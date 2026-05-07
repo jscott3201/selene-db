@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::{CoreError, CoreResult, IStr, Value};
@@ -14,7 +14,7 @@ use crate::{CoreError, CoreResult, IStr, Value};
 const MAX_PROPERTY_COUNT: usize = u32::MAX as usize;
 
 /// Property storage for open and closed graph values.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub enum PropertyMap {
     /// Open graph representation: sorted key/value pairs.
     Standard(SmallVec<[(IStr, Value); 6]>),
@@ -74,6 +74,14 @@ impl PropertyMap {
         keys: impl IntoIterator<Item = IStr>,
         values: impl IntoIterator<Item = Option<Value>>,
     ) -> CoreResult<Self> {
+        let keys: Vec<IStr> = keys.into_iter().collect();
+        let values: Vec<Option<Value>> = values.into_iter().collect();
+        if keys.len() != values.len() {
+            return Err(CoreError::CompactKeyValueLengthMismatch {
+                keys: keys.len(),
+                values: values.len(),
+            });
+        }
         let mut slots: Vec<(IStr, Option<Value>)> = keys.into_iter().zip(values).collect();
         ensure_within_cap(slots.len())?;
         slots.sort_by_key(|(key, _)| *key);
@@ -211,6 +219,53 @@ impl Default for PropertyMap {
     }
 }
 
+#[derive(Deserialize)]
+enum PropertyMapWire {
+    Standard(SmallVec<[(IStr, Value); 6]>),
+    Compact {
+        keys: Arc<[IStr]>,
+        values: SmallVec<[Option<Value>; 6]>,
+    },
+}
+
+impl<'de> Deserialize<'de> for PropertyMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = PropertyMapWire::deserialize(deserializer)?;
+        match wire {
+            PropertyMapWire::Standard(entries) => {
+                for window in entries.windows(2) {
+                    if window[0].0 >= window[1].0 {
+                        return Err(serde::de::Error::custom(
+                            "PropertyMap::Standard entries must be sorted by IStr key with no duplicates",
+                        ));
+                    }
+                }
+                Ok(Self::Standard(entries))
+            }
+            PropertyMapWire::Compact { keys, values } => {
+                if keys.len() != values.len() {
+                    return Err(serde::de::Error::custom(format!(
+                        "PropertyMap::Compact key/value length mismatch: {} keys, {} values",
+                        keys.len(),
+                        values.len(),
+                    )));
+                }
+                for window in keys.windows(2) {
+                    if window[0] >= window[1] {
+                        return Err(serde::de::Error::custom(
+                            "PropertyMap::Compact keys must be sorted by IStr order with no duplicates",
+                        ));
+                    }
+                }
+                Ok(Self::Compact { keys, values })
+            }
+        }
+    }
+}
+
 fn ensure_within_cap(count: usize) -> CoreResult<()> {
     if count > MAX_PROPERTY_COUNT {
         Err(CoreError::ConstructedValueTooLarge {
@@ -337,6 +392,84 @@ mod tests {
         map.set(key("pm.len"), int(1)).unwrap();
         assert_eq!(map.len(), 1);
         assert!(!map.is_empty());
+    }
+
+    #[test]
+    fn compact_rejects_mismatched_key_value_lengths() {
+        let a = key("pm.mismatch.a");
+        let b = key("pm.mismatch.b");
+        let err = PropertyMap::compact([a, b], [Some(int(1))]).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreError::CompactKeyValueLengthMismatch { keys: 2, values: 1 }
+        ));
+        let err = PropertyMap::compact([a], [Some(int(1)), Some(int(2))]).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreError::CompactKeyValueLengthMismatch { keys: 1, values: 2 }
+        ));
+    }
+
+    #[test]
+    fn deserialize_rejects_unsorted_standard_keys() {
+        let a = key("pm.de.std.a");
+        let b = key("pm.de.std.b");
+        let valid = PropertyMap::from_pairs([(a, int(1)), (b, int(2))]).unwrap();
+        let bytes = postcard::to_allocvec(&valid).unwrap();
+        let round: PropertyMap = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round, valid);
+
+        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        entries.push((b, int(2)));
+        entries.push((a, int(1)));
+        let bad = PropertyMapWire::Standard(entries);
+        let bad_bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bad_bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_compact_length_mismatch() {
+        let a = key("pm.de.cmp.a");
+        let b = key("pm.de.cmp.b");
+        let bad = PropertyMapWire::Compact {
+            keys: Arc::from([a, b]),
+            values: SmallVec::from_vec(vec![Some(int(1))]),
+        };
+        let bad_bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bad_bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_unsorted_compact_keys() {
+        let a = key("pm.de.cmpsort.a");
+        let b = key("pm.de.cmpsort.b");
+        let bad = PropertyMapWire::Compact {
+            keys: Arc::from([b, a]),
+            values: SmallVec::from_vec(vec![Some(int(1)), Some(int(2))]),
+        };
+        let bad_bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bad_bytes);
+        assert!(result.is_err());
+    }
+
+    fn bad_wire_map(wire: PropertyMapWire) -> PropertyMapWireSer {
+        match wire {
+            PropertyMapWire::Standard(entries) => PropertyMapWireSer::Standard(entries),
+            PropertyMapWire::Compact { keys, values } => {
+                PropertyMapWireSer::Compact { keys, values }
+            }
+        }
+    }
+
+    #[derive(serde::Serialize)]
+    enum PropertyMapWireSer {
+        Standard(SmallVec<[(IStr, Value); 6]>),
+        Compact {
+            keys: Arc<[IStr]>,
+            values: SmallVec<[Option<Value>; 6]>,
+        },
     }
 
     #[test]

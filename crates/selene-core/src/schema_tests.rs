@@ -123,3 +123,18 @@ fn value_type_list_of_takes_precedence_when_multiple_fields_set() {
     assert!(value_type.list_of.is_some());
     assert_eq!(value_type.predefined, Some(PredefinedValueType::String));
 }
+
+#[test]
+fn graph_type_id_deserialize_round_trips_non_zero() {
+    let id = GraphTypeId::new(7).unwrap();
+    let bytes = postcard::to_allocvec(&id).unwrap();
+    let round: GraphTypeId = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(round, id);
+}
+
+#[test]
+fn graph_type_id_deserialize_rejects_zero() {
+    let bytes = postcard::to_allocvec::<u64>(&0_u64).unwrap();
+    let result: Result<GraphTypeId, _> = postcard::from_bytes(&bytes);
+    assert!(result.is_err());
+}

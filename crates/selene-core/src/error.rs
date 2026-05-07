@@ -1,6 +1,7 @@
 //! Core error types and ISO GQLSTATUS mappings.
 
 use crate::extension_type_ids::ExtensionTypeId;
+use crate::istr::IStr;
 
 /// Result alias for `selene-core` operations.
 pub type CoreResult<T> = Result<T, CoreError>;
@@ -72,6 +73,26 @@ pub enum CoreError {
     #[error("invalid identifier: zero is reserved as tombstone sentinel")]
     #[diagnostic(code(SLENE_C_007))]
     ZeroIdentifier,
+
+    /// Compact `PropertyMap` was constructed with mismatched key and value counts.
+    #[error("compact property map key/value length mismatch: {keys} keys, {values} values")]
+    #[diagnostic(code(SLENE_C_008))]
+    CompactKeyValueLengthMismatch {
+        /// Number of keys supplied.
+        keys: usize,
+        /// Number of value slots supplied.
+        values: usize,
+    },
+
+    /// A label diff or property diff named the same key in both add/set and remove.
+    #[error("overlapping {kind} diff: key {key} appears in both add/set and remove")]
+    #[diagnostic(code(SLENE_C_009))]
+    OverlappingDiff {
+        /// `"label"` or `"property"`.
+        kind: &'static str,
+        /// The contradicting key.
+        key: IStr,
+    },
 }
 
 impl CoreError {
@@ -88,6 +109,8 @@ impl CoreError {
             Self::ExtensionTypeIdConflict { .. } => "0G001",
             Self::ExtensionTypeIdUnregistered { .. } => "0G002",
             Self::ZeroIdentifier => "0G003",
+            Self::CompactKeyValueLengthMismatch { .. } => "0G008",
+            Self::OverlappingDiff { .. } => "0G009",
         }
     }
 }
@@ -123,6 +146,16 @@ mod tests {
         "SLENE_C_006"
     )]
     #[case(CoreError::ZeroIdentifier, "0G003", "SLENE_C_007")]
+    #[case(
+        CoreError::CompactKeyValueLengthMismatch { keys: 2, values: 1 },
+        "0G008",
+        "SLENE_C_008"
+    )]
+    #[case(
+        CoreError::OverlappingDiff { kind: "label", key: crate::intern("err.test.overlap").unwrap() },
+        "0G009",
+        "SLENE_C_009"
+    )]
     fn gqlstatus_and_diagnostic_code_match(
         #[case] error: CoreError,
         #[case] gqlstatus: &str,

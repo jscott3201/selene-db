@@ -5,13 +5,13 @@
 //! Edges semantically carry exactly one label, but that constraint is enforced
 //! by `selene-graph`, not by this plain set type.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::IStr;
 
 /// Sorted set of graph labels.
-#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct LabelSet(SmallVec<[IStr; 3]>);
 
 impl LabelSet {
@@ -104,6 +104,23 @@ impl Default for LabelSet {
     }
 }
 
+impl<'de> Deserialize<'de> for LabelSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw: SmallVec<[IStr; 3]> = SmallVec::deserialize(deserializer)?;
+        for window in raw.windows(2) {
+            if window[0] >= window[1] {
+                return Err(serde::de::Error::custom(
+                    "LabelSet must be sorted by IStr order with no duplicates",
+                ));
+            }
+        }
+        Ok(Self(raw))
+    }
+}
+
 impl FromIterator<IStr> for LabelSet {
     fn from_iter<T: IntoIterator<Item = IStr>>(iter: T) -> Self {
         let mut set = Self::new();
@@ -179,6 +196,45 @@ mod tests {
         let a = label("ls.eq.a");
         let b = label("ls.eq.b");
         assert_eq!(LabelSet::from_iter([a, b]), LabelSet::from_iter([b, a]));
+    }
+
+    #[test]
+    fn deserialize_round_trips_sorted_set() {
+        let a = label("ls.de.a");
+        let b = label("ls.de.b");
+        let set = LabelSet::from_iter([a, b]);
+        let bytes = postcard::to_allocvec(&set).unwrap();
+        let round: LabelSet = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round, set);
+    }
+
+    #[test]
+    fn deserialize_rejects_unsorted_payload() {
+        let a = label("ls.de.bad.a");
+        let b = label("ls.de.bad.b");
+        let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
+            let mut v = SmallVec::<[IStr; 3]>::new();
+            v.push(b);
+            v.push(a);
+            v
+        })
+        .unwrap();
+        let result: Result<LabelSet, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn deserialize_rejects_duplicate_payload() {
+        let a = label("ls.de.dup.a");
+        let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
+            let mut v = SmallVec::<[IStr; 3]>::new();
+            v.push(a);
+            v.push(a);
+            v
+        })
+        .unwrap();
+        let result: Result<LabelSet, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
     }
 
     #[test]

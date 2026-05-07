@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::{
-    EdgeId, EdgeTypeDef, GraphId, GraphType, GraphTypeId, IStr, LabelSet, NodeId, NodeTypeDef,
-    PropertyMap, RecordTypeDef, Value,
+    CoreError, CoreResult, EdgeId, EdgeTypeDef, GraphId, GraphType, GraphTypeId, IStr, LabelSet,
+    NodeId, NodeTypeDef, PropertyMap, RecordTypeDef, Value,
 };
 
 /// A graph, schema, or extension-provider change carried by the WAL.
@@ -86,7 +86,7 @@ pub enum Change {
 }
 
 /// Label set difference.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct LabelDiff {
     /// Labels added by the mutation.
     pub added: SmallVec<[IStr; 2]>,
@@ -96,15 +96,20 @@ pub struct LabelDiff {
 
 impl LabelDiff {
     /// Construct a sorted, deduplicated label diff.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::OverlappingDiff`] when a label appears in both
+    /// `added` and `removed`. Contradictory diffs would make WAL replay
+    /// order-dependent, so the constructor refuses to build them.
     pub fn new(
         added: impl IntoIterator<Item = IStr>,
         removed: impl IntoIterator<Item = IStr>,
-    ) -> Self {
-        Self {
-            added: sorted_deduped(added),
-            removed: sorted_deduped(removed),
-        }
+    ) -> CoreResult<Self> {
+        let added = sorted_deduped(added);
+        let removed = sorted_deduped(removed);
+        ensure_disjoint("label", &added, &removed)?;
+        Ok(Self { added, removed })
     }
 
     /// Return true if no labels changed.
@@ -114,8 +119,30 @@ impl LabelDiff {
     }
 }
 
+#[derive(Deserialize)]
+struct LabelDiffWire {
+    added: SmallVec<[IStr; 2]>,
+    removed: SmallVec<[IStr; 2]>,
+}
+
+impl<'de> Deserialize<'de> for LabelDiff {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = LabelDiffWire::deserialize(deserializer)?;
+        validate_sorted_unique(&wire.added, "LabelDiff.added")?;
+        validate_sorted_unique(&wire.removed, "LabelDiff.removed")?;
+        validate_disjoint(&wire.added, &wire.removed, "label")?;
+        Ok(Self {
+            added: wire.added,
+            removed: wire.removed,
+        })
+    }
+}
+
 /// Property map difference.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PropertyDiff {
     /// Keys set to a new value. Use [`Value::Null`] for an explicit null set.
     pub set: SmallVec<[(IStr, Value); 4]>,
@@ -125,11 +152,16 @@ pub struct PropertyDiff {
 
 impl PropertyDiff {
     /// Construct a sorted, deduplicated property diff.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::OverlappingDiff`] when a key appears in both `set`
+    /// and `removed`. Contradictory diffs would make WAL replay
+    /// order-dependent, so the constructor refuses to build them.
     pub fn new(
         set: impl IntoIterator<Item = (IStr, Value)>,
         removed: impl IntoIterator<Item = IStr>,
-    ) -> Self {
+    ) -> CoreResult<Self> {
         let mut set: Vec<_> = set.into_iter().collect();
         set.sort_by_key(|(key, _)| *key);
         set.dedup_by(|(lhs_key, lhs_value), (rhs_key, rhs_value)| {
@@ -140,16 +172,57 @@ impl PropertyDiff {
                 false
             }
         });
-        Self {
-            set: set.into_iter().collect(),
-            removed: sorted_deduped(removed),
+        let set: SmallVec<[(IStr, Value); 4]> = set.into_iter().collect();
+        let removed = sorted_deduped(removed);
+        for (key, _) in set.iter() {
+            if removed.binary_search(key).is_ok() {
+                return Err(CoreError::OverlappingDiff {
+                    kind: "property",
+                    key: *key,
+                });
+            }
         }
+        Ok(Self { set, removed })
     }
 
     /// Return true if no properties changed.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.set.is_empty() && self.removed.is_empty()
+    }
+}
+
+#[derive(Deserialize)]
+struct PropertyDiffWire {
+    set: SmallVec<[(IStr, Value); 4]>,
+    removed: SmallVec<[IStr; 2]>,
+}
+
+impl<'de> Deserialize<'de> for PropertyDiff {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = PropertyDiffWire::deserialize(deserializer)?;
+        for window in wire.set.windows(2) {
+            if window[0].0 >= window[1].0 {
+                return Err(serde::de::Error::custom(
+                    "PropertyDiff.set entries must be sorted by key with no duplicates",
+                ));
+            }
+        }
+        validate_sorted_unique(&wire.removed, "PropertyDiff.removed")?;
+        for (key, _) in wire.set.iter() {
+            if wire.removed.binary_search(key).is_ok() {
+                return Err(serde::de::Error::custom(format!(
+                    "PropertyDiff: key {key} appears in both set and removed",
+                )));
+            }
+        }
+        Ok(Self {
+            set: wire.set,
+            removed: wire.removed,
+        })
     }
 }
 
@@ -240,6 +313,48 @@ fn sorted_deduped(values: impl IntoIterator<Item = IStr>) -> SmallVec<[IStr; 2]>
     values
 }
 
+fn ensure_disjoint(
+    kind: &'static str,
+    added: &SmallVec<[IStr; 2]>,
+    removed: &SmallVec<[IStr; 2]>,
+) -> CoreResult<()> {
+    for label in added.iter() {
+        if removed.binary_search(label).is_ok() {
+            return Err(CoreError::OverlappingDiff { kind, key: *label });
+        }
+    }
+    Ok(())
+}
+
+fn validate_sorted_unique<E: serde::de::Error>(
+    values: &SmallVec<[IStr; 2]>,
+    label: &'static str,
+) -> Result<(), E> {
+    for window in values.windows(2) {
+        if window[0] >= window[1] {
+            return Err(E::custom(format!(
+                "{label} must be sorted by IStr order with no duplicates"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_disjoint<E: serde::de::Error>(
+    added: &SmallVec<[IStr; 2]>,
+    removed: &SmallVec<[IStr; 2]>,
+    kind: &'static str,
+) -> Result<(), E> {
+    for label in added.iter() {
+        if removed.binary_search(label).is_ok() {
+            return Err(E::custom(format!(
+                "overlapping {kind} diff: {label} appears in both add/set and remove",
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -269,8 +384,9 @@ mod tests {
     fn node_updated_with_label_diff_and_property_diff() {
         let change = Change::NodeUpdated {
             id: NodeId::new(1),
-            labels_diff: LabelDiff::new([istr("change.add")], [istr("change.remove")]),
-            properties_diff: PropertyDiff::new([(istr("change.set"), Value::Bool(true))], []),
+            labels_diff: LabelDiff::new([istr("change.add")], [istr("change.remove")]).unwrap(),
+            properties_diff: PropertyDiff::new([(istr("change.set"), Value::Bool(true))], [])
+                .unwrap(),
         };
         assert_eq!(change.clone(), change);
     }
@@ -286,7 +402,7 @@ mod tests {
         };
         let update = Change::EdgeUpdated {
             id: EdgeId::new(1),
-            properties_diff: PropertyDiff::new([], [istr("change.removed")]),
+            properties_diff: PropertyDiff::new([], [istr("change.removed")]).unwrap(),
         };
         let delete = Change::EdgeDeleted { id: EdgeId::new(1) };
         assert_ne!(create, update);
@@ -323,7 +439,7 @@ mod tests {
     fn label_diff_added_and_removed_independent() {
         let added = istr("change.label.added");
         let removed = istr("change.label.removed");
-        let diff = LabelDiff::new([added], [removed]);
+        let diff = LabelDiff::new([added], [removed]).unwrap();
         assert_eq!(diff.added.as_slice(), &[added]);
         assert_eq!(diff.removed.as_slice(), &[removed]);
     }
@@ -331,8 +447,79 @@ mod tests {
     #[test]
     fn property_diff_set_includes_null_value() {
         let property = istr("change.null");
-        let diff = PropertyDiff::new([(property, Value::Null)], []);
+        let diff = PropertyDiff::new([(property, Value::Null)], []).unwrap();
         assert_eq!(diff.set.as_slice(), &[(property, Value::Null)]);
+    }
+
+    #[test]
+    fn label_diff_rejects_overlapping_label() {
+        let label = istr("change.overlap.label");
+        let err = LabelDiff::new([label], [label]).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreError::OverlappingDiff { kind: "label", .. }
+        ));
+    }
+
+    #[test]
+    fn property_diff_rejects_overlapping_key() {
+        let key = istr("change.overlap.prop");
+        let err = PropertyDiff::new([(key, Value::Int(1))], [key]).unwrap_err();
+        assert!(matches!(
+            err,
+            CoreError::OverlappingDiff {
+                kind: "property",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn label_diff_deserialize_round_trip() {
+        let added = istr("change.deser.add");
+        let removed = istr("change.deser.remove");
+        let diff = LabelDiff::new([added], [removed]).unwrap();
+        let bytes = postcard::to_allocvec(&diff).unwrap();
+        let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round, diff);
+    }
+
+    #[test]
+    fn label_diff_deserialize_rejects_overlap() {
+        let label = istr("change.deser.bad");
+        let mut added = SmallVec::<[IStr; 2]>::new();
+        added.push(label);
+        let mut removed = SmallVec::<[IStr; 2]>::new();
+        removed.push(label);
+        let bad = LabelDiffWireSer { added, removed };
+        let bytes = postcard::to_allocvec(&bad).unwrap();
+        let result: Result<LabelDiff, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn property_diff_deserialize_rejects_overlap() {
+        let key = istr("change.deser.prop");
+        let mut set = SmallVec::<[(IStr, Value); 4]>::new();
+        set.push((key, Value::Int(1)));
+        let mut removed = SmallVec::<[IStr; 2]>::new();
+        removed.push(key);
+        let bad = PropertyDiffWireSer { set, removed };
+        let bytes = postcard::to_allocvec(&bad).unwrap();
+        let result: Result<PropertyDiff, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
+    }
+
+    #[derive(serde::Serialize)]
+    struct LabelDiffWireSer {
+        added: SmallVec<[IStr; 2]>,
+        removed: SmallVec<[IStr; 2]>,
+    }
+
+    #[derive(serde::Serialize)]
+    struct PropertyDiffWireSer {
+        set: SmallVec<[(IStr, Value); 4]>,
+        removed: SmallVec<[IStr; 2]>,
     }
 
     #[test]
@@ -360,8 +547,8 @@ mod tests {
 
     #[test]
     fn empty_diffs_and_empty_payload_are_valid() {
-        assert!(LabelDiff::new([], []).is_empty());
-        assert!(PropertyDiff::new([], []).is_empty());
+        assert!(LabelDiff::new([], []).unwrap().is_empty());
+        assert!(PropertyDiff::new([], []).unwrap().is_empty());
         let event = Change::IndexExtensionEvent {
             provider: istr("empty-provider"),
             payload: Arc::from([]),
@@ -421,7 +608,7 @@ mod tests {
                 let name = format!("change.diff.{value}");
                 intern(&name).unwrap()
             });
-            let diff = LabelDiff::new(added, removed);
+            let diff = LabelDiff::new(added, removed).unwrap();
             prop_assert!(diff.added.windows(2).all(|pair| pair[0] < pair[1]));
             prop_assert!(diff.removed.windows(2).all(|pair| pair[0] < pair[1]));
             prop_assert!(diff.added.iter().all(|label| !diff.removed.contains(label)));
@@ -437,7 +624,7 @@ mod tests {
                 let name = format!("change.prop.{value}");
                 intern(&name).unwrap()
             });
-            let diff = PropertyDiff::new(set, removed);
+            let diff = PropertyDiff::new(set, removed).unwrap();
             prop_assert!(diff.set.windows(2).all(|pair| pair[0].0 < pair[1].0));
             prop_assert!(diff.removed.windows(2).all(|pair| pair[0] < pair[1]));
         }

@@ -168,8 +168,9 @@ fn change_postcard_round_trip() {
         },
         Change::NodeUpdated {
             id: NodeId::new(1),
-            labels_diff: LabelDiff::new([istr("serde.change.add")], [istr("serde.change.remove")]),
-            properties_diff: PropertyDiff::new([(property, Value::Null)], []),
+            labels_diff: LabelDiff::new([istr("serde.change.add")], [istr("serde.change.remove")])
+                .unwrap(),
+            properties_diff: PropertyDiff::new([(property, Value::Null)], []).unwrap(),
         },
         Change::NodeDeleted { id: NodeId::new(1) },
         Change::EdgeCreated {
@@ -181,7 +182,7 @@ fn change_postcard_round_trip() {
         },
         Change::EdgeUpdated {
             id: EdgeId::new(1),
-            properties_diff: PropertyDiff::new([(property, Value::Bool(true))], []),
+            properties_diff: PropertyDiff::new([(property, Value::Bool(true))], []).unwrap(),
         },
         Change::EdgeDeleted { id: EdgeId::new(1) },
         Change::SchemaChanged {

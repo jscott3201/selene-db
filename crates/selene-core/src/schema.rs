@@ -6,15 +6,25 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
 use crate::{CoreError, CoreResult, ExtensionTypeId, IStr, LabelSet, RecordTypeId, Value};
 
 /// Graph-type-scoped schema identifier.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[repr(transparent)]
 pub struct GraphTypeId(pub u64);
+
+impl<'de> Deserialize<'de> for GraphTypeId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = u64::deserialize(deserializer)?;
+        Self::new(raw).map_err(serde::de::Error::custom)
+    }
+}
 
 impl GraphTypeId {
     /// Construct a graph type ID, rejecting the reserved zero sentinel.
