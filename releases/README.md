@@ -12,3 +12,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-04b: extension API surface hardened — single ProcedureRegistry trait in selene-gql; per-tier concrete Context structs with dyn-compatible Procedure traits; pack-lifecycle audit consolidates through WAL only (AuditEntry/EMITTED_AUDIT removed).
 - BRIEF-05: selene-core foundation bootstrapped with primitive IDs, IStr interning, Value variants, extension type IDs, and ValueTypeAdapter registry.
 - BRIEF-05.1: IStr cap admission is now atomic under concurrency (double-checked locking with a static admission Mutex); fixes PR #3 Copilot P1 finding.
+- BRIEF-INFRA-01: CI speedup — cargo-audit and cargo-about install via prebuilt binaries (taiki-e/install-action); advisory DB cached; concurrency block cancels obsolete runs.
