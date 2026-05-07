@@ -6,7 +6,7 @@
 //! GQLSTATUS `54000`.
 
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use lasso::{Spur, ThreadedRodeo};
 
@@ -29,6 +29,14 @@ pub struct IStr(Spur);
 
 static INTERNER: OnceLock<ThreadedRodeo<Spur>> = OnceLock::new();
 
+/// Admission lock for cap-check + insert atomicity.
+///
+/// Held only on the slow path for strings that are not yet interned.
+/// Already-interned strings hit the lock-free fast path via `rodeo.get(s)`.
+/// Without this lock, concurrent callers could both observe capacity and insert
+/// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 54000 contract.
+static ADMISSION_LOCK: Mutex<()> = Mutex::new(());
+
 fn interner() -> &'static ThreadedRodeo<Spur> {
     INTERNER.get_or_init(ThreadedRodeo::new)
 }
@@ -39,17 +47,36 @@ const fn cap_exceeded(current_len: usize) -> bool {
 
 /// Intern a string slice, returning a stable [`IStr`] handle.
 ///
-/// If the string is already interned, this returns the existing handle. If
-/// interning a new string would exceed [`MAX_INTERNED_STRINGS`], this returns
-/// [`CoreError::IStrCapExceeded`].
+/// If the string is already interned, this returns the existing handle from a
+/// lock-free fast path. Otherwise, the admission lock serializes the second
+/// lookup, cap check, and insert so [`MAX_INTERNED_STRINGS`] remains a hard
+/// process cap under concurrency.
+///
+/// # Errors
+///
+/// Returns [`CoreError::IStrCapExceeded`] if the interner is at cap and the
+/// string is not already present.
 pub fn intern(s: &str) -> CoreResult<IStr> {
     let rodeo = interner();
+
+    // Fast path: already-interned strings do not need admission.
     if let Some(spur) = rodeo.get(s) {
         return Ok(IStr(spur));
     }
-    if cap_exceeded(rodeo.len()) {
+
+    // Slow path: serialize admission so cap-check + insert are atomic.
+    let _admission = ADMISSION_LOCK.lock().expect("admission lock poisoned");
+
+    // Re-check inside the lock; another thread may have interned `s` between
+    // the fast-path miss and lock acquisition.
+    if let Some(spur) = rodeo.get(s) {
+        return Ok(IStr(spur));
+    }
+
+    let count = rodeo.len();
+    if cap_exceeded(count) {
         return Err(CoreError::IStrCapExceeded {
-            count: rodeo.len(),
+            count,
             max: MAX_INTERNED_STRINGS,
         });
     }
@@ -78,6 +105,7 @@ impl fmt::Display for IStr {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
     use std::thread;
 
     use super::*;
@@ -116,6 +144,73 @@ mod tests {
         assert!(!cap_exceeded(MAX_INTERNED_STRINGS - 1));
         assert!(cap_exceeded(MAX_INTERNED_STRINGS));
         assert_eq!(MAX_INTERNED_STRINGS, 1_000_000);
+    }
+
+    #[test]
+    fn cap_is_monotonic_under_concurrent_admission() {
+        let prefix = format!("brief-05.1-mono-{}", std::process::id());
+        let n_threads = 16;
+        let strings_per_thread = 64;
+
+        let handles: Vec<Vec<IStr>> = thread::scope(|scope| {
+            let mut joiners = Vec::new();
+            for t in 0..n_threads {
+                let prefix = prefix.clone();
+                joiners.push(scope.spawn(move || {
+                    let mut keys = Vec::new();
+                    for i in 0..strings_per_thread {
+                        let key = format!("{prefix}-t{t}-{i}");
+                        keys.push(intern(&key).expect("under cap"));
+                    }
+                    keys
+                }));
+            }
+            joiners
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+
+        let admitted: HashSet<IStr> = handles.into_iter().flatten().collect();
+        assert_eq!(admitted.len(), n_threads * strings_per_thread);
+        assert!(interner().len() <= MAX_INTERNED_STRINGS);
+    }
+
+    #[test]
+    fn same_string_race_returns_identical_handle() {
+        let key = format!("brief-05.1-same-{}", std::process::id());
+        let n_threads = 32;
+
+        let handles: Vec<IStr> = thread::scope(|scope| {
+            let mut joiners = Vec::new();
+            for _ in 0..n_threads {
+                let key = key.clone();
+                joiners
+                    .push(scope.spawn(move || intern(&key).expect("contended duplicate intern")));
+            }
+            joiners
+                .into_iter()
+                .map(|handle| handle.join().unwrap())
+                .collect()
+        });
+
+        let first = handles[0];
+        for handle in &handles[1..] {
+            assert_eq!(
+                *handle, first,
+                "concurrent intern of same string must return same handle"
+            );
+        }
+    }
+
+    #[test]
+    fn cap_error_carries_current_count_and_max() {
+        let err = CoreError::IStrCapExceeded {
+            count: MAX_INTERNED_STRINGS,
+            max: MAX_INTERNED_STRINGS,
+        };
+        assert_eq!(err.gqlstatus(), "54000");
+        assert!(err.to_string().contains(&MAX_INTERNED_STRINGS.to_string()));
     }
 
     #[test]
