@@ -165,6 +165,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         if: steps.cargo-lock.outputs.exists == 'true'
       - if: steps.cargo-lock.outputs.exists == 'true'
-        run: cargo install cargo-about --locked
+        run: cargo install cargo-about --locked --features cli
       - if: steps.cargo-lock.outputs.exists == 'true'
         run: bash .github/scripts/check-thirdparty-current.sh

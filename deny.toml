@@ -68,7 +68,11 @@ deny = [
   { name = "schannel" },
   { name = "security-framework" },
 ]
-skip = []
+skip = [
+  # BRIEF-05: getrandom 0.3 (proptest/rand) and 0.4 (uuid/insta) carry
+  # target-specific WASI helpers that currently resolve to two wit-bindgen lines.
+  { name = "wit-bindgen", version = "0.51.0" },
+]
 skip-tree = []
 
 [sources]

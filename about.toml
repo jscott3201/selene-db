@@ -21,5 +21,3 @@ accepted = [
 # Crates that have unclear license metadata or require manual override
 # go here with a justification. Empty by design — adding an entry should
 # carry a comment explaining why.
-[[crates]]
-name = ""
