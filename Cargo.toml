@@ -8,7 +8,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/selene-core"]
+members = ["crates/selene-core", "crates/selene-graph"]
 exclude = ["_spec"]
 
 [workspace.package]
@@ -44,6 +44,11 @@ uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
 smallvec = { version = "1", features = ["const_generics", "serde", "union"] }
 bytes = "1.10"
 serde = { version = "1.0", features = ["derive", "rc"] }
+arc-swap = "1"
+parking_lot = "0.12"
+imbl = { version = "7.0", default-features = false }
+roaring = "0.11"
+triomphe = "0.1"
 
 # Dev dependencies.
 proptest = { version = "1.11", default-features = false, features = ["std"] }

@@ -1,82 +1,109 @@
-#![forbid(unsafe_code)]
-#![deny(missing_docs)]
-
-//! Per-graph ID allocator skeleton for `selene-graph`.
+//! Per-graph ID allocator per D11.
 //!
-//! D11 settles real ID allocation under the graph write-lock. `alloc_node_id`
-//! and `alloc_edge_id` are called while a `WriteTxn` holds that lock, so aborted
-//! transaction allocations are not rolled back; they become permanent holes in
-//! the dense monotonic sequence. See `_spec/02-data-model.md` §4 for the
-//! identity rule and `_spec/03-property-graph-and-concurrency.md` §6 for the
-//! transaction lifecycle. Atomics are used so recovery can restore checkpoints
-//! without widening this skeleton into a runtime concurrency design.
+//! The allocator is owned by `SharedGraph`, not by individual transactions.
+//! Advancing a counter is permanent even when the transaction later rolls back,
+//! which preserves spec 02 section 4's no-reuse identity rule.
 
-use std::sync::atomic::AtomicU64;
+use selene_core::{EdgeId, NodeId};
 
-/// Per-graph allocator for node and edge identifiers.
-///
-/// Allocation starts at one because ID zero is reserved as a tombstone sentinel
-/// in spec 02 §4. Calls are made under the D10 write-lock; the atomics are not
-/// a multi-writer permission slip.
+use crate::graph::GraphMeta;
+
+/// Per-graph node and edge ID allocator.
+#[derive(Clone, Debug)]
 pub struct IdAllocator {
-    next_node_id: AtomicU64,
-    next_edge_id: AtomicU64,
+    next_node_id: u64,
+    next_edge_id: u64,
 }
 
 impl IdAllocator {
-    /// Create an allocator at the v1.0 initial checkpoint.
-    ///
-    /// The first allocated node and edge IDs are both `1`. See spec 02 §4.
-    pub fn new() -> Self {
-        unimplemented!("M2 work")
+    /// Construct an allocator at the v1.0 initial checkpoint.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            next_node_id: 1,
+            next_edge_id: 1,
+        }
     }
 
-    /// Allocate the next real node ID.
-    ///
-    /// The caller must hold the graph write-lock. If the surrounding
-    /// transaction aborts, this ID is still consumed as a hole per D11.
-    pub fn alloc_node_id(&self) -> NodeId {
-        unimplemented!("M2 work")
+    /// Restore allocator counters from graph metadata.
+    #[must_use]
+    pub const fn from_meta(meta: &GraphMeta) -> Self {
+        Self {
+            next_node_id: meta.next_node_id,
+            next_edge_id: meta.next_edge_id,
+        }
     }
 
-    /// Allocate the next real edge ID.
-    ///
-    /// The caller must hold the graph write-lock. If the surrounding
-    /// transaction aborts, this ID is still consumed as a hole per D11.
-    pub fn alloc_edge_id(&self) -> EdgeId {
-        unimplemented!("M2 work")
+    /// Allocate a node ID and advance the permanent high-water mark.
+    #[must_use]
+    pub fn allocate_node(&mut self) -> NodeId {
+        let id = self.next_node_id;
+        self.next_node_id = self
+            .next_node_id
+            .checked_add(1)
+            .expect("node id allocator exhausted");
+        NodeId::new(id)
     }
 
-    /// Capture the allocator high-water marks for snapshot publication.
-    ///
-    /// Committed checkpoints preserve abort holes that advanced the counters.
-    /// See `_spec/03` §6.2 for the commit boundary.
-    pub fn snapshot(&self) -> IdCheckpoint {
-        unimplemented!("M2 work")
+    /// Allocate an edge ID and advance the permanent high-water mark.
+    #[must_use]
+    pub fn allocate_edge(&mut self) -> EdgeId {
+        let id = self.next_edge_id;
+        self.next_edge_id = self
+            .next_edge_id
+            .checked_add(1)
+            .expect("edge id allocator exhausted");
+        EdgeId::new(id)
     }
 
-    /// Restore allocator high-water marks during recovery.
-    ///
-    /// This is the recovery-only path; normal writes advance IDs through
-    /// [`Self::alloc_node_id`] and [`Self::alloc_edge_id`] under the write-lock.
-    pub fn restore(&self, _ckpt: IdCheckpoint) {
-        unimplemented!("M2 work")
+    /// Return the next node ID without allocating it.
+    #[must_use]
+    pub const fn peek_next_node(&self) -> u64 {
+        self.next_node_id
+    }
+
+    /// Return the next edge ID without allocating it.
+    #[must_use]
+    pub const fn peek_next_edge(&self) -> u64 {
+        self.next_edge_id
     }
 }
 
-/// Durable allocator checkpoint stored in graph metadata.
-///
-/// The fields represent the next IDs to allocate, not the most recent IDs
-/// allocated. See spec 02 §4 for the monotonic rule.
-pub struct IdCheckpoint {
-    /// Next node ID to allocate.
-    pub next_node_id: u64,
-    /// Next edge ID to allocate.
-    pub next_edge_id: u64,
+impl Default for IdAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
-/// Placeholder node ID; the final type lives in `selene-core`.
-pub struct NodeId(u64);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use selene_core::GraphId;
 
-/// Placeholder edge ID; the final type lives in `selene-core`.
-pub struct EdgeId(u64);
+    #[test]
+    fn allocate_node_advances_counter() {
+        let mut allocator = IdAllocator::new();
+        assert_eq!(allocator.allocate_node(), NodeId::new(1));
+        assert_eq!(allocator.peek_next_node(), 2);
+    }
+
+    #[test]
+    fn allocate_edge_advances_counter() {
+        let mut allocator = IdAllocator::new();
+        assert_eq!(allocator.allocate_edge(), EdgeId::new(1));
+        assert_eq!(allocator.peek_next_edge(), 2);
+    }
+
+    #[test]
+    fn from_meta_restores_counters() {
+        let meta = GraphMeta {
+            graph_id: GraphId::new(1),
+            generation: 7,
+            next_node_id: 42,
+            next_edge_id: 99,
+        };
+        let allocator = IdAllocator::from_meta(&meta);
+        assert_eq!(allocator.peek_next_node(), 42);
+        assert_eq!(allocator.peek_next_edge(), 99);
+    }
+}
