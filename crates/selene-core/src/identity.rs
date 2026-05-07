@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 macro_rules! identity_id {
     ($Name:ident, $doc:literal) => {
         #[doc = $doc]
@@ -9,7 +11,9 @@ macro_rules! identity_id {
         /// The raw value `0` is reserved as a tombstone sentinel. Allocators
         /// start at `1`, and callers maintain that invariant when constructing
         /// IDs directly.
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(
+            Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+        )]
         #[repr(transparent)]
         pub struct $Name(u64);
 

@@ -5,6 +5,8 @@
 //! `0x00000100..=0x0000FFFF`; third-party extensions use
 //! `0x00010000..=0xFFFFFFFE`.
 
+use serde::{Deserialize, Serialize};
+
 /// Numeric ID reserving an extension value type.
 ///
 /// Reserved ranges:
@@ -13,7 +15,7 @@
 /// * `0x00000100..=0x0000FFFF` - first-party selene-* extensions
 /// * `0x00010000..=0xFFFFFFFE` - third-party extensions
 /// * `0xFFFFFFFF` - reserved sentinel
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[repr(transparent)]
 pub struct ExtensionTypeId(pub u32);
 

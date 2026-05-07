@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
 use crate::extension_type_ids::ExtensionTypeId;
@@ -19,7 +20,7 @@ use crate::istr::IStr;
 /// remains distinct for schema storage. Rust equality preserves GQL's
 /// `+0.0 == -0.0` behavior, while NaN ordering is handled by query-engine
 /// `ORDER BY` logic outside this crate.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
 pub enum Value {
     /// Boolean value.
@@ -29,15 +30,15 @@ pub enum Value {
     /// Unsigned integer up to 64 bits.
     Uint(u64),
     /// Signed 128-bit integer.
-    Int128(i128),
+    Int128(#[serde(with = "serde_i128_le")] i128),
     /// Unsigned 128-bit integer.
-    Uint128(u128),
+    Uint128(#[serde(with = "serde_u128_le")] u128),
     /// Default floating-point value.
     Float(f64),
     /// Distinct 32-bit floating-point value.
     Float32(f32),
     /// Fixed-precision decimal value.
-    Decimal(rust_decimal::Decimal),
+    Decimal(#[serde(with = "serde_decimal_str")] rust_decimal::Decimal),
     /// Interned string value.
     String(IStr),
     /// Byte-string value.
@@ -131,7 +132,7 @@ impl PartialEq for Value {
 }
 
 /// Open record value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[non_exhaustive]
 pub enum Record {
     /// Open `RECORD` literal in expressions.
@@ -139,7 +140,7 @@ pub enum Record {
 }
 
 /// Closed record value tied to a graph-type-defined record type.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RecordTyped {
     /// Identifier pointing to a `RecordTypeDef` in the graph type catalog.
     pub type_id: RecordTypeId,
@@ -148,7 +149,7 @@ pub struct RecordTyped {
 }
 
 /// Path value.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct Path {
     /// Graph the path lives within.
     pub graph: GraphId,
@@ -159,7 +160,7 @@ pub struct Path {
 }
 
 /// One traversal step in a [`Path`].
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct PathSegment {
     /// Edge traversed in this step.
     pub edge: EdgeId,
@@ -170,7 +171,7 @@ pub struct PathSegment {
 }
 
 /// Direction of edge traversal.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum EdgeDirection {
     /// Source-to-target traversal of a directed edge.
     Outgoing,
@@ -178,6 +179,66 @@ pub enum EdgeDirection {
     Incoming,
     /// Undirected edge.
     Undirected,
+}
+
+mod serde_i128_le {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S>(value: &i128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.to_le_bytes().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<i128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        <[u8; 16]>::deserialize(deserializer).map(i128::from_le_bytes)
+    }
+}
+
+mod serde_u128_le {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S>(value: &u128, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.to_le_bytes().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<u128, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        <[u8; 16]>::deserialize(deserializer).map(u128::from_le_bytes)
+    }
+}
+
+mod serde_decimal_str {
+    use std::str::FromStr;
+
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(super) fn serialize<S>(
+        value: &rust_decimal::Decimal,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<rust_decimal::Decimal, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        rust_decimal::Decimal::from_str(&value).map_err(serde::de::Error::custom)
+    }
 }
 
 #[cfg(test)]
