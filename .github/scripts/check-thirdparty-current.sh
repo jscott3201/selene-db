@@ -7,7 +7,7 @@
 set -euo pipefail
 
 if ! command -v cargo-about >/dev/null 2>&1; then
-  echo "cargo-about not found. Install with: cargo install cargo-about" >&2
+  echo "cargo-about not found. Install with: cargo install cargo-about --features cli" >&2
   exit 2
 fi
 

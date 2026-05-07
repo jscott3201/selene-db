@@ -1,0 +1,26 @@
+[package]
+name = "selene-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+description = "Foundation types for the selene-db ISO/IEC 39075:2024 GQL property graph engine."
+
+[dependencies]
+thiserror.workspace = true
+miette.workspace = true
+lasso.workspace = true
+jiff.workspace = true
+rust_decimal.workspace = true
+uuid.workspace = true
+smallvec.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rstest.workspace = true
+insta.workspace = true
+
+[lints]
+workspace = true
