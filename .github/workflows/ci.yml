@@ -25,8 +25,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -124,10 +124,18 @@ jobs:
           fi
       - if: steps.cargo-lock.outputs.exists == 'false'
         run: echo "No Cargo.lock yet; cargo-audit starts once dependencies land."
-      - uses: rustsec/audit-check@v2
+      - uses: taiki-e/install-action@v2
         if: steps.cargo-lock.outputs.exists == 'true'
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          tool: cargo-audit
+      - uses: actions/cache@v4
+        if: steps.cargo-lock.outputs.exists == 'true'
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: advisory-db-${{ runner.os }}-
+      - if: steps.cargo-lock.outputs.exists == 'true'
+        run: cargo audit --color always
 
   file-size-cap:
     name: file-size cap (700 LOC)
@@ -164,7 +172,9 @@ jobs:
         if: steps.cargo-lock.outputs.exists == 'true'
       - uses: Swatinem/rust-cache@v2
         if: steps.cargo-lock.outputs.exists == 'true'
-      - if: steps.cargo-lock.outputs.exists == 'true'
-        run: cargo install cargo-about --locked --features cli
+      - uses: taiki-e/install-action@v2
+        if: steps.cargo-lock.outputs.exists == 'true'
+        with:
+          tool: cargo-about
       - if: steps.cargo-lock.outputs.exists == 'true'
         run: bash .github/scripts/check-thirdparty-current.sh
