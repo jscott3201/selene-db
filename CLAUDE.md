@@ -259,6 +259,24 @@ The second-pass library survey (4 deep-research agents) verified license, mainte
 - **KuzuDB acquired by Apple Oct 2025; archived publicly** — reference design preserved, no longer evolving in public.
 - **GraphLite (Rust, Sled, Nov 2025)** — selene-db's closest direct comparable; worth studying their grammar mapping and conformance approach.
 
+### D10 — Transaction isolation: single graph write-lock + MVCC reads (2026-05-07)
+
+Writers acquire the per-graph write-lock (`parking_lot::RwLock` write guard) at `START TRANSACTION` and hold it across the entire read+write phase until `COMMIT` or `ROLLBACK`. Readers run lock-free against the `ArcSwap`-published immutable snapshot at any time, including while a writer holds the lock. The published snapshot only updates at successful `COMMIT`. This is the strict-serializable contract per ISO clause 4.6 and `IE002`/`IE004`: only one transaction is effectively active for write purposes at a time.
+
+Rationale: simplest correct implementation of declared serializable; no read-set tracking, no validation, no retry loop. Concurrency is the caller's responsibility and the caller is expected to serialize its own writes anyway because v1.0 is library-only (D1). Runtime details live in `_spec/03-property-graph-and-concurrency.md` §6.
+
+### D11 — ID allocation: real `NodeId` / `EdgeId` allocated under the write-lock; aborted-tx IDs become permanent holes (2026-05-07)
+
+A per-graph `IdAllocator` holds the next-`NodeId` and next-`EdgeId` counters. While a transaction holds the write-lock (per D10), it freely increments the counters; the increments are visible only to that transaction's `Mutator` until commit. On commit, the counters' new values are published as part of the `ArcSwap` swap. On abort, the counters are NOT rolled back: the IDs that were allocated become permanent holes in the dense monotonic sequence, identical in effect to a node that was created and then dropped.
+
+Spec 02 §4's "holes from `DROP NODE` are not reused" rule generalizes naturally: aborted-transaction holes obey the same invariant. No free-list, no temp-ID rewrite, no commit-time renumbering. Read-your-writes within an aborting transaction is preserved because IDs are already real-shaped. The identity rule lives in `_spec/02-data-model.md` §4; lifecycle details live in `_spec/03-property-graph-and-concurrency.md` §6.
+
+### D12 — Audit: opaque caller-supplied principal byte-slot in the WAL header (2026-05-07)
+
+Every WAL entry header carries `principal: Option<Arc<[u8]>>`. The bytes are caller-defined and never parsed, validated, or interpreted by selene-db. The caller (for example, an `aether-*` server) supplies them at commit time via `Mutator::commit_with_principal(bytes)`; the convenience `commit()` is equivalent to `commit_with_principal(None)`. `selene-persist` round-trips the slot through WAL serialization, snapshot capture, and recovery replay. Audit replay is `selene_persist::wal_iterate(filter)`.
+
+Audit-outlives-subjects is satisfied because the WAL is append-only: a deleted node's mutation history remains queryable from prior WAL entries indefinitely. This honors D1 (selene-db never owns auth/principal modeling) and the Poseidon discipline-stack (audit records do not couple to subject lifecycle). Cap on principal slot: 4096 bytes per entry, rejected with `GQLSTATUS 22023`. Rationale for 4 KiB: comfortably exceeds Cedar entity-uid + signature payloads observed in Aether; small enough to keep WAL entry sizes predictable. The durability format lives in `_spec/04-persistence-format.md` §3.
+
 ### D4 — Extension architecture: procedure-pack + feature-gated workspace modules (2026-05-07)
 
 The extension system is the procedure-pack model from `aether-db`, ported with the per-tier-Context fix. Concretely:

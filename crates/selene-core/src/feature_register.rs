@@ -271,8 +271,8 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("ID001"),
         ImplDefinedChoice {
-            choice: "caller-supplied Principal; opaque to selene-db",
-            settled_in: "spec 05 section 3.1",
+            choice: "caller-supplied principal bytes; opaque to selene-db",
+            settled_in: "spec 04 section 3.2",
         },
     ),
     (
@@ -328,35 +328,35 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
         AnnexBId("IE001"),
         ImplDefinedChoice {
             choice: "auto-commit per statement; explicit START TRANSACTION for multi-statement",
-            settled_in: "spec 03 section 6.3",
+            settled_in: "spec 03 section 6.4",
         },
     ),
     (
         AnnexBId("IE002"),
         ImplDefinedChoice {
             choice: "serializable only in v1.0",
-            settled_in: "spec 03 section 6.3",
+            settled_in: "spec 03 section 6.4",
         },
     ),
     (
         AnnexBId("IE004"),
         ImplDefinedChoice {
             choice: "no relaxation from serializable in v1.0",
-            settled_in: "spec 03 section 6.3",
+            settled_in: "spec 03 section 6.4",
         },
     ),
     (
         AnnexBId("IE006"),
         ImplDefinedChoice {
-            choice: "catalog inside data transaction rejected",
-            settled_in: "spec 03 section 6.3",
+            choice: "catalog statements inside data transactions are rejected",
+            settled_in: "spec 03 section 6.4",
         },
     ),
     (
         AnnexBId("IE007"),
         ImplDefinedChoice {
-            choice: "data mutation inside catalog transaction rejected",
-            settled_in: "spec 03 section 6.3",
+            choice: "data mutations inside catalog transactions are rejected",
+            settled_in: "spec 03 section 6.4",
         },
     ),
     (
