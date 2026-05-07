@@ -72,6 +72,13 @@ skip = [
   # BRIEF-05: getrandom 0.3 (proptest/rand) and 0.4 (uuid/insta) carry
   # target-specific WASI helpers that currently resolve to two wit-bindgen lines.
   { name = "wit-bindgen", version = "0.51.0" },
+  # BRIEF-07: imbl 7.0's persistent HashMap pulls rand_core/getrandom 0.3
+  # for its internal randomized state, while uuid/tempfile currently pull
+  # getrandom 0.4. Both are live maintained lines; allow the older line until
+  # the upstream ecosystem converges.
+  { name = "getrandom", version = "0.3.4" },
+  # Same getrandom 0.3/0.4 split through WASI support crates.
+  { name = "r-efi", version = "5.3.0" },
 ]
 skip-tree = []
 
