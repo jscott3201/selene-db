@@ -47,7 +47,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - run: cargo fmt --all --check
+      - name: cargo fmt or tracked-source rustfmt
+        run: |
+          if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
+            rustfmt --check $(git ls-files '*.rs')
+          else
+            cargo fmt --all --check
+          fi
 
   clippy:
     name: clippy
@@ -59,7 +65,13 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo clippy
+        run: |
+          if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
+            echo "No workspace packages yet; clippy starts once crate manifests land."
+          else
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+          fi
 
   test:
     name: test
@@ -69,7 +81,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --workspace --locked --all-features
+      - name: cargo test
+        run: |
+          if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
+            echo "No workspace packages yet; tests start once crate manifests land."
+          else
+            cargo test --workspace --locked --all-features
+          fi
 
   deny:
     name: cargo-deny
@@ -77,7 +95,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: cargo-lock
+        run: |
+          if [ -f Cargo.lock ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.cargo-lock.outputs.exists == 'false'
+        run: echo "No Cargo.lock yet; cargo-deny starts once dependencies land."
       - uses: EmbarkStudios/cargo-deny-action@v2
+        if: steps.cargo-lock.outputs.exists == 'true'
         with:
           command: check bans licenses sources
 
@@ -87,7 +115,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: cargo-lock
+        run: |
+          if [ -f Cargo.lock ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.cargo-lock.outputs.exists == 'false'
+        run: echo "No Cargo.lock yet; cargo-audit starts once dependencies land."
       - uses: rustsec/audit-check@v2
+        if: steps.cargo-lock.outputs.exists == 'true'
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -113,7 +151,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: cargo-lock
+        run: |
+          if [ -f Cargo.lock ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.cargo-lock.outputs.exists == 'false'
+        run: echo "No Cargo.lock yet; third-party attribution check starts once dependencies land."
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.cargo-lock.outputs.exists == 'true'
       - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-about --locked
-      - run: bash .github/scripts/check-thirdparty-current.sh
+        if: steps.cargo-lock.outputs.exists == 'true'
+      - if: steps.cargo-lock.outputs.exists == 'true'
+        run: cargo install cargo-about --locked
+      - if: steps.cargo-lock.outputs.exists == 'true'
+        run: bash .github/scripts/check-thirdparty-current.sh
