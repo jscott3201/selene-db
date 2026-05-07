@@ -115,7 +115,9 @@ mod tests {
         let mut txn = shared.begin_write();
         let node_id = {
             let mut mutator = txn.mutator();
-            mutator.create_node(LabelSet::new(), PropertyMap::new())
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok")
         };
         let outcome = txn.commit().unwrap();
         assert_eq!(outcome.generation, 1);
@@ -128,7 +130,9 @@ mod tests {
         {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
-            let _ = mutator.create_node(LabelSet::new(), PropertyMap::new());
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok");
             txn.rollback();
         }
         assert_eq!(shared.read().node_count(), 0);
@@ -141,7 +145,9 @@ mod tests {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
             assert_eq!(
-                mutator.create_node(LabelSet::new(), PropertyMap::new()),
+                mutator
+                    .create_node(LabelSet::new(), PropertyMap::new())
+                    .expect("create_node ok"),
                 NodeId::new(1)
             );
         }
@@ -149,7 +155,9 @@ mod tests {
             let mut txn = shared.begin_write();
             let mut mutator = txn.mutator();
             assert_eq!(
-                mutator.create_node(LabelSet::new(), PropertyMap::new()),
+                mutator
+                    .create_node(LabelSet::new(), PropertyMap::new())
+                    .expect("create_node ok"),
                 NodeId::new(2)
             );
             txn.commit().unwrap();
@@ -178,7 +186,9 @@ mod tests {
         let label = intern("txn.node").unwrap();
         {
             let mut mutator = txn.mutator();
-            let id = mutator.create_node(LabelSet::single(label), PropertyMap::new());
+            let id = mutator
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .expect("create_node ok");
             let prop = intern("txn.prop").unwrap();
             let diff = selene_core::PropertyDiff::new([(prop, Value::Int(1))], []).unwrap();
             mutator

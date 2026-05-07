@@ -41,6 +41,18 @@ pub enum GraphError {
         id: EdgeId,
     },
 
+    /// Allocator advanced past the v1 row-addressable range (max 2^32 rows).
+    #[error("{kind} id {raw} exceeds the v1 row-index range (max {max})")]
+    #[diagnostic(code(SLENE_G_005))]
+    IdOverflow {
+        /// `"node"` or `"edge"`.
+        kind: &'static str,
+        /// The raw u64 ID that overflowed.
+        raw: u64,
+        /// The maximum addressable raw ID.
+        max: u64,
+    },
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -56,6 +68,7 @@ impl GraphError {
             | Self::EdgeNotFound { .. }
             | Self::NodeNotAlive { .. }
             | Self::EdgeNotAlive { .. } => "22023",
+            Self::IdOverflow { .. } => "53000",
             Self::Core(_) => "22000",
         }
     }
@@ -72,6 +85,10 @@ mod tests {
     #[case(GraphError::EdgeNotFound { id: EdgeId::new(1) }, "22023")]
     #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22023")]
     #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22023")]
+    #[case(
+        GraphError::IdOverflow { kind: "node", raw: 5_000_000_000, max: 4_294_967_296 },
+        "53000"
+    )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);

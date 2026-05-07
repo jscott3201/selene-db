@@ -34,14 +34,32 @@ impl IdAllocator {
         }
     }
 
+    /// Restore allocator counters from graph metadata, never falling below the
+    /// supplied storage floors.
+    ///
+    /// Recovery uses `(node_store_len + 1, edge_store_len + 1)` as the floors so
+    /// that stale metadata cannot allow ID reuse over already-populated rows.
+    /// Identity invariants in spec 02 §4 require allocators to monotonically
+    /// advance past every row that ever existed.
+    #[must_use]
+    pub fn from_meta_with_floors(meta: &GraphMeta, node_floor: u64, edge_floor: u64) -> Self {
+        Self {
+            next_node_id: meta.next_node_id.max(node_floor),
+            next_edge_id: meta.next_edge_id.max(edge_floor),
+        }
+    }
+
     /// Allocate a node ID and advance the permanent high-water mark.
     #[must_use]
     pub fn allocate_node(&mut self) -> NodeId {
         let id = self.next_node_id;
+        // Why: 2^64 distinct allocations is unreachable in any deployment;
+        // practical overflow lands at the u32 row-index boundary in mutator.rs
+        // and is surfaced as `GraphError::IdOverflow` long before this expect.
         self.next_node_id = self
             .next_node_id
             .checked_add(1)
-            .expect("node id allocator exhausted");
+            .expect("node id allocator exhausted (u64 counter wrap)");
         NodeId::new(id)
     }
 
@@ -49,10 +67,11 @@ impl IdAllocator {
     #[must_use]
     pub fn allocate_edge(&mut self) -> EdgeId {
         let id = self.next_edge_id;
+        // Why: see allocate_node — same reasoning.
         self.next_edge_id = self
             .next_edge_id
             .checked_add(1)
-            .expect("edge id allocator exhausted");
+            .expect("edge id allocator exhausted (u64 counter wrap)");
         EdgeId::new(id)
     }
 
@@ -105,5 +124,35 @@ mod tests {
         let allocator = IdAllocator::from_meta(&meta);
         assert_eq!(allocator.peek_next_node(), 42);
         assert_eq!(allocator.peek_next_edge(), 99);
+    }
+
+    #[test]
+    fn from_meta_with_floors_takes_max_of_meta_and_storage() {
+        let meta = GraphMeta {
+            graph_id: GraphId::new(1),
+            generation: 0,
+            next_node_id: 5,
+            next_edge_id: 50,
+        };
+        let allocator = IdAllocator::from_meta_with_floors(&meta, 10, 30);
+        assert_eq!(
+            allocator.peek_next_node(),
+            10,
+            "storage floor wins for nodes"
+        );
+        assert_eq!(allocator.peek_next_edge(), 50, "meta wins for edges");
+    }
+
+    #[test]
+    fn from_meta_with_floors_uses_meta_when_higher() {
+        let meta = GraphMeta {
+            graph_id: GraphId::new(1),
+            generation: 0,
+            next_node_id: 100,
+            next_edge_id: 200,
+        };
+        let allocator = IdAllocator::from_meta_with_floors(&meta, 1, 1);
+        assert_eq!(allocator.peek_next_node(), 100);
+        assert_eq!(allocator.peek_next_edge(), 200);
     }
 }

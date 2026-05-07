@@ -28,10 +28,18 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 
     /// Create a node, emit `Change::NodeCreated`, and return its ID.
-    #[must_use]
-    pub fn create_node(&mut self, labels: LabelSet, props: PropertyMap) -> NodeId {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::IdOverflow`] when the allocator advances past the
+    /// v1 row-index range (max 2^32 rows).
+    pub fn create_node(&mut self, labels: LabelSet, props: PropertyMap) -> GraphResult<NodeId> {
         let id = self.txn.allocator.allocate_node();
-        let row = node_row_index(id).expect("node id exceeds v1 row index range") as usize;
+        let row = node_row_index(id).ok_or_else(|| GraphError::IdOverflow {
+            kind: "node",
+            raw: id.get(),
+            max: u32::MAX as u64 + 1,
+        })? as usize;
         ensure_node_rows(&mut self.txn.working, row);
         if row == self.txn.working.node_store.len() {
             self.txn.working.node_store.labels.push(labels.clone());
@@ -50,7 +58,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             labels,
             properties: props,
         });
-        id
+        Ok(id)
     }
 
     /// Create an edge between two alive nodes.
@@ -64,8 +72,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.require_live_node(source)?;
         self.require_live_node(target)?;
         let id = self.txn.allocator.allocate_edge();
-        let row = edge_row_index(id).expect("edge id exceeds v1 row index range") as usize;
-        ensure_edge_rows(&mut self.txn.working, row);
+        let row = edge_row_index(id).ok_or_else(|| GraphError::IdOverflow {
+            kind: "edge",
+            raw: id.get(),
+            max: u32::MAX as u64 + 1,
+        })? as usize;
+        ensure_edge_rows(&mut self.txn.working, row)?;
         if row == self.txn.working.edge_store.len() {
             self.txn.working.edge_store.label.push(label);
             self.txn.working.edge_store.source.push(source);
@@ -292,16 +304,34 @@ fn ensure_node_rows(graph: &mut crate::SeleneGraph, target_row: usize) {
     }
 }
 
-fn ensure_edge_rows(graph: &mut crate::SeleneGraph, target_row: usize) {
+fn ensure_edge_rows(graph: &mut crate::SeleneGraph, target_row: usize) -> GraphResult<()> {
+    if graph.edge_store.len() >= target_row {
+        return Ok(());
+    }
+    let hole_label = edge_hole_label()?;
     while graph.edge_store.len() < target_row {
-        graph
-            .edge_store
-            .label
-            .push(selene_core::intern("__selene_hole").unwrap());
+        graph.edge_store.label.push(hole_label);
         graph.edge_store.source.push(NodeId::TOMBSTONE);
         graph.edge_store.target.push(NodeId::TOMBSTONE);
         graph.edge_store.properties.push(PropertyMap::new());
     }
+    Ok(())
+}
+
+/// Cache the sentinel label used to pad over aborted-tx EdgeId holes.
+///
+/// First call interns `"__selene_hole"`; subsequent calls return the cached
+/// `IStr` so transaction-time hole materialization never re-hits the interner.
+/// If interner capacity is exhausted on the first call, the error propagates
+/// to the caller as a typed `CoreError::IStrCapExceeded`.
+fn edge_hole_label() -> selene_core::CoreResult<IStr> {
+    static CELL: std::sync::OnceLock<IStr> = std::sync::OnceLock::new();
+    if let Some(value) = CELL.get() {
+        return Ok(*value);
+    }
+    let value = selene_core::intern("__selene_hole")?;
+    let _ = CELL.set(value);
+    Ok(value)
 }
 
 fn apply_property_diff(map: &mut PropertyMap, diff: &PropertyDiff) -> GraphResult<()> {
@@ -335,7 +365,9 @@ mod tests {
     use crate::SharedGraph;
 
     fn empty_node(mutator: &mut Mutator<'_, '_>) -> NodeId {
-        mutator.create_node(LabelSet::new(), PropertyMap::new())
+        mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .expect("create_node ok")
     }
 
     #[test]
@@ -344,7 +376,9 @@ mod tests {
         let mut txn = shared.begin_write();
         let id = {
             let mut mutator = txn.mutator();
-            mutator.create_node(LabelSet::new(), PropertyMap::new())
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok")
         };
         let outcome = txn.commit().unwrap();
         assert_eq!(id, NodeId::new(1));
@@ -546,7 +580,9 @@ mod tests {
             {
                 let mut mutator = txn.mutator();
                 for delete_previous in ops {
-                    let id = mutator.create_node(LabelSet::new(), PropertyMap::new());
+                    let id = mutator
+                        .create_node(LabelSet::new(), PropertyMap::new())
+                        .expect("create_node ok");
                     expected_alive.insert(id);
                     created.push(id);
                     if delete_previous
@@ -582,7 +618,9 @@ mod tests {
                     {
                         let mut mutator = txn.mutator();
                         for _ in 0..nodes_per_thread {
-                            let _ = mutator.create_node(LabelSet::new(), PropertyMap::new());
+                            mutator
+                                .create_node(LabelSet::new(), PropertyMap::new())
+                                .expect("create_node ok");
                         }
                     }
                     txn.commit().unwrap();
@@ -595,6 +633,47 @@ mod tests {
             snapshot.meta.next_node_id,
             (4 * nodes_per_thread + 1) as u64
         );
+    }
+
+    #[test]
+    fn create_node_returns_id_overflow_when_allocator_past_u32() {
+        // Force the allocator past the v1 row-index limit by constructing a
+        // SharedGraph with a meta whose next_node_id is u32::MAX as u64 + 2,
+        // which is past the addressable boundary.
+        let mut graph = crate::SeleneGraph::new(GraphId::new(1));
+        graph.meta.next_node_id = u32::MAX as u64 + 2;
+        let shared = SharedGraph::from_graph(graph);
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let err = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap_err();
+        assert!(matches!(err, GraphError::IdOverflow { kind: "node", .. }));
+    }
+
+    #[test]
+    fn create_edge_returns_id_overflow_when_allocator_past_u32() {
+        let mut graph = crate::SeleneGraph::new(GraphId::new(1));
+        graph.meta.next_edge_id = u32::MAX as u64 + 2;
+        let shared = SharedGraph::from_graph(graph);
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        // Create source and target nodes first.
+        let source = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .expect("create_node ok");
+        let target = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .expect("create_node ok");
+        let err = mutator
+            .create_edge(
+                intern("edge.overflow").unwrap(),
+                source,
+                target,
+                PropertyMap::new(),
+            )
+            .unwrap_err();
+        assert!(matches!(err, GraphError::IdOverflow { kind: "edge", .. }));
     }
 
     #[test]
