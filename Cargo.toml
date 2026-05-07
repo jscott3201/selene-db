@@ -1,0 +1,58 @@
+# selene-db workspace root.
+#
+# Multi-crate, no umbrella facade (decision D8 in CLAUDE.md). Members are
+# added as they're built; an empty members list is intentional at this
+# point in the lifecycle.
+#
+# Workspace-level configuration (lints, profile, deps version pins) lives
+# here so each member crate inherits the floor without re-declaring.
+
+[workspace]
+resolver = "3"
+members = []
+exclude = ["_spec"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+authors = ["Justin Scott"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jscott3201/selene-db"
+homepage = "https://github.com/jscott3201/selene-db"
+
+# Pedantic + nursery clippy via workspace lints, so individual files can
+# `#![allow(...)]` for known false positives instead of fighting the
+# command line.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Lints intentionally relaxed for selene-db's domain:
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "deny"
+unused_imports = "deny"
+unused_must_use = "deny"
+nonstandard_style = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+
+# Workspace-level dependency versions go here as crates are added. Keeping
+# them centralized means a single line bumps the version everywhere.
+[workspace.dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = true

@@ -1,0 +1,25 @@
+# cargo-about configuration. Drives the generation of THIRDPARTY.md from
+# Cargo.lock. Verified in CI by .github/scripts/check-thirdparty-current.sh.
+#
+# Permissive licenses we accept for transitive deps; mirrors deny.toml's
+# [licenses].allow list (decision D7 added MPL-2.0 for imbl).
+
+accepted = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "Zlib",
+  "MPL-2.0",
+]
+
+# Crates that have unclear license metadata or require manual override
+# go here with a justification. Empty by design — adding an entry should
+# carry a comment explaining why.
+[[crates]]
+name = ""

@@ -1,0 +1,14 @@
+/target
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.direnv/
+node_modules/
+.env
+.env.*
+
+# Local working directories — design artifacts, briefs, reviews, plans.
+# Canonical state lives in the MCP graph (selenedb instance); these folders
+# are working documents that don't get committed to git.
+_*/
