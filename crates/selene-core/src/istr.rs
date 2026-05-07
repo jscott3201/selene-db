@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
 use lasso::{Spur, ThreadedRodeo};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{CoreError, CoreResult};
 
@@ -100,6 +101,25 @@ impl IStr {
 impl fmt::Display for IStr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for IStr {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for IStr {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        intern(&value).map_err(serde::de::Error::custom)
     }
 }
 

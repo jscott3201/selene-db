@@ -38,16 +38,18 @@ print_stdout = "warn"
 thiserror = "2.0"
 miette = { version = "7.6", features = ["derive"] }
 lasso = { version = "0.7", features = ["multi-threaded"] }
-jiff = "0.2"
-# default-features = false drops the default serde feature; serde is added in BRIEF-06.
-rust_decimal = { version = "1.42", default-features = false, features = ["std"] }
-uuid = { version = "1.23", features = ["v4", "v7"] }
-smallvec = { version = "1", features = ["const_generics", "union"] }
+jiff = { version = "0.2", features = ["serde"] }
+rust_decimal = { version = "1.42", default-features = false, features = ["std", "serde"] }
+uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
+smallvec = { version = "1", features = ["const_generics", "serde", "union"] }
+bytes = "1.10"
+serde = { version = "1.0", features = ["derive", "rc"] }
 
 # Dev dependencies.
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 rstest = "0.26"
 insta = "1.47"
+postcard = { version = "1.1", features = ["alloc"] }
 
 [profile.release]
 opt-level = 3

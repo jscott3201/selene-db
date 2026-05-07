@@ -16,11 +16,14 @@ jiff.workspace = true
 rust_decimal.workspace = true
 uuid.workspace = true
 smallvec.workspace = true
+bytes.workspace = true
+serde.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
 rstest.workspace = true
 insta.workspace = true
+postcard.workspace = true
 
 [lints]
 workspace = true

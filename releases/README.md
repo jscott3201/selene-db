@@ -13,3 +13,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-05: selene-core foundation bootstrapped with primitive IDs, IStr interning, Value variants, extension type IDs, and ValueTypeAdapter registry.
 - BRIEF-05.1: IStr cap admission is now atomic under concurrency (double-checked locking with a static admission Mutex); fixes PR #3 Copilot P1 finding.
 - BRIEF-INFRA-01: CI speedup — cargo-audit and cargo-about install via prebuilt binaries (taiki-e/install-action); advisory DB cached; concurrency block cancels obsolete runs.
+- BRIEF-06: selene-core composites completed with PropertyMap, LabelSet, schema model, transient Codec, Origin, Change/SchemaChange payloads, serde/postcard transit derives, and spec 02 amendments for adapter validation + Codec framing.
