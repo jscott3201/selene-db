@@ -52,7 +52,8 @@ allow = [
 exceptions = []
 
 [bans]
-multiple-versions = "warn"
+# Keep a single coherent semver line for each selene crate in dependency trees.
+multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
 deny = [

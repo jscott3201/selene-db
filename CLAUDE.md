@@ -36,7 +36,7 @@ Key facts (derived 2026-05-07; full notes in repo memory):
 3. **`#![forbid(unsafe_code)]` workspace-wide.** Bounded RFC-specified surfaces may be exceptions, with justification in `// Why:` comments.
 4. **`missing_docs = "deny"` workspace-wide.** Every `pub` item carries a rustdoc with intent, invariants, or non-obvious behavior. Dead surfaces get demoted to `pub(crate)`, not stubbed.
 5. **File-size cap: 700 LOC.** Refactor or split before approaching the cap. Enforced in CI by `.github/scripts/check-file-size.sh`.
-6. **Per-crate LOC budgets:** `selene-core` ≤ 3K; the property-graph crate ≤ 8K; the GQL crate ≤ 25K. Anything beyond a budget moves to a module/extension crate.
+6. **Per-crate LOC budgets:** `selene-core` ≤ 3K; the property-graph crate ≤ 8K; the GQL crate ≤ 35–45K. Anything beyond a budget moves to a module/extension crate.
 7. **rustls-only TLS posture.** No native-tls, no openssl-sys. Enforced in `deny.toml`.
 8. **Dual MIT OR Apache-2.0 license.** Permissive transitive license allow-list per template `deny.toml`.
 9. **Latest stable Rust.** Pinned in `rust-toolchain.toml`. Latest published deps with strong adoption signals.
@@ -142,19 +142,19 @@ Implications:
 v1.0 claims conformance with **minimum conformance + ~30–40 commonly-expected optional features**. Concretely the v1.0 claim list includes (subject to refinement during planner/executor work):
 
 - **Updatable graphs**: GD01 (implies GT01 explicit transactions); INSERT/SET/REMOVE/DELETE statements (clause 13).
-- **Catalog**: GC03/GC04 (CREATE/DROP GRAPH, CREATE/DROP GRAPH TYPE).
+- **Catalog**: GC04 graph management (`CREATE/DROP GRAPH`); GG02 closed graph types (`CREATE/DROP GRAPH TYPE`); GC03 only for graph-type `IF [NOT] EXISTS` syntax.
 - **Procedures**: GP04 (named procedure calls — the extension hook), GP05–GP13 (procedure-local value/binding-table/graph variable definitions), GP14/GP15 (binding-table/graph procedure args).
-- **Numeric types**: all sized integer variants (GV01–GV26), DECIMAL (GV17), float variants relevant to IEEE 754 default behavior.
+- **Numeric types**: sized integer variants through 128-bit (GV01–GV14 plus SMALL/BIG synonyms GV05/GV10/GV18/GV19), DECIMAL (GV17), FLOAT32/FLOAT64 (GV21/GV24), and IEEE 754 operation behavior (GA01). GV15/GV16 256-bit integers and GV20/GV25/GV26 non-v1.0 float widths are not claimed.
 - **Strings/bytes**: BYTES/BINARY/VARBINARY (GV35), nullability syntax NOT NULL (GV90).
 - **Composite types**: LIST (GV50), PATH (GV55), RECORD open + closed (GV45–GV48), reference types GRAPH/NODE/EDGE/TABLE (GV60, GV61).
 - **Temporal types**: ZONED DATETIME, LOCAL DATETIME, DATE, ZONED TIME, LOCAL TIME, DURATION (GV39–GV41).
-- **Query surface**: composite queries / UNION (GQ03), GROUP BY (GQ15), CASE expressions, advanced path modes — SHORTEST/ALL SHORTEST/ANY (G015–G020), advanced predicates (IS LABELED, IS DIRECTED, IS SOURCE/DESTINATION, ALL_DIFFERENT, SAME, PROPERTY_EXISTS, NORMALIZED).
-- **Schema**: GG01 + GG02 (deferred to D3 below for the open-vs-closed-vs-both call), with whichever GG20–GG23 key-label-set policy aligns.
+- **Query surface**: composite queries / UNION (GQ03), GROUP BY (GQ15), CASE expressions, advanced path modes — SHORTEST/ALL SHORTEST/ANY (G015–G020), advanced predicates (G110–G115: IS DIRECTED, IS LABELED, IS SOURCE/DESTINATION, ALL_DIFFERENT, SAME, PROPERTY_EXISTS), plus NORMALIZED under the character-string predicate surface.
+- **Schema**: GG01 + GG02 (deferred to D3 below for the open-vs-closed-vs-both call), with GG20/GG21 explicit element type names and key label sets.
 
 Rationale: the user chose this over the recommended embedded-ready (~15-feature) target after weighing the trade-off. Marathon mindset accepts the larger scope; aether-db has already brought ~18 KLOC of donor parser/planner/AST forward, which de-risks the language-surface portion of this scope. The runtime/execute layer is the long pole.
 
 Architectural implications:
-- The parser implements the supported feature surface; constructs outside that surface raise structured diagnostics with feature IDs at parse time. This **is** the GQL Flagger (clause 24.6) — no separate machine-readable manifest, no `claimed-features.xml`, no hash-anchored artifact in v1.0. The prose feature list in `_spec/01-mission-and-conformance-target.md` §5.1 is the canonical surface; the parser's runtime behavior is authoritative.
+- The parser implements the supported feature surface; constructs outside that surface raise structured diagnostics with feature IDs at parse time. This **is** the GQL Flagger (clause 24.6). The canonical feature surface is `crates/selene-core/src/feature_register.rs::SUPPORTED_FEATURES`; spec prose and parser checks are generated or verified against it.
 - Per-crate LOC budgets revised: GQL crate budget moves from ~25K to ~35–45K to accommodate market-parity scope. Hard cap stays soft above 50K.
 - Decision D2 sets the *language* scope. The *runtime / executor* scope is a separate sizing question (factorized vs row-at-a-time; WCO vs hash-join) — captured in a future decision after extension API and persistence are settled.
 
@@ -278,9 +278,9 @@ The procedure-pack registry is itself stored as platform-owned graph nodes insid
 
 Implementation order: trait + Context, then registry, then activation state machine, then JSON manifest validator, then the normative `CALL` planner integration. JSON Schema validation crate to be picked from a small short-list (`jsonschema`-rs is the donor's choice; pick a dep with a strong adoption signal).
 
-### D5 — `Value::Vector` and HNSW packaging (2026-05-07)
+### D5 — Extension-owned vector values and HNSW packaging (2026-05-07)
 
-- **`Value::Vector(Arc<[f32]>)` lives in `selene-core` as a permanent enum variant.** Postcard discriminator layout stable. Schema-validation, equality, and serialization for the variant ship in core.
+- **Superseded by the amendment below:** the early compromise put a typed vector primitive in `selene-core` for postcard layout stability. BRIEF-02 replaces that with the permanent opaque `Value::Extended` variant so extension-owned value types never become core enum members.
 - **HNSW index implementation lives in an extension crate `selene-vector`.** `selene-graph` does NOT contain HNSW code at all. HNSW is physically excluded from the binary when `vector` feature is off.
 - **`selene-graph` exposes one `IndexProvider` trait** — a carefully-scoped addition to D4's procedure-pack model — letting extension crates register custom indexes. The trait surface includes:
   - Mutation event hook: `on_node_change(NodeId, ChangeKind, &PropertyMap)` etc.
@@ -290,7 +290,13 @@ Implementation order: trait + Context, then registry, then activation state mach
 - **`selene-vector` ships procedures**: `vector.search`, `vector.cosine`, `vector.quantize`, etc. via the procedure-pack model. The procedures consume the registered HNSW index through their per-tier `Context`.
 - **Implication for `selene-graph` budget:** the index hook keeps selene-graph graph-focused. Graph crate stays in its ~8K LOC budget; vector code is wholly external.
 
-This is the model that operationalizes the user's stated vision ("move vectors to extensions") concretely: the value primitive stays in core for ABI/serialization stability, but the *operational* code (HNSW build/search/persist) is extension-owned.
+This is the model that operationalizes the user's stated vision ("move vectors to extensions") concretely: vector *typing and operations* stay extension-owned, while core carries only the stable opaque extension payload variant.
+
+#### D5 amendment — 2026-05-07 — Vector pushed fully to extension (BRIEF-02 / F-007 / marathon-directive)
+
+The former typed vector enum variant is removed from core. `Value::Extended { type_id, payload }` is the canonical mechanism for any non-mandatory-spec value type. `selene-vector` reserves `ExtensionTypeId(0x00000100)`, registers a `ValueTypeAdapter`, and is the only place vectors exist as a typed concept. Postcard layout stability is preserved by `Extended` being the permanent enum variant.
+
+Rationale: this is the marathon path. It eliminates the extension-leak risk from REVIEW-01 F-007, aligns with the project's "move vectors to extensions" vision, and leaves no future enum churn for other extension-owned value types such as geometry or specialized decimal forms.
 
 ### D6 — Persistence: WAL+snapshot from day one in `selene-persist` (2026-05-07)
 
@@ -335,7 +341,7 @@ The graph uses a three-layer concurrency model:
 selene-db is a Cargo workspace with multiple focused crates and **no `selene` umbrella facade crate**. Consumers depend on the sub-crates they need by path or version dep.
 
 **v1.0 mandatory crates** (at process start, every consumer pulls these):
-- `selene-core` — foundation types (Node, Edge, Value with all 4 mandatory spec types + Vector, IStr, PropertyMap, LabelSet, schema types, Codec trait, Origin enum, Changeset). Zero deps on other selene crates. LOC budget ~3K.
+- `selene-core` — foundation types (Node, Edge, Value with all 4 mandatory spec types + `Value::Extended`, IStr, PropertyMap, LabelSet, schema types, Codec trait, Origin enum, Changeset). Zero deps on other selene crates. LOC budget ~3K.
 - `selene-graph` — in-memory property graph. ArcSwap+RwLock+imbl model. RoaringBitmap label indexes, TypedIndex, IndexProvider trait (the extension hook for HNSW etc.). LOC budget ~8K.
 - `selene-gql` — ISO GQL parser (pest), AST, planner with rule-based optimizer + WCO joins, pattern executor, columnar runtime, mutation builder. LOC budget ~35–45K (D2 market-parity scope).
 - `selene-persist` — WAL (`SLDB` magic) + snapshot (`SLSN` with TLV-tagged sections) + recovery. Does not own the graph. LOC budget ~5K.
@@ -344,7 +350,7 @@ selene-db is a Cargo workspace with multiple focused crates and **no `selene` um
 - `selene-testing` — test fixtures (synthetic graph generators, assertion helpers). Internal use only. LOC budget ~2K.
 
 **v1.0 opt-in extension crates** (depend on the mandatory crates, register procedures + indexes):
-- `selene-vector` — HNSW index (registered via D5's IndexProvider hook) + vector procedures (search, cosine, quantize). PolarQuant ported as a procedure. LOC budget ~6K.
+- `selene-vector` — HNSW index (registered via D5's IndexProvider hook) + vector procedures (search, cosine, quantize). `selene-polar-quant` is an internal placeholder for the donor polar-coordinate quantization experiment; final public name resolved during selene-vector M8 implementation. LOC budget ~6K.
 - (Future, post-v1.0:) `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-fulltext`. Each ships as a separate workspace crate gated by Cargo features at the consumer level.
 
 **No umbrella** means: refactoring crate boundaries doesn't break the public surface; each crate has its own `Cargo.toml` version and changelog entry; per-crate dependency rules are visible (selene-graph cannot accidentally pull a vector dep). Mirrors aether-db's library-only shape.
