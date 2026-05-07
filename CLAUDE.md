@@ -289,6 +289,32 @@ imbl 7.0's HAMT and RRB-Tree types are not archivable by rkyv directly. selene-d
 
 The recovery algorithm is two distinct steps. Step 1: load the latest snapshot's envelope, iterate the section table, and call `IndexProvider::read_section(sub_tag, bytes)` on each section's registered provider. Step 2: iterate WAL entries with sequence after the snapshot's sequence, decode each entry's body, and call `IndexProvider::on_change(&Change)` on every registered provider for every change. The `IndexExtensionEvent { provider, payload }` variant in spec 02 §9 is the path for provider-private state updates that need to ride the unified Change stream (the engine routes the event to the named provider; other providers ignore it via match). Spec 06 owns the trait signatures and the recovery prose; spec 04 cross-references and removes its duplicate `restore_from`/`replay` definitions. The `&mut self` shape from spec 06 wins over spec 04's `&self -> Self` shape because the snapshot section bytes belong to the provider's own format and decoding into the provider's owned state is the natural operation.
 
+### D16 — Procedure lookup boundary: single `ProcedureRegistry` trait in `selene-gql`; embedder injects (2026-05-07)
+
+`selene-gql` defines `pub trait ProcedureRegistry: Send + Sync` with two methods: `lookup(name: &str) -> Option<ProcedureMetadata>` for plan-time signature resolution, and `execute(handle: ProcedureHandle, args: &[Value]) -> Result<ProcedureResult, ProcedureError>` for runtime dispatch. `selene-pack` implements `ProcedureRegistry` for `ProcedurePackRegistry`. The planner and executor accept `&dyn ProcedureRegistry` (or `R: ProcedureRegistry` generic) parameters; the embedder constructs the concrete registry at startup and threads the reference through every `plan` and `execute` call. No `selene_pack::` references appear in `selene-gql` source. Linear dep chain (D8) preserved. The trait lives in selene-gql because the planner is the upstream consumer; selene-pack is downstream and implements it. Removes the F-013 contradiction where spec 08 pseudocode reached into selene-pack from above. Runtime details live in `_spec/08-iso-gql-planner-and-executor.md` §7.
+
+### D17 — Procedure tiers: per-tier concrete Context structs + per-tier dyn-compatible Procedure traits (2026-05-07)
+
+Three tiers (graph / mutation / persist) each get their own concrete Context struct and dyn-compatible Procedure trait:
+
+```text
+pub struct GraphContext<'a>    { graph: &'a Graph }
+pub struct MutationContext<'a> { graph: &'a Graph, mutator: &'a mut Mutator<'a, 'a> }
+pub struct PersistContext<'a>  { graph: &'a Graph, persist: &'a dyn Persist }
+
+pub trait GraphProcedure: Send + Sync + 'static {
+    fn execute(&self, ctx: &GraphContext, args: &[Value])
+        -> Result<ProcedureResult, ProcedureError>;
+}
+// + MutationProcedure, PersistProcedure (same shape per tier)
+```
+
+The `ProcedurePackRegistry` stores three independent slices of `Arc<dyn GraphProcedure>` / `Arc<dyn MutationProcedure>` / `Arc<dyn PersistProcedure>`. The Procedure traits have NO generics, NO associated types, NO `dyn` Context types — each is fully object-safe. The type system enforces "graph-tier procedures cannot see Mutator" at compile time; tier-mismatch is impossible by construction. Resolves the F-014 dyn-compat failure cleanly and codifies D4's "per-tier Context types" promise as concrete structs rather than aspirational trait shapes. Runtime details live in `_spec/05-extension-architecture.md` §3.
+
+### D18 — Procedure-pack lifecycle audit: WAL-only; AuditEntry node and EMITTED_AUDIT edge removed (2026-05-07)
+
+Pack activation, deprecation, and disable transitions flow through the normal mutation funnel: `Mutator → SchemaChanged → WAL entry (with D12 principal slot) → snapshot`. There is no separate `AuditEntry` node, no `EMITTED_AUDIT` edge, and no parallel audit channel. Audit replay is via `selene_persist::wal_iterate(filter)` — the same path D12 established for mutation audit. A convenience procedure `selene.pack.history(pack_name)` wraps the filter and returns `(event_kind, principal, hlc, transition)` rows for callers that want a direct query API rather than the WAL iterator. Audit-outlives-subjects holds because the WAL is append-only: a deleted pack's lifecycle history remains queryable from prior WAL entries indefinitely. Symmetric with mutation audit (D12) — one audit channel for everything; no parallel ledger. Runtime details live in `_spec/05-extension-architecture.md` §5.
+
 ### D4 — Extension architecture: procedure-pack + feature-gated workspace modules (2026-05-07)
 
 The extension system is the procedure-pack model from `aether-db`, ported with the per-tier-Context fix. Concretely:
