@@ -11,8 +11,12 @@ use crate::{
 };
 
 use super::{Rule, expr, first_child, intern_pair, span, unexpected_pair};
+use crate::parser::budget::InternerBudget;
 
-pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, ParserError> {
+pub(super) fn build_match_clause(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<MatchClause, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::match_stmt);
     let source_span = span(&pair);
     let mut optional = false;
@@ -28,8 +32,8 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
             Rule::path_selector => selector = Some(build_path_selector(&child)?),
             Rule::match_mode => match_mode = Some(build_match_mode(&child)?),
             Rule::path_modifier => path_mode = build_path_mode(&child)?,
-            Rule::graph_pattern_list => patterns = build_graph_pattern_list(child)?,
-            Rule::where_clause => where_clause = Some(expr_from_child(child)?),
+            Rule::graph_pattern_list => patterns = build_graph_pattern_list(child, budget)?,
+            Rule::where_clause => where_clause = Some(expr_from_child(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected MATCH child")),
         }
     }
@@ -93,22 +97,30 @@ fn build_path_mode(pair: &Pair<'_, Rule>) -> Result<PathMode, ParserError> {
     }
 }
 
-fn build_graph_pattern_list(pair: Pair<'_, Rule>) -> Result<Vec<GraphPattern>, ParserError> {
+fn build_graph_pattern_list(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<GraphPattern>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::graph_pattern)
-        .map(build_graph_pattern)
+        .map(|child| build_graph_pattern(child, budget))
         .collect()
 }
 
-fn build_graph_pattern(pair: Pair<'_, Rule>) -> Result<GraphPattern, ParserError> {
+fn build_graph_pattern(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<GraphPattern, ParserError> {
     let source_span = span(&pair);
     let mut path_binding = None;
     let mut elements = Vec::new();
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::path_var_binding => path_binding = Some(intern_pair(first_child(child)?)?),
-            Rule::pattern_chain => elements = build_pattern_chain(child)?,
+            Rule::path_var_binding => {
+                path_binding = Some(intern_pair(first_child(child)?, budget)?);
+            }
+            Rule::pattern_chain => elements = build_pattern_chain(child, budget)?,
             _ => return Err(unexpected_pair(child, "unexpected graph-pattern child")),
         }
     }
@@ -128,19 +140,29 @@ fn build_graph_pattern(pair: Pair<'_, Rule>) -> Result<GraphPattern, ParserError
     })
 }
 
-fn build_pattern_chain(pair: Pair<'_, Rule>) -> Result<Vec<PatternElement>, ParserError> {
+fn build_pattern_chain(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<PatternElement>, ParserError> {
     let mut elements = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::node_pattern => elements.push(PatternElement::Node(build_node_pattern(child)?)),
-            Rule::edge_pattern => elements.push(PatternElement::Edge(build_edge_pattern(child)?)),
+            Rule::node_pattern => {
+                elements.push(PatternElement::Node(build_node_pattern(child, budget)?));
+            }
+            Rule::edge_pattern => {
+                elements.push(PatternElement::Edge(build_edge_pattern(child, budget)?));
+            }
             _ => return Err(unexpected_pair(child, "unexpected pattern-chain child")),
         }
     }
     Ok(elements)
 }
 
-fn build_node_pattern(pair: Pair<'_, Rule>) -> Result<NodePattern, ParserError> {
+fn build_node_pattern(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<NodePattern, ParserError> {
     let source_span = span(&pair);
     let mut binding = None;
     let mut label_expr = None;
@@ -149,10 +171,10 @@ fn build_node_pattern(pair: Pair<'_, Rule>) -> Result<NodePattern, ParserError> 
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::node_var => binding = Some(intern_pair(first_child(child)?)?),
-            Rule::label_expr => label_expr = Some(build_label_expr(child)?),
-            Rule::property_map => properties = build_property_map(child)?,
-            Rule::inline_where => inline_where = Some(expr_from_child(child)?),
+            Rule::node_var => binding = Some(intern_pair(first_child(child)?, budget)?),
+            Rule::label_expr => label_expr = Some(build_label_expr(child, budget)?),
+            Rule::property_map => properties = build_property_map(child, budget)?,
+            Rule::inline_where => inline_where = Some(expr_from_child(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected node-pattern child")),
         }
     }
@@ -166,7 +188,10 @@ fn build_node_pattern(pair: Pair<'_, Rule>) -> Result<NodePattern, ParserError> 
     })
 }
 
-fn build_edge_pattern(pair: Pair<'_, Rule>) -> Result<EdgePattern, ParserError> {
+fn build_edge_pattern(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<EdgePattern, ParserError> {
     let source_span = span(&pair);
     let child = first_child(pair)?;
     let direction = match child.as_rule() {
@@ -188,7 +213,7 @@ fn build_edge_pattern(pair: Pair<'_, Rule>) -> Result<EdgePattern, ParserError> 
 
     for child in child.into_inner() {
         match child.as_rule() {
-            Rule::edge_interior => apply_edge_interior(child, &mut pattern)?,
+            Rule::edge_interior => apply_edge_interior(child, &mut pattern, budget)?,
             Rule::quantifier => assign_quantifier(&mut pattern, child)?,
             _ => return Err(unexpected_pair(child, "unexpected edge-pattern child")),
         }
@@ -214,28 +239,35 @@ fn assign_quantifier(pattern: &mut EdgePattern, pair: Pair<'_, Rule>) -> Result<
     Ok(())
 }
 
-fn apply_edge_interior(pair: Pair<'_, Rule>, pattern: &mut EdgePattern) -> Result<(), ParserError> {
+fn apply_edge_interior(
+    pair: Pair<'_, Rule>,
+    pattern: &mut EdgePattern,
+    budget: &mut InternerBudget,
+) -> Result<(), ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::edge_var => pattern.binding = Some(intern_pair(first_child(child)?)?),
-            Rule::label_expr => pattern.label_expr = Some(build_label_expr(child)?),
-            Rule::property_map => pattern.properties = build_property_map(child)?,
+            Rule::edge_var => pattern.binding = Some(intern_pair(first_child(child)?, budget)?),
+            Rule::label_expr => pattern.label_expr = Some(build_label_expr(child, budget)?),
+            Rule::property_map => pattern.properties = build_property_map(child, budget)?,
             Rule::quantifier => assign_quantifier(pattern, child)?,
-            Rule::inline_where => pattern.inline_where = Some(expr_from_child(child)?),
+            Rule::inline_where => pattern.inline_where = Some(expr_from_child(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected edge-interior child")),
         }
     }
     Ok(())
 }
 
-pub(super) fn build_label_expr(pair: Pair<'_, Rule>) -> Result<LabelExpr, ParserError> {
+pub(super) fn build_label_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<LabelExpr, ParserError> {
     match pair.as_rule() {
-        Rule::label_expr => build_label_expr(first_child(pair)?),
+        Rule::label_expr => build_label_expr(first_child(pair)?, budget),
         Rule::label_or => {
             let parts = pair
                 .into_inner()
                 .filter(|child| child.as_rule() == Rule::label_and)
-                .map(build_label_expr)
+                .map(|child| build_label_expr(child, budget))
                 .collect::<Result<Vec<_>, _>>()?;
             collapse_label_parts(parts, LabelExpr::Disjunction)
         }
@@ -243,23 +275,23 @@ pub(super) fn build_label_expr(pair: Pair<'_, Rule>) -> Result<LabelExpr, Parser
             let parts = pair
                 .into_inner()
                 .filter(|child| child.as_rule() == Rule::label_not)
-                .map(build_label_expr)
+                .map(|child| build_label_expr(child, budget))
                 .collect::<Result<Vec<_>, _>>()?;
             collapse_label_parts(parts, LabelExpr::Conjunction)
         }
         Rule::label_not => {
             let negated = pair.as_str().starts_with('!');
             let child = first_child(pair)?;
-            let value = build_label_expr(child)?;
+            let value = build_label_expr(child, budget)?;
             if negated {
                 Ok(LabelExpr::Negation(Box::new(value)))
             } else {
                 Ok(value)
             }
         }
-        Rule::label_atom => build_label_expr(first_child(pair)?),
+        Rule::label_atom => build_label_expr(first_child(pair)?, budget),
         Rule::label_wildcard => Ok(LabelExpr::Wildcard),
-        Rule::ident => Ok(LabelExpr::Single(intern_pair(pair)?)),
+        Rule::ident => Ok(LabelExpr::Single(intern_pair(pair, budget)?)),
         _ => Err(unexpected_pair(pair, "expected label expression")),
     }
 }
@@ -366,6 +398,7 @@ fn parse_u32(text: &str, source_span: SourceSpan) -> Result<u32, ParserError> {
 
 pub(super) fn build_property_map(
     pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
 ) -> Result<Vec<(selene_core::IStr, ValueExpr)>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::property_pair)
@@ -377,22 +410,25 @@ pub(super) fn build_property_map(
                 .ok_or_else(|| {
                     ParserError::syntax("property pair is missing key", property_span, None)
                 })
-                .and_then(intern_pair)?;
+                .and_then(|pair| intern_pair(pair, budget))?;
             let value = children
                 .next()
                 .ok_or_else(|| {
                     ParserError::syntax("property pair is missing value", property_span, None)
                 })
-                .and_then(expr::build_value_expr)?;
+                .and_then(|pair| expr::build_value_expr(pair, budget))?;
             Ok((key, value))
         })
         .collect()
 }
 
-fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+fn expr_from_child(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     pair.into_inner()
         .find(|child| child.as_rule() == Rule::expr)
         .ok_or_else(|| ParserError::syntax("clause is missing expression", source_span, None))
-        .and_then(expr::build_value_expr)
+        .and_then(|pair| expr::build_value_expr(pair, budget))
 }

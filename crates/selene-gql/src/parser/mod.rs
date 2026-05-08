@@ -1,15 +1,21 @@
 //! Pest-backed GQL parser entry points.
 
+mod budget;
 mod builders;
+
+use std::sync::Arc;
 
 use pest::{Parser, error::InputLocation};
 
 use crate::{
     ast::{SourceSpan, Statement},
+    diagnostic::DiagnosticReport,
     error::ParserError,
+    flagger,
 };
 
 use self::pest_impl::{GqlParser, Rule};
+use budget::{InternerBudget, MAX_NEW_ADMISSIONS_PER_PARSE};
 
 mod pest_impl {
     #![allow(missing_docs)]
@@ -35,7 +41,23 @@ pub fn parse(source: &str) -> Result<Statement, ParserError> {
     let mut pairs =
         GqlParser::parse(Rule::gql_program, source).map_err(|error| pest_error(source, error))?;
     let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;
-    builders::build_statement(program_pair)
+    let mut budget = InternerBudget::new(MAX_NEW_ADMISSIONS_PER_PARSE);
+    let statement = builders::build_statement(program_pair, &mut budget)?;
+    flagger::flag(&statement)?;
+    Ok(statement)
+}
+
+/// Parse one GQL program and wrap failures with source text for miette rendering.
+///
+/// # Errors
+///
+/// Returns [`DiagnosticReport`] when parsing, AST construction, admission
+/// budgeting, or Flagger validation fails.
+pub fn parse_with_source(
+    source: Arc<str>,
+    label: impl Into<String>,
+) -> Result<Statement, DiagnosticReport> {
+    parse(&source).map_err(|error| DiagnosticReport::new(error, source, label))
 }
 
 fn pest_error(source: &str, error: pest::error::Error<Rule>) -> ParserError {
@@ -65,8 +87,6 @@ fn to_u32(value: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::intern;
-
     use super::*;
     use crate::ast::{
         BinaryOp, EdgeDirection, LabelExpr, Literal, PathSelector, PipelineStatement, SetOp,
@@ -96,6 +116,10 @@ mod tests {
         clause.items.into_iter().next().unwrap()
     }
 
+    fn optional_name(value: Option<selene_core::IStr>) -> Option<&'static str> {
+        value.map(selene_core::IStr::as_str)
+    }
+
     #[test]
     fn parse_return_integer() {
         let item = only_item("RETURN 1");
@@ -118,13 +142,11 @@ mod tests {
     #[test]
     fn parse_return_string() {
         let item = only_item("RETURN 'hello'");
-        assert_eq!(
-            item.expr,
-            ValueExpr::Literal(Literal::String(
-                intern("hello").expect("intern succeeds"),
-                SourceSpan::new(7, 7)
-            ))
-        );
+        let ValueExpr::Literal(Literal::String(value, span)) = item.expr else {
+            panic!("expected string literal");
+        };
+        assert_eq!(value.as_str(), "hello");
+        assert_eq!(span, SourceSpan::new(7, 7));
     }
 
     #[test]
@@ -146,7 +168,7 @@ mod tests {
     #[test]
     fn parse_return_alias() {
         let item = only_item("RETURN 1 AS one");
-        assert_eq!(item.alias, Some(intern("one").expect("intern succeeds")));
+        assert_eq!(optional_name(item.alias), Some("one"));
         assert_eq!(item.span, SourceSpan::new(7, 8));
     }
 
@@ -221,25 +243,19 @@ mod tests {
     #[test]
     fn parse_return_alias_quoted() {
         let item = only_item("RETURN 1 AS \"my name\"");
-        assert_eq!(
-            item.alias,
-            Some(intern("my name").expect("intern succeeds"))
-        );
+        assert_eq!(optional_name(item.alias), Some("my name"));
     }
 
     #[test]
     fn parse_return_alias_quoted_doubled_quote() {
         let item = only_item("RETURN 1 AS \"a\"\"b\"");
-        assert_eq!(item.alias, Some(intern("a\"b").expect("intern succeeds")));
+        assert_eq!(optional_name(item.alias), Some("a\"b"));
     }
 
     #[test]
     fn parse_return_alias_backtick() {
         let item = only_item("RETURN 1 AS `my name`");
-        assert_eq!(
-            item.alias,
-            Some(intern("my name").expect("intern succeeds"))
-        );
+        assert_eq!(optional_name(item.alias), Some("my name"));
     }
 
     #[test]
@@ -277,17 +293,17 @@ mod tests {
             crate::ast::PatternElement::Node(node) => node,
             _ => panic!("expected node pattern"),
         };
-        assert_eq!(node.binding, Some(intern("n").expect("intern succeeds")));
-        assert_eq!(
-            node.label_expr,
-            Some(LabelExpr::Single(intern("Person").unwrap()))
-        );
+        assert_eq!(optional_name(node.binding), Some("n"));
+        let Some(LabelExpr::Single(label)) = node.label_expr.as_ref() else {
+            panic!("expected Person label");
+        };
+        assert_eq!(label.as_str(), "Person");
         assert_eq!(node.properties.len(), 1);
 
         let PipelineStatement::Return(return_clause) = &query.statements[1] else {
             panic!("expected RETURN");
         };
-        assert_eq!(return_clause.items[0].alias, Some(intern("name").unwrap()));
+        assert_eq!(optional_name(return_clause.items[0].alias), Some("name"));
         assert!(matches!(
             return_clause.items[0].expr,
             ValueExpr::PropertyAccess { .. }
@@ -417,7 +433,7 @@ mod tests {
             panic!("expected RETURN");
         };
         assert!(return_clause.distinct);
-        assert_eq!(return_clause.items[0].alias, Some(intern("one").unwrap()));
+        assert_eq!(optional_name(return_clause.items[0].alias), Some("one"));
         assert!(matches!(query.statements[1], PipelineStatement::Sorting(_)));
         assert!(matches!(query.statements[2], PipelineStatement::Limit(_)));
     }

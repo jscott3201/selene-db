@@ -8,7 +8,7 @@ pub(super) mod pattern;
 pub(super) mod transaction;
 
 use pest::iterators::Pair;
-use selene_core::{IStr, intern};
+use selene_core::IStr;
 
 use crate::{
     ast::{
@@ -19,43 +19,49 @@ use crate::{
     error::ParserError,
 };
 
-use super::Rule;
+use super::{Rule, budget::InternerBudget};
 
-pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+pub(crate) fn build_statement(
+    program_pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
     match program_pair.as_rule() {
         Rule::gql_program => {
             let child = first_non_eoi(program_pair)?;
-            build_statement(child)
+            build_statement(child, budget)
         }
-        Rule::query_pipeline => build_query_pipeline(program_pair).map(Statement::Query),
-        Rule::composite_query => build_composite(program_pair),
-        Rule::chained_query => build_chained(program_pair),
+        Rule::query_pipeline => build_query_pipeline(program_pair, budget).map(Statement::Query),
+        Rule::composite_query => build_composite(program_pair, budget),
+        Rule::chained_query => build_chained(program_pair, budget),
         Rule::pipeline_statement => {
             let span = span(&program_pair);
-            let statement = build_pipeline_statement(program_pair)?;
+            let statement = build_pipeline_statement(program_pair, budget)?;
             Ok(Statement::Query(QueryPipeline {
                 statements: vec![statement],
                 span,
             }))
         }
-        Rule::select_stmt => build_select_pipeline(program_pair).map(Statement::Query),
+        Rule::select_stmt => build_select_pipeline(program_pair, budget).map(Statement::Query),
         Rule::mutation_pipeline => {
-            mutation::build_mutation_pipeline(program_pair).map(Statement::Mutate)
+            mutation::build_mutation_pipeline(program_pair, budget).map(Statement::Mutate)
         }
-        Rule::ddl_statement => ddl::build_ddl_statement(program_pair).map(Statement::Ddl),
-        Rule::call_stmt => call::build_top_level_call(program_pair).map(Statement::Call),
+        Rule::ddl_statement => ddl::build_ddl_statement(program_pair, budget).map(Statement::Ddl),
+        Rule::call_stmt => call::build_top_level_call(program_pair, budget).map(Statement::Call),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
     }
 }
 
-fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+fn build_composite(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
         .next()
         .ok_or_else(ParserError::empty_program)
-        .and_then(build_query_pipeline)?;
+        .and_then(|pair| build_query_pipeline(pair, budget))?;
     let mut rest = Vec::new();
 
     while let Some(op_pair) = children.next() {
@@ -63,7 +69,7 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
         let pipeline = children
             .next()
             .ok_or_else(ParserError::empty_program)
-            .and_then(build_query_pipeline)?;
+            .and_then(|pair| build_query_pipeline(pair, budget))?;
         rest.push((op, pipeline));
     }
 
@@ -74,12 +80,15 @@ fn build_composite(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     })
 }
 
-fn build_chained(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+fn build_chained(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
     let blocks = pair
         .into_inner()
         .filter(|child| child.as_rule() == Rule::query_pipeline)
-        .map(build_query_pipeline)
+        .map(|child| build_query_pipeline(child, budget))
         .collect::<Result<Vec<_>, _>>()?;
     if blocks.is_empty() {
         return Err(ParserError::empty_program());
@@ -120,12 +129,15 @@ fn contains_word(text: &str, word: &str) -> bool {
         .any(|part| part == word)
 }
 
-pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
+pub(super) fn build_query_pipeline(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<QueryPipeline, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::query_pipeline);
     let source_span = span(&pair);
     let statements = pair
         .into_inner()
-        .map(build_pipeline_statement)
+        .map(|child| build_pipeline_statement(child, budget))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(QueryPipeline {
         statements,
@@ -133,29 +145,35 @@ pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline
     })
 }
 
-fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, ParserError> {
+fn build_pipeline_statement(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<PipelineStatement, ParserError> {
     if pair.as_rule() == Rule::pipeline_statement {
-        return build_pipeline_statement(first_child(pair)?);
+        return build_pipeline_statement(first_child(pair)?, budget);
     }
 
     match pair.as_rule() {
-        Rule::match_stmt => pattern::build_match_clause(pair).map(PipelineStatement::Match),
-        Rule::filter_stmt => build_filter(pair).map(PipelineStatement::Filter),
-        Rule::let_stmt => build_let(pair).map(PipelineStatement::Let),
-        Rule::unwind_stmt => build_unwind(pair).map(PipelineStatement::Unwind),
-        Rule::sorting_stmt => build_sorting(pair).map(PipelineStatement::Sorting),
-        Rule::offset_stmt => build_limit_or_offset(pair).map(PipelineStatement::Offset),
-        Rule::limit_stmt => build_limit_or_offset(pair).map(PipelineStatement::Limit),
-        Rule::return_stmt => build_return_clause(pair).map(PipelineStatement::Return),
-        Rule::with_stmt => build_with_clause(pair).map(PipelineStatement::With),
+        Rule::match_stmt => pattern::build_match_clause(pair, budget).map(PipelineStatement::Match),
+        Rule::filter_stmt => build_filter(pair, budget).map(PipelineStatement::Filter),
+        Rule::let_stmt => build_let(pair, budget).map(PipelineStatement::Let),
+        Rule::unwind_stmt => build_unwind(pair, budget).map(PipelineStatement::Unwind),
+        Rule::sorting_stmt => build_sorting(pair, budget).map(PipelineStatement::Sorting),
+        Rule::offset_stmt => build_limit_or_offset(pair, budget).map(PipelineStatement::Offset),
+        Rule::limit_stmt => build_limit_or_offset(pair, budget).map(PipelineStatement::Limit),
+        Rule::return_stmt => build_return_clause(pair, budget).map(PipelineStatement::Return),
+        Rule::with_stmt => build_with_clause(pair, budget).map(PipelineStatement::With),
         Rule::for_stmt => Err(not_implemented(&pair, "FOR lands in BRIEF-18")),
         Rule::match_view_stmt => Err(not_implemented(&pair, "MATCH VIEW lands in BRIEF-18")),
-        Rule::call_stmt => call::build_pipeline_call(pair).map(PipelineStatement::Call),
+        Rule::call_stmt => call::build_pipeline_call(pair, budget).map(PipelineStatement::Call),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }
 }
 
-fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
+fn build_select_pipeline(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<QueryPipeline, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::select_stmt);
     let source_span = span(&pair);
     let mut return_clause = ReturnClause {
@@ -179,12 +197,12 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
         match child.as_rule() {
             Rule::distinct_kw => return_clause.distinct = true,
             Rule::return_star => return_clause.star = true,
-            Rule::projection_list => return_clause.items = build_projection_list(child)?,
+            Rule::projection_list => return_clause.items = build_projection_list(child, budget)?,
             Rule::select_from => {
                 let from_child = first_child(child)?;
                 if from_child.as_rule() == Rule::match_stmt {
                     pre_return.push(PipelineStatement::Match(pattern::build_match_clause(
-                        from_child,
+                        from_child, budget,
                     )?));
                 } else {
                     return Err(not_implemented(
@@ -193,17 +211,23 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
                     ));
                 }
             }
-            Rule::where_clause => pre_return.push(PipelineStatement::Filter(build_where(child)?)),
-            Rule::group_by_clause => return_clause.group_by = Some(build_group_by(child)?),
-            Rule::having_clause => return_clause.having = Some(build_having(child)?),
+            Rule::where_clause => {
+                pre_return.push(PipelineStatement::Filter(build_where(child, budget)?));
+            }
+            Rule::group_by_clause => return_clause.group_by = Some(build_group_by(child, budget)?),
+            Rule::having_clause => return_clause.having = Some(build_having(child, budget)?),
             Rule::sorting_stmt => {
-                post_return.push(PipelineStatement::Sorting(build_sorting(child)?));
+                post_return.push(PipelineStatement::Sorting(build_sorting(child, budget)?));
             }
             Rule::offset_stmt => {
-                post_return.push(PipelineStatement::Offset(build_limit_or_offset(child)?));
+                post_return.push(PipelineStatement::Offset(build_limit_or_offset(
+                    child, budget,
+                )?));
             }
             Rule::limit_stmt => {
-                post_return.push(PipelineStatement::Limit(build_limit_or_offset(child)?));
+                post_return.push(PipelineStatement::Limit(build_limit_or_offset(
+                    child, budget,
+                )?));
             }
             _ => return Err(unexpected_pair(child, "unexpected SELECT child")),
         }
@@ -218,31 +242,44 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
     })
 }
 
-pub(super) fn build_filter(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
-    expr_from_first(pair, "FILTER is missing expression")
+pub(super) fn build_filter(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<crate::ast::ValueExpr, ParserError> {
+    expr_from_first(pair, "FILTER is missing expression", budget)
 }
 
-fn build_where(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
-    expr_from_first(pair, "WHERE is missing expression")
+fn build_where(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<crate::ast::ValueExpr, ParserError> {
+    expr_from_first(pair, "WHERE is missing expression", budget)
 }
 
-fn build_having(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
-    expr_from_first(pair, "HAVING is missing expression")
+fn build_having(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<crate::ast::ValueExpr, ParserError> {
+    expr_from_first(pair, "HAVING is missing expression", budget)
 }
 
 fn expr_from_first(
     pair: Pair<'_, Rule>,
     missing: &'static str,
+    budget: &mut InternerBudget,
 ) -> Result<crate::ast::ValueExpr, ParserError> {
     let pair_span = span(&pair);
     let expr_pair = pair
         .into_inner()
         .find(|child| child.as_rule() == Rule::expr)
         .ok_or_else(|| ParserError::syntax(missing, pair_span, None))?;
-    expr::build_value_expr(expr_pair)
+    expr::build_value_expr(expr_pair, budget)
 }
 
-fn build_let(pair: Pair<'_, Rule>) -> Result<Vec<LetBinding>, ParserError> {
+fn build_let(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<LetBinding>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::let_binding)
         .map(|binding| {
@@ -255,15 +292,18 @@ fn build_let(pair: Pair<'_, Rule>) -> Result<Vec<LetBinding>, ParserError> {
                 ParserError::syntax("LET binding is missing expression", binding_span, None)
             })?;
             Ok(LetBinding {
-                alias: intern_pair(alias_pair)?,
-                value: expr::build_value_expr(value_pair)?,
+                alias: intern_pair(alias_pair, budget)?,
+                value: expr::build_value_expr(value_pair, budget)?,
                 span: binding_span,
             })
         })
         .collect()
 }
 
-fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
+fn build_unwind(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<UnwindStatement, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let source = children
@@ -271,11 +311,11 @@ fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
         .ok_or_else(|| {
             ParserError::syntax("UNWIND is missing source expression", source_span, None)
         })
-        .and_then(expr::build_value_expr)?;
+        .and_then(|pair| expr::build_value_expr(pair, budget))?;
     let alias = children
         .next()
         .ok_or_else(|| ParserError::syntax("UNWIND is missing alias", source_span, None))
-        .and_then(intern_pair)?;
+        .and_then(|pair| intern_pair(pair, budget))?;
     Ok(UnwindStatement {
         source,
         alias,
@@ -283,14 +323,20 @@ fn build_unwind(pair: Pair<'_, Rule>) -> Result<UnwindStatement, ParserError> {
     })
 }
 
-fn build_sorting(pair: Pair<'_, Rule>) -> Result<Vec<OrderTerm>, ParserError> {
+fn build_sorting(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<OrderTerm>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::order_term)
-        .map(build_order_term)
+        .map(|child| build_order_term(child, budget))
         .collect()
 }
 
-fn build_order_term(pair: Pair<'_, Rule>) -> Result<OrderTerm, ParserError> {
+fn build_order_term(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<OrderTerm, ParserError> {
     let source_span = span(&pair);
     let mut expr_value = None;
     let mut direction = OrderDirection::Asc;
@@ -298,7 +344,7 @@ fn build_order_term(pair: Pair<'_, Rule>) -> Result<OrderTerm, ParserError> {
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::expr => expr_value = Some(expr::build_value_expr(child)?),
+            Rule::expr => expr_value = Some(expr::build_value_expr(child, budget)?),
             Rule::sort_dir if child.as_str().eq_ignore_ascii_case("DESC") => {
                 direction = OrderDirection::Desc;
             }
@@ -321,7 +367,10 @@ fn build_order_term(pair: Pair<'_, Rule>) -> Result<OrderTerm, ParserError> {
     })
 }
 
-fn build_limit_or_offset(pair: Pair<'_, Rule>) -> Result<LimitValue, ParserError> {
+fn build_limit_or_offset(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<LimitValue, ParserError> {
     let source_span = span(&pair);
     let child = pair
         .into_inner()
@@ -338,13 +387,19 @@ fn build_limit_or_offset(pair: Pair<'_, Rule>) -> Result<LimitValue, ParserError
             }),
         Rule::param_ref => {
             let value_span = span(&inner);
-            Ok(LimitValue::Parameter(intern_param(inner)?, value_span))
+            Ok(LimitValue::Parameter(
+                intern_param(inner, budget)?,
+                value_span,
+            ))
         }
         _ => Err(unexpected_pair(inner, "expected LIMIT/OFFSET value")),
     }
 }
 
-pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, ParserError> {
+pub(super) fn build_return_clause(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ReturnClause, ParserError> {
     let source_span = span(&pair);
     let mut clause = ReturnClause {
         distinct: false,
@@ -359,9 +414,9 @@ pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, 
         match child.as_rule() {
             Rule::distinct_kw => clause.distinct = true,
             Rule::return_star => clause.star = true,
-            Rule::projection_list => clause.items = build_projection_list(child)?,
-            Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
-            Rule::having_clause => clause.having = Some(build_having(child)?),
+            Rule::projection_list => clause.items = build_projection_list(child, budget)?,
+            Rule::group_by_clause => clause.group_by = Some(build_group_by(child, budget)?),
+            Rule::having_clause => clause.having = Some(build_having(child, budget)?),
             Rule::no_bindings => {
                 return Err(not_implemented(
                     &child,
@@ -382,7 +437,10 @@ pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, 
     Ok(clause)
 }
 
-fn build_with_clause(pair: Pair<'_, Rule>) -> Result<WithClause, ParserError> {
+fn build_with_clause(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<WithClause, ParserError> {
     let source_span = span(&pair);
     let mut clause = WithClause {
         distinct: false,
@@ -396,32 +454,38 @@ fn build_with_clause(pair: Pair<'_, Rule>) -> Result<WithClause, ParserError> {
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::distinct_kw => clause.distinct = true,
-            Rule::projection_list => clause.items = build_projection_list(child)?,
-            Rule::group_by_clause => clause.group_by = Some(build_group_by(child)?),
-            Rule::having_clause => clause.having = Some(build_having(child)?),
-            Rule::where_clause => clause.where_clause = Some(build_where(child)?),
+            Rule::projection_list => clause.items = build_projection_list(child, budget)?,
+            Rule::group_by_clause => clause.group_by = Some(build_group_by(child, budget)?),
+            Rule::having_clause => clause.having = Some(build_having(child, budget)?),
+            Rule::where_clause => clause.where_clause = Some(build_where(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected WITH child")),
         }
     }
     Ok(clause)
 }
 
-fn build_projection_list(pair: Pair<'_, Rule>) -> Result<Vec<ReturnItem>, ParserError> {
+fn build_projection_list(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<ReturnItem>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::projection)
-        .map(build_return_item)
+        .map(|child| build_return_item(child, budget))
         .collect()
 }
 
-fn build_return_item(pair: Pair<'_, Rule>) -> Result<ReturnItem, ParserError> {
+fn build_return_item(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ReturnItem, ParserError> {
     let source_span = span(&pair);
     let mut value = None;
     let mut alias = None;
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::expr => value = Some(expr::build_value_expr(child)?),
-            Rule::alias => alias = Some(build_alias(child)?),
+            Rule::expr => value = Some(expr::build_value_expr(child, budget)?),
+            Rule::alias => alias = Some(build_alias(child, budget)?),
             _ => {
                 return Err(unexpected_pair(
                     child,
@@ -440,19 +504,22 @@ fn build_return_item(pair: Pair<'_, Rule>) -> Result<ReturnItem, ParserError> {
     })
 }
 
-fn build_alias(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+fn build_alias(pair: Pair<'_, Rule>, budget: &mut InternerBudget) -> Result<IStr, ParserError> {
     let source_span = span(&pair);
     let ident = pair
         .into_inner()
         .find(|child| child.as_rule() == Rule::prop_ident)
         .ok_or_else(|| ParserError::syntax("AS alias is missing identifier", source_span, None))?;
-    intern_pair(ident)
+    intern_pair(ident, budget)
 }
 
-fn build_group_by(pair: Pair<'_, Rule>) -> Result<Vec<crate::ast::ValueExpr>, ParserError> {
+fn build_group_by(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<crate::ast::ValueExpr>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::group_by_item)
-        .map(|item| expr_from_first(item, "GROUP BY item is missing expression"))
+        .map(|item| expr_from_first(item, "GROUP BY item is missing expression", budget))
         .collect()
 }
 
@@ -474,16 +541,13 @@ pub(super) fn span(pair: &Pair<'_, Rule>) -> SourceSpan {
     SourceSpan::from_pest(pair.as_span())
 }
 
-pub(super) fn intern_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+pub(super) fn intern_pair(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<IStr, ParserError> {
     let source_span = span(&pair);
     let decoded = decode_ident_like(pair.as_str());
-    intern(&decoded).map_err(|error| {
-        ParserError::syntax(
-            format!("could not intern identifier: {error}"),
-            source_span,
-            Some("identifier interning cap may be exhausted".into()),
-        )
-    })
+    budget.intern_str(&decoded, source_span, "identifier")
 }
 
 /// Build a qualified name as a list of interned segments.
@@ -491,7 +555,10 @@ pub(super) fn intern_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
 /// Each grammar segment is interned independently. Quoted segments containing
 /// dots stay one segment, so `foo."bar.baz"` and `foo.bar.baz` produce
 /// different paths.
-pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
+pub(super) fn build_qualified_name(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<IStr>, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::qualified_name);
     let source_span = span(&pair);
     let mut segments = Vec::new();
@@ -499,13 +566,8 @@ pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, Pa
         match child.as_rule() {
             Rule::ident | Rule::prop_ident => {
                 let canonical = decode_ident_like(child.as_str());
-                let interned = intern(&canonical).map_err(|error| {
-                    ParserError::syntax(
-                        format!("could not intern qualified-name segment: {error}"),
-                        source_span,
-                        Some("identifier interning cap may be exhausted".into()),
-                    )
-                })?;
+                let interned =
+                    budget.intern_str(&canonical, source_span, "qualified-name segment")?;
                 segments.push(interned);
             }
             _ => return Err(unexpected_pair(child, "unexpected qualified-name child")),
@@ -521,16 +583,13 @@ pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, Pa
     Ok(segments)
 }
 
-pub(super) fn intern_param(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+pub(super) fn intern_param(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<IStr, ParserError> {
     let source_span = span(&pair);
     let text = pair.as_str().strip_prefix('$').unwrap_or(pair.as_str());
-    intern(text).map_err(|error| {
-        ParserError::syntax(
-            format!("could not intern parameter: {error}"),
-            source_span,
-            Some("identifier interning cap may be exhausted".into()),
-        )
-    })
+    budget.intern_str(text, source_span, "parameter")
 }
 
 pub(super) fn decode_ident_like(text: &str) -> String {

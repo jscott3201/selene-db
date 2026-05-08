@@ -1,10 +1,12 @@
 //! Predicate expression builders.
 
 use pest::iterators::Pair;
+use selene_core::feature_register::FeatureId;
 
 use crate::{
     ast::{BinaryOp, GqlType, IsCheckKind, NormalForm, SourceSpan, TruthValue, ValueExpr},
     error::ParserError,
+    parser::budget::InternerBudget,
 };
 
 use super::{Rule, build_value_expr, literal};
@@ -14,6 +16,7 @@ pub(super) fn apply_is_suffix(
     operand: ValueExpr,
     suffix: Pair<'_, Rule>,
     source_span: SourceSpan,
+    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     debug_assert_eq!(suffix.as_rule(), Rule::is_suffix);
     let children: Vec<_> = suffix.into_inner().collect();
@@ -21,7 +24,7 @@ pub(super) fn apply_is_suffix(
     // source text. Substring scans were misleading when an operand contained
     // a quoted identifier with `NOT` in it (e.g. `IS LABELED :"NOT"`).
     let negated = children.iter().any(|child| child.as_rule() == Rule::not_kw);
-    dispatch_is_suffix(operand, &children, negated, source_span)
+    dispatch_is_suffix(operand, &children, negated, source_span, budget)
 }
 
 fn dispatch_is_suffix(
@@ -29,19 +32,20 @@ fn dispatch_is_suffix(
     children: &[Pair<'_, Rule>],
     negated: bool,
     source_span: SourceSpan,
+    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     if let Some(string_op) = children
         .iter()
         .find(|child| child.as_rule() == Rule::string_match_op)
     {
-        return build_string_match(operand, string_op, children, source_span);
+        return build_string_match(operand, string_op, children, source_span, budget);
     }
 
     if children.iter().any(|child| child.as_rule() == Rule::in_kw) {
         let list_pair = find_child(children, Rule::list_lit, "IN predicate is missing list")?;
         return Ok(ValueExpr::InList {
             operand: Box::new(operand),
-            list: literal::build_list_items(list_pair)?,
+            list: literal::build_list_items(list_pair, budget)?,
             negated,
             span: source_span,
         });
@@ -58,7 +62,7 @@ fn dispatch_is_suffix(
         )?;
         return Ok(ValueExpr::Like {
             operand: Box::new(operand),
-            pattern: Box::new(build_value_expr(pattern_pair)?),
+            pattern: Box::new(build_value_expr(pattern_pair, budget)?),
             negated,
             span: source_span,
         });
@@ -72,7 +76,7 @@ fn dispatch_is_suffix(
             .iter()
             .filter(|child| child.as_rule() == Rule::addition)
             .cloned()
-            .map(build_value_expr)
+            .map(|child| build_value_expr(child, budget))
             .collect::<Result<Vec<_>, _>>()?;
         if bounds.len() != 2 {
             return Err(ParserError::syntax(
@@ -92,7 +96,7 @@ fn dispatch_is_suffix(
 
     Ok(ValueExpr::IsCheck {
         operand: Box::new(operand),
-        kind: build_is_kind(children, source_span)?,
+        kind: build_is_kind(children, source_span, budget)?,
         negated,
         span: source_span,
     })
@@ -103,6 +107,7 @@ fn build_string_match(
     string_op: &Pair<'_, Rule>,
     children: &[Pair<'_, Rule>],
     source_span: SourceSpan,
+    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     let upper = string_op.as_str().to_ascii_uppercase();
     let op = if upper.starts_with("STARTS") {
@@ -120,7 +125,7 @@ fn build_string_match(
     Ok(ValueExpr::BinaryOp {
         op,
         lhs: Box::new(operand),
-        rhs: Box::new(build_value_expr(rhs_pair)?),
+        rhs: Box::new(build_value_expr(rhs_pair, budget)?),
         span: source_span,
     })
 }
@@ -128,6 +133,7 @@ fn build_string_match(
 fn build_is_kind(
     children: &[Pair<'_, Rule>],
     source_span: SourceSpan,
+    budget: &mut InternerBudget,
 ) -> Result<IsCheckKind, ParserError> {
     if children
         .iter()
@@ -144,7 +150,9 @@ fn build_is_kind(
             Rule::label_expr,
             "IS LABELED is missing label expression",
         )?;
-        return Ok(IsCheckKind::Labeled(pattern::build_label_expr(label_pair)?));
+        return Ok(IsCheckKind::Labeled(pattern::build_label_expr(
+            label_pair, budget,
+        )?));
     }
     if children
         .iter()
@@ -155,7 +163,9 @@ fn build_is_kind(
             Rule::comparison,
             "IS SOURCE OF is missing expression",
         )?;
-        return Ok(IsCheckKind::SourceOf(Box::new(build_value_expr(rhs_pair)?)));
+        return Ok(IsCheckKind::SourceOf(Box::new(build_value_expr(
+            rhs_pair, budget,
+        )?)));
     }
     if children
         .iter()
@@ -167,7 +177,7 @@ fn build_is_kind(
             "IS DESTINATION OF is missing expression",
         )?;
         return Ok(IsCheckKind::DestinationOf(Box::new(build_value_expr(
-            rhs_pair,
+            rhs_pair, budget,
         )?)));
     }
     if children
@@ -234,6 +244,14 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
     let source_span = span(&pair);
     let text = pair.as_str().to_ascii_uppercase();
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact == "REAL" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV20,
+            display_name: "Approximate value type: REAL",
+            span: source_span,
+            hint: "REAL type spelling is outside the selene-db v1.0 claim list; use FLOAT or DOUBLE",
+        });
+    }
     if compact.starts_with("LIST") {
         let inner = pair
             .into_inner()
@@ -259,7 +277,7 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
         "UINT16" => Ok(GqlType::Uint16),
         "UINT32" => Ok(GqlType::Uint32),
         "UINT128" => Ok(GqlType::Uint128),
-        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT" | "REAL" => Ok(GqlType::Float),
+        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT" => Ok(GqlType::Float),
         "FLOAT32" => Ok(GqlType::Float32),
         "FLOAT64" => Ok(GqlType::Float64),
         "STRING" | "VARCHAR" | "UUID" => Ok(GqlType::String),

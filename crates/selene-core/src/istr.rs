@@ -63,11 +63,26 @@ const fn cap_exceeded(current_len: usize) -> bool {
 /// Returns [`CoreError::IStrCapExceeded`] if the interner is at cap and the
 /// string is not already present.
 pub fn intern(s: &str) -> CoreResult<IStr> {
+    intern_with_admission(s).map(|(value, _was_new)| value)
+}
+
+/// Intern a string slice and report whether it was newly admitted.
+///
+/// This has the same cap and concurrency behavior as [`intern`], but returns
+/// `true` in the second tuple slot only when the call inserted a new string
+/// into the process-global interner. Parser-side DoS guards use that signal to
+/// enforce per-request admission budgets without charging repeated names.
+///
+/// # Errors
+///
+/// Returns [`CoreError::IStrCapExceeded`] if the interner is at cap and the
+/// string is not already present.
+pub fn intern_with_admission(s: &str) -> CoreResult<(IStr, bool)> {
     let rodeo = interner();
 
     // Fast path: already-interned strings do not need admission.
     if let Some(spur) = rodeo.get(s) {
-        return Ok(IStr(spur));
+        return Ok((IStr(spur), false));
     }
 
     // Slow path: serialize admission so cap-check + insert are atomic.
@@ -76,7 +91,7 @@ pub fn intern(s: &str) -> CoreResult<IStr> {
     // Re-check inside the lock; another thread may have interned `s` between
     // the fast-path miss and lock acquisition.
     if let Some(spur) = rodeo.get(s) {
-        return Ok(IStr(spur));
+        return Ok((IStr(spur), false));
     }
 
     let count = rodeo.len();
@@ -86,7 +101,7 @@ pub fn intern(s: &str) -> CoreResult<IStr> {
             max: MAX_INTERNED_STRINGS,
         });
     }
-    Ok(IStr(rodeo.get_or_intern(s)))
+    Ok((IStr(rodeo.get_or_intern(s)), true))
 }
 
 /// Resolve an [`IStr`] to its process-lifetime string representation.

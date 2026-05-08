@@ -6,7 +6,9 @@
 #![deny(missing_docs)]
 
 pub mod ast;
+pub mod diagnostic;
 pub mod error;
+mod flagger;
 pub mod parser;
 
 pub use crate::ast::{
@@ -30,5 +32,6 @@ pub use crate::ast::{
     },
     types::{GqlType, RecordType, ValueType},
 };
+pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
-pub use crate::parser::parse;
+pub use crate::parser::{parse, parse_with_source};

@@ -9,49 +9,53 @@ use pest::iterators::Pair;
 use crate::{
     ast::{BinaryOp, GqlType, Literal, SourceSpan, UnaryOp, ValueExpr},
     error::ParserError,
+    parser::budget::InternerBudget,
 };
 
 use super::{Rule, first_child, intern_pair, intern_param, not_implemented, span, unexpected_pair};
 
-pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_value_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     match pair.as_rule() {
-        Rule::expr => build_value_expr(first_child(pair)?),
-        Rule::or_expr => build_left_assoc(pair, Rule::or_kw, |_| BinaryOp::Or),
-        Rule::xor_expr => build_left_assoc(pair, Rule::xor_kw, |_| BinaryOp::Xor),
-        Rule::and_expr => build_left_assoc(pair, Rule::and_kw, |_| BinaryOp::And),
-        Rule::not_expr => build_not_expr(pair),
-        Rule::is_expr => build_is_expr(pair),
-        Rule::comparison => build_left_assoc(pair, Rule::comp_op, build_comparison_op),
-        Rule::concat => build_repeated_same_op(pair, BinaryOp::Concat),
-        Rule::addition => build_left_assoc(pair, Rule::add_op, build_add_op),
-        Rule::multiplication => build_left_assoc(pair, Rule::mul_op, build_mul_op),
-        Rule::unary => build_unary(pair),
-        Rule::postfix => build_postfix(pair),
-        Rule::primary => build_value_expr(first_child(pair)?),
-        Rule::literal => literal::build_literal_expr(pair),
-        Rule::list_lit => literal::build_list_lit(pair),
-        Rule::record_constructor => build_record_constructor(pair),
+        Rule::expr => build_value_expr(first_child(pair)?, budget),
+        Rule::or_expr => build_left_assoc(pair, Rule::or_kw, |_| BinaryOp::Or, budget),
+        Rule::xor_expr => build_left_assoc(pair, Rule::xor_kw, |_| BinaryOp::Xor, budget),
+        Rule::and_expr => build_left_assoc(pair, Rule::and_kw, |_| BinaryOp::And, budget),
+        Rule::not_expr => build_not_expr(pair, budget),
+        Rule::is_expr => build_is_expr(pair, budget),
+        Rule::comparison => build_left_assoc(pair, Rule::comp_op, build_comparison_op, budget),
+        Rule::concat => build_repeated_same_op(pair, BinaryOp::Concat, budget),
+        Rule::addition => build_left_assoc(pair, Rule::add_op, build_add_op, budget),
+        Rule::multiplication => build_left_assoc(pair, Rule::mul_op, build_mul_op, budget),
+        Rule::unary => build_unary(pair, budget),
+        Rule::postfix => build_postfix(pair, budget),
+        Rule::primary => build_value_expr(first_child(pair)?, budget),
+        Rule::literal => literal::build_literal_expr(pair, budget),
+        Rule::list_lit => literal::build_list_lit(pair, budget),
+        Rule::record_constructor => build_record_constructor(pair, budget),
         Rule::var_ref => Ok(ValueExpr::Variable {
-            name: intern_pair(pair)?,
+            name: intern_pair(pair, budget)?,
             span: source_span,
         }),
         Rule::param_ref => Ok(ValueExpr::Parameter {
-            name: intern_param(pair)?,
+            name: intern_param(pair, budget)?,
             span: source_span,
         }),
-        Rule::function_call => call::build_function_call(pair),
-        Rule::aggregate_expr => call::build_aggregate_expr(pair),
-        Rule::paren_expr => build_value_expr(first_child(pair)?),
+        Rule::function_call => call::build_function_call(pair, budget),
+        Rule::aggregate_expr => call::build_aggregate_expr(pair, budget),
+        Rule::paren_expr => build_value_expr(first_child(pair)?, budget),
         Rule::all_different_expr => {
-            call::build_expr_list_predicate(pair, call::PredicateKind::AllDifferent)
+            call::build_expr_list_predicate(pair, call::PredicateKind::AllDifferent, budget)
         }
-        Rule::same_expr => call::build_expr_list_predicate(pair, call::PredicateKind::Same),
-        Rule::property_exists_expr => call::build_property_exists(pair),
-        Rule::exists_expr => call::build_exists(pair),
-        Rule::count_subquery_expr => call::build_count_subquery(pair),
-        Rule::case_expr => call::build_case_expr(first_child(pair)?),
-        Rule::simple_case | Rule::searched_case => call::build_case_expr(pair),
+        Rule::same_expr => call::build_expr_list_predicate(pair, call::PredicateKind::Same, budget),
+        Rule::property_exists_expr => call::build_property_exists(pair, budget),
+        Rule::exists_expr => call::build_exists(pair, budget),
+        Rule::count_subquery_expr => call::build_count_subquery(pair, budget),
+        Rule::case_expr => call::build_case_expr(first_child(pair)?, budget),
+        Rule::simple_case | Rule::searched_case => call::build_case_expr(pair, budget),
         Rule::cast_expr => Err(not_implemented(
             &pair,
             "CAST expression builder lands in M5b",
@@ -80,21 +84,23 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
 
 pub(super) fn intern_string_literal(
     pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
 ) -> Result<selene_core::IStr, ParserError> {
-    literal::parse_string_pair(pair)
+    literal::parse_string_pair(pair, budget)
 }
 
 fn build_left_assoc(
     pair: Pair<'_, Rule>,
     op_rule: Rule,
     op_from_pair: fn(&Pair<'_, Rule>) -> BinaryOp,
+    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
         .next()
         .ok_or_else(|| ParserError::syntax("expression is empty", source_span, None))?;
-    let mut value = build_value_expr(first)?;
+    let mut value = build_value_expr(first, budget)?;
 
     while let Some(op_pair) = children.next() {
         if op_pair.as_rule() != op_rule {
@@ -107,23 +113,27 @@ fn build_left_assoc(
                 None,
             )
         })?;
-        let rhs = build_value_expr(rhs_pair)?;
+        let rhs = build_value_expr(rhs_pair, budget)?;
         value = binary(value, op_from_pair(&op_pair), rhs);
     }
 
     Ok(value)
 }
 
-fn build_repeated_same_op(pair: Pair<'_, Rule>, op: BinaryOp) -> Result<ValueExpr, ParserError> {
+fn build_repeated_same_op(
+    pair: Pair<'_, Rule>,
+    op: BinaryOp,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
         .next()
         .ok_or_else(|| ParserError::syntax("expression is empty", source_span, None))?;
-    let mut value = build_value_expr(first)?;
+    let mut value = build_value_expr(first, budget)?;
 
     for rhs_pair in children {
-        value = binary(value, op, build_value_expr(rhs_pair)?);
+        value = binary(value, op, build_value_expr(rhs_pair, budget)?);
     }
 
     Ok(value)
@@ -166,7 +176,10 @@ fn build_mul_op(pair: &Pair<'_, Rule>) -> BinaryOp {
     }
 }
 
-fn build_not_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+fn build_not_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let Some(first) = children.next() else {
@@ -183,28 +196,34 @@ fn build_not_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         })?;
         return Ok(ValueExpr::UnaryOp {
             op: UnaryOp::Not,
-            operand: Box::new(build_value_expr(operand_pair)?),
+            operand: Box::new(build_value_expr(operand_pair, budget)?),
             span: source_span,
         });
     }
 
-    build_value_expr(first)
+    build_value_expr(first, budget)
 }
 
-fn build_is_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+fn build_is_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let operand_pair = children
         .next()
         .ok_or_else(|| ParserError::syntax("IS expression is empty", source_span, None))?;
-    let operand = build_value_expr(operand_pair)?;
+    let operand = build_value_expr(operand_pair, budget)?;
     match children.next() {
-        Some(suffix) => predicate::apply_is_suffix(operand, suffix, source_span),
+        Some(suffix) => predicate::apply_is_suffix(operand, suffix, source_span, budget),
         None => Ok(operand),
     }
 }
 
-fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+fn build_unary(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
@@ -212,14 +231,14 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         .ok_or_else(|| ParserError::syntax("expression is empty", source_span, None))?;
 
     if first.as_rule() != Rule::sign_op {
-        return build_value_expr(first);
+        return build_value_expr(first, budget);
     }
 
     let is_negative = first.as_str() == "-";
     let operand_pair = children.next().ok_or_else(|| {
         ParserError::syntax("unary operator is missing operand", source_span, None)
     })?;
-    let operand = build_value_expr(operand_pair)?;
+    let operand = build_value_expr(operand_pair, budget)?;
 
     match (is_negative, operand) {
         (false, value @ ValueExpr::Literal(Literal::Integer(_, _)))
@@ -248,13 +267,16 @@ fn build_unary(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     }
 }
 
-fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+fn build_postfix(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let mut children = pair.into_inner();
     let first = children
         .next()
         .ok_or_else(|| ParserError::syntax("postfix expression is empty", source_span, None))?;
-    let mut value = build_value_expr(first)?;
+    let mut value = build_value_expr(first, budget)?;
 
     for op_pair in children {
         let op_span = span(&op_pair);
@@ -265,7 +287,7 @@ fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                 let previous_span = value.span();
                 value = ValueExpr::PropertyAccess {
                     target: Box::new(value),
-                    key: intern_pair(prop)?,
+                    key: intern_pair(prop, budget)?,
                     span: SourceSpan::merge(previous_span, op_span),
                 };
             }
@@ -274,7 +296,7 @@ fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
                 let previous_span = value.span();
                 value = ValueExpr::ListAccess {
                     target: Box::new(value),
-                    index: Box::new(build_value_expr(index_pair)?),
+                    index: Box::new(build_value_expr(index_pair, budget)?),
                     span: SourceSpan::merge(previous_span, op_span),
                 };
             }
@@ -291,7 +313,10 @@ fn build_postfix(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     Ok(value)
 }
 
-fn build_record_constructor(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
+fn build_record_constructor(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     let fields = pair
         .into_inner()
@@ -305,7 +330,10 @@ fn build_record_constructor(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserErr
             let value_pair = children.next().ok_or_else(|| {
                 ParserError::syntax("record field is missing value", field_span, None)
             })?;
-            Ok((intern_pair(key_pair)?, build_value_expr(value_pair)?))
+            Ok((
+                intern_pair(key_pair, budget)?,
+                build_value_expr(value_pair, budget)?,
+            ))
         })
         .collect::<Result<Vec<_>, ParserError>>()?;
     Ok(ValueExpr::RecordLiteral {
