@@ -183,6 +183,10 @@ mod tests {
     )]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
+        assert!(
+            selene_core::gqlstatus_name(status).is_some(),
+            "GQLSTATUS code {status} emitted by GraphError but not in ALL_GQLSTATUS_NAMES"
+        );
     }
 
     #[test]

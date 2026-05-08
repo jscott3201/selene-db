@@ -171,6 +171,10 @@ mod tests {
         ];
         for error in errors {
             assert_eq!(error.gqlstatus(), "0G004");
+            assert!(
+                crate::gqlstatus_name(error.gqlstatus()).is_some(),
+                "GQLSTATUS code emitted by CodecError but not in ALL_GQLSTATUS_NAMES"
+            );
         }
     }
 

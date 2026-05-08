@@ -316,5 +316,9 @@ mod tests {
     #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "XX500")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
+        assert!(
+            selene_core::gqlstatus_name(status).is_some(),
+            "GQLSTATUS code {status} emitted by PersistError but not in ALL_GQLSTATUS_NAMES"
+        );
     }
 }
