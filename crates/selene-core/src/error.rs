@@ -162,6 +162,10 @@ mod tests {
         #[case] diagnostic_code: &str,
     ) {
         assert_eq!(error.gqlstatus(), gqlstatus);
+        assert!(
+            crate::gqlstatus_name(gqlstatus).is_some(),
+            "GQLSTATUS code {gqlstatus} emitted by CoreError but not in ALL_GQLSTATUS_NAMES"
+        );
         assert_eq!(
             error.code().map(|code| code.to_string()).as_deref(),
             Some(diagnostic_code)
