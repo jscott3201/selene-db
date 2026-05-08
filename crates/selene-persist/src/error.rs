@@ -1,4 +1,4 @@
-//! Error types for WAL persistence.
+//! Error types for persistence formats.
 
 /// Result alias for persistence operations.
 pub type PersistResult<T> = Result<T, PersistError>;
@@ -7,8 +7,8 @@ pub type PersistResult<T> = Result<T, PersistError>;
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum PersistError {
-    /// I/O failure on the WAL file.
-    #[error("wal io: {0}")]
+    /// I/O failure on a persistence file.
+    #[error("persistence io: {0}")]
     #[diagnostic(code(SLENE_P_001))]
     Io(#[from] std::io::Error),
 
@@ -47,8 +47,8 @@ pub enum PersistError {
         max: usize,
     },
 
-    /// Magic bytes do not match `SLDB`.
-    #[error("wal magic mismatch: expected SLDB, got {observed:?}")]
+    /// Magic bytes do not match the expected persistence format.
+    #[error("persistence magic mismatch: got {observed:?}")]
     #[diagnostic(code(SLENE_P_007))]
     MagicMismatch {
         /// Observed four-byte file magic.
@@ -100,6 +100,90 @@ pub enum PersistError {
     #[error("wal writer lock is held by another process or handle")]
     #[diagnostic(code(SLENE_P_013))]
     WriterLockHeld,
+
+    /// Snapshot header missing or short read at open.
+    #[error("snapshot file truncated before completing the file header")]
+    #[diagnostic(code(SLENE_P_014))]
+    TruncatedSnapshotHeader,
+
+    /// Snapshot section table missing or short read.
+    #[error("snapshot section table truncated at offset {offset}")]
+    #[diagnostic(code(SLENE_P_015))]
+    TruncatedSectionTable {
+        /// File offset where the truncated table row started.
+        offset: u64,
+    },
+
+    /// Snapshot contains more sections than the u16 section-count field can hold.
+    #[error("snapshot has too many sections: {count} (max {max})")]
+    #[diagnostic(code(SLENE_P_016))]
+    TooManySections {
+        /// Requested section count.
+        count: usize,
+        /// Maximum section count.
+        max: usize,
+    },
+
+    /// Snapshot section payload exceeds the hard per-section cap.
+    #[error("snapshot section too large: {len} bytes (max {max})")]
+    #[diagnostic(code(SLENE_P_017))]
+    SectionTooLarge {
+        /// Encoded or decoded section length.
+        len: usize,
+        /// Maximum section byte length.
+        max: usize,
+    },
+
+    /// Snapshot builder saw the same provider/sub tag twice.
+    #[error("duplicate snapshot section tag: provider {provider:?}, sub {sub:?}")]
+    #[diagnostic(code(SLENE_P_018))]
+    DuplicateSection {
+        /// Provider tag.
+        provider: [u8; 4],
+        /// Provider-owned sub-tag.
+        sub: [u8; 4],
+    },
+
+    /// Snapshot body hash does not match the section table and payload bytes.
+    #[error("snapshot body hash mismatch: expected {expected:?}, observed {observed:?}")]
+    #[diagnostic(code(SLENE_P_019))]
+    BodyHashMismatch {
+        /// Hash stored in the snapshot header.
+        expected: [u8; 16],
+        /// Hash recomputed by the reader.
+        observed: [u8; 16],
+    },
+
+    /// Snapshot header set a flag this implementation does not support.
+    #[error("snapshot flag unsupported: {flag:#06x}")]
+    #[diagnostic(code(SLENE_P_020))]
+    UnsupportedFlag {
+        /// Unsupported flag bit or mask.
+        flag: u16,
+    },
+
+    /// Snapshot header reserved bytes were not zero.
+    #[error("snapshot reserved bytes were nonzero at offset {offset}")]
+    #[diagnostic(code(SLENE_P_021))]
+    ReservedBytesNonZero {
+        /// File offset of the first nonzero reserved byte.
+        offset: u64,
+    },
+
+    /// Snapshot filename could not be parsed.
+    #[error("malformed snapshot filename")]
+    #[diagnostic(code(SLENE_P_022))]
+    MalformedSnapshotFilename,
+
+    /// Requested snapshot section tag is not present.
+    #[error("snapshot section missing: provider {provider:?}, sub {sub:?}")]
+    #[diagnostic(code(SLENE_P_023))]
+    SectionMissing {
+        /// Provider tag.
+        provider: [u8; 4],
+        /// Provider-owned sub-tag.
+        sub: [u8; 4],
+    },
 }
 
 impl PersistError {
@@ -108,7 +192,10 @@ impl PersistError {
     pub const fn gqlstatus(&self) -> &'static str {
         match self {
             Self::PrincipalTooLarge { .. } => "22023",
-            Self::PayloadTooLarge { .. } => "54000",
+            Self::PayloadTooLarge { .. }
+            | Self::TooManySections { .. }
+            | Self::SectionTooLarge { .. } => "54000",
+            Self::DuplicateSection { .. } => "22023",
             Self::UnsupportedVersion { .. } => "08000",
             Self::Io(_)
             | Self::HeaderCodec(_)
@@ -119,7 +206,14 @@ impl PersistError {
             | Self::NonMonotonicSequence { .. }
             | Self::TruncatedFileHeader
             | Self::TruncatedEntry { .. }
-            | Self::WriterLockHeld => "XX500",
+            | Self::WriterLockHeld
+            | Self::TruncatedSnapshotHeader
+            | Self::TruncatedSectionTable { .. }
+            | Self::BodyHashMismatch { .. }
+            | Self::UnsupportedFlag { .. }
+            | Self::ReservedBytesNonZero { .. }
+            | Self::MalformedSnapshotFilename
+            | Self::SectionMissing { .. } => "XX500",
         }
     }
 }
@@ -143,6 +237,16 @@ mod tests {
     #[case(PersistError::TruncatedFileHeader, "XX500")]
     #[case(PersistError::TruncatedEntry { offset: 16 }, "XX500")]
     #[case(PersistError::WriterLockHeld, "XX500")]
+    #[case(PersistError::TruncatedSnapshotHeader, "XX500")]
+    #[case(PersistError::TruncatedSectionTable { offset: 32 }, "XX500")]
+    #[case(PersistError::TooManySections { count: 2, max: 1 }, "54000")]
+    #[case(PersistError::SectionTooLarge { len: 2, max: 1 }, "54000")]
+    #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22023")]
+    #[case(PersistError::BodyHashMismatch { expected: [1; 16], observed: [2; 16] }, "XX500")]
+    #[case(PersistError::UnsupportedFlag { flag: 1 }, "XX500")]
+    #[case(PersistError::ReservedBytesNonZero { offset: 12 }, "XX500")]
+    #[case(PersistError::MalformedSnapshotFilename, "XX500")]
+    #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "XX500")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
     }

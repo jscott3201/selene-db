@@ -1,9 +1,8 @@
 //! WAL payload codec.
 
-use std::io::Read;
-
 use selene_core::Change;
 
+use crate::compression::{compress_zstd, decompress_zstd_bounded};
 use crate::entry_header::{
     COMPRESS_THRESHOLD, FLAG_PAYLOAD_COMPRESSED, MAX_WAL_ENTRY_BYTES, ensure_payload_len,
 };
@@ -19,11 +18,7 @@ pub(crate) fn encode_changes(changes: &[Change]) -> PersistResult<EncodedPayload
     let raw = postcard::to_stdvec(changes)
         .map_err(|error| PersistError::PayloadCodec(error.to_string()))?;
     let (bytes, flags) = if raw.len() >= COMPRESS_THRESHOLD {
-        (
-            zstd::stream::encode_all(raw.as_slice(), 1)
-                .map_err(|error| PersistError::Compression(error.to_string()))?,
-            FLAG_PAYLOAD_COMPRESSED,
-        )
+        (compress_zstd(raw.as_slice(), 1)?, FLAG_PAYLOAD_COMPRESSED)
     } else {
         (raw, 0)
     };
@@ -38,37 +33,13 @@ pub(crate) fn encode_changes(changes: &[Change]) -> PersistResult<EncodedPayload
 
 pub(crate) fn decode_changes(bytes: &[u8], compressed: bool) -> PersistResult<Vec<Change>> {
     let raw = if compressed {
-        decompress_bounded(bytes)?
+        decompress_zstd_bounded(bytes, MAX_WAL_ENTRY_BYTES, |len, max| {
+            PersistError::PayloadTooLarge { len, max }
+        })?
     } else {
         bytes.to_vec()
     };
     postcard::from_bytes(&raw).map_err(|error| PersistError::PayloadCodec(error.to_string()))
-}
-
-/// Stream-decompress a zstd frame, bounding the output to
-/// [`MAX_WAL_ENTRY_BYTES`]. A crafted or corrupt frame whose decompressed
-/// size exceeds the WAL entry cap is rejected with
-/// [`PersistError::PayloadTooLarge`] before a runaway allocation happens.
-fn decompress_bounded(bytes: &[u8]) -> PersistResult<Vec<u8>> {
-    let mut decoder = zstd::stream::read::Decoder::new(bytes)
-        .map_err(|error| PersistError::Compression(error.to_string()))?;
-    let mut output = Vec::new();
-    let mut buf = [0_u8; 8 * 1024];
-    loop {
-        let read = decoder
-            .read(&mut buf)
-            .map_err(|error| PersistError::Compression(error.to_string()))?;
-        if read == 0 {
-            return Ok(output);
-        }
-        if output.len().saturating_add(read) > MAX_WAL_ENTRY_BYTES {
-            return Err(PersistError::PayloadTooLarge {
-                len: output.len().saturating_add(read),
-                max: MAX_WAL_ENTRY_BYTES,
-            });
-        }
-        output.extend_from_slice(&buf[..read]);
-    }
 }
 
 pub(crate) fn verify_checksum(header: &WalEntryHeader, bytes: &[u8]) -> PersistResult<()> {
@@ -197,7 +168,10 @@ mod tests {
         let huge = vec![0_u8; oversize];
         let compressed =
             zstd::stream::encode_all(huge.as_slice(), 1).expect("zstd encode of test buffer");
-        let err = decompress_bounded(&compressed).unwrap_err();
+        let err = decompress_zstd_bounded(&compressed, MAX_WAL_ENTRY_BYTES, |len, max| {
+            PersistError::PayloadTooLarge { len, max }
+        })
+        .unwrap_err();
         match err {
             PersistError::PayloadTooLarge { len, max } => {
                 assert!(len > max);
