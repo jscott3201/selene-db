@@ -21,15 +21,15 @@ mod pest_impl {
 
 /// Parse one GQL program.
 ///
-/// BRIEF-16 constructs AST nodes only for literal `RETURN` statements. The
-/// grammar already recognizes the broader language surface so later briefs can
-/// add builders without another grammar port.
+/// BRIEF-17 constructs AST nodes for read-side query pipelines and expression
+/// forms. Mutation, DDL, CALL, and transaction-control builders intentionally
+/// remain deferred to later briefs.
 ///
 /// # Errors
 ///
 /// Returns [`ParserError::SyntaxError`] for parse failures and
 /// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
-/// intentionally land after BRIEF-16.
+/// intentionally land after BRIEF-17.
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     let mut pairs =
         GqlParser::parse(Rule::gql_program, source).map_err(|error| pest_error(source, error))?;
@@ -67,13 +67,32 @@ mod tests {
     use selene_core::intern;
 
     use super::*;
-    use crate::ast::{Literal, ValueExpr};
+    use crate::ast::{
+        BinaryOp, EdgeDirection, LabelExpr, Literal, PathSelector, PipelineStatement, SetOp,
+        ValueExpr,
+    };
     use crate::error::GqlStatus;
 
+    fn query(source: &str) -> crate::ast::QueryPipeline {
+        let Statement::Query(query) = parse(source).expect("parse succeeds") else {
+            panic!("expected query statement");
+        };
+        query
+    }
+
+    fn return_clause(source: &str) -> crate::ast::ReturnClause {
+        let query = query(source);
+        assert_eq!(query.statements.len(), 1);
+        let PipelineStatement::Return(clause) = query.statements.into_iter().next().unwrap() else {
+            panic!("expected return clause");
+        };
+        clause
+    }
+
     fn only_item(source: &str) -> crate::ast::ReturnItem {
-        let Statement::Return(statement) = parse(source).expect("parse succeeds");
-        assert_eq!(statement.items.len(), 1);
-        statement.items.into_iter().next().unwrap()
+        let clause = return_clause(source);
+        assert_eq!(clause.items.len(), 1);
+        clause.items.into_iter().next().unwrap()
     }
 
     #[test]
@@ -132,7 +151,7 @@ mod tests {
 
     #[test]
     fn parse_return_multiple_items() {
-        let Statement::Return(statement) = parse("RETURN 1, 2.5, 'x'").expect("parse succeeds");
+        let statement = return_clause("RETURN 1, 2.5, 'x'");
         assert_eq!(statement.items.len(), 3);
         assert_eq!(statement.span, SourceSpan::new(0, 18));
         assert_eq!(statement.items[0].span, SourceSpan::new(7, 1));
@@ -158,7 +177,7 @@ mod tests {
 
     #[test]
     fn unsupported_grammar_surface_returns_not_implemented() {
-        let err = parse("MATCH (n) RETURN n").expect_err("unsupported grammar should error");
+        let err = parse("CALL foo() YIELD *").expect_err("unsupported grammar should error");
         assert!(matches!(err, ParserError::NotImplemented { .. }));
         assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
@@ -235,12 +254,337 @@ mod tests {
 
     #[test]
     fn non_decimal_literal_reports_not_implemented() {
-        // Hex/oct/bin/uint/temporal/list literals parse at the grammar level
-        // but their builders land in BRIEF-17. Surface them as
-        // NotImplemented (0A000), not SyntaxError, so callers can distinguish
-        // capability gaps from typos.
+        // Hex/oct/bin/uint/temporal literals parse at the grammar level but
+        // their builders land later. Surface them as NotImplemented (0A000),
+        // not SyntaxError, so callers can distinguish capability gaps from
+        // typos.
         let err = parse("RETURN 0x10").expect_err("hex literal should report not implemented");
         assert!(matches!(err, ParserError::NotImplemented { .. }));
         assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    }
+
+    #[test]
+    fn parse_match_return_pipeline() {
+        let query = query("MATCH ANY (n:Person {age: 42}) WHERE n.active RETURN n.name AS name");
+        assert_eq!(query.statements.len(), 2);
+        let PipelineStatement::Match(match_clause) = &query.statements[0] else {
+            panic!("expected MATCH");
+        };
+        assert_eq!(match_clause.selector, Some(PathSelector::Any));
+        assert!(match_clause.where_clause.is_some());
+        let node = match &match_clause.patterns[0].elements[0] {
+            crate::ast::PatternElement::Node(node) => node,
+            _ => panic!("expected node pattern"),
+        };
+        assert_eq!(node.binding, Some(intern("n").expect("intern succeeds")));
+        assert_eq!(
+            node.label_expr,
+            Some(LabelExpr::Single(intern("Person").unwrap()))
+        );
+        assert_eq!(node.properties.len(), 1);
+
+        let PipelineStatement::Return(return_clause) = &query.statements[1] else {
+            panic!("expected RETURN");
+        };
+        assert_eq!(return_clause.items[0].alias, Some(intern("name").unwrap()));
+        assert!(matches!(
+            return_clause.items[0].expr,
+            ValueExpr::PropertyAccess { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_edge_quantifier_and_undirected_direction() {
+        let query = query("MATCH (a)-[:KNOWS*1..3]-(b) RETURN b");
+        let PipelineStatement::Match(match_clause) = &query.statements[0] else {
+            panic!("expected MATCH");
+        };
+        let edge = match &match_clause.patterns[0].elements[1] {
+            crate::ast::PatternElement::Edge(edge) => edge,
+            _ => panic!("expected edge pattern"),
+        };
+        assert_eq!(edge.direction, EdgeDirection::Undirected);
+        assert_eq!(edge.quantifier.unwrap().min, 1);
+        assert_eq!(edge.quantifier.unwrap().max, Some(3));
+    }
+
+    #[test]
+    fn parse_label_conjunction_with_colon_separator() {
+        let query = query("MATCH (n:Person:Engineer) RETURN n");
+        let PipelineStatement::Match(match_clause) = &query.statements[0] else {
+            panic!("expected MATCH");
+        };
+        let node = match &match_clause.patterns[0].elements[0] {
+            crate::ast::PatternElement::Node(node) => node,
+            _ => panic!("expected node pattern"),
+        };
+        assert!(matches!(
+            node.label_expr,
+            Some(LabelExpr::Conjunction(ref parts)) if parts.len() == 2
+        ));
+    }
+
+    #[test]
+    fn parse_binary_expression_precedence() {
+        let item = only_item("RETURN 1 + 2 * 3");
+        let ValueExpr::BinaryOp {
+            op: BinaryOp::Add,
+            rhs,
+            ..
+        } = item.expr
+        else {
+            panic!("expected addition");
+        };
+        assert!(matches!(
+            *rhs,
+            ValueExpr::BinaryOp {
+                op: BinaryOp::Mul,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_function_aggregate_star_and_distinct() {
+        let count_star = only_item("RETURN count(*)").expr;
+        assert!(matches!(
+            count_star,
+            ValueExpr::FunctionCall {
+                star: true,
+                distinct: false,
+                ref args,
+                ..
+            } if args.is_empty()
+        ));
+
+        let count_distinct = only_item("RETURN count(DISTINCT n)").expr;
+        assert!(matches!(
+            count_distinct,
+            ValueExpr::FunctionCall {
+                star: false,
+                distinct: true,
+                ref args,
+                ..
+            } if args.len() == 1
+        ));
+    }
+
+    #[test]
+    fn parse_list_record_and_case_expressions() {
+        assert!(matches!(
+            only_item("RETURN [1, 2][0]").expr,
+            ValueExpr::ListAccess { .. }
+        ));
+        assert!(matches!(
+            only_item("RETURN {name: 'Alice'}").expr,
+            ValueExpr::RecordLiteral { ref fields, .. } if fields.len() == 1
+        ));
+        assert!(matches!(
+            only_item("RETURN CASE WHEN true THEN 1 ELSE 0 END").expr,
+            ValueExpr::Case { ref branches, else_branch: Some(_), .. } if branches.len() == 1
+        ));
+    }
+
+    #[test]
+    fn parse_predicate_expression_family() {
+        assert!(matches!(
+            only_item("RETURN n IS NOT NULL").expr,
+            ValueExpr::IsCheck { negated: true, .. }
+        ));
+        assert!(matches!(
+            only_item("RETURN n.age BETWEEN 1 AND 3").expr,
+            ValueExpr::Between { negated: false, .. }
+        ));
+        assert!(matches!(
+            only_item("RETURN n.name STARTS WITH 'A'").expr,
+            ValueExpr::BinaryOp {
+                op: BinaryOp::StartsWith,
+                ..
+            }
+        ));
+        assert!(matches!(
+            only_item("RETURN PROPERTY_EXISTS(n, 'name')").expr,
+            ValueExpr::PropertyExists { .. }
+        ));
+    }
+
+    #[test]
+    fn parse_select_desugars_to_return_pipeline() {
+        let query = query("SELECT DISTINCT 1 AS one ORDER BY one DESC LIMIT 10");
+        assert_eq!(query.statements.len(), 3);
+        let PipelineStatement::Return(return_clause) = &query.statements[0] else {
+            panic!("expected RETURN");
+        };
+        assert!(return_clause.distinct);
+        assert_eq!(return_clause.items[0].alias, Some(intern("one").unwrap()));
+        assert!(matches!(query.statements[1], PipelineStatement::Sorting(_)));
+        assert!(matches!(query.statements[2], PipelineStatement::Limit(_)));
+    }
+
+    #[test]
+    fn parse_composite_and_chained_queries() {
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 UNION ALL RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::UnionAll);
+
+        let Statement::Chained { blocks, .. } =
+            parse("MATCH (n) RETURN n NEXT MATCH (m) RETURN m").expect("parse succeeds")
+        else {
+            panic!("expected chained query");
+        };
+        assert_eq!(blocks.len(), 2);
+    }
+
+    #[test]
+    fn intersect_and_except_preserve_all_modifier() {
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 INTERSECT ALL RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::IntersectAll);
+
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 EXCEPT ALL RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::ExceptAll);
+
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 INTERSECT RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::Intersect);
+    }
+
+    #[test]
+    fn select_pipeline_emits_pre_return_then_return_then_post_return() {
+        // SELECT desugaring must lay statements out in semantic order:
+        // pre-projection (MATCH, WHERE/FILTER) before RETURN, post-projection
+        // (ORDER BY, OFFSET, LIMIT) after. The previous shape pushed every
+        // non-projection clause into a single `deferred` bucket appended
+        // after RETURN, which silently rewrote `WHERE` into a post-RETURN
+        // filter — wrong semantics whenever projection introduces aliases
+        // or aggregation. The grammar's match_stmt currently absorbs an
+        // inline WHERE on `FROM MATCH (...) WHERE ...`, so the statement
+        // shape here exercises ordering of the post-RETURN slot (sorting
+        // and limit) which routes through the same fix.
+        let query = query("SELECT n.name FROM MATCH (n) WHERE n.age > 18 ORDER BY n.name LIMIT 10");
+        assert!(
+            matches!(query.statements[0], PipelineStatement::Match(_)),
+            "[0] expected Match, got {:?}",
+            query.statements[0]
+        );
+        assert!(
+            matches!(query.statements[1], PipelineStatement::Return(_)),
+            "[1] expected Return, got {:?}",
+            query.statements[1]
+        );
+        assert!(
+            matches!(query.statements[2], PipelineStatement::Sorting(_)),
+            "[2] expected Sorting, got {:?}",
+            query.statements[2]
+        );
+        assert!(
+            matches!(query.statements[3], PipelineStatement::Limit(_)),
+            "[3] expected Limit, got {:?}",
+            query.statements[3]
+        );
+    }
+
+    #[test]
+    fn quantifier_range_with_max_below_min_rejected() {
+        for source in [
+            "MATCH (a)-[*5..2]-(b) RETURN a",
+            "MATCH (a)-[*{5,2}]-(b) RETURN a",
+        ] {
+            let err = parse(source).expect_err("max < min should error");
+            assert!(
+                matches!(err, ParserError::SyntaxError { .. }),
+                "expected syntax error for {source:?}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn conflicting_quantifiers_in_edge_pattern_rejected() {
+        // edge_interior accepts a quantifier and the outer edge accepts one
+        // too. Specifying both must error rather than letting the second
+        // silently overwrite the first.
+        let err = parse("MATCH (a)-[r*1..2*3..4]->(b) RETURN a")
+            .expect_err("conflicting quantifiers should error");
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected syntax error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn is_labeled_with_quoted_keyword_does_not_misroute() {
+        // Quoted identifiers that contain IS-suffix keywords (IN, NOT,
+        // LIKE, BETWEEN, NORMALIZED, ...) must be classified by grammar
+        // rules, not by substring scans of the source text. Otherwise
+        // `IS LABELED :"IN"` would be misrouted to the IN predicate and
+        // fail with "missing list", and `IS LABELED :"NOT"` would
+        // silently flip negation.
+        let labeled_in = only_item("RETURN n IS LABELED :\"IN\"").expr;
+        let ValueExpr::IsCheck { kind, negated, .. } = labeled_in else {
+            panic!("expected IS LABELED to parse as IsCheck");
+        };
+        assert!(!negated, "no NOT token, but negation flagged");
+        assert!(matches!(
+            kind,
+            crate::ast::IsCheckKind::Labeled(LabelExpr::Single(_))
+        ));
+
+        let labeled_not = only_item("RETURN n IS LABELED :\"NOT\"").expr;
+        let ValueExpr::IsCheck { negated, .. } = labeled_not else {
+            panic!("expected IS LABELED to parse as IsCheck");
+        };
+        assert!(!negated, "quoted NOT in label name must not flip negation");
+    }
+
+    #[test]
+    fn is_not_labeled_uses_token_negation() {
+        // The NOT keyword in IS NOT LABELED really does negate the predicate.
+        let item = only_item("RETURN n IS NOT LABELED :Person").expr;
+        let ValueExpr::IsCheck { negated, .. } = item else {
+            panic!("expected IS NOT LABELED to parse as IsCheck");
+        };
+        assert!(negated, "IS NOT LABELED must produce negated=true");
+    }
+
+    #[test]
+    fn qualified_function_names_preserve_segment_boundaries() {
+        // `foo."bar.baz"` and `foo.bar.baz` would collide if the AST stored
+        // the qualified name as a single dotted string. The Vec<IStr> path
+        // keeps them distinguishable so namespaced procedure calls resolve
+        // to the right thing.
+        let bare = only_item("RETURN foo.bar.baz()").expr;
+        let ValueExpr::FunctionCall {
+            name: name_three, ..
+        } = bare
+        else {
+            panic!("expected FunctionCall");
+        };
+        assert_eq!(name_three.len(), 3);
+
+        let quoted = only_item("RETURN foo.\"bar.baz\"()").expr;
+        let ValueExpr::FunctionCall { name: name_two, .. } = quoted else {
+            panic!("expected FunctionCall");
+        };
+        assert_eq!(name_two.len(), 2);
+
+        // Single-segment bare name is still one segment.
+        let single = only_item("RETURN count(*)").expr;
+        let ValueExpr::FunctionCall { name: name_one, .. } = single else {
+            panic!("expected FunctionCall");
+        };
+        assert_eq!(name_one.len(), 1);
     }
 }

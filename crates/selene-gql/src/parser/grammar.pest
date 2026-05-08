@@ -129,7 +129,7 @@ with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 
 match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
 match_mode        = { ^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS" }
-path_selector     = { (^"ANY" | ^"ALL") ~ ^"SHORTEST" }
+path_selector     = { ^"ANY" ~ ^"SHORTEST"? | ^"ALL" ~ ^"SHORTEST"? }
 optional_modifier = { ^"OPTIONAL" }
 path_modifier     = { ^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL" }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
@@ -154,13 +154,14 @@ abbrev_right = { "->" }
 abbrev_left  = { "<-" ~ !("[") }
 abbrev_any   = { "-" ~ !("-" | "[" | ">" | ASCII_DIGIT) }
 
-edge_interior = { edge_var? ~ label_expr? ~ property_map? ~ inline_where? }
+edge_interior = { edge_var? ~ label_expr? ~ quantifier? ~ property_map? ~ inline_where? }
 edge_var      = { ident }
 
 // -- Quantifier -----------------------------------------------------
 
-quantifier = { "{" ~ quant_body ~ "}" | quant_star | quant_plus | quant_question }
+quantifier = { quant_star_range | "{" ~ quant_body ~ "}" | quant_star | quant_plus | quant_question }
 quant_body = { quant_range_full | quant_range_min | quant_range_max | quant_exact }
+quant_star_range = { "*" ~ uint ~ ".." ~ uint? }
 quant_star     = { "*" }
 quant_plus     = { "+" }
 quant_question = { "?" }
@@ -173,7 +174,7 @@ quant_range_max  = { "," ~ uint }
 
 label_expr = { ":" ~ label_or }
 label_or   = { label_and ~ ("|" ~ label_and)* }
-label_and  = { label_not ~ ("&" ~ label_not)* }
+label_and  = { label_not ~ (("&" | ":") ~ label_not)* }
 label_not  = { "!" ~ label_atom | label_atom }
 label_atom = { label_wildcard | ident }
 label_wildcard = { "%" }
@@ -319,23 +320,34 @@ like_kw    = @{ ^"LIKE"    ~ !(LETTER | NUMBER | "_") }
 between_kw = @{ ^"BETWEEN" ~ !(LETTER | NUMBER | "_") }
 
 // IS NULL, IS TRUE/FALSE/UNKNOWN, IN list, string matching - same precedence, after NOT
+//
+// Each branch produces the typed discriminator children (labeled_kw,
+// directed_kw, etc.) so the AST builder can dispatch by Rule variant rather
+// than scanning the rendered text. Substring scans of the source text
+// misroute predicates whose operands contain quoted identifiers like
+// `:"NOT"` or `:"LABELED"`.
 is_expr = { comparison ~ is_suffix? }
 is_suffix = {
     is_kw ~ not_kw ~ null_kw
   | is_kw ~ null_kw
-  | is_kw ~ not_kw? ~ ^"LABELED" ~ label_expr
-  | is_kw ~ not_kw? ~ ^"SOURCE" ~ ^"OF" ~ comparison
-  | is_kw ~ not_kw? ~ ^"DESTINATION" ~ ^"OF" ~ comparison
-  | is_kw ~ not_kw? ~ ^"DIRECTED"
-  | is_kw ~ not_kw? ~ normal_form? ~ ^"NORMALIZED"
+  | is_kw ~ not_kw? ~ labeled_kw ~ label_expr
+  | is_kw ~ not_kw? ~ source_of_kw ~ comparison
+  | is_kw ~ not_kw? ~ destination_of_kw ~ comparison
+  | is_kw ~ not_kw? ~ directed_kw
+  | is_kw ~ not_kw? ~ normal_form? ~ normalized_kw
   | is_kw ~ not_kw? ~ truth_value
-  | is_kw ~ not_kw? ~ ^"TYPED" ~ type_name
+  | is_kw ~ not_kw? ~ typed_kw ~ type_name
   | not_kw? ~ like_kw ~ addition
   | not_kw? ~ between_kw ~ addition ~ and_kw ~ addition
-  | not_kw ~ ^"IN" ~ !(LETTER | NUMBER | "_") ~ list_lit
-  | ^"IN" ~ !(LETTER | NUMBER | "_") ~ list_lit
+  | not_kw? ~ in_kw ~ list_lit
   | string_match_op ~ comparison
 }
+labeled_kw        = @{ ^"LABELED" ~ !(LETTER | NUMBER | "_") }
+directed_kw       = @{ ^"DIRECTED" ~ !(LETTER | NUMBER | "_") }
+normalized_kw     = @{ ^"NORMALIZED" ~ !(LETTER | NUMBER | "_") }
+typed_kw          = @{ ^"TYPED" ~ !(LETTER | NUMBER | "_") }
+source_of_kw      = ${ ^"SOURCE" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
+destination_of_kw = ${ ^"DESTINATION" ~ WHITESPACE+ ~ ^"OF" ~ !(LETTER | NUMBER | "_") }
 truth_value = { ^"TRUE" | ^"FALSE" | ^"UNKNOWN" }
 normal_form = { ^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD" }
 string_match_op = { ^"STARTS" ~ ^"WITH" | ^"ENDS" ~ ^"WITH" | ^"CONTAINS" }
