@@ -26,6 +26,23 @@ fn kind_round_trips_for_each_variant() {
 }
 
 #[test]
+fn kind_rkyv_round_trips_for_each_variant() {
+    for kind in [
+        TypedIndexKind::I64,
+        TypedIndexKind::F64,
+        TypedIndexKind::String,
+        TypedIndexKind::Date,
+        TypedIndexKind::LocalDateTime,
+        TypedIndexKind::Uuid,
+    ] {
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&kind).unwrap();
+        let round: TypedIndexKind =
+            rkyv::from_bytes::<TypedIndexKind, rkyv::rancor::Error>(&bytes).unwrap();
+        assert_eq!(round, kind);
+    }
+}
+
+#[test]
 fn not_nan_rejects_nan() {
     assert_eq!(NotNanF64::new(f64::NAN), Err(NotNanError));
 }

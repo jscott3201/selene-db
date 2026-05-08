@@ -9,6 +9,11 @@ use std::fmt;
 use std::sync::{Mutex, OnceLock};
 
 use lasso::{Spur, ThreadedRodeo};
+use rkyv::{
+    Archive, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize, SerializeUnsized,
+    rancor::{Fallible, Source},
+    string::{ArchivedString, StringResolver},
+};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::error::{CoreError, CoreResult};
@@ -95,6 +100,43 @@ impl IStr {
     #[must_use]
     pub fn as_str(self) -> &'static str {
         resolve(self)
+    }
+}
+
+impl Archive for IStr {
+    type Archived = ArchivedString;
+    type Resolver = StringResolver;
+
+    fn resolve(&self, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        ArchivedString::resolve_from_str(self.as_str(), resolver, out);
+    }
+}
+
+impl<S> RkyvSerialize<S> for IStr
+where
+    S: Fallible + ?Sized,
+    S::Error: Source,
+    str: SerializeUnsized<S>,
+{
+    fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        // Why: interner keys are process-local; archive bytes ensure
+        // cold-start portability per spec 04 section 2 / D9.
+        ArchivedString::serialize_from_str(self.as_str(), serializer)
+    }
+}
+
+impl<D> RkyvDeserialize<IStr, D> for ArchivedString
+where
+    D: Fallible + ?Sized,
+    D::Error: Source,
+{
+    fn deserialize(&self, _deserializer: &mut D) -> Result<IStr, D::Error> {
+        match intern(self.as_str()) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                rkyv::rancor::fail!(error);
+            }
+        }
     }
 }
 
@@ -241,5 +283,22 @@ mod tests {
         for handle in handles {
             assert!(handle.join().is_ok());
         }
+    }
+
+    #[test]
+    fn rkyv_archives_resolved_string_not_interner_key() {
+        let key = intern("istr.rkyv.portable").unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
+        let archived = rkyv::access::<rkyv::Archived<IStr>, rkyv::rancor::Error>(&bytes).unwrap();
+        assert_eq!(archived.as_str(), "istr.rkyv.portable");
+    }
+
+    #[test]
+    fn rkyv_round_trip_reinterns_string() {
+        let key = intern("istr.rkyv.reintern").unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
+        let decoded: IStr = rkyv::from_bytes::<IStr, rkyv::rancor::Error>(&bytes).unwrap();
+        assert_eq!(decoded.as_str(), "istr.rkyv.reintern");
+        assert_eq!(decoded, key);
     }
 }

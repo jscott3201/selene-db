@@ -22,3 +22,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-12: selene-persist added the recovery API with `RecoveryProvider`, deterministic `ProviderRegistry`, snapshot apply, WAL replay, WAL/snapshot epoch validation, provider error wrapping, and per-entry replicated-change dedupe.
 - BRIEF-INFRA-02: selene-core added symbolic registries for first-party `ExtensionTypeId` rendering and emitted GQLSTATUS code names, with drift tests in selene-core, selene-graph, and selene-persist.
 - BRIEF-13: selene-graph added the auto-registered CORE provider, postcard snapshot sections for primary graph state, SharedGraph recovery through selene-persist, and cold-start rebuild of adjacency plus secondary indexes.
+- BRIEF-14: selene-graph switched CORE snapshot sections from postcard payloads to rkyv sorted-vec archives, with portable UTF-8 `IStr` archiving and postcard retained only inside per-row property blobs.
