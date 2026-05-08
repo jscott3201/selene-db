@@ -4,12 +4,20 @@ use selene_core::intern;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ConditionClause,
     GqlStatus, GqlType, IsCheckKind, Literal, PipelineStatement, QueryPipeline, ReturnClause,
-    ReturnItem, SourceSpan, Statement, TypeMismatchContext, ValueExpr, analyze, parse,
+    ReturnItem, Side, SourceSpan, Statement, TypeMismatchContext, ValueExpr, analyze, parse,
 };
 
 fn analyze_one(source: &str) -> Result<AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
     analyze(statement)
+}
+
+fn type_mismatch(source: &str) -> (TypeMismatchContext, SourceSpan) {
+    let err = analyze_one(source).unwrap_err();
+    match err {
+        AnalysisError::TypeMismatch { context, span, .. } => (context, span),
+        other => panic!("expected TypeMismatch for {source}, got {other:?}"),
+    }
 }
 
 fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
@@ -119,6 +127,15 @@ fn record_literal_stays_dynamic() {
 }
 
 #[test]
+fn list_concat_returns_list_type() {
+    let analyzed = analyze_one("RETURN [1] || [2] AS xs").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "xs"),
+        AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::Integer)))
+    );
+}
+
+#[test]
 fn expr_type_table_is_deterministic_for_same_source() {
     let left = analyze_one("RETURN 1 + 2 AS sum").unwrap();
     let right = analyze_one("RETURN 1 + 2 AS sum").unwrap();
@@ -175,6 +192,75 @@ fn compare_boolean_to_integer_errors() {
 }
 
 #[test]
+fn boolean_operator_rejects_static_non_boolean_operand() {
+    let (context, _) = type_mismatch("RETURN true AND 1 AS x");
+    assert!(matches!(
+        context,
+        TypeMismatchContext::BinaryBoolean {
+            op: _,
+            side: Side::Rhs
+        }
+    ));
+}
+
+#[test]
+fn concat_rejects_static_non_list_or_string_operand() {
+    let (context, _) = type_mismatch("RETURN 'a' || 1 AS x");
+    assert!(matches!(
+        context,
+        TypeMismatchContext::BinaryConcat { side: Side::Rhs }
+    ));
+}
+
+#[test]
+fn string_predicate_rejects_static_non_string_operand() {
+    let (context, _) = type_mismatch("RETURN 1 CONTAINS 'a' AS x");
+    assert!(matches!(
+        context,
+        TypeMismatchContext::BinaryStringPredicate {
+            op: _,
+            side: Side::Lhs
+        }
+    ));
+}
+
+#[test]
+fn like_uses_dedicated_mismatch_context() {
+    let (context, _) = type_mismatch("RETURN 1 LIKE 'a' AS x");
+    assert!(matches!(
+        context,
+        TypeMismatchContext::LikePredicate { side: Side::Lhs }
+    ));
+}
+
+#[test]
+fn is_normalized_uses_dedicated_mismatch_context() {
+    let (context, _) = type_mismatch("RETURN 1 IS NORMALIZED AS x");
+    assert!(matches!(context, TypeMismatchContext::IsNormalized));
+}
+
+#[test]
+fn unary_negate_rejects_static_non_numeric_operand() {
+    let (context, _) = type_mismatch("RETURN -true AS x");
+    assert!(matches!(context, TypeMismatchContext::UnaryNegate));
+}
+
+#[test]
+fn in_list_updates_unified_type_across_resolved_items() {
+    let (context, _) = type_mismatch("RETURN 'a' IN [NULL, 'b', 1] AS x");
+    assert!(matches!(context, TypeMismatchContext::InListUnification));
+}
+
+#[test]
+fn between_rejects_static_bound_family_mismatch() {
+    let (context, _) = type_mismatch("RETURN 1 BETWEEN 'a' AND 2 AS x");
+    assert!(matches!(
+        context,
+        TypeMismatchContext::BetweenBounds { side: Side::Rhs }
+    ));
+}
+
+#[test]
 fn case_branches_with_disjoint_types_error() {
     let err = analyze_one("MATCH (n) RETURN CASE WHEN n.age > 18 THEN 1 ELSE 'minor' END AS label")
         .unwrap_err();
@@ -188,6 +274,18 @@ fn case_branches_with_disjoint_types_error() {
 }
 
 #[test]
+fn case_dynamic_branch_still_validates_resolved_branches() {
+    let (context, span) = type_mismatch(
+        "MATCH (n) RETURN CASE WHEN true THEN n.age WHEN false THEN 'a' ELSE 1 END AS label",
+    );
+    assert!(matches!(
+        context,
+        TypeMismatchContext::CaseBranchUnification
+    ));
+    assert!(span.byte_len > 0);
+}
+
+#[test]
 fn list_literal_with_disjoint_types_errors() {
     let err = analyze_one("RETURN [1, 'a'] AS xs").unwrap_err();
     assert!(matches!(
@@ -197,6 +295,16 @@ fn list_literal_with_disjoint_types_errors() {
             ..
         }
     ));
+}
+
+#[test]
+fn list_dynamic_item_still_validates_resolved_items() {
+    let (context, span) = type_mismatch("MATCH (n) RETURN [n.age, 'a', 1] AS xs");
+    assert!(matches!(
+        context,
+        TypeMismatchContext::ListLiteralUnification
+    ));
+    assert!(span.byte_len > 0);
 }
 
 #[test]

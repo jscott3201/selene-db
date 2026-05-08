@@ -10,7 +10,7 @@ use crate::{
 };
 
 /// A parsed and bind-pass-validated GQL statement.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct AnalyzedStatement {
     /// Original statement shape, preserved for planner input.
     pub statement: AnalyzedStatementKind,

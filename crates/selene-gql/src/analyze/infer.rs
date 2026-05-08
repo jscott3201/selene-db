@@ -100,14 +100,7 @@ pub(crate) fn is_check(
             predicate_span,
         )),
         IsCheckKind::Normalized(_) => {
-            expect_string(
-                operand,
-                operand_span,
-                TypeMismatchContext::BinaryStringPredicate {
-                    op: BinaryOp::Contains,
-                    side: Side::Lhs,
-                },
-            )?;
+            expect_string(operand, operand_span, TypeMismatchContext::IsNormalized)?;
             Ok(AnalyzedType::Resolved(GqlType::Boolean))
         }
         IsCheckKind::Null
@@ -130,7 +123,9 @@ pub(crate) fn in_list(
     for (ty, span) in items {
         if let AnalyzedType::Resolved(item_ty) = ty {
             if let Some((current, _)) = &unified {
-                if meet_gql_types(current, item_ty).is_none() {
+                if let Some(meet) = meet_gql_types(current, item_ty) {
+                    unified = Some((meet, *span));
+                } else {
                     return Err(type_mismatch(
                         TypeMismatchContext::InListUnification,
                         ExpectedType::Specific(current.clone()),
@@ -166,18 +161,12 @@ pub(crate) fn like(
     expect_string(
         operand,
         operand_span,
-        TypeMismatchContext::BinaryStringPredicate {
-            op: BinaryOp::Contains,
-            side: Side::Lhs,
-        },
+        TypeMismatchContext::LikePredicate { side: Side::Lhs },
     )?;
     expect_string(
         pattern,
         pattern_span,
-        TypeMismatchContext::BinaryStringPredicate {
-            op: BinaryOp::Contains,
-            side: Side::Rhs,
-        },
+        TypeMismatchContext::LikePredicate { side: Side::Rhs },
     )?;
     Ok(AnalyzedType::Resolved(GqlType::Boolean))
 }
@@ -222,55 +211,73 @@ pub(crate) fn between(
 }
 
 /// Infer a list literal type.
-pub(crate) fn list_literal(items: &[AnalyzedType]) -> Result<AnalyzedType, AnalysisError> {
-    let mut unified: Option<GqlType> = None;
-    for ty in items {
+pub(crate) fn list_literal(
+    items: &[(AnalyzedType, SourceSpan)],
+) -> Result<AnalyzedType, AnalysisError> {
+    let mut unified: Option<(GqlType, SourceSpan)> = None;
+    let mut saw_dynamic = false;
+    for (ty, span) in items {
         match ty {
-            AnalyzedType::Dynamic => return Ok(AnalyzedType::Dynamic),
+            AnalyzedType::Dynamic => saw_dynamic = true,
             AnalyzedType::Resolved(item_ty) => {
                 unified = Some(match unified {
-                    Some(ref current) => meet_gql_types(current, item_ty).ok_or_else(|| {
-                        type_mismatch(
-                            TypeMismatchContext::ListLiteralUnification,
-                            ExpectedType::Specific(current.clone()),
-                            item_ty.clone(),
-                            SourceSpan::default(),
-                        )
-                    })?,
-                    None => item_ty.clone(),
+                    Some((ref current, _)) => (
+                        meet_gql_types(current, item_ty).ok_or_else(|| {
+                            type_mismatch(
+                                TypeMismatchContext::ListLiteralUnification,
+                                ExpectedType::Specific(current.clone()),
+                                item_ty.clone(),
+                                *span,
+                            )
+                        })?,
+                        *span,
+                    ),
+                    None => (item_ty.clone(), *span),
                 });
             }
         }
     }
-    let Some(item_ty) = unified else {
+    if saw_dynamic {
+        return Ok(AnalyzedType::Dynamic);
+    }
+    let Some((item_ty, _)) = unified else {
         return Ok(AnalyzedType::Dynamic);
     };
     Ok(AnalyzedType::Resolved(GqlType::List(Box::new(item_ty))))
 }
 
 /// Infer a CASE expression result type from branch result cells.
-pub(crate) fn case_result(branches: &[AnalyzedType]) -> Result<AnalyzedType, AnalysisError> {
-    let mut unified: Option<GqlType> = None;
-    for ty in branches {
+pub(crate) fn case_result(
+    branches: &[(AnalyzedType, SourceSpan)],
+) -> Result<AnalyzedType, AnalysisError> {
+    let mut unified: Option<(GqlType, SourceSpan)> = None;
+    let mut saw_dynamic = false;
+    for (ty, span) in branches {
         match ty {
-            AnalyzedType::Dynamic => return Ok(AnalyzedType::Dynamic),
+            AnalyzedType::Dynamic => saw_dynamic = true,
             AnalyzedType::Resolved(branch_ty) => {
                 unified = Some(match unified {
-                    Some(ref current) => meet_gql_types(current, branch_ty).ok_or_else(|| {
-                        type_mismatch(
-                            TypeMismatchContext::CaseBranchUnification,
-                            ExpectedType::Specific(current.clone()),
-                            branch_ty.clone(),
-                            SourceSpan::default(),
-                        )
-                    })?,
-                    None => branch_ty.clone(),
+                    Some((ref current, _)) => (
+                        meet_gql_types(current, branch_ty).ok_or_else(|| {
+                            type_mismatch(
+                                TypeMismatchContext::CaseBranchUnification,
+                                ExpectedType::Specific(current.clone()),
+                                branch_ty.clone(),
+                                *span,
+                            )
+                        })?,
+                        *span,
+                    ),
+                    None => (branch_ty.clone(), *span),
                 });
             }
         }
     }
+    if saw_dynamic {
+        return Ok(AnalyzedType::Dynamic);
+    }
     Ok(unified
-        .map(AnalyzedType::Resolved)
+        .map(|(ty, _)| AnalyzedType::Resolved(ty))
         .unwrap_or(AnalyzedType::Dynamic))
 }
 
@@ -400,7 +407,31 @@ fn concat(
         rhs_span,
         TypeMismatchContext::BinaryConcat { side: Side::Rhs },
     )?;
-    Ok(AnalyzedType::Resolved(GqlType::String))
+    match (lhs, rhs) {
+        (AnalyzedType::Dynamic, _) | (_, AnalyzedType::Dynamic) => Ok(AnalyzedType::Dynamic),
+        (AnalyzedType::Resolved(GqlType::String), AnalyzedType::Resolved(GqlType::String)) => {
+            Ok(AnalyzedType::Resolved(GqlType::String))
+        }
+        (
+            AnalyzedType::Resolved(GqlType::List(lhs_inner)),
+            AnalyzedType::Resolved(GqlType::List(rhs_inner)),
+        ) => meet_gql_types(lhs_inner, rhs_inner)
+            .map(|inner| AnalyzedType::Resolved(GqlType::List(Box::new(inner))))
+            .ok_or_else(|| {
+                type_mismatch(
+                    TypeMismatchContext::BinaryConcat { side: Side::Rhs },
+                    ExpectedType::Specific(GqlType::List(lhs_inner.clone())),
+                    GqlType::List(rhs_inner.clone()),
+                    rhs_span,
+                )
+            }),
+        (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) => Err(type_mismatch(
+            TypeMismatchContext::BinaryConcat { side: Side::Rhs },
+            ExpectedType::Specific(lhs_ty.clone()),
+            rhs_ty.clone(),
+            rhs_span,
+        )),
+    }
 }
 
 fn string_predicate(

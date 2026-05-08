@@ -97,11 +97,12 @@ impl ExprTypeTable {
 }
 
 /// Lookup table from parser AST expression nodes to their allocated [`ExprId`].
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct ExprIdMap {
     // Why: the parser AST is moved into `AnalyzedStatement` without relocating
     // its heap-backed expression nodes (`Vec` buffers and `Box` payloads stay
-    // put). The map is only valid for the owning `AnalyzedStatement`.
+    // put). The map is only valid for the owning `AnalyzedStatement`, so it is
+    // intentionally not Clone.
     ids: HashMap<*const ValueExpr, ExprId>,
 }
 

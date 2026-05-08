@@ -124,12 +124,19 @@ pub enum TypeMismatchContext {
         /// Offending operand side.
         side: Side,
     },
+    /// LIKE predicate.
+    LikePredicate {
+        /// Offending operand side.
+        side: Side,
+    },
     /// Unary numeric negation.
     UnaryNegate,
     /// Unary boolean negation.
     UnaryNot,
     /// Unsupported `IS TYPED` target.
     IsTypedTarget,
+    /// `IS NORMALIZED` operand.
+    IsNormalized,
     /// CASE branch result unification failed.
     CaseBranchUnification,
     /// List literal element unification failed.
@@ -164,9 +171,11 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::BinaryStringPredicate { op, side } => {
                 write!(f, "{side} operand of string predicate {op:?}")
             }
+            Self::LikePredicate { side } => write!(f, "{side} operand of LIKE predicate"),
             Self::UnaryNegate => f.write_str("operand of unary negate"),
             Self::UnaryNot => f.write_str("operand of unary NOT"),
             Self::IsTypedTarget => f.write_str("IS TYPED target"),
+            Self::IsNormalized => f.write_str("IS NORMALIZED operand"),
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),

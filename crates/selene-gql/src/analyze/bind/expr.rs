@@ -33,7 +33,7 @@ pub(crate) fn bind_value_expr(
             AnalyzedType::Dynamic
         }
         ValueExpr::ListLiteral { items, .. } => {
-            let item_types = bind_many(ctx, items)?;
+            let item_types = bind_many_with_spans(ctx, items)?;
             infer::list_literal(&item_types)?
         }
         ValueExpr::RecordLiteral { fields, .. } => {
@@ -129,14 +129,14 @@ pub(crate) fn bind_value_expr(
                         bind_condition(ctx, condition, ConditionClause::CaseWhen)?;
                         bind_value_expr(ctx, value)
                     })?;
-                result_types.push(ctx.expr_type(value_id).clone());
+                result_types.push((ctx.expr_type(value_id).clone(), value.span()));
             }
             if let Some(value) = else_branch {
                 let value_id =
                     ctx.with_child_scope(ScopeKind::CaseBranch, value.span(), false, |ctx| {
                         bind_value_expr(ctx, value)
                     })?;
-                result_types.push(ctx.expr_type(value_id).clone());
+                result_types.push((ctx.expr_type(value_id).clone(), value.span()));
             }
             infer::case_result(&result_types)?
         }
