@@ -17,6 +17,10 @@ impl GqlStatus {
     pub const FEATURE_NOT_SUPPORTED: Self = Self(*b"0A000");
     /// Program limit exceeded.
     pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"54000");
+    /// Undefined reference.
+    pub const UNDEFINED_REFERENCE: Self = Self(*b"42703");
+    /// Duplicate object or binding name.
+    pub const DUPLICATE_OBJECT: Self = Self(*b"42710");
 
     /// Return this status as its 5-character string form.
     #[must_use]

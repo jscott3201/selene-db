@@ -5,12 +5,18 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod analyze;
 pub mod ast;
 pub mod diagnostic;
 pub mod error;
 mod flagger;
 pub mod parser;
 
+pub use crate::analyze::{
+    AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
+    BindingDeclKind, BindingId, BindingScope, BindingScopeTree, BindingUse, BindingUseKind,
+    ScopeId, ScopeKind, analyze,
+};
 pub use crate::ast::{
     call::{ProcedureCall, YieldColumn, YieldItem},
     ddl::{

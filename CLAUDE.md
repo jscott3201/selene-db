@@ -162,6 +162,10 @@ D2 amendment — 2026-05-08 — parser-reachable v1.0 claim list
 
 BRIEF-20 tightens the v1.0 optional-feature claim to parser-reachable surfaces only. `G019`/`G020`, `GP05`–`GP15`, `GV45`–`GV48`, `GV60`/`GV61`, and `GV90` move from `SUPPORTED_FEATURES` to `NOT_SUPPORTED_RATIONALE` until their grammar/AST surfaces exist. This keeps the GQL Flagger corpus zero-exception: every supported feature must have a positive parser corpus entry, and every non-supported referenced feature must have a negative entry. The original market-parity direction stands; these features are reclaimed by future briefs when their concrete parser surfaces land.
 
+M5b analyzer foundation note — 2026-05-08 — semantic-analysis contract
+
+BRIEF-21 opens M5b by adding `selene-gql::analyze(statement)` as the first semantic pass: it resolves parser-stage variable references into stable `BindingId`s, records the lexical `BindingScopeTree`, and leaves every expression type cell as `AnalyzedType::Dynamic` for BRIEF-22. Spec 12 is maintained as a local `_spec/12-semantic-analysis.md` mirror with durable MCP spec node 478; `_spec/` remains local-only per the underscore-folder rule.
+
 ### D3 — Schema model: both GG01 + GG02 (2026-05-07)
 
 v1.0 supports **both** open graphs (GG01, schemaless) and closed graphs (GG02, declared graph type). Per-graph choice at `CREATE GRAPH` time:

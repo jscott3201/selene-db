@@ -29,3 +29,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-18: selene-gql added write-side mutation, DDL, procedure CALL, in-pipeline CALL, and transaction-control AST builders, with precise `NotImplemented` routing for deferred grammar surfaces.
 - BRIEF-19: selene-gql added the AST Flagger, miette-backed diagnostic reports with source spans, parse-time interner admission budgeting, and parser-time unsupported-feature diagnostics.
 - BRIEF-20: selene-gql added the parser conformance corpus, opengql sample cross-validation, a cargo-fuzz parse target, read-side AST formatting/round-trip checks, and tightened optional-feature claims to parser-reachable surfaces.
+- BRIEF-21: selene-gql added the first semantic analyzer pass, resolving binding references into stable BindingIds with lexical scope tracking and fail-fast name-resolution diagnostics.
