@@ -5,6 +5,7 @@ pub mod ddl;
 pub mod eq;
 pub mod expr;
 pub mod format;
+mod format_ident;
 pub mod mutation;
 pub mod pattern;
 pub mod span;
