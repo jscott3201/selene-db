@@ -8,7 +8,12 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/selene-core", "crates/selene-graph", "crates/selene-persist"]
+members = [
+    "crates/selene-core",
+    "crates/selene-graph",
+    "crates/selene-persist",
+    "crates/selene-gql",
+]
 exclude = ["_spec"]
 
 [workspace.package]
@@ -37,6 +42,8 @@ print_stdout = "warn"
 [workspace.dependencies]
 thiserror = "2.0"
 miette = { version = "7.6", features = ["derive"] }
+pest = "2.8"
+pest_derive = "2.8"
 lasso = { version = "0.7", features = ["multi-threaded"] }
 jiff = { version = "0.2", features = ["serde"] }
 rust_decimal = { version = "1.42", default-features = false, features = ["std", "serde"] }

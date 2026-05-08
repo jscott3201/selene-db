@@ -4,6 +4,8 @@
 //! The markdown tables in `_spec/01`, `_spec/07`, and `_spec/09` are rendered
 //! or checked from these constants by `build/regen_feature_docs.sh`.
 
+use std::fmt;
+
 /// Stable ISO GQL feature identifier.
 ///
 /// The private field makes the set closed to this module while preserving the
@@ -16,6 +18,12 @@ impl FeatureId {
     /// Return the ISO feature ID string, such as `GP04`.
     pub const fn as_str(self) -> &'static str {
         self.0
+    }
+}
+
+impl fmt::Display for FeatureId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

@@ -24,3 +24,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-13: selene-graph added the auto-registered CORE provider, postcard snapshot sections for primary graph state, SharedGraph recovery through selene-persist, and cold-start rebuild of adjacency plus secondary indexes.
 - BRIEF-14: selene-graph switched CORE snapshot sections from postcard payloads to rkyv sorted-vec archives, with portable UTF-8 `IStr` archiving and postcard retained only inside per-row property blobs.
 - BRIEF-15: selene-graph added GG02 closed-graph runtime validation, per-graph immutable `GraphTypeDef` bindings, CORE/GTYP snapshot persistence, recovery-time revalidation, and full `PropertyValueType` tags in selene-core.
+- BRIEF-16: selene-gql bootstrapped the ISO GQL parser crate with the donor pest grammar, public AST/span/error surface, and literal `RETURN` parsing with interned identifiers.
