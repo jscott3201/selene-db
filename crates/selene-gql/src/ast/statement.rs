@@ -2,7 +2,10 @@
 
 use selene_core::IStr;
 
-use crate::ast::{expr::ValueExpr, pattern::MatchClause, span::SourceSpan, types::GqlType};
+use crate::ast::{
+    call::ProcedureCall, ddl::DdlStatement, expr::ValueExpr, mutation::MutationPipeline,
+    pattern::MatchClause, span::SourceSpan, types::GqlType,
+};
 
 /// Top-level GQL statement.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -26,6 +29,27 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
+    /// Write-side mutation pipeline.
+    Mutate(MutationPipeline),
+    /// Data-definition statement.
+    Ddl(DdlStatement),
+    /// Top-level procedure call.
+    Call(ProcedureCall),
+    /// `START TRANSACTION`.
+    StartTransaction {
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `COMMIT`.
+    Commit {
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `ROLLBACK`.
+    Rollback {
+        /// Source span.
+        span: SourceSpan,
+    },
 }
 
 impl Statement {
@@ -35,6 +59,12 @@ impl Statement {
         match self {
             Self::Query(pipeline) => pipeline.span,
             Self::Composite { span, .. } | Self::Chained { span, .. } => *span,
+            Self::Mutate(pipeline) => pipeline.span,
+            Self::Ddl(statement) => statement.span(),
+            Self::Call(call) => call.span,
+            Self::StartTransaction { span } | Self::Commit { span } | Self::Rollback { span } => {
+                *span
+            }
         }
     }
 }
@@ -89,6 +119,8 @@ pub enum PipelineStatement {
     Return(ReturnClause),
     /// `WITH`.
     With(WithClause),
+    /// `CALL`.
+    Call(ProcedureCall),
 }
 
 impl PipelineStatement {
@@ -104,6 +136,7 @@ impl PipelineStatement {
             Self::Limit(value) | Self::Offset(value) => value.span(),
             Self::Return(value) => value.span,
             Self::With(value) => value.span,
+            Self::Call(value) => value.span,
         }
     }
 }

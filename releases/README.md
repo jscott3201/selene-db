@@ -26,3 +26,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-15: selene-graph added GG02 closed-graph runtime validation, per-graph immutable `GraphTypeDef` bindings, CORE/GTYP snapshot persistence, recovery-time revalidation, and full `PropertyValueType` tags in selene-core.
 - BRIEF-16: selene-gql bootstrapped the ISO GQL parser crate with the donor pest grammar, public AST/span/error surface, and literal `RETURN` parsing with interned identifiers.
 - BRIEF-17: selene-gql added the read-side query AST and builders for MATCH/RETURN pipelines, expressions, predicates, pattern variants, set operations, SELECT desugaring, and NEXT-chained queries.
+- BRIEF-18: selene-gql added write-side mutation, DDL, procedure CALL, in-pipeline CALL, and transaction-control AST builders, with precise `NotImplemented` routing for deferred grammar surfaces.

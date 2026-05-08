@@ -1,6 +1,8 @@
 //! Public parser round-trip smoke tests.
 
-use selene_gql::{PipelineStatement, Statement, ValueExpr, parse};
+use selene_gql::{
+    MutationStatement, MutationTerminator, PipelineStatement, Statement, ValueExpr, parse,
+};
 
 #[test]
 fn canonical_read_query_builds_structural_ast() {
@@ -45,5 +47,56 @@ LIMIT 10 OFFSET 5";
     assert!(matches!(
         pipeline.statements[4],
         PipelineStatement::Offset(_)
+    ));
+}
+
+#[test]
+fn mutation_match_where_absorbs_where_in_match_clause() {
+    let source = "\
+MATCH (n:Person) WHERE n.age > 30
+SET n.active = true
+RETURN n.name AS name";
+
+    let Statement::Mutate(pipeline) = parse(source).expect("mutation parses") else {
+        panic!("expected mutation pipeline");
+    };
+
+    assert_eq!(pipeline.statements.len(), 2);
+    let MutationStatement::Match(match_clause) = &pipeline.statements[0] else {
+        panic!("expected MATCH");
+    };
+    assert!(match_clause.where_clause.is_some());
+    assert!(matches!(pipeline.statements[1], MutationStatement::Set(_)));
+    assert!(matches!(
+        pipeline.terminator,
+        Some(MutationTerminator::Return(_))
+    ));
+}
+
+#[test]
+fn mutation_explicit_filter_is_separate_statement() {
+    let source = "\
+MATCH (n:Person)
+FILTER n.age > 30
+SET n.active = true
+RETURN n.name AS name";
+
+    let Statement::Mutate(pipeline) = parse(source).expect("mutation parses") else {
+        panic!("expected mutation pipeline");
+    };
+
+    assert_eq!(pipeline.statements.len(), 3);
+    assert!(matches!(
+        pipeline.statements[0],
+        MutationStatement::Match(_)
+    ));
+    assert!(matches!(
+        pipeline.statements[1],
+        MutationStatement::Filter(_)
+    ));
+    assert!(matches!(pipeline.statements[2], MutationStatement::Set(_)));
+    assert!(matches!(
+        pipeline.terminator,
+        Some(MutationTerminator::Return(_))
     ));
 }

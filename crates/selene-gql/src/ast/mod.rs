@@ -1,5 +1,7 @@
 //! Public GQL abstract syntax tree types.
 
+pub mod call;
+pub mod ddl;
 pub mod expr;
 pub mod mutation;
 pub mod pattern;
@@ -7,8 +9,15 @@ pub mod span;
 pub mod statement;
 pub mod types;
 
+pub use call::{ProcedureCall, YieldColumn, YieldItem};
+pub use ddl::{
+    DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
+};
 pub use expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr};
-pub use mutation::{DataDefinitionStatement, MutationStatement, TransactionControlStatement};
+pub use mutation::{
+    DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
+    MutationTerminator, RemoveItem, SetItem,
+};
 pub use pattern::{
     EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern,
     PathMode, PathSelector, PatternElement, Quantifier,
