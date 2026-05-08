@@ -6,7 +6,7 @@ use crate::{
     SourceSpan,
     analyze::{
         binding::{BindingDecl, BindingDeclKind, BindingId},
-        error::AnalysisError,
+        error::{AnalysisError, PatternElementKind},
     },
 };
 
@@ -153,11 +153,32 @@ impl BindingScopeTree {
         kind: BindingDeclKind,
         name: IStr,
         span: SourceSpan,
-    ) -> (BindingId, bool) {
+    ) -> Result<(BindingId, bool), AnalysisError> {
         if let Some(existing) = self.resolve(scope, name) {
-            return (existing, true);
+            // Cross-element-kind reuse is a semantic error: a node variable
+            // cannot be silently rebound as an edge/path variable, and vice
+            // versa. Same-element-kind reuse (NodePattern <-> InsertNode,
+            // EdgePattern <-> InsertEdge) is the legitimate path that lets
+            // `MATCH (n) INSERT (n)-[:K]->(m)` work.
+            let prior_decl = self
+                .declaration(existing)
+                .expect("resolved binding has decl");
+            let new_element = PatternElementKind::from_decl_kind(kind);
+            let prior_element = PatternElementKind::from_decl_kind(prior_decl.kind());
+            if let (Some(new_kind), Some(prior_kind)) = (new_element, prior_element)
+                && new_kind != prior_kind
+            {
+                return Err(AnalysisError::PatternKindMismatch {
+                    name,
+                    prior: prior_kind,
+                    current: new_kind,
+                    span,
+                    prior_span: prior_decl.span(),
+                });
+            }
+            return Ok((existing, true));
         }
-        (self.declare_unchecked(scope, kind, name, span), false)
+        Ok((self.declare_unchecked(scope, kind, name, span), false))
     }
 
     pub(crate) fn resolve(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {

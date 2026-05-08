@@ -57,6 +57,7 @@ feature_ids! {
     G114 = "G114" => "SAME predicate";
     G115 = "G115" => "PROPERTY_EXISTS predicate";
     GA01 = "GA01" => "IEEE 754 floating point operations";
+    GA07 = "GA07" => "Ordering by discarded binding variables";
     GC02 = "GC02" => "Graph schema management: IF [ NOT ] EXISTS";
     GC03 = "GC03" => "Graph type: IF [ NOT ] EXISTS";
     GC04 = "GC04" => "Graph management";
@@ -148,6 +149,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G114,
     FeatureId::G115,
     FeatureId::GA01,
+    FeatureId::GA07,
     FeatureId::GC03,
     FeatureId::GC04,
     FeatureId::GC05,

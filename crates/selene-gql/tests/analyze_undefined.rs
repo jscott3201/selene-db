@@ -58,3 +58,12 @@ fn yield_star_columns_are_not_available_until_registry_expansion() {
     let err = analyze_one("MATCH (n) CALL pkg.fn() YIELD * RETURN col").expect_err("col not bound");
     assert!(matches!(err, AnalysisError::UndefinedReference { .. }));
 }
+
+#[test]
+fn cross_kind_pattern_reuse_is_rejected() {
+    // Reusing a node variable as an edge variable (or vice versa) must be a
+    // semantic error, not a silent alias. Codex P2 on PR #25.
+    let err = analyze_one("MATCH (n) MATCH (a)-[n]->(b) RETURN a")
+        .expect_err("n cannot be reused as an edge");
+    assert!(matches!(err, AnalysisError::PatternKindMismatch { .. }));
+}

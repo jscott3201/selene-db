@@ -33,7 +33,7 @@ fn bind_graph_pattern(
     mode: PatternBindingMode,
 ) -> Result<(), AnalysisError> {
     if let Some(name) = pattern.path_binding {
-        ctx.declare_or_reuse(BindingDeclKind::PathBinding, name, pattern.span);
+        ctx.declare_or_reuse(BindingDeclKind::PathBinding, name, pattern.span)?;
     }
 
     for element in &pattern.elements {
@@ -55,7 +55,7 @@ fn bind_node_pattern(
             PatternBindingMode::Match => BindingDeclKind::NodePattern,
             PatternBindingMode::Insert => BindingDeclKind::InsertNode,
         };
-        ctx.declare_or_reuse(kind, name, node.span);
+        ctx.declare_or_reuse(kind, name, node.span)?;
     }
     if let Some(label) = &node.label_expr {
         bind_label_expr(label);
@@ -79,7 +79,7 @@ fn bind_edge_pattern(
             PatternBindingMode::Match => BindingDeclKind::EdgePattern,
             PatternBindingMode::Insert => BindingDeclKind::InsertEdge,
         };
-        ctx.declare_or_reuse(kind, name, edge.span);
+        ctx.declare_or_reuse(kind, name, edge.span)?;
     }
     if let Some(label) = &edge.label_expr {
         bind_label_expr(label);

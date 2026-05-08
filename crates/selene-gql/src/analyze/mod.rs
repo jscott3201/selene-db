@@ -16,7 +16,7 @@ use crate::Statement;
 
 pub use ast::{AnalyzedStatement, AnalyzedStatementKind};
 pub use binding::{BindingDecl, BindingDeclKind, BindingId, BindingUse, BindingUseKind};
-pub use error::AnalysisError;
+pub use error::{AnalysisError, PatternElementKind};
 pub use scope::{BindingScope, BindingScopeTree, ScopeId, ScopeKind};
 pub use types::AnalyzedType;
 

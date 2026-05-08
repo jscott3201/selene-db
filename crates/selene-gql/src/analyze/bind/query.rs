@@ -51,7 +51,10 @@ pub(crate) fn bind_return_clause(
         clause.group_by.as_deref(),
         clause.having.as_ref(),
     )?;
-    ctx.enter_projection_scope(clause.span);
+    // Non-boundary projection scope: ISO GA07 lets ORDER BY / OFFSET /
+    // LIMIT reach the pre-RETURN bindings, and `RETURN *` keeps the whole
+    // input row visible by virtue of the parent walk.
+    ctx.enter_projection_scope(clause.span, false);
     declare_projection_items(ctx, &clause.items)
 }
 
@@ -62,7 +65,9 @@ fn bind_with_clause(ctx: &mut BindContext, clause: &WithClause) -> Result<(), An
         clause.group_by.as_deref(),
         clause.having.as_ref(),
     )?;
-    ctx.enter_projection_scope(clause.span);
+    // Boundary projection scope: pre-WITH bindings end here. Post-WITH
+    // clauses see only the projection aliases declared below.
+    ctx.enter_projection_scope(clause.span, true);
     declare_projection_items(ctx, &clause.items)?;
     if let Some(where_clause) = &clause.where_clause {
         expr::bind_value_expr(ctx, where_clause)?;

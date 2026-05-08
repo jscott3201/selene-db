@@ -36,11 +36,22 @@ pub(crate) fn bind_statement(stmt: Statement) -> Result<AnalyzedStatement, Analy
             }
         }
         Statement::Chained { blocks, .. } => {
+            // Each NEXT block consumes the prior block's binding table, so
+            // we run sequential blocks in scopes chained off the previous
+            // block's *terminal* scope (which holds the projection aliases
+            // each block published). Boundary stays `false` so post-RETURN
+            // bindings flow forward through GA07.
+            let root = ctx.current_scope();
+            let mut prior_tail = root;
             for block in blocks {
-                ctx.with_child_scope(ScopeKind::Projection, block.span, true, |ctx| {
-                    query::bind_query_pipeline(ctx, block)
-                })?;
+                let block_root =
+                    ctx.scopes
+                        .push_scope(prior_tail, ScopeKind::Projection, block.span, false);
+                ctx.set_scope(block_root);
+                query::bind_query_pipeline(&mut ctx, block)?;
+                prior_tail = ctx.current_scope();
             }
+            ctx.set_scope(root);
         }
         Statement::Mutate(pipeline) => mutation::bind_mutation_pipeline(&mut ctx, pipeline)?,
         Statement::Ddl(statement) => ddl::bind_ddl_statement(&mut ctx, statement)?,
@@ -91,8 +102,10 @@ impl BindContext {
         kind: BindingDeclKind,
         name: IStr,
         span: SourceSpan,
-    ) -> BindingId {
-        let (binding, reused) = self.scopes.declare_or_reuse(self.current, kind, name, span);
+    ) -> Result<BindingId, AnalysisError> {
+        let (binding, reused) = self
+            .scopes
+            .declare_or_reuse(self.current, kind, name, span)?;
         if reused {
             self.references.push(BindingUse {
                 name,
@@ -101,7 +114,7 @@ impl BindContext {
                 kind: BindingUseKind::PatternReuse,
             });
         }
-        binding
+        Ok(binding)
     }
 
     pub(crate) fn resolve(
@@ -141,10 +154,29 @@ impl BindContext {
         self.yield_stars.push(span);
     }
 
-    pub(crate) fn enter_projection_scope(&mut self, span: SourceSpan) {
+    /// Enter a fresh projection scope and stay there for the rest of the
+    /// pipeline.
+    ///
+    /// `boundary = false` matches ISO Feature `GA07` ("Ordering by discarded
+    /// binding variables") for `RETURN`-style projections: pre-projection
+    /// bindings stay reachable for downstream `ORDER BY` / `OFFSET` /
+    /// `LIMIT`, and `RETURN *` keeps the entire input row visible.
+    ///
+    /// `boundary = true` matches the `WITH` continuation rule: pre-`WITH`
+    /// bindings end at the boundary and only the WITH-projected aliases
+    /// flow into the next clauses.
+    pub(crate) fn enter_projection_scope(&mut self, span: SourceSpan, boundary: bool) {
         let child = self
             .scopes
-            .push_scope(self.current, ScopeKind::Projection, span, true);
+            .push_scope(self.current, ScopeKind::Projection, span, boundary);
         self.current = child;
+    }
+
+    pub(crate) fn current_scope(&self) -> ScopeId {
+        self.current
+    }
+
+    pub(crate) fn set_scope(&mut self, scope: ScopeId) {
+        self.current = scope;
     }
 }

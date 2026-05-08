@@ -176,6 +176,15 @@ fn unwind(statement: &UnwindStatement, uses: &mut Vec<FeatureUse>) {
 }
 
 fn order_terms(terms: &[OrderTerm], uses: &mut Vec<FeatureUse>) {
+    if let Some(first) = terms.first() {
+        // Stamp every ORDER BY clause with GA07. The strict spec rule
+        // (sort key must be a return alias unless GA07 is claimed) is a
+        // bind-pass concern — the Flagger cannot tell at parse time
+        // whether a sort key is an alias. The conservative gate is to
+        // claim GA07 on any ORDER BY presence; selene-db's v1.0 claim
+        // list includes GA07, so this stamp does not produce rejections.
+        record_feature(uses, FeatureId::GA07, first.span);
+    }
     for term in terms {
         expr::value(&term.expr, uses);
     }

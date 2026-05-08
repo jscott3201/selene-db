@@ -118,6 +118,44 @@ fn top_level_shapes_without_data_bindings_analyze() {
 }
 
 #[test]
+fn return_projection_is_permeable_for_ga07_order_by() {
+    // GA07: ORDER BY may reference pre-RETURN bindings even when they are
+    // not republished as aliases. Codex P1 on PR #25.
+    analyze_one("MATCH (n) RETURN n.name AS who ORDER BY n.age").expect("GA07 ordering");
+    analyze_one("MATCH (n) RETURN n.name AS who LIMIT 10").expect("LIMIT after RETURN");
+}
+
+#[test]
+fn return_star_preserves_input_bindings_for_post_return_clauses() {
+    // RETURN * does not redeclare aliases; pre-RETURN bindings must stay
+    // visible for ORDER BY / LIMIT / OFFSET. Codex P1 on PR #25.
+    analyze_one("MATCH (n) RETURN * ORDER BY n.name").expect("RETURN * keeps n visible");
+}
+
+#[test]
+fn next_chain_threads_bindings_forward() {
+    // NEXT consumes the prior block's terminal scope. Codex P1 on PR #25.
+    analyze_one("MATCH (n) RETURN n NEXT RETURN n").expect("n flows across NEXT");
+}
+
+#[test]
+fn mixed_yield_star_binds_explicit_columns() {
+    // YIELD * combined with explicit YIELD items must still declare the
+    // named columns. Codex P2 on PR #25.
+    let analyzed =
+        analyze_one("CALL pkg.fn() YIELD *, result AS alias").expect("mixed YIELD analyses");
+    assert_eq!(analyzed.yield_stars.len(), 1);
+    assert!(
+        analyzed
+            .scopes
+            .declarations()
+            .iter()
+            .any(|decl| decl.kind() == BindingDeclKind::YieldColumn
+                && decl.name().as_str() == "alias")
+    );
+}
+
+#[test]
 fn analyzed_statement_preserves_top_level_shape() {
     let analyzed = analyze_one("MATCH (n) RETURN n").expect("analyzes");
     let selene_gql::AnalyzedStatementKind::Query(query) = analyzed.statement else {
