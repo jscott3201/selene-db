@@ -1,7 +1,6 @@
 //! Shared graph wrapper implementing lock-free reads and serialized writes.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
@@ -20,11 +19,6 @@ pub struct SharedGraph {
     snapshot: Arc<ArcSwap<SeleneGraph>>,
     allocator: Arc<Mutex<IdAllocator>>,
     providers: Vec<Arc<dyn IndexProvider>>,
-    /// Graph-scoped fanout flag visible to every thread. `begin_write`
-    /// panics if this is `true`, regardless of which thread set it; the
-    /// flag is set only inside `WriteTxn::commit_with_principal` for the
-    /// duration of `notify_providers`.
-    fanout_active: Arc<AtomicBool>,
 }
 
 /// Builder for a [`SharedGraph`] and its fixed provider registry.
@@ -109,7 +103,6 @@ impl SharedGraph {
             snapshot: Arc::new(ArcSwap::new(Arc::new(graph))),
             allocator: Arc::new(Mutex::new(allocator)),
             providers,
-            fanout_active: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -130,28 +123,35 @@ impl SharedGraph {
 
     /// Begin a write transaction by acquiring the single graph write lock.
     ///
+    /// Concurrent writers from other threads queue normally on the write
+    /// lock; the engine does **not** panic legitimate concurrent writes
+    /// during another commit's provider fanout.
+    ///
     /// # Panics
     ///
-    /// Panics when called while commit fanout is in progress on this graph,
-    /// regardless of which thread set the flag. Re-entrant writes are not
-    /// supported in v1.0; the outer commit holds the write lock and the
-    /// fanout serializer, so a nested write would either deadlock or recurse
-    /// indefinitely. The check happens **before** any locking so a worker
-    /// thread spawned inside `IndexProvider::on_change` panics immediately
-    /// instead of blocking on the held write lock. The panic is caught by
-    /// the outer commit's `notify_providers` boundary; provider state may
-    /// drift, but the outer commit still completes.
+    /// Panics when called from inside an [`IndexProvider`] callback **on
+    /// the same thread** as the active fanout. Same-thread re-entrant
+    /// writes are unsupported in v1.0; the outer commit holds the write
+    /// lock and the fanout serializer, so a nested write would deadlock or
+    /// recurse indefinitely. The panic is caught by the outer commit's
+    /// `notify_providers` boundary; provider state may drift, but the
+    /// outer commit still completes.
+    ///
+    /// Cross-thread re-entry — a provider spawning a worker thread that
+    /// calls `begin_write` and waiting for it — is **documented misuse**
+    /// rather than a detectable footgun (the engine cannot trace causal
+    /// thread ancestry). See the module docs in `reentry.rs` and the
+    /// `IndexProvider` rustdoc for the v1.0 contract.
     #[must_use]
     pub fn begin_write(&self) -> WriteTxn<'_> {
-        if crate::reentry::in_fanout(&self.fanout_active) {
+        if crate::reentry::in_fanout() {
             panic!(
-                "selene-graph: SharedGraph::begin_write() called while \
-                 IndexProvider callback fanout is active on this graph; \
-                 re-entrant writes (same-thread or via spawned worker \
-                 threads) are not supported in v1.0. The outer commit's \
-                 notify_providers boundary will catch this panic; the outer \
-                 commit succeeds, but the offending provider's chained \
-                 mutation does not."
+                "selene-graph: SharedGraph::begin_write() called from within \
+                 an IndexProvider callback on the same thread; same-thread \
+                 re-entrant writes are not supported in v1.0. The outer \
+                 commit's notify_providers boundary will catch this panic; \
+                 the outer commit succeeds, but the offending provider's \
+                 chained mutation does not."
             );
         }
         WriteTxn::new(
@@ -159,7 +159,6 @@ impl SharedGraph {
             Arc::clone(&self.snapshot),
             self.allocator.lock(),
             self.providers.clone(),
-            Arc::clone(&self.fanout_active),
         )
     }
 }

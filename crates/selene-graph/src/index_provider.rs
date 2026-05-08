@@ -41,6 +41,23 @@ impl fmt::Display for SubTag {
 /// [`IndexProvider::on_change`]. `selene-graph` stores providers as
 /// `Arc<dyn IndexProvider>`, so providers use interior mutability for owned
 /// state. The engine guarantees serialized calls per graph.
+///
+/// ## Re-entrancy contract
+///
+/// `on_change` MUST NOT initiate a write transaction on the same graph,
+/// directly or indirectly. The engine detects same-thread re-entry into
+/// `SharedGraph::begin_write` and panics with a clear message; the panic
+/// is caught by the outer `notify_providers` boundary so the outer commit
+/// still completes.
+///
+/// **Cross-thread re-entry is documented misuse.** A provider whose
+/// `on_change` spawns a worker thread, calls `begin_write` on that worker,
+/// and waits for the worker (e.g., `JoinHandle::join`, channel `recv`) is a
+/// circular wait the engine cannot detect: the worker blocks on the held
+/// write lock; the outer `on_change` blocks waiting for the worker; the
+/// outer commit cannot release the lock until `on_change` returns.
+/// Provider authors who spawn threads inside `on_change` must not block
+/// the callback on those threads' progress.
 pub trait IndexProvider: Send + Sync + 'static {
     /// Stable 4-byte ASCII tag uniquely identifying this provider.
     fn provider_tag(&self) -> ProviderTag;

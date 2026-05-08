@@ -1,7 +1,6 @@
 //! Write transaction RAII handle per spec 03 sections 4 and 6.
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 
 use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
@@ -10,7 +9,7 @@ use selene_core::{Change, Origin};
 use crate::error::GraphResult;
 use crate::graph::SeleneGraph;
 use crate::id_allocator::IdAllocator;
-use crate::index_provider::{IndexProvider, ProviderTag};
+use crate::index_provider::IndexProvider;
 use crate::mutator::Mutator;
 
 /// Result metadata returned after a successful commit.
@@ -35,7 +34,6 @@ pub struct WriteTxn<'g> {
     pub(crate) working: SeleneGraph,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
-    pub(crate) fanout_active: Arc<AtomicBool>,
     pub(crate) changes: Vec<Change>,
 }
 
@@ -45,7 +43,6 @@ impl<'g> WriteTxn<'g> {
         snapshot: Arc<ArcSwap<SeleneGraph>>,
         allocator: MutexGuard<'g, IdAllocator>,
         providers: Vec<Arc<dyn IndexProvider>>,
-        fanout_active: Arc<AtomicBool>,
     ) -> Self {
         let working = guard.clone();
         Self {
@@ -54,7 +51,6 @@ impl<'g> WriteTxn<'g> {
             working,
             allocator,
             providers,
-            fanout_active,
             changes: Vec::new(),
         }
     }
@@ -76,13 +72,15 @@ impl<'g> WriteTxn<'g> {
     /// published, **with the write lock and allocator mutex still held**, so
     /// that two concurrent commits cannot interleave their `on_change`
     /// callbacks (the per-graph serialization contract from
-    /// `_spec/06-index-provider-protocol.md`). Re-entrant provider calls into
-    /// `SharedGraph::begin_write()` are detected via a graph-scoped
-    /// `AtomicBool` (visible to **every** thread, including a worker spawned
-    /// by an `on_change` callback) and panic with a clear message; the outer
-    /// `std::panic::catch_unwind` in `notify_providers` catches those panics
-    /// (along with provider-internal panics and returned errors) so a single
-    /// misbehaving provider can never abort the writer thread.
+    /// `_spec/06-index-provider-protocol.md`). Same-thread re-entrant
+    /// provider calls into `SharedGraph::begin_write()` are detected via a
+    /// thread-local fanout counter and panic with a clear message; the
+    /// outer `std::panic::catch_unwind` in `notify_providers` catches those
+    /// panics (along with provider-internal panics and returned errors) so
+    /// a single misbehaving provider can never abort the writer thread.
+    /// Cross-thread re-entry (a provider waiting on a spawned worker that
+    /// calls `begin_write`) is documented misuse — see `reentry.rs` and
+    /// the `IndexProvider` rustdoc.
     pub fn commit_with_principal(self, principal: Option<Arc<[u8]>>) -> GraphResult<CommitOutcome> {
         let WriteTxn {
             mut guard,
@@ -90,7 +88,6 @@ impl<'g> WriteTxn<'g> {
             mut working,
             allocator,
             providers,
-            fanout_active,
             changes,
         } = self;
 
@@ -110,13 +107,14 @@ impl<'g> WriteTxn<'g> {
         *guard = published.clone();
         snapshot.store(Arc::new(published));
 
-        // Hold guard + allocator across fanout. The graph-scoped fanout flag
-        // is set for the duration; `SharedGraph::begin_write` consults the
-        // same `AtomicBool` from any thread and panics before reaching the
-        // lock — so a worker thread spawned by `on_change` cannot deadlock
-        // the commit, and commit serialization is preserved.
+        // Hold guard + allocator across fanout. The thread-local fanout
+        // guard increments a counter that `SharedGraph::begin_write` checks
+        // before attempting any locking, so same-thread re-entrant writes
+        // from inside `on_change` panic before reaching this lock — no
+        // deadlock, and commit serialization is preserved. Concurrent
+        // writers from other threads queue normally on the write lock.
         {
-            let _fanout_guard = crate::reentry::FanoutGuard::enter(Arc::clone(&fanout_active));
+            let _fanout_guard = crate::reentry::FanoutGuard::enter();
             notify_providers(&providers, &changes);
         }
 
@@ -148,29 +146,34 @@ impl<'g> WriteTxn<'g> {
 /// returned errors and panics so a misbehaving provider can never abort or
 /// crash the writer thread after the snapshot has already published.
 ///
-/// Each iteration acquires the provider's tag through its own unwind
-/// boundary so a panic in `provider_tag()` is logged with a sentinel tag
-/// rather than escaping the writer. The cached tag is then reused in the
-/// `on_change` panic branch so operators can attribute failures to the
-/// faulty provider without depending on the panic payload.
+/// Each iteration first reads the provider's tag through its own unwind
+/// boundary so a panic in `provider_tag()` is logged with the sentinel
+/// `<unknown>` tag and the provider is **skipped for this change** —
+/// matching the original "single combined unwind" behavior where a tag
+/// panic short-circuited `on_change`. When the tag is read successfully it
+/// is reused in both the error-return and panic branches of `on_change` so
+/// operators can attribute failures to the faulty provider.
 fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
     for change in changes {
         for provider in providers {
-            // First boundary: cache the provider tag for logging. A panic in
-            // `provider_tag()` itself is rare, but we still log it (with
-            // `tag_for_log = None`) instead of unwinding through the writer.
-            let tag_for_log = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // First boundary: cache the provider tag for logging. If
+            // `provider_tag()` itself panics, log with the sentinel tag and
+            // skip `on_change` — the provider is in an inconsistent state
+            // and we should not invoke further side effects on it.
+            let tag = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 provider.provider_tag()
             })) {
-                Ok(tag) => Some(tag),
+                Ok(tag) => tag,
                 Err(payload) => {
                     let payload = describe_panic_payload(&payload);
                     tracing::error!(
+                        provider_tag = %SENTINEL_PROVIDER_TAG,
                         ?change,
                         payload = %payload,
-                        "index provider provider_tag() panicked after graph commit; continuing",
+                        "index provider provider_tag() panicked after graph commit; \
+                         skipping on_change for this change",
                     );
-                    None
+                    continue;
                 }
             };
 
@@ -186,17 +189,20 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
             match outcome {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    log_provider_failure(
-                        tag_for_log,
-                        change,
-                        ProviderFailure::ReturnedError(error.to_string()),
+                    tracing::error!(
+                        provider_tag = %tag,
+                        error = %error,
+                        ?change,
+                        "index provider on_change failed after graph commit; continuing",
                     );
                 }
                 Err(panic_payload) => {
-                    log_provider_failure(
-                        tag_for_log,
-                        change,
-                        ProviderFailure::Panicked(describe_panic_payload(&panic_payload)),
+                    let payload = describe_panic_payload(&panic_payload);
+                    tracing::error!(
+                        provider_tag = %tag,
+                        ?change,
+                        payload = %payload,
+                        "index provider on_change panicked after graph commit; continuing",
                     );
                 }
             }
@@ -204,35 +210,10 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
     }
 }
 
-enum ProviderFailure {
-    ReturnedError(String),
-    Panicked(String),
-}
-
-fn log_provider_failure(tag: Option<ProviderTag>, change: &Change, failure: ProviderFailure) {
-    // Format tag once so we can include it consistently across log lines.
-    let tag_field = tag
-        .map(|t| t.to_string())
-        .unwrap_or_else(|| "<unknown>".to_owned());
-    match failure {
-        ProviderFailure::ReturnedError(error) => {
-            tracing::error!(
-                provider_tag = %tag_field,
-                error = %error,
-                ?change,
-                "index provider on_change failed after graph commit; continuing",
-            );
-        }
-        ProviderFailure::Panicked(payload) => {
-            tracing::error!(
-                provider_tag = %tag_field,
-                payload = %payload,
-                ?change,
-                "index provider on_change panicked after graph commit; continuing",
-            );
-        }
-    }
-}
+/// Sentinel value emitted on the `provider_tag` field when the provider's
+/// own `provider_tag()` method panicked, so log filters keyed on the field
+/// name still match.
+const SENTINEL_PROVIDER_TAG: &str = "<unknown>";
 
 fn describe_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&'static str>() {
@@ -603,104 +584,6 @@ mod tests {
         txn.rollback();
     }
 
-    /// A provider whose `on_change` spawns a worker thread that calls
-    /// `SharedGraph::begin_write()` and joins it. With the v1.0 contract
-    /// the worker thread reads the graph-scoped fanout flag, panics before
-    /// touching the lock, and the join's `Err` is unwrapped to propagate
-    /// the panic out of `on_change` — which the outer `notify_providers`
-    /// catches.
-    struct CrossThreadReentrantProvider {
-        tag: ProviderTag,
-        shared: Mutex<Option<Arc<SharedGraph>>>,
-        chained_count: Arc<Mutex<usize>>,
-    }
-
-    impl CrossThreadReentrantProvider {
-        fn new(tag: ProviderTag) -> Self {
-            Self {
-                tag,
-                shared: Mutex::new(None),
-                chained_count: Arc::new(Mutex::new(0)),
-            }
-        }
-
-        fn install_shared(&self, shared: Arc<SharedGraph>) {
-            *self.shared.lock() = Some(shared);
-        }
-    }
-
-    impl IndexProvider for CrossThreadReentrantProvider {
-        fn provider_tag(&self) -> ProviderTag {
-            self.tag
-        }
-
-        fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-            Ok(())
-        }
-
-        fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-            Ok(Vec::new())
-        }
-
-        fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-            let shared = self.shared.lock().take();
-            if let Some(shared) = shared {
-                let chained_count = Arc::clone(&self.chained_count);
-                let handle = thread::spawn(move || {
-                    let txn = shared.begin_write();
-                    let _ = txn.commit();
-                    *chained_count.lock() += 1;
-                });
-                // Worker thread panics before reaching the lock because the
-                // graph's fanout flag is set. Joining returns Err; unwrap
-                // propagates the panic into this thread, which the outer
-                // catch_unwind in notify_providers catches.
-                handle.join().expect("worker panicked");
-            }
-            Ok(())
-        }
-
-        fn declared_sub_tags(&self) -> &[SubTag] {
-            &[]
-        }
-    }
-
-    #[test]
-    fn begin_write_from_provider_spawned_thread_panics_and_is_caught() {
-        let provider = Arc::new(CrossThreadReentrantProvider::new(ProviderTag(*b"XTHR")));
-        let chained_count = Arc::clone(&provider.chained_count);
-        let shared = Arc::new(
-            SharedGraph::builder(GraphId::new(1))
-                .with_provider(Arc::clone(&provider) as Arc<dyn IndexProvider>)
-                .build()
-                .unwrap(),
-        );
-        provider.install_shared(Arc::clone(&shared));
-
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(LabelSet::new(), PropertyMap::new())
-                .expect("create_node ok");
-        }
-        // Outer commit completes despite the worker-thread misuse — the
-        // worker's panic propagates back through the join and into the
-        // outer catch_unwind boundary in notify_providers.
-        let outcome = txn.commit().unwrap();
-        assert_eq!(outcome.changes.len(), 1);
-        // The worker's increment after begin_write/commit was never reached.
-        assert_eq!(
-            *chained_count.lock(),
-            0,
-            "worker thread's chained mutation must not have completed"
-        );
-        // After the outer commit returns, the flag is clear and a fresh
-        // begin_write succeeds normally.
-        let txn = shared.begin_write();
-        txn.rollback();
-    }
-
     /// A provider whose `on_change` panics. Used to verify the engine catches
     /// the unwind and continues serving subsequent providers.
     struct PanickingProvider {
@@ -754,6 +637,168 @@ mod tests {
         assert_eq!(outcome.changes.len(), 1);
         // The provider AFTER the panicking one still received the change.
         assert_eq!(seen.lock().len(), 1);
+    }
+
+    /// A provider whose `on_change` blocks for a brief window so a second
+    /// writer thread can observe that it queues normally on the write lock
+    /// without panicking — the explicit non-regression for the round-4 P1.
+    struct SlowProvider {
+        tag: ProviderTag,
+        hold: std::time::Duration,
+    }
+
+    impl IndexProvider for SlowProvider {
+        fn provider_tag(&self) -> ProviderTag {
+            self.tag
+        }
+
+        fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+            std::thread::sleep(self.hold);
+            Ok(())
+        }
+
+        fn declared_sub_tags(&self) -> &[SubTag] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn concurrent_writer_does_not_panic_during_other_commits_fanout() {
+        // Regression test for the round-4 P1: the previous design had
+        // begin_write panic on every concurrent writer while another
+        // commit's fanout was running. Concurrent writers must queue on
+        // the write lock and proceed normally instead.
+        let shared = Arc::new(
+            SharedGraph::builder(GraphId::new(1))
+                .with_provider(Arc::new(SlowProvider {
+                    tag: ProviderTag(*b"SLOW"),
+                    hold: std::time::Duration::from_millis(40),
+                }))
+                .build()
+                .unwrap(),
+        );
+
+        let writer_a = {
+            let shared = Arc::clone(&shared);
+            thread::spawn(move || {
+                let mut txn = shared.begin_write();
+                {
+                    let mut mutator = txn.mutator();
+                    mutator
+                        .create_node(LabelSet::new(), PropertyMap::new())
+                        .expect("create_node ok");
+                }
+                txn.commit().unwrap();
+            })
+        };
+
+        // Give writer A a head start so it owns the lock and is inside the
+        // SlowProvider's on_change.
+        thread::sleep(std::time::Duration::from_millis(10));
+
+        // Writer B begins a write while A's fanout is running. It must
+        // queue on the write lock, NOT panic.
+        let writer_b = {
+            let shared = Arc::clone(&shared);
+            thread::spawn(move || {
+                let mut txn = shared.begin_write();
+                {
+                    let mut mutator = txn.mutator();
+                    mutator
+                        .create_node(LabelSet::new(), PropertyMap::new())
+                        .expect("create_node ok");
+                }
+                txn.commit().unwrap();
+            })
+        };
+
+        writer_a.join().expect("writer A finished without panic");
+        writer_b.join().expect("writer B finished without panic");
+        assert_eq!(shared.read().node_count(), 2);
+    }
+
+    /// A provider whose `provider_tag()` panics only after the build-time
+    /// uniqueness check has already run successfully. Used to verify the
+    /// engine short-circuits `on_change` for that provider rather than
+    /// calling it after a fanout-time tag panic.
+    struct ConditionallyTagPanickingProvider {
+        tag: ProviderTag,
+        panic_during_fanout: Arc<std::sync::atomic::AtomicBool>,
+        on_change_called: Arc<Mutex<bool>>,
+    }
+
+    impl IndexProvider for ConditionallyTagPanickingProvider {
+        fn provider_tag(&self) -> ProviderTag {
+            if self
+                .panic_during_fanout
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                panic!("synthetic provider_tag() panic during fanout");
+            }
+            self.tag
+        }
+
+        fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+            *self.on_change_called.lock() = true;
+            Ok(())
+        }
+
+        fn declared_sub_tags(&self) -> &[SubTag] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn provider_tag_panic_short_circuits_on_change_for_that_provider() {
+        let panic_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let on_change_called = Arc::new(Mutex::new(false));
+        let other_seen = Arc::new(Mutex::new(Vec::new()));
+        let shared = SharedGraph::builder(GraphId::new(1))
+            .with_provider(Arc::new(ConditionallyTagPanickingProvider {
+                tag: ProviderTag(*b"TPNC"),
+                panic_during_fanout: Arc::clone(&panic_flag),
+                on_change_called: Arc::clone(&on_change_called),
+            }))
+            .with_provider(Arc::new(RecordingProvider::new(
+                ProviderTag(*b"OTHR"),
+                Arc::clone(&other_seen),
+            )))
+            .build()
+            .unwrap();
+
+        // Arm the panic only after the build-time uniqueness check has run.
+        panic_flag.store(true, std::sync::atomic::Ordering::Release);
+
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok");
+        }
+        txn.commit().unwrap();
+        assert!(
+            !*on_change_called.lock(),
+            "on_change must not run after provider_tag() panicked",
+        );
+        // The non-panicking provider after the panicking one still ran.
+        assert_eq!(other_seen.lock().len(), 1);
     }
 
     #[test]

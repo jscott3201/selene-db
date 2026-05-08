@@ -1,48 +1,60 @@
-//! Graph-scoped re-entrancy guard for the provider-fanout phase of commit.
+//! Thread-local re-entrancy guard for the provider-fanout phase of commit.
 //!
-//! Re-entrant writes (a thread calling `SharedGraph::begin_write()` while
-//! commit fanout is in progress on this graph) are misuse: the outer commit
-//! still holds the write lock and the fanout serializer, so a nested write
-//! would either deadlock or recurse indefinitely through the same provider
-//! list. The guard is a graph-scoped `AtomicBool` rather than a thread-local
-//! so that **any** thread — including a worker thread spawned by the
-//! provider's `on_change` — sees the flag and panics before reaching the lock.
-//! `begin_write` consults the flag and panics with a clear message; the outer
-//! `notify_providers` catches that unwind.
+//! Re-entrant writes from inside an `IndexProvider::on_change` callback are
+//! misuse: the outer commit holds the write lock and the fanout serializer,
+//! so a same-thread nested write would deadlock or recurse indefinitely. We
+//! detect the same-thread case here via a thread-local counter and let
+//! `begin_write` panic with a clear message; the outer `notify_providers`
+//! catches that unwind so the outer commit still completes.
+//!
+//! ## Cross-thread misuse — out of scope
+//!
+//! A provider whose `on_change` spawns a worker thread, calls `begin_write()`
+//! on that worker, AND blocks waiting for the worker (e.g., `JoinHandle::join`,
+//! `mpsc::Receiver::recv`) will deadlock. The worker blocks on the held write
+//! lock; the outer `on_change` blocks waiting for the worker; the outer commit
+//! cannot release the lock until `on_change` returns. This is a circular
+//! wait the engine cannot detect without tracing causal thread ancestry.
+//!
+//! v1.0 contract: `IndexProvider::on_change` MUST NOT initiate a write
+//! transaction, directly or indirectly via a spawned thread it then waits on.
+//! Cross-thread reentry is documented misuse, not a detectable footgun.
+//! Catching the same-thread case here is a courtesy that flags the obvious
+//! mistake; cross-thread waits are the provider author's responsibility.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::Cell;
 
-/// Returns `true` while commit fanout is active on the given graph.
-pub(crate) fn in_fanout(flag: &AtomicBool) -> bool {
-    flag.load(Ordering::Acquire)
+thread_local! {
+    static FANOUT_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
 
-/// RAII guard that flips a graph-scoped `AtomicBool` to `true` for the
-/// duration of provider fanout. Drop semantics make the reset panic-safe so
-/// that a panicking provider cannot leave the flag wedged on.
+/// Returns true if this thread is currently inside an
+/// [`IndexProvider`](crate::IndexProvider) callback fanout.
+pub(crate) fn in_fanout() -> bool {
+    FANOUT_DEPTH.with(|cell| cell.get() > 0)
+}
+
+/// RAII guard that increments `FANOUT_DEPTH` for the duration of provider
+/// fanout. Drop semantics make the decrement panic-safe so that a panicking
+/// provider cannot leave the counter wedged above zero.
 pub(crate) struct FanoutGuard {
-    flag: Arc<AtomicBool>,
+    _private: (),
 }
 
 impl FanoutGuard {
-    /// Mark the graph's fanout flag as active. Panics in debug builds if the
-    /// flag is already set — that would mean two commits raced their fanouts
-    /// on the same graph, which the write lock + allocator mutex are supposed
-    /// to forbid.
-    pub(crate) fn enter(flag: Arc<AtomicBool>) -> Self {
-        let previous = flag.swap(true, Ordering::AcqRel);
-        debug_assert!(
-            !previous,
-            "FanoutGuard::enter called while fanout already active on this graph",
-        );
-        Self { flag }
+    pub(crate) fn enter() -> Self {
+        FANOUT_DEPTH.with(|cell| cell.set(cell.get().saturating_add(1)));
+        Self { _private: () }
     }
 }
 
 impl Drop for FanoutGuard {
     fn drop(&mut self) {
-        self.flag.store(false, Ordering::Release);
+        FANOUT_DEPTH.with(|cell| {
+            let value = cell.get();
+            debug_assert!(value > 0, "FanoutGuard dropped without matching enter");
+            cell.set(value.saturating_sub(1));
+        });
     }
 }
 
@@ -51,42 +63,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fanout_guard_sets_and_clears_flag() {
-        let flag = Arc::new(AtomicBool::new(false));
-        assert!(!in_fanout(&flag));
+    fn fanout_guard_increments_and_decrements() {
+        assert!(!in_fanout());
         {
-            let _g = FanoutGuard::enter(Arc::clone(&flag));
-            assert!(in_fanout(&flag));
+            let _g = FanoutGuard::enter();
+            assert!(in_fanout());
+            {
+                let _h = FanoutGuard::enter();
+                assert!(in_fanout());
+            }
+            assert!(in_fanout());
         }
-        assert!(!in_fanout(&flag));
+        assert!(!in_fanout());
     }
 
     #[test]
-    fn fanout_guard_clears_flag_on_panic_unwind() {
-        let flag = Arc::new(AtomicBool::new(false));
-        let flag_clone = Arc::clone(&flag);
-        let result = std::panic::catch_unwind(move || {
-            let _g = FanoutGuard::enter(Arc::clone(&flag_clone));
-            assert!(in_fanout(&flag_clone));
+    fn fanout_guard_decrements_on_panic_unwind() {
+        let result = std::panic::catch_unwind(|| {
+            let _g = FanoutGuard::enter();
+            assert!(in_fanout());
             panic!("synthetic panic inside fanout");
         });
         assert!(result.is_err());
-        assert!(!in_fanout(&flag), "guard's Drop ran on unwind");
+        assert!(!in_fanout(), "guard's Drop ran on unwind");
     }
 
     #[test]
-    fn fanout_guard_visible_across_threads() {
-        let flag = Arc::new(AtomicBool::new(false));
-        let _g = FanoutGuard::enter(Arc::clone(&flag));
+    fn fanout_guard_does_not_leak_into_other_threads() {
+        let _g = FanoutGuard::enter();
+        assert!(in_fanout());
         let observed = std::thread::scope(|scope| {
-            scope
-                .spawn({
-                    let flag = Arc::clone(&flag);
-                    move || in_fanout(&flag)
-                })
-                .join()
-                .expect("worker thread did not panic")
+            scope.spawn(in_fanout).join().expect("worker did not panic")
         });
-        assert!(observed, "another thread sees the graph-scoped flag");
+        assert!(
+            !observed,
+            "thread-local guard is intentionally not visible to other threads",
+        );
     }
 }
