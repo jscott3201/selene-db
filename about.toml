@@ -19,5 +19,19 @@ accepted = [
 ]
 
 # Crates that have unclear license metadata or require manual override
-# go here with a justification. Empty by design — adding an entry should
-# carry a comment explaining why.
+# go here with a justification.
+
+# rkyv_derive ships its top-level MIT LICENSE alongside a second
+# `src/serde/LICENSE` (a vendored copy of serde's MIT license, lacking
+# the copyright header). Default cargo-about discovery is filesystem-
+# order-dependent: macOS finds only the top-level file, Linux finds both,
+# producing two different MIT clusters in THIRDPARTY.md. Pin discovery to
+# the top-level LICENSE so the regenerated file is byte-deterministic
+# across CI and contributor environments.
+[rkyv_derive.clarify]
+license = "MIT"
+
+[[rkyv_derive.clarify.files]]
+path = "LICENSE"
+checksum = "635111a955495b5d8d34b8052f69656e8e45f6437f9266329077b9aad5fbe8d3"
+license = "MIT"

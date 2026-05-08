@@ -172,13 +172,9 @@ jobs:
         if: steps.cargo-lock.outputs.exists == 'true'
       - uses: Swatinem/rust-cache@v2
         if: steps.cargo-lock.outputs.exists == 'true'
-      - if: steps.cargo-lock.outputs.exists == 'true'
-        # Source-build cargo-about with --locked. The taiki-e binstall path
-        # produced different MIT-cluster output on rkyv_derive than a
-        # `cargo install` build, leading to false-positive drift on rkyv 0.8.
-        # Compiling from source is slower but Swatinem/rust-cache@v2 caches
-        # it across runs, and it stays byte-deterministic with local
-        # regeneration.
-        run: cargo install cargo-about --version 0.9.0 --locked --features cli
+      - uses: taiki-e/install-action@v2
+        if: steps.cargo-lock.outputs.exists == 'true'
+        with:
+          tool: cargo-about
       - if: steps.cargo-lock.outputs.exists == 'true'
         run: bash .github/scripts/check-thirdparty-current.sh

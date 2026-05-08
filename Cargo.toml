@@ -44,7 +44,12 @@ uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
 smallvec = { version = "1", features = ["const_generics", "serde", "union"] }
 bytes = "1.10"
 serde = { version = "1.0", features = ["derive", "rc"] }
-rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "pointer_width_64"] }
+# pointer_width_64 pins archived relative-pointer width to 64 bits; v1.0
+# ships only x86_64 / aarch64 targets, so this is intentional. unaligned
+# lets rkyv decode archives from byte buffers (Vec<u8>) without requiring
+# 8-byte alignment; section bytes come back from the snapshot reader as
+# plain Vec<u8> with only 1-byte alignment guarantees by type.
+rkyv = { version = "0.8", default-features = false, features = ["alloc", "bytecheck", "pointer_width_64", "unaligned"] }
 arc-swap = "1"
 parking_lot = "0.12"
 imbl = { version = "7.0", default-features = false }
