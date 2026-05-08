@@ -34,4 +34,5 @@ pub use crate::ast::{
 };
 pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
+pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_with_source};

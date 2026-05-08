@@ -1,0 +1,20 @@
+[package]
+name = "selene-testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+selene-core = { path = "../selene-core", version = "0.0.0" }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -2,7 +2,9 @@
 
 pub mod call;
 pub mod ddl;
+pub mod eq;
 pub mod expr;
+pub mod format;
 pub mod mutation;
 pub mod pattern;
 pub mod span;
@@ -13,7 +15,9 @@ pub use call::{ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{
     DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
 };
+pub use eq::structurally_eq;
 pub use expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr};
+pub use format::{FormatError, format_statement};
 pub use mutation::{
     DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
     MutationTerminator, RemoveItem, SetItem,

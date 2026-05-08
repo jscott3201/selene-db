@@ -2662,6 +2662,7 @@ Used by:
 - selene-gql v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-graph v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-persist v0.0.0 — https://github.com/jscott3201/selene-db
+- selene-testing v0.0.0 — https://github.com/jscott3201/selene-db
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
 - r-efi v6.0.0 — https://github.com/r-efi/r-efi
 - relative-path v1.9.3 — https://github.com/udoprog/relative-path

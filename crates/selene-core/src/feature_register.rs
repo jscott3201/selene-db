@@ -141,8 +141,6 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G016,
     FeatureId::G017,
     FeatureId::G018,
-    FeatureId::G019,
-    FeatureId::G020,
     FeatureId::G110,
     FeatureId::G111,
     FeatureId::G112,
@@ -159,17 +157,6 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG20,
     FeatureId::GG21,
     FeatureId::GP04,
-    FeatureId::GP05,
-    FeatureId::GP06,
-    FeatureId::GP07,
-    FeatureId::GP08,
-    FeatureId::GP09,
-    FeatureId::GP10,
-    FeatureId::GP11,
-    FeatureId::GP12,
-    FeatureId::GP13,
-    FeatureId::GP14,
-    FeatureId::GP15,
     FeatureId::GQ03,
     FeatureId::GQ15,
     FeatureId::GT01,
@@ -196,25 +183,70 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV39,
     FeatureId::GV40,
     FeatureId::GV41,
-    FeatureId::GV45,
-    FeatureId::GV46,
-    FeatureId::GV47,
-    FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
-    FeatureId::GV60,
-    FeatureId::GV61,
-    FeatureId::GV90,
 ];
 
 /// Rationale for referenced optional features not claimed in v1.0.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
+    (
+        FeatureId::G019,
+        "counted shortest selectors require grammar + PathSelector AST work; reclaim with the path-selector extension brief",
+    ),
+    (
+        FeatureId::G020,
+        "counted shortest selectors require grammar + PathSelector AST work; reclaim with the path-selector extension brief",
+    ),
     (
         FeatureId::GP01,
         "inline procedures are out of v1.0 scope; extensions use named CALL",
     ),
     (FeatureId::GP02, "inline procedures are out of v1.0 scope"),
     (FeatureId::GP03, "inline procedures are out of v1.0 scope"),
+    (
+        FeatureId::GP05,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP06,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP07,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP08,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP09,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP10,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP11,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP12,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP13,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP14,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
+    (
+        FeatureId::GP15,
+        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+    ),
     (
         FeatureId::GP18,
         "mixed catalog/data transaction behavior remains forbidden in v1.0",
@@ -269,6 +301,34 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
+    (
+        FeatureId::GV45,
+        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
+    ),
+    (
+        FeatureId::GV46,
+        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
+    ),
+    (
+        FeatureId::GV47,
+        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
+    ),
+    (
+        FeatureId::GV48,
+        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
+    ),
+    (
+        FeatureId::GV60,
+        "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
+    ),
+    (
+        FeatureId::GV61,
+        "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
+    ),
+    (
+        FeatureId::GV90,
+        "explicit value type nullability requires type-level nullability on GqlType; reclaim once the type AST carries the marker",
+    ),
 ];
 
 /// ISO Annex B implementation-defined identifier.
@@ -530,6 +590,13 @@ pub fn name_of(id: FeatureId) -> Option<&'static str> {
     REFERENCED_FEATURES
         .iter()
         .find_map(|(feature, name)| (*feature == id).then_some(*name))
+}
+
+/// Return a referenced feature ID from its stable string representation.
+pub fn feature_id_from_str(id: &str) -> Option<FeatureId> {
+    REFERENCED_FEATURES
+        .iter()
+        .find_map(|(feature, _)| (feature.as_str() == id).then_some(*feature))
 }
 
 /// Return the v1.0 non-support rationale for a referenced feature ID.

@@ -1,0 +1,4 @@
+-- corpus: negative
+-- feature: GQ09
+-- expects: parse-rejected(GQ09)
+RETURN 1 AS n OTHERWISE RETURN 2 AS n

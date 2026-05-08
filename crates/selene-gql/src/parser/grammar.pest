@@ -472,6 +472,7 @@ type_name = {
   | ^"DOUBLE" ~ (^"PRECISION")?
   | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
   | ^"FLOAT" | ^"REAL"
+  | ^"DECIMAL" | ^"DEC"
   | ^"STRING" | ^"VARCHAR"
   | ^"UUID"
   | ^"BYTES" | ^"BYTEA"

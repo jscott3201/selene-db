@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: G112
+-- expects: parse-ok
+RETURN n IS SOURCE OF e AS source

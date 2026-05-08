@@ -1,0 +1,4 @@
+-- corpus: negative
+-- feature: GV20
+-- expects: parse-rejected(GV20)
+RETURN n IS TYPED REAL

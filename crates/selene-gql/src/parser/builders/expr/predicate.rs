@@ -249,7 +249,55 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
             feature_id: FeatureId::GV20,
             display_name: "Approximate value type: REAL",
             span: source_span,
-            hint: "REAL type spelling is outside the selene-db v1.0 claim list; use FLOAT or DOUBLE",
+            hint: "REAL type spelling is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
+        });
+    }
+    if compact == "FLOAT16" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV20,
+            display_name: "16 bit floating point numbers",
+            span: source_span,
+            hint: "FLOAT16 is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
+        });
+    }
+    if compact == "DOUBLE" || compact == "DOUBLE PRECISION" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV23,
+            display_name: "Floating point type name synonyms",
+            span: source_span,
+            hint: "DOUBLE spelling is outside the selene-db v1.0 claim list; use FLOAT64",
+        });
+    }
+    if compact == "UINT256" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV15,
+            display_name: "256 bit unsigned integer numbers",
+            span: source_span,
+            hint: "UINT256 is outside the selene-db v1.0 claim list",
+        });
+    }
+    if compact == "INT256" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV16,
+            display_name: "256 bit signed integer numbers",
+            span: source_span,
+            hint: "INT256 is outside the selene-db v1.0 claim list",
+        });
+    }
+    if compact == "FLOAT128" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV25,
+            display_name: "128 bit floating point numbers",
+            span: source_span,
+            hint: "FLOAT128 is outside the selene-db v1.0 claim list",
+        });
+    }
+    if compact == "FLOAT256" {
+        return Err(ParserError::UnsupportedFeature {
+            feature_id: FeatureId::GV26,
+            display_name: "256 bit floating point numbers",
+            span: source_span,
+            hint: "FLOAT256 is outside the selene-db v1.0 claim list",
         });
     }
     if compact.starts_with("LIST") {
@@ -277,7 +325,8 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
         "UINT16" => Ok(GqlType::Uint16),
         "UINT32" => Ok(GqlType::Uint32),
         "UINT128" => Ok(GqlType::Uint128),
-        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT" => Ok(GqlType::Float),
+        "FLOAT" => Ok(GqlType::Float),
+        "DECIMAL" | "DEC" => Ok(GqlType::Decimal),
         "FLOAT32" => Ok(GqlType::Float32),
         "FLOAT64" => Ok(GqlType::Float64),
         "STRING" | "VARCHAR" | "UUID" => Ok(GqlType::String),

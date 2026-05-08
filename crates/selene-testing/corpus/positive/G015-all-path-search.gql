@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: G015
+-- expects: parse-ok
+MATCH ALL (n:Person) RETURN n

@@ -4,8 +4,8 @@ This directory is the tracked home for claimed-feature query coverage.
 
 Layout:
 
-- `positive/` - queries that exercise claimed features and declare expected results.
-- `negative/` - queries that require unclaimed features and declare expected GQLSTATUS rejections.
+- `positive/` - queries that exercise claimed features and parse cleanly.
+- `negative/` - queries that require unclaimed features and declare parser rejections.
 - `fixtures/` - graph and procedure-pack fixtures used by corpus entries.
 
 File names start with the relevant ISO feature ID, for example
@@ -16,9 +16,11 @@ Each `.gql` file declares its expected outcome in header comments:
 ```sql
 -- corpus: positive
 -- feature: GP04
--- expects: ResultRows { columns: ["v"], rows: [[42]] }
--- fixture: person_graph
+-- expects: parse-ok
 
-CALL count.nodes() YIELD count AS v
+CALL selene.count_nodes() YIELD count AS v
 RETURN v
 ```
+
+M5a corpus files are parse-only. Executor-backed `ResultRows` expectations
+land with the planner/executor briefs.
