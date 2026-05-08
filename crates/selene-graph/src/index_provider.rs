@@ -6,8 +6,10 @@ use selene_core::Change;
 
 /// Stable 4-byte ASCII identifier for an [`IndexProvider`] registration.
 ///
-/// Reserved tag space:
-/// - `META`/`NODE`/`EDGE`/`SCMA` are reserved for engine-owned snapshot sections.
+/// Reserved tag space per spec 04 section 4.2:
+/// - `CORE` is reserved for engine-owned snapshot sections.
+/// - `META`/`NODE`/`EDGE`/`SCMA` are reserved sub-tags under `CORE`, not
+///   provider tags.
 /// - First-party extension allocations include `VECT`, `FULL`, `TIMS`, `GRPR`.
 /// - Other ASCII uppercase 4-byte sequences are provider-allocated.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]

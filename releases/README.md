@@ -21,3 +21,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-11: selene-persist added the v1.0 snapshot envelope (`snapshot.{seq}.snap`) with SLSN headers, TLV section tables, atomic tmp-file publication, blake3-128 body hashes, per-section zstd compression, bounded reads, and latest-snapshot path helpers.
 - BRIEF-12: selene-persist added the recovery API with `RecoveryProvider`, deterministic `ProviderRegistry`, snapshot apply, WAL replay, WAL/snapshot epoch validation, provider error wrapping, and per-entry replicated-change dedupe.
 - BRIEF-INFRA-02: selene-core added symbolic registries for first-party `ExtensionTypeId` rendering and emitted GQLSTATUS code names, with drift tests in selene-core, selene-graph, and selene-persist.
+- BRIEF-13: selene-graph added the auto-registered CORE provider, postcard snapshot sections for primary graph state, SharedGraph recovery through selene-persist, and cold-start rebuild of adjacency plus secondary indexes.

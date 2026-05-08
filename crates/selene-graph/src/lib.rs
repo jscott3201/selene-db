@@ -1,22 +1,24 @@
 //! In-memory property graph runtime per spec 03.
 //!
-//! Storage, concurrency, built-in label/property indexes, and the typed
-//! mutation funnel live here. Composite indexes, edge property indexes,
-//! schema validation for closed graphs, catalog bootstrap, the procedure-pack
-//! `selene.create_index` wrapper, and persistence integration land in
-//! subsequent briefs.
+//! Storage, concurrency, built-in label/property indexes, the typed mutation
+//! funnel, and the auto-registered CORE persistence provider live here.
+//! Composite indexes, edge property indexes, schema validation for closed
+//! graphs, catalog bootstrap, and the procedure-pack `selene.create_index`
+//! wrapper land in subsequent briefs.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod adjacency;
 pub mod chunked_vec;
+pub mod core_provider;
 pub mod error;
 pub mod graph;
 pub mod id_allocator;
 pub mod index_provider;
 pub mod mutator;
 pub(crate) mod property_index;
+mod recover;
 pub(crate) mod reentry;
 pub mod shared;
 pub mod store;
@@ -25,6 +27,9 @@ pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
 pub use chunked_vec::ChunkedVec;
+pub use core_provider::{
+    CORE_EDGE_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_PROVIDER_TAG, CORE_SCMA_SUB, CoreProvider,
+};
 pub use error::{GraphError, GraphResult};
 pub use graph::{GraphMeta, SeleneGraph};
 pub use id_allocator::IdAllocator;

@@ -52,6 +52,7 @@ triomphe = "0.1"
 tracing = "0.1"
 blake3 = "1.8"
 zstd = "0.13"
+selene-persist = { path = "crates/selene-persist", version = "0.0.0" }
 
 # Dev dependencies.
 proptest = { version = "1.11", default-features = false, features = ["std"] }

@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use imbl::HashMap;
 use roaring::RoaringBitmap;
+use serde::{Deserialize, Serialize};
 
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 
@@ -13,7 +14,7 @@ use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
 use crate::typed_index::TypedIndex;
 
 /// Snapshot metadata.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GraphMeta {
     /// Graph identifier.
     pub graph_id: GraphId,
