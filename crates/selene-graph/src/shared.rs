@@ -48,8 +48,23 @@ impl SharedGraph {
     /// The allocator floors are derived from storage length so that stale
     /// `GraphMeta.next_*_id` values cannot allow ID reuse over rows that
     /// already exist (recovery hardening — spec 02 §4 forbids ID reuse).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the supplied graph contains more than `u32::MAX` rows in
+    /// either store. Selene-graph's row index is `u32` by construction;
+    /// `SeleneGraph::new()` always satisfies this, and any caller-built
+    /// fixture must too. Use [`SharedGraph::try_from_graph`] for the
+    /// fallible variant when validating untrusted snapshots.
     #[must_use]
     pub fn from_graph(graph: SeleneGraph) -> Self {
+        Self::try_from_graph(graph).expect("graph store row count exceeds u32::MAX")
+    }
+
+    /// Fallible variant of [`SharedGraph::from_graph`]. Returns
+    /// [`GraphError::Inconsistent`] when the graph's stores exceed the
+    /// `u32` row capacity.
+    pub fn try_from_graph(graph: SeleneGraph) -> GraphResult<Self> {
         Self::from_graph_parts(graph, Vec::new())
     }
 
@@ -58,33 +73,37 @@ impl SharedGraph {
     /// # Errors
     ///
     /// Returns [`GraphError::Provider`] when two providers declare the same
-    /// [`ProviderTag`].
+    /// [`ProviderTag`], and [`GraphError::Inconsistent`] when the graph's
+    /// stores exceed the `u32` row capacity.
     pub fn from_graph_with_providers(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
     ) -> GraphResult<Self> {
         validate_unique_provider_tags(&providers)?;
-        Ok(Self::from_graph_parts(graph, providers))
+        Self::from_graph_parts(graph, providers)
     }
 
-    fn from_graph_parts(graph: SeleneGraph, providers: Vec<Arc<dyn IndexProvider>>) -> Self {
+    fn from_graph_parts(
+        graph: SeleneGraph,
+        providers: Vec<Arc<dyn IndexProvider>>,
+    ) -> GraphResult<Self> {
         let mut graph = graph;
         // Always rebuild label indexes from the canonical column data + alive
         // bitmaps. Caller-supplied `idx_label`/`idx_edge_label` are treated as
         // hints at best — derived state is computed from primary state to
         // prevent silent drift on recovery, manual construction, or test
         // fixtures.
-        rebuild_label_indexes(&mut graph);
+        rebuild_label_indexes(&mut graph)?;
 
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
         let allocator = IdAllocator::from_meta_with_floors(&graph.meta, node_floor, edge_floor);
-        Self {
+        Ok(Self {
             shared: Arc::new(RwLock::new(graph.clone())),
             snapshot: Arc::new(ArcSwap::new(Arc::new(graph))),
             allocator: Arc::new(Mutex::new(allocator)),
             providers,
-        }
+        })
     }
 
     /// Load the current immutable snapshot without taking the write lock.
@@ -104,23 +123,35 @@ impl SharedGraph {
 
     /// Begin a write transaction by acquiring the single graph write lock.
     ///
+    /// Concurrent writers from other threads queue normally on the write
+    /// lock; the engine does **not** panic legitimate concurrent writes
+    /// during another commit's provider fanout.
+    ///
     /// # Panics
     ///
-    /// Panics when called from within an [`IndexProvider`] callback (i.e.,
-    /// during commit fanout). Re-entrant writes are not supported in v1.0;
-    /// the outer commit holds the write lock and the fanout serializer, so a
-    /// nested write would either deadlock or recurse indefinitely. The panic
-    /// is caught by the outer commit's `notify_providers` boundary; provider
-    /// state may drift, but the outer commit still completes.
+    /// Panics when called from inside an [`IndexProvider`] callback **on
+    /// the same thread** as the active fanout. Same-thread re-entrant
+    /// writes are unsupported in v1.0; the outer commit holds the write
+    /// lock and the fanout serializer, so a nested write would deadlock or
+    /// recurse indefinitely. The panic is caught by the outer commit's
+    /// `notify_providers` boundary; provider state may drift, but the
+    /// outer commit still completes.
+    ///
+    /// Cross-thread re-entry — a provider spawning a worker thread that
+    /// calls `begin_write` and waiting for it — is **documented misuse**
+    /// rather than a detectable footgun (the engine cannot trace causal
+    /// thread ancestry). See the module docs in `reentry.rs` and the
+    /// `IndexProvider` rustdoc for the v1.0 contract.
     #[must_use]
     pub fn begin_write(&self) -> WriteTxn<'_> {
         if crate::reentry::in_fanout() {
             panic!(
                 "selene-graph: SharedGraph::begin_write() called from within \
-                 an IndexProvider callback; re-entrant writes are not \
-                 supported in v1.0. The outer commit's notify_providers \
-                 boundary will catch this panic; the outer commit succeeds, \
-                 but the offending provider's chained mutation does not."
+                 an IndexProvider callback on the same thread; same-thread \
+                 re-entrant writes are not supported in v1.0. The outer \
+                 commit's notify_providers boundary will catch this panic; \
+                 the outer commit succeeds, but the offending provider's \
+                 chained mutation does not."
             );
         }
         WriteTxn::new(
@@ -153,13 +184,18 @@ impl SharedGraphBuilder {
     }
 }
 
-fn rebuild_label_indexes(graph: &mut SeleneGraph) {
+fn rebuild_label_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
     graph.idx_label.clear();
     graph.idx_edge_label.clear();
 
     let node_count = graph.node_store.labels.len();
     for row_index in 0..node_count {
-        let row = row_index as u32;
+        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
+            reason: format!(
+                "node store row index {row_index} exceeds u32::MAX; selene-graph \
+                 caps rows at u32::MAX",
+            ),
+        })?;
         if !graph.node_store.is_alive(row) {
             continue;
         }
@@ -172,7 +208,12 @@ fn rebuild_label_indexes(graph: &mut SeleneGraph) {
 
     let edge_count = graph.edge_store.label.len();
     for row_index in 0..edge_count {
-        let row = row_index as u32;
+        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
+            reason: format!(
+                "edge store row index {row_index} exceeds u32::MAX; selene-graph \
+                 caps rows at u32::MAX",
+            ),
+        })?;
         if !graph.edge_store.is_alive(row) {
             continue;
         }
@@ -180,6 +221,7 @@ fn rebuild_label_indexes(graph: &mut SeleneGraph) {
             graph.idx_edge_label.entry(*label).or_default().insert(row);
         }
     }
+    Ok(())
 }
 
 fn validate_unique_provider_tags(providers: &[Arc<dyn IndexProvider>]) -> GraphResult<()> {
@@ -435,6 +477,22 @@ mod tests {
             .edges_with_label(&edge_label)
             .expect("edge label present");
         assert_eq!(edges.iter().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn try_from_graph_returns_ok_for_well_formed_input() {
+        use selene_core::{LabelSet, PropertyMap, intern};
+
+        let label = intern("idx.ok").unwrap();
+        let mut graph = SeleneGraph::new(GraphId::new(1));
+        graph.node_store.labels.push(LabelSet::single(label));
+        graph.node_store.properties.push(PropertyMap::new());
+        graph.node_store.alive.insert(0);
+
+        let shared =
+            SharedGraph::try_from_graph(graph).expect("well-formed graph rebuilds successfully");
+        let snapshot = shared.read();
+        assert!(snapshot.nodes_with_label(&label).is_some());
     }
 
     #[test]

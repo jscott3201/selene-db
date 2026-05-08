@@ -55,6 +55,15 @@ pub enum GraphError {
         max: u64,
     },
 
+    /// The graph snapshot violates a structural invariant (e.g., row count
+    /// exceeds the addressable u32 range).
+    #[error("graph snapshot is inconsistent: {reason}")]
+    #[diagnostic(code(SLENE_G_006))]
+    Inconsistent {
+        /// Free-form description of the inconsistency.
+        reason: String,
+    },
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -76,6 +85,7 @@ impl GraphError {
             | Self::NodeNotAlive { .. }
             | Self::EdgeNotAlive { .. } => "22023",
             Self::IdOverflow { .. } => "53000",
+            Self::Inconsistent { .. } => "XX500",
             Self::Core(_) => "22000",
             Self::Provider(_) => "XX500",
         }
@@ -97,6 +107,10 @@ mod tests {
     #[case(
         GraphError::IdOverflow { kind: "node", raw: 5_000_000_000, max: 4_294_967_296 },
         "53000"
+    )]
+    #[case(
+        GraphError::Inconsistent { reason: "row index exceeds u32::MAX".to_owned() },
+        "XX500"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
     #[case(

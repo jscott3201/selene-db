@@ -1,11 +1,26 @@
 //! Thread-local re-entrancy guard for the provider-fanout phase of commit.
 //!
-//! Re-entrant writes (a thread calling `SharedGraph::begin_write()` from
-//! inside an `IndexProvider::on_change` callback) are misuse: the outer
-//! commit still holds the write lock and the fanout serializer, so a nested
-//! write would either deadlock or recurse indefinitely through the same
-//! provider list. We detect the misuse here and let `begin_write` panic with
-//! a clear message; the outer `notify_providers` catches that unwind.
+//! Re-entrant writes from inside an `IndexProvider::on_change` callback are
+//! misuse: the outer commit holds the write lock and the fanout serializer,
+//! so a same-thread nested write would deadlock or recurse indefinitely. We
+//! detect the same-thread case here via a thread-local counter and let
+//! `begin_write` panic with a clear message; the outer `notify_providers`
+//! catches that unwind so the outer commit still completes.
+//!
+//! ## Cross-thread misuse — out of scope
+//!
+//! A provider whose `on_change` spawns a worker thread, calls `begin_write()`
+//! on that worker, AND blocks waiting for the worker (e.g., `JoinHandle::join`,
+//! `mpsc::Receiver::recv`) will deadlock. The worker blocks on the held write
+//! lock; the outer `on_change` blocks waiting for the worker; the outer commit
+//! cannot release the lock until `on_change` returns. This is a circular
+//! wait the engine cannot detect without tracing causal thread ancestry.
+//!
+//! v1.0 contract: `IndexProvider::on_change` MUST NOT initiate a write
+//! transaction, directly or indirectly via a spawned thread it then waits on.
+//! Cross-thread reentry is documented misuse, not a detectable footgun.
+//! Catching the same-thread case here is a courtesy that flags the obvious
+//! mistake; cross-thread waits are the provider author's responsibility.
 
 use std::cell::Cell;
 
@@ -71,5 +86,18 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(!in_fanout(), "guard's Drop ran on unwind");
+    }
+
+    #[test]
+    fn fanout_guard_does_not_leak_into_other_threads() {
+        let _g = FanoutGuard::enter();
+        assert!(in_fanout());
+        let observed = std::thread::scope(|scope| {
+            scope.spawn(in_fanout).join().expect("worker did not panic")
+        });
+        assert!(
+            !observed,
+            "thread-local guard is intentionally not visible to other threads",
+        );
     }
 }
