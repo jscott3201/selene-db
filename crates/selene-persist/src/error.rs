@@ -184,6 +184,15 @@ pub enum PersistError {
         /// Provider-owned sub-tag.
         sub: [u8; 4],
     },
+
+    /// Snapshot section table claims a payload range that overlaps the
+    /// header/table region, runs past end-of-file, or overflows `u64`.
+    #[error("malformed snapshot section layout: {reason}")]
+    #[diagnostic(code(SLENE_P_024))]
+    MalformedSectionLayout {
+        /// Human-readable reason for the layout rejection.
+        reason: &'static str,
+    },
 }
 
 impl PersistError {
@@ -213,7 +222,8 @@ impl PersistError {
             | Self::UnsupportedFlag { .. }
             | Self::ReservedBytesNonZero { .. }
             | Self::MalformedSnapshotFilename
-            | Self::SectionMissing { .. } => "XX500",
+            | Self::SectionMissing { .. }
+            | Self::MalformedSectionLayout { .. } => "XX500",
         }
     }
 }
@@ -247,6 +257,7 @@ mod tests {
     #[case(PersistError::ReservedBytesNonZero { offset: 12 }, "XX500")]
     #[case(PersistError::MalformedSnapshotFilename, "XX500")]
     #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "XX500")]
+    #[case(PersistError::MalformedSectionLayout { reason: "test" }, "XX500")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
     }

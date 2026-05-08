@@ -1,13 +1,16 @@
 //! Snapshot envelope reader.
 
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
 use crate::compression::decompress_zstd_bounded;
 use crate::section::{
-    MAX_SECTION_PAYLOAD_BYTES, SectionEntry, body_hash, read_section_table, section_table_bytes,
+    MAX_SECTION_PAYLOAD_BYTES, SECTION_TABLE_ROW_LEN, SectionEntry, read_section_table,
+    section_table_bytes,
 };
+use crate::snapshot_file_header::SNAPSHOT_FILE_HEADER_LEN;
 use crate::{PersistError, PersistResult, SnapshotFileHeader};
 
 /// Reader for one snapshot file.
@@ -29,6 +32,9 @@ impl SnapshotReader {
         let mut file = File::open(path)?;
         let header = SnapshotFileHeader::read_from(&mut file)?;
         let sections = read_section_table(&mut file, usize::from(header.section_count))?;
+        validate_unique_tags(&sections)?;
+        let file_len = file.metadata()?.len();
+        validate_section_offsets(&sections, file_len)?;
         Ok(Self {
             file,
             header,
@@ -88,17 +94,33 @@ impl SnapshotReader {
 
     /// Recompute and validate the snapshot body hash.
     ///
+    /// Streams payload bytes through the hasher in 8 KiB chunks rather than
+    /// materializing every section in memory, so peak memory stays bounded
+    /// regardless of total snapshot size.
+    ///
     /// # Errors
     ///
     /// Returns [`PersistError::BodyHashMismatch`] if the stored and recomputed
     /// hashes differ, or I/O errors while reading payload bytes.
     pub fn verify_body_hash(&mut self) -> PersistResult<()> {
         let table = section_table_bytes(&self.sections)?;
-        let mut payloads = Vec::with_capacity(self.sections.len());
-        for entry in self.sections.clone() {
-            payloads.push(self.read_payload(&entry)?);
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&table);
+        let mut buf = [0_u8; 8 * 1024];
+        let entries = self.sections.clone();
+        for entry in entries {
+            self.file.seek(SeekFrom::Start(entry.payload_offset))?;
+            let mut remaining = entry.payload_len;
+            while remaining > 0 {
+                let want = remaining.min(buf.len() as u64) as usize;
+                self.file.read_exact(&mut buf[..want])?;
+                hasher.update(&buf[..want]);
+                remaining -= want as u64;
+            }
         }
-        let observed = body_hash(&table, payloads.iter().map(Vec::as_slice));
+        let digest = hasher.finalize();
+        let mut observed = [0_u8; 16];
+        observed.copy_from_slice(&digest.as_bytes()[..16]);
         if observed != self.header.body_hash {
             return Err(PersistError::BodyHashMismatch {
                 expected: self.header.body_hash,
@@ -119,6 +141,42 @@ impl SnapshotReader {
         self.file.read_exact(&mut payload)?;
         Ok(payload)
     }
+}
+
+fn validate_unique_tags(sections: &[SectionEntry]) -> PersistResult<()> {
+    let mut seen = HashSet::with_capacity(sections.len());
+    for entry in sections {
+        if !seen.insert(entry.tag_pair()) {
+            return Err(PersistError::DuplicateSection {
+                provider: entry.provider,
+                sub: entry.sub,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_section_offsets(sections: &[SectionEntry], file_len: u64) -> PersistResult<()> {
+    let payloads_start = SNAPSHOT_FILE_HEADER_LEN as u64
+        + (sections.len() as u64).saturating_mul(SECTION_TABLE_ROW_LEN as u64);
+    for entry in sections {
+        if entry.payload_offset < payloads_start {
+            return Err(PersistError::MalformedSectionLayout {
+                reason: "section payload offset overlaps header or table",
+            });
+        }
+        let end = entry.payload_offset.checked_add(entry.payload_len).ok_or(
+            PersistError::MalformedSectionLayout {
+                reason: "section offset+length overflows u64",
+            },
+        )?;
+        if end > file_len {
+            return Err(PersistError::MalformedSectionLayout {
+                reason: "section payload extends past end of file",
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -369,6 +427,105 @@ mod tests {
         );
         let reader = SnapshotReader::open(&path).unwrap();
         assert_eq!(reader.header().flags, FLAG_SECTION_COMPRESSED);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Hand-write a snapshot file with the supplied entries directly, bypassing
+    /// the builder so we can exercise reader-side validation against malformed
+    /// inputs the builder would otherwise reject.
+    fn write_raw_snapshot(path: &Path, entries: &[SectionEntry], extra_payload: &[u8]) {
+        let table = section_table_bytes(entries).unwrap();
+        let hash = crate::section::body_hash(&table, [extra_payload]);
+        let header = SnapshotFileHeader::new(0, entries.len(), hash).unwrap();
+        let mut file = File::create(path).unwrap();
+        header.write_to(&mut file).unwrap();
+        file.write_all(&table).unwrap();
+        file.write_all(extra_payload).unwrap();
+    }
+
+    #[test]
+    fn duplicate_section_tag_at_open_is_rejected() {
+        let dir = temp_dir("dup-open");
+        let path = snapshot_path(&dir, 10);
+        let payload_offset = SNAPSHOT_FILE_HEADER_LEN as u64 + 2 * SECTION_TABLE_ROW_LEN as u64;
+        let entries = vec![
+            SectionEntry {
+                provider: *b"CORE",
+                sub: *b"META",
+                payload_offset,
+                payload_len: 0,
+            },
+            SectionEntry {
+                provider: *b"CORE",
+                sub: *b"META",
+                payload_offset,
+                payload_len: 0,
+            },
+        ];
+        write_raw_snapshot(&path, &entries, &[]);
+        assert!(matches!(
+            SnapshotReader::open(&path),
+            Err(PersistError::DuplicateSection { provider, sub })
+                if provider == *b"CORE" && sub == *b"META"
+        ));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn section_offset_inside_header_or_table_is_rejected() {
+        let dir = temp_dir("overlap");
+        let path = snapshot_path(&dir, 11);
+        let entries = vec![SectionEntry {
+            provider: *b"CORE",
+            sub: *b"META",
+            payload_offset: 8, // inside the 32-byte header
+            payload_len: 0,
+        }];
+        write_raw_snapshot(&path, &entries, &[]);
+        assert!(matches!(
+            SnapshotReader::open(&path),
+            Err(PersistError::MalformedSectionLayout { reason })
+                if reason.contains("header or table")
+        ));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn section_payload_past_eof_is_rejected() {
+        let dir = temp_dir("past-eof");
+        let path = snapshot_path(&dir, 12);
+        let payload_offset = SNAPSHOT_FILE_HEADER_LEN as u64 + SECTION_TABLE_ROW_LEN as u64;
+        let entries = vec![SectionEntry {
+            provider: *b"CORE",
+            sub: *b"META",
+            payload_offset,
+            payload_len: 4096, // file is only 56 bytes
+        }];
+        write_raw_snapshot(&path, &entries, &[]);
+        assert!(matches!(
+            SnapshotReader::open(&path),
+            Err(PersistError::MalformedSectionLayout { reason })
+                if reason.contains("end of file")
+        ));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn section_offset_overflow_is_rejected() {
+        let dir = temp_dir("overflow");
+        let path = snapshot_path(&dir, 13);
+        let entries = vec![SectionEntry {
+            provider: *b"CORE",
+            sub: *b"META",
+            payload_offset: u64::MAX,
+            payload_len: 1,
+        }];
+        write_raw_snapshot(&path, &entries, &[]);
+        assert!(matches!(
+            SnapshotReader::open(&path),
+            Err(PersistError::MalformedSectionLayout { reason })
+                if reason.contains("overflows")
+        ));
         let _ = fs::remove_dir_all(dir);
     }
 }

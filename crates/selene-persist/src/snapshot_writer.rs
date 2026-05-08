@@ -71,7 +71,7 @@ pub struct SnapshotBuilder {
     seen: HashSet<([u8; 4], [u8; 4])>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 struct RawSection {
     provider: [u8; 4],
     sub: [u8; 4],
@@ -127,22 +127,22 @@ impl SnapshotBuilder {
     /// Atomically write the snapshot and return the final path.
     ///
     /// The writer creates `snapshot.{sequence}.snap.tmp`, writes and optionally
-    /// fsyncs it, then renames it to `snapshot.{sequence}.snap`. The parent
-    /// directory is not fsynced in v1.0.
+    /// fsyncs it, then **hard-links** it to `snapshot.{sequence}.snap` and
+    /// removes the tmp. `hard_link` fails atomically with `AlreadyExists` when
+    /// the final path already has a snapshot for this sequence; this is the
+    /// race-safe alternative to `rename` (which silently overwrites on POSIX)
+    /// without requiring `unsafe` for `renameat2(RENAME_NOREPLACE)`. On a
+    /// collision the tmp is removed best-effort. The parent directory is not
+    /// fsynced in v1.0.
     ///
     /// # Errors
     ///
-    /// Returns cap, compression, hash/header construction, or I/O errors.
+    /// Returns cap, compression, hash/header construction, or I/O errors,
+    /// including `Io(AlreadyExists)` when the final snapshot path is taken.
     pub fn finalize(self) -> PersistResult<PathBuf> {
         let final_path = snapshot_path(&self.config.dir, self.config.sequence);
-        if final_path.try_exists()? {
-            return Err(PersistError::Io(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "snapshot already exists for sequence",
-            )));
-        }
         let tmp_path = snapshot_tmp_path(&self.config.dir, self.config.sequence);
-        let prepared = prepare_sections(&self.sections, self.config.compression)?;
+        let prepared = prepare_sections(self.sections, self.config.compression)?;
         let entries: Vec<_> = prepared.iter().map(|section| section.entry).collect();
         let table = section_table_bytes(&entries)?;
         let hash = body_hash(
@@ -170,29 +170,43 @@ impl SnapshotBuilder {
             writer.get_ref().sync_data()?;
         }
         drop(writer);
-        std::fs::rename(&tmp_path, &final_path)?;
-        Ok(final_path)
+        match std::fs::hard_link(&tmp_path, &final_path) {
+            Ok(()) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                Ok(final_path)
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                Err(PersistError::Io(error))
+            }
+        }
     }
 }
 
 fn prepare_sections(
-    sections: &[RawSection],
+    sections: Vec<RawSection>,
     compression: SectionCompression,
 ) -> PersistResult<Vec<PreparedSection>> {
+    let count = sections.len();
     let mut payload_offset =
-        SNAPSHOT_FILE_HEADER_LEN as u64 + (sections.len() * SECTION_TABLE_ROW_LEN) as u64;
-    let mut prepared = Vec::with_capacity(sections.len());
+        SNAPSHOT_FILE_HEADER_LEN as u64 + (count * SECTION_TABLE_ROW_LEN) as u64;
+    let mut prepared = Vec::with_capacity(count);
     for section in sections {
+        let RawSection {
+            provider,
+            sub,
+            payload,
+        } = section;
         let payload = match compression {
-            SectionCompression::None => section.payload.clone(),
-            SectionCompression::PerSection { level } => compress_zstd(&section.payload, level)?,
+            SectionCompression::None => payload,
+            SectionCompression::PerSection { level } => compress_zstd(&payload, level)?,
         };
         validate_section_payload_len(payload.len())?;
         let payload_len = payload.len() as u64;
         prepared.push(PreparedSection {
             entry: SectionEntry {
-                provider: section.provider,
-                sub: section.sub,
+                provider,
+                sub,
                 payload_offset,
                 payload_len,
             },
@@ -317,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn final_snapshot_path_already_exists_is_rejected_before_rename() {
+    fn final_snapshot_path_already_exists_is_rejected_atomically() {
         let dir = temp_dir("final-exists");
         fs::write(snapshot_path(&dir, 6), b"existing").unwrap();
         let err = SnapshotBuilder::new(config(dir.clone(), 6, SectionCompression::None))
@@ -327,7 +341,10 @@ mod tests {
             err,
             PersistError::Io(error) if error.kind() == std::io::ErrorKind::AlreadyExists
         ));
+        // hard_link rejection cleans up the tmp; the pre-existing final
+        // remains untouched.
         assert!(!snapshot_tmp_path(&dir, 6).exists());
+        assert_eq!(fs::read(snapshot_path(&dir, 6)).unwrap(), b"existing");
         let _ = fs::remove_dir_all(dir);
     }
 

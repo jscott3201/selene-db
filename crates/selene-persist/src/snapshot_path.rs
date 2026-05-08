@@ -39,7 +39,10 @@ pub fn parse_snapshot_filename(name: &OsStr) -> Option<u64> {
 
 /// Find the highest-sequence snapshot in `dir`.
 ///
-/// Malformed names and temporary files are ignored.
+/// Malformed names, temporary files, and non-regular-file entries (directories,
+/// symlinks) are ignored — recovery should not try to open a directory named
+/// `snapshot.{seq}.snap` even if its parsed sequence is higher than any real
+/// snapshot present.
 ///
 /// # Errors
 ///
@@ -51,6 +54,9 @@ pub fn find_latest_snapshot(dir: &Path) -> PersistResult<Option<(u64, PathBuf)>>
         let Some(sequence) = parse_snapshot_filename(&entry.file_name()) else {
             continue;
         };
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
         let path = entry.path();
         match &latest {
             Some((current, _)) if *current >= sequence => {}
@@ -126,6 +132,17 @@ mod tests {
     fn find_latest_snapshot_returns_none_for_empty_dir() {
         let dir = temp_dir("empty");
         assert!(find_latest_snapshot(&dir).unwrap().is_none());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn find_latest_snapshot_skips_directories_named_like_snapshots() {
+        let dir = temp_dir("dir-named-snap");
+        fs::create_dir(snapshot_path(&dir, 99)).unwrap(); // directory shaped like a snapshot
+        fs::write(snapshot_path(&dir, 2), []).unwrap();
+        let (sequence, path) = find_latest_snapshot(&dir).unwrap().unwrap();
+        assert_eq!(sequence, 2);
+        assert_eq!(path, snapshot_path(&dir, 2));
         let _ = fs::remove_dir_all(dir);
     }
 }
