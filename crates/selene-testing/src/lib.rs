@@ -6,4 +6,5 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod analyzed_corpus;
 pub mod corpus;

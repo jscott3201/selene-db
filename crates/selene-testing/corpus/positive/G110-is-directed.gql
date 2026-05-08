@@ -1,4 +1,4 @@
 -- corpus: positive
 -- feature: G110
 -- expects: parse-ok
-RETURN e IS DIRECTED AS directed
+MATCH ()-[e]->() RETURN e IS DIRECTED AS directed
