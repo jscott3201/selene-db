@@ -42,7 +42,9 @@ pub use extension_type_ids::{
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
-pub use istr::{IStr, intern, intern_with_admission, lookup, resolve};
+pub use istr::{
+    AdmissionError, IStr, intern, intern_atomic_admit, intern_with_admission, lookup, resolve,
+};
 pub use label_set::LabelSet;
 pub use origin::Origin;
 pub use property_map::PropertyMap;

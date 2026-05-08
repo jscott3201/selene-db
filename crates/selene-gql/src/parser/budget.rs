@@ -1,6 +1,6 @@
 //! Per-parse interner admission budget.
 
-use selene_core::{IStr, intern_with_admission, lookup};
+use selene_core::{AdmissionError, IStr, intern_atomic_admit};
 
 use crate::{SourceSpan, error::ParserError};
 
@@ -18,38 +18,46 @@ impl InternerBudget {
         Self { limit, admitted: 0 }
     }
 
-    fn charge(&mut self, span: SourceSpan) -> Result<(), ParserError> {
-        self.admitted = self.admitted.saturating_add(1);
-        if self.admitted > self.limit {
-            return Err(ParserError::InternerBudgetExceeded {
-                limit: self.limit,
-                span,
-            });
-        }
-        Ok(())
-    }
-
     pub(super) fn intern_str(
         &mut self,
         value: &str,
         span: SourceSpan,
         kind: &'static str,
     ) -> Result<IStr, ParserError> {
-        // Already interned: free admission, no global growth, no budget charge.
-        if let Some(existing) = lookup(value) {
-            return Ok(existing);
-        }
-        // Would be a new admission. Charge the local budget BEFORE the global
-        // intern call so an over-budget parse never permanently grows the
-        // process-wide pool.
-        self.charge(span)?;
-        let (interned, _was_new) = intern_with_admission(value).map_err(|error| {
-            ParserError::syntax(
-                format!("could not intern {kind}: {error}"),
+        // The closure runs only when this call would be a genuine new
+        // admission from this thread's vantage, under the same lock that
+        // gates the global cap check and insertion. If the closure rejects,
+        // no global insertion happens; if it accepts, the local counter and
+        // the global pool advance atomically. This makes the per-parse
+        // budget race-free against other threads admitting the same string:
+        // the closure is never invoked when another thread has already
+        // interned `value`, so we never over-charge for redundant work.
+        intern_atomic_admit(value, || {
+            if self.admitted >= self.limit {
+                return Err(());
+            }
+            self.admitted += 1;
+            Ok(())
+        })
+        .map_err(|error| match error {
+            AdmissionError::Cap(cap) => ParserError::syntax(
+                format!("could not intern {kind}: {cap}"),
                 span,
                 Some("interner cap may be exhausted".into()),
-            )
-        })?;
-        Ok(interned)
+            ),
+            AdmissionError::Rejected => ParserError::InternerBudgetExceeded {
+                limit: self.limit,
+                span,
+            },
+            // AdmissionError is #[non_exhaustive] so cross-crate matches
+            // need this arm. Treat any future variant conservatively as a
+            // syntax error rather than silently mapping it to the budget
+            // path, where the limit field would be misleading.
+            other => ParserError::syntax(
+                format!("could not intern {kind}: {other}"),
+                span,
+                None,
+            ),
+        })
     }
 }
