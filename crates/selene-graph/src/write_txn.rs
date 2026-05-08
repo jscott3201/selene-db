@@ -69,43 +69,49 @@ impl<'g> WriteTxn<'g> {
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
     /// Registered index providers are notified after the new graph snapshot is
-    /// published. Provider errors are logged and do not fail the graph commit.
-    pub fn commit_with_principal(
-        mut self,
-        principal: Option<Arc<[u8]>>,
-    ) -> GraphResult<CommitOutcome> {
-        self.working.meta.generation = self
-            .working
+    /// published AND after the graph write lock is released. Provider errors
+    /// (returned `Err`) and provider panics are both logged and do not fail
+    /// the graph commit. Releasing the write lock before fanout prevents a
+    /// re-entrant provider (one that calls `begin_write()` from `on_change`)
+    /// from deadlocking on the same lock.
+    pub fn commit_with_principal(self, principal: Option<Arc<[u8]>>) -> GraphResult<CommitOutcome> {
+        let WriteTxn {
+            mut guard,
+            snapshot,
+            mut working,
+            allocator,
+            providers,
+            changes,
+        } = self;
+
+        working.meta.generation = working
             .meta
             .generation
             .checked_add(1)
             .expect("graph generation exhausted");
-        self.working.meta.next_node_id = self.allocator.peek_next_node();
-        self.working.meta.next_edge_id = self.allocator.peek_next_edge();
+        working.meta.next_node_id = allocator.peek_next_node();
+        working.meta.next_edge_id = allocator.peek_next_edge();
 
-        let generation = self.working.meta.generation;
-        let next_node_id = self.working.meta.next_node_id;
-        let next_edge_id = self.working.meta.next_edge_id;
-        let published = self.working.clone();
-        *self.guard = published.clone();
-        self.snapshot.store(Arc::new(published));
+        let generation = working.meta.generation;
+        let next_node_id = working.meta.next_node_id;
+        let next_edge_id = working.meta.next_edge_id;
 
-        for change in &self.changes {
-            for provider in &self.providers {
-                if let Err(error) = provider.on_change(change) {
-                    tracing::error!(
-                        provider_tag = %provider.provider_tag(),
-                        error = %error,
-                        ?change,
-                        "index provider on_change failed after graph commit; continuing"
-                    );
-                }
-            }
-        }
+        let published = working.clone();
+        *guard = published.clone();
+        snapshot.store(Arc::new(published));
+
+        // CRITICAL: release the write lock and the allocator mutex BEFORE
+        // calling provider callbacks. A provider that re-enters via
+        // `SharedGraph::begin_write()` would otherwise deadlock against the
+        // very lock we hold here.
+        drop(guard);
+        drop(allocator);
+
+        notify_providers(&providers, &changes);
 
         Ok(CommitOutcome {
             generation,
-            changes: std::mem::take(&mut self.changes),
+            changes,
             principal,
             next_node_id,
             next_edge_id,
@@ -116,8 +122,56 @@ impl<'g> WriteTxn<'g> {
     pub fn rollback(self) {}
 }
 
-impl Drop for WriteTxn<'_> {
-    fn drop(&mut self) {}
+// No explicit `Drop` impl — the standard field-drop order releases the
+// `RwLockWriteGuard` (and the allocator `MutexGuard`), which is the actual
+// rollback semantic. An explicit `Drop` impl would also block the
+// destructuring move in `commit_with_principal`.
+
+/// Fan out committed changes to every registered provider, swallowing
+/// returned errors and panics so a misbehaving provider can never abort or
+/// crash the writer thread after the snapshot has already published.
+fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
+    for change in changes {
+        for provider in providers {
+            // AssertUnwindSafe: we don't care if the provider's interior state
+            // is left half-updated by a panic — the engine's contract is that
+            // the graph commit succeeded; provider state may drift, and a
+            // future hardening pass can add a strict-mode knob if needed.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                provider.on_change(change)
+            }));
+            match result {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(
+                        provider_tag = %provider.provider_tag(),
+                        error = %error,
+                        ?change,
+                        "index provider on_change failed after graph commit; continuing",
+                    );
+                }
+                Err(panic_payload) => {
+                    let payload = describe_panic_payload(&panic_payload);
+                    tracing::error!(
+                        provider_tag = %provider.provider_tag(),
+                        ?change,
+                        payload = %payload,
+                        "index provider on_change panicked after graph commit; continuing",
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn describe_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<&'static str>() {
+        (*s).to_owned()
+    } else if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else {
+        "<non-string panic payload>".to_owned()
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +439,145 @@ mod tests {
             }
         });
         assert_eq!(shared.read().node_count(), 4);
+    }
+
+    /// A provider that calls `begin_write()` from within its `on_change` to
+    /// chain another transaction. Used to verify the commit path does NOT
+    /// hold the write lock while invoking provider callbacks.
+    struct ReentrantProvider {
+        tag: ProviderTag,
+        shared: Mutex<Option<Arc<SharedGraph>>>,
+        chained_count: Arc<Mutex<usize>>,
+    }
+
+    impl ReentrantProvider {
+        fn new(tag: ProviderTag) -> Self {
+            Self {
+                tag,
+                shared: Mutex::new(None),
+                chained_count: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn install_shared(&self, shared: Arc<SharedGraph>) {
+            *self.shared.lock() = Some(shared);
+        }
+    }
+
+    impl IndexProvider for ReentrantProvider {
+        fn provider_tag(&self) -> ProviderTag {
+            self.tag
+        }
+
+        fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+            // Take the shared graph reference once; chained on_change calls
+            // would otherwise recurse infinitely.
+            let shared = self.shared.lock().take();
+            if let Some(shared) = shared {
+                // This would deadlock if the outer commit still held the
+                // write lock when calling on_change.
+                let txn = shared.begin_write();
+                txn.commit().expect("chained commit ok");
+                *self.chained_count.lock() += 1;
+            }
+            Ok(())
+        }
+
+        fn declared_sub_tags(&self) -> &[SubTag] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn provider_can_re_enter_begin_write_without_deadlock() {
+        let provider = Arc::new(ReentrantProvider::new(ProviderTag(*b"REEN")));
+        let chained_count = Arc::clone(&provider.chained_count);
+        let shared = Arc::new(
+            SharedGraph::builder(GraphId::new(1))
+                .with_provider(Arc::clone(&provider) as Arc<dyn IndexProvider>)
+                .build()
+                .unwrap(),
+        );
+        provider.install_shared(Arc::clone(&shared));
+
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok");
+        }
+        // If the write lock were still held during provider fanout this
+        // commit would deadlock the test harness.
+        txn.commit().unwrap();
+        assert_eq!(
+            *chained_count.lock(),
+            1,
+            "provider chained one inner commit"
+        );
+    }
+
+    /// A provider whose `on_change` panics. Used to verify the engine catches
+    /// the unwind and continues serving subsequent providers.
+    struct PanickingProvider {
+        tag: ProviderTag,
+    }
+
+    impl IndexProvider for PanickingProvider {
+        fn provider_tag(&self) -> ProviderTag {
+            self.tag
+        }
+
+        fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+            panic!("synthetic provider panic");
+        }
+
+        fn declared_sub_tags(&self) -> &[SubTag] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn provider_panic_does_not_crash_commit_or_block_other_providers() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let shared = SharedGraph::builder(GraphId::new(1))
+            .with_provider(Arc::new(PanickingProvider {
+                tag: ProviderTag(*b"PANC"),
+            }))
+            .with_provider(Arc::new(RecordingProvider::new(
+                ProviderTag(*b"AFTR"),
+                Arc::clone(&seen),
+            )))
+            .build()
+            .unwrap();
+        let mut txn = shared.begin_write();
+        let id = {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok")
+        };
+        let outcome = txn.commit().unwrap();
+        assert!(shared.read().is_node_alive(id));
+        assert_eq!(outcome.changes.len(), 1);
+        // The provider AFTER the panicking one still received the change.
+        assert_eq!(seen.lock().len(), 1);
     }
 
     #[test]

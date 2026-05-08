@@ -68,6 +68,14 @@ impl SharedGraph {
     }
 
     fn from_graph_parts(graph: SeleneGraph, providers: Vec<Arc<dyn IndexProvider>>) -> Self {
+        let mut graph = graph;
+        // Always rebuild label indexes from the canonical column data + alive
+        // bitmaps. Caller-supplied `idx_label`/`idx_edge_label` are treated as
+        // hints at best — derived state is computed from primary state to
+        // prevent silent drift on recovery, manual construction, or test
+        // fixtures.
+        rebuild_label_indexes(&mut graph);
+
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
         let allocator = IdAllocator::from_meta_with_floors(&graph.meta, node_floor, edge_floor);
@@ -124,6 +132,35 @@ impl SharedGraphBuilder {
     /// Returns [`GraphError::Provider`] when provider tags are duplicated.
     pub fn build(self) -> GraphResult<SharedGraph> {
         SharedGraph::from_graph_with_providers(self.graph, self.providers)
+    }
+}
+
+fn rebuild_label_indexes(graph: &mut SeleneGraph) {
+    graph.idx_label.clear();
+    graph.idx_edge_label.clear();
+
+    let node_count = graph.node_store.labels.len();
+    for row_index in 0..node_count {
+        let row = row_index as u32;
+        if !graph.node_store.is_alive(row) {
+            continue;
+        }
+        if let Some(labels) = graph.node_store.labels.get(row_index) {
+            for label in labels.iter() {
+                graph.idx_label.entry(*label).or_default().insert(row);
+            }
+        }
+    }
+
+    let edge_count = graph.edge_store.label.len();
+    for row_index in 0..edge_count {
+        let row = row_index as u32;
+        if !graph.edge_store.is_alive(row) {
+            continue;
+        }
+        if let Some(label) = graph.edge_store.label.get(row_index) {
+            graph.idx_edge_label.entry(*label).or_default().insert(row);
+        }
     }
 }
 
@@ -335,6 +372,75 @@ mod tests {
         // the allocator returned NodeId(2), not the colliding NodeId(1).
         assert_eq!(id, selene_core::NodeId::new(2));
         txn.commit().unwrap();
+    }
+
+    #[test]
+    fn from_graph_rebuilds_label_indexes_from_stores() {
+        use selene_core::{LabelSet, NodeId as CoreNodeId, PropertyMap, intern};
+
+        let label_a = intern("idx.a").unwrap();
+        let label_b = intern("idx.b").unwrap();
+
+        let mut graph = SeleneGraph::new(GraphId::new(1));
+        // Row 0: alive, labels {a, b}.
+        let mut labels0 = LabelSet::new();
+        labels0.insert(label_a);
+        labels0.insert(label_b);
+        graph.node_store.labels.push(labels0);
+        graph.node_store.properties.push(PropertyMap::new());
+        graph.node_store.alive.insert(0);
+        // Row 1: dead, label {a} — must NOT appear in the rebuilt index.
+        graph.node_store.labels.push(LabelSet::single(label_a));
+        graph.node_store.properties.push(PropertyMap::new());
+        // alive bit deliberately not set on row 1.
+
+        // Edge row 0: alive, label.
+        let edge_label = intern("idx.edge").unwrap();
+        graph.edge_store.label.push(edge_label);
+        graph.edge_store.source.push(CoreNodeId::new(1));
+        graph.edge_store.target.push(CoreNodeId::new(1));
+        graph.edge_store.properties.push(PropertyMap::new());
+        graph.edge_store.alive.insert(0);
+
+        // Caller-supplied indexes are intentionally empty / stale.
+        graph.idx_label.clear();
+        graph.idx_edge_label.clear();
+
+        let shared = SharedGraph::from_graph(graph);
+        let snapshot = shared.read();
+        let nodes_a = snapshot.nodes_with_label(&label_a).expect("idx.a present");
+        let nodes_b = snapshot.nodes_with_label(&label_b).expect("idx.b present");
+        // Only row 0 (alive) appears for label a; row 1 (dead) is filtered.
+        assert_eq!(nodes_a.iter().collect::<Vec<_>>(), vec![0]);
+        assert_eq!(nodes_b.iter().collect::<Vec<_>>(), vec![0]);
+        let edges = snapshot
+            .edges_with_label(&edge_label)
+            .expect("edge label present");
+        assert_eq!(edges.iter().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn from_graph_discards_caller_supplied_index_drift() {
+        use selene_core::{LabelSet, PropertyMap, intern};
+
+        let real_label = intern("idx.real").unwrap();
+        let phantom_label = intern("idx.phantom").unwrap();
+
+        let mut graph = SeleneGraph::new(GraphId::new(1));
+        graph.node_store.labels.push(LabelSet::single(real_label));
+        graph.node_store.properties.push(PropertyMap::new());
+        graph.node_store.alive.insert(0);
+
+        // Caller injects a phantom index entry that doesn't match storage.
+        let mut phantom_bitmap = roaring::RoaringBitmap::new();
+        phantom_bitmap.insert(99);
+        graph.idx_label.insert(phantom_label, phantom_bitmap);
+
+        let shared = SharedGraph::from_graph(graph);
+        let snapshot = shared.read();
+        // Phantom index is rebuilt away — only the real label remains.
+        assert!(snapshot.nodes_with_label(&phantom_label).is_none());
+        assert!(snapshot.nodes_with_label(&real_label).is_some());
     }
 
     #[test]

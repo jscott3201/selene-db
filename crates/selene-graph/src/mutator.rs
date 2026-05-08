@@ -136,6 +136,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         props_diff: PropertyDiff,
     ) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
+
+        // Compute the new label set without mutating the working graph yet.
         let mut labels = self
             .txn
             .working
@@ -146,12 +148,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .unwrap_or_default();
         for label in labels_diff.added.iter().copied() {
             labels.insert(label);
-            insert_index_row(&mut self.txn.working.idx_label, label, row as u32);
         }
         for label in labels_diff.removed.iter() {
             labels.remove(label);
-            remove_index_row(&mut self.txn.working.idx_label, label, row as u32);
         }
+
+        // Apply the property diff up front; if it errors we leave the working
+        // graph (including idx_label) untouched so the transaction can still
+        // be safely rolled back or aborted without leaking inconsistent state.
         let mut props = self
             .txn
             .working
@@ -161,8 +165,17 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .cloned()
             .unwrap_or_default();
         apply_property_diff(&mut props, &props_diff)?;
+
+        // Now atomic in the working graph: write columns, then update indexes.
         self.txn.working.node_store.labels.set(row, labels);
         self.txn.working.node_store.properties.set(row, props);
+        for label in labels_diff.added.iter().copied() {
+            insert_index_row(&mut self.txn.working.idx_label, label, row as u32);
+        }
+        for label in labels_diff.removed.iter() {
+            remove_index_row(&mut self.txn.working.idx_label, label, row as u32);
+        }
+
         self.txn.changes.push(Change::NodeUpdated {
             id,
             labels_diff,
