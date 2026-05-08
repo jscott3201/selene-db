@@ -314,6 +314,17 @@ impl TypedIndex {
     }
 
     /// Return the union of string-key rows whose key starts with `prefix`.
+    ///
+    /// This scans every key in the BTreeMap and runs `starts_with` per
+    /// entry — O(total cardinality), not O(matching prefix span). The
+    /// reason is that `IStr` ordering is **interner-key order** (allocation
+    /// order), not lexicographic — see `selene_core::IStr` rustdoc. So a
+    /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval is
+    /// not possible; lex-equivalent keys can be scattered throughout the
+    /// map. Switching the StringBtree key from `IStr` to `String` would
+    /// enable range iteration but lose interning's compactness — a
+    /// trade-off out of scope for v1.0 (deferred to a future brief if
+    /// prefix-query latency becomes a hot path).
     #[must_use]
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {
@@ -519,27 +530,23 @@ fn range_union<K: Ord>(
     start: &KeyBound<K>,
     end: &KeyBound<K>,
 ) -> RoaringBitmap {
+    // Use BTreeMap's ordered range iteration so a narrow window touches
+    // O(log n + matched) keys rather than scanning the entire map.
+    let start_bound = match start {
+        KeyBound::Unbounded => Bound::Unbounded,
+        KeyBound::Included(key) => Bound::Included(key),
+        KeyBound::Excluded(key) => Bound::Excluded(key),
+    };
+    let end_bound = match end {
+        KeyBound::Unbounded => Bound::Unbounded,
+        KeyBound::Included(key) => Bound::Included(key),
+        KeyBound::Excluded(key) => Bound::Excluded(key),
+    };
     let mut result = RoaringBitmap::new();
-    for (key, bitmap) in index {
-        if key_in_bounds(key, start, end) {
-            insert_all(&mut result, bitmap);
-        }
+    for (_key, bitmap) in index.range::<K, _>((start_bound, end_bound)) {
+        insert_all(&mut result, bitmap);
     }
     result
-}
-
-fn key_in_bounds<K: Ord>(key: &K, start: &KeyBound<K>, end: &KeyBound<K>) -> bool {
-    let starts_after = match start {
-        KeyBound::Unbounded => true,
-        KeyBound::Included(bound) => key >= bound,
-        KeyBound::Excluded(bound) => key > bound,
-    };
-    let ends_before = match end {
-        KeyBound::Unbounded => true,
-        KeyBound::Included(bound) => key <= bound,
-        KeyBound::Excluded(bound) => key < bound,
-    };
-    starts_after && ends_before
 }
 
 fn insert_all(target: &mut RoaringBitmap, source: &RoaringBitmap) {
