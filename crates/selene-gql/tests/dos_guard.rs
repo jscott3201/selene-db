@@ -80,6 +80,32 @@ fn cap_is_per_parse_not_per_process() {
 }
 
 #[test]
+fn over_budget_parse_does_not_pollute_global_interner() {
+    // The 8193rd unique string in a parse must NOT enter the process-wide
+    // interner: the local budget is checked BEFORE the global admission so
+    // a rejected parse leaves the global pool unchanged.
+    let prefix = unique_prefix("nopoll");
+    let canary_index = LIMIT;
+    let canary = format!("{prefix}_{canary_index}");
+    assert!(
+        selene_core::lookup(&canary).is_none(),
+        "canary string is unexpectedly present before parse: {canary}"
+    );
+
+    let source = return_identifiers(&prefix, LIMIT + 1);
+    let error = parse(&source).expect_err("over-budget parse rejects");
+    assert!(matches!(
+        error,
+        ParserError::InternerBudgetExceeded { limit: 8192, .. }
+    ));
+
+    assert!(
+        selene_core::lookup(&canary).is_none(),
+        "rejected over-budget parse leaked canary into the global interner: {canary}"
+    );
+}
+
+#[test]
 fn no_unbudgeted_intern_call_in_selene_gql() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut offenders = Vec::new();

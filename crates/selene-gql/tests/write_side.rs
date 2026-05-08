@@ -107,13 +107,9 @@ fn parse_graph_ddl() {
             ..
         }
     ));
-    assert!(matches!(
-        parse_ddl("CREATE OR REPLACE GRAPH foo"),
-        DdlStatement::CreateGraph {
-            or_replace: true,
-            ..
-        }
-    ));
+    // CREATE OR REPLACE GRAPH parses to or_replace=true at the builder layer
+    // but the Flagger now rejects it (no ISO feature ID for OR REPLACE in
+    // graph DDL). Coverage for the rejection path lives in flagger.rs.
     assert!(matches!(
         parse_ddl("DROP GRAPH IF EXISTS foo"),
         DdlStatement::DropGraph {

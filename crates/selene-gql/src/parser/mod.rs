@@ -456,27 +456,22 @@ mod tests {
     }
 
     #[test]
-    fn intersect_and_except_preserve_all_modifier() {
-        let Statement::Composite { rest, .. } =
-            parse("RETURN 1 INTERSECT ALL RETURN 2").expect("parse succeeds")
-        else {
-            panic!("expected composite");
-        };
-        assert_eq!(rest[0].0, SetOp::IntersectAll);
-
-        let Statement::Composite { rest, .. } =
-            parse("RETURN 1 EXCEPT ALL RETURN 2").expect("parse succeeds")
-        else {
-            panic!("expected composite");
-        };
-        assert_eq!(rest[0].0, SetOp::ExceptAll);
-
-        let Statement::Composite { rest, .. } =
-            parse("RETURN 1 INTERSECT RETURN 2").expect("parse succeeds")
-        else {
-            panic!("expected composite");
-        };
-        assert_eq!(rest[0].0, SetOp::Intersect);
+    fn intersect_and_except_modifiers_route_to_distinct_feature_ids() {
+        // INTERSECT/EXCEPT are unclaimed in v1.0; the Flagger rejects each
+        // modifier via its own ISO feature ID so the diagnostic explains why
+        // (DISTINCT vs ALL maps to a different optional feature each).
+        for (source, expected) in [
+            ("RETURN 1 INTERSECT RETURN 2", "GQ06"),
+            ("RETURN 1 INTERSECT ALL RETURN 2", "GQ07"),
+            ("RETURN 1 EXCEPT RETURN 2", "GQ04"),
+            ("RETURN 1 EXCEPT ALL RETURN 2", "GQ05"),
+        ] {
+            let error = parse(source).expect_err(source);
+            let ParserError::UnsupportedFeature { feature_id, .. } = error else {
+                panic!("expected UnsupportedFeature for {source:?}");
+            };
+            assert_eq!(feature_id.as_str(), expected, "feature id for {source:?}");
+        }
     }
 
     #[test]

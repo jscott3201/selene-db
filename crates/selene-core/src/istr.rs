@@ -110,6 +110,18 @@ pub fn resolve(istr: IStr) -> &'static str {
     interner().resolve(&istr.0)
 }
 
+/// Look up an existing interned handle without admitting a new one.
+///
+/// Returns the interned handle if `s` is already present and `None` otherwise.
+/// Use this when a caller needs to know whether interning would grow the global
+/// pool — for example, parser-side admission budgets that must charge a slot
+/// *before* the global insertion happens, so a rejected over-budget parse never
+/// pollutes the process-wide interner.
+#[must_use]
+pub fn lookup(s: &str) -> Option<IStr> {
+    interner().get(s).map(IStr)
+}
+
 impl IStr {
     /// Resolve this handle to its process-lifetime string representation.
     #[must_use]
@@ -306,6 +318,21 @@ mod tests {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
         let archived = rkyv::access::<rkyv::Archived<IStr>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.as_str(), "istr.rkyv.portable");
+    }
+
+    #[test]
+    fn lookup_returns_some_for_already_interned_strings() {
+        let key = format!("brief-19.lookup-some-{}", std::process::id());
+        let admitted = intern(&key).expect("intern succeeds");
+        assert_eq!(lookup(&key), Some(admitted));
+    }
+
+    #[test]
+    fn lookup_returns_none_for_unseen_string_without_admitting() {
+        let key = format!("brief-19.lookup-none-{}", std::process::id());
+        assert!(lookup(&key).is_none());
+        // The lookup must not have admitted the string.
+        assert!(lookup(&key).is_none());
     }
 
     #[test]

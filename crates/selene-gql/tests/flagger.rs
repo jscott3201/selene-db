@@ -59,8 +59,36 @@ fn mutation_feature_is_supported() {
 
 #[test]
 fn graph_management_and_if_exists_features_are_supported() {
-    parse("CREATE GRAPH IF NOT EXISTS demo").expect("GC04 and GC03 are claimed");
-    parse("DROP GRAPH IF EXISTS demo").expect("GC04 and GC03 are claimed");
+    parse("CREATE GRAPH IF NOT EXISTS demo").expect("GC04 and GC05 are claimed");
+    parse("DROP GRAPH IF EXISTS demo").expect("GC04 and GC05 are claimed");
+}
+
+#[test]
+fn intersect_and_except_composite_set_ops_are_rejected() {
+    for (source, expected) in [
+        ("RETURN 1 INTERSECT RETURN 2", FeatureId::GQ06),
+        ("RETURN 1 INTERSECT ALL RETURN 2", FeatureId::GQ07),
+        ("RETURN 1 EXCEPT RETURN 2", FeatureId::GQ04),
+        ("RETURN 1 EXCEPT ALL RETURN 2", FeatureId::GQ05),
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_feature(error, expected);
+    }
+}
+
+#[test]
+fn or_replace_catalog_ddl_is_not_implemented() {
+    for source in [
+        "CREATE OR REPLACE GRAPH demo",
+        "CREATE OR REPLACE NODE TYPE :Person (name :: STRING)",
+        "CREATE OR REPLACE EDGE TYPE :KNOWS (FROM :Person TO :Person)",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert!(
+            matches!(error, ParserError::NotImplemented { .. }),
+            "expected NotImplemented for {source:?}, got {error:?}"
+        );
+    }
 }
 
 #[test]

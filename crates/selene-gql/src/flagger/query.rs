@@ -27,7 +27,10 @@ pub(crate) fn statement(statement: &Statement) -> Result<(), ParserError> {
                         check_feature(FeatureId::GQ03, pipeline.span)?
                     }
                     SetOp::Otherwise => check_feature(FeatureId::GQ09, pipeline.span)?,
-                    SetOp::Intersect | SetOp::IntersectAll | SetOp::Except | SetOp::ExceptAll => {}
+                    SetOp::Intersect => check_feature(FeatureId::GQ06, pipeline.span)?,
+                    SetOp::IntersectAll => check_feature(FeatureId::GQ07, pipeline.span)?,
+                    SetOp::Except => check_feature(FeatureId::GQ04, pipeline.span)?,
+                    SetOp::ExceptAll => check_feature(FeatureId::GQ05, pipeline.span)?,
                 }
                 query_pipeline(pipeline)?;
             }
