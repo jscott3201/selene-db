@@ -49,6 +49,7 @@ parking_lot = "0.12"
 imbl = { version = "7.0", default-features = false }
 roaring = "0.11"
 triomphe = "0.1"
+tracing = "0.1"
 
 # Dev dependencies.
 proptest = { version = "1.11", default-features = false, features = ["std"] }

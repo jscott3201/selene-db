@@ -1,6 +1,7 @@
 //! Immutable graph snapshot and read accessors.
 
 use imbl::HashMap;
+use roaring::RoaringBitmap;
 
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap};
 
@@ -33,6 +34,10 @@ pub struct SeleneGraph {
     pub adjacency_out: HashMap<NodeId, AdjacencyEntry>,
     /// Incoming adjacency keyed by target node.
     pub adjacency_in: HashMap<NodeId, AdjacencyEntry>,
+    /// Bitmap of node rows carrying each label.
+    pub idx_label: HashMap<IStr, RoaringBitmap>,
+    /// Bitmap of edge rows carrying each edge label.
+    pub idx_edge_label: HashMap<IStr, RoaringBitmap>,
 }
 
 impl SeleneGraph {
@@ -50,6 +55,8 @@ impl SeleneGraph {
             edge_store: EdgeStore::new(),
             adjacency_out: HashMap::new(),
             adjacency_in: HashMap::new(),
+            idx_label: HashMap::new(),
+            idx_edge_label: HashMap::new(),
         }
     }
 
@@ -132,6 +139,30 @@ impl SeleneGraph {
         self.adjacency_in.get(&target)
     }
 
+    /// Return the bitmap of node rows carrying `label`.
+    #[must_use]
+    pub fn nodes_with_label(&self, label: &IStr) -> Option<&RoaringBitmap> {
+        self.idx_label.get(label)
+    }
+
+    /// Return the bitmap of edge rows carrying `label`.
+    #[must_use]
+    pub fn edges_with_label(&self, label: &IStr) -> Option<&RoaringBitmap> {
+        self.idx_edge_label.get(label)
+    }
+
+    /// Number of distinct node labels currently indexed.
+    #[must_use]
+    pub fn label_count(&self) -> usize {
+        self.idx_label.len()
+    }
+
+    /// Number of distinct edge labels currently indexed.
+    #[must_use]
+    pub fn edge_label_count(&self) -> usize {
+        self.idx_edge_label.len()
+    }
+
     fn live_node_row(&self, id: NodeId) -> Option<usize> {
         let row = node_row_index(id)?;
         ((row as usize) < self.node_store.len() && self.node_store.is_alive(row))
@@ -155,6 +186,10 @@ mod tests {
         let graph = SeleneGraph::new(GraphId::new(1));
         assert_eq!(graph.node_count(), 0);
         assert_eq!(graph.edge_count(), 0);
+        assert_eq!(graph.label_count(), 0);
+        assert_eq!(graph.edge_label_count(), 0);
+        assert!(graph.idx_label.is_empty());
+        assert!(graph.idx_edge_label.is_empty());
         assert_eq!(graph.meta.generation, 0);
         assert_eq!(graph.meta.next_node_id, 1);
         assert_eq!(graph.meta.next_edge_id, 1);
@@ -165,6 +200,10 @@ mod tests {
         let graph = SeleneGraph::new(GraphId::new(1));
         assert_eq!(graph.node_labels(NodeId::new(1)), None);
         assert_eq!(graph.edge_label(EdgeId::new(1)), None);
+        assert_eq!(
+            graph.nodes_with_label(&intern("graph.missing").unwrap()),
+            None
+        );
         assert!(!graph.is_node_alive(NodeId::TOMBSTONE));
     }
 
@@ -184,5 +223,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![label]
         );
+    }
+
+    #[test]
+    fn label_count_reports_distinct_labels_only() {
+        let mut graph = SeleneGraph::new(GraphId::new(1));
+        let label = intern("graph.same").unwrap();
+        let mut bitmap = RoaringBitmap::new();
+        bitmap.insert(0);
+        bitmap.insert(1);
+        graph.idx_label.insert(label, bitmap);
+        assert_eq!(graph.label_count(), 1);
+        assert!(graph.nodes_with_label(&label).unwrap().contains(0));
+        assert!(graph.nodes_with_label(&label).unwrap().contains(1));
     }
 }

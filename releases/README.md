@@ -15,3 +15,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-INFRA-01: CI speedup — cargo-audit and cargo-about install via prebuilt binaries (taiki-e/install-action); advisory DB cached; concurrency block cancels obsolete runs.
 - BRIEF-06: selene-core composites completed with PropertyMap, LabelSet, schema model, transient Codec, Origin, Change/SchemaChange payloads, serde/postcard transit derives, and spec 02 amendments for adapter validation + Codec framing.
 - BRIEF-07: selene-graph foundation bootstrapped with chunked SoA storage, lock-free snapshots, serialized write transactions, SharedGraph-level ID allocation, and the Mutator change funnel; indexes/schema validation remain deferred.
+- BRIEF-08: selene-graph added built-in node/edge label indexes, the `IndexProvider` extension trait, provider registration/lookup, and log-and-continue provider notification on commit.

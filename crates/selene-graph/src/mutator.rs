@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use roaring::RoaringBitmap;
 use selene_core::{
     Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, Origin, PropertyDiff, PropertyMap,
     SchemaChange,
@@ -53,6 +54,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 .set(row, props.clone());
         }
         self.txn.working.node_store.alive.insert(row as u32);
+        insert_node_labels(&mut self.txn.working.idx_label, row as u32, &labels);
         self.txn.changes.push(Change::NodeCreated {
             id,
             labels,
@@ -94,6 +96,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 .set(row, props.clone());
         }
         self.txn.working.edge_store.alive.insert(row as u32);
+        insert_index_row(&mut self.txn.working.idx_edge_label, label, row as u32);
 
         self.txn
             .working
@@ -133,6 +136,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         props_diff: PropertyDiff,
     ) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
+
+        // Compute the new label set without mutating the working graph yet.
         let mut labels = self
             .txn
             .working
@@ -147,6 +152,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         for label in labels_diff.removed.iter() {
             labels.remove(label);
         }
+
+        // Apply the property diff up front; if it errors we leave the working
+        // graph (including idx_label) untouched so the transaction can still
+        // be safely rolled back or aborted without leaking inconsistent state.
         let mut props = self
             .txn
             .working
@@ -156,8 +165,17 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .cloned()
             .unwrap_or_default();
         apply_property_diff(&mut props, &props_diff)?;
+
+        // Now atomic in the working graph: write columns, then update indexes.
         self.txn.working.node_store.labels.set(row, labels);
         self.txn.working.node_store.properties.set(row, props);
+        for label in labels_diff.added.iter().copied() {
+            insert_index_row(&mut self.txn.working.idx_label, label, row as u32);
+        }
+        for label in labels_diff.removed.iter() {
+            remove_index_row(&mut self.txn.working.idx_label, label, row as u32);
+        }
+
         self.txn.changes.push(Change::NodeUpdated {
             id,
             labels_diff,
@@ -167,6 +185,9 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 
     /// Update an alive edge and emit `Change::EdgeUpdated`.
+    ///
+    /// Edge labels are immutable, so property updates do not touch
+    /// `idx_edge_label`.
     pub fn update_edge(&mut self, id: EdgeId, props_diff: PropertyDiff) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
         let mut props = self
@@ -189,6 +210,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Delete an alive node and cascade delete incident edges.
     pub fn delete_node(&mut self, id: NodeId) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
+        let labels = self
+            .txn
+            .working
+            .node_store
+            .labels
+            .get(row)
+            .cloned()
+            .unwrap_or_default();
         let mut incident = BTreeSet::new();
         if let Some(outgoing) = self.txn.working.adjacency_out.get(&id) {
             incident.extend(outgoing.iter().map(|edge| edge.edge_id));
@@ -196,6 +225,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         if let Some(incoming) = self.txn.working.adjacency_in.get(&id) {
             incident.extend(incoming.iter().map(|edge| edge.edge_id));
         }
+        remove_node_labels(&mut self.txn.working.idx_label, row as u32, &labels);
         self.txn.working.node_store.alive.remove(row as u32);
         self.txn.changes.push(Change::NodeDeleted { id });
         for edge_id in incident {
@@ -259,6 +289,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
         self.txn.working.edge_store.alive.remove(row as u32);
+        remove_index_row(&mut self.txn.working.idx_edge_label, &label, row as u32);
         if let Some(mut entry) = self.txn.working.adjacency_out.get(&source).cloned() {
             entry.remove(id);
             update_or_remove_entry(&mut self.txn.working.adjacency_out, source, entry);
@@ -267,7 +298,6 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             entry.remove(id);
             update_or_remove_entry(&mut self.txn.working.adjacency_in, target, entry);
         }
-        let _ = label;
         if record_change {
             self.txn.changes.push(Change::EdgeDeleted { id });
         }
@@ -334,6 +364,35 @@ fn edge_hole_label() -> selene_core::CoreResult<IStr> {
     Ok(value)
 }
 
+fn insert_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
+    for label in labels.iter().copied() {
+        insert_index_row(index, label, row);
+    }
+}
+
+fn remove_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
+    for label in labels.iter() {
+        remove_index_row(index, label, row);
+    }
+}
+
+fn insert_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: IStr, row: u32) {
+    let mut bitmap = index.get(&label).cloned().unwrap_or_default();
+    bitmap.insert(row);
+    index.insert(label, bitmap);
+}
+
+fn remove_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: &IStr, row: u32) {
+    if let Some(mut bitmap) = index.get(label).cloned() {
+        bitmap.remove(row);
+        if bitmap.is_empty() {
+            index.remove(label);
+        } else {
+            index.insert(*label, bitmap);
+        }
+    }
+}
+
 fn apply_property_diff(map: &mut PropertyMap, diff: &PropertyDiff) -> GraphResult<()> {
     for (key, value) in diff.set.iter() {
         map.set(*key, value.clone())?;
@@ -357,328 +416,4 @@ fn update_or_remove_entry(
 }
 
 #[cfg(test)]
-mod tests {
-    use proptest::prelude::*;
-    use selene_core::{Change, GraphId, PredefinedValueType, Value, ValueType, intern};
-
-    use super::*;
-    use crate::SharedGraph;
-
-    fn empty_node(mutator: &mut Mutator<'_, '_>) -> NodeId {
-        mutator
-            .create_node(LabelSet::new(), PropertyMap::new())
-            .expect("create_node ok")
-    }
-
-    #[test]
-    fn create_node_returns_id_and_emits_change() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let id = {
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(LabelSet::new(), PropertyMap::new())
-                .expect("create_node ok")
-        };
-        let outcome = txn.commit().unwrap();
-        assert_eq!(id, NodeId::new(1));
-        assert!(
-            matches!(outcome.changes[0], Change::NodeCreated { id, .. } if id == NodeId::new(1))
-        );
-    }
-
-    #[test]
-    fn create_edge_with_invalid_source_fails() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let mut mutator = txn.mutator();
-        let target = empty_node(&mut mutator);
-        let err = mutator
-            .create_edge(
-                intern("edge.invalid.source").unwrap(),
-                NodeId::new(99),
-                target,
-                PropertyMap::new(),
-            )
-            .unwrap_err();
-        assert!(matches!(err, GraphError::NodeNotFound { id } if id == NodeId::new(99)));
-    }
-
-    #[test]
-    fn create_edge_with_invalid_target_fails() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let mut mutator = txn.mutator();
-        let source = empty_node(&mut mutator);
-        let err = mutator
-            .create_edge(
-                intern("edge.invalid.target").unwrap(),
-                source,
-                NodeId::new(99),
-                PropertyMap::new(),
-            )
-            .unwrap_err();
-        assert!(matches!(err, GraphError::NodeNotFound { id } if id == NodeId::new(99)));
-    }
-
-    #[test]
-    fn update_node_with_unknown_id_fails() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let mut mutator = txn.mutator();
-        let err = mutator
-            .update_node(
-                NodeId::new(1),
-                LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([], []).unwrap(),
-            )
-            .unwrap_err();
-        assert!(matches!(err, GraphError::NodeNotFound { .. }));
-    }
-
-    #[test]
-    fn delete_node_cascades_to_incident_edges() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let (a, b, edge) = {
-            let mut mutator = txn.mutator();
-            let a = empty_node(&mut mutator);
-            let b = empty_node(&mut mutator);
-            let edge = mutator
-                .create_edge(intern("edge.cascade").unwrap(), a, b, PropertyMap::new())
-                .unwrap();
-            mutator.delete_node(a).unwrap();
-            (a, b, edge)
-        };
-        txn.commit().unwrap();
-        let snapshot = shared.read();
-        assert!(!snapshot.is_node_alive(a));
-        assert!(snapshot.is_node_alive(b));
-        assert!(!snapshot.is_edge_alive(edge));
-        assert!(snapshot.incoming_edges(b).is_none());
-    }
-
-    #[test]
-    fn delete_edge_updates_both_adjacencies() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let (a, b, edge) = {
-            let mut mutator = txn.mutator();
-            let a = empty_node(&mut mutator);
-            let b = empty_node(&mut mutator);
-            let edge = mutator
-                .create_edge(intern("edge.delete").unwrap(), a, b, PropertyMap::new())
-                .unwrap();
-            mutator.delete_edge(edge).unwrap();
-            (a, b, edge)
-        };
-        txn.commit().unwrap();
-        let snapshot = shared.read();
-        assert!(!snapshot.is_edge_alive(edge));
-        assert!(snapshot.outgoing_edges(a).is_none());
-        assert!(snapshot.incoming_edges(b).is_none());
-    }
-
-    #[test]
-    fn read_within_tx_sees_own_writes() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let mut mutator = txn.mutator();
-        let id = empty_node(&mut mutator);
-        assert!(mutator.read().is_node_alive(id));
-    }
-
-    #[test]
-    fn multi_step_tx_emits_changes_in_order() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let id = {
-            let mut mutator = txn.mutator();
-            let id = empty_node(&mut mutator);
-            mutator
-                .update_node(
-                    id,
-                    LabelDiff::new([intern("node.updated").unwrap()], []).unwrap(),
-                    PropertyDiff::new([], []).unwrap(),
-                )
-                .unwrap();
-            mutator.delete_node(id).unwrap();
-            id
-        };
-        let outcome = txn.commit().unwrap();
-        assert!(matches!(outcome.changes[0], Change::NodeCreated { .. }));
-        assert!(matches!(outcome.changes[1], Change::NodeUpdated { .. }));
-        assert_eq!(outcome.changes[2], Change::NodeDeleted { id });
-    }
-
-    #[test]
-    fn extension_event_emits_change_passthrough() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            mutator.extension_event(intern("provider").unwrap(), Arc::from([1_u8, 2]));
-        }
-        let outcome = txn.commit().unwrap();
-        assert!(matches!(
-            outcome.changes[0],
-            Change::IndexExtensionEvent { .. }
-        ));
-    }
-
-    #[test]
-    fn schema_change_emits_change_passthrough() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            mutator.schema_change(
-                GraphId::new(1),
-                SchemaChange::GraphDropped {
-                    id: GraphId::new(2),
-                },
-            );
-        }
-        let outcome = txn.commit().unwrap();
-        assert!(matches!(outcome.changes[0], Change::SchemaChanged { .. }));
-    }
-
-    #[test]
-    fn update_edge_updates_properties() {
-        let shared = SharedGraph::new(GraphId::new(1));
-        let mut txn = shared.begin_write();
-        let (edge, prop) = {
-            let mut mutator = txn.mutator();
-            let a = empty_node(&mut mutator);
-            let b = empty_node(&mut mutator);
-            let edge = mutator
-                .create_edge(intern("edge.update").unwrap(), a, b, PropertyMap::new())
-                .unwrap();
-            let prop = intern("edge.prop").unwrap();
-            mutator
-                .update_edge(
-                    edge,
-                    PropertyDiff::new([(prop, Value::String(prop))], []).unwrap(),
-                )
-                .unwrap();
-            (edge, prop)
-        };
-        txn.commit().unwrap();
-        assert_eq!(
-            shared.read().edge_properties(edge).unwrap().get(&prop),
-            Some(&Value::String(prop))
-        );
-    }
-
-    proptest! {
-        #[test]
-        fn create_delete_sequence_preserves_alive_count(ops in proptest::collection::vec(any::<bool>(), 1..64)) {
-            let shared = SharedGraph::new(GraphId::new(1));
-            let mut txn = shared.begin_write();
-            let mut expected_alive = BTreeSet::new();
-            let mut created = Vec::new();
-            {
-                let mut mutator = txn.mutator();
-                for delete_previous in ops {
-                    let id = mutator
-                        .create_node(LabelSet::new(), PropertyMap::new())
-                        .expect("create_node ok");
-                    expected_alive.insert(id);
-                    created.push(id);
-                    if delete_previous
-                        && let Some(to_delete) = created.first().copied()
-                        && expected_alive.remove(&to_delete)
-                    {
-                        mutator.delete_node(to_delete).unwrap();
-                    }
-                }
-                prop_assert_eq!(mutator.read().node_count(), expected_alive.len());
-                prop_assert_eq!(
-                    mutator.read().meta.next_node_id,
-                    1,
-                    "working meta is updated at commit, allocator advances during mutation"
-                );
-            }
-            let outcome = txn.commit().unwrap();
-            prop_assert_eq!(shared.read().node_count(), expected_alive.len());
-            prop_assert_eq!(outcome.next_node_id as usize, created.len() + 1);
-        }
-    }
-
-    #[test]
-    #[cfg(not(miri))]
-    fn four_writer_stress_no_double_allocation() {
-        let shared = Arc::new(SharedGraph::new(GraphId::new(1)));
-        let nodes_per_thread = 64;
-        std::thread::scope(|scope| {
-            for _ in 0..4 {
-                let shared = Arc::clone(&shared);
-                scope.spawn(move || {
-                    let mut txn = shared.begin_write();
-                    {
-                        let mut mutator = txn.mutator();
-                        for _ in 0..nodes_per_thread {
-                            mutator
-                                .create_node(LabelSet::new(), PropertyMap::new())
-                                .expect("create_node ok");
-                        }
-                    }
-                    txn.commit().unwrap();
-                });
-            }
-        });
-        let snapshot = shared.read();
-        assert_eq!(snapshot.node_count(), 4 * nodes_per_thread);
-        assert_eq!(
-            snapshot.meta.next_node_id,
-            (4 * nodes_per_thread + 1) as u64
-        );
-    }
-
-    #[test]
-    fn create_node_returns_id_overflow_when_allocator_past_u32() {
-        // Force the allocator past the v1 row-index limit by constructing a
-        // SharedGraph with a meta whose next_node_id is u32::MAX as u64 + 2,
-        // which is past the addressable boundary.
-        let mut graph = crate::SeleneGraph::new(GraphId::new(1));
-        graph.meta.next_node_id = u32::MAX as u64 + 2;
-        let shared = SharedGraph::from_graph(graph);
-        let mut txn = shared.begin_write();
-        let mut mutator = txn.mutator();
-        let err = mutator
-            .create_node(LabelSet::new(), PropertyMap::new())
-            .unwrap_err();
-        assert!(matches!(err, GraphError::IdOverflow { kind: "node", .. }));
-    }
-
-    #[test]
-    fn create_edge_returns_id_overflow_when_allocator_past_u32() {
-        let mut graph = crate::SeleneGraph::new(GraphId::new(1));
-        graph.meta.next_edge_id = u32::MAX as u64 + 2;
-        let shared = SharedGraph::from_graph(graph);
-        let mut txn = shared.begin_write();
-        let mut mutator = txn.mutator();
-        // Create source and target nodes first.
-        let source = mutator
-            .create_node(LabelSet::new(), PropertyMap::new())
-            .expect("create_node ok");
-        let target = mutator
-            .create_node(LabelSet::new(), PropertyMap::new())
-            .expect("create_node ok");
-        let err = mutator
-            .create_edge(
-                intern("edge.overflow").unwrap(),
-                source,
-                target,
-                PropertyMap::new(),
-            )
-            .unwrap_err();
-        assert!(matches!(err, GraphError::IdOverflow { kind: "edge", .. }));
-    }
-
-    #[test]
-    fn value_type_import_smoke_keeps_schema_deferred() {
-        let value_type = ValueType::predefined(PredefinedValueType::String);
-        assert_eq!(value_type.predefined, Some(PredefinedValueType::String));
-    }
-}
+mod tests;

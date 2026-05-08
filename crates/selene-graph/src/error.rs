@@ -2,6 +2,8 @@
 
 use selene_core::{CoreError, EdgeId, NodeId};
 
+use crate::index_provider::ProviderError;
+
 /// Result alias for graph operations.
 pub type GraphResult<T> = Result<T, GraphError>;
 
@@ -57,6 +59,11 @@ pub enum GraphError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Core(#[from] CoreError),
+
+    /// Error propagated from an index provider.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Provider(#[from] ProviderError),
 }
 
 impl GraphError {
@@ -70,6 +77,7 @@ impl GraphError {
             | Self::EdgeNotAlive { .. } => "22023",
             Self::IdOverflow { .. } => "53000",
             Self::Core(_) => "22000",
+            Self::Provider(_) => "XX500",
         }
     }
 }
@@ -79,6 +87,7 @@ mod tests {
     use rstest::rstest;
 
     use super::*;
+    use crate::ProviderError;
 
     #[rstest]
     #[case(GraphError::NodeNotFound { id: NodeId::new(1) }, "22023")]
@@ -90,6 +99,10 @@ mod tests {
         "53000"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
+    #[case(
+        GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag VECT".to_owned() }),
+        "XX500"
+    )]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
     }
