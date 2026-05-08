@@ -364,7 +364,7 @@ fn parse_u32(text: &str, source_span: SourceSpan) -> Result<u32, ParserError> {
     })
 }
 
-fn build_property_map(
+pub(super) fn build_property_map(
     pair: Pair<'_, Rule>,
 ) -> Result<Vec<(selene_core::IStr, ValueExpr)>, ParserError> {
     pair.into_inner()

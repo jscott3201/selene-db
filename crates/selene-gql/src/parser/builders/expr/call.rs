@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{Rule, build_value_expr, literal};
-use crate::parser::builders::{decode_ident_like, pattern, span, unexpected_pair};
+use crate::parser::builders::{build_qualified_name, pattern, span, unexpected_pair};
 
 pub(super) enum PredicateKind {
     AllDifferent,
@@ -249,41 +249,6 @@ fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         .find(|child| child.as_rule() == Rule::expr)
         .ok_or_else(|| ParserError::syntax("clause is missing expression", source_span, None))
         .and_then(build_value_expr)
-}
-
-/// Build a qualified name as a list of interned segments.
-///
-/// Each grammar segment (delimited or bare identifier) is interned
-/// independently. Quoted segments containing dots stay one segment, so
-/// `foo."bar.baz"` and `foo.bar.baz` produce different paths.
-fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
-    debug_assert_eq!(pair.as_rule(), Rule::qualified_name);
-    let source_span = span(&pair);
-    let mut segments = Vec::new();
-    for child in pair.into_inner() {
-        match child.as_rule() {
-            Rule::ident | Rule::prop_ident => {
-                let canonical = decode_ident_like(child.as_str());
-                let interned = intern(&canonical).map_err(|error| {
-                    ParserError::syntax(
-                        format!("could not intern qualified-name segment: {error}"),
-                        source_span,
-                        Some("identifier interning cap may be exhausted".into()),
-                    )
-                })?;
-                segments.push(interned);
-            }
-            _ => return Err(unexpected_pair(child, "unexpected qualified-name child")),
-        }
-    }
-    if segments.is_empty() {
-        return Err(ParserError::syntax(
-            "qualified name has no segments",
-            source_span,
-            None,
-        ));
-    }
-    Ok(segments)
 }
 
 fn intern_lower(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {

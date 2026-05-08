@@ -1,7 +1,11 @@
 //! Pair-to-AST builders.
 
+pub(super) mod call;
+pub(super) mod ddl;
 pub(super) mod expr;
+pub(super) mod mutation;
 pub(super) mod pattern;
+pub(super) mod transaction;
 
 use pest::iterators::Pair;
 use selene_core::{IStr, intern};
@@ -35,15 +39,12 @@ pub(crate) fn build_statement(program_pair: Pair<'_, Rule>) -> Result<Statement,
             }))
         }
         Rule::select_stmt => build_select_pipeline(program_pair).map(Statement::Query),
-        Rule::mutation_pipeline => Err(not_implemented(
-            &program_pair,
-            "mutation statements land in BRIEF-18",
-        )),
-        Rule::ddl_statement => Err(not_implemented(&program_pair, "DDL lands in BRIEF-18")),
-        Rule::transaction_control => Err(not_implemented(
-            &program_pair,
-            "transaction control lands in BRIEF-18",
-        )),
+        Rule::mutation_pipeline => {
+            mutation::build_mutation_pipeline(program_pair).map(Statement::Mutate)
+        }
+        Rule::ddl_statement => ddl::build_ddl_statement(program_pair).map(Statement::Ddl),
+        Rule::call_stmt => call::build_top_level_call(program_pair).map(Statement::Call),
+        Rule::transaction_control => transaction::build_transaction_control(program_pair),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
     }
 }
@@ -149,7 +150,7 @@ fn build_pipeline_statement(pair: Pair<'_, Rule>) -> Result<PipelineStatement, P
         Rule::with_stmt => build_with_clause(pair).map(PipelineStatement::With),
         Rule::for_stmt => Err(not_implemented(&pair, "FOR lands in BRIEF-18")),
         Rule::match_view_stmt => Err(not_implemented(&pair, "MATCH VIEW lands in BRIEF-18")),
-        Rule::call_stmt => Err(not_implemented(&pair, "CALL lands in BRIEF-18")),
+        Rule::call_stmt => call::build_pipeline_call(pair).map(PipelineStatement::Call),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }
 }
@@ -217,7 +218,7 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
     })
 }
 
-fn build_filter(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
+pub(super) fn build_filter(pair: Pair<'_, Rule>) -> Result<crate::ast::ValueExpr, ParserError> {
     expr_from_first(pair, "FILTER is missing expression")
 }
 
@@ -343,7 +344,7 @@ fn build_limit_or_offset(pair: Pair<'_, Rule>) -> Result<LimitValue, ParserError
     }
 }
 
-fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, ParserError> {
+pub(super) fn build_return_clause(pair: Pair<'_, Rule>) -> Result<ReturnClause, ParserError> {
     let source_span = span(&pair);
     let mut clause = ReturnClause {
         distinct: false,
@@ -483,6 +484,41 @@ pub(super) fn intern_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
             Some("identifier interning cap may be exhausted".into()),
         )
     })
+}
+
+/// Build a qualified name as a list of interned segments.
+///
+/// Each grammar segment is interned independently. Quoted segments containing
+/// dots stay one segment, so `foo."bar.baz"` and `foo.bar.baz` produce
+/// different paths.
+pub(super) fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::qualified_name);
+    let source_span = span(&pair);
+    let mut segments = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::ident | Rule::prop_ident => {
+                let canonical = decode_ident_like(child.as_str());
+                let interned = intern(&canonical).map_err(|error| {
+                    ParserError::syntax(
+                        format!("could not intern qualified-name segment: {error}"),
+                        source_span,
+                        Some("identifier interning cap may be exhausted".into()),
+                    )
+                })?;
+                segments.push(interned);
+            }
+            _ => return Err(unexpected_pair(child, "unexpected qualified-name child")),
+        }
+    }
+    if segments.is_empty() {
+        return Err(ParserError::syntax(
+            "qualified name has no segments",
+            source_span,
+            None,
+        ));
+    }
+    Ok(segments)
 }
 
 pub(super) fn intern_param(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {

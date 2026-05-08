@@ -10,7 +10,15 @@ pub mod error;
 pub mod parser;
 
 pub use crate::ast::{
+    call::{ProcedureCall, YieldColumn, YieldItem},
+    ddl::{
+        DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
+    },
     expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr},
+    mutation::{
+        DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
+        MutationTerminator, RemoveItem, SetItem,
+    },
     pattern::{
         EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern,
         PathMode, PathSelector, PatternElement, Quantifier,

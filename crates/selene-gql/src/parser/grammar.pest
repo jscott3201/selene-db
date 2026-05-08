@@ -18,7 +18,7 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (ddl_statement | transaction_control | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (ddl_statement | transaction_control | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
 // -- DDL statements -----------------------------------------------
 
@@ -238,7 +238,7 @@ group_by_item   = { expr }
 
 call_stmt      = { ^"CALL" ~ (call_subquery | call_procedure) }
 call_subquery  = { "{" ~ query_pipeline ~ "}" }
-call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ yield_clause ~ yield_filter? }
+call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ (yield_clause ~ yield_filter?)? }
 qualified_name = { ident ~ ("." ~ prop_ident)* }
 arg_list       = { expr ~ ("," ~ expr)* }
 yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
@@ -288,7 +288,8 @@ remove_label_item = { ident ~ (^"IS" | ":") ~ ident }
 
 // Multi-target DELETE (spec section13.5): DELETE a, b or DETACH DELETE a, b
 detach_delete_op = { ^"DETACH" ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
-delete_op   = { ^"NODETACH"? ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
+delete_op   = { nodetach_kw? ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
+nodetach_kw = { ^"NODETACH" }
 
 // -------------------------------------------------------------------
 // Expressions (precedence via recursive descent)

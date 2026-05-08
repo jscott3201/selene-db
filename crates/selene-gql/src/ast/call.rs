@@ -1,0 +1,39 @@
+//! Procedure-call AST nodes.
+
+use selene_core::IStr;
+
+use crate::ast::{expr::ValueExpr, span::SourceSpan};
+
+/// Top-level or in-pipeline procedure call.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct ProcedureCall {
+    /// Qualified procedure name as interned path segments.
+    pub name: Vec<IStr>,
+    /// Positional arguments.
+    pub args: Vec<ValueExpr>,
+    /// Requested yield columns. Empty means the call discards return columns.
+    pub yield_items: Vec<YieldItem>,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// One `YIELD` item.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct YieldItem {
+    /// Yielded column.
+    pub column: YieldColumn,
+    /// Optional alias.
+    pub alias: Option<IStr>,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Yielded column selector.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[non_exhaustive]
+pub enum YieldColumn {
+    /// `YIELD *`.
+    Star,
+    /// `YIELD col`.
+    Named(IStr),
+}

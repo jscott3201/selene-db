@@ -22,8 +22,9 @@ mod pest_impl {
 /// Parse one GQL program.
 ///
 /// BRIEF-17 constructs AST nodes for read-side query pipelines and expression
-/// forms. Mutation, DDL, CALL, and transaction-control builders intentionally
-/// remain deferred to later briefs.
+/// forms. BRIEF-18 adds mutation, DDL, CALL, and transaction-control builders;
+/// later briefs still route deferred grammar surfaces through
+/// [`ParserError::NotImplemented`].
 ///
 /// # Errors
 ///
@@ -177,7 +178,7 @@ mod tests {
 
     #[test]
     fn unsupported_grammar_surface_returns_not_implemented() {
-        let err = parse("CALL foo() YIELD *").expect_err("unsupported grammar should error");
+        let err = parse("CALL { RETURN 1 }").expect_err("unsupported grammar should error");
         assert!(matches!(err, ParserError::NotImplemented { .. }));
         assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }

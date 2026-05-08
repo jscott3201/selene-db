@@ -7,7 +7,7 @@ mod predicate;
 use pest::iterators::Pair;
 
 use crate::{
-    ast::{BinaryOp, Literal, SourceSpan, UnaryOp, ValueExpr},
+    ast::{BinaryOp, GqlType, Literal, SourceSpan, UnaryOp, ValueExpr},
     error::ParserError,
 };
 
@@ -72,6 +72,16 @@ pub(super) fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Parser
         }
         _ => Err(unexpected_pair(pair, "expected value expression")),
     }
+}
+
+pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    predicate::build_type_name(pair)
+}
+
+pub(super) fn intern_string_literal(
+    pair: Pair<'_, Rule>,
+) -> Result<selene_core::IStr, ParserError> {
+    literal::parse_string_pair(pair)
 }
 
 fn build_left_assoc(
