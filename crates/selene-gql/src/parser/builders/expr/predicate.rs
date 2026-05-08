@@ -8,7 +8,7 @@ use crate::{
 };
 
 use super::{Rule, build_value_expr, literal};
-use crate::parser::builders::{not_implemented, pattern, span, unexpected_pair};
+use crate::parser::builders::{not_implemented, pattern, span};
 
 pub(super) fn apply_is_suffix(
     operand: ValueExpr,
@@ -16,16 +16,29 @@ pub(super) fn apply_is_suffix(
     source_span: SourceSpan,
 ) -> Result<ValueExpr, ParserError> {
     debug_assert_eq!(suffix.as_rule(), Rule::is_suffix);
-    let text = suffix.as_str().to_ascii_uppercase();
-    let negated = has_word(&text, "NOT");
+    let children: Vec<_> = suffix.into_inner().collect();
+    // Negation is taken from the parsed `not_kw` token, not by scanning the
+    // source text. Substring scans were misleading when an operand contained
+    // a quoted identifier with `NOT` in it (e.g. `IS LABELED :"NOT"`).
+    let negated = children.iter().any(|child| child.as_rule() == Rule::not_kw);
+    dispatch_is_suffix(operand, &children, negated, source_span)
+}
 
-    if has_word(&text, "IN") {
-        let list_pair = suffix
-            .into_inner()
-            .find(|child| child.as_rule() == Rule::list_lit)
-            .ok_or_else(|| {
-                ParserError::syntax("IN predicate is missing list", source_span, None)
-            })?;
+fn dispatch_is_suffix(
+    operand: ValueExpr,
+    children: &[Pair<'_, Rule>],
+    negated: bool,
+    source_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    if let Some(string_op) = children
+        .iter()
+        .find(|child| child.as_rule() == Rule::string_match_op)
+    {
+        return build_string_match(operand, string_op, children, source_span);
+    }
+
+    if children.iter().any(|child| child.as_rule() == Rule::in_kw) {
+        let list_pair = find_child(children, Rule::list_lit, "IN predicate is missing list")?;
         return Ok(ValueExpr::InList {
             operand: Box::new(operand),
             list: literal::build_list_items(list_pair)?,
@@ -34,13 +47,15 @@ pub(super) fn apply_is_suffix(
         });
     }
 
-    if has_word(&text, "LIKE") {
-        let pattern_pair = suffix
-            .into_inner()
-            .find(|child| child.as_rule() == Rule::addition)
-            .ok_or_else(|| {
-                ParserError::syntax("LIKE predicate is missing pattern", source_span, None)
-            })?;
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::like_kw)
+    {
+        let pattern_pair = find_child(
+            children,
+            Rule::addition,
+            "LIKE predicate is missing pattern",
+        )?;
         return Ok(ValueExpr::Like {
             operand: Box::new(operand),
             pattern: Box::new(build_value_expr(pattern_pair)?),
@@ -49,10 +64,14 @@ pub(super) fn apply_is_suffix(
         });
     }
 
-    if has_word(&text, "BETWEEN") {
-        let bounds = suffix
-            .into_inner()
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::between_kw)
+    {
+        let bounds = children
+            .iter()
             .filter(|child| child.as_rule() == Rule::addition)
+            .cloned()
             .map(build_value_expr)
             .collect::<Result<Vec<_>, _>>()?;
         if bounds.len() != 2 {
@@ -71,16 +90,9 @@ pub(super) fn apply_is_suffix(
         });
     }
 
-    if text.starts_with("STARTS WITH")
-        || text.starts_with("ENDS WITH")
-        || text.starts_with("CONTAINS")
-    {
-        return build_string_match(operand, suffix, &text, source_span);
-    }
-
     Ok(ValueExpr::IsCheck {
         operand: Box::new(operand),
-        kind: build_is_kind(suffix, &text, source_span)?,
+        kind: build_is_kind(children, source_span)?,
         negated,
         span: source_span,
     })
@@ -88,27 +100,23 @@ pub(super) fn apply_is_suffix(
 
 fn build_string_match(
     operand: ValueExpr,
-    suffix: Pair<'_, Rule>,
-    text: &str,
+    string_op: &Pair<'_, Rule>,
+    children: &[Pair<'_, Rule>],
     source_span: SourceSpan,
 ) -> Result<ValueExpr, ParserError> {
-    let op = if text.starts_with("STARTS WITH") {
+    let upper = string_op.as_str().to_ascii_uppercase();
+    let op = if upper.starts_with("STARTS") {
         BinaryOp::StartsWith
-    } else if text.starts_with("ENDS WITH") {
+    } else if upper.starts_with("ENDS") {
         BinaryOp::EndsWith
     } else {
         BinaryOp::Contains
     };
-    let rhs_pair = suffix
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::comparison)
-        .ok_or_else(|| {
-            ParserError::syntax(
-                "string-match predicate is missing operand",
-                source_span,
-                None,
-            )
-        })?;
+    let rhs_pair = find_child(
+        children,
+        Rule::comparison,
+        "string-match predicate is missing operand",
+    )?;
     Ok(ValueExpr::BinaryOp {
         op,
         lhs: Box::new(operand),
@@ -118,64 +126,107 @@ fn build_string_match(
 }
 
 fn build_is_kind(
-    suffix: Pair<'_, Rule>,
-    text: &str,
+    children: &[Pair<'_, Rule>],
     source_span: SourceSpan,
 ) -> Result<IsCheckKind, ParserError> {
-    if has_word(text, "NULL") {
-        Ok(IsCheckKind::Null)
-    } else if has_word(text, "LABELED") {
-        let label_pair = suffix
-            .into_inner()
-            .find(|child| child.as_rule() == Rule::label_expr)
-            .ok_or_else(|| {
-                ParserError::syntax("IS LABELED is missing label expression", source_span, None)
-            })?;
-        Ok(IsCheckKind::Labeled(pattern::build_label_expr(label_pair)?))
-    } else if text.contains("SOURCE OF") || text.contains("DESTINATION OF") {
-        build_endpoint_kind(suffix, text, source_span)
-    } else if has_word(text, "DIRECTED") {
-        Ok(IsCheckKind::Directed)
-    } else if has_word(text, "NORMALIZED") {
-        Ok(IsCheckKind::Normalized(normal_form(text)))
-    } else if has_word(text, "TRUE") {
-        Ok(IsCheckKind::TruthValue(TruthValue::True))
-    } else if has_word(text, "FALSE") {
-        Ok(IsCheckKind::TruthValue(TruthValue::False))
-    } else if has_word(text, "UNKNOWN") {
-        Ok(IsCheckKind::TruthValue(TruthValue::Unknown))
-    } else if has_word(text, "TYPED") {
-        let type_pair = suffix
-            .into_inner()
-            .find(|child| child.as_rule() == Rule::type_name)
-            .ok_or_else(|| ParserError::syntax("IS TYPED is missing type", source_span, None))?;
-        Ok(IsCheckKind::Typed(build_type_name(type_pair)?))
-    } else {
-        Err(unexpected_pair(suffix, "unsupported IS predicate"))
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::null_kw)
+    {
+        return Ok(IsCheckKind::Null);
     }
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::labeled_kw)
+    {
+        let label_pair = find_child(
+            children,
+            Rule::label_expr,
+            "IS LABELED is missing label expression",
+        )?;
+        return Ok(IsCheckKind::Labeled(pattern::build_label_expr(label_pair)?));
+    }
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::source_of_kw)
+    {
+        let rhs_pair = find_child(
+            children,
+            Rule::comparison,
+            "IS SOURCE OF is missing expression",
+        )?;
+        return Ok(IsCheckKind::SourceOf(Box::new(build_value_expr(rhs_pair)?)));
+    }
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::destination_of_kw)
+    {
+        let rhs_pair = find_child(
+            children,
+            Rule::comparison,
+            "IS DESTINATION OF is missing expression",
+        )?;
+        return Ok(IsCheckKind::DestinationOf(Box::new(build_value_expr(
+            rhs_pair,
+        )?)));
+    }
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::directed_kw)
+    {
+        return Ok(IsCheckKind::Directed);
+    }
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::normalized_kw)
+    {
+        let form = children
+            .iter()
+            .find(|child| child.as_rule() == Rule::normal_form)
+            .map(|child| match child.as_str().to_ascii_uppercase().as_str() {
+                "NFD" => NormalForm::Nfd,
+                "NFKC" => NormalForm::Nfkc,
+                "NFKD" => NormalForm::Nfkd,
+                _ => NormalForm::Nfc,
+            })
+            .unwrap_or(NormalForm::Nfc);
+        return Ok(IsCheckKind::Normalized(form));
+    }
+    if let Some(truth) = children
+        .iter()
+        .find(|child| child.as_rule() == Rule::truth_value)
+    {
+        let value = match truth.as_str().to_ascii_uppercase().as_str() {
+            "TRUE" => TruthValue::True,
+            "FALSE" => TruthValue::False,
+            _ => TruthValue::Unknown,
+        };
+        return Ok(IsCheckKind::TruthValue(value));
+    }
+    if children
+        .iter()
+        .any(|child| child.as_rule() == Rule::typed_kw)
+    {
+        let type_pair = find_child(children, Rule::type_name, "IS TYPED is missing type")?;
+        return Ok(IsCheckKind::Typed(build_type_name(type_pair)?));
+    }
+    Err(ParserError::syntax(
+        "unsupported IS predicate",
+        source_span,
+        None,
+    ))
 }
 
-fn build_endpoint_kind(
-    suffix: Pair<'_, Rule>,
-    text: &str,
-    source_span: SourceSpan,
-) -> Result<IsCheckKind, ParserError> {
-    let rhs_pair = suffix
-        .into_inner()
-        .find(|child| child.as_rule() == Rule::comparison)
-        .ok_or_else(|| {
-            ParserError::syntax(
-                "IS endpoint predicate is missing expression",
-                source_span,
-                None,
-            )
-        })?;
-    let rhs = Box::new(build_value_expr(rhs_pair)?);
-    if text.contains("SOURCE OF") {
-        Ok(IsCheckKind::SourceOf(rhs))
-    } else {
-        Ok(IsCheckKind::DestinationOf(rhs))
-    }
+fn find_child<'a>(
+    children: &'a [Pair<'a, Rule>],
+    rule: Rule,
+    missing: &'static str,
+) -> Result<Pair<'a, Rule>, ParserError> {
+    children
+        .iter()
+        .find(|child| child.as_rule() == rule)
+        .cloned()
+        .ok_or_else(|| ParserError::syntax(missing, SourceSpan::default(), None))
 }
 
 pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
@@ -224,21 +275,4 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
         "NOTHING" => Ok(GqlType::Nothing),
         _ => Err(not_implemented(&pair, "this GQL type builder lands in M5b")),
     }
-}
-
-fn normal_form(text: &str) -> NormalForm {
-    if has_word(text, "NFD") {
-        NormalForm::Nfd
-    } else if has_word(text, "NFKC") {
-        NormalForm::Nfkc
-    } else if has_word(text, "NFKD") {
-        NormalForm::Nfkd
-    } else {
-        NormalForm::Nfc
-    }
-}
-
-fn has_word(text: &str, word: &str) -> bool {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-        .any(|part| part == word)
 }

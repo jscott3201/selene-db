@@ -42,14 +42,18 @@ impl Statement {
 /// Set operator.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum SetOp {
-    /// `UNION`.
+    /// `UNION` (distinct).
     Union,
-    /// `UNION ALL`.
+    /// `UNION ALL` (multiset).
     UnionAll,
-    /// `INTERSECT`.
+    /// `INTERSECT` (distinct).
     Intersect,
-    /// `EXCEPT`.
+    /// `INTERSECT ALL` (multiset).
+    IntersectAll,
+    /// `EXCEPT` (distinct).
     Except,
+    /// `EXCEPT ALL` (multiset).
+    ExceptAll,
     /// `OTHERWISE`.
     Otherwise,
 }

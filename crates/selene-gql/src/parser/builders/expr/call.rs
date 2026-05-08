@@ -22,7 +22,7 @@ pub(super) fn build_function_call(pair: Pair<'_, Rule>) -> Result<ValueExpr, Par
     let name_pair = children
         .next()
         .ok_or_else(|| ParserError::syntax("function call is missing name", source_span, None))?;
-    let name = intern_qualified_name(name_pair)?;
+    let name = build_qualified_name(name_pair)?;
     let mut args = Vec::new();
     for child in children {
         match child.as_rule() {
@@ -62,10 +62,11 @@ pub(super) fn build_aggregate_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, Pa
         }
     }
 
+    let segment = name.ok_or_else(|| {
+        ParserError::syntax("aggregate expression is missing name", source_span, None)
+    })?;
     Ok(ValueExpr::FunctionCall {
-        name: name.ok_or_else(|| {
-            ParserError::syntax("aggregate expression is missing name", source_span, None)
-        })?,
+        name: vec![segment],
         args,
         star,
         distinct,
@@ -250,24 +251,39 @@ fn expr_from_child(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         .and_then(build_value_expr)
 }
 
-fn intern_qualified_name(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+/// Build a qualified name as a list of interned segments.
+///
+/// Each grammar segment (delimited or bare identifier) is interned
+/// independently. Quoted segments containing dots stay one segment, so
+/// `foo."bar.baz"` and `foo.bar.baz` produce different paths.
+fn build_qualified_name(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::qualified_name);
     let source_span = span(&pair);
-    let mut parts = Vec::new();
+    let mut segments = Vec::new();
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::ident | Rule::prop_ident => parts.push(decode_ident_like(child.as_str())),
+            Rule::ident | Rule::prop_ident => {
+                let canonical = decode_ident_like(child.as_str());
+                let interned = intern(&canonical).map_err(|error| {
+                    ParserError::syntax(
+                        format!("could not intern qualified-name segment: {error}"),
+                        source_span,
+                        Some("identifier interning cap may be exhausted".into()),
+                    )
+                })?;
+                segments.push(interned);
+            }
             _ => return Err(unexpected_pair(child, "unexpected qualified-name child")),
         }
     }
-    let joined = parts.join(".");
-    intern(&joined).map_err(|error| {
-        ParserError::syntax(
-            format!("could not intern qualified name: {error}"),
+    if segments.is_empty() {
+        return Err(ParserError::syntax(
+            "qualified name has no segments",
             source_span,
-            Some("identifier interning cap may be exhausted".into()),
-        )
-    })
+            None,
+        ));
+    }
+    Ok(segments)
 }
 
 fn intern_lower(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {

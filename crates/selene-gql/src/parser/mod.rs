@@ -437,4 +437,154 @@ mod tests {
         };
         assert_eq!(blocks.len(), 2);
     }
+
+    #[test]
+    fn intersect_and_except_preserve_all_modifier() {
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 INTERSECT ALL RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::IntersectAll);
+
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 EXCEPT ALL RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::ExceptAll);
+
+        let Statement::Composite { rest, .. } =
+            parse("RETURN 1 INTERSECT RETURN 2").expect("parse succeeds")
+        else {
+            panic!("expected composite");
+        };
+        assert_eq!(rest[0].0, SetOp::Intersect);
+    }
+
+    #[test]
+    fn select_pipeline_emits_pre_return_then_return_then_post_return() {
+        // SELECT desugaring must lay statements out in semantic order:
+        // pre-projection (MATCH, WHERE/FILTER) before RETURN, post-projection
+        // (ORDER BY, OFFSET, LIMIT) after. The previous shape pushed every
+        // non-projection clause into a single `deferred` bucket appended
+        // after RETURN, which silently rewrote `WHERE` into a post-RETURN
+        // filter — wrong semantics whenever projection introduces aliases
+        // or aggregation. The grammar's match_stmt currently absorbs an
+        // inline WHERE on `FROM MATCH (...) WHERE ...`, so the statement
+        // shape here exercises ordering of the post-RETURN slot (sorting
+        // and limit) which routes through the same fix.
+        let query = query("SELECT n.name FROM MATCH (n) WHERE n.age > 18 ORDER BY n.name LIMIT 10");
+        assert!(
+            matches!(query.statements[0], PipelineStatement::Match(_)),
+            "[0] expected Match, got {:?}",
+            query.statements[0]
+        );
+        assert!(
+            matches!(query.statements[1], PipelineStatement::Return(_)),
+            "[1] expected Return, got {:?}",
+            query.statements[1]
+        );
+        assert!(
+            matches!(query.statements[2], PipelineStatement::Sorting(_)),
+            "[2] expected Sorting, got {:?}",
+            query.statements[2]
+        );
+        assert!(
+            matches!(query.statements[3], PipelineStatement::Limit(_)),
+            "[3] expected Limit, got {:?}",
+            query.statements[3]
+        );
+    }
+
+    #[test]
+    fn quantifier_range_with_max_below_min_rejected() {
+        for source in [
+            "MATCH (a)-[*5..2]-(b) RETURN a",
+            "MATCH (a)-[*{5,2}]-(b) RETURN a",
+        ] {
+            let err = parse(source).expect_err("max < min should error");
+            assert!(
+                matches!(err, ParserError::SyntaxError { .. }),
+                "expected syntax error for {source:?}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn conflicting_quantifiers_in_edge_pattern_rejected() {
+        // edge_interior accepts a quantifier and the outer edge accepts one
+        // too. Specifying both must error rather than letting the second
+        // silently overwrite the first.
+        let err = parse("MATCH (a)-[r*1..2*3..4]->(b) RETURN a")
+            .expect_err("conflicting quantifiers should error");
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected syntax error, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn is_labeled_with_quoted_keyword_does_not_misroute() {
+        // Quoted identifiers that contain IS-suffix keywords (IN, NOT,
+        // LIKE, BETWEEN, NORMALIZED, ...) must be classified by grammar
+        // rules, not by substring scans of the source text. Otherwise
+        // `IS LABELED :"IN"` would be misrouted to the IN predicate and
+        // fail with "missing list", and `IS LABELED :"NOT"` would
+        // silently flip negation.
+        let labeled_in = only_item("RETURN n IS LABELED :\"IN\"").expr;
+        let ValueExpr::IsCheck { kind, negated, .. } = labeled_in else {
+            panic!("expected IS LABELED to parse as IsCheck");
+        };
+        assert!(!negated, "no NOT token, but negation flagged");
+        assert!(matches!(
+            kind,
+            crate::ast::IsCheckKind::Labeled(LabelExpr::Single(_))
+        ));
+
+        let labeled_not = only_item("RETURN n IS LABELED :\"NOT\"").expr;
+        let ValueExpr::IsCheck { negated, .. } = labeled_not else {
+            panic!("expected IS LABELED to parse as IsCheck");
+        };
+        assert!(!negated, "quoted NOT in label name must not flip negation");
+    }
+
+    #[test]
+    fn is_not_labeled_uses_token_negation() {
+        // The NOT keyword in IS NOT LABELED really does negate the predicate.
+        let item = only_item("RETURN n IS NOT LABELED :Person").expr;
+        let ValueExpr::IsCheck { negated, .. } = item else {
+            panic!("expected IS NOT LABELED to parse as IsCheck");
+        };
+        assert!(negated, "IS NOT LABELED must produce negated=true");
+    }
+
+    #[test]
+    fn qualified_function_names_preserve_segment_boundaries() {
+        // `foo."bar.baz"` and `foo.bar.baz` would collide if the AST stored
+        // the qualified name as a single dotted string. The Vec<IStr> path
+        // keeps them distinguishable so namespaced procedure calls resolve
+        // to the right thing.
+        let bare = only_item("RETURN foo.bar.baz()").expr;
+        let ValueExpr::FunctionCall {
+            name: name_three, ..
+        } = bare
+        else {
+            panic!("expected FunctionCall");
+        };
+        assert_eq!(name_three.len(), 3);
+
+        let quoted = only_item("RETURN foo.\"bar.baz\"()").expr;
+        let ValueExpr::FunctionCall { name: name_two, .. } = quoted else {
+            panic!("expected FunctionCall");
+        };
+        assert_eq!(name_two.len(), 2);
+
+        // Single-segment bare name is still one segment.
+        let single = only_item("RETURN count(*)").expr;
+        let ValueExpr::FunctionCall { name: name_one, .. } = single else {
+            panic!("expected FunctionCall");
+        };
+        assert_eq!(name_one.len(), 1);
+    }
 }

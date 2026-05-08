@@ -78,8 +78,14 @@ pub enum ValueExpr {
     },
     /// Function call, including aggregate-looking calls.
     FunctionCall {
-        /// Interned function name.
-        name: IStr,
+        /// Qualified function name as a list of interned segments.
+        ///
+        /// Stored as a path so that `foo."bar.baz"` and `foo.bar.baz`
+        /// (which a flat string would alias) parse to distinguishable
+        /// values. Bare functions (`count(...)`) are a single-element
+        /// path; namespaced calls (`db.bar()`, `pkg.subpkg.fn()`) preserve
+        /// every segment.
+        name: Vec<IStr>,
         /// Function arguments.
         args: Vec<ValueExpr>,
         /// `true` for `count(*)`.

@@ -189,12 +189,29 @@ fn build_edge_pattern(pair: Pair<'_, Rule>) -> Result<EdgePattern, ParserError> 
     for child in child.into_inner() {
         match child.as_rule() {
             Rule::edge_interior => apply_edge_interior(child, &mut pattern)?,
-            Rule::quantifier => pattern.quantifier = Some(build_quantifier(child)?),
+            Rule::quantifier => assign_quantifier(&mut pattern, child)?,
             _ => return Err(unexpected_pair(child, "unexpected edge-pattern child")),
         }
     }
 
     Ok(pattern)
+}
+
+fn assign_quantifier(pattern: &mut EdgePattern, pair: Pair<'_, Rule>) -> Result<(), ParserError> {
+    if pattern.quantifier.is_some() {
+        // Quantifiers can appear inside edge_interior or after the closing
+        // bracket; the grammar does not forbid both forms in the same edge,
+        // so the builder rejects the conflict explicitly. Silently keeping
+        // the second occurrence would change traversal bounds without the
+        // author noticing.
+        return Err(ParserError::syntax(
+            "edge pattern carries conflicting quantifiers",
+            span(&pair),
+            Some("specify the quantifier exactly once".into()),
+        ));
+    }
+    pattern.quantifier = Some(build_quantifier(pair)?);
+    Ok(())
 }
 
 fn apply_edge_interior(pair: Pair<'_, Rule>, pattern: &mut EdgePattern) -> Result<(), ParserError> {
@@ -203,7 +220,7 @@ fn apply_edge_interior(pair: Pair<'_, Rule>, pattern: &mut EdgePattern) -> Resul
             Rule::edge_var => pattern.binding = Some(intern_pair(first_child(child)?)?),
             Rule::label_expr => pattern.label_expr = Some(build_label_expr(child)?),
             Rule::property_map => pattern.properties = build_property_map(child)?,
-            Rule::quantifier => pattern.quantifier = Some(build_quantifier(child)?),
+            Rule::quantifier => assign_quantifier(pattern, child)?,
             Rule::inline_where => pattern.inline_where = Some(expr_from_child(child)?),
             _ => return Err(unexpected_pair(child, "unexpected edge-interior child")),
         }
@@ -289,7 +306,7 @@ fn build_quantifier(pair: Pair<'_, Rule>) -> Result<Quantifier, ParserError> {
         } else {
             Some(parse_u32(max_text, source_span)?)
         };
-        return Ok(Quantifier { min, max });
+        return validate_range(min, max, source_span);
     }
 
     let body = text
@@ -307,7 +324,7 @@ fn build_quantifier(pair: Pair<'_, Rule>) -> Result<Quantifier, ParserError> {
         } else {
             Some(parse_u32(max_text, source_span)?)
         };
-        return Ok(Quantifier { min, max });
+        return validate_range(min, max, source_span);
     }
 
     let exact = parse_u32(body, source_span)?;
@@ -315,6 +332,26 @@ fn build_quantifier(pair: Pair<'_, Rule>) -> Result<Quantifier, ParserError> {
         min: exact,
         max: Some(exact),
     })
+}
+
+fn validate_range(
+    min: u32,
+    max: Option<u32>,
+    source_span: SourceSpan,
+) -> Result<Quantifier, ParserError> {
+    if let Some(max_value) = max
+        && max_value < min
+    {
+        // Reject `*5..2`, `{5,2}`, etc. before they reach planning, where
+        // an impossible bound would either be silently empty or violate
+        // the planner's monotonicity assumptions.
+        return Err(ParserError::syntax(
+            "quantifier range has max below min",
+            source_span,
+            Some("ensure max >= min in `*min..max` or `{min,max}`".into()),
+        ));
+    }
+    Ok(Quantifier { min, max })
 }
 
 fn parse_u32(text: &str, source_span: SourceSpan) -> Result<u32, ParserError> {

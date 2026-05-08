@@ -94,15 +94,29 @@ fn build_set_op(pair: Pair<'_, Rule>) -> Result<SetOp, ParserError> {
         .into_inner()
         .next()
         .ok_or_else(|| ParserError::syntax("set operator is empty", SourceSpan::default(), None))?;
-    let text = child.as_str().to_ascii_uppercase();
+    let has_all = contains_word(child.as_str(), "ALL");
     match child.as_rule() {
-        Rule::union_op if text.contains("ALL") => Ok(SetOp::UnionAll),
+        Rule::union_op if has_all => Ok(SetOp::UnionAll),
         Rule::union_op => Ok(SetOp::Union),
+        Rule::intersect_op if has_all => Ok(SetOp::IntersectAll),
         Rule::intersect_op => Ok(SetOp::Intersect),
+        Rule::except_op if has_all => Ok(SetOp::ExceptAll),
         Rule::except_op => Ok(SetOp::Except),
         Rule::otherwise_op => Ok(SetOp::Otherwise),
         _ => Err(unexpected_pair(child, "expected set operator")),
     }
+}
+
+/// Case-insensitive whole-word match against a SQL/GQL keyword.
+///
+/// Used to detect modifier keywords (e.g. `ALL` in `INTERSECT ALL`) without
+/// false-matching identifiers that happen to contain the keyword as a
+/// substring.
+fn contains_word(text: &str, word: &str) -> bool {
+    let upper = text.to_ascii_uppercase();
+    upper
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .any(|part| part == word)
 }
 
 pub(super) fn build_query_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserError> {
@@ -151,8 +165,14 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
         having: None,
         span: source_span,
     };
-    let mut statements = Vec::new();
-    let mut deferred = Vec::new();
+    // SELECT desugars to a query pipeline whose statements are emitted in
+    // semantic order: pre-projection (MATCH, WHERE/FILTER), then RETURN, then
+    // post-projection (ORDER BY, OFFSET, LIMIT). Routing WHERE through the
+    // post-RETURN slot would filter on projected rows instead of source rows
+    // and silently change query semantics whenever projection introduces
+    // aliases or aggregation.
+    let mut pre_return = Vec::new();
+    let mut post_return = Vec::new();
 
     for child in pair.into_inner() {
         match child.as_rule() {
@@ -162,7 +182,7 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
             Rule::select_from => {
                 let from_child = first_child(child)?;
                 if from_child.as_rule() == Rule::match_stmt {
-                    statements.push(PipelineStatement::Match(pattern::build_match_clause(
+                    pre_return.push(PipelineStatement::Match(pattern::build_match_clause(
                         from_child,
                     )?));
                 } else {
@@ -172,22 +192,25 @@ fn build_select_pipeline(pair: Pair<'_, Rule>) -> Result<QueryPipeline, ParserEr
                     ));
                 }
             }
-            Rule::where_clause => deferred.push(PipelineStatement::Filter(build_where(child)?)),
+            Rule::where_clause => pre_return.push(PipelineStatement::Filter(build_where(child)?)),
             Rule::group_by_clause => return_clause.group_by = Some(build_group_by(child)?),
             Rule::having_clause => return_clause.having = Some(build_having(child)?),
-            Rule::sorting_stmt => deferred.push(PipelineStatement::Sorting(build_sorting(child)?)),
+            Rule::sorting_stmt => {
+                post_return.push(PipelineStatement::Sorting(build_sorting(child)?));
+            }
             Rule::offset_stmt => {
-                deferred.push(PipelineStatement::Offset(build_limit_or_offset(child)?));
+                post_return.push(PipelineStatement::Offset(build_limit_or_offset(child)?));
             }
             Rule::limit_stmt => {
-                deferred.push(PipelineStatement::Limit(build_limit_or_offset(child)?))
+                post_return.push(PipelineStatement::Limit(build_limit_or_offset(child)?));
             }
             _ => return Err(unexpected_pair(child, "unexpected SELECT child")),
         }
     }
 
+    let mut statements = pre_return;
     statements.push(PipelineStatement::Return(return_clause));
-    statements.extend(deferred);
+    statements.extend(post_return);
     Ok(QueryPipeline {
         statements,
         span: source_span,
