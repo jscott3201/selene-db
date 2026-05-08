@@ -112,10 +112,14 @@ fn numeric_assignable(arg: NumericKind, param: NumericKind) -> bool {
         (NumericKind::Integer(arg), NumericKind::Integer(param)) => integer_assignable(arg, param),
         (NumericKind::Integer(_), NumericKind::Decimal | NumericKind::Float(_)) => true,
         (NumericKind::Decimal, NumericKind::Decimal | NumericKind::Float(_)) => true,
-        (NumericKind::Float(arg), NumericKind::Float(param)) => arg <= param,
+        (NumericKind::Float(arg), NumericKind::Float(param)) => float_assignable(arg, param),
         (NumericKind::Decimal | NumericKind::Float(_), NumericKind::Integer(_))
         | (NumericKind::Float(_), NumericKind::Decimal) => false,
     }
+}
+
+fn float_assignable(arg: FloatKind, param: FloatKind) -> bool {
+    matches!(arg, FloatKind::Unsized) || matches!(param, FloatKind::Unsized) || arg <= param
 }
 
 fn integer_assignable(arg: IntegerKind, param: IntegerKind) -> bool {
@@ -296,6 +300,39 @@ mod tests {
         assert!(!argument_assignable(
             &GqlType::Float64,
             &GqlType::Decimal,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_treats_unsized_float_as_abstract() {
+        assert!(argument_assignable(
+            &GqlType::Float,
+            &GqlType::Float32,
+            false
+        ));
+        assert!(argument_assignable(
+            &GqlType::Float32,
+            &GqlType::Float,
+            false
+        ));
+        assert!(argument_assignable(
+            &GqlType::Float64,
+            &GqlType::Float,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_keeps_concrete_float_width_directional() {
+        assert!(argument_assignable(
+            &GqlType::Float32,
+            &GqlType::Float64,
+            false
+        ));
+        assert!(!argument_assignable(
+            &GqlType::Float64,
+            &GqlType::Float32,
             false
         ));
     }

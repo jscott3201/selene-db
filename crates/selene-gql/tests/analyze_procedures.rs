@@ -144,6 +144,27 @@ fn yield_star_plus_explicit_alias_keeps_alias_typed() {
 }
 
 #[test]
+fn yield_star_after_explicit_keeps_wildcard_first_order() {
+    let registry = registry(
+        &["pkg", "all"],
+        Vec::new(),
+        vec![
+            output("outA", GqlType::Integer),
+            output("outB", GqlType::String),
+        ],
+    );
+
+    let analyzed =
+        analyze_with("CALL pkg.all() YIELD outA AS alias, *", &registry).expect("analyzes");
+
+    assert_eq!(yield_names(&analyzed), ["outA", "outB", "alias"]);
+    assert_eq!(
+        yield_type(&analyzed, "alias"),
+        AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
 fn argument_type_promotes_via_assignment_direction() {
     let registry = registry(
         &["pkg", "wide"],
@@ -225,6 +246,27 @@ fn wrong_arity_too_many_errors() {
         AnalysisError::WrongArgumentCount {
             expected: 2,
             actual: 3,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn wrong_arity_precedes_argument_binding_errors() {
+    let registry = registry(
+        &["pkg", "need_one"],
+        vec![param("value", GqlType::Integer, false)],
+        Vec::new(),
+    );
+
+    let err =
+        analyze_with("CALL pkg.need_one(undef_var, undef_var2)", &registry).expect_err("arity");
+
+    assert!(matches!(
+        err,
+        AnalysisError::WrongArgumentCount {
+            expected: 1,
+            actual: 2,
             ..
         }
     ));
