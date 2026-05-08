@@ -83,6 +83,10 @@ skip = [
   # archives while lasso 0.7/dashmap remain on hashbrown 0.14. Both are live
   # maintained lines; allow the older lasso line until upstream converges.
   { name = "hashbrown", version = "0.14.5" },
+  # BRIEF-16: pest_derive 2.8 builds through sha2/cpufeatures 0.2 while
+  # blake3 1.8 uses cpufeatures 0.3. Both lines are maintained and target-gated;
+  # keep the older build-time line until upstream converges.
+  { name = "cpufeatures", version = "0.2.17" },
 ]
 skip-tree = []
 

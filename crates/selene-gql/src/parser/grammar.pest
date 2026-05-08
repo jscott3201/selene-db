@@ -1,0 +1,611 @@
+// selene-gql GQL grammar (pest 2.8).
+//
+// Adapted from:
+// /Users/justin/Development/AgentAether/aether-db/crates/aether-db-gql/src/parser/grammar.pest
+//
+// Rule names follow snake_case mirrors of ISO/IEC 39075:2024 grammar names,
+// aligned with opengql/grammar v1.9.0 where the donor name diverged.
+//
+// FEATURE comments tag rules whose surface area belongs to a v1.0 claimed
+// feature ID. The Flagger (BRIEF-19) will reject unsupported surfaces.
+// -------------------------------------------------------------------
+// PEG grammar (pest). Case-insensitive keywords via ^"keyword".
+// All whitespace and comments handled implicitly by WHITESPACE/COMMENT.
+//
+// Spec alignment: double-quote = delimited identifier (not string),
+// single-quote = string literal, Unicode identifiers, prop_ident
+// for keyword-safe property access.
+
+// -- Top-level ------------------------------------------------------
+
+gql_program = { SOI ~ (ddl_statement | transaction_control | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+
+// -- DDL statements -----------------------------------------------
+
+ddl_statement = { create_trigger | drop_trigger | show_triggers
+              | create_materialized_view | drop_materialized_view | show_materialized_views
+              | create_node_type | drop_node_type | show_node_types
+              | create_edge_type | drop_edge_type | show_edge_types
+              | create_graph | drop_graph | create_procedure | drop_procedure | create_index | drop_index | create_user | drop_user | create_role | drop_role | grant_role | revoke_role }
+
+create_procedure = { ^"CREATE" ~ or_replace? ~ ^"PROCEDURE" ~ if_not_exists? ~ qualified_name ~ "(" ~ param_list? ~ ")" ~ "{" ~ query_pipeline ~ "}" }
+drop_procedure   = { ^"DROP" ~ ^"PROCEDURE" ~ if_exists? ~ qualified_name }
+param_list       = { param_decl ~ ("," ~ param_decl)* }
+param_decl       = { ident ~ type_name }
+
+create_trigger = { ^"CREATE" ~ ^"TRIGGER" ~ ident ~ ^"AFTER" ~ trigger_event ~ ^"ON" ~ ":" ~ ident ~ (^"WHEN" ~ expr)? ~ ^"EXECUTE" ~ mutation_op+ }
+trigger_event  = { ^"INSERT" | ^"SET" | ^"REMOVE" | ^"DELETE" }
+drop_trigger   = { ^"DROP" ~ ^"TRIGGER" ~ ident }
+show_triggers  = { ^"SHOW" ~ ^"TRIGGERS" }
+
+create_materialized_view = {
+    ^"CREATE" ~ or_replace? ~ ^"MATERIALIZED" ~ ^"VIEW" ~ if_not_exists? ~
+    ident ~ ^"AS" ~ match_stmt ~ return_stmt
+}
+
+drop_materialized_view = {
+    ^"DROP" ~ ^"MATERIALIZED" ~ ^"VIEW" ~ if_exists? ~ ident
+}
+
+show_materialized_views = { ^"SHOW" ~ ^"MATERIALIZED" ~ ^"VIEWS" }
+
+create_node_type = {
+    ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
+    ":" ~ ident ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    "(" ~ type_prop_def_list? ~ ")" ~
+    validation_mode_clause?
+}
+create_edge_type = {
+    ^"CREATE" ~ or_replace? ~ ^"EDGE" ~ ^"TYPE" ~ if_not_exists? ~
+    ":" ~ ident ~
+    "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
+    validation_mode_clause?
+}
+validation_mode_clause = { ^"STRICT" | ^"WARN" }
+or_replace = { ^"OR" ~ ^"REPLACE" }
+drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
+drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
+show_node_types  = { ^"SHOW" ~ ^"NODE" ~ ^"TYPES" }
+show_edge_types  = { ^"SHOW" ~ ^"EDGE" ~ ^"TYPES" }
+
+type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
+type_prop_def      = { ident ~ "::" ~ type_name ~ type_prop_constraint* }
+type_prop_constraint = { ^"NOT" ~ ^"NULL" | ^"DEFAULT" ~ literal | ^"IMMUTABLE" | ^"UNIQUE" | ^"INDEXED" | ^"SEARCHABLE" | ^"DICTIONARY" | ^"FILL" ~ ident | ^"INTERVAL" ~ string_lit | ^"ENCODING" ~ ident }
+edge_endpoint_clause = { ^"FROM" ~ label_list ~ ^"TO" ~ label_list }
+label_list           = { ":" ~ ident ~ ("," ~ ":" ~ ident)* }
+
+create_graph = { ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~ ident }
+drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
+create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ ident ~ ("," ~ ident)* ~ ")" }
+drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
+create_user  = { ^"CREATE" ~ ^"USER" ~ if_not_exists? ~ ident ~ ^"SET" ~ ^"PASSWORD" ~ string_lit ~ (^"ROLE" ~ ident)? }
+drop_user    = { ^"DROP" ~ ^"USER" ~ if_exists? ~ ident }
+create_role  = { ^"CREATE" ~ ^"ROLE" ~ if_not_exists? ~ ident }
+drop_role    = { ^"DROP" ~ ^"ROLE" ~ if_exists? ~ ident }
+grant_role   = { ^"GRANT" ~ ^"ROLE" ~ ident ~ ^"TO" ~ ident }
+revoke_role  = { ^"REVOKE" ~ ^"ROLE" ~ ident ~ ^"FROM" ~ ident }
+
+if_not_exists = { ^"IF" ~ ^"NOT" ~ ^"EXISTS" }
+if_exists     = { ^"IF" ~ ^"EXISTS" }
+
+chained_query = { query_pipeline ~ (^"NEXT" ~ query_pipeline)+ }
+
+composite_query = { query_pipeline ~ (set_op ~ query_pipeline)+ }
+set_op          = { union_op | intersect_op | except_op | otherwise_op }
+union_op        = { ^"UNION" ~ (^"ALL" | ^"DISTINCT")? }
+intersect_op    = { ^"INTERSECT" ~ (^"ALL" | ^"DISTINCT")? }
+except_op       = { ^"EXCEPT" ~ (^"ALL" | ^"DISTINCT")? }
+otherwise_op    = { ^"OTHERWISE" }
+
+// -- Transaction control --------------------------------------------
+
+transaction_control = { start_transaction | commit | rollback }
+start_transaction   = { ^"START" ~ ^"TRANSACTION" }
+commit              = { ^"COMMIT" }
+rollback            = { ^"ROLLBACK" }
+
+// -- SELECT (desugars to MATCH + RETURN at AST level) ------------
+
+select_stmt = {
+    ^"SELECT" ~ distinct_kw? ~ (return_star | projection_list)
+    ~ select_from? ~ where_clause?
+    ~ group_by_clause? ~ having_clause?
+    ~ sorting_stmt? ~ offset_stmt? ~ limit_stmt?
+}
+select_from = { ^"FROM" ~ (match_stmt | ident) }
+
+// -- Query pipeline -------------------------------------------------
+
+query_pipeline     = { pipeline_statement+ }
+pipeline_statement = { match_view_stmt | match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
+
+match_view_stmt = { ^"MATCH" ~ ^"VIEW" ~ ident ~ yield_clause }
+
+for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr }
+unwind_stmt = { ^"UNWIND" ~ expr ~ ^"AS" ~ ident }
+with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ having_clause? ~ where_clause? }
+
+// -- MATCH ----------------------------------------------------------
+
+match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
+match_mode        = { ^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS" }
+path_selector     = { (^"ANY" | ^"ALL") ~ ^"SHORTEST" }
+optional_modifier = { ^"OPTIONAL" }
+path_modifier     = { ^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL" }
+graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
+
+graph_pattern     = { path_var_binding? ~ pattern_chain }
+path_var_binding  = { ident ~ "=" }
+pattern_chain     = { node_pattern ~ (edge_pattern ~ node_pattern)* }
+
+// -- Node pattern ---------------------------------------------------
+
+node_pattern = { "(" ~ node_var? ~ label_expr? ~ property_map? ~ inline_where? ~ ")" }
+node_var     = { ident }
+
+// -- Edge pattern ---------------------------------------------------
+
+edge_pattern = { edge_right | edge_left | edge_any | abbrev_right | abbrev_left | abbrev_any }
+edge_right   = { "-" ~ "[" ~ edge_interior ~ "]" ~ "->" ~ quantifier? }
+edge_left    = { "<-" ~ "[" ~ edge_interior ~ "]" ~ "-" ~ quantifier? }
+edge_any     = { "-" ~ "[" ~ edge_interior ~ "]" ~ "-" ~ !(">" | "[") ~ quantifier? }
+// Abbreviated edge patterns (Feature G044) - no brackets
+abbrev_right = { "->" }
+abbrev_left  = { "<-" ~ !("[") }
+abbrev_any   = { "-" ~ !("-" | "[" | ">" | ASCII_DIGIT) }
+
+edge_interior = { edge_var? ~ label_expr? ~ property_map? ~ inline_where? }
+edge_var      = { ident }
+
+// -- Quantifier -----------------------------------------------------
+
+quantifier = { "{" ~ quant_body ~ "}" | quant_star | quant_plus | quant_question }
+quant_body = { quant_range_full | quant_range_min | quant_range_max | quant_exact }
+quant_star     = { "*" }
+quant_plus     = { "+" }
+quant_question = { "?" }
+quant_exact      = { uint }
+quant_range_full = { uint ~ "," ~ uint }
+quant_range_min  = { uint ~ "," }
+quant_range_max  = { "," ~ uint }
+
+// -- Label expression -----------------------------------------------
+
+label_expr = { ":" ~ label_or }
+label_or   = { label_and ~ ("|" ~ label_and)* }
+label_and  = { label_not ~ ("&" ~ label_not)* }
+label_not  = { "!" ~ label_atom | label_atom }
+label_atom = { label_wildcard | ident }
+label_wildcard = { "%" }
+
+// -- Property map (inline) ------------------------------------------
+
+property_map  = { "{" ~ property_pair ~ ("," ~ property_pair)* ~ "}" }
+property_pair = { prop_ident ~ ":" ~ expr }
+
+// -- WHERE clause ---------------------------------------------------
+
+where_clause = { ^"WHERE" ~ expr }
+inline_where = { ^"WHERE" ~ expr }
+
+// -- LET ------------------------------------------------------------
+
+let_stmt    = { ^"LET" ~ let_binding ~ ("," ~ let_binding)* }
+let_binding = { ident ~ "=" ~ expr }
+
+// -- FILTER ---------------------------------------------------------
+
+filter_stmt = { ^"FILTER" ~ ^"WHERE"? ~ expr }
+
+// -- ORDER BY -------------------------------------------------------
+
+sorting_stmt = { ^"ORDER" ~ ^"BY" ~ order_term ~ ("," ~ order_term)* }
+order_term    = { expr ~ sort_dir? ~ nulls_order? }
+sort_dir      = { ^"ASC" | ^"DESC" }
+nulls_order   = { ^"NULLS" ~ (^"FIRST" | ^"LAST") }
+
+// -- OFFSET / LIMIT -------------------------------------------------
+
+offset_stmt   = { (^"OFFSET" | ^"SKIP") ~ limit_value }
+limit_stmt    = { ^"LIMIT" ~ limit_value }
+limit_value   = { param_ref | uint }
+
+// -- RETURN ---------------------------------------------------------
+
+return_stmt = { ^"RETURN" ~ (no_bindings | distinct_kw? ~ (return_star | projection_list) ~ group_by_clause? ~ having_clause?) }
+no_bindings = { ^"NO" ~ ^"BINDINGS" }
+return_star = { "*" }
+having_clause = { ^"HAVING" ~ expr }
+// Note: ORDER BY, OFFSET, LIMIT after RETURN are parsed as separate pipeline
+// statements. The GQL spec distinguishes RETURN-level ORDER BY from pipeline
+// ORDER BY for visibility semantics - but syntactically they're the same and
+// the planner handles the distinction based on position relative to RETURN.
+distinct_kw = { ^"DISTINCT" }
+
+projection_list = { projection ~ ("," ~ projection)* }
+projection      = { expr ~ alias? }
+alias           = { ^"AS" ~ prop_ident }
+
+group_by_clause = { group_by_kw ~ group_by_item ~ ("," ~ group_by_item)* }
+group_by_kw     = { ^"GROUP" ~ ^"BY" }
+group_by_item   = { expr }
+
+// return_order_by, return_offset, return_limit removed - parsed as separate
+// pipeline statements after RETURN. Planner handles positional semantics.
+
+// -- CALL -----------------------------------------------------------
+
+call_stmt      = { ^"CALL" ~ (call_subquery | call_procedure) }
+call_subquery  = { "{" ~ query_pipeline ~ "}" }
+call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ yield_clause ~ yield_filter? }
+qualified_name = { ident ~ ("." ~ prop_ident)* }
+arg_list       = { expr ~ ("," ~ expr)* }
+yield_clause   = { ^"YIELD" ~ yield_item ~ ("," ~ yield_item)* }
+yield_item     = { ("*" | prop_ident) ~ alias? }
+yield_filter   = { (^"WHERE" | ^"FILTER" ~ ^"WHERE"?) ~ expr }
+
+// -- Mutations ------------------------------------------------------
+
+mutation_pipeline = { (match_stmt | filter_stmt)* ~ mutation_op+ ~ (return_stmt | finish_stmt)? }
+finish_stmt       = { ^"FINISH" }
+mutation_op       = { insert_op | merge_op | set_stmt | remove_stmt | detach_delete_op | delete_op }
+
+// MERGE accepts ON CREATE and ON MATCH in either order, with at most one
+// of each. The nested-optional form prevents duplicated clauses
+// (e.g. `ON CREATE ... ON CREATE ...`) that a naive
+// `(a | b)? ~ (a | b)?` would let through. Builder routes each clause
+// by rule name.
+merge_op = { ^"MERGE" ~ node_pattern ~ ((on_create_clause ~ on_match_clause?) | (on_match_clause ~ on_create_clause?))? }
+on_create_clause = { ^"ON" ~ ^"CREATE" ~ ^"SET" ~ set_pair ~ ("," ~ set_pair)* }
+on_match_clause  = { ^"ON" ~ ^"MATCH" ~ ^"SET" ~ set_pair ~ ("," ~ set_pair)* }
+set_pair         = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
+
+// INSERT: path-based form per spec section13.2
+// Example: INSERT (a:P {name: 'Alice'})-[:K]->(b:P {name: 'Bob'})
+insert_op = { ^"INSERT" ~ insert_graph_pattern }
+insert_graph_pattern = { insert_path_pattern ~ ("," ~ insert_path_pattern)* }
+insert_path_pattern = { insert_node_pattern ~ (insert_edge_pattern ~ insert_node_pattern)* }
+insert_node_pattern = { "(" ~ ident? ~ insert_label_set? ~ property_map? ~ ")" }
+// INSERT label set: reuses full label_expr (AND-only semantics enforced by executor)
+insert_label_set = { label_expr }
+insert_edge_pattern = { insert_edge_right | insert_edge_left }
+insert_edge_right = { "-" ~ "[" ~ edge_var? ~ label_expr? ~ property_map? ~ "]" ~ "->" }
+insert_edge_left  = { "<-" ~ "[" ~ edge_var? ~ label_expr? ~ property_map? ~ "]" ~ "-" }
+
+// Multi-item SET (spec section13.3): SET a.x = 1, b.y = 2, n = {x: 1}, n IS Label
+set_stmt = { ^"SET" ~ set_item ~ ("," ~ set_item)* }
+set_item = { set_property_item | set_all_properties_item | set_label_item }
+set_property_item = { ident ~ "." ~ prop_ident ~ "=" ~ expr }
+set_all_properties_item = { ident ~ "=" ~ property_map }
+set_label_item = { ident ~ (^"IS" | ":") ~ ident }
+
+// Multi-item REMOVE (spec section13.4): REMOVE a.x, b.y, n IS Label
+remove_stmt = { ^"REMOVE" ~ remove_item ~ ("," ~ remove_item)* }
+remove_item = { remove_property_item | remove_label_item }
+remove_property_item = { ident ~ "." ~ prop_ident }
+remove_label_item = { ident ~ (^"IS" | ":") ~ ident }
+
+// Multi-target DELETE (spec section13.5): DELETE a, b or DETACH DELETE a, b
+detach_delete_op = { ^"DETACH" ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
+delete_op   = { ^"NODETACH"? ~ ^"DELETE" ~ ident ~ ("," ~ ident)* }
+
+// -------------------------------------------------------------------
+// Expressions (precedence via recursive descent)
+// -------------------------------------------------------------------
+//
+// Precedence (low to high):
+//   OR -> XOR -> AND -> NOT -> IS NULL / IN / string match -> comparison ->
+//   concat (||) -> addition (+,-) -> multiplication (*,/,%) ->
+//   unary (+,-) -> postfix (.prop, [idx]) -> primary
+
+expr = { or_expr }
+
+or_expr  = { xor_expr ~ (or_kw ~ xor_expr)* }
+xor_expr = { and_expr ~ (xor_kw ~ and_expr)* }
+and_expr = { not_expr ~ (and_kw ~ not_expr)* }
+not_expr = { not_kw ~ not_expr | is_expr }
+
+// Keyword rules with word boundary - prevents ^"OR" from matching "ORDER",
+// ^"AND" from matching "ANDROID", ^"NOT" from matching "NOTE", etc.
+// Unicode-aware: uses LETTER | NUMBER for boundary (not ASCII_ALPHANUMERIC).
+or_kw   = @{ ^"OR"   ~ !(LETTER | NUMBER | "_") }
+xor_kw  = @{ ^"XOR"  ~ !(LETTER | NUMBER | "_") }
+and_kw  = @{ ^"AND"  ~ !(LETTER | NUMBER | "_") }
+not_kw  = @{ ^"NOT"  ~ !(LETTER | NUMBER | "_") }
+is_kw   = @{ ^"IS"   ~ !(LETTER | NUMBER | "_") }
+in_kw   = @{ ^"IN"   ~ !(LETTER | NUMBER | "_") }
+null_kw    = @{ ^"NULL"    ~ !(LETTER | NUMBER | "_") }
+like_kw    = @{ ^"LIKE"    ~ !(LETTER | NUMBER | "_") }
+between_kw = @{ ^"BETWEEN" ~ !(LETTER | NUMBER | "_") }
+
+// IS NULL, IS TRUE/FALSE/UNKNOWN, IN list, string matching - same precedence, after NOT
+is_expr = { comparison ~ is_suffix? }
+is_suffix = {
+    is_kw ~ not_kw ~ null_kw
+  | is_kw ~ null_kw
+  | is_kw ~ not_kw? ~ ^"LABELED" ~ label_expr
+  | is_kw ~ not_kw? ~ ^"SOURCE" ~ ^"OF" ~ comparison
+  | is_kw ~ not_kw? ~ ^"DESTINATION" ~ ^"OF" ~ comparison
+  | is_kw ~ not_kw? ~ ^"DIRECTED"
+  | is_kw ~ not_kw? ~ normal_form? ~ ^"NORMALIZED"
+  | is_kw ~ not_kw? ~ truth_value
+  | is_kw ~ not_kw? ~ ^"TYPED" ~ type_name
+  | not_kw? ~ like_kw ~ addition
+  | not_kw? ~ between_kw ~ addition ~ and_kw ~ addition
+  | not_kw ~ ^"IN" ~ !(LETTER | NUMBER | "_") ~ list_lit
+  | ^"IN" ~ !(LETTER | NUMBER | "_") ~ list_lit
+  | string_match_op ~ comparison
+}
+truth_value = { ^"TRUE" | ^"FALSE" | ^"UNKNOWN" }
+normal_form = { ^"NFC" | ^"NFD" | ^"NFKC" | ^"NFKD" }
+string_match_op = { ^"STARTS" ~ ^"WITH" | ^"ENDS" ~ ^"WITH" | ^"CONTAINS" }
+
+comparison = { concat ~ (comp_op ~ concat)? }
+comp_op    = { "<>" | "<=" | ">=" | "<" | ">" | "=" }
+
+// String concatenation (||) - between comparison and addition
+concat = { addition ~ ("||" ~ addition)* }
+
+addition       = { multiplication ~ (add_op ~ multiplication)* }
+add_op         = { "+" | "-" }
+multiplication = { unary ~ (mul_op ~ unary)* }
+mul_op         = { "*" | "/" | "%" }
+
+// Unary: both + (identity) and - (negation)
+unary    = { sign_op ~ unary | postfix }
+sign_op  = { "+" | "-" }
+
+postfix = { primary ~ postfix_op* }
+postfix_op = { temporal_prop_access | prop_access | list_access_op }
+temporal_prop_access = { "." ~ prop_ident ~ ^"AT" ~ ^"TIME" ~ string_lit }
+prop_access    = { "." ~ prop_ident }
+list_access_op = { "[" ~ expr ~ "]" }
+
+// -- Primary expressions (no left-recursion) ------------------------
+
+primary = {
+    count_subquery_expr
+  | exists_expr
+  | list_iter_expr
+  | all_different_expr
+  | same_expr
+  | property_exists_expr
+  | case_expr
+  | cast_expr
+  | labels_expr
+  | record_constructor
+  | trim_expr
+  | aggregate_expr
+  | function_call
+  | paren_expr
+  | literal
+  | param_ref
+  | var_ref
+}
+
+// -- List iteration expressions (spec section20.10-11) -------------------
+// List comprehension:  [ x IN list WHERE pred | projection ]
+// Quantifier predicates: any|all|none|single ( x IN list WHERE pred )
+// Reduce:               reduce ( acc = init, x IN list | step )
+//
+// PEG ordering: tried before `function_call` so `any(x IN list WHERE p)`
+// does not greedily match as a user function. A plain call like `any(x)`
+// (no `IN`) fails the rule and backtracks to `function_call`. Likewise,
+// a list literal `[1, 2, 3]` fails at the missing `IN` after the first
+// element and backtracks to `list_lit`. Iteration-variable names are
+// not reserved keywords - only the rule head tokens (ANY/ALL/NONE/SINGLE
+// as list_quant_op; REDUCE as list_reduce) are matched by the rule.
+list_iter_expr     = { list_comprehension | list_quant | list_reduce }
+// Note: use `in_kw` (atomic, word-bounded) not bare ^"IN". Non-atomic `~`
+// skips whitespace BEFORE checking the boundary, so `^"IN" ~ !(LETTER|...)`
+// fails on legitimate expressions like `IN null` or `IN my_var`.
+list_comprehension = { "[" ~ ident ~ in_kw ~ expr ~ list_iter_where? ~ "|" ~ expr ~ "]" }
+list_quant         = { list_quant_op ~ "(" ~ ident ~ in_kw ~ expr ~ list_iter_where ~ ")" }
+list_quant_op      = { ^"ALL" | ^"ANY" | ^"NONE" | ^"SINGLE" }
+list_reduce        = { ^"REDUCE" ~ "(" ~ ident ~ "=" ~ expr ~ "," ~ ident ~ in_kw ~ expr ~ "|" ~ expr ~ ")" }
+list_iter_where    = { ^"WHERE" ~ expr }
+
+count_subquery_expr  = { ^"COUNT" ~ "{" ~ match_stmt ~ "}" }
+exists_expr          = { not_kw? ~ ^"EXISTS" ~ "{" ~ match_stmt ~ "}" }
+all_different_expr   = { ^"ALL_DIFFERENT" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
+same_expr            = { ^"SAME" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
+property_exists_expr = { ^"PROPERTY_EXISTS" ~ "(" ~ expr ~ "," ~ string_lit ~ ")" }
+
+param_ref = @{ "$" ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
+
+// Simple CASE: CASE expr WHEN val THEN result ... END
+// Searched CASE: CASE WHEN condition THEN result ... END
+// PEG: try simple_case first (CASE expr WHEN), falls back to searched_case (CASE WHEN)
+case_expr    = { simple_case | searched_case }
+simple_case  = { ^"CASE" ~ expr ~ simple_when+ ~ else_clause? ~ ^"END" }
+simple_when  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
+searched_case = { ^"CASE" ~ when_clause+ ~ else_clause? ~ ^"END" }
+when_clause  = { ^"WHEN" ~ expr ~ ^"THEN" ~ expr }
+else_clause  = { ^"ELSE" ~ expr }
+
+cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
+labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
+
+// TRIM (spec section20.24): TRIM([LEADING|TRAILING|BOTH] [char] FROM source)
+trim_expr = { ^"TRIM" ~ "(" ~ trim_spec? ~ trim_char? ~ ^"FROM" ~ expr ~ ")" }
+trim_spec = { ^"LEADING" | ^"TRAILING" | ^"BOTH" }
+trim_char = { expr }
+
+// Record constructor (spec section20.18): RECORD {name: expr, ...}
+// The RECORD keyword is optional: both `RECORD {a: 1}` and `{a: 1}` are valid.
+record_constructor = { ^"RECORD"? ~ "{" ~ record_field ~ ("," ~ record_field)* ~ "}" }
+record_field = { prop_ident ~ ":" ~ expr }
+
+// Aggregates with optional DISTINCT (spec section20.9)
+aggregate_expr  = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
+aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST" | ^"COLLECT"
+                  | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG" | ^"MIN" | ^"MAX" }
+star            = { "*" }
+
+function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
+paren_expr      = { "(" ~ expr ~ ")" }
+var_ref         = { ident }
+
+// -- Type names (for CAST) ------------------------------------------
+// PEG ordering: longer alternatives BEFORE shorter to prevent prefix matching.
+
+type_name = {
+    ^"BOOLEAN" | ^"BOOL"
+  | ^"SIGNED" ~ ^"INTEGER"
+  | ^"INT256" | ^"INT128" | ^"INT64" | ^"INT32" | ^"INT16" | ^"INT8"
+  | ^"INTEGER" | ^"BIGINT" | ^"SMALLINT" | ^"INT"
+  | ^"UINT256" | ^"UINT128" | ^"UINT64" | ^"UINT32" | ^"UINT16" | ^"UINT8"
+  | ^"UINT"
+  | ^"DOUBLE" ~ (^"PRECISION")?
+  | ^"FLOAT256" | ^"FLOAT128" | ^"FLOAT64" | ^"FLOAT32" | ^"FLOAT16"
+  | ^"FLOAT" | ^"REAL"
+  | ^"STRING" | ^"VARCHAR"
+  | ^"UUID"
+  | ^"BYTES" | ^"BYTEA"
+  | ^"ZONED" ~ ^"DATETIME" | ^"LOCAL" ~ ^"DATETIME"
+  | ^"ZONED" ~ ^"TIME" | ^"LOCAL" ~ ^"TIME"
+  | ^"DATE"
+  | ^"DURATION"
+  | ^"PATH"
+  | ^"VECTOR"
+  | ^"LIST" ~ "<" ~ type_name ~ ">"
+  | ^"NOTHING" | ^"NULL"
+}
+
+// -------------------------------------------------------------------
+// Literals
+// -------------------------------------------------------------------
+
+literal = {
+    null_lit
+  | unknown_lit
+  | bool_lit
+  | zoned_datetime_lit
+  | local_datetime_lit
+  | datetime_bare_lit
+  | date_lit
+  | zoned_time_lit
+  | local_time_lit
+  | time_lit
+  | duration_lit
+  | uuid_lit
+  | float_lit
+  | hex_lit
+  | oct_lit
+  | bin_lit
+  | uint_lit
+  | int_lit
+  | string_lit
+  | list_lit
+}
+
+null_lit    = { ^"NULL" }
+unknown_lit = { ^"UNKNOWN" }
+bool_lit    = { ^"TRUE" | ^"FALSE" }
+uuid_lit    = { ^"UUID" ~ string_lit }
+
+// Integer: optional sign + digits (no suffix)
+int_lit = @{ ("+" | "-")? ~ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* }
+
+// Unsigned: digits + "u" suffix
+uint_lit = @{ ASCII_DIGIT ~ (ASCII_DIGIT | "_")* ~ "u" }
+
+// Float: digits.digits with optional exponent and suffix
+float_lit = @{
+    ("+" | "-")? ~ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ (("e" | "E") ~ ("+" | "-")? ~ ASCII_DIGIT+)? ~ ("f" | "d")?
+}
+
+// Hex/Oct/Bin integer literals (Features GL01-GL03)
+hex_lit = @{ ("+" | "-")? ~ "0" ~ ("x" | "X") ~ ASCII_HEX_DIGIT ~ (ASCII_HEX_DIGIT | "_")* }
+oct_lit = @{ ("+" | "-")? ~ "0" ~ ("o" | "O") ~ ('0'..'7') ~ ('0'..'7' | "_")* }
+bin_lit = @{ ("+" | "-")? ~ "0" ~ ("b" | "B") ~ ("0" | "1") ~ ("0" | "1" | "_")* }
+
+// Strings: SINGLE-QUOTE ONLY (spec-aligned)
+// Double-quotes are delimited identifiers (see ident rule).
+// Supports '' escape (two single-quotes = literal single-quote) and backslash escapes.
+string_lit        = ${ "'" ~ single_inner ~ "'" }
+single_inner      = @{ (escape_seq | "''" | !("'" | "\\") ~ ANY)* }
+escape_seq        = @{ "\\" ~ ("n" | "r" | "t" | "\\" | "'" | "\"" | "`" | "b" | "f" | unicode_escape) }
+unicode_escape    = @{ "u" ~ ASCII_HEX_DIGIT{4} | "U" ~ ASCII_HEX_DIGIT{8} }
+
+// List literal
+list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
+
+// Temporal keyword literals (ISO GQL spec section21.2)
+zoned_datetime_lit = { ^"ZONED" ~ ^"DATETIME" ~ string_lit }
+local_datetime_lit = { ^"LOCAL" ~ ^"DATETIME" ~ string_lit }
+date_lit           = { ^"DATE" ~ string_lit }
+zoned_time_lit     = { ^"ZONED" ~ ^"TIME" ~ string_lit }
+local_time_lit     = { ^"LOCAL" ~ ^"TIME" ~ string_lit }
+time_lit           = { ^"TIME" ~ string_lit }
+
+// Bare DATETIME/TIMESTAMP keyword literal (ISO section21.2): infers zoned vs local from content
+datetime_bare_lit = { (^"DATETIME" | ^"TIMESTAMP") ~ string_lit }
+
+// Duration literal: DURATION('1h30m') or DURATION 'P1DT2H'
+duration_lit = {
+    ^"DURATION" ~ string_lit
+  | ^"DURATION" ~ "(" ~ string_lit ~ ")"
+}
+
+// -------------------------------------------------------------------
+// Identifiers
+// -------------------------------------------------------------------
+
+// Identifiers: Unicode letters or underscore start, followed by letters/digits/underscore.
+// Double-quote delimited identifiers (spec section21.3): "my id", ""escaped""
+// Backtick delimited identifiers (Selene extension): `my id`
+// Keywords are excluded via negative lookahead - an identifier cannot be a
+// reserved word (unless delimited).
+ident = @{
+    "\"" ~ (!"\"" ~ ANY | "\"\"")+ ~ "\""
+  | "`" ~ (!"`" ~ ANY)+ ~ "`"
+  | !keyword ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")*
+}
+
+// Property identifier: allows keywords as property names.
+// Used in prop_access (n.date), property_map ({date: val}), set/remove items.
+// No keyword guard - "date", "time", "type" etc. are valid property names.
+prop_ident = @{
+    "\"" ~ (!"\"" ~ ANY | "\"\"")+ ~ "\""
+  | "`" ~ (!"`" ~ ANY)+ ~ "`"
+  | (LETTER | "_") ~ (LETTER | NUMBER | "_")*
+}
+
+// Keywords that begin clauses/statements and cause parsing ambiguity
+// when used as identifiers in expression context.
+// Unicode-aware word boundary: !(LETTER | NUMBER | "_")
+keyword = @{
+    ( ^"MATCH" | ^"RETURN" | ^"FILTER" | ^"WHERE" | ^"ORDER"
+    | ^"LIMIT" | ^"OFFSET" | ^"GROUP" | ^"LET" | ^"SET" | ^"DELETE"
+    | ^"INSERT" | ^"REMOVE" | ^"MERGE" | ^"CALL" | ^"YIELD" | ^"AS" | ^"FINISH" | ^"DETACH" | ^"FOR"
+    | ^"AND" | ^"OR" | ^"NOT" | ^"XOR" | ^"IN" | ^"IS" | ^"EXISTS"
+    | ^"NULL" | ^"TRUE" | ^"FALSE" | ^"UNKNOWN"
+    | ^"WALK" | ^"TRAIL" | ^"ACYCLIC" | ^"SIMPLE" | ^"OPTIONAL" | ^"SHORTEST" | ^"DISTINCT" | ^"ASC" | ^"DESC"
+    | ^"START" | ^"COMMIT" | ^"ROLLBACK" | ^"UNION" | ^"INTERSECT" | ^"EXCEPT" | ^"OTHERWISE" | ^"NEXT"
+    | ^"CAST" | ^"CASE" | ^"WHEN" | ^"THEN" | ^"ELSE" | ^"END"
+    | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG"
+    | ^"STDDEV_SAMP" | ^"STDDEV_POP"
+    | ^"COLLECT_LIST" | ^"COLLECT"
+    | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
+    | ^"CREATE" | ^"DROP" | ^"GRANT" | ^"REVOKE"
+    | ^"SELECT" | ^"FROM"
+    | ^"DIRECTED" | ^"LABELED" | ^"RECORD" | ^"NORMALIZED"
+    | ^"DAY" | ^"HOUR" | ^"MINUTE" | ^"SECOND" | ^"MONTH" | ^"YEAR"
+    | ^"BETWEEN" | ^"LIKE" | ^"ARRAY"
+    | ^"BINDING" | ^"CONNECTING" | ^"DIFFERENT" | ^"KEEP" | ^"ONLY"
+    | ^"MATERIALIZED" | ^"VIEW" | ^"VIEWS"
+    | ^"STRICT" | ^"WARN"
+    ) ~ !(LETTER | NUMBER | "_")
+}
+
+uint = @{ ASCII_DIGIT+ }
+
+// -------------------------------------------------------------------
+// Whitespace and comments
+// -------------------------------------------------------------------
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ line_comment | block_comment }
+line_comment  = _{ ("//" | "--") ~ (!"\n" ~ ANY)* }
+block_comment = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }

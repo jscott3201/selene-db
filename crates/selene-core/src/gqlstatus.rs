@@ -8,6 +8,7 @@
 pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("00000", "successful-completion"),
     ("08000", "connection-exception"),
+    ("0A000", "feature-not-supported"),
     ("0G001", "extension-type-id-conflict"),
     ("0G002", "extension-type-id-unregistered"),
     ("0G003", "zero-identifier"),
@@ -17,6 +18,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
     ("22023", "data-exception-invalid-parameter-value"),
+    ("42601", "syntax-error-or-access-rule-violation"),
     ("53000", "insufficient-resources"),
     ("54000", "program-limit-exceeded"),
     ("XX500", "implementation-defined-error"),

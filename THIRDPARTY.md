@@ -807,6 +807,44 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## MIT License (MIT)
 
 Used by:
+- sha2 v0.10.9 — https://github.com/RustCrypto/hashes
+
+```
+Copyright (c) 2006-2009 Graydon Hoare
+Copyright (c) 2009-2013 Mozilla Foundation
+Copyright (c) 2016 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - cc v1.2.61 — https://github.com/rust-lang/cc-rs
 - cfg-if v1.0.4 — https://github.com/rust-lang/cfg-if
 - find-msvc-tools v0.1.9 — https://github.com/rust-lang/cc-rs
@@ -1324,6 +1362,42 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- digest v0.10.7 — https://github.com/RustCrypto/traits
+
+```
+Copyright (c) 2017 Artyom Pavlov
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - heapless v0.7.17 — https://github.com/japaric/heapless
 
 ```
@@ -1680,6 +1754,42 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- block-buffer v0.10.4 — https://github.com/RustCrypto/utils
+
+```
+Copyright (c) 2018-2019 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - getrandom v0.3.4 — https://github.com/rust-random/getrandom
 
 ```
@@ -1936,10 +2046,47 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- cpufeatures v0.2.17 — https://github.com/RustCrypto/utils
 - cpufeatures v0.3.0 — https://github.com/RustCrypto/utils
 
 ```
 Copyright (c) 2020-2025 The RustCrypto Project Developers
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the &quot;Software&quot;), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- crypto-common v0.1.7 — https://github.com/RustCrypto/traits
+
+```
+Copyright (c) 2021 RustCrypto Developers
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -2512,6 +2659,7 @@ SOFTWARE.
 
 Used by:
 - selene-core v0.0.0 — https://github.com/jscott3201/selene-db
+- selene-gql v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-graph v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-persist v0.0.0 — https://github.com/jscott3201/selene-db
 - r-efi v5.3.0 — https://github.com/r-efi/r-efi
@@ -2644,6 +2792,10 @@ Used by:
 - fastrand v2.4.1 — https://github.com/smol-rs/fastrand
 - linux-raw-sys v0.12.1 — https://github.com/sunfishcode/linux-raw-sys
 - once_cell v1.21.4 — https://github.com/matklad/once_cell
+- pest v2.8.6 — https://github.com/pest-parser/pest
+- pest_derive v2.8.6 — https://github.com/pest-parser/pest
+- pest_generator v2.8.6 — https://github.com/pest-parser/pest
+- pest_meta v2.8.6 — https://github.com/pest-parser/pest
 - pin-project-lite v0.2.17 — https://github.com/taiki-e/pin-project-lite
 - portable-atomic-util v0.2.7 — https://github.com/taiki-e/portable-atomic-util
 - portable-atomic v1.13.1 — https://github.com/taiki-e/portable-atomic
@@ -2818,12 +2970,45 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- typenum v1.20.0 — https://github.com/paholg/typenum
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2014 Paho Lurie-Gregg
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - aho-corasick v1.1.4 — https://github.com/BurntSushi/aho-corasick
 - byteorder v1.5.0 — https://github.com/BurntSushi/byteorder
 - jiff-tzdb-platform v0.1.3 — https://github.com/BurntSushi/jiff
 - jiff-tzdb v0.1.6 — https://github.com/BurntSushi/jiff
 - jiff v0.2.24 — https://github.com/BurntSushi/jiff
 - memchr v2.8.0 — https://github.com/BurntSushi/memchr
+- ucd-trie v0.1.7 — https://github.com/BurntSushi/ucd-generate
 
 ```
 The MIT License (MIT)
@@ -3002,6 +3187,37 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- generic-array v0.14.7 — https://github.com/fizyk20/generic-array.git
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2015 Bartłomiej Kamiński
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 ---
