@@ -1077,6 +1077,7 @@ version = "0.0.0"
 dependencies = [
  "arc-swap",
  "imbl",
+ "jiff",
  "miette",
  "parking_lot",
  "proptest",
@@ -1088,6 +1089,7 @@ dependencies = [
  "thiserror",
  "tracing",
  "triomphe",
+ "uuid",
 ]
 
 [[package]]

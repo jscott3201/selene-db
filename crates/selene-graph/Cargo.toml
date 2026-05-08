@@ -13,6 +13,7 @@ selene-core = { path = "../selene-core", version = "0.0.0" }
 arc-swap.workspace = true
 parking_lot.workspace = true
 imbl.workspace = true
+jiff.workspace = true
 roaring.workspace = true
 smallvec.workspace = true
 triomphe.workspace = true
@@ -20,6 +21,7 @@ serde.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 tracing.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

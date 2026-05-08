@@ -5,12 +5,13 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::GraphId;
+use selene_core::{GraphId, IStr};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
+use crate::typed_index::TypedIndexKind;
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
@@ -94,6 +95,7 @@ impl SharedGraph {
         // prevent silent drift on recovery, manual construction, or test
         // fixtures.
         rebuild_label_indexes(&mut graph)?;
+        crate::property_index::rebuild_property_indexes(&mut graph)?;
 
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
@@ -119,6 +121,54 @@ impl SharedGraph {
             .iter()
             .find(|provider| provider.provider_tag() == tag)
             .map(Arc::clone)
+    }
+
+    /// Register a built-in node property index for `(label, property)`.
+    ///
+    /// The current node columns are scanned under the write lock and the
+    /// published snapshot is updated in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::PropertyIndexAlreadyExists`] if the pair is
+    /// already registered, or [`GraphError::IndexValueRejected`] if any
+    /// existing node with `label` has a non-null value that does not match
+    /// `kind`.
+    pub fn create_property_index(
+        &self,
+        label: IStr,
+        property: IStr,
+        kind: TypedIndexKind,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        if txn.working.property_index.contains_key(&(label, property)) {
+            return Err(GraphError::PropertyIndexAlreadyExists { label, property });
+        }
+        let index =
+            crate::property_index::build_property_index(&txn.working, label, property, kind)?;
+        txn.working
+            .property_index
+            .insert((label, property), Arc::new(index));
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Drop a built-in node property index.
+    ///
+    /// The operation is idempotent; dropping an absent index succeeds without
+    /// publishing a new snapshot.
+    pub fn drop_property_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        if txn
+            .working
+            .property_index
+            .remove(&(label, property))
+            .is_none()
+        {
+            return Ok(());
+        }
+        txn.commit()?;
+        Ok(())
     }
 
     /// Begin a write transaction by acquiring the single graph write lock.
@@ -543,3 +593,7 @@ mod tests {
         });
     }
 }
+
+#[cfg(test)]
+#[path = "shared_property_tests.rs"]
+mod property_tests;

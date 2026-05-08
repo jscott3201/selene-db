@@ -1,8 +1,10 @@
 //! In-memory property graph runtime per spec 03.
 //!
-//! Storage, concurrency, built-in label indexes, and the typed mutation funnel
-//! live here. Property indexes, schema validation for closed graphs, catalog
-//! bootstrap, and persistence integration land in subsequent briefs.
+//! Storage, concurrency, built-in label/property indexes, and the typed
+//! mutation funnel live here. Composite indexes, edge property indexes,
+//! schema validation for closed graphs, catalog bootstrap, the procedure-pack
+//! `selene.create_index` wrapper, and persistence integration land in
+//! subsequent briefs.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -14,9 +16,11 @@ pub mod graph;
 pub mod id_allocator;
 pub mod index_provider;
 pub mod mutator;
+pub(crate) mod property_index;
 pub(crate) mod reentry;
 pub mod shared;
 pub mod store;
+pub mod typed_index;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
@@ -28,4 +32,5 @@ pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 pub use mutator::Mutator;
 pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore};
+pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
 pub use write_txn::{CommitOutcome, WriteTxn};

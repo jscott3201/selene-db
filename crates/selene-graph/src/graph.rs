@@ -1,12 +1,16 @@
 //! Immutable graph snapshot and read accessors.
 
+use std::ops::RangeBounds;
+use std::sync::Arc;
+
 use imbl::HashMap;
 use roaring::RoaringBitmap;
 
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
 use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
+use crate::typed_index::TypedIndex;
 
 /// Snapshot metadata.
 #[derive(Clone, Debug)]
@@ -38,6 +42,8 @@ pub struct SeleneGraph {
     pub idx_label: HashMap<IStr, RoaringBitmap>,
     /// Bitmap of edge rows carrying each edge label.
     pub idx_edge_label: HashMap<IStr, RoaringBitmap>,
+    /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
+    pub property_index: HashMap<(IStr, IStr), Arc<TypedIndex>>,
 }
 
 impl SeleneGraph {
@@ -57,6 +63,7 @@ impl SeleneGraph {
             adjacency_in: HashMap::new(),
             idx_label: HashMap::new(),
             idx_edge_label: HashMap::new(),
+            property_index: HashMap::new(),
         }
     }
 
@@ -163,6 +170,73 @@ impl SeleneGraph {
         self.idx_edge_label.len()
     }
 
+    /// Return a clone of the registered `(label, property)` index.
+    #[must_use]
+    pub fn property_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<TypedIndex>> {
+        self.property_index
+            .get(&(*label, *property))
+            .map(Arc::clone)
+    }
+
+    /// Number of distinct `(label, property)` indexes currently registered.
+    #[must_use]
+    pub fn property_index_count(&self) -> usize {
+        self.property_index.len()
+    }
+
+    /// Return rows matching `value` under a registered property index.
+    ///
+    /// `None` means no index is registered for `(label, property)` or the
+    /// supplied value cannot be used with that index kind. `Some(empty)` means
+    /// the index exists but no row matches.
+    #[must_use]
+    pub fn nodes_with_property_eq(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        value: &Value,
+    ) -> Option<RoaringBitmap> {
+        self.property_index
+            .get(&(*label, *property))
+            .and_then(|index| index.lookup_eq(value))
+    }
+
+    /// Return rows matching `range` under a registered property index.
+    ///
+    /// `None` means no index is registered or the supplied bounds do not match
+    /// the index kind. `Some(empty)` means the index exists but the range
+    /// matches no rows.
+    #[must_use]
+    pub fn nodes_with_property_range<R>(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        range: R,
+    ) -> Option<RoaringBitmap>
+    where
+        R: RangeBounds<Value>,
+    {
+        self.property_index
+            .get(&(*label, *property))
+            .and_then(|index| index.lookup_range(range))
+    }
+
+    /// Return rows whose string property key starts with `prefix`.
+    ///
+    /// `None` means no index is registered or the registered index is not a
+    /// string index.
+    #[must_use]
+    pub fn nodes_with_property_prefix(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        prefix: &str,
+    ) -> Option<RoaringBitmap> {
+        self.property_index
+            .get(&(*label, *property))
+            .and_then(|index| index.lookup_prefix(prefix))
+    }
+
     fn live_node_row(&self, id: NodeId) -> Option<usize> {
         let row = node_row_index(id)?;
         ((row as usize) < self.node_store.len() && self.node_store.is_alive(row))
@@ -188,8 +262,10 @@ mod tests {
         assert_eq!(graph.edge_count(), 0);
         assert_eq!(graph.label_count(), 0);
         assert_eq!(graph.edge_label_count(), 0);
+        assert_eq!(graph.property_index_count(), 0);
         assert!(graph.idx_label.is_empty());
         assert!(graph.idx_edge_label.is_empty());
+        assert!(graph.property_index.is_empty());
         assert_eq!(graph.meta.generation, 0);
         assert_eq!(graph.meta.next_node_id, 1);
         assert_eq!(graph.meta.next_edge_id, 1);

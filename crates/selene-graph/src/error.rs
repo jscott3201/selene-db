@@ -1,8 +1,9 @@
 //! Graph-layer error types and GQLSTATUS mappings.
 
-use selene_core::{CoreError, EdgeId, NodeId};
+use selene_core::{CoreError, EdgeId, IStr, NodeId};
 
 use crate::index_provider::ProviderError;
+use crate::typed_index::TypedIndexKind;
 
 /// Result alias for graph operations.
 pub type GraphResult<T> = Result<T, GraphError>;
@@ -64,6 +65,42 @@ pub enum GraphError {
         reason: String,
     },
 
+    /// A property index already exists for this `(label, property)`.
+    #[error("property index already exists for ({label}, {property})")]
+    #[diagnostic(code(SLENE_G_007))]
+    PropertyIndexAlreadyExists {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property key.
+        property: IStr,
+    },
+
+    /// The named property index does not exist.
+    #[error("property index does not exist for ({label}, {property})")]
+    #[diagnostic(code(SLENE_G_008))]
+    PropertyIndexNotFound {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property key.
+        property: IStr,
+    },
+
+    /// A value cannot be admitted to the declared property index kind.
+    #[error(
+        "property index ({label}, {property}) expected {expected_kind:?} but observed {observed}"
+    )]
+    #[diagnostic(code(SLENE_G_009))]
+    IndexValueRejected {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property key.
+        property: IStr,
+        /// Registered index kind.
+        expected_kind: TypedIndexKind,
+        /// Observed value kind or `"NaN"`.
+        observed: &'static str,
+    },
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -86,6 +123,9 @@ impl GraphError {
             | Self::EdgeNotAlive { .. } => "22023",
             Self::IdOverflow { .. } => "53000",
             Self::Inconsistent { .. } => "XX500",
+            Self::PropertyIndexAlreadyExists { .. }
+            | Self::PropertyIndexNotFound { .. }
+            | Self::IndexValueRejected { .. } => "22023",
             Self::Core(_) => "22000",
             Self::Provider(_) => "XX500",
         }
@@ -95,6 +135,7 @@ impl GraphError {
 #[cfg(test)]
 mod tests {
     use rstest::rstest;
+    use selene_core::intern;
 
     use super::*;
     use crate::ProviderError;
@@ -111,6 +152,29 @@ mod tests {
     #[case(
         GraphError::Inconsistent { reason: "row index exceeds u32::MAX".to_owned() },
         "XX500"
+    )]
+    #[case(
+        GraphError::PropertyIndexAlreadyExists {
+            label: intern("err.label").unwrap(),
+            property: intern("err.property").unwrap(),
+        },
+        "22023"
+    )]
+    #[case(
+        GraphError::PropertyIndexNotFound {
+            label: intern("err.label.missing").unwrap(),
+            property: intern("err.property.missing").unwrap(),
+        },
+        "22023"
+    )]
+    #[case(
+        GraphError::IndexValueRejected {
+            label: intern("err.label.rejected").unwrap(),
+            property: intern("err.property.rejected").unwrap(),
+            expected_kind: TypedIndexKind::I64,
+            observed: "String",
+        },
+        "22023"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
     #[case(
