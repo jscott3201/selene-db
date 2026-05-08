@@ -53,11 +53,7 @@ impl InternerBudget {
             // need this arm. Treat any future variant conservatively as a
             // syntax error rather than silently mapping it to the budget
             // path, where the limit field would be misleading.
-            other => ParserError::syntax(
-                format!("could not intern {kind}: {other}"),
-                span,
-                None,
-            ),
+            other => ParserError::syntax(format!("could not intern {kind}: {other}"), span, None),
         })
     }
 }

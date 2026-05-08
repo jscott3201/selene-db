@@ -452,7 +452,10 @@ mod tests {
             Ok(())
         });
         assert!(result.is_ok());
-        assert_eq!(admit_count, 1, "predicate runs exactly once on new admission");
+        assert_eq!(
+            admit_count, 1,
+            "predicate runs exactly once on new admission"
+        );
         assert!(lookup(&key).is_some(), "accepted admission grew the pool");
     }
 
