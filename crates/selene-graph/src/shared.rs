@@ -103,8 +103,26 @@ impl SharedGraph {
     }
 
     /// Begin a write transaction by acquiring the single graph write lock.
+    ///
+    /// # Panics
+    ///
+    /// Panics when called from within an [`IndexProvider`] callback (i.e.,
+    /// during commit fanout). Re-entrant writes are not supported in v1.0;
+    /// the outer commit holds the write lock and the fanout serializer, so a
+    /// nested write would either deadlock or recurse indefinitely. The panic
+    /// is caught by the outer commit's `notify_providers` boundary; provider
+    /// state may drift, but the outer commit still completes.
     #[must_use]
     pub fn begin_write(&self) -> WriteTxn<'_> {
+        if crate::reentry::in_fanout() {
+            panic!(
+                "selene-graph: SharedGraph::begin_write() called from within \
+                 an IndexProvider callback; re-entrant writes are not \
+                 supported in v1.0. The outer commit's notify_providers \
+                 boundary will catch this panic; the outer commit succeeds, \
+                 but the offending provider's chained mutation does not."
+            );
+        }
         WriteTxn::new(
             self.shared.write(),
             Arc::clone(&self.snapshot),

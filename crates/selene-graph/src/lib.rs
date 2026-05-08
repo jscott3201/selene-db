@@ -14,6 +14,7 @@ pub mod graph;
 pub mod id_allocator;
 pub mod index_provider;
 pub mod mutator;
+pub(crate) mod reentry;
 pub mod shared;
 pub mod store;
 pub mod write_txn;

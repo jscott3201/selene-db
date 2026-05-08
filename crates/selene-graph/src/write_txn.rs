@@ -69,11 +69,15 @@ impl<'g> WriteTxn<'g> {
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
     /// Registered index providers are notified after the new graph snapshot is
-    /// published AND after the graph write lock is released. Provider errors
-    /// (returned `Err`) and provider panics are both logged and do not fail
-    /// the graph commit. Releasing the write lock before fanout prevents a
-    /// re-entrant provider (one that calls `begin_write()` from `on_change`)
-    /// from deadlocking on the same lock.
+    /// published, **with the write lock and allocator mutex still held**, so
+    /// that two concurrent commits cannot interleave their `on_change`
+    /// callbacks (the per-graph serialization contract from
+    /// `_spec/06-index-provider-protocol.md`). Re-entrant provider calls into
+    /// `SharedGraph::begin_write()` are detected via a thread-local fanout
+    /// counter and panic with a clear message; the outer
+    /// `std::panic::catch_unwind` in `notify_providers` catches those panics
+    /// (along with provider-internal panics and returned errors) so a single
+    /// misbehaving provider can never abort the writer thread.
     pub fn commit_with_principal(self, principal: Option<Arc<[u8]>>) -> GraphResult<CommitOutcome> {
         let WriteTxn {
             mut guard,
@@ -100,14 +104,21 @@ impl<'g> WriteTxn<'g> {
         *guard = published.clone();
         snapshot.store(Arc::new(published));
 
-        // CRITICAL: release the write lock and the allocator mutex BEFORE
-        // calling provider callbacks. A provider that re-enters via
-        // `SharedGraph::begin_write()` would otherwise deadlock against the
-        // very lock we hold here.
+        // Hold guard + allocator across fanout. The fanout guard increments a
+        // thread-local counter that `SharedGraph::begin_write` checks before
+        // attempting any locking, so re-entrant writes from inside
+        // `on_change` panic before reaching this lock — no deadlock, and
+        // commit serialization is preserved.
+        {
+            let _fanout_guard = crate::reentry::FanoutGuard::enter();
+            notify_providers(&providers, &changes);
+        }
+
+        // Releasing guard + allocator AFTER fanout. Other writers can now
+        // start their own commits; their fanouts run after this one in
+        // strict serial order.
         drop(guard);
         drop(allocator);
-
-        notify_providers(&providers, &changes);
 
         Ok(CommitOutcome {
             generation,
@@ -130,21 +141,31 @@ impl<'g> WriteTxn<'g> {
 /// Fan out committed changes to every registered provider, swallowing
 /// returned errors and panics so a misbehaving provider can never abort or
 /// crash the writer thread after the snapshot has already published.
+///
+/// Every per-provider iteration — including `provider_tag()` access in the
+/// logging path — runs inside `catch_unwind`. This handles three failure
+/// modes uniformly:
+///   1. `on_change` returns `Err` (logged at error level).
+///   2. `on_change` panics (logged at error level with the payload).
+///   3. `provider_tag()` itself panics during logging (logged at error level
+///      with a sentinel tag and the original panic payload).
 fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
     for change in changes {
         for provider in providers {
-            // AssertUnwindSafe: we don't care if the provider's interior state
-            // is left half-updated by a panic — the engine's contract is that
-            // the graph commit succeeded; provider state may drift, and a
-            // future hardening pass can add a strict-mode knob if needed.
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                provider.on_change(change)
+            // AssertUnwindSafe: provider interior state may be left
+            // half-updated by a panic. The engine's contract is that the
+            // graph commit succeeded; provider drift is logged but not
+            // catastrophic.
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let tag = provider.provider_tag();
+                let on_change_result = provider.on_change(change);
+                (tag, on_change_result)
             }));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
+            match outcome {
+                Ok((_tag, Ok(()))) => {}
+                Ok((tag, Err(error))) => {
                     tracing::error!(
-                        provider_tag = %provider.provider_tag(),
+                        provider_tag = %tag,
                         error = %error,
                         ?change,
                         "index provider on_change failed after graph commit; continuing",
@@ -153,7 +174,6 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
                 Err(panic_payload) => {
                     let payload = describe_panic_payload(&panic_payload);
                     tracing::error!(
-                        provider_tag = %provider.provider_tag(),
                         ?change,
                         payload = %payload,
                         "index provider on_change panicked after graph commit; continuing",
@@ -441,9 +461,11 @@ mod tests {
         assert_eq!(shared.read().node_count(), 4);
     }
 
-    /// A provider that calls `begin_write()` from within its `on_change` to
-    /// chain another transaction. Used to verify the commit path does NOT
-    /// hold the write lock while invoking provider callbacks.
+    /// A provider whose `on_change` tries to start a nested write via
+    /// `SharedGraph::begin_write()`. With the v1.0 contract this is misuse
+    /// and must panic — caught by `notify_providers` so the outer commit
+    /// completes regardless. The `chained_count` increments only if the
+    /// nested write completes; it must stay at 0.
     struct ReentrantProvider {
         tag: ProviderTag,
         shared: Mutex<Option<Arc<SharedGraph>>>,
@@ -478,14 +500,13 @@ mod tests {
         }
 
         fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-            // Take the shared graph reference once; chained on_change calls
-            // would otherwise recurse infinitely.
+            // begin_write() panics on this thread because the FanoutGuard is
+            // active. The panic unwinds out of on_change before reaching the
+            // chained_count increment.
             let shared = self.shared.lock().take();
             if let Some(shared) = shared {
-                // This would deadlock if the outer commit still held the
-                // write lock when calling on_change.
                 let txn = shared.begin_write();
-                txn.commit().expect("chained commit ok");
+                let _ = txn.commit();
                 *self.chained_count.lock() += 1;
             }
             Ok(())
@@ -497,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_can_re_enter_begin_write_without_deadlock() {
+    fn begin_write_inside_provider_callback_panics_and_is_caught() {
         let provider = Arc::new(ReentrantProvider::new(ProviderTag(*b"REEN")));
         let chained_count = Arc::clone(&provider.chained_count);
         let shared = Arc::new(
@@ -515,14 +536,22 @@ mod tests {
                 .create_node(LabelSet::new(), PropertyMap::new())
                 .expect("create_node ok");
         }
-        // If the write lock were still held during provider fanout this
-        // commit would deadlock the test harness.
-        txn.commit().unwrap();
+        // Outer commit completes despite the provider's misuse — the panic
+        // raised by begin_write inside on_change is caught by
+        // notify_providers' catch_unwind boundary.
+        let outcome = txn.commit().unwrap();
+        assert_eq!(outcome.changes.len(), 1);
+        // The increment after begin_write/commit was never reached.
         assert_eq!(
             *chained_count.lock(),
-            1,
-            "provider chained one inner commit"
+            0,
+            "provider's chained mutation must not have completed"
         );
+        // After the outer commit returns, this thread is no longer in
+        // fanout and a fresh begin_write succeeds normally.
+        assert!(!crate::reentry::in_fanout());
+        let txn = shared.begin_write();
+        txn.rollback();
     }
 
     /// A provider whose `on_change` panics. Used to verify the engine catches
