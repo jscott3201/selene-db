@@ -82,7 +82,12 @@ impl GraphTypeDef {
             .find(|edge_type| edge_type.label == label)
     }
 
-    fn validate_ref(&self) -> GraphResult<()> {
+    /// Validate the type without consuming it.
+    ///
+    /// Same checks as [`GraphTypeDef::validate`]; preferred when callers
+    /// already hold a reference (recovery, [`crate::SharedGraph::from_graph`]
+    /// re-validation) and cannot move the value.
+    pub fn validate_ref(&self) -> GraphResult<()> {
         ensure_unique_names(
             "node type",
             self.node_types.iter().map(|node_type| node_type.name),
@@ -92,10 +97,25 @@ impl GraphTypeDef {
             self.edge_types.iter().map(|edge_type| edge_type.name),
         )?;
 
+        let mut seen_label_sets = BTreeSet::new();
         for node_type in &self.node_types {
             if node_type.key_labels.is_empty() {
                 return Err(GraphError::Inconsistent {
                     reason: format!("node type {} has an empty label set", node_type.name),
+                });
+            }
+            // Why: find_node_type_index uses first-match semantics, so two
+            // node types with identical key_labels would leave the second
+            // unreachable AND cause edge / property validation to dispatch
+            // against the wrong type. Reject ambiguity at type-construction
+            // time rather than letting it manifest as silent mis-typing.
+            let label_key: Vec<IStr> = node_type.key_labels.iter().copied().collect();
+            if !seen_label_sets.insert(label_key) {
+                return Err(GraphError::Inconsistent {
+                    reason: format!(
+                        "node type {} duplicates the key_labels of an earlier node type",
+                        node_type.name
+                    ),
                 });
             }
             ensure_unique_names(
@@ -308,6 +328,20 @@ mod tests {
         assert!(matches!(
             graph_type.validate(),
             Err(GraphError::Inconsistent { reason }) if reason.contains("empty label set")
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_node_key_label_sets() {
+        // Two node types with identical key_labels would leave the second
+        // unreachable via find_node_type_index (first-match wins); rejecting
+        // at construction prevents silent mis-typing of edges and properties.
+        let mut graph_type = valid_type();
+        graph_type.node_types[1].key_labels = graph_type.node_types[0].key_labels.clone();
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason })
+                if reason.contains("duplicates the key_labels")
         ));
     }
 

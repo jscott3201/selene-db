@@ -89,6 +89,7 @@ impl CoreProvider {
     pub fn finish_recovery(
         self: Arc<Self>,
         expected_graph_id: selene_core::GraphId,
+        expected_bound_type: Option<Arc<crate::graph_types::GraphTypeDef>>,
     ) -> GraphResult<SeleneGraph> {
         let mut inner = self.inner.lock();
         match &mut *inner {
@@ -97,7 +98,7 @@ impl CoreProvider {
             }
             CoreInner::Recovery { state } => {
                 let state = std::mem::take(state);
-                state.into_graph(expected_graph_id)
+                state.into_graph(expected_graph_id, expected_bound_type)
             }
         }
     }

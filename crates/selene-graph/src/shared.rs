@@ -110,6 +110,11 @@ impl SharedGraph {
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
+            // Why: GraphMeta is publicly constructible, so SharedGraph::from_graph
+            // can land a malformed bound_type that bypassed builder().bound_to()'s
+            // validate(). Re-check self-consistency here so every constructor
+            // arrives at the same closed-graph admissibility contract.
+            type_def.validate_ref()?;
             crate::type_validator::validate_entity_state(&graph, type_def)?;
         }
 

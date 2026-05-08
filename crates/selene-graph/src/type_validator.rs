@@ -127,10 +127,32 @@ pub fn validate_change(
     type_def: &GraphTypeDef,
 ) -> Result<(), TypeViolation> {
     match change {
-        Change::NodeCreated { id, .. } | Change::NodeUpdated { id, .. } => {
+        Change::NodeCreated { id, .. } => {
+            // Skip validation for entities the same transaction has since
+            // deleted: aborted-tx-IDs become permanent holes (D11), but a
+            // create-then-delete pair has no net effect and should not
+            // surface UnknownNodeLabel for a row that no longer exists.
+            if !graph.is_node_alive(*id) {
+                return Ok(());
+            }
             validate_node_state(*id, graph, type_def).map(|_| ())
         }
+        Change::NodeUpdated { id, .. } => {
+            if !graph.is_node_alive(*id) {
+                return Ok(());
+            }
+            validate_node_state(*id, graph, type_def).map(|_| ())?;
+            // A label change can invalidate every incident edge's
+            // (label, source_type, target_type) constraint without the
+            // edge itself producing a Change. Re-validate every alive
+            // incident edge so closed-graph commits cannot publish a
+            // graph that violates the edge-type rules.
+            revalidate_incident_edges(*id, graph, type_def)
+        }
         Change::EdgeCreated { id, .. } | Change::EdgeUpdated { id, .. } => {
+            if !graph.is_edge_alive(*id) {
+                return Ok(());
+            }
             validate_edge_state(*id, graph, type_def)
         }
         Change::NodeDeleted { .. }
@@ -138,6 +160,28 @@ pub fn validate_change(
         | Change::SchemaChanged { .. }
         | Change::IndexExtensionEvent { .. } => Ok(()),
     }
+}
+
+fn revalidate_incident_edges(
+    node: NodeId,
+    graph: &SeleneGraph,
+    type_def: &GraphTypeDef,
+) -> Result<(), TypeViolation> {
+    if let Some(entry) = graph.outgoing_edges(node) {
+        for edge in entry.iter() {
+            if graph.is_edge_alive(edge.edge_id) {
+                validate_edge_state(edge.edge_id, graph, type_def)?;
+            }
+        }
+    }
+    if let Some(entry) = graph.incoming_edges(node) {
+        for edge in entry.iter() {
+            if graph.is_edge_alive(edge.edge_id) {
+                validate_edge_state(edge.edge_id, graph, type_def)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Validate every alive node and edge in a materialized graph.

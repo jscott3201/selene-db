@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{
-    Change, EdgeId, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap,
-    PropertyValueType, Value, intern,
+    Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, Origin, PropertyDiff,
+    PropertyMap, PropertyValueType, Value, intern,
 };
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, WalConfig,
@@ -252,7 +252,7 @@ fn recover_round_trips_bound_graph_type_and_rearms_validator() {
         }],
     );
 
-    let recovered = SharedGraph::recover(&dir, GraphId::new(5)).unwrap();
+    let recovered = SharedGraph::recover_closed(&dir, GraphId::new(5), graph_type.clone()).unwrap();
     assert!(recovered.is_closed());
     assert_eq!(recovered.graph_type().as_deref(), Some(&graph_type));
     assert!(recovered.read().is_node_alive(NodeId::new(3)));
@@ -278,5 +278,187 @@ fn recover_round_trips_bound_graph_type_and_rearms_validator() {
             observed: "String",
         }) if entity_id == EntityId::Edge(EdgeId::new(2)) && property == istr("since")
     ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn person_company_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: istr("closed.pc.graph"),
+        node_types: vec![
+            NodeTypeDef {
+                name: istr("closed.person.pc"),
+                key_labels: LabelSet::single(istr("PCPerson")),
+                properties: vec![],
+            },
+            NodeTypeDef {
+                name: istr("closed.company.pc"),
+                key_labels: LabelSet::single(istr("PCCompany")),
+                properties: vec![],
+            },
+        ],
+        edge_types: vec![crate::EdgeTypeDef {
+            name: istr("closed.works_at"),
+            label: istr("WORKS_AT"),
+            source_node_type: 0, // PCPerson
+            target_node_type: 1, // PCCompany
+            properties: vec![],
+        }],
+    }
+}
+
+#[test]
+fn closed_graph_revalidates_incident_edges_on_node_label_change() {
+    // F1 regression: a NodeUpdated that flips labels can leave incident edges
+    // pointing to mismatched endpoint types without producing an EdgeUpdated.
+    // The validator must fan out to incident edges.
+    let graph_type = person_company_graph_type();
+    let shared = SharedGraph::builder(GraphId::new(11))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let (alice, acme) = {
+        let mut mutator = txn.mutator();
+        let alice = mutator
+            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .unwrap();
+        let acme = mutator
+            .create_node(LabelSet::single(istr("PCCompany")), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(istr("WORKS_AT"), alice, acme, PropertyMap::new())
+            .unwrap();
+        (alice, acme)
+    };
+    txn.commit().unwrap();
+
+    // Flip Alice from PCPerson to PCCompany. The (label=WORKS_AT,
+    // source_type=PCPerson, target_type=PCCompany) edge no longer matches
+    // any edge type because the source side is now PCCompany.
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        mutator
+            .update_node(
+                alice,
+                LabelDiff::new([istr("PCCompany")], [istr("PCPerson")]).unwrap(),
+                PropertyDiff::new(std::iter::empty(), std::iter::empty()).unwrap(),
+            )
+            .unwrap();
+    }
+    let err = txn.commit().unwrap_err();
+    assert!(
+        matches!(
+            err,
+            GraphError::TypeViolation(TypeViolation::EdgeEndpointTypeMismatch { .. })
+        ),
+        "expected EdgeEndpointTypeMismatch, got {err:?}",
+    );
+    // Original endpoints still alive — no publication happened.
+    assert!(shared.read().is_node_alive(alice));
+    assert!(shared.read().is_node_alive(acme));
+}
+
+#[test]
+fn closed_graph_accepts_create_then_delete_in_same_tx() {
+    // F6 regression: creating then deleting an entity in one commit should
+    // succeed; the validator must skip entities not alive in the working
+    // snapshot rather than failing on UnknownNodeLabel for a tombstoned row.
+    let graph_type = person_graph_type();
+    let shared = SharedGraph::builder(GraphId::new(12))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let scratch = mutator
+            .create_node(
+                LabelSet::single(istr("Stranger")), // would fail validation if checked
+                prop("name", Value::String(istr("scratch"))),
+            )
+            .unwrap();
+        mutator.delete_node(scratch).unwrap();
+    }
+    txn.commit().expect(
+        "create-then-delete in one tx must succeed even when the create's labels would \
+         have failed validation; the validator skips tombstoned rows",
+    );
+}
+
+#[test]
+fn from_graph_validates_bound_type_self_consistency() {
+    // F4 regression: SharedGraph::from_graph must validate the bound_type
+    // shape, otherwise a malformed type slipped through the public
+    // GraphMeta surface accepts a graph that builder().bound_to() would
+    // have rejected.
+    use crate::SeleneGraph;
+    let mut bad_type = person_company_graph_type();
+    bad_type.edge_types[0].source_node_type = 99; // out of range
+    let mut graph = SeleneGraph::new(GraphId::new(13));
+    graph.meta.bound_type = Some(std::sync::Arc::new(bad_type));
+    let result = SharedGraph::try_from_graph(graph);
+    assert!(matches!(
+        result,
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("references node type index")
+    ));
+}
+
+#[test]
+fn recover_closed_preserves_bound_type_for_wal_only() {
+    // F2 regression: WAL-only recovery (no snapshot) must accept the
+    // caller's bound_type rather than silently defaulting to None.
+    // Without this, a closed-graph crash before the first snapshot would
+    // permanently downgrade to open and skip GG02 validation forever after.
+    let dir = temp_dir("closed-wal-only");
+    let graph_type = person_graph_type();
+    append_wal(
+        &dir,
+        0,
+        &[Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(istr("Person")),
+            properties: prop("name", Value::String(istr("Alice"))),
+        }],
+    );
+
+    let recovered =
+        SharedGraph::recover_closed(&dir, GraphId::new(14), graph_type.clone()).unwrap();
+    assert!(recovered.is_closed());
+    assert_eq!(recovered.graph_type().as_deref(), Some(&graph_type));
+    assert!(recovered.read().is_node_alive(NodeId::new(1)));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_closed_rejects_disagreement_with_snapshot_meta() {
+    // F2 regression (drift case): if the snapshot's META declares one
+    // bound_type and the caller asserts a different one, recovery must fail
+    // rather than silently picking either side.
+    let dir = temp_dir("closed-drift");
+    let snapshot_type = person_graph_type();
+    let shared = SharedGraph::builder(GraphId::new(15))
+        .bound_to(snapshot_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    write_snapshot(&dir, &shared, 1);
+
+    let mut other_type = person_graph_type();
+    other_type.name = istr("closed.person.other");
+    let err = match SharedGraph::recover_closed(&dir, GraphId::new(15), other_type) {
+        Ok(_) => panic!("recovery should fail on bound_type drift"),
+        Err(error) => error,
+    };
+    let GraphError::Provider(crate::ProviderError::Inconsistent { reason }) = &err else {
+        panic!("expected Provider::Inconsistent, got {err:?}");
+    };
+    assert!(
+        reason.contains("bound_type disagrees"),
+        "expected bound_type-disagrees, got: {reason}",
+    );
     let _ = fs::remove_dir_all(dir);
 }

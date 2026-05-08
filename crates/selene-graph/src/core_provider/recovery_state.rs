@@ -155,7 +155,20 @@ impl RecoveryState {
         Ok(())
     }
 
-    pub(crate) fn into_graph(self, expected_graph_id: GraphId) -> crate::GraphResult<SeleneGraph> {
+    pub(crate) fn into_graph(
+        self,
+        expected_graph_id: GraphId,
+        expected_bound_type: Option<Arc<GraphTypeDef>>,
+    ) -> crate::GraphResult<SeleneGraph> {
+        // F5: GTYP non-empty + META missing is a structurally inconsistent
+        // snapshot. Type rows must have a META to bind to, otherwise recovery
+        // would silently downgrade a closed graph to open.
+        if self.meta.is_none() && !self.graph_types.is_empty() {
+            return Err(crate::GraphError::Provider(inconsistent(
+                "CORE/GTYP non-empty but CORE/META missing; snapshot is \
+                 structurally inconsistent",
+            )));
+        }
         let meta = match self.meta {
             Some(meta) => {
                 if meta.graph_id != expected_graph_id {
@@ -165,7 +178,7 @@ impl RecoveryState {
                         meta.graph_id, expected_graph_id,
                     ))));
                 }
-                let bound_type = match meta.bound_type_index {
+                let snapshot_bound_type = match meta.bound_type_index {
                     Some(index) => {
                         Some(self.graph_types.get(&index).cloned().ok_or_else(|| {
                             crate::GraphError::Provider(inconsistent(format!(
@@ -175,6 +188,25 @@ impl RecoveryState {
                     }
                     None => None,
                 };
+                // Reconcile snapshot binding with caller's assertion. Either
+                // side disagreeing is closed/open drift the user must surface.
+                let bound_type = match (&snapshot_bound_type, &expected_bound_type) {
+                    (Some(snap), Some(caller)) if snap.as_ref() != caller.as_ref() => {
+                        return Err(crate::GraphError::Provider(inconsistent(
+                            "CORE/META bound_type disagrees with caller-supplied \
+                             bound_type during recovery; refusing to reconstruct \
+                             under the wrong type",
+                        )));
+                    }
+                    (Some(snap), _) => Some(snap.clone()),
+                    (None, Some(_)) => {
+                        return Err(crate::GraphError::Provider(inconsistent(
+                            "caller supplied bound_type but CORE/META declares no \
+                             binding; refusing to reconstruct under the wrong shape",
+                        )));
+                    }
+                    (None, None) => None,
+                };
                 GraphMeta {
                     graph_id: meta.graph_id,
                     generation: meta.generation,
@@ -183,12 +215,15 @@ impl RecoveryState {
                     bound_type,
                 }
             }
+            // F2: WAL-only recovery preserves the caller's binding so a
+            // closed-graph crash before the first snapshot does not silently
+            // downgrade to open and skip GG02 validation forever after.
             None => GraphMeta {
                 graph_id: expected_graph_id,
                 generation: 0,
                 next_node_id: 1,
                 next_edge_id: 1,
-                bound_type: None,
+                bound_type: expected_bound_type.clone(),
             },
         };
         let mut graph = SeleneGraph::new(meta.graph_id);

@@ -158,7 +158,7 @@ fn new_for_live_holds_snapshot_pointer() {
 #[test]
 fn new_for_recovery_starts_empty() {
     let provider = CoreProvider::new_for_recovery();
-    let graph = provider.finish_recovery(GraphId::new(1)).unwrap();
+    let graph = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert_eq!(graph.node_count(), 0);
     assert_eq!(graph.edge_count(), 0);
 }
@@ -168,7 +168,7 @@ fn finish_recovery_on_live_mode_is_error() {
     let snapshot = Arc::new(ArcSwap::from_pointee(SeleneGraph::new(GraphId::new(1))));
     let provider = CoreProvider::new_for_live(snapshot);
     assert!(matches!(
-        provider.finish_recovery(GraphId::new(1)),
+        provider.finish_recovery(GraphId::new(1), None),
         Err(GraphError::Provider(ProviderError::Inconsistent { reason }))
             if reason.contains("finish_recovery called on live-mode")
     ));
@@ -211,7 +211,7 @@ fn recovery_rejects_meta_referencing_missing_gtyp() {
     let provider = CoreProvider::new_for_recovery();
     IndexProvider::read_section(provider.as_ref(), SubTag(CORE_META_SUB), &bytes).unwrap();
     assert!(matches!(
-        provider.finish_recovery(GraphId::new(8)),
+        provider.finish_recovery(GraphId::new(8), None),
         Err(GraphError::Provider(ProviderError::Inconsistent { reason }))
             if reason.contains("missing CORE/GTYP index 0")
     ));
@@ -371,7 +371,7 @@ fn recovery_mode_read_section_populates_state() {
     let bytes = encode_nodes(&graph).unwrap();
     let provider = CoreProvider::new_for_recovery();
     IndexProvider::read_section(provider.as_ref(), SubTag(CORE_NODE_SUB), &bytes).unwrap();
-    let recovered = provider.finish_recovery(GraphId::new(1)).unwrap();
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert_eq!(recovered.node_count(), 1);
     assert!(recovered.is_node_alive(NodeId::new(1)));
 }
@@ -388,7 +388,7 @@ fn recovery_mode_on_change_applies_node_created() {
         },
     )
     .unwrap();
-    let graph = provider.finish_recovery(GraphId::new(1)).unwrap();
+    let graph = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert_eq!(graph.node_count(), 1);
     assert!(graph.is_node_alive(NodeId::new(1)));
 }
@@ -475,7 +475,7 @@ fn recovery_mode_on_change_applies_each_change_variant() {
     )
     .unwrap();
 
-    let graph = provider.finish_recovery(GraphId::new(1)).unwrap();
+    let graph = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert!(!graph.is_node_alive(NodeId::new(1)));
     assert!(graph.is_node_alive(NodeId::new(2)));
     assert!(!graph.is_edge_alive(EdgeId::new(1)));
@@ -499,7 +499,7 @@ fn recovery_provider_read_section_round_trips_via_typed_path() {
     let bytes = encode_nodes(&graph).unwrap();
     let provider = CoreProvider::new_for_recovery();
     RecoveryProvider::read_section(provider.as_ref(), CORE_NODE_SUB, &bytes).unwrap();
-    let recovered = provider.finish_recovery(GraphId::new(1)).unwrap();
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert!(recovered.is_node_alive(NodeId::new(1)));
 }
 
@@ -515,6 +515,42 @@ fn recovery_provider_on_change_calls_typed_path() {
         },
     )
     .unwrap();
-    let recovered = provider.finish_recovery(GraphId::new(1)).unwrap();
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert!(recovered.is_node_alive(NodeId::new(1)));
+}
+
+#[test]
+fn finish_recovery_rejects_gtyp_without_meta() {
+    // F5 regression: a snapshot whose section table carries CORE/GTYP rows
+    // but no CORE/META row is structurally inconsistent — the type rows have
+    // no graph identity to bind to. Recovery must error rather than silently
+    // downgrading to an open graph.
+    use crate::graph_types::{GraphTypeDef, NodeTypeDef, PropertyTypeDef};
+    let mut graph = SeleneGraph::new(GraphId::new(20));
+    graph.meta.bound_type = Some(Arc::new(GraphTypeDef {
+        name: intern("test.gtyp.no.meta").unwrap(),
+        node_types: vec![NodeTypeDef {
+            name: intern("test.node").unwrap(),
+            key_labels: LabelSet::single(intern("Test").unwrap()),
+            properties: vec![PropertyTypeDef {
+                name: intern("name").unwrap(),
+                value_type: PropertyValueType::String,
+                required: false,
+            }],
+        }],
+        edge_types: vec![],
+    }));
+    let gtyp_bytes = encode_graph_types(&graph).unwrap();
+
+    // Apply only GTYP, never META.
+    let provider = CoreProvider::new_for_recovery();
+    RecoveryProvider::read_section(provider.as_ref(), CORE_GTYP_SUB, &gtyp_bytes).unwrap();
+    let err = provider
+        .finish_recovery(GraphId::new(20), None)
+        .expect_err("recovery must fail when GTYP is non-empty but META is missing");
+    assert!(matches!(
+        err,
+        GraphError::Provider(ProviderError::Inconsistent { reason })
+            if reason.contains("GTYP non-empty") && reason.contains("META missing")
+    ));
 }
