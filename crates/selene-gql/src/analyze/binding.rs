@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::SourceSpan;
+use crate::{GqlType, SourceSpan, analyze::types::AnalyzedType};
 
 /// Stable, opaque identifier for a binding declaration.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -55,6 +55,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `MATCH ()-[e]->()`.
     EdgePattern {
@@ -64,6 +66,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `LET x = expr`.
     LetAlias {
@@ -73,6 +77,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `UNWIND expr AS x`.
     UnwindAlias {
@@ -82,6 +88,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `RETURN expr AS x` or `WITH expr AS x`.
     ProjectionAlias {
@@ -91,6 +99,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `CALL proc() YIELD x`.
     YieldColumn {
@@ -100,6 +110,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `INSERT (n)`.
     InsertNode {
@@ -109,6 +121,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `INSERT ()-[e]->()`.
     InsertEdge {
@@ -118,6 +132,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
     /// `p = (...)`.
     PathBinding {
@@ -127,6 +143,8 @@ pub enum BindingDecl {
         name: IStr,
         /// Source span of the declaration.
         span: SourceSpan,
+        /// Static type of the binding.
+        ty: AnalyzedType,
     },
 }
 
@@ -136,53 +154,79 @@ impl BindingDecl {
         binding: BindingId,
         name: IStr,
         span: SourceSpan,
+        ty: AnalyzedType,
     ) -> Self {
         match kind {
             BindingDeclKind::NodePattern => Self::NodePattern {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::EdgePattern => Self::EdgePattern {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::LetAlias => Self::LetAlias {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::UnwindAlias => Self::UnwindAlias {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::ProjectionAlias => Self::ProjectionAlias {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::YieldColumn => Self::YieldColumn {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::InsertNode => Self::InsertNode {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::InsertEdge => Self::InsertEdge {
                 binding,
                 name,
                 span,
+                ty,
             },
             BindingDeclKind::PathBinding => Self::PathBinding {
                 binding,
                 name,
                 span,
+                ty,
             },
+        }
+    }
+
+    pub(crate) fn default_type(kind: BindingDeclKind) -> AnalyzedType {
+        match kind {
+            BindingDeclKind::NodePattern | BindingDeclKind::InsertNode => {
+                AnalyzedType::Resolved(GqlType::NodeRef)
+            }
+            BindingDeclKind::EdgePattern | BindingDeclKind::InsertEdge => {
+                AnalyzedType::Resolved(GqlType::EdgeRef)
+            }
+            BindingDeclKind::PathBinding => AnalyzedType::Resolved(GqlType::Path),
+            BindingDeclKind::LetAlias
+            | BindingDeclKind::UnwindAlias
+            | BindingDeclKind::ProjectionAlias
+            | BindingDeclKind::YieldColumn => AnalyzedType::Dynamic,
         }
     }
 
@@ -231,6 +275,22 @@ impl BindingDecl {
             | Self::InsertNode { span, .. }
             | Self::InsertEdge { span, .. }
             | Self::PathBinding { span, .. } => *span,
+        }
+    }
+
+    /// Return this declaration's static type.
+    #[must_use]
+    pub const fn ty(&self) -> &AnalyzedType {
+        match self {
+            Self::NodePattern { ty, .. }
+            | Self::EdgePattern { ty, .. }
+            | Self::LetAlias { ty, .. }
+            | Self::UnwindAlias { ty, .. }
+            | Self::ProjectionAlias { ty, .. }
+            | Self::YieldColumn { ty, .. }
+            | Self::InsertNode { ty, .. }
+            | Self::InsertEdge { ty, .. }
+            | Self::PathBinding { ty, .. } => ty,
         }
     }
 

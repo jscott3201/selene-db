@@ -7,6 +7,7 @@ use crate::{
     analyze::{
         binding::{BindingDecl, BindingDeclKind, BindingId},
         error::{AnalysisError, PatternElementKind},
+        types::AnalyzedType,
     },
 };
 
@@ -133,6 +134,17 @@ impl BindingScopeTree {
         name: IStr,
         span: SourceSpan,
     ) -> Result<BindingId, AnalysisError> {
+        self.declare_strict_typed(scope, kind, name, span, BindingDecl::default_type(kind))
+    }
+
+    pub(crate) fn declare_strict_typed(
+        &mut self,
+        scope: ScopeId,
+        kind: BindingDeclKind,
+        name: IStr,
+        span: SourceSpan,
+        ty: AnalyzedType,
+    ) -> Result<BindingId, AnalysisError> {
         if let Some(prior) = self.resolve_local(scope, name) {
             let prior_span = self
                 .declaration(prior)
@@ -144,7 +156,7 @@ impl BindingScopeTree {
                 prior_span,
             });
         }
-        Ok(self.declare_unchecked(scope, kind, name, span))
+        Ok(self.declare_unchecked(scope, kind, name, span, ty))
     }
 
     pub(crate) fn declare_or_reuse(
@@ -178,7 +190,10 @@ impl BindingScopeTree {
             }
             return Ok((existing, true));
         }
-        Ok((self.declare_unchecked(scope, kind, name, span), false))
+        Ok((
+            self.declare_unchecked(scope, kind, name, span, BindingDecl::default_type(kind)),
+            false,
+        ))
     }
 
     pub(crate) fn resolve(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {
@@ -202,9 +217,10 @@ impl BindingScopeTree {
         kind: BindingDeclKind,
         name: IStr,
         span: SourceSpan,
+        ty: AnalyzedType,
     ) -> BindingId {
         let id = BindingId::new(self.decls.len() as u32);
-        self.decls.push(BindingDecl::new(kind, id, name, span));
+        self.decls.push(BindingDecl::new(kind, id, name, span, ty));
         self.scopes[scope.get() as usize].locals.push(id);
         id
     }

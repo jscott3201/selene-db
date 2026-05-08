@@ -11,14 +11,17 @@ pub mod scope;
 pub mod types;
 
 pub(crate) mod bind;
+pub(crate) mod infer;
 
 use crate::Statement;
 
 pub use ast::{AnalyzedStatement, AnalyzedStatementKind};
 pub use binding::{BindingDecl, BindingDeclKind, BindingId, BindingUse, BindingUseKind};
-pub use error::{AnalysisError, PatternElementKind};
+pub use error::{
+    AnalysisError, ConditionClause, ExpectedType, PatternElementKind, Side, TypeMismatchContext,
+};
 pub use scope::{BindingScope, BindingScopeTree, ScopeId, ScopeKind};
-pub use types::AnalyzedType;
+pub use types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable};
 
 /// Analyze a parsed GQL statement.
 ///

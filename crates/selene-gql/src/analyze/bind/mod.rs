@@ -11,12 +11,13 @@ pub(crate) mod transaction;
 use selene_core::IStr;
 
 use crate::{
-    SourceSpan, Statement,
+    SourceSpan, Statement, ValueExpr,
     analyze::{
         ast::AnalyzedStatement,
         binding::{BindingDeclKind, BindingId, BindingUse, BindingUseKind},
         error::AnalysisError,
         scope::{BindingScopeTree, ScopeId, ScopeKind},
+        types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable},
     },
 };
 
@@ -70,6 +71,8 @@ pub(crate) struct BindContext {
     current: ScopeId,
     references: Vec<BindingUse>,
     yield_stars: Vec<SourceSpan>,
+    expr_types: ExprTypeTable,
+    expr_ids: ExprIdMap,
 }
 
 impl BindContext {
@@ -81,11 +84,20 @@ impl BindContext {
             current,
             references: Vec::new(),
             yield_stars: Vec::new(),
+            expr_types: ExprTypeTable::default(),
+            expr_ids: ExprIdMap::default(),
         }
     }
 
     fn finish(self, stmt: Statement) -> AnalyzedStatement {
-        AnalyzedStatement::new(stmt, self.scopes, self.references, self.yield_stars)
+        AnalyzedStatement::new(
+            stmt,
+            self.scopes,
+            self.references,
+            self.yield_stars,
+            self.expr_types,
+            self.expr_ids,
+        )
     }
 
     pub(crate) fn declare_strict(
@@ -95,6 +107,17 @@ impl BindContext {
         span: SourceSpan,
     ) -> Result<BindingId, AnalysisError> {
         self.scopes.declare_strict(self.current, kind, name, span)
+    }
+
+    pub(crate) fn declare_strict_typed(
+        &mut self,
+        kind: BindingDeclKind,
+        name: IStr,
+        span: SourceSpan,
+        ty: AnalyzedType,
+    ) -> Result<BindingId, AnalysisError> {
+        self.scopes
+            .declare_strict_typed(self.current, kind, name, span, ty)
     }
 
     pub(crate) fn declare_or_reuse(
@@ -152,6 +175,27 @@ impl BindContext {
 
     pub(crate) fn record_yield_star(&mut self, span: SourceSpan) {
         self.yield_stars.push(span);
+    }
+
+    pub(crate) fn allocate_expr(&mut self, expr: &ValueExpr, ty: AnalyzedType) -> ExprId {
+        let id = self.expr_types.push(ty);
+        self.expr_ids.insert(expr, id);
+        id
+    }
+
+    pub(crate) fn expr_type(&self, id: ExprId) -> &AnalyzedType {
+        self.expr_types.get(id)
+    }
+
+    pub(crate) fn expr_id(&self, expr: &ValueExpr) -> Option<ExprId> {
+        self.expr_ids.get(expr)
+    }
+
+    pub(crate) fn binding_type(&self, binding: BindingId) -> AnalyzedType {
+        self.scopes
+            .declaration(binding)
+            .map(|decl| decl.ty().clone())
+            .unwrap_or(AnalyzedType::Dynamic)
     }
 
     /// Enter a fresh projection scope and stay there for the rest of the

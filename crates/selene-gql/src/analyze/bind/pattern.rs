@@ -2,7 +2,10 @@
 
 use crate::{
     EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PatternElement,
-    analyze::{binding::BindingDeclKind, error::AnalysisError},
+    analyze::{
+        binding::BindingDeclKind,
+        error::{AnalysisError, ConditionClause},
+    },
 };
 
 use super::{BindContext, expr};
@@ -15,7 +18,7 @@ pub(crate) fn bind_match_clause(
         bind_graph_pattern(ctx, pattern, PatternBindingMode::Match)?;
     }
     if let Some(where_clause) = &clause.where_clause {
-        expr::bind_value_expr(ctx, where_clause)?;
+        expr::bind_condition(ctx, where_clause, ConditionClause::MatchWhere)?;
     }
     Ok(())
 }
@@ -64,7 +67,7 @@ fn bind_node_pattern(
         expr::bind_value_expr(ctx, value)?;
     }
     if let Some(where_clause) = &node.inline_where {
-        expr::bind_value_expr(ctx, where_clause)?;
+        expr::bind_condition(ctx, where_clause, ConditionClause::InlineWhere)?;
     }
     Ok(())
 }
@@ -88,7 +91,7 @@ fn bind_edge_pattern(
         expr::bind_value_expr(ctx, value)?;
     }
     if let Some(where_clause) = &edge.inline_where {
-        expr::bind_value_expr(ctx, where_clause)?;
+        expr::bind_condition(ctx, where_clause, ConditionClause::InlineWhere)?;
     }
     Ok(())
 }

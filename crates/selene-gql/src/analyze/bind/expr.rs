@@ -1,119 +1,209 @@
-//! Value-expression bind handling.
+//! Value-expression bind and type-inference handling.
 
 use crate::{
-    IsCheckKind, Literal, ValueExpr,
-    analyze::{binding::BindingUseKind, error::AnalysisError, scope::ScopeKind},
+    IsCheckKind, ValueExpr,
+    analyze::{
+        error::{AnalysisError, ConditionClause},
+        infer,
+        types::{AnalyzedType, ExprId},
+    },
 };
 
 use super::{BindContext, pattern};
+use crate::analyze::{binding::BindingUseKind, scope::ScopeKind};
 
 pub(crate) fn bind_value_expr(
     ctx: &mut BindContext,
     expr: &ValueExpr,
-) -> Result<(), AnalysisError> {
-    match expr {
-        ValueExpr::Literal(literal) => bind_literal(ctx, literal),
+) -> Result<ExprId, AnalysisError> {
+    let ty = match expr {
+        ValueExpr::Literal(literal) => infer::literal(literal),
         ValueExpr::Variable { name, span } => {
-            ctx.resolve(*name, *span, BindingUseKind::Variable)?;
-            Ok(())
+            let binding = ctx.resolve(*name, *span, BindingUseKind::Variable)?;
+            ctx.binding_type(binding)
         }
-        ValueExpr::Parameter { .. } => Ok(()),
-        ValueExpr::PropertyAccess { target, .. } => bind_value_expr(ctx, target),
+        ValueExpr::Parameter { .. } => AnalyzedType::Dynamic,
+        ValueExpr::PropertyAccess { target, .. } => {
+            bind_value_expr(ctx, target)?;
+            AnalyzedType::Dynamic
+        }
         ValueExpr::ListAccess { target, index, .. } => {
             bind_value_expr(ctx, target)?;
-            bind_value_expr(ctx, index)
+            bind_value_expr(ctx, index)?;
+            AnalyzedType::Dynamic
         }
-        ValueExpr::ListLiteral { items, .. } => bind_many(ctx, items),
+        ValueExpr::ListLiteral { items, .. } => {
+            let item_types = bind_many(ctx, items)?;
+            infer::list_literal(&item_types)?
+        }
         ValueExpr::RecordLiteral { fields, .. } => {
             for (_, value) in fields {
                 bind_value_expr(ctx, value)?;
             }
-            Ok(())
+            // Why: GV45-GV48 (RECORD types) are demoted to
+            // NOT_SUPPORTED_RATIONALE per CLAUDE.md D2 amendment
+            // (2026-05-08). The parser is the gate for whether a
+            // RecordLiteral reaches the analyzer; leave the type cell Dynamic
+            // rather than implying claimed-feature support.
+            AnalyzedType::Dynamic
         }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => {
-            bind_value_expr(ctx, lhs)?;
-            bind_value_expr(ctx, rhs)
+        ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
+            let lhs_id = bind_value_expr(ctx, lhs)?;
+            let rhs_id = bind_value_expr(ctx, rhs)?;
+            infer::binary(
+                *op,
+                ctx.expr_type(lhs_id),
+                lhs.span(),
+                ctx.expr_type(rhs_id),
+                rhs.span(),
+            )?
         }
-        ValueExpr::UnaryOp { operand, .. } => bind_value_expr(ctx, operand),
-        ValueExpr::FunctionCall { args, .. } => bind_many(ctx, args),
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            bind_value_expr(ctx, operand)?;
-            bind_is_check(ctx, kind)
+        ValueExpr::UnaryOp { op, operand, .. } => {
+            let operand_id = bind_value_expr(ctx, operand)?;
+            infer::unary(*op, ctx.expr_type(operand_id), operand.span())?
+        }
+        ValueExpr::FunctionCall { args, .. } => {
+            bind_many(ctx, args)?;
+            AnalyzedType::Dynamic
+        }
+        ValueExpr::IsCheck {
+            operand,
+            kind,
+            span,
+            ..
+        } => {
+            let operand_id = bind_value_expr(ctx, operand)?;
+            bind_is_check(ctx, kind)?;
+            infer::is_check(kind, ctx.expr_type(operand_id), operand.span(), *span)?
         }
         ValueExpr::InList { operand, list, .. } => {
-            bind_value_expr(ctx, operand)?;
-            bind_many(ctx, list)
+            let operand_id = bind_value_expr(ctx, operand)?;
+            let items = bind_many_with_spans(ctx, list)?;
+            infer::in_list(ctx.expr_type(operand_id), operand.span(), &items)?
         }
         ValueExpr::Like {
             operand, pattern, ..
         } => {
-            bind_value_expr(ctx, operand)?;
-            bind_value_expr(ctx, pattern)
+            let operand_id = bind_value_expr(ctx, operand)?;
+            let pattern_id = bind_value_expr(ctx, pattern)?;
+            infer::like(
+                ctx.expr_type(operand_id),
+                operand.span(),
+                ctx.expr_type(pattern_id),
+                pattern.span(),
+            )?
         }
         ValueExpr::Between {
             operand, low, high, ..
         } => {
-            bind_value_expr(ctx, operand)?;
-            bind_value_expr(ctx, low)?;
-            bind_value_expr(ctx, high)
+            let operand_id = bind_value_expr(ctx, operand)?;
+            let low_id = bind_value_expr(ctx, low)?;
+            let high_id = bind_value_expr(ctx, high)?;
+            infer::between(
+                ctx.expr_type(operand_id),
+                operand.span(),
+                ctx.expr_type(low_id),
+                low.span(),
+                ctx.expr_type(high_id),
+                high.span(),
+            )?
         }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-            bind_many(ctx, items)
+            bind_many(ctx, items)?;
+            AnalyzedType::Resolved(crate::GqlType::Boolean)
         }
-        ValueExpr::PropertyExists { target, .. } => bind_value_expr(ctx, target),
+        ValueExpr::PropertyExists { target, .. } => {
+            bind_value_expr(ctx, target)?;
+            AnalyzedType::Resolved(crate::GqlType::Boolean)
+        }
         ValueExpr::Case {
             branches,
             else_branch,
             span,
         } => {
+            let mut result_types =
+                Vec::with_capacity(branches.len() + usize::from(else_branch.is_some()));
             for (condition, value) in branches {
-                ctx.with_child_scope(ScopeKind::CaseBranch, *span, false, |ctx| {
-                    bind_value_expr(ctx, condition)?;
-                    bind_value_expr(ctx, value)
-                })?;
+                let value_id =
+                    ctx.with_child_scope(ScopeKind::CaseBranch, *span, false, |ctx| {
+                        bind_condition(ctx, condition, ConditionClause::CaseWhen)?;
+                        bind_value_expr(ctx, value)
+                    })?;
+                result_types.push(ctx.expr_type(value_id).clone());
             }
             if let Some(value) = else_branch {
-                ctx.with_child_scope(ScopeKind::CaseBranch, value.span(), false, |ctx| {
-                    bind_value_expr(ctx, value)
-                })?;
+                let value_id =
+                    ctx.with_child_scope(ScopeKind::CaseBranch, value.span(), false, |ctx| {
+                        bind_value_expr(ctx, value)
+                    })?;
+                result_types.push(ctx.expr_type(value_id).clone());
             }
-            Ok(())
+            infer::case_result(&result_types)?
         }
         ValueExpr::Exists {
             pattern: clause,
             span,
             ..
+        } => {
+            ctx.with_child_scope(ScopeKind::Subquery, *span, false, |ctx| {
+                pattern::bind_match_clause(ctx, clause)
+            })?;
+            AnalyzedType::Resolved(crate::GqlType::Boolean)
         }
-        | ValueExpr::CountSubquery {
+        ValueExpr::CountSubquery {
             pattern: clause,
             span,
-        } => ctx.with_child_scope(ScopeKind::Subquery, *span, false, |ctx| {
-            pattern::bind_match_clause(ctx, clause)
-        }),
-    }
+        } => {
+            ctx.with_child_scope(ScopeKind::Subquery, *span, false, |ctx| {
+                pattern::bind_match_clause(ctx, clause)
+            })?;
+            AnalyzedType::Resolved(crate::GqlType::Integer)
+        }
+    };
+    Ok(ctx.allocate_expr(expr, ty))
 }
 
-fn bind_literal(_ctx: &mut BindContext, literal: &Literal) -> Result<(), AnalysisError> {
-    match literal {
-        Literal::Bool(..)
-        | Literal::Integer(..)
-        | Literal::Float(..)
-        | Literal::String(..)
-        | Literal::Null(..) => Ok(()),
-    }
+pub(crate) fn bind_condition(
+    ctx: &mut BindContext,
+    expr: &ValueExpr,
+    clause: ConditionClause,
+) -> Result<ExprId, AnalysisError> {
+    let id = bind_value_expr(ctx, expr)?;
+    infer::condition(ctx.expr_type(id), expr.span(), clause)?;
+    Ok(id)
 }
 
-fn bind_many(ctx: &mut BindContext, values: &[ValueExpr]) -> Result<(), AnalysisError> {
-    for value in values {
-        bind_value_expr(ctx, value)?;
-    }
-    Ok(())
+fn bind_many(
+    ctx: &mut BindContext,
+    values: &[ValueExpr],
+) -> Result<Vec<AnalyzedType>, AnalysisError> {
+    values
+        .iter()
+        .map(|value| {
+            let id = bind_value_expr(ctx, value)?;
+            Ok(ctx.expr_type(id).clone())
+        })
+        .collect()
+}
+
+fn bind_many_with_spans(
+    ctx: &mut BindContext,
+    values: &[ValueExpr],
+) -> Result<Vec<(AnalyzedType, crate::SourceSpan)>, AnalysisError> {
+    values
+        .iter()
+        .map(|value| {
+            let id = bind_value_expr(ctx, value)?;
+            Ok((ctx.expr_type(id).clone(), value.span()))
+        })
+        .collect()
 }
 
 fn bind_is_check(ctx: &mut BindContext, kind: &IsCheckKind) -> Result<(), AnalysisError> {
     match kind {
         IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-            bind_value_expr(ctx, value)
+            bind_value_expr(ctx, value)?;
+            Ok(())
         }
         IsCheckKind::Null
         | IsCheckKind::Directed

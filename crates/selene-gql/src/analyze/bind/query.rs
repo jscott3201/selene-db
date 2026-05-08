@@ -3,7 +3,11 @@
 use crate::{
     LetBinding, LimitValue, OrderTerm, PipelineStatement, QueryPipeline, ReturnClause, ReturnItem,
     UnwindStatement, ValueExpr, WithClause,
-    analyze::{binding::BindingDeclKind, error::AnalysisError},
+    analyze::{
+        binding::BindingDeclKind,
+        error::{AnalysisError, ConditionClause},
+        types::AnalyzedType,
+    },
 };
 
 use super::{BindContext, call, expr, pattern};
@@ -24,7 +28,10 @@ pub(crate) fn bind_pipeline_statement(
 ) -> Result<(), AnalysisError> {
     match statement {
         PipelineStatement::Match(clause) => pattern::bind_match_clause(ctx, clause),
-        PipelineStatement::Filter(value) => expr::bind_value_expr(ctx, value),
+        PipelineStatement::Filter(value) => {
+            expr::bind_condition(ctx, value, ConditionClause::Filter)?;
+            Ok(())
+        }
         PipelineStatement::Let(bindings) => bind_let(ctx, bindings),
         PipelineStatement::Unwind(unwind) => bind_unwind(ctx, unwind),
         PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms),
@@ -70,7 +77,7 @@ fn bind_with_clause(ctx: &mut BindContext, clause: &WithClause) -> Result<(), An
     ctx.enter_projection_scope(clause.span, true);
     declare_projection_items(ctx, &clause.items)?;
     if let Some(where_clause) = &clause.where_clause {
-        expr::bind_value_expr(ctx, where_clause)?;
+        expr::bind_condition(ctx, where_clause, ConditionClause::WithWhere)?;
     }
     Ok(())
 }
@@ -90,7 +97,7 @@ fn bind_return_inputs(
         }
     }
     if let Some(value) = having {
-        expr::bind_value_expr(ctx, value)?;
+        expr::bind_condition(ctx, value, ConditionClause::Having)?;
     }
     Ok(())
 }
@@ -100,10 +107,11 @@ fn declare_projection_items(
     items: &[ReturnItem],
 ) -> Result<(), AnalysisError> {
     for item in items {
+        let ty = projection_item_type(ctx, item);
         if let Some(alias) = item.alias {
-            ctx.declare_strict(BindingDeclKind::ProjectionAlias, alias, item.span)?;
+            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, alias, item.span, ty)?;
         } else if let ValueExpr::Variable { name, span } = &item.expr {
-            ctx.declare_strict(BindingDeclKind::ProjectionAlias, *name, *span)?;
+            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, *name, *span, ty)?;
         }
     }
     Ok(())
@@ -111,15 +119,22 @@ fn declare_projection_items(
 
 fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), AnalysisError> {
     for binding in bindings {
-        expr::bind_value_expr(ctx, &binding.value)?;
-        ctx.declare_strict(BindingDeclKind::LetAlias, binding.alias, binding.span)?;
+        let id = expr::bind_value_expr(ctx, &binding.value)?;
+        let ty = ctx.expr_type(id).clone();
+        ctx.declare_strict_typed(BindingDeclKind::LetAlias, binding.alias, binding.span, ty)?;
     }
     Ok(())
 }
 
 fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), AnalysisError> {
-    expr::bind_value_expr(ctx, &unwind.source)?;
-    ctx.declare_strict(BindingDeclKind::UnwindAlias, unwind.alias, unwind.span)?;
+    let id = expr::bind_value_expr(ctx, &unwind.source)?;
+    let ty = match ctx.expr_type(id) {
+        AnalyzedType::Resolved(crate::GqlType::List(inner)) => {
+            AnalyzedType::Resolved((**inner).clone())
+        }
+        _ => AnalyzedType::Dynamic,
+    };
+    ctx.declare_strict_typed(BindingDeclKind::UnwindAlias, unwind.alias, unwind.span, ty)?;
     Ok(())
 }
 
@@ -134,4 +149,10 @@ fn bind_limit_value(value: &LimitValue) {
     match value {
         LimitValue::Count(..) | LimitValue::Parameter(..) => {}
     }
+}
+
+fn projection_item_type(ctx: &BindContext, item: &ReturnItem) -> AnalyzedType {
+    ctx.expr_id(&item.expr)
+        .map(|id| ctx.expr_type(id).clone())
+        .unwrap_or(AnalyzedType::Dynamic)
 }
