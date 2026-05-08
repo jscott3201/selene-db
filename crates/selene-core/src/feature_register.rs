@@ -57,8 +57,10 @@ feature_ids! {
     G114 = "G114" => "SAME predicate";
     G115 = "G115" => "PROPERTY_EXISTS predicate";
     GA01 = "GA01" => "IEEE 754 floating point operations";
+    GC02 = "GC02" => "Graph schema management: IF [ NOT ] EXISTS";
     GC03 = "GC03" => "Graph type: IF [ NOT ] EXISTS";
     GC04 = "GC04" => "Graph management";
+    GC05 = "GC05" => "Graph management: IF [ NOT ] EXISTS";
     GD01 = "GD01" => "Updatable graphs";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
@@ -81,6 +83,10 @@ feature_ids! {
     GP15 = "GP15" => "Graphs as procedure arguments";
     GP18 = "GP18" => "Mixed catalog/data transaction feature";
     GQ03 = "GQ03" => "Composite query: UNION";
+    GQ04 = "GQ04" => "Composite query: EXCEPT DISTINCT";
+    GQ05 = "GQ05" => "Composite query: EXCEPT ALL";
+    GQ06 = "GQ06" => "Composite query: INTERSECT DISTINCT";
+    GQ07 = "GQ07" => "Composite query: INTERSECT ALL";
     GQ09 = "GQ09" => "Composite query: OTHERWISE";
     GQ15 = "GQ15" => "GROUP BY clause";
     GT01 = "GT01" => "Explicit transaction commands";
@@ -146,6 +152,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GA01,
     FeatureId::GC03,
     FeatureId::GC04,
+    FeatureId::GC05,
     FeatureId::GD01,
     FeatureId::GG01,
     FeatureId::GG02,
@@ -211,6 +218,26 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GP18,
         "mixed catalog/data transaction behavior remains forbidden in v1.0",
+    ),
+    (
+        FeatureId::GC02,
+        "CREATE/DROP SCHEMA is outside the v1.0 catalog claim (graph-schema vs graph-type vs graph)",
+    ),
+    (
+        FeatureId::GQ04,
+        "EXCEPT DISTINCT is outside the v1.0 composite-query claim; only UNION is supported",
+    ),
+    (
+        FeatureId::GQ05,
+        "EXCEPT ALL is outside the v1.0 composite-query claim; only UNION is supported",
+    ),
+    (
+        FeatureId::GQ06,
+        "INTERSECT DISTINCT is outside the v1.0 composite-query claim; only UNION is supported",
+    ),
+    (
+        FeatureId::GQ07,
+        "INTERSECT ALL is outside the v1.0 composite-query claim; only UNION is supported",
     ),
     (
         FeatureId::GQ09,

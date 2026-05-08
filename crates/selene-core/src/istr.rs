@@ -110,6 +110,109 @@ pub fn resolve(istr: IStr) -> &'static str {
     interner().resolve(&istr.0)
 }
 
+/// Look up an existing interned handle without admitting a new one.
+///
+/// Returns the interned handle if `s` is already present and `None` otherwise.
+#[must_use]
+pub fn lookup(s: &str) -> Option<IStr> {
+    interner().get(s).map(IStr)
+}
+
+/// Outcome of an atomic admission attempt via [`intern_atomic_admit`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum AdmissionError {
+    /// The global process-wide interner is at [`MAX_INTERNED_STRINGS`].
+    Cap(CoreError),
+    /// The caller-supplied admission predicate rejected this admission.
+    ///
+    /// Only raised when `s` would be a *new* admission and the caller's
+    /// predicate returned `Err`. Already-interned strings never reach the
+    /// predicate.
+    Rejected,
+}
+
+impl fmt::Display for AdmissionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Cap(error) => fmt::Display::fmt(error, f),
+            Self::Rejected => f.write_str("admission rejected by caller predicate"),
+        }
+    }
+}
+
+impl std::error::Error for AdmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Cap(error) => Some(error),
+            Self::Rejected => None,
+        }
+    }
+}
+
+/// Intern `s`, but route every *new* admission through a caller predicate.
+///
+/// Already-interned strings hit the lock-free fast path; the predicate is not
+/// called. New admissions take the admission lock, then the predicate is run
+/// **under** the same lock that gates the global insertion. The predicate's
+/// `Ok`/`Err` decision is therefore atomic with the global cap check and
+/// insertion: a rejected admission cannot grow the global pool, and the
+/// predicate is never invoked redundantly because of a race with another
+/// thread admitting the same string.
+///
+/// Use this from parser-side admission budgets that must charge a slot
+/// before — and only when — the admission is genuinely new from this
+/// thread's vantage. Compare with [`intern_with_admission`], which only
+/// reports `was_new` after the global insertion has already happened.
+///
+/// # Errors
+///
+/// - [`AdmissionError::Cap`] if the global pool is at capacity.
+/// - [`AdmissionError::Rejected`] if the caller's predicate returned `Err`
+///   for what would have been a new admission.
+pub fn intern_atomic_admit<F>(s: &str, on_new: F) -> Result<IStr, AdmissionError>
+where
+    F: FnOnce() -> Result<(), ()>,
+{
+    let rodeo = interner();
+
+    // Fast path: already-interned strings do not need admission.
+    if let Some(spur) = rodeo.get(s) {
+        return Ok(IStr(spur));
+    }
+
+    // Slow path: serialize admission with the cap check and the predicate
+    // so callers see a single atomic accept-or-reject.
+    let _admission = ADMISSION_LOCK.lock().expect("admission lock poisoned");
+
+    // Re-check inside the lock: another thread may have interned `s`
+    // between the fast-path miss and the lock acquisition. If so, the
+    // caller predicate is NOT called — admission was not consumed by this
+    // call.
+    if let Some(spur) = rodeo.get(s) {
+        return Ok(IStr(spur));
+    }
+
+    // This call would be a genuine new admission. Cap check first so a
+    // global-cap failure never perturbs caller state via the predicate.
+    let count = rodeo.len();
+    if cap_exceeded(count) {
+        return Err(AdmissionError::Cap(CoreError::IStrCapExceeded {
+            count,
+            max: MAX_INTERNED_STRINGS,
+        }));
+    }
+
+    // Predicate runs under the lock; if it accepts, the global insertion
+    // happens immediately and the lock is released; if it rejects, no
+    // global insertion occurs at all.
+    if on_new().is_err() {
+        return Err(AdmissionError::Rejected);
+    }
+
+    Ok(IStr(rodeo.get_or_intern(s)))
+}
+
 impl IStr {
     /// Resolve this handle to its process-lifetime string representation.
     #[must_use]
@@ -306,6 +409,69 @@ mod tests {
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
         let archived = rkyv::access::<rkyv::Archived<IStr>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.as_str(), "istr.rkyv.portable");
+    }
+
+    #[test]
+    fn intern_atomic_admit_skips_predicate_for_existing_strings() {
+        let key = format!("brief-19.atomic.exists-{}", std::process::id());
+        let _admitted = intern(&key).expect("seed admission");
+
+        let mut predicate_calls = 0;
+        let result = intern_atomic_admit(&key, || {
+            predicate_calls += 1;
+            Ok(())
+        });
+        assert!(result.is_ok(), "already-interned string returns Ok");
+        assert_eq!(
+            predicate_calls, 0,
+            "predicate must not run for already-interned strings"
+        );
+    }
+
+    #[test]
+    fn intern_atomic_admit_rejects_without_global_growth() {
+        let key = format!("brief-19.atomic.reject-{}", std::process::id());
+        assert!(lookup(&key).is_none(), "test setup: key not yet interned");
+
+        let result = intern_atomic_admit(&key, || Err(()));
+        assert!(matches!(result, Err(AdmissionError::Rejected)));
+        assert!(
+            lookup(&key).is_none(),
+            "rejected admission must not have grown the global pool"
+        );
+    }
+
+    #[test]
+    fn intern_atomic_admit_accepts_and_admits() {
+        let key = format!("brief-19.atomic.accept-{}", std::process::id());
+        assert!(lookup(&key).is_none());
+
+        let mut admit_count = 0;
+        let result = intern_atomic_admit(&key, || {
+            admit_count += 1;
+            Ok(())
+        });
+        assert!(result.is_ok());
+        assert_eq!(
+            admit_count, 1,
+            "predicate runs exactly once on new admission"
+        );
+        assert!(lookup(&key).is_some(), "accepted admission grew the pool");
+    }
+
+    #[test]
+    fn lookup_returns_some_for_already_interned_strings() {
+        let key = format!("brief-19.lookup-some-{}", std::process::id());
+        let admitted = intern(&key).expect("intern succeeds");
+        assert_eq!(lookup(&key), Some(admitted));
+    }
+
+    #[test]
+    fn lookup_returns_none_for_unseen_string_without_admitting() {
+        let key = format!("brief-19.lookup-none-{}", std::process::id());
+        assert!(lookup(&key).is_none());
+        // The lookup must not have admitted the string.
+        assert!(lookup(&key).is_none());
     }
 
     #[test]
