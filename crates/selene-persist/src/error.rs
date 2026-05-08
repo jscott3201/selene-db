@@ -1,5 +1,7 @@
 //! Error types for persistence formats.
 
+use crate::provider::RecoveryError;
+
 /// Result alias for persistence operations.
 pub type PersistResult<T> = Result<T, PersistError>;
 
@@ -193,6 +195,49 @@ pub enum PersistError {
         /// Human-readable reason for the layout rejection.
         reason: &'static str,
     },
+
+    /// Recovery provider registry saw the same provider tag twice.
+    #[error("duplicate recovery provider tag: {tag:?}")]
+    #[diagnostic(code(SLENE_P_025))]
+    DuplicateProviderTag {
+        /// Duplicate provider tag.
+        tag: [u8; 4],
+    },
+
+    /// Snapshot section table referenced an unregistered provider.
+    #[error("unknown recovery provider: provider {provider:?}, sub {sub:?}")]
+    #[diagnostic(code(SLENE_P_026))]
+    UnknownProvider {
+        /// Provider tag from the snapshot section row.
+        provider: [u8; 4],
+        /// Provider-owned sub-tag from the snapshot section row.
+        sub: [u8; 4],
+    },
+
+    /// Recovery provider returned an error while applying bytes or changes.
+    #[error("recovery provider {provider:?} failed for sub {sub:?}: {source}")]
+    #[diagnostic(code(SLENE_P_027))]
+    ProviderFailed {
+        /// Provider tag whose callback failed.
+        provider: [u8; 4],
+        /// Section sub-tag for snapshot failures, or `None` for WAL changes.
+        sub: Option<[u8; 4]>,
+        /// Provider-owned source error.
+        #[source]
+        source: RecoveryError,
+    },
+
+    /// WAL file extends a different snapshot epoch than the snapshot applied.
+    #[error(
+        "wal snapshot sequence {wal_snapshot_seq} does not match applied snapshot {snapshot_seq}"
+    )]
+    #[diagnostic(code(SLENE_P_028))]
+    WalSnapshotMismatch {
+        /// Snapshot sequence recorded in the WAL header.
+        wal_snapshot_seq: u64,
+        /// Snapshot sequence selected by recovery.
+        snapshot_seq: u64,
+    },
 }
 
 impl PersistError {
@@ -204,7 +249,7 @@ impl PersistError {
             Self::PayloadTooLarge { .. }
             | Self::TooManySections { .. }
             | Self::SectionTooLarge { .. } => "54000",
-            Self::DuplicateSection { .. } => "22023",
+            Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22023",
             Self::UnsupportedVersion { .. } => "08000",
             Self::Io(_)
             | Self::HeaderCodec(_)
@@ -223,7 +268,10 @@ impl PersistError {
             | Self::ReservedBytesNonZero { .. }
             | Self::MalformedSnapshotFilename
             | Self::SectionMissing { .. }
-            | Self::MalformedSectionLayout { .. } => "XX500",
+            | Self::MalformedSectionLayout { .. }
+            | Self::UnknownProvider { .. }
+            | Self::ProviderFailed { .. }
+            | Self::WalSnapshotMismatch { .. } => "XX500",
         }
     }
 }
@@ -258,6 +306,14 @@ mod tests {
     #[case(PersistError::MalformedSnapshotFilename, "XX500")]
     #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "XX500")]
     #[case(PersistError::MalformedSectionLayout { reason: "test" }, "XX500")]
+    #[case(PersistError::DuplicateProviderTag { tag: *b"CORE" }, "22023")]
+    #[case(PersistError::UnknownProvider { provider: *b"CORE", sub: *b"META" }, "XX500")]
+    #[case(PersistError::ProviderFailed {
+        provider: *b"CORE",
+        sub: Some(*b"META"),
+        source: Box::new(std::io::Error::other("provider failed")),
+    }, "XX500")]
+    #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "XX500")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
     }

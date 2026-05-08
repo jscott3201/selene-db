@@ -2,9 +2,10 @@
 //!
 //! This crate owns persistence formats described in
 //! `_spec/04-persistence-format.md`. It writes and reads the BRIEF-10 WAL
-//! format, and writes and reads the BRIEF-11 snapshot envelope. It does not
-//! own graph state and intentionally depends only on `selene-core` among
-//! selene crates. Recovery orchestration remains deferred to BRIEF-12.
+//! format, writes and reads the BRIEF-11 snapshot envelope, and exposes the
+//! BRIEF-12 recovery contract that routes bytes and changes to caller-owned
+//! providers. It does not own graph state and intentionally depends only on
+//! `selene-core` among selene crates.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -14,7 +15,9 @@ pub mod entry_header;
 pub mod error;
 pub mod file_header;
 mod payload;
+pub mod provider;
 mod reader;
+pub mod recovery;
 pub mod section;
 pub mod snapshot_file_header;
 pub mod snapshot_path;
@@ -30,7 +33,9 @@ pub use crate::error::{PersistError, PersistResult};
 pub use crate::file_header::{
     WAL_FILE_HEADER_LEN, WAL_MAGIC, WAL_VERSION_MAJOR, WAL_VERSION_MINOR, WalFileHeader,
 };
+pub use crate::provider::{ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult};
 pub use crate::reader::{WalEntry, WalEntryStream, WalEntryView, WalReader};
+pub use crate::recovery::{RecoveryOutcome, recover};
 pub use crate::section::{
     MAX_SECTION_COUNT, MAX_SECTION_PAYLOAD_BYTES, SECTION_TABLE_ROW_LEN, SectionEntry,
 };
