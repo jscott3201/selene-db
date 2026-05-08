@@ -103,6 +103,12 @@ impl<'g> WriteTxn<'g> {
         let next_node_id = working.meta.next_node_id;
         let next_edge_id = working.meta.next_edge_id;
 
+        if let Some(type_def) = working.meta.bound_type.as_deref() {
+            for change in &changes {
+                crate::type_validator::validate_change(change, &working, type_def)?;
+            }
+        }
+
         let published = working.clone();
         *guard = published.clone();
         snapshot.store(Arc::new(published));

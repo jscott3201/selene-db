@@ -4,6 +4,7 @@ use selene_core::{CoreError, EdgeId, IStr, NodeId};
 use selene_persist::PersistError;
 
 use crate::index_provider::ProviderError;
+use crate::type_validator::TypeViolation;
 use crate::typed_index::TypedIndexKind;
 
 /// Result alias for graph operations.
@@ -102,6 +103,11 @@ pub enum GraphError {
         observed: &'static str,
     },
 
+    /// A closed graph mutation violates its bound graph type.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    TypeViolation(#[from] TypeViolation),
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -132,6 +138,7 @@ impl GraphError {
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
             | Self::IndexValueRejected { .. } => "22023",
+            Self::TypeViolation(_) => "22000",
             Self::Core(_) => "22000",
             Self::Provider(_) | Self::Persist(_) => "XX500",
         }
@@ -181,6 +188,13 @@ mod tests {
             observed: "String",
         },
         "22023"
+    )]
+    #[case(
+        GraphError::TypeViolation(TypeViolation::UnknownEdgeLabel {
+            id: EdgeId::new(1),
+            label: intern("err.edge.label").unwrap(),
+        }),
+        "22000"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
     #[case(

@@ -1,0 +1,340 @@
+//! Closed graph type catalog definitions.
+
+use std::collections::BTreeSet;
+
+use selene_core::{IStr, LabelSet, PropertyValueType};
+use serde::{Deserialize, Serialize};
+
+use crate::error::{GraphError, GraphResult};
+
+/// Definition of a closed graph type per ISO clause 18.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct GraphTypeDef {
+    /// Graph type name.
+    pub name: IStr,
+    /// Node-type elements in graph-type order.
+    pub node_types: Vec<NodeTypeDef>,
+    /// Edge-type elements in graph-type order.
+    pub edge_types: Vec<EdgeTypeDef>,
+}
+
+impl GraphTypeDef {
+    /// Validate this graph type's structural invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Inconsistent`] when the type contains duplicate
+    /// names, invalid edge endpoint indexes, duplicate properties within a
+    /// node/edge type, duplicate edge triples, or an empty node label set.
+    pub fn validate(self) -> GraphResult<Self> {
+        self.validate_ref()?;
+        Ok(self)
+    }
+
+    /// Return the first node type matching `labels`.
+    #[must_use]
+    pub fn find_node_type(&self, labels: &LabelSet) -> Option<&NodeTypeDef> {
+        self.node_types
+            .iter()
+            .find(|node_type| &node_type.key_labels == labels)
+    }
+
+    /// Return the first node-type index matching `labels`.
+    #[must_use]
+    pub fn find_node_type_index(&self, labels: &LabelSet) -> Option<u32> {
+        self.node_types
+            .iter()
+            .position(|node_type| &node_type.key_labels == labels)
+            .and_then(|index| u32::try_from(index).ok())
+    }
+
+    /// Return the edge type for `(label, source_node_type, target_node_type)`.
+    #[must_use]
+    pub fn find_edge_type(
+        &self,
+        label: IStr,
+        source_node_type: u32,
+        target_node_type: u32,
+    ) -> Option<&EdgeTypeDef> {
+        self.edge_types.iter().find(|edge_type| {
+            edge_type.label == label
+                && edge_type.source_node_type == source_node_type
+                && edge_type.target_node_type == target_node_type
+        })
+    }
+
+    /// Return the first edge type carrying `label`.
+    #[must_use]
+    pub fn first_edge_type_with_label(&self, label: IStr) -> Option<&EdgeTypeDef> {
+        self.edge_types
+            .iter()
+            .find(|edge_type| edge_type.label == label)
+    }
+
+    fn validate_ref(&self) -> GraphResult<()> {
+        ensure_unique_names(
+            "node type",
+            self.node_types.iter().map(|node_type| node_type.name),
+        )?;
+        ensure_unique_names(
+            "edge type",
+            self.edge_types.iter().map(|edge_type| edge_type.name),
+        )?;
+
+        for node_type in &self.node_types {
+            if node_type.key_labels.is_empty() {
+                return Err(GraphError::Inconsistent {
+                    reason: format!("node type {} has an empty label set", node_type.name),
+                });
+            }
+            ensure_unique_names(
+                "node property",
+                node_type.properties.iter().map(|property| property.name),
+            )?;
+        }
+
+        let node_type_count = self.node_types.len();
+        let mut edge_triples = BTreeSet::new();
+        for edge_type in &self.edge_types {
+            ensure_node_type_index(node_type_count, edge_type.source_node_type, edge_type.name)?;
+            ensure_node_type_index(node_type_count, edge_type.target_node_type, edge_type.name)?;
+            ensure_unique_names(
+                "edge property",
+                edge_type.properties.iter().map(|property| property.name),
+            )?;
+            if !edge_triples.insert((
+                edge_type.label,
+                edge_type.source_node_type,
+                edge_type.target_node_type,
+            )) {
+                return Err(GraphError::Inconsistent {
+                    reason: format!(
+                        "duplicate edge type triple ({}, {}, {})",
+                        edge_type.label, edge_type.source_node_type, edge_type.target_node_type
+                    ),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Node-type element.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct NodeTypeDef {
+    /// Node type name.
+    pub name: IStr,
+    /// Defining label set for this node type.
+    pub key_labels: LabelSet,
+    /// Declared properties.
+    pub properties: Vec<PropertyTypeDef>,
+}
+
+/// Edge-type element.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct EdgeTypeDef {
+    /// Edge type name.
+    pub name: IStr,
+    /// Edge label.
+    pub label: IStr,
+    /// Index into [`GraphTypeDef::node_types`] for the source endpoint.
+    pub source_node_type: u32,
+    /// Index into [`GraphTypeDef::node_types`] for the target endpoint.
+    pub target_node_type: u32,
+    /// Declared properties.
+    pub properties: Vec<PropertyTypeDef>,
+}
+
+/// Property declaration for a closed graph type.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct PropertyTypeDef {
+    /// Property name.
+    pub name: IStr,
+    /// Declared value type.
+    pub value_type: PropertyValueType,
+    /// `true` means NOT NULL / required.
+    pub required: bool,
+}
+
+fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {
+    let mut seen = BTreeSet::new();
+    for name in names {
+        if !seen.insert(name) {
+            return Err(GraphError::Inconsistent {
+                reason: format!("duplicate {kind} name {name}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphResult<()> {
+    if usize::try_from(index).is_ok_and(|index| index < count) {
+        return Ok(());
+    }
+    Err(GraphError::Inconsistent {
+        reason: format!(
+            "edge type {edge_name} references node type index {index}, but only {count} node types exist"
+        ),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::{PropertyValueType, intern};
+
+    use super::*;
+
+    fn label(name: &str) -> IStr {
+        intern(name).unwrap()
+    }
+
+    fn property(name: &str) -> PropertyTypeDef {
+        PropertyTypeDef {
+            name: label(name),
+            value_type: PropertyValueType::String,
+            required: true,
+        }
+    }
+
+    fn valid_type() -> GraphTypeDef {
+        GraphTypeDef {
+            name: label("types.graph"),
+            node_types: vec![
+                NodeTypeDef {
+                    name: label("types.person"),
+                    key_labels: LabelSet::single(label("Person")),
+                    properties: vec![property("name")],
+                },
+                NodeTypeDef {
+                    name: label("types.company"),
+                    key_labels: LabelSet::single(label("Company")),
+                    properties: vec![property("name")],
+                },
+            ],
+            edge_types: vec![EdgeTypeDef {
+                name: label("types.works_at"),
+                label: label("WORKS_AT"),
+                source_node_type: 0,
+                target_node_type: 1,
+                properties: vec![property("since")],
+            }],
+        }
+    }
+
+    #[test]
+    fn validate_accepts_well_formed_type() {
+        assert!(valid_type().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_node_type_names() {
+        let mut graph_type = valid_type();
+        graph_type.node_types[1].name = graph_type.node_types[0].name;
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node type name")
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_edge_index_out_of_range() {
+        let mut graph_type = valid_type();
+        graph_type.edge_types[0].target_node_type = 99;
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason }) if reason.contains("references node type index")
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_duplicate_property_names() {
+        let mut graph_type = valid_type();
+        graph_type.node_types[0].properties.push(property("name"));
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node property name")
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_empty_node_label_set() {
+        let mut graph_type = valid_type();
+        graph_type.node_types[0].key_labels = LabelSet::new();
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason }) if reason.contains("empty label set")
+        ));
+    }
+
+    #[test]
+    fn lookup_returns_matching_elements() {
+        let graph_type = valid_type();
+        let person = LabelSet::single(label("Person"));
+        assert_eq!(
+            graph_type
+                .find_node_type(&person)
+                .map(|node_type| node_type.name),
+            Some(label("types.person"))
+        );
+        assert_eq!(graph_type.find_node_type_index(&person), Some(0));
+        assert_eq!(
+            graph_type
+                .find_edge_type(label("WORKS_AT"), 0, 1)
+                .map(|edge_type| edge_type.name),
+            Some(label("types.works_at"))
+        );
+    }
+
+    #[test]
+    fn rkyv_round_trips_graph_type_def() {
+        let graph_type = valid_type();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&graph_type).unwrap();
+        let decoded = rkyv::from_bytes::<GraphTypeDef, rkyv::rancor::Error>(&bytes).unwrap();
+        assert_eq!(decoded, graph_type);
+    }
+}

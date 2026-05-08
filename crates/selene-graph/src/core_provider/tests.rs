@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use selene_core::{
-    Change, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
-    Value, intern,
+    Change, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+    PropertyValueType, SchemaChange, Value, intern,
 };
 
 use super::sections::{
-    decode_edges, decode_meta, decode_nodes, encode_edges, encode_meta, encode_nodes,
-    ensure_section_within_cap,
+    decode_edges, decode_graph_types, decode_meta, decode_nodes, encode_edges, encode_graph_types,
+    encode_meta, encode_nodes, ensure_section_within_cap,
 };
 use super::*;
 use crate::{GraphError, SharedGraph};
@@ -119,6 +119,31 @@ fn graph_with_edge() -> SeleneGraph {
     shared.read().as_ref().clone()
 }
 
+fn graph_type() -> crate::GraphTypeDef {
+    crate::GraphTypeDef {
+        name: intern("core.gtyp").unwrap(),
+        node_types: vec![crate::NodeTypeDef {
+            name: intern("core.gtyp.node").unwrap(),
+            key_labels: LabelSet::single(intern("CoreTypedNode").unwrap()),
+            properties: vec![crate::PropertyTypeDef {
+                name: intern("core.gtyp.name").unwrap(),
+                value_type: PropertyValueType::String,
+                required: true,
+            }],
+        }],
+        edge_types: Vec::new(),
+    }
+}
+
+fn typed_graph() -> SeleneGraph {
+    let shared = SharedGraph::builder(GraphId::new(8))
+        .bound_to(graph_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    shared.read().as_ref().clone()
+}
+
 #[test]
 fn new_for_live_holds_snapshot_pointer() {
     let snapshot = Arc::new(ArcSwap::from_pointee(SeleneGraph::new(GraphId::new(1))));
@@ -154,8 +179,42 @@ fn encode_decode_round_trip_meta() {
     let graph = graph_with_node();
     let bytes = encode_meta(&graph.meta, 9).unwrap();
     let payload = decode_meta(&bytes).unwrap();
-    assert_eq!(payload.meta, graph.meta);
+    assert_eq!(payload.graph_id, graph.meta.graph_id);
+    assert_eq!(payload.generation, graph.meta.generation);
+    assert_eq!(payload.next_node_id, graph.meta.next_node_id);
+    assert_eq!(payload.next_edge_id, graph.meta.next_edge_id);
+    assert_eq!(payload.bound_type_index, None);
     assert_eq!(payload.sequence, 9);
+}
+
+#[test]
+fn encode_decode_round_trip_empty_graph_types() {
+    let graph = graph_with_node();
+    let rows = decode_graph_types(&encode_graph_types(&graph).unwrap()).unwrap();
+    assert!(rows.is_empty());
+}
+
+#[test]
+fn encode_decode_round_trip_bound_graph_type() {
+    let graph = typed_graph();
+    let rows = decode_graph_types(&encode_graph_types(&graph).unwrap()).unwrap();
+    assert_eq!(rows, vec![(0, graph_type())]);
+
+    let payload = decode_meta(&encode_meta(&graph.meta, 1).unwrap()).unwrap();
+    assert_eq!(payload.bound_type_index, Some(0));
+}
+
+#[test]
+fn recovery_rejects_meta_referencing_missing_gtyp() {
+    let graph = typed_graph();
+    let bytes = encode_meta(&graph.meta, 1).unwrap();
+    let provider = CoreProvider::new_for_recovery();
+    IndexProvider::read_section(provider.as_ref(), SubTag(CORE_META_SUB), &bytes).unwrap();
+    assert!(matches!(
+        provider.finish_recovery(GraphId::new(8)),
+        Err(GraphError::Provider(ProviderError::Inconsistent { reason }))
+            if reason.contains("missing CORE/GTYP index 0")
+    ));
 }
 
 #[test]

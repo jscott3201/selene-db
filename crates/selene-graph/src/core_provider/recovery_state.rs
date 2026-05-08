@@ -6,20 +6,23 @@ use std::sync::{Arc, OnceLock};
 use selene_core::{Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap};
 
 use crate::core_provider::sections::{
-    EdgeRow, MetaPayload, NodeRow, SchemaEntry, SchemaKey, decode_edges, decode_meta, decode_nodes,
-    decode_schemas,
+    EdgeRow, MetaPayload, NodeRow, SchemaEntry, SchemaKey, decode_edges, decode_graph_types,
+    decode_meta, decode_nodes, decode_schemas,
 };
 use crate::core_provider::{
-    CORE_EDGE_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB, inconsistent, invalid_payload,
+    CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB, inconsistent,
+    invalid_payload,
 };
 use crate::graph::{GraphMeta, SeleneGraph};
+use crate::graph_types::GraphTypeDef;
 use crate::store::{edge_row_index, node_row_index};
 use crate::typed_index::TypedIndex;
 
 /// Accumulator populated by snapshot sections and WAL replay.
 #[derive(Default)]
 pub(crate) struct RecoveryState {
-    meta: Option<GraphMeta>,
+    meta: Option<MetaPayload>,
+    graph_types: BTreeMap<u32, Arc<GraphTypeDef>>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
@@ -39,10 +42,20 @@ impl RecoveryState {
         bytes: &[u8],
     ) -> Result<(), crate::ProviderError> {
         match sub_tag.0 {
+            CORE_GTYP_SUB => {
+                let mut graph_types = BTreeMap::new();
+                for (index, graph_type) in decode_graph_types(bytes)? {
+                    let graph_type = graph_type
+                        .validate()
+                        .map_err(|error| inconsistent(format!("CORE/GTYP is invalid: {error}")))?;
+                    graph_types.insert(index, Arc::new(graph_type));
+                }
+                self.graph_types = graph_types;
+            }
             CORE_META_SUB => {
-                let MetaPayload { meta, sequence } = decode_meta(bytes)?;
-                self.meta = Some(meta);
-                self.sequence = sequence;
+                let payload = decode_meta(bytes)?;
+                self.sequence = payload.sequence;
+                self.meta = Some(payload);
             }
             CORE_NODE_SUB => {
                 self.nodes = decode_nodes(bytes)?.into_iter().collect();
@@ -152,13 +165,30 @@ impl RecoveryState {
                         meta.graph_id, expected_graph_id,
                     ))));
                 }
-                meta
+                let bound_type = match meta.bound_type_index {
+                    Some(index) => {
+                        Some(self.graph_types.get(&index).cloned().ok_or_else(|| {
+                            crate::GraphError::Provider(inconsistent(format!(
+                                "CORE/META references missing CORE/GTYP index {index}"
+                            )))
+                        })?)
+                    }
+                    None => None,
+                };
+                GraphMeta {
+                    graph_id: meta.graph_id,
+                    generation: meta.generation,
+                    next_node_id: meta.next_node_id,
+                    next_edge_id: meta.next_edge_id,
+                    bound_type,
+                }
             }
             None => GraphMeta {
                 graph_id: expected_graph_id,
                 generation: 0,
                 next_node_id: 1,
                 next_edge_id: 1,
+                bound_type: None,
             },
         };
         let mut graph = SeleneGraph::new(meta.graph_id);
@@ -187,6 +217,13 @@ impl RecoveryState {
                 (key.label, key.property),
                 Arc::new(TypedIndex::new(entry.kind)),
             );
+        }
+        if let Some(type_def) = graph.meta.bound_type.as_deref() {
+            crate::type_validator::validate_entity_state(&graph, type_def).map_err(|error| {
+                crate::GraphError::Provider(inconsistent(format!(
+                    "recovered closed graph violates bound type: {error}"
+                )))
+            })?;
         }
         Ok(graph)
     }

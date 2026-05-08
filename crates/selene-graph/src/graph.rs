@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
+use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
 use crate::typed_index::TypedIndex;
 
@@ -34,6 +35,8 @@ pub struct GraphMeta {
     pub next_node_id: u64,
     /// Next edge ID to allocate.
     pub next_edge_id: u64,
+    /// Bound closed graph type. `None` means GG01/open graph.
+    pub bound_type: Option<Arc<GraphTypeDef>>,
 }
 
 /// Immutable graph snapshot.
@@ -67,6 +70,7 @@ impl SeleneGraph {
                 generation: 0,
                 next_node_id: 1,
                 next_edge_id: 1,
+                bound_type: None,
             },
             node_store: NodeStore::new(),
             edge_store: EdgeStore::new(),
