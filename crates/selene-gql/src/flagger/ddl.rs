@@ -3,14 +3,13 @@
 use selene_core::feature_register::FeatureId;
 
 use crate::{
-    DdlStatement, SourceSpan,
+    DdlStatement,
     ast::ddl::{TypePropertyConstraint, TypePropertyDef},
-    error::ParserError,
 };
 
-use super::{check_feature, expr};
+use super::{FeatureUse, expr, record_feature};
 
-pub(crate) fn statement(statement: &DdlStatement) -> Result<(), ParserError> {
+pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
     match statement {
         DdlStatement::CreateGraph {
             or_replace,
@@ -18,21 +17,20 @@ pub(crate) fn statement(statement: &DdlStatement) -> Result<(), ParserError> {
             span,
             ..
         } => {
-            reject_or_replace(*or_replace, *span, "CREATE OR REPLACE GRAPH")?;
-            check_feature(FeatureId::GC04, *span)?;
+            let _ = or_replace;
+            record_feature(uses, FeatureId::GG01, *span);
+            record_feature(uses, FeatureId::GC04, *span);
             if *if_not_exists {
-                check_feature(FeatureId::GC05, *span)?;
+                record_feature(uses, FeatureId::GC05, *span);
             }
-            Ok(())
         }
         DdlStatement::DropGraph {
             if_exists, span, ..
         } => {
-            check_feature(FeatureId::GC04, *span)?;
+            record_feature(uses, FeatureId::GC04, *span);
             if *if_exists {
-                check_feature(FeatureId::GC05, *span)?;
+                record_feature(uses, FeatureId::GC05, *span);
             }
-            Ok(())
         }
         DdlStatement::CreateNodeType {
             or_replace,
@@ -41,12 +39,12 @@ pub(crate) fn statement(statement: &DdlStatement) -> Result<(), ParserError> {
             span,
             ..
         } => {
-            reject_or_replace(*or_replace, *span, "CREATE OR REPLACE NODE TYPE")?;
-            type_ddl(*span)?;
+            let _ = or_replace;
+            type_ddl(*span, uses);
             if *if_not_exists {
-                check_feature(FeatureId::GC03, *span)?;
+                record_feature(uses, FeatureId::GC03, *span);
             }
-            property_defs(properties)
+            property_defs(properties, uses);
         }
         DdlStatement::CreateEdgeType {
             or_replace,
@@ -55,12 +53,12 @@ pub(crate) fn statement(statement: &DdlStatement) -> Result<(), ParserError> {
             span,
             ..
         } => {
-            reject_or_replace(*or_replace, *span, "CREATE OR REPLACE EDGE TYPE")?;
-            type_ddl(*span)?;
+            let _ = or_replace;
+            type_ddl(*span, uses);
             if *if_not_exists {
-                check_feature(FeatureId::GC03, *span)?;
+                record_feature(uses, FeatureId::GC03, *span);
             }
-            property_defs(properties)
+            property_defs(properties, uses);
         }
         DdlStatement::DropNodeType {
             if_exists, span, ..
@@ -68,49 +66,35 @@ pub(crate) fn statement(statement: &DdlStatement) -> Result<(), ParserError> {
         | DdlStatement::DropEdgeType {
             if_exists, span, ..
         } => {
-            type_ddl(*span)?;
+            type_ddl(*span, uses);
             if *if_exists {
-                check_feature(FeatureId::GC03, *span)?;
+                record_feature(uses, FeatureId::GC03, *span);
             }
-            Ok(())
         }
-        DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => type_ddl(*span),
+        DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
+            type_ddl(*span, uses);
+        }
     }
 }
 
-fn reject_or_replace(
-    or_replace: bool,
-    span: SourceSpan,
-    surface: &'static str,
-) -> Result<(), ParserError> {
-    if or_replace {
-        return Err(ParserError::not_implemented(
-            format!("{surface} is not part of ISO/IEC 39075:2024 catalog DDL"),
-            span,
-            Some("OR REPLACE has no ISO feature ID; drop the modifier or DROP+CREATE explicitly"),
-        ));
-    }
-    Ok(())
+fn type_ddl(span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
+    record_feature(uses, FeatureId::GG02, span);
+    record_feature(uses, FeatureId::GG20, span);
+    record_feature(uses, FeatureId::GG21, span);
 }
 
-fn type_ddl(span: crate::SourceSpan) -> Result<(), ParserError> {
-    check_feature(FeatureId::GG02, span)?;
-    check_feature(FeatureId::GG20, span)?;
-    check_feature(FeatureId::GG21, span)
-}
-
-fn property_defs(properties: &[TypePropertyDef]) -> Result<(), ParserError> {
+fn property_defs(properties: &[TypePropertyDef], uses: &mut Vec<FeatureUse>) {
     for property in properties {
+        expr::gql_type(&property.gql_type, property.span, uses);
         for constraint in &property.constraints {
-            property_constraint(constraint)?;
+            property_constraint(constraint, uses);
         }
     }
-    Ok(())
 }
 
-fn property_constraint(constraint: &TypePropertyConstraint) -> Result<(), ParserError> {
+fn property_constraint(constraint: &TypePropertyConstraint, uses: &mut Vec<FeatureUse>) {
     match constraint {
-        TypePropertyConstraint::Default(value, _) => expr::value(value),
+        TypePropertyConstraint::Default(value, _) => expr::value(value, uses),
         TypePropertyConstraint::NotNull(_)
         | TypePropertyConstraint::Immutable(_)
         | TypePropertyConstraint::Unique(_)
@@ -119,6 +103,6 @@ fn property_constraint(constraint: &TypePropertyConstraint) -> Result<(), Parser
         | TypePropertyConstraint::Dictionary(_)
         | TypePropertyConstraint::Fill(_, _)
         | TypePropertyConstraint::Interval(_, _)
-        | TypePropertyConstraint::Encoding(_, _) => Ok(()),
+        | TypePropertyConstraint::Encoding(_, _) => {}
     }
 }

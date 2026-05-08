@@ -89,6 +89,30 @@ jobs:
             cargo test --workspace --locked --all-features
           fi
 
+  parse-fuzz:
+    name: parse-fuzz
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: actions/cache@v4
+        with:
+          path: crates/selene-gql/fuzz/corpus
+          key: gql-fuzz-corpus-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: gql-fuzz-corpus-${{ runner.os }}-
+      - name: seed parse corpus
+        run: |
+          mkdir -p crates/selene-gql/fuzz/corpus/parse_gql
+          find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
+      - name: fuzz parser
+        working-directory: crates/selene-gql/fuzz
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=60
+
   deny:
     name: cargo-deny
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'

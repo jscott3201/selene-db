@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: GA01
+-- expects: parse-ok
+RETURN 1.5 + 2.25 AS total

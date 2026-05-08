@@ -1,0 +1,4 @@
+-- corpus: negative
+-- feature: G020
+-- expects: parse-rejected(syntax)
+MATCH ALL 2 SHORTEST (a)-[:KNOWS]->(b) RETURN b

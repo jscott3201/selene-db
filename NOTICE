@@ -14,9 +14,16 @@ notices required by Apache-2.0 / BSD / MPL-2.0 / etc.) are maintained in
 THIRDPARTY.md at the repo root, generated automatically from Cargo.lock by
 cargo-about. CI verifies the file is current; drift is a merge block.
 
-This NOTICE file lists source-level adaptations: code that was copied or
-non-trivially derived from a third-party project rather than pulled in as a
-crate dependency. As of the initial commit, there are no such adaptations.
+This NOTICE file lists source-level adaptations or vendored source fixtures:
+code or data that was copied or non-trivially derived from a third-party
+project rather than pulled in as a crate dependency.
+
+opengql/grammar samples
+
+The parser cross-validation samples under `crates/selene-testing/opengql/`
+are vendored from `opengql/grammar` revision `16ea71b` (`v1.9.0`), licensed
+under Apache-2.0. See `crates/selene-testing/opengql/ATTRIBUTION.md` for the
+source URL, pinned revision, and re-vendor policy.
 
 If you add a source-level adaptation in the future, append a section here
 naming the upstream source, its license (SPDX), and a brief note on what

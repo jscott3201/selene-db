@@ -13,8 +13,9 @@ members = [
     "crates/selene-graph",
     "crates/selene-persist",
     "crates/selene-gql",
+    "crates/selene-testing",
 ]
-exclude = ["_spec"]
+exclude = ["_spec", "crates/selene-gql/fuzz"]
 
 [workspace.package]
 version = "0.0.0"

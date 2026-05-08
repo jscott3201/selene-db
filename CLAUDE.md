@@ -143,12 +143,12 @@ v1.0 claims conformance with **minimum conformance + ~30–40 commonly-expected 
 
 - **Updatable graphs**: GD01 (implies GT01 explicit transactions); INSERT/SET/REMOVE/DELETE statements (clause 13).
 - **Catalog**: GC04 graph management (`CREATE/DROP GRAPH`); GG02 closed graph types (`CREATE/DROP GRAPH TYPE`); GC03 only for graph-type `IF [NOT] EXISTS` syntax.
-- **Procedures**: GP04 (named procedure calls — the extension hook), GP05–GP13 (procedure-local value/binding-table/graph variable definitions), GP14/GP15 (binding-table/graph procedure args).
+- **Procedures**: GP04 (named procedure calls — the extension hook). Procedure-local definitions and procedure argument types (GP05–GP15) are deferred until their grammar/AST surfaces land.
 - **Numeric types**: sized integer variants through 128-bit (GV01–GV14 plus SMALL/BIG synonyms GV05/GV10/GV18/GV19), DECIMAL (GV17), FLOAT32/FLOAT64 (GV21/GV24), and IEEE 754 operation behavior (GA01). GV15/GV16 256-bit integers and GV20/GV25/GV26 non-v1.0 float widths are not claimed.
-- **Strings/bytes**: BYTES/BINARY/VARBINARY (GV35), nullability syntax NOT NULL (GV90).
-- **Composite types**: LIST (GV50), PATH (GV55), RECORD open + closed (GV45–GV48), reference types GRAPH/NODE/EDGE/TABLE (GV60, GV61).
+- **Strings/bytes**: BYTES/BINARY/VARBINARY (GV35). Type-level nullability syntax (GV90) is deferred until the type AST carries nullability markers.
+- **Composite types**: LIST (GV50), PATH (GV55). RECORD open + closed (GV45–GV48) and reference types GRAPH/NODE/EDGE/TABLE (GV60, GV61) are deferred until their `type_name` grammar/builders land.
 - **Temporal types**: ZONED DATETIME, LOCAL DATETIME, DATE, ZONED TIME, LOCAL TIME, DURATION (GV39–GV41).
-- **Query surface**: composite queries / UNION (GQ03), GROUP BY (GQ15), CASE expressions, advanced path modes — SHORTEST/ALL SHORTEST/ANY (G015–G020), advanced predicates (G110–G115: IS DIRECTED, IS LABELED, IS SOURCE/DESTINATION, ALL_DIFFERENT, SAME, PROPERTY_EXISTS), plus NORMALIZED under the character-string predicate surface.
+- **Query surface**: composite queries / UNION (GQ03), GROUP BY (GQ15), CASE expressions, advanced path modes — SHORTEST/ALL SHORTEST/ANY (G015–G018), advanced predicates (G110–G115: IS DIRECTED, IS LABELED, IS SOURCE/DESTINATION, ALL_DIFFERENT, SAME, PROPERTY_EXISTS), plus NORMALIZED under the character-string predicate surface. Counted shortest selectors (G019/G020) are deferred until their `PathSelector` AST variants exist.
 - **Schema**: GG01 + GG02 (deferred to D3 below for the open-vs-closed-vs-both call), with GG20/GG21 explicit element type names and key label sets.
 
 Rationale: the user chose this over the recommended embedded-ready (~15-feature) target after weighing the trade-off. Marathon mindset accepts the larger scope; aether-db has already brought ~18 KLOC of donor parser/planner/AST forward, which de-risks the language-surface portion of this scope. The runtime/execute layer is the long pole.
@@ -157,6 +157,10 @@ Architectural implications:
 - The parser implements the supported feature surface; constructs outside that surface raise structured diagnostics with feature IDs at parse time. This **is** the GQL Flagger (clause 24.6). The canonical feature surface is `crates/selene-core/src/feature_register.rs::SUPPORTED_FEATURES`; spec prose and parser checks are generated or verified against it.
 - Per-crate LOC budgets revised: GQL crate budget moves from ~25K to ~35–45K to accommodate market-parity scope. Hard cap stays soft above 50K.
 - Decision D2 sets the *language* scope. The *runtime / executor* scope is a separate sizing question (factorized vs row-at-a-time; WCO vs hash-join) — captured in a future decision after extension API and persistence are settled.
+
+D2 amendment — 2026-05-08 — parser-reachable v1.0 claim list
+
+BRIEF-20 tightens the v1.0 optional-feature claim to parser-reachable surfaces only. `G019`/`G020`, `GP05`–`GP15`, `GV45`–`GV48`, `GV60`/`GV61`, and `GV90` move from `SUPPORTED_FEATURES` to `NOT_SUPPORTED_RATIONALE` until their grammar/AST surfaces exist. This keeps the GQL Flagger corpus zero-exception: every supported feature must have a positive parser corpus entry, and every non-supported referenced feature must have a negative entry. The original market-parity direction stands; these features are reclaimed by future briefs when their concrete parser surfaces land.
 
 ### D3 — Schema model: both GG01 + GG02 (2026-05-07)
 

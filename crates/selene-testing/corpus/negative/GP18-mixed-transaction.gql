@@ -1,0 +1,4 @@
+-- corpus: negative
+-- feature: GP18
+-- expects: parse-rejected(syntax)
+START TRANSACTION CREATE GRAPH demo
