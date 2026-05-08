@@ -1,6 +1,7 @@
 //! Graph-layer error types and GQLSTATUS mappings.
 
 use selene_core::{CoreError, EdgeId, IStr, NodeId};
+use selene_persist::PersistError;
 
 use crate::index_provider::ProviderError;
 use crate::typed_index::TypedIndexKind;
@@ -110,6 +111,11 @@ pub enum GraphError {
     #[error(transparent)]
     #[diagnostic(transparent)]
     Provider(#[from] ProviderError),
+
+    /// Error propagated from persistence recovery.
+    #[error(transparent)]
+    #[diagnostic(transparent)]
+    Persist(#[from] PersistError),
 }
 
 impl GraphError {
@@ -127,7 +133,7 @@ impl GraphError {
             | Self::PropertyIndexNotFound { .. }
             | Self::IndexValueRejected { .. } => "22023",
             Self::Core(_) => "22000",
-            Self::Provider(_) => "XX500",
+            Self::Provider(_) | Self::Persist(_) => "XX500",
         }
     }
 }
@@ -181,6 +187,7 @@ mod tests {
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag VECT".to_owned() }),
         "XX500"
     )]
+    #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "XX500")]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(

@@ -10,6 +10,7 @@ homepage.workspace = true
 
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
+selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
 imbl.workspace = true
@@ -18,6 +19,7 @@ roaring.workspace = true
 smallvec.workspace = true
 triomphe.workspace = true
 serde.workspace = true
+postcard.workspace = true
 thiserror.workspace = true
 miette.workspace = true
 tracing.workspace = true

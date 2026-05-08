@@ -7,10 +7,13 @@ use parking_lot::{Mutex, RwLock};
 
 use selene_core::{GraphId, IStr};
 
+use crate::adjacency::AdjacencyEdge;
+use crate::core_provider::CoreProvider;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
+use crate::store::EdgeStore;
 use crate::typed_index::TypedIndexKind;
 use crate::write_txn::WriteTxn;
 
@@ -66,7 +69,7 @@ impl SharedGraph {
     /// [`GraphError::Inconsistent`] when the graph's stores exceed the
     /// `u32` row capacity.
     pub fn try_from_graph(graph: SeleneGraph) -> GraphResult<Self> {
-        Self::from_graph_parts(graph, Vec::new())
+        Self::from_graph_with_core(graph, Vec::new())
     }
 
     /// Construct shared state from a graph snapshot and fixed provider list.
@@ -80,29 +83,39 @@ impl SharedGraph {
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
     ) -> GraphResult<Self> {
-        validate_unique_provider_tags(&providers)?;
-        Self::from_graph_parts(graph, providers)
+        Self::from_graph_with_core(graph, providers)
     }
 
-    fn from_graph_parts(
+    fn from_graph_with_core(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
     ) -> GraphResult<Self> {
+        let snapshot = Arc::new(ArcSwap::from_pointee(graph.clone()));
+        let core = CoreProvider::new_for_live(Arc::clone(&snapshot));
+        let mut all_providers = Vec::with_capacity(providers.len() + 1);
+        all_providers.push(core as Arc<dyn IndexProvider>);
+        all_providers.extend(providers);
+        validate_unique_provider_tags(&all_providers)?;
+        Self::from_graph_parts_and_snapshot(graph, all_providers, snapshot)
+    }
+
+    pub(crate) fn from_graph_parts_and_snapshot(
+        graph: SeleneGraph,
+        providers: Vec<Arc<dyn IndexProvider>>,
+        snapshot: Arc<ArcSwap<SeleneGraph>>,
+    ) -> GraphResult<Self> {
+        validate_unique_provider_tags(&providers)?;
         let mut graph = graph;
-        // Always rebuild label indexes from the canonical column data + alive
-        // bitmaps. Caller-supplied `idx_label`/`idx_edge_label` are treated as
-        // hints at best — derived state is computed from primary state to
-        // prevent silent drift on recovery, manual construction, or test
-        // fixtures.
-        rebuild_label_indexes(&mut graph)?;
+        rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
 
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
         let allocator = IdAllocator::from_meta_with_floors(&graph.meta, node_floor, edge_floor);
+        snapshot.store(Arc::new(graph.clone()));
         Ok(Self {
             shared: Arc::new(RwLock::new(graph.clone())),
-            snapshot: Arc::new(ArcSwap::new(Arc::new(graph))),
+            snapshot,
             allocator: Arc::new(Mutex::new(allocator)),
             providers,
         })
@@ -230,13 +243,15 @@ impl SharedGraphBuilder {
     ///
     /// Returns [`GraphError::Provider`] when provider tags are duplicated.
     pub fn build(self) -> GraphResult<SharedGraph> {
-        SharedGraph::from_graph_with_providers(self.graph, self.providers)
+        SharedGraph::from_graph_with_core(self.graph, self.providers)
     }
 }
 
-fn rebuild_label_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
+fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
     graph.idx_label.clear();
     graph.idx_edge_label.clear();
+    graph.adjacency_out.clear();
+    graph.adjacency_in.clear();
 
     let node_count = graph.node_store.labels.len();
     for row_index in 0..node_count {
@@ -271,7 +286,68 @@ fn rebuild_label_indexes(graph: &mut SeleneGraph) -> GraphResult<()> {
             graph.idx_edge_label.entry(*label).or_default().insert(row);
         }
     }
+    rebuild_adjacency(graph)?;
     Ok(())
+}
+
+fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
+    let edge_count = graph.edge_store.len();
+    for row_index in 0..edge_count {
+        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
+            reason: format!(
+                "edge store row index {row_index} exceeds u32::MAX; selene-graph \
+                 caps rows at u32::MAX",
+            ),
+        })?;
+        if !graph.edge_store.is_alive(row) {
+            continue;
+        }
+        let (label, source, target) = edge_row_parts(&graph.edge_store, row_index)?;
+        graph
+            .adjacency_out
+            .entry(source)
+            .or_default()
+            .add(AdjacencyEdge {
+                label,
+                neighbor: target,
+                edge_id: selene_core::EdgeId::new(row as u64 + 1),
+            });
+        graph
+            .adjacency_in
+            .entry(target)
+            .or_default()
+            .add(AdjacencyEdge {
+                label,
+                neighbor: source,
+                edge_id: selene_core::EdgeId::new(row as u64 + 1),
+            });
+    }
+    Ok(())
+}
+
+fn edge_row_parts(
+    store: &EdgeStore,
+    row_index: usize,
+) -> GraphResult<(IStr, selene_core::NodeId, selene_core::NodeId)> {
+    let label = *store
+        .label
+        .get(row_index)
+        .ok_or_else(|| GraphError::Inconsistent {
+            reason: format!("edge label column missing row {row_index}"),
+        })?;
+    let source = *store
+        .source
+        .get(row_index)
+        .ok_or_else(|| GraphError::Inconsistent {
+            reason: format!("edge source column missing row {row_index}"),
+        })?;
+    let target = *store
+        .target
+        .get(row_index)
+        .ok_or_else(|| GraphError::Inconsistent {
+            reason: format!("edge target column missing row {row_index}"),
+        })?;
+    Ok((label, source, target))
 }
 
 fn validate_unique_provider_tags(providers: &[Arc<dyn IndexProvider>]) -> GraphResult<()> {
@@ -294,6 +370,8 @@ mod tests {
     use selene_core::Change;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    use crate::CORE_PROVIDER_TAG;
 
     struct TestProvider {
         tag: ProviderTag,
@@ -340,14 +418,21 @@ mod tests {
     fn new_initial_state_is_empty() {
         let shared = SharedGraph::new(GraphId::new(1));
         assert_eq!(shared.read().node_count(), 0);
-        assert!(shared.providers.is_empty());
+        assert!(
+            shared
+                .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
+                .is_some()
+        );
     }
 
     #[test]
     fn builder_constructs_empty_graph() {
         let shared = SharedGraph::builder(GraphId::new(1)).build().unwrap();
         assert_eq!(shared.read().meta.graph_id, GraphId::new(1));
-        assert!(shared.providers.is_empty());
+        assert_eq!(
+            shared.providers[0].provider_tag(),
+            ProviderTag(CORE_PROVIDER_TAG)
+        );
     }
 
     #[test]
@@ -359,8 +444,12 @@ mod tests {
             .with_provider(second)
             .build()
             .unwrap();
-        assert_eq!(shared.providers[0].provider_tag(), ProviderTag(*b"ONE1"));
-        assert_eq!(shared.providers[1].provider_tag(), ProviderTag(*b"TWO2"));
+        assert_eq!(
+            shared.providers[0].provider_tag(),
+            ProviderTag(CORE_PROVIDER_TAG)
+        );
+        assert_eq!(shared.providers[1].provider_tag(), ProviderTag(*b"ONE1"));
+        assert_eq!(shared.providers[2].provider_tag(), ProviderTag(*b"TWO2"));
     }
 
     #[test]
@@ -401,11 +490,31 @@ mod tests {
     }
 
     #[test]
-    fn existing_constructors_remain_provider_free() {
+    fn public_constructors_auto_register_core_provider() {
         let from_new = SharedGraph::new(GraphId::new(1));
         let from_graph = SharedGraph::from_graph(SeleneGraph::new(GraphId::new(2)));
-        assert!(from_new.providers.is_empty());
-        assert!(from_graph.providers.is_empty());
+        assert!(
+            from_new
+                .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
+                .is_some()
+        );
+        assert!(
+            from_graph
+                .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn user_registered_core_tag_is_rejected() {
+        let result = SharedGraph::builder(GraphId::new(1))
+            .with_provider(Arc::new(TestProvider::new(ProviderTag(CORE_PROVIDER_TAG))))
+            .build();
+        assert!(matches!(
+            result,
+            Err(GraphError::Provider(ProviderError::Inconsistent { reason }))
+                if reason.contains("duplicate provider tag CORE")
+        ));
     }
 
     #[test]
@@ -527,6 +636,42 @@ mod tests {
             .edges_with_label(&edge_label)
             .expect("edge label present");
         assert_eq!(edges.iter().collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn from_graph_rebuilds_adjacency_from_edge_store() {
+        use selene_core::{LabelSet, NodeId as CoreNodeId, PropertyMap, intern};
+
+        let edge_label = intern("idx.edge.adj").unwrap();
+        let mut graph = SeleneGraph::new(GraphId::new(1));
+        for label in ["adj.node.a", "adj.node.b"] {
+            graph
+                .node_store
+                .labels
+                .push(LabelSet::single(intern(label).unwrap()));
+            graph.node_store.properties.push(PropertyMap::new());
+        }
+        graph.node_store.alive.insert(0);
+        graph.node_store.alive.insert(1);
+        graph.edge_store.label.push(edge_label);
+        graph.edge_store.source.push(CoreNodeId::new(1));
+        graph.edge_store.target.push(CoreNodeId::new(2));
+        graph.edge_store.properties.push(PropertyMap::new());
+        graph.edge_store.alive.insert(0);
+        graph.adjacency_out.clear();
+        graph.adjacency_in.clear();
+
+        let shared = SharedGraph::from_graph(graph);
+        let snapshot = shared.read();
+        let outgoing = snapshot
+            .outgoing_edges(CoreNodeId::new(1))
+            .expect("outgoing adjacency rebuilt");
+        let incoming = snapshot
+            .incoming_edges(CoreNodeId::new(2))
+            .expect("incoming adjacency rebuilt");
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(incoming.len(), 1);
+        assert_eq!(outgoing.iter().next().unwrap().label, edge_label);
     }
 
     #[test]
