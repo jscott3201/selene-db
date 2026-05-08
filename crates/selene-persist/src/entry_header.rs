@@ -25,6 +25,9 @@ pub(crate) const HEADER_SCRATCH_BYTES: usize = MAX_PRINCIPAL_BYTES + 128;
 /// last per spec 04 section 3.2 and D12. Future fields append after it as
 /// design intent, but any streaming-safe layout change still follows spec 04
 /// section 7 version-bump rules.
+///
+/// `origin` carries the full [`Origin`] enum (including `Replicated`'s
+/// `source_seq` for replication provenance) rather than a flattened node ID.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WalEntryHeader {
     /// Encoded on-disk payload length in bytes.
@@ -37,8 +40,8 @@ pub struct WalEntryHeader {
     pub hlc_seconds: u64,
     /// NTP64 HLC subseconds component.
     pub hlc_subseconds: u32,
-    /// Replication origin node ID, or `0` for local origin.
-    pub origin_node_id: u64,
+    /// Mutation origin (Local or Replicated with full provenance).
+    pub origin: Origin,
     /// Entry flags; bit 0 means the payload is zstd-compressed.
     pub flags: u8,
     /// Caller-owned opaque audit principal bytes, capped at 4 KiB.
@@ -64,17 +67,13 @@ impl WalEntryHeader {
     ) -> PersistResult<Self> {
         ensure_payload_len(payload_len)?;
         validate_principal(principal.as_deref())?;
-        let origin_node_id = match origin {
-            Origin::Local => 0,
-            Origin::Replicated { source_node_id, .. } => source_node_id.get(),
-        };
         Ok(Self {
             payload_len: payload_len as u32,
             checksum_lo,
             sequence,
             hlc_seconds: hlc.seconds,
             hlc_subseconds: hlc.subseconds,
-            origin_node_id,
+            origin,
             flags,
             principal,
         })
@@ -125,7 +124,14 @@ pub(crate) fn read_entry_header<R: Read>(
 ) -> PersistResult<(WalEntryHeader, R)> {
     let mut scratch = [0_u8; HEADER_SCRATCH_BYTES];
     match postcard::from_io::<WalEntryHeader, _>((reader, &mut scratch)) {
-        Ok((header, (reader, _))) => Ok((header, reader)),
+        Ok((header, (reader, _))) => {
+            // Revalidate caps on read so on-disk data cannot bypass the
+            // write-time invariants. Corrupt or maliciously-crafted bytes
+            // are rejected with the same typed errors as the write path.
+            ensure_payload_len(header.payload_len as usize)?;
+            validate_principal(header.principal.as_deref())?;
+            Ok((header, reader))
+        }
         Err(postcard::Error::DeserializeUnexpectedEnd) => {
             Err(PersistError::TruncatedEntry { offset })
         }
@@ -152,7 +158,7 @@ mod tests {
         let (decoded, remainder) = read_entry_header(bytes.as_slice(), 0).unwrap();
         assert_eq!(decoded, header);
         assert_eq!(remainder.len(), 0);
-        assert_eq!(decoded.origin_node_id, 0);
+        assert_eq!(decoded.origin, Origin::Local);
         assert_eq!(decoded.hlc(), HlcTimestamp::new(10, 20));
     }
 
@@ -174,7 +180,13 @@ mod tests {
         let bytes = encode_entry_header(&header).unwrap();
         let (decoded, _) = read_entry_header(bytes.as_slice(), 0).unwrap();
         assert_eq!(decoded, header);
-        assert_eq!(decoded.origin_node_id, 55);
+        assert_eq!(
+            decoded.origin,
+            Origin::Replicated {
+                source_node_id: NodeId::new(55),
+                source_seq: 88,
+            }
+        );
         assert!(decoded.is_payload_compressed());
         assert_eq!(decoded.principal.as_deref(), Some(b"alice".as_slice()));
     }

@@ -95,6 +95,11 @@ pub enum PersistError {
         /// File offset where the truncated entry started.
         offset: u64,
     },
+
+    /// Another writer holds the exclusive WAL lock.
+    #[error("wal writer lock is held by another process or handle")]
+    #[diagnostic(code(SLENE_P_013))]
+    WriterLockHeld,
 }
 
 impl PersistError {
@@ -113,7 +118,8 @@ impl PersistError {
             | Self::ChecksumMismatch { .. }
             | Self::NonMonotonicSequence { .. }
             | Self::TruncatedFileHeader
-            | Self::TruncatedEntry { .. } => "XX500",
+            | Self::TruncatedEntry { .. }
+            | Self::WriterLockHeld => "XX500",
         }
     }
 }
@@ -136,6 +142,7 @@ mod tests {
     #[case(PersistError::NonMonotonicSequence { previous: 7, current: 7 }, "XX500")]
     #[case(PersistError::TruncatedFileHeader, "XX500")]
     #[case(PersistError::TruncatedEntry { offset: 16 }, "XX500")]
+    #[case(PersistError::WriterLockHeld, "XX500")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
     }

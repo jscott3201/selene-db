@@ -1,7 +1,7 @@
 //! Append-only WAL writer.
 
 use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -26,6 +26,12 @@ pub struct WalConfig {
     /// commit. `0` is normalized to `1`.
     pub fsync_every_n: u32,
     /// Highest WAL sequence covered by the snapshot this file extends.
+    ///
+    /// Written into the file header on a fresh file, and used to seed
+    /// `last_sequence` so the first appended entry receives sequence
+    /// `snapshot_seq + 1`. On reopen, the on-disk header is the source of
+    /// truth and the config value is ignored — recovery never moves a
+    /// snapshot watermark backward.
     pub snapshot_seq: u64,
 }
 
@@ -39,11 +45,21 @@ impl Default for WalConfig {
 }
 
 /// Single-threaded append-only WAL writer.
+///
+/// Holds an exclusive OS-level file lock on the WAL file for the writer's
+/// lifetime, so a second `WalWriter::open` call on the same path
+/// (in-process or cross-process) fails fast with
+/// [`PersistError::WriterLockHeld`] rather than corrupting the log.
 pub struct WalWriter {
-    writer: BufWriter<File>,
+    file: File,
     last_sequence: u64,
     fsync_every_n: u32,
     entries_since_fsync: u32,
+    /// File offset of the last fully-committed entry's end. On any
+    /// append-time error, the file is truncated and re-seeked to this
+    /// offset so the writer's in-memory state and the on-disk state stay
+    /// consistent.
+    committed_offset: u64,
 }
 
 impl WalWriter {
@@ -52,10 +68,14 @@ impl WalWriter {
     /// Existing files are scanned once to find the last valid entry. A partial
     /// or checksum-invalid tail is truncated to the last valid offset.
     ///
+    /// Acquires an exclusive OS-level file lock; a second writer on the
+    /// same path fails immediately with
+    /// [`PersistError::WriterLockHeld`] instead of clobbering the log.
+    ///
     /// # Errors
     ///
-    /// Returns I/O, header, sequence, or checksum errors encountered while
-    /// opening and validating the WAL.
+    /// Returns I/O, header, sequence, lock, or checksum errors encountered
+    /// while opening and validating the WAL.
     pub fn open(path: &Path, config: WalConfig) -> PersistResult<Self> {
         let fsync_every_n = config.fsync_every_n.max(1);
         let mut file = OpenOptions::new()
@@ -64,14 +84,25 @@ impl WalWriter {
             .write(true)
             .truncate(false)
             .open(path)?;
+        // Acquire an exclusive lock before doing anything else. A second
+        // writer on the same path observes WriterLockHeld and returns
+        // without touching the file.
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(PersistError::WriterLockHeld);
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
+        }
         let len = file.metadata()?.len();
-        if len == 0 {
+        let header_snapshot_seq = if len == 0 {
             WalFileHeader::new(config.snapshot_seq).write_to(&mut file)?;
             file.sync_data()?;
+            config.snapshot_seq
         } else {
             file.seek(SeekFrom::Start(0))?;
-            WalFileHeader::read_from(&mut file)?;
-        }
+            WalFileHeader::read_from(&mut file)?.snapshot_seq
+        };
 
         let scan = scan_existing(&mut file)?;
         if scan.truncate_to < file.metadata()?.len() {
@@ -83,11 +114,17 @@ impl WalWriter {
         }
         file.seek(SeekFrom::Start(scan.truncate_to))?;
 
+        // Seed last_sequence from the larger of (header watermark, last
+        // scanned entry). On a fresh file, scan returns 0 and the
+        // watermark wins. On reopen with entries that already extend past
+        // the snapshot, the entry sequence wins.
+        let last_sequence = scan.last_sequence.max(header_snapshot_seq);
         Ok(Self {
-            writer: BufWriter::new(file),
-            last_sequence: scan.last_sequence,
+            file,
+            last_sequence,
             fsync_every_n,
             entries_since_fsync: 0,
+            committed_offset: scan.truncate_to,
         })
     }
 
@@ -95,8 +132,10 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns codec, cap, compression, or I/O errors. On error, the in-memory
-    /// sequence counter is not advanced.
+    /// Returns codec, cap, compression, or I/O errors. On any error, the
+    /// in-memory sequence counter is **not** advanced and the file is
+    /// truncated back to the last fully-committed entry, so the next
+    /// append (or a reopen + retry) observes a consistent state.
     pub fn append(
         &mut self,
         hlc: HlcTimestamp,
@@ -117,24 +156,45 @@ impl WalWriter {
             principal,
         )?;
         let header_bytes = encode_entry_header(&header)?;
-        self.writer.write_all(&header_bytes)?;
-        self.writer.write_all(&payload.bytes)?;
-        self.last_sequence = sequence;
-        self.entries_since_fsync += 1;
-        if self.entries_since_fsync >= self.fsync_every_n {
-            self.flush()?;
+        let pending_count = self.entries_since_fsync.saturating_add(1);
+        let needs_fsync = pending_count >= self.fsync_every_n;
+
+        // Single contiguous record. Write it in one syscall via a Vec
+        // assembly so partial writes are easier to reason about.
+        let mut record = Vec::with_capacity(header_bytes.len() + payload.bytes.len());
+        record.extend_from_slice(&header_bytes);
+        record.extend_from_slice(&payload.bytes);
+
+        let result = (|| -> PersistResult<()> {
+            self.file.write_all(&record)?;
+            if needs_fsync {
+                self.file.sync_data()?;
+            }
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                let new_offset = self.committed_offset.saturating_add(record.len() as u64);
+                self.committed_offset = new_offset;
+                self.last_sequence = sequence;
+                self.entries_since_fsync = if needs_fsync { 0 } else { pending_count };
+                Ok(sequence)
+            }
+            Err(error) => {
+                self.rollback_to_committed_offset();
+                Err(error)
+            }
         }
-        Ok(sequence)
     }
 
-    /// Flush buffered bytes and fsync the WAL file.
+    /// Flush + fsync without appending. Useful before snapshot publication.
     ///
     /// # Errors
     ///
-    /// Returns I/O errors from flush or fsync.
+    /// Returns I/O errors from fsync.
     pub fn flush(&mut self) -> PersistResult<()> {
-        self.writer.flush()?;
-        self.writer.get_ref().sync_data()?;
+        self.file.sync_data()?;
         self.entries_since_fsync = 0;
         Ok(())
     }
@@ -144,13 +204,28 @@ impl WalWriter {
     pub const fn last_sequence(&self) -> u64 {
         self.last_sequence
     }
+
+    /// Best-effort rollback to the last committed offset on append failure.
+    /// On rollback failure, the writer is left in a half-consistent state;
+    /// the caller should reopen the WAL (which scan-truncates on open) to
+    /// recover.
+    fn rollback_to_committed_offset(&mut self) {
+        if let Err(error) = self.file.set_len(self.committed_offset) {
+            tracing::error!(%error, "failed to truncate WAL after append error");
+            return;
+        }
+        if let Err(error) = self.file.seek(SeekFrom::Start(self.committed_offset)) {
+            tracing::error!(%error, "failed to seek WAL after append error");
+        }
+    }
 }
 
 impl Drop for WalWriter {
     fn drop(&mut self) {
-        if let Err(error) = self.flush() {
-            tracing::error!(%error, "failed to flush WAL writer on drop");
+        if let Err(error) = self.file.sync_data() {
+            tracing::error!(%error, "failed to fsync WAL writer on drop");
         }
+        // The exclusive file lock is released when `file` is dropped.
     }
 }
 
@@ -376,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn replicated_origin_node_id_is_written() {
+    fn replicated_origin_round_trips_node_id_and_source_seq() {
         let path = temp_path("origin");
         {
             let mut writer = WalWriter::open(&path, WalConfig::default()).unwrap();
@@ -394,7 +469,80 @@ mod tests {
         }
         let reader = WalReader::open(&path).unwrap();
         let entry = reader.iterate(|_| true).unwrap().next().unwrap().unwrap();
-        assert_eq!(entry.header.origin_node_id, 77);
+        assert_eq!(
+            entry.header.origin,
+            Origin::Replicated {
+                source_node_id: NodeId::new(77),
+                source_seq: 9,
+            }
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn snapshot_seq_seeds_first_appended_sequence() {
+        let path = temp_path("snapshot-seq-seed");
+        let mut writer = WalWriter::open(
+            &path,
+            WalConfig {
+                fsync_every_n: 1,
+                snapshot_seq: 100,
+            },
+        )
+        .unwrap();
+        // First append must follow snapshot_seq + 1 = 101, not start at 1.
+        let seq = writer
+            .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+            .unwrap();
+        assert_eq!(seq, 101);
+        assert_eq!(writer.last_sequence(), 101);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn reopen_uses_header_snapshot_seq_not_config() {
+        let path = temp_path("reopen-snapshot-seq");
+        // Create with snapshot_seq=100
+        {
+            let mut writer = WalWriter::open(
+                &path,
+                WalConfig {
+                    fsync_every_n: 1,
+                    snapshot_seq: 100,
+                },
+            )
+            .unwrap();
+            assert_eq!(writer.last_sequence(), 100);
+            writer
+                .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+                .unwrap();
+        }
+        // Reopen with a stale config.snapshot_seq=0 — header wins, last
+        // appended sequence (101) is recovered.
+        let writer = WalWriter::open(
+            &path,
+            WalConfig {
+                fsync_every_n: 1,
+                snapshot_seq: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(writer.last_sequence(), 101);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn second_writer_open_returns_writer_lock_held() {
+        let path = temp_path("lock");
+        let _first = WalWriter::open(&path, WalConfig::default()).unwrap();
+        let second = WalWriter::open(&path, WalConfig::default());
+        assert!(matches!(second, Err(PersistError::WriterLockHeld)));
+        drop(_first);
+        // After the first writer drops, a fresh open must succeed (the
+        // OS releases the file lock when the File handle closes).
+        let third = WalWriter::open(&path, WalConfig::default());
+        assert!(third.is_ok());
+        drop(third);
         let _ = fs::remove_file(path);
     }
 }
