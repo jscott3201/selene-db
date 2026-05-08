@@ -55,6 +55,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         self.txn.working.node_store.alive.insert(row as u32);
         insert_node_labels(&mut self.txn.working.idx_label, row as u32, &labels);
+        crate::property_index::apply_node_create(
+            &mut self.txn.working.property_index,
+            &labels,
+            &props,
+            row as u32,
+        );
         self.txn.changes.push(Change::NodeCreated {
             id,
             labels,
@@ -138,7 +144,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         let row = self.require_live_node(id)?;
 
         // Compute the new label set without mutating the working graph yet.
-        let mut labels = self
+        let old_labels = self
             .txn
             .working
             .node_store
@@ -146,6 +152,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .cloned()
             .unwrap_or_default();
+        let mut labels = old_labels.clone();
         for label in labels_diff.added.iter().copied() {
             labels.insert(label);
         }
@@ -156,7 +163,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // Apply the property diff up front; if it errors we leave the working
         // graph (including idx_label) untouched so the transaction can still
         // be safely rolled back or aborted without leaking inconsistent state.
-        let mut props = self
+        let old_props = self
             .txn
             .working
             .node_store
@@ -164,9 +171,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .cloned()
             .unwrap_or_default();
+        let mut props = old_props.clone();
         apply_property_diff(&mut props, &props_diff)?;
 
         // Now atomic in the working graph: write columns, then update indexes.
+        let new_labels = labels.clone();
+        let new_props = props.clone();
         self.txn.working.node_store.labels.set(row, labels);
         self.txn.working.node_store.properties.set(row, props);
         for label in labels_diff.added.iter().copied() {
@@ -175,6 +185,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         for label in labels_diff.removed.iter() {
             remove_index_row(&mut self.txn.working.idx_label, label, row as u32);
         }
+        crate::property_index::apply_node_update(
+            &mut self.txn.working.property_index,
+            &old_labels,
+            &old_props,
+            &new_labels,
+            &new_props,
+            row as u32,
+        );
 
         self.txn.changes.push(Change::NodeUpdated {
             id,
@@ -218,6 +236,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .get(row)
             .cloned()
             .unwrap_or_default();
+        let props = self
+            .txn
+            .working
+            .node_store
+            .properties
+            .get(row)
+            .cloned()
+            .unwrap_or_default();
         let mut incident = BTreeSet::new();
         if let Some(outgoing) = self.txn.working.adjacency_out.get(&id) {
             incident.extend(outgoing.iter().map(|edge| edge.edge_id));
@@ -226,6 +252,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             incident.extend(incoming.iter().map(|edge| edge.edge_id));
         }
         remove_node_labels(&mut self.txn.working.idx_label, row as u32, &labels);
+        crate::property_index::apply_node_delete(
+            &mut self.txn.working.property_index,
+            &labels,
+            &props,
+            row as u32,
+        );
         self.txn.working.node_store.alive.remove(row as u32);
         self.txn.changes.push(Change::NodeDeleted { id });
         for edge_id in incident {
