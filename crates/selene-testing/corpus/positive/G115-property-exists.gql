@@ -1,4 +1,4 @@
 -- corpus: positive
 -- feature: G115
 -- expects: parse-ok
-RETURN PROPERTY_EXISTS(n, 'name') AS ok
+MATCH (n) RETURN PROPERTY_EXISTS(n, 'name') AS ok

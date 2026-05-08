@@ -1,4 +1,4 @@
 -- corpus: positive
 -- feature: GQ15
 -- expects: parse-ok
-RETURN n GROUP BY n
+MATCH (n) RETURN n GROUP BY n

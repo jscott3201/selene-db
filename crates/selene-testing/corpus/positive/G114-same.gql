@@ -1,4 +1,4 @@
 -- corpus: positive
 -- feature: G114
 -- expects: parse-ok
-RETURN SAME(a, b) AS ok
+MATCH (a), (b) RETURN SAME(a, b) AS ok

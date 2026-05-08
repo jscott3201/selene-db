@@ -1,4 +1,4 @@
 -- corpus: positive
 -- feature: G111
 -- expects: parse-ok
-RETURN n IS LABELED :Person AS labeled
+MATCH (n:Person) RETURN n IS LABELED :Person AS labeled
