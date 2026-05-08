@@ -8,7 +8,7 @@
 
 [workspace]
 resolver = "3"
-members = ["crates/selene-core", "crates/selene-graph"]
+members = ["crates/selene-core", "crates/selene-graph", "crates/selene-persist"]
 exclude = ["_spec"]
 
 [workspace.package]
@@ -50,6 +50,8 @@ imbl = { version = "7.0", default-features = false }
 roaring = "0.11"
 triomphe = "0.1"
 tracing = "0.1"
+blake3 = "1.8"
+zstd = "0.13"
 
 # Dev dependencies.
 proptest = { version = "1.11", default-features = false, features = ["std"] }
