@@ -102,19 +102,32 @@ fn build_alias(pair: Pair<'_, Rule>) -> Result<selene_core::IStr, ParserError> {
         .into_inner()
         .find(|child| child.as_rule() == Rule::prop_ident)
         .ok_or_else(|| ParserError::syntax("AS alias is missing an identifier", span, None))?;
-    intern(prop_ident.as_str()).map_err(|error| {
+    let ident_span = SourceSpan::from_pest(prop_ident.as_span());
+    let canonical = decode_prop_ident(prop_ident.as_str());
+    intern(&canonical).map_err(|error| {
         ParserError::syntax(
             format!("could not intern alias: {error}"),
-            SourceSpan::from_pest(prop_ident.as_span()),
+            ident_span,
             Some("identifier interning cap may be exhausted".into()),
         )
     })
+}
+
+fn decode_prop_ident(text: &str) -> String {
+    if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        inner.replace("\"\"", "\"")
+    } else if let Some(inner) = text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+        inner.to_owned()
+    } else {
+        text.to_owned()
+    }
 }
 
 fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let span = SourceSpan::from_pest(pair.as_span());
     match pair.as_rule() {
         Rule::literal => build_literal(pair).map(ValueExpr::Literal),
+        Rule::unary => build_unary(pair, span),
         Rule::expr
         | Rule::or_expr
         | Rule::xor_expr
@@ -125,7 +138,6 @@ fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
         | Rule::concat
         | Rule::addition
         | Rule::multiplication
-        | Rule::unary
         | Rule::postfix
         | Rule::primary => {
             let mut children = pair.into_inner();
@@ -138,6 +150,64 @@ fn build_value_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
             build_value_expr(child)
         }
         _ => Err(ParserError::unsupported_bootstrap(span)),
+    }
+}
+
+fn build_unary(pair: Pair<'_, Rule>, outer_span: SourceSpan) -> Result<ValueExpr, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::unary);
+    let mut children = pair.into_inner();
+    let Some(first) = children.next() else {
+        return Err(ParserError::syntax("expression is empty", outer_span, None));
+    };
+
+    if first.as_rule() != Rule::sign_op {
+        if children.next().is_some() {
+            return Err(ParserError::unsupported_bootstrap(outer_span));
+        }
+        return build_value_expr(first);
+    }
+
+    let is_negative = first.as_str() == "-";
+    let Some(operand) = children.next() else {
+        return Err(ParserError::syntax(
+            "unary operator missing operand",
+            outer_span,
+            None,
+        ));
+    };
+    if children.next().is_some() {
+        return Err(ParserError::unsupported_bootstrap(outer_span));
+    }
+
+    let inner = build_value_expr(operand)?;
+    apply_sign(is_negative, inner, outer_span)
+}
+
+fn apply_sign(
+    is_negative: bool,
+    value: ValueExpr,
+    outer_span: SourceSpan,
+) -> Result<ValueExpr, ParserError> {
+    match value {
+        ValueExpr::Literal(Literal::Integer(v, _)) => {
+            let signed = if is_negative {
+                v.checked_neg().ok_or_else(|| {
+                    ParserError::syntax(
+                        "integer literal overflows i64 after negation",
+                        outer_span,
+                        Some("the most-negative i64 cannot be written as -<unsigned>".into()),
+                    )
+                })?
+            } else {
+                v
+            };
+            Ok(ValueExpr::Literal(Literal::Integer(signed, outer_span)))
+        }
+        ValueExpr::Literal(Literal::Float(v, _)) => {
+            let signed = if is_negative { -v } else { v };
+            Ok(ValueExpr::Literal(Literal::Float(signed, outer_span)))
+        }
+        _ => Err(ParserError::unsupported_bootstrap(outer_span)),
     }
 }
 
@@ -171,6 +241,7 @@ fn build_literal(pair: Pair<'_, Rule>) -> Result<Literal, ParserError> {
 }
 
 fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
+    validate_underscores(text, span)?;
     let normalized = text.replace('_', "");
     normalized
         .parse::<i64>()
@@ -185,10 +256,9 @@ fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
 }
 
 fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
-    let mut normalized = text.replace('_', "");
-    if matches!(normalized.as_bytes().last(), Some(b'f' | b'd')) {
-        normalized.pop();
-    }
+    let trimmed = text.strip_suffix(['f', 'd', 'F', 'D']).unwrap_or(text);
+    validate_underscores(trimmed, span)?;
+    let normalized = trimmed.replace('_', "");
     normalized
         .parse::<f64>()
         .map(|value| Literal::Float(value, span))
@@ -199,6 +269,39 @@ fn parse_f64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
                 None,
             )
         })
+}
+
+/// Reject `__` runs and trailing `_` in a numeric literal.
+///
+/// Aligns selene-db's underscore policy with Rust's: separators may appear
+/// between digits but never consecutively and never at the trailing edge.
+/// Leading underscores cannot occur because the grammar requires the literal
+/// to start with a digit (or sign + digit, the sign already extracted).
+fn validate_underscores(text: &str, span: SourceSpan) -> Result<(), ParserError> {
+    let bytes = text.as_bytes();
+    let mut prev_underscore = false;
+    for &b in bytes {
+        if b == b'_' {
+            if prev_underscore {
+                return Err(ParserError::syntax(
+                    "numeric literal contains consecutive underscores",
+                    span,
+                    Some("use `_` only between digits".into()),
+                ));
+            }
+            prev_underscore = true;
+        } else {
+            prev_underscore = false;
+        }
+    }
+    if prev_underscore {
+        return Err(ParserError::syntax(
+            "numeric literal cannot end with an underscore",
+            span,
+            Some("remove the trailing `_`".into()),
+        ));
+    }
+    Ok(())
 }
 
 fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {

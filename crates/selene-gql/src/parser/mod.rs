@@ -27,8 +27,9 @@ mod pest_impl {
 ///
 /// # Errors
 ///
-/// Returns [`ParserError::SyntaxError`] for parse failures and for grammar
-/// surfaces whose AST builders intentionally land after BRIEF-16.
+/// Returns [`ParserError::SyntaxError`] for parse failures and
+/// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
+/// intentionally land after BRIEF-16.
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     let mut pairs =
         GqlParser::parse(Rule::gql_program, source).map_err(|error| pest_error(source, error))?;
@@ -67,6 +68,7 @@ mod tests {
 
     use super::*;
     use crate::ast::{Literal, ValueExpr};
+    use crate::error::GqlStatus;
 
     fn only_item(source: &str) -> crate::ast::ReturnItem {
         let Statement::Return(statement) = parse(source).expect("parse succeeds");
@@ -155,10 +157,90 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_grammar_surface_returns_visible_error() {
-        assert!(matches!(
-            parse("MATCH (n) RETURN n"),
-            Err(ParserError::SyntaxError { .. })
-        ));
+    fn unsupported_grammar_surface_returns_not_implemented() {
+        let err = parse("MATCH (n) RETURN n").expect_err("unsupported grammar should error");
+        assert!(matches!(err, ParserError::NotImplemented { .. }));
+        assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    }
+
+    #[test]
+    fn parse_return_signed_integer() {
+        assert_eq!(
+            only_item("RETURN -1").expr,
+            ValueExpr::Literal(Literal::Integer(-1, SourceSpan::new(7, 2)))
+        );
+        assert_eq!(
+            only_item("RETURN +42").expr,
+            ValueExpr::Literal(Literal::Integer(42, SourceSpan::new(7, 3)))
+        );
+    }
+
+    #[test]
+    fn parse_return_signed_float() {
+        assert_eq!(
+            only_item("RETURN -1.5").expr,
+            ValueExpr::Literal(Literal::Float(-1.5, SourceSpan::new(7, 4)))
+        );
+        assert_eq!(
+            only_item("RETURN +0.25").expr,
+            ValueExpr::Literal(Literal::Float(0.25, SourceSpan::new(7, 5)))
+        );
+    }
+
+    #[test]
+    fn signed_integer_overflow_reports_syntax_error() {
+        // `-9223372036854775808` is i64::MIN; pest produces unary(-) over the
+        // unsigned magnitude `9223372036854775808`, which doesn't fit in i64.
+        // BRIEF-17 will fold the sign into int_lit decoding; for now this is a
+        // bounded, intentional limitation surfaced as a syntax error.
+        let err =
+            parse("RETURN -9223372036854775808").expect_err("magnitude overflow should error");
+        assert!(matches!(err, ParserError::SyntaxError { .. }));
+    }
+
+    #[test]
+    fn parse_return_alias_quoted() {
+        let item = only_item("RETURN 1 AS \"my name\"");
+        assert_eq!(
+            item.alias,
+            Some(intern("my name").expect("intern succeeds"))
+        );
+    }
+
+    #[test]
+    fn parse_return_alias_quoted_doubled_quote() {
+        let item = only_item("RETURN 1 AS \"a\"\"b\"");
+        assert_eq!(item.alias, Some(intern("a\"b").expect("intern succeeds")));
+    }
+
+    #[test]
+    fn parse_return_alias_backtick() {
+        let item = only_item("RETURN 1 AS `my name`");
+        assert_eq!(
+            item.alias,
+            Some(intern("my name").expect("intern succeeds"))
+        );
+    }
+
+    #[test]
+    fn malformed_underscores_in_integer_rejected() {
+        for source in ["RETURN 1__2", "RETURN 1_"] {
+            let err = parse(source).expect_err("malformed underscores should error");
+            assert!(
+                matches!(err, ParserError::SyntaxError { .. }),
+                "expected SyntaxError for {source:?}, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_decimal_literal_reports_not_implemented() {
+        // Hex/oct/bin/uint/temporal/list literals parse at the grammar level
+        // but their builders land in BRIEF-17. Surface them as
+        // NotImplemented (0A000), not SyntaxError, so callers can distinguish
+        // capability gaps from typos.
+        let err = parse("RETURN 0x10").expect_err("hex literal should report not implemented");
+        assert!(matches!(err, ParserError::NotImplemented { .. }));
+        assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
 }

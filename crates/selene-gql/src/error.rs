@@ -77,6 +77,25 @@ pub enum ParserError {
         #[label("introduces too many new names")]
         span: SourceSpan,
     },
+
+    /// Source parsed at the grammar level, but no AST builder is implemented yet.
+    ///
+    /// Distinct from [`Self::SyntaxError`] (parse failed) and
+    /// [`Self::UnsupportedFeature`] (specific ISO feature not in the claim list).
+    /// This variant covers grammar surfaces selene-db will support but whose
+    /// builders land in a later brief.
+    #[error("not implemented: {message}")]
+    #[diagnostic(code(SLENE_GQL_0A000))]
+    NotImplemented {
+        /// Human-readable description of the missing capability.
+        message: String,
+        /// Source span requiring the missing capability.
+        #[label("not implemented yet")]
+        span: SourceSpan,
+        /// Pointer to the brief or milestone that lands the capability.
+        #[help]
+        hint: Option<String>,
+    },
 }
 
 impl ParserError {
@@ -85,7 +104,9 @@ impl ParserError {
     pub const fn gqlstatus(&self) -> GqlStatus {
         match self {
             Self::SyntaxError { status, .. } => *status,
-            Self::UnsupportedFeature { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::UnsupportedFeature { .. } | Self::NotImplemented { .. } => {
+                GqlStatus::FEATURE_NOT_SUPPORTED
+            }
             Self::IdentifierLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
         }
     }
@@ -104,11 +125,13 @@ impl ParserError {
     }
 
     pub(crate) fn unsupported_bootstrap(span: SourceSpan) -> Self {
-        Self::syntax(
-            "BRIEF-16 parser bootstrap only supports RETURN literal statements",
+        Self::NotImplemented {
+            message: "BRIEF-16 parser bootstrap only supports RETURN literal statements".into(),
             span,
-            Some("MATCH, mutation, DDL, CALL, and expression builders land in later briefs".into()),
-        )
+            hint: Some(
+                "MATCH, mutation, DDL, CALL, and expression builders land in later briefs".into(),
+            ),
+        }
     }
 
     pub(crate) fn empty_program() -> Self {
