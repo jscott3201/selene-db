@@ -1,0 +1,27 @@
+[package]
+name = "selene-persist"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "WAL and snapshot persistence formats for selene-db."
+
+[dependencies]
+selene-core = { path = "../selene-core", version = "0.0.0" }
+thiserror.workspace = true
+miette.workspace = true
+serde.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+blake3.workspace = true
+zstd.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+rstest.workspace = true
+
+[lints]
+workspace = true

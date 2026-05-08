@@ -20,6 +20,7 @@ pub mod codec;
 pub mod error;
 pub mod extension_type_ids;
 pub mod feature_register;
+pub mod hlc;
 pub mod identity;
 pub mod istr;
 pub mod label_set;
@@ -36,6 +37,7 @@ pub use extension_type_ids::{
     ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_FULLTEXT, SELENE_RDF,
     SELENE_TIMESERIES, SELENE_VECTOR,
 };
+pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
 pub use istr::{IStr, intern, resolve};
 pub use label_set::LabelSet;

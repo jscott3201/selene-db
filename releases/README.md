@@ -17,3 +17,4 @@ context needed by users upgrading a full selene-db workspace.
 - BRIEF-07: selene-graph foundation bootstrapped with chunked SoA storage, lock-free snapshots, serialized write transactions, SharedGraph-level ID allocation, and the Mutator change funnel; indexes/schema validation remain deferred.
 - BRIEF-08: selene-graph added built-in node/edge label indexes, the `IndexProvider` extension trait, provider registration/lookup, and log-and-continue provider notification on commit.
 - BRIEF-09: selene-graph added built-in `TypedIndex` node property indexes with strict registration, mutation-funnel maintenance, read accessors, and a six-kind v1.0 index surface.
+- BRIEF-10: selene-persist bootstrapped the v1.0 single-file WAL (`wal.log`) with SLDB headers, postcard/zstd payloads, blake3-low-32 checksums, HLC/origin/principal audit headers, writer append/group-commit, and lazy reader iteration.

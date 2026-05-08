@@ -1,0 +1,413 @@
+//! Read-only WAL iteration.
+
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::marker::PhantomData;
+use std::path::{Path, PathBuf};
+
+use selene_core::Change;
+
+use crate::entry_header::{ensure_payload_len, read_entry_header};
+use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
+use crate::payload::{decode_changes, verify_checksum};
+use crate::{PersistError, PersistResult, WalEntryHeader};
+
+/// WAL reader for a single WAL file.
+pub struct WalReader {
+    path: PathBuf,
+    snapshot_seq: u64,
+}
+
+impl WalReader {
+    /// Open and validate a WAL file for read-only iteration.
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O or file-header validation errors.
+    pub fn open(path: &Path) -> PersistResult<Self> {
+        let mut file = File::open(path)?;
+        let header = WalFileHeader::read_from(&mut file)?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            snapshot_seq: header.snapshot_seq,
+        })
+    }
+
+    /// Highest WAL sequence covered by the snapshot this file extends.
+    #[must_use]
+    pub const fn snapshot_seq(&self) -> u64 {
+        self.snapshot_seq
+    }
+
+    /// Iterate entries whose headers match `filter`.
+    ///
+    /// The iterator reads payload bytes to advance the stream, but postcard
+    /// body decoding is deferred until [`WalEntryView::body`] is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O errors from opening a fresh read handle.
+    pub fn iterate<F>(&self, filter: F) -> PersistResult<WalEntryStream<'_>>
+    where
+        F: Fn(&WalEntryHeader) -> bool + 'static,
+    {
+        let mut file = File::open(&self.path)?;
+        WalFileHeader::read_from(&mut file)?;
+        let file_len = file.metadata()?.len();
+        Ok(WalEntryStream {
+            file,
+            file_len,
+            next_offset: WAL_FILE_HEADER_LEN as u64,
+            previous_sequence: 0,
+            filter: Box::new(filter),
+            stopped: false,
+            _marker: PhantomData,
+        })
+    }
+}
+
+/// Streaming WAL entry iterator.
+pub struct WalEntryStream<'a> {
+    file: File,
+    file_len: u64,
+    next_offset: u64,
+    previous_sequence: u64,
+    filter: Box<dyn Fn(&WalEntryHeader) -> bool>,
+    stopped: bool,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl<'a> Iterator for WalEntryStream<'a> {
+    type Item = PersistResult<WalEntryView<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.stopped {
+            return None;
+        }
+        loop {
+            if self.next_offset >= self.file_len {
+                self.stopped = true;
+                return None;
+            }
+
+            let offset = self.next_offset;
+            if let Err(error) = self.file.seek(SeekFrom::Start(offset)) {
+                self.stopped = true;
+                return Some(Err(error.into()));
+            }
+            let header = match read_entry_header(&mut self.file, offset) {
+                Ok((header, _)) => header,
+                Err(error) => {
+                    self.stopped = true;
+                    return Some(Err(error));
+                }
+            };
+            if header.sequence <= self.previous_sequence {
+                self.stopped = true;
+                return Some(Err(PersistError::NonMonotonicSequence {
+                    previous: self.previous_sequence,
+                    current: header.sequence,
+                }));
+            }
+
+            let payload_len = header.payload_len as usize;
+            if let Err(error) = ensure_payload_len(payload_len) {
+                self.stopped = true;
+                return Some(Err(error));
+            }
+            let payload_start = match self.file.stream_position() {
+                Ok(position) => position,
+                Err(error) => {
+                    self.stopped = true;
+                    return Some(Err(error.into()));
+                }
+            };
+            let payload_end = payload_start.saturating_add(u64::from(header.payload_len));
+            if payload_end > self.file_len {
+                self.stopped = true;
+                return Some(Err(PersistError::TruncatedEntry { offset }));
+            }
+            let mut payload = vec![0_u8; payload_len];
+            if let Err(error) = self.file.read_exact(&mut payload) {
+                self.stopped = true;
+                return Some(Err(error.into()));
+            }
+
+            self.previous_sequence = header.sequence;
+            self.next_offset = payload_end;
+            if !(self.filter)(&header) {
+                continue;
+            }
+            return Some(Ok(WalEntryView {
+                header,
+                payload,
+                _marker: PhantomData,
+            }));
+        }
+    }
+}
+
+/// Header-filtered WAL entry view with lazily decoded body.
+pub struct WalEntryView<'a> {
+    /// Decoded entry header.
+    pub header: WalEntryHeader,
+    payload: Vec<u8>,
+    _marker: PhantomData<&'a ()>,
+}
+
+impl WalEntryView<'_> {
+    /// Validate the checksum and decode the body as `Vec<Change>`.
+    ///
+    /// # Errors
+    ///
+    /// Returns checksum, compression, or postcard payload decode errors.
+    pub fn body(&self) -> PersistResult<Vec<Change>> {
+        verify_checksum(&self.header, &self.payload)?;
+        decode_changes(&self.payload, self.header.is_payload_compressed())
+    }
+
+    /// Consume this view and return a fully decoded WAL entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns checksum, compression, or postcard payload decode errors.
+    pub fn into_entry(self) -> PersistResult<WalEntry> {
+        let changes = self.body()?;
+        Ok(WalEntry {
+            header: self.header,
+            changes,
+        })
+    }
+}
+
+/// Fully decoded WAL entry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WalEntry {
+    /// Decoded entry header.
+    pub header: WalEntryHeader,
+    /// Decoded `Vec<Change>` body.
+    pub changes: Vec<Change>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+    use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
+
+    use super::*;
+    use crate::entry_header::encode_entry_header;
+    use crate::file_header::WalFileHeader;
+    use crate::payload::{checksum_lo, encode_changes};
+    use crate::{WalConfig, WalWriter};
+
+    fn temp_path(name: &str) -> std::path::PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "selene-persist-reader-{name}-{}-{nanos}.wal",
+            std::process::id()
+        ))
+    }
+
+    fn changes(id: u64) -> Vec<Change> {
+        vec![Change::NodeCreated {
+            id: NodeId::new(id),
+            labels: LabelSet::single(intern("reader.node").unwrap()),
+            properties: PropertyMap::from_pairs([(intern("reader.p").unwrap(), Value::Int(1))])
+                .unwrap(),
+        }]
+    }
+
+    fn append(path: &Path, principal: Option<Arc<[u8]>>, id: u64) {
+        let mut writer = WalWriter::open(path, WalConfig::default()).unwrap();
+        writer
+            .append(
+                HlcTimestamp::new(id, 0),
+                Origin::Local,
+                principal,
+                &changes(id),
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn empty_wal_iterates_no_entries() {
+        let path = temp_path("empty");
+        {
+            let _writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+        }
+        let reader = WalReader::open(&path).unwrap();
+        assert_eq!(reader.snapshot_seq(), 0);
+        assert!(reader.iterate(|_| true).unwrap().next().is_none());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn entries_round_trip() {
+        let path = temp_path("round");
+        append(&path, None, 1);
+        append(&path, None, 2);
+        let reader = WalReader::open(&path).unwrap();
+        let entries: Vec<_> = reader
+            .iterate(|_| true)
+            .unwrap()
+            .map(|result| result.unwrap().into_entry().unwrap())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].changes, changes(1));
+        assert_eq!(entries[1].changes, changes(2));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn header_filter_skips_unmatched_bodies() {
+        let path = temp_path("filter");
+        append(&path, Some(Arc::from(b"alice".as_slice())), 1);
+        append(&path, Some(Arc::from(b"bob".as_slice())), 2);
+        let reader = WalReader::open(&path).unwrap();
+        let entries: Vec<_> = reader
+            .iterate(|header| header.principal.as_deref() == Some(b"alice".as_slice()))
+            .unwrap()
+            .map(|result| result.unwrap().into_entry().unwrap())
+            .collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].header.principal.as_deref(),
+            Some(b"alice".as_slice())
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn checksum_corruption_is_reported_by_body() {
+        let path = temp_path("checksum");
+        append(&path, None, 1);
+        {
+            let mut bytes = fs::read(&path).unwrap();
+            let last = bytes.last_mut().unwrap();
+            *last ^= 0xFF;
+            fs::write(&path, bytes).unwrap();
+        }
+        let reader = WalReader::open(&path).unwrap();
+        let view = reader.iterate(|_| true).unwrap().next().unwrap().unwrap();
+        assert!(matches!(
+            view.body(),
+            Err(PersistError::ChecksumMismatch { sequence: 1 })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn truncated_entry_stops_iterator_with_error() {
+        let path = temp_path("trunc");
+        append(&path, None, 1);
+        let len = fs::metadata(&path).unwrap().len();
+        {
+            let file = OpenOptions::new().write(true).open(&path).unwrap();
+            file.set_len(len - 1).unwrap();
+        }
+        let reader = WalReader::open(&path).unwrap();
+        assert!(matches!(
+            reader.iterate(|_| true).unwrap().next().unwrap(),
+            Err(PersistError::TruncatedEntry { .. })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn non_monotonic_sequence_is_reported() {
+        let path = temp_path("nonmono");
+        let payload = encode_changes(&changes(1)).unwrap();
+        let header1 = WalEntryHeader::new(
+            payload.bytes.len(),
+            payload.checksum_lo,
+            1,
+            HlcTimestamp::zero(),
+            Origin::Local,
+            payload.flags,
+            None,
+        )
+        .unwrap();
+        let header2 = WalEntryHeader::new(
+            payload.bytes.len(),
+            payload.checksum_lo,
+            1,
+            HlcTimestamp::zero(),
+            Origin::Local,
+            payload.flags,
+            None,
+        )
+        .unwrap();
+        {
+            let mut file = File::create(&path).unwrap();
+            WalFileHeader::new(0).write_to(&mut file).unwrap();
+            file.write_all(&encode_entry_header(&header1).unwrap())
+                .unwrap();
+            file.write_all(&payload.bytes).unwrap();
+            file.write_all(&encode_entry_header(&header2).unwrap())
+                .unwrap();
+            file.write_all(&payload.bytes).unwrap();
+        }
+        let reader = WalReader::open(&path).unwrap();
+        let mut stream = reader.iterate(|_| true).unwrap();
+        assert!(stream.next().unwrap().unwrap().body().is_ok());
+        assert!(matches!(
+            stream.next().unwrap(),
+            Err(PersistError::NonMonotonicSequence {
+                previous: 1,
+                current: 1
+            })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn major_version_mismatch_is_rejected() {
+        let path = temp_path("version");
+        {
+            let mut file = File::create(&path).unwrap();
+            file.write_all(b"SLDB").unwrap();
+            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&0_u16.to_le_bytes()).unwrap();
+            file.write_all(&0_u64.to_le_bytes()).unwrap();
+        }
+        assert!(matches!(
+            WalReader::open(&path),
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 0 })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn malformed_payload_reports_payload_codec() {
+        let path = temp_path("payload-codec");
+        let payload = vec![0xFF, 0xFF, 0xFF];
+        let header = WalEntryHeader::new(
+            payload.len(),
+            checksum_lo(&payload),
+            1,
+            HlcTimestamp::zero(),
+            Origin::Local,
+            0,
+            None,
+        )
+        .unwrap();
+        {
+            let mut file = File::create(&path).unwrap();
+            WalFileHeader::new(0).write_to(&mut file).unwrap();
+            file.write_all(&encode_entry_header(&header).unwrap())
+                .unwrap();
+            file.write_all(&payload).unwrap();
+        }
+        let reader = WalReader::open(&path).unwrap();
+        let view = reader.iterate(|_| true).unwrap().next().unwrap().unwrap();
+        assert!(matches!(view.body(), Err(PersistError::PayloadCodec(_))));
+        let _ = fs::remove_file(path);
+    }
+}
