@@ -17,6 +17,61 @@ fn prop(name: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
 }
 
+fn full_value_property_map(prefix: &str) -> PropertyMap {
+    PropertyMap::from_pairs([
+        (
+            intern(&format!("{prefix}.bool")).unwrap(),
+            Value::Bool(true),
+        ),
+        (intern(&format!("{prefix}.int")).unwrap(), Value::Int(-7)),
+        (
+            intern(&format!("{prefix}.float")).unwrap(),
+            Value::Float(1.25),
+        ),
+        (
+            intern(&format!("{prefix}.string")).unwrap(),
+            Value::String(intern("core.values.string").unwrap()),
+        ),
+        (
+            intern(&format!("{prefix}.decimal")).unwrap(),
+            Value::Decimal("123.45".parse().unwrap()),
+        ),
+        (
+            intern(&format!("{prefix}.bytes")).unwrap(),
+            Value::Bytes(Arc::from([1_u8, 2, 3, 4])),
+        ),
+        (
+            intern(&format!("{prefix}.uuid")).unwrap(),
+            Value::Uuid(uuid::Uuid::from_u128(42)),
+        ),
+        (
+            intern(&format!("{prefix}.zoned_datetime")).unwrap(),
+            Value::ZonedDateTime(
+                "2026-05-07T12:34:56-04:00[America/New_York]"
+                    .parse()
+                    .unwrap(),
+            ),
+        ),
+        (
+            intern(&format!("{prefix}.date")).unwrap(),
+            Value::Date("2026-05-07".parse().unwrap()),
+        ),
+        (
+            intern(&format!("{prefix}.local_datetime")).unwrap(),
+            Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap()),
+        ),
+        (
+            intern(&format!("{prefix}.local_time")).unwrap(),
+            Value::LocalTime("12:34:56".parse().unwrap()),
+        ),
+        (
+            intern(&format!("{prefix}.duration")).unwrap(),
+            Value::Duration("PT1H2M3S".parse().unwrap()),
+        ),
+    ])
+    .unwrap()
+}
+
 fn graph_with_node() -> SeleneGraph {
     let shared = SharedGraph::builder(GraphId::new(1)).build().unwrap();
     let mut txn = shared.begin_write();
@@ -145,6 +200,50 @@ fn encode_decode_round_trip_edges() {
     assert_eq!(rows[0].0, EdgeId::new(1));
     assert_eq!(rows[0].1.source, NodeId::new(1));
     assert_eq!(rows[0].1.target, NodeId::new(2));
+}
+
+#[test]
+fn bytecheck_rejects_truncated_node_section() {
+    let graph = graph_with_node();
+    let mut bytes = encode_nodes(&graph).unwrap();
+    let new_len = bytes.len().saturating_sub(16);
+    bytes.truncate(new_len);
+    assert!(matches!(
+        decode_nodes(&bytes),
+        Err(ProviderError::InvalidPayload { reason }) if reason.contains("bytecheck")
+    ));
+}
+
+#[test]
+fn bytecheck_rejects_corrupted_section_header() {
+    let graph = graph_with_node();
+    let mut bytes = encode_nodes(&graph).unwrap();
+    bytes[0] ^= 0x80;
+    assert!(matches!(
+        decode_nodes(&bytes),
+        Err(ProviderError::InvalidPayload { reason }) if reason.contains("bytecheck")
+    ));
+}
+
+#[test]
+fn properties_blob_round_trips_full_value_set() {
+    let shared = SharedGraph::builder(GraphId::new(3)).build().unwrap();
+    let expected = full_value_property_map("core.values");
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(intern("core.values.node").unwrap()),
+                expected.clone(),
+            )
+            .unwrap();
+    }
+    txn.commit().unwrap();
+
+    let rows = decode_nodes(&encode_nodes(shared.read().as_ref()).unwrap()).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].1.properties, expected);
 }
 
 #[test]

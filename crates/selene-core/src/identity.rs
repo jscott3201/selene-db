@@ -12,7 +12,19 @@ macro_rules! identity_id {
         /// start at `1`, and callers maintain that invariant when constructing
         /// IDs directly.
         #[derive(
-            Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize,
+            Clone,
+            Copy,
+            Debug,
+            Deserialize,
+            Eq,
+            Hash,
+            Ord,
+            PartialEq,
+            PartialOrd,
+            rkyv::Archive,
+            rkyv::Deserialize,
+            rkyv::Serialize,
+            Serialize,
         )]
         #[repr(transparent)]
         pub struct $Name(u64);
@@ -77,6 +89,24 @@ mod tests {
     #[test]
     fn display_includes_type_name_and_value() {
         assert_eq!(NodeId::new(42).to_string(), "NodeId(42)");
+    }
+
+    #[test]
+    fn identity_types_rkyv_round_trip() {
+        macro_rules! assert_round_trip {
+            ($ty:ident, $raw:expr) => {{
+                let value = $ty::new($raw);
+                let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&value).unwrap();
+                let round: $ty = rkyv::from_bytes::<$ty, rkyv::rancor::Error>(&bytes).unwrap();
+                assert_eq!(round, value);
+            }};
+        }
+
+        assert_round_trip!(NodeId, 1);
+        assert_round_trip!(EdgeId, 2);
+        assert_round_trip!(GraphId, 3);
+        assert_round_trip!(BindingTableId, 4);
+        assert_round_trip!(RecordTypeId, 5);
     }
 
     proptest! {

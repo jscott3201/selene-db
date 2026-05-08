@@ -5,6 +5,15 @@
 //! Edges semantically carry exactly one label, but that constraint is enforced
 //! by `selene-graph`, not by this plain set type.
 
+use std::error::Error;
+use std::fmt;
+
+use rkyv::{
+    Archive, Archived, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize,
+    rancor::{Fallible, Source},
+    ser::{Allocator, Writer},
+    vec::{ArchivedVec, VecResolver},
+};
 use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
@@ -13,6 +22,17 @@ use crate::IStr;
 /// Sorted set of graph labels.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 pub struct LabelSet(SmallVec<[IStr; 3]>);
+
+#[derive(Debug)]
+struct InvalidArchivedLabelSet;
+
+impl fmt::Display for InvalidArchivedLabelSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("archived LabelSet must be sorted by IStr order with no duplicates")
+    }
+}
+
+impl Error for InvalidArchivedLabelSet {}
 
 impl LabelSet {
     /// Construct an empty label set.
@@ -118,6 +138,45 @@ impl<'de> Deserialize<'de> for LabelSet {
             }
         }
         Ok(Self(raw))
+    }
+}
+
+impl Archive for LabelSet {
+    type Archived = ArchivedVec<Archived<IStr>>;
+    type Resolver = VecResolver;
+
+    fn resolve(&self, resolver: Self::Resolver, out: Place<Self::Archived>) {
+        ArchivedVec::resolve_from_slice(self.0.as_slice(), resolver, out);
+    }
+}
+
+impl<S> RkyvSerialize<S> for LabelSet
+where
+    S: Fallible + Allocator + Writer + ?Sized,
+    IStr: RkyvSerialize<S>,
+{
+    fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
+        ArchivedVec::serialize_from_slice(self.0.as_slice(), serializer)
+    }
+}
+
+impl<D> RkyvDeserialize<LabelSet, D> for ArchivedVec<Archived<IStr>>
+where
+    D: Fallible + ?Sized,
+    D::Error: Source,
+    Archived<IStr>: RkyvDeserialize<IStr, D>,
+{
+    fn deserialize(&self, deserializer: &mut D) -> Result<LabelSet, D::Error> {
+        let mut raw = SmallVec::new();
+        for label in self.as_slice() {
+            raw.push(label.deserialize(deserializer)?);
+        }
+        for window in raw.windows(2) {
+            if window[0] >= window[1] {
+                rkyv::rancor::fail!(InvalidArchivedLabelSet);
+            }
+        }
+        Ok(LabelSet(raw))
     }
 }
 
@@ -247,6 +306,25 @@ mod tests {
         }));
         assert_eq!(large.len(), 100);
         assert!(large.sorted_deduped_invariant_holds());
+    }
+
+    #[test]
+    fn rkyv_deserialize_round_trips_sorted_set() {
+        let a = label("ls.rkyv.a");
+        let b = label("ls.rkyv.b");
+        let set = LabelSet::from_iter([a, b]);
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&set).unwrap();
+        let round: LabelSet = rkyv::from_bytes::<LabelSet, rkyv::rancor::Error>(&bytes).unwrap();
+        assert_eq!(round, set);
+    }
+
+    #[test]
+    fn rkyv_deserialize_rejects_unsorted_payload() {
+        let a = label("ls.rkyv.bad.a");
+        let b = label("ls.rkyv.bad.b");
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![b, a]).unwrap();
+        let result = rkyv::from_bytes::<LabelSet, rkyv::rancor::Error>(&bytes);
+        assert!(result.is_err());
     }
 
     proptest! {
