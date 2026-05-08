@@ -11,7 +11,9 @@ use selene_core::Change;
 use selene_persist::{RecoveryError, RecoveryProvider, RecoveryResult};
 
 use crate::core_provider::recovery_state::RecoveryState;
-use crate::core_provider::sections::{encode_edges, encode_meta, encode_nodes, encode_schemas};
+use crate::core_provider::sections::{
+    encode_edges, encode_graph_types, encode_meta, encode_nodes, encode_schemas,
+};
 use crate::error::GraphResult;
 use crate::graph::SeleneGraph;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
@@ -20,6 +22,8 @@ use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 pub const CORE_PROVIDER_TAG: [u8; 4] = *b"CORE";
 /// Core metadata subsection tag under [`CORE_PROVIDER_TAG`].
 pub const CORE_META_SUB: [u8; 4] = *b"META";
+/// Core graph-type subsection tag under [`CORE_PROVIDER_TAG`].
+pub const CORE_GTYP_SUB: [u8; 4] = *b"GTYP";
 /// Core node-column subsection tag under [`CORE_PROVIDER_TAG`].
 pub const CORE_NODE_SUB: [u8; 4] = *b"NODE";
 /// Core edge-column subsection tag under [`CORE_PROVIDER_TAG`].
@@ -28,6 +32,7 @@ pub const CORE_EDGE_SUB: [u8; 4] = *b"EDGE";
 pub const CORE_SCMA_SUB: [u8; 4] = *b"SCMA";
 
 const CORE_SUB_TAGS: &[SubTag] = &[
+    SubTag(CORE_GTYP_SUB),
     SubTag(CORE_META_SUB),
     SubTag(CORE_NODE_SUB),
     SubTag(CORE_EDGE_SUB),
@@ -84,6 +89,7 @@ impl CoreProvider {
     pub fn finish_recovery(
         self: Arc<Self>,
         expected_graph_id: selene_core::GraphId,
+        expected_bound_type: Option<Arc<crate::graph_types::GraphTypeDef>>,
     ) -> GraphResult<SeleneGraph> {
         let mut inner = self.inner.lock();
         match &mut *inner {
@@ -92,7 +98,7 @@ impl CoreProvider {
             }
             CoreInner::Recovery { state } => {
                 let state = std::mem::take(state);
-                state.into_graph(expected_graph_id)
+                state.into_graph(expected_graph_id, expected_bound_type)
             }
         }
     }
@@ -113,6 +119,7 @@ impl CoreProvider {
             CoreInner::Live { snapshot } => {
                 let graph = snapshot.load_full();
                 match sub_tag.0 {
+                    CORE_GTYP_SUB => encode_graph_types(&graph),
                     CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
                     CORE_NODE_SUB => encode_nodes(&graph),
                     CORE_EDGE_SUB => encode_edges(&graph),

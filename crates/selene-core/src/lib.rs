@@ -27,6 +27,7 @@ pub mod istr;
 pub mod label_set;
 pub mod origin;
 pub mod property_map;
+pub mod property_value_type;
 pub mod schema;
 pub mod value;
 pub mod value_adapter;
@@ -45,6 +46,7 @@ pub use istr::{IStr, intern, resolve};
 pub use label_set::LabelSet;
 pub use origin::Origin;
 pub use property_map::PropertyMap;
+pub use property_value_type::PropertyValueType;
 pub use schema::{
     EdgeTypeDef, GraphType, GraphTypeId, KeyLabelSetPolicy, NodeKey, NodeTypeDef, NodeTypeRef,
     PredefinedValueType, PropertyDef, RecordTypeDef, RecordTypeRef, ValueType,

@@ -323,6 +323,14 @@ The `ProcedurePackRegistry` stores three independent slices of `Arc<dyn GraphPro
 
 Pack activation, deprecation, and disable transitions flow through the normal mutation funnel: `Mutator → SchemaChanged → WAL entry (with D12 principal slot) → snapshot`. There is no separate `AuditEntry` node, no `EMITTED_AUDIT` edge, and no parallel audit channel. Audit replay is via `selene_persist::wal_iterate(filter)` — the same path D12 established for mutation audit. A convenience procedure `selene.pack.history(pack_name)` wraps the filter and returns `(event_kind, principal, hlc, transition)` rows for callers that want a direct query API rather than the WAL iterator. Audit-outlives-subjects holds because the WAL is append-only: a deleted pack's lifecycle history remains queryable from prior WAL entries indefinitely. Symmetric with mutation audit (D12) — one audit channel for everything; no parallel ledger. Runtime details live in `_spec/05-extension-architecture.md` §5.
 
+### D19 — GG02 catalog shape: per-graph immutable runtime binding (2026-05-08)
+
+BRIEF-15 settles the v1.0 closed-graph catalog placement as `GraphMeta::bound_type: Option<Arc<GraphTypeDef>>` on each `SeleneGraph`. `None` is GG01/open graph; `Some` is GG02/closed graph. The binding is supplied at graph construction through `SharedGraph::builder(graph_id).bound_to(type_def)` and is immutable afterward. There is no rebinding API in v1.0 because a graph type is part of a graph's identity; changing it is a create-new-graph/catalog operation for a later GQL layer.
+
+The rejected alternatives are deliberate. A process-wide graph-type registry would create lifetime and cross-instance ownership questions before selene-db has multi-graph catalog machinery. Reserved-label catalog nodes are attractive long-term but create reflection cycles ("what type does the GraphType node have?") and would force catalog bootstrapping into the graph runtime. v1.0 keeps the runtime direct: the published `ArcSwap<SeleneGraph>` snapshot shares the `Arc<GraphTypeDef>` cheaply with readers, and closed-graph commits validate through a pure `type_validator` module before publication.
+
+Persistence stores the binding through `CORE/GTYP` plus a scalar `META.bound_type_index`, not by archiving the live `Arc` inside `META`. This keeps metadata compact, avoids duplicate graph type bytes, and leaves room for future multi-graph/type-table expansion without changing the v1.0 CORE provider tag.
+
 ### D4 — Extension architecture: procedure-pack + feature-gated workspace modules (2026-05-07)
 
 The extension system is the procedure-pack model from `aether-db`, ported with the per-tier-Context fix. Concretely:

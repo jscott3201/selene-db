@@ -11,6 +11,7 @@ use crate::adjacency::AdjacencyEdge;
 use crate::core_provider::CoreProvider;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
+use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
 use crate::store::EdgeStore;
@@ -108,6 +109,14 @@ impl SharedGraph {
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
+        if let Some(type_def) = graph.meta.bound_type.as_deref() {
+            // Why: GraphMeta is publicly constructible, so SharedGraph::from_graph
+            // can land a malformed bound_type that bypassed builder().bound_to()'s
+            // validate(). Re-check self-consistency here so every constructor
+            // arrives at the same closed-graph admissibility contract.
+            type_def.validate_ref()?;
+            crate::type_validator::validate_entity_state(&graph, type_def)?;
+        }
 
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
@@ -125,6 +134,18 @@ impl SharedGraph {
     #[must_use]
     pub fn read(&self) -> Arc<SeleneGraph> {
         self.snapshot.load_full()
+    }
+
+    /// Return the bound graph type, if this is a closed graph.
+    #[must_use]
+    pub fn graph_type(&self) -> Option<Arc<GraphTypeDef>> {
+        self.read().meta.bound_type.as_ref().map(Arc::clone)
+    }
+
+    /// Return true when this graph is bound to a closed graph type.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.read().meta.bound_type.is_some()
     }
 
     /// Look up a registered provider by tag.
@@ -235,6 +256,22 @@ impl SharedGraphBuilder {
     pub fn with_provider(mut self, provider: Arc<dyn IndexProvider>) -> Self {
         self.providers.push(provider);
         self
+    }
+
+    /// Bind this graph to `type_def` at construction time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Inconsistent`] when the builder is already bound
+    /// or when `type_def` fails self-consistency validation.
+    pub fn bound_to(mut self, type_def: GraphTypeDef) -> GraphResult<Self> {
+        if self.graph.meta.bound_type.is_some() {
+            return Err(GraphError::Inconsistent {
+                reason: "graph builder is already bound to a graph type".to_owned(),
+            });
+        }
+        self.graph.meta.bound_type = Some(Arc::new(type_def.validate()?));
+        Ok(self)
     }
 
     /// Build shared graph state and validate provider registration.
@@ -367,7 +404,7 @@ fn validate_unique_provider_tags(providers: &[Arc<dyn IndexProvider>]) -> GraphR
 mod tests {
     use super::*;
     use parking_lot::Mutex;
-    use selene_core::Change;
+    use selene_core::{Change, LabelSet, PropertyValueType, intern};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -414,6 +451,22 @@ mod tests {
         }
     }
 
+    fn sample_type() -> GraphTypeDef {
+        GraphTypeDef {
+            name: intern("shared.type").unwrap(),
+            node_types: vec![crate::NodeTypeDef {
+                name: intern("shared.node").unwrap(),
+                key_labels: LabelSet::single(intern("SharedNode").unwrap()),
+                properties: vec![crate::PropertyTypeDef {
+                    name: intern("shared.name").unwrap(),
+                    value_type: PropertyValueType::String,
+                    required: true,
+                }],
+            }],
+            edge_types: Vec::new(),
+        }
+    }
+
     #[test]
     fn new_initial_state_is_empty() {
         let shared = SharedGraph::new(GraphId::new(1));
@@ -433,6 +486,28 @@ mod tests {
             shared.providers[0].provider_tag(),
             ProviderTag(CORE_PROVIDER_TAG)
         );
+    }
+
+    #[test]
+    fn builder_bound_to_constructs_closed_graph() {
+        let graph_type = sample_type();
+        let shared = SharedGraph::builder(GraphId::new(1))
+            .bound_to(graph_type.clone())
+            .unwrap()
+            .build()
+            .unwrap();
+        assert!(shared.is_closed());
+        assert_eq!(shared.graph_type().as_deref(), Some(&graph_type));
+    }
+
+    #[test]
+    fn builder_bound_to_rejects_invalid_type() {
+        let mut graph_type = sample_type();
+        graph_type.node_types[0].key_labels = LabelSet::new();
+        assert!(matches!(
+            SharedGraph::builder(GraphId::new(1)).bound_to(graph_type),
+            Err(GraphError::Inconsistent { reason }) if reason.contains("empty label set")
+        ));
     }
 
     #[test]

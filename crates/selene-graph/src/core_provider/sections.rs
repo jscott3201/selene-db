@@ -29,6 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload, serialization_failed};
 use crate::graph::{GraphMeta, SeleneGraph};
+use crate::graph_types::GraphTypeDef;
 use crate::typed_index::TypedIndexKind;
 
 struct ArcBytes;
@@ -76,8 +77,16 @@ where
     Serialize,
 )]
 pub struct MetaPayload {
-    /// Graph snapshot metadata.
-    pub meta: GraphMeta,
+    /// Graph identifier.
+    pub graph_id: selene_core::GraphId,
+    /// Published generation counter.
+    pub generation: u64,
+    /// Next node ID to allocate.
+    pub next_node_id: u64,
+    /// Next edge ID to allocate.
+    pub next_edge_id: u64,
+    /// Index into the `CORE/GTYP` table for closed graphs.
+    pub bound_type_index: Option<u32>,
     /// Persistence sequence associated with the metadata payload.
     pub sequence: u64,
 }
@@ -216,7 +225,11 @@ pub(super) fn encode_meta(
 ) -> Result<Vec<u8>, crate::ProviderError> {
     encode_rkyv(
         &MetaPayload {
-            meta: meta.clone(),
+            graph_id: meta.graph_id,
+            generation: meta.generation,
+            next_node_id: meta.next_node_id,
+            next_edge_id: meta.next_edge_id,
+            bound_type_index: meta.bound_type.as_ref().map(|_| 0),
             sequence,
         },
         "CORE/META",
@@ -225,6 +238,24 @@ pub(super) fn encode_meta(
 
 pub(super) fn decode_meta(bytes: &[u8]) -> Result<MetaPayload, crate::ProviderError> {
     decode_rkyv(bytes, "CORE/META")
+}
+
+pub(super) fn encode_graph_types(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
+    let rows = graph
+        .meta
+        .bound_type
+        .as_ref()
+        .map(|type_def| vec![(0_u32, (**type_def).clone())])
+        .unwrap_or_default();
+    encode_rkyv(&rows, "CORE/GTYP")
+}
+
+pub(super) fn decode_graph_types(
+    bytes: &[u8],
+) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
+    let rows: Vec<(u32, GraphTypeDef)> = decode_rkyv(bytes, "CORE/GTYP")?;
+    validate_sorted_unique(&rows, "CORE/GTYP")?;
+    Ok(rows)
 }
 
 pub(super) fn encode_nodes(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {

@@ -120,6 +120,7 @@ mod tests {
             generation: 7,
             next_node_id: 42,
             next_edge_id: 99,
+            bound_type: None,
         };
         let allocator = IdAllocator::from_meta(&meta);
         assert_eq!(allocator.peek_next_node(), 42);
@@ -133,6 +134,7 @@ mod tests {
             generation: 0,
             next_node_id: 5,
             next_edge_id: 50,
+            bound_type: None,
         };
         let allocator = IdAllocator::from_meta_with_floors(&meta, 10, 30);
         assert_eq!(
@@ -150,6 +152,7 @@ mod tests {
             generation: 0,
             next_node_id: 100,
             next_edge_id: 200,
+            bound_type: None,
         };
         let allocator = IdAllocator::from_meta_with_floors(&meta, 1, 1);
         assert_eq!(allocator.peek_next_node(), 100);
