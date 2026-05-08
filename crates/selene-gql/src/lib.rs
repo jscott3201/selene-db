@@ -15,7 +15,8 @@ pub mod parser;
 pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
     BindingDeclKind, BindingId, BindingScope, BindingScopeTree, BindingUse, BindingUseKind,
-    ScopeId, ScopeKind, analyze,
+    ConditionClause, ExpectedType, ExprId, ExprIdMap, ExprTypeTable, ScopeId, ScopeKind, Side,
+    TypeMismatchContext, analyze,
 };
 pub use crate::ast::{
     call::{ProcedureCall, YieldColumn, YieldItem},

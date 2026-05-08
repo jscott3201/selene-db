@@ -2,7 +2,10 @@
 
 use crate::{
     DeleteStatement, MutationPipeline, MutationStatement, MutationTerminator, RemoveItem, SetItem,
-    analyze::{binding::BindingUseKind, error::AnalysisError},
+    analyze::{
+        binding::BindingUseKind,
+        error::{AnalysisError, ConditionClause},
+    },
 };
 
 use super::{BindContext, expr, pattern, query};
@@ -29,7 +32,10 @@ fn bind_mutation_statement(
 ) -> Result<(), AnalysisError> {
     match statement {
         MutationStatement::Match(clause) => pattern::bind_match_clause(ctx, clause),
-        MutationStatement::Filter(value) => expr::bind_value_expr(ctx, value),
+        MutationStatement::Filter(value) => {
+            expr::bind_condition(ctx, value, ConditionClause::Filter)?;
+            Ok(())
+        }
         MutationStatement::Insert(insert) => {
             for graph_pattern in &insert.patterns {
                 pattern::bind_insert_graph_pattern(ctx, graph_pattern)?;

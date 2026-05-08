@@ -21,6 +21,8 @@ impl GqlStatus {
     pub const UNDEFINED_REFERENCE: Self = Self(*b"42703");
     /// Duplicate object or binding name.
     pub const DUPLICATE_OBJECT: Self = Self(*b"42710");
+    /// Datatype mismatch.
+    pub const DATATYPE_MISMATCH: Self = Self(*b"42883");
 
     /// Return this status as its 5-character string form.
     #[must_use]
