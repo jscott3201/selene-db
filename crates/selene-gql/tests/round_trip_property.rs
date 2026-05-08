@@ -18,6 +18,42 @@ fn representative_read_shapes_round_trip() {
 }
 
 #[test]
+fn typed_list_predicate_preserves_element_type() {
+    // Regression for Codex P2 on PR #24: fmt_type was hard-coding every
+    // List(_) to "LIST<STRING>" so `IS TYPED LIST<INT8>` round-tripped
+    // into `IS TYPED LIST<STRING>` and structurally-equal failed.
+    for source in [
+        "RETURN n IS TYPED LIST<INT8>",
+        "RETURN n IS TYPED LIST<INTEGER>",
+        "RETURN n IS TYPED LIST<DATE>",
+        "RETURN n IS TYPED LIST<LIST<INT32>>",
+    ] {
+        assert_round_trip(source);
+    }
+}
+
+#[test]
+fn reserved_word_aliases_are_quoted_in_formatted_output() {
+    // Regression for Codex P2 on PR #24: the formatter's KEYWORDS list
+    // was much smaller than the grammar's reserved-word set, so
+    // identifiers whose uppercase form is a keyword (DISTINCT, WITH,
+    // ASC, MIN, BY, ...) could emit bare and reparse as the keyword
+    // instead of as an identifier.
+    for source in [
+        "RETURN 1 AS \"DISTINCT\"",
+        "RETURN 1 AS \"WITH\"",
+        "RETURN 1 AS \"ASC\"",
+        "RETURN 1 AS \"BY\"",
+        "RETURN 1 AS \"MIN\"",
+        "RETURN 1 AS \"COUNT\"",
+        "RETURN 1 AS \"NULL\"",
+        "RETURN 1 AS \"AND\"",
+    ] {
+        assert_round_trip(source);
+    }
+}
+
+#[test]
 fn positive_read_corpus_round_trips_under_proptest() {
     let sources = load_default_corpus()
         .expect("corpus loads")

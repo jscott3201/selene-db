@@ -431,7 +431,7 @@ fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 if index > 0 {
                     out.push('.');
                 }
-                out.push_str(&fmt_ident(*part));
+                out.push_str(&fmt_call_segment(*part));
             }
             out.push('(');
             if *distinct {
@@ -670,45 +670,55 @@ fn fmt_path_mode(mode: PathMode) -> &'static str {
     }
 }
 
-fn fmt_type(ty: &crate::GqlType) -> &'static str {
+fn fmt_type(ty: &crate::GqlType) -> String {
     match ty {
-        crate::GqlType::String => "STRING",
-        crate::GqlType::Boolean => "BOOLEAN",
-        crate::GqlType::Integer => "INTEGER",
-        crate::GqlType::Float => "FLOAT",
-        crate::GqlType::Int8 => "INT8",
-        crate::GqlType::Int16 => "INT16",
-        crate::GqlType::Int32 => "INT32",
-        crate::GqlType::Int64 => "INT64",
-        crate::GqlType::Int128 => "INT128",
-        crate::GqlType::Uint8 => "UINT8",
-        crate::GqlType::Uint16 => "UINT16",
-        crate::GqlType::Uint32 => "UINT32",
-        crate::GqlType::Uint64 => "UINT64",
-        crate::GqlType::Uint128 => "UINT128",
-        crate::GqlType::SmallInt => "SMALLINT",
-        crate::GqlType::BigInt => "BIGINT",
-        crate::GqlType::Decimal => "DECIMAL",
-        crate::GqlType::Float32 => "FLOAT32",
-        crate::GqlType::Float64 => "FLOAT64",
-        crate::GqlType::Bytes => "BYTES",
-        crate::GqlType::Binary => "BYTES",
-        crate::GqlType::VarBinary => "BYTES",
-        crate::GqlType::ZonedDateTime => "ZONED DATETIME",
-        crate::GqlType::LocalDateTime => "LOCAL DATETIME",
-        crate::GqlType::Date => "DATE",
-        crate::GqlType::ZonedTime => "ZONED TIME",
-        crate::GqlType::LocalTime => "LOCAL TIME",
-        crate::GqlType::Duration => "DURATION",
-        crate::GqlType::List(_) => "LIST<STRING>",
-        crate::GqlType::Path => "PATH",
-        crate::GqlType::Null => "NULL",
-        crate::GqlType::Nothing => "NOTHING",
+        crate::GqlType::String => "STRING".to_owned(),
+        crate::GqlType::Boolean => "BOOLEAN".to_owned(),
+        crate::GqlType::Integer => "INTEGER".to_owned(),
+        crate::GqlType::Float => "FLOAT".to_owned(),
+        crate::GqlType::Int8 => "INT8".to_owned(),
+        crate::GqlType::Int16 => "INT16".to_owned(),
+        crate::GqlType::Int32 => "INT32".to_owned(),
+        crate::GqlType::Int64 => "INT64".to_owned(),
+        crate::GqlType::Int128 => "INT128".to_owned(),
+        crate::GqlType::Uint8 => "UINT8".to_owned(),
+        crate::GqlType::Uint16 => "UINT16".to_owned(),
+        crate::GqlType::Uint32 => "UINT32".to_owned(),
+        crate::GqlType::Uint64 => "UINT64".to_owned(),
+        crate::GqlType::Uint128 => "UINT128".to_owned(),
+        crate::GqlType::SmallInt => "SMALLINT".to_owned(),
+        crate::GqlType::BigInt => "BIGINT".to_owned(),
+        crate::GqlType::Decimal => "DECIMAL".to_owned(),
+        crate::GqlType::Float32 => "FLOAT32".to_owned(),
+        crate::GqlType::Float64 => "FLOAT64".to_owned(),
+        crate::GqlType::Bytes => "BYTES".to_owned(),
+        crate::GqlType::Binary => "BYTES".to_owned(),
+        crate::GqlType::VarBinary => "BYTES".to_owned(),
+        crate::GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),
+        crate::GqlType::LocalDateTime => "LOCAL DATETIME".to_owned(),
+        crate::GqlType::Date => "DATE".to_owned(),
+        crate::GqlType::ZonedTime => "ZONED TIME".to_owned(),
+        crate::GqlType::LocalTime => "LOCAL TIME".to_owned(),
+        crate::GqlType::Duration => "DURATION".to_owned(),
+        // Recurse into the element type so `LIST<INT8>` round-trips
+        // through parse-format-parse without rewriting the element type
+        // (Codex P2 on PR #24: a hard-coded "LIST<STRING>" silently broke
+        // the §D3 round-trip property for typed-list predicates).
+        crate::GqlType::List(inner) => format!("LIST<{}>", fmt_type(inner)),
+        crate::GqlType::Path => "PATH".to_owned(),
+        crate::GqlType::Null => "NULL".to_owned(),
+        crate::GqlType::Nothing => "NOTHING".to_owned(),
+        // Variants below are AST-only today (BRIEF-20 §K1 demoted them
+        // from SUPPORTED_FEATURES because the parser cannot construct
+        // them). The fallback never runs through the round-trip property
+        // because no parser path produces these shapes; it survives so
+        // synthesised AST shapes that reach the formatter still get a
+        // string instead of a panic.
         crate::GqlType::Record(_)
         | crate::GqlType::GraphRef
         | crate::GqlType::NodeRef
         | crate::GqlType::EdgeRef
-        | crate::GqlType::TableRef => "STRING",
+        | crate::GqlType::TableRef => "STRING".to_owned(),
     }
 }
 
@@ -720,8 +730,89 @@ fn fmt_ident(value: IStr) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
 
+/// Format a function-call name segment.
+///
+/// Same quoting policy as [`fmt_ident`], minus the aggregate-op tokens.
+/// The grammar's `aggregate_expr` rule (see `parser/grammar.pest`) demands
+/// the bare keyword (case-insensitive) so it can recognise `count(*)` as
+/// the COUNT aggregate; quoting any of those names breaks the parse.
+/// Aggregate ops are not safe identifier names anyway — they are
+/// grammar-reserved at every site where this function is consulted.
+fn fmt_call_segment(value: IStr) -> String {
+    let value = value.as_str();
+    if is_simple_ident(value) {
+        let upper = value.to_ascii_uppercase();
+        let is_aggregate = AGGREGATE_OPS.contains(&upper.as_str());
+        let is_keyword = KEYWORDS.contains(&upper.as_str());
+        if is_aggregate || !is_keyword {
+            return value.to_owned();
+        }
+    }
+    format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+/// Aggregate-op keywords reserved by the `aggregate_expr` grammar rule.
+///
+/// Per `parser/grammar.pest` line 454, these tokens MUST appear bare in
+/// function-call position so the parser can route the call through the
+/// aggregate path (which accepts `*` and `DISTINCT`). Quoting any of them
+/// rewrites the parse from aggregate to a generic function call and the
+/// argument list shape diverges.
+const AGGREGATE_OPS: &[&str] = &[
+    "AVERAGE",
+    "AVG",
+    "COLLECT",
+    "COLLECT_LIST",
+    "COUNT",
+    "MAX",
+    "MIN",
+    "STDDEV_POP",
+    "STDDEV_SAMP",
+    "SUM",
+];
+
+/// Reserved-word set against which [`fmt_ident`] decides whether to quote.
+///
+/// Derived from every `^"WORD"` keyword token referenced in
+/// `crates/selene-gql/src/parser/grammar.pest`. The list is intentionally
+/// over-conservative: any identifier whose uppercase form matches an entry
+/// is quoted in the formatted output. Over-quoting is round-trip-safe
+/// because [`crate::parser::builders::decode_ident_like`] strips the
+/// surrounding quotes and returns the same case-preserved bytes for both
+/// `name` and `"name"`.
+///
+/// Codex P2 on PR #24 caught the previous, much shorter list (24 entries):
+/// identifiers like `DISTINCT`, `WITH`, `ASC` could be emitted bare and
+/// then re-parse as keywords, breaking the §D3 round-trip property.
 #[rustfmt::skip]
-const KEYWORDS: &[&str] = &["MATCH", "RETURN", "FILTER", "WHERE", "ORDER", "LIMIT", "OFFSET", "GROUP", "LET", "SET", "DELETE", "INSERT", "REMOVE", "CALL", "YIELD", "AS", "START", "COMMIT", "ROLLBACK", "UNION", "INTERSECT", "EXCEPT", "OTHERWISE", "NEXT"];
+const KEYWORDS: &[&str] = &[
+    "ACYCLIC", "AFTER", "ALL", "ALL_DIFFERENT", "AND", "ANY", "ARRAY", "AS",
+    "ASC", "AT", "AVERAGE", "AVG", "BETWEEN", "BIGINT", "BINDING", "BINDINGS",
+    "BOOL", "BOOLEAN", "BOTH", "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST",
+    "COLLECT", "COLLECT_LIST", "COMMIT", "CONNECTING", "CONTAINS", "COUNT",
+    "CREATE", "DATE", "DATETIME", "DAY", "DEC", "DECIMAL", "DEFAULT", "DELETE",
+    "DESC", "DESTINATION", "DETACH", "DICTIONARY", "DIFFERENT", "DIRECTED",
+    "DISTINCT", "DOUBLE", "DROP", "DURATION", "EDGE", "EDGES", "ELEMENTS",
+    "ELSE", "ENCODING", "END", "ENDS", "EXCEPT", "EXECUTE", "EXISTS", "EXTENDS",
+    "FALSE", "FILL", "FILTER", "FINISH", "FIRST", "FLOAT", "FOR", "FROM",
+    "GRANT", "GRAPH", "GROUP", "HAVING", "HOUR", "IF", "IMMUTABLE", "IN",
+    "INDEX", "INDEXED", "INSERT", "INT", "INTEGER", "INTERSECT", "INTERVAL",
+    "IS", "KEEP", "LABELED", "LABELS", "LAST", "LEADING", "LET", "LIKE",
+    "LIMIT", "LIST", "LOCAL", "MATCH", "MATERIALIZED", "MAX", "MERGE", "MIN",
+    "MINUTE", "MONTH", "NEXT", "NFC", "NFD", "NFKC", "NFKD", "NO", "NODE",
+    "NODETACH", "NONE", "NORMALIZED", "NOT", "NOTHING", "NULL", "NULLS", "OF",
+    "OFFSET", "ON", "ONLY", "OPTIONAL", "OR", "ORDER", "OTHERWISE", "PASSWORD",
+    "PATH", "PRECISION", "PROCEDURE", "PROPERTY_EXISTS", "REAL", "RECORD",
+    "REDUCE", "REMOVE", "REPEATABLE", "REPLACE", "RETURN", "REVOKE", "ROLE",
+    "ROLLBACK", "SAME", "SEARCHABLE", "SECOND", "SELECT", "SET", "SHORTEST",
+    "SHOW", "SIGNED", "SIMPLE", "SINGLE", "SKIP", "SMALLINT", "SOURCE",
+    "START", "STARTS", "STDDEV_POP", "STDDEV_SAMP", "STRICT", "STRING", "SUM",
+    "THEN", "TIME", "TIMESTAMP", "TO", "TRAIL", "TRAILING", "TRANSACTION",
+    "TRIGGER", "TRIGGERS", "TRIM", "TRUE", "TYPE", "TYPED", "TYPES", "UINT",
+    "UNION", "UNIQUE", "UNKNOWN", "UNWIND", "USER", "UUID", "VARCHAR",
+    "VECTOR", "VIEW", "VIEWS", "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR",
+    "YEAR", "YIELD", "ZONED",
+];
 
 fn is_simple_ident(value: &str) -> bool {
     let mut chars = value.chars();
