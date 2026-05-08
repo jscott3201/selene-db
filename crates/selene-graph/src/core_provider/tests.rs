@@ -78,7 +78,7 @@ fn new_for_live_holds_snapshot_pointer() {
 #[test]
 fn new_for_recovery_starts_empty() {
     let provider = CoreProvider::new_for_recovery();
-    let graph = provider.finish_recovery().unwrap();
+    let graph = provider.finish_recovery(GraphId::new(1)).unwrap();
     assert_eq!(graph.node_count(), 0);
     assert_eq!(graph.edge_count(), 0);
 }
@@ -88,7 +88,7 @@ fn finish_recovery_on_live_mode_is_error() {
     let snapshot = Arc::new(ArcSwap::from_pointee(SeleneGraph::new(GraphId::new(1))));
     let provider = CoreProvider::new_for_live(snapshot);
     assert!(matches!(
-        provider.finish_recovery(),
+        provider.finish_recovery(GraphId::new(1)),
         Err(GraphError::Provider(ProviderError::Inconsistent { reason }))
             if reason.contains("finish_recovery called on live-mode")
     ));
@@ -213,7 +213,7 @@ fn recovery_mode_read_section_populates_state() {
     let bytes = encode_nodes(&graph).unwrap();
     let provider = CoreProvider::new_for_recovery();
     IndexProvider::read_section(provider.as_ref(), SubTag(CORE_NODE_SUB), &bytes).unwrap();
-    let recovered = provider.finish_recovery().unwrap();
+    let recovered = provider.finish_recovery(GraphId::new(1)).unwrap();
     assert_eq!(recovered.node_count(), 1);
     assert!(recovered.is_node_alive(NodeId::new(1)));
 }
@@ -230,7 +230,7 @@ fn recovery_mode_on_change_applies_node_created() {
         },
     )
     .unwrap();
-    let graph = provider.finish_recovery().unwrap();
+    let graph = provider.finish_recovery(GraphId::new(1)).unwrap();
     assert_eq!(graph.node_count(), 1);
     assert!(graph.is_node_alive(NodeId::new(1)));
 }
@@ -317,7 +317,7 @@ fn recovery_mode_on_change_applies_each_change_variant() {
     )
     .unwrap();
 
-    let graph = provider.finish_recovery().unwrap();
+    let graph = provider.finish_recovery(GraphId::new(1)).unwrap();
     assert!(!graph.is_node_alive(NodeId::new(1)));
     assert!(graph.is_node_alive(NodeId::new(2)));
     assert!(!graph.is_edge_alive(EdgeId::new(1)));
@@ -341,7 +341,7 @@ fn recovery_provider_read_section_round_trips_via_typed_path() {
     let bytes = encode_nodes(&graph).unwrap();
     let provider = CoreProvider::new_for_recovery();
     RecoveryProvider::read_section(provider.as_ref(), CORE_NODE_SUB, &bytes).unwrap();
-    let recovered = provider.finish_recovery().unwrap();
+    let recovered = provider.finish_recovery(GraphId::new(1)).unwrap();
     assert!(recovered.is_node_alive(NodeId::new(1)));
 }
 
@@ -357,6 +357,6 @@ fn recovery_provider_on_change_calls_typed_path() {
         },
     )
     .unwrap();
-    let recovered = provider.finish_recovery().unwrap();
+    let recovered = provider.finish_recovery(GraphId::new(1)).unwrap();
     assert!(recovered.is_node_alive(NodeId::new(1)));
 }

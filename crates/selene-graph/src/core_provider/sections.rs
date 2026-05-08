@@ -1,11 +1,12 @@
 //! Postcard section payloads for the core graph provider.
 
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
 use selene_persist::MAX_SECTION_PAYLOAD_BYTES;
 use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload, serialization_failed};
 use crate::graph::{GraphMeta, SeleneGraph};
+use crate::typed_index::TypedIndexKind;
 
 /// Graph metadata section payload.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -42,18 +43,24 @@ pub struct EdgeRow {
     pub alive: bool,
 }
 
-/// Placeholder key for the core schema section.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+/// Identity for an entry in the core schema section.
+///
+/// In v1.0, schema entries map one-to-one with built-in property index
+/// registrations. BRIEF-15 (closed-graph types) extends the [`SchemaEntry`]
+/// payload but keeps the section sub-tag stable.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct SchemaKey {
-    /// Opaque schema key ID. BRIEF-15 gives this real meaning.
-    pub id: u64,
+    /// Node label the registration applies to.
+    pub label: IStr,
+    /// Property the registration applies to.
+    pub property: IStr,
 }
 
-/// Placeholder value for the core schema section.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// Persisted shape of a single schema entry.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SchemaEntry {
-    /// Opaque schema bytes. Empty in v1.0.
-    pub payload: Vec<u8>,
+    /// Indexable value kind declared at registration time.
+    pub kind: TypedIndexKind,
 }
 
 pub(super) fn encode_meta(
@@ -149,8 +156,22 @@ pub(super) fn decode_edges(bytes: &[u8]) -> Result<Vec<(EdgeId, EdgeRow)>, crate
     Ok(rows)
 }
 
-pub(super) fn encode_schemas() -> Result<Vec<u8>, crate::ProviderError> {
-    encode_postcard::<Vec<(SchemaKey, SchemaEntry)>>(&Vec::new(), "CORE/SCMA")
+pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
+    let mut rows: Vec<(SchemaKey, SchemaEntry)> = graph
+        .property_index
+        .iter()
+        .map(|((label, property), index)| {
+            (
+                SchemaKey {
+                    label: *label,
+                    property: *property,
+                },
+                SchemaEntry { kind: index.kind() },
+            )
+        })
+        .collect();
+    rows.sort_by_key(|(key, _)| *key);
+    encode_postcard(&rows, "CORE/SCMA")
 }
 
 pub(super) fn decode_schemas(
@@ -209,13 +230,4 @@ where
         }
     }
     Ok(())
-}
-
-pub(super) fn default_recovered_meta() -> GraphMeta {
-    GraphMeta {
-        graph_id: GraphId::new(1),
-        generation: 0,
-        next_node_id: 1,
-        next_edge_id: 1,
-    }
 }

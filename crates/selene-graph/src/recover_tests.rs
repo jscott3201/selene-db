@@ -65,8 +65,8 @@ fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {
     writer.flush().unwrap();
 }
 
-fn recover_err(dir: &Path) -> GraphError {
-    match SharedGraph::recover(dir) {
+fn recover_err(dir: &Path, graph_id: GraphId) -> GraphError {
+    match SharedGraph::recover(dir, graph_id) {
         Ok(_) => panic!("recovery should have failed"),
         Err(error) => error,
     }
@@ -149,7 +149,7 @@ fn node_created(id: u64) -> Change {
 #[test]
 fn recover_from_empty_dir_returns_empty_graph() {
     let dir = temp_dir("empty");
-    let recovered = SharedGraph::recover(&dir).unwrap();
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
     assert_eq!(recovered.read().node_count(), 0);
     assert_eq!(recovered.read().edge_count(), 0);
     assert!(
@@ -166,7 +166,7 @@ fn recover_from_snapshot_only_round_trips_nodes_and_edges() {
     let shared = sample_shared_graph();
     write_snapshot(&dir, &shared, 1);
 
-    let recovered = SharedGraph::recover(&dir).unwrap();
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
     let snapshot = recovered.read();
     assert_eq!(snapshot.node_count(), 4);
     assert_eq!(snapshot.edge_count(), 1);
@@ -191,7 +191,7 @@ fn recover_from_wal_only_replays_changes_to_state() {
     ];
     append_wal(&dir, 0, &changes);
 
-    let recovered = SharedGraph::recover(&dir).unwrap();
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
     let snapshot = recovered.read();
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 1);
@@ -206,7 +206,7 @@ fn recover_from_snapshot_and_wal_streams_only_post_snapshot_changes() {
     write_snapshot(&dir, &shared, 3);
     append_wal(&dir, 3, &[node_created(6)]);
 
-    let recovered = SharedGraph::recover(&dir).unwrap();
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
     let snapshot = recovered.read();
     assert!(snapshot.is_node_alive(NodeId::new(1)));
     assert!(snapshot.is_node_alive(NodeId::new(6)));
@@ -219,7 +219,7 @@ fn recover_then_commit_continues_id_allocation_above_recovered_floor() {
     let dir = temp_dir("allocation");
     append_wal(&dir, 0, &[node_created(49)]);
 
-    let recovered = SharedGraph::recover(&dir).unwrap();
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
     let mut txn = recovered.begin_write();
     let id = {
         let mut mutator = txn.mutator();
@@ -242,7 +242,7 @@ fn recover_with_corrupt_snapshot_returns_persist_error() {
     *last ^= 0xAA;
     fs::write(&path, bytes).unwrap();
 
-    let err = recover_err(&dir);
+    let err = recover_err(&dir, GraphId::new(7));
     assert!(matches!(
         err,
         GraphError::Persist(PersistError::BodyHashMismatch { .. })
@@ -264,7 +264,7 @@ fn recover_returns_persist_error_for_unknown_provider_in_section_table() {
         .unwrap();
     builder.finalize().unwrap();
 
-    let err = recover_err(&dir);
+    let err = recover_err(&dir, GraphId::new(7));
     assert!(matches!(
         err,
         GraphError::Persist(PersistError::UnknownProvider { provider, sub })
@@ -280,7 +280,7 @@ fn live_mutate_snapshot_recover_matches_state() {
     let expected = shared.read();
     write_snapshot(&dir, &shared, expected.meta.generation);
 
-    let recovered = SharedGraph::recover(&dir).unwrap();
+    let recovered = SharedGraph::recover(&dir, GraphId::new(13)).unwrap();
     let snapshot = recovered.read();
     assert_eq!(snapshot.node_count(), expected.node_count());
     assert_eq!(snapshot.edge_count(), expected.edge_count());
@@ -294,5 +294,99 @@ fn live_mutate_snapshot_recover_matches_state() {
         snapshot.edge_endpoints(EdgeId::new(1)),
         expected.edge_endpoints(EdgeId::new(1))
     );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_advances_generation_to_last_replayed_wal_sequence() {
+    // After recovery, the next mutation must increment from the recovered tip,
+    // not from the snapshot's stale generation. Regression guard for the bug
+    // where SharedGraph::recover discarded RecoveryOutcome.last_wal_seq.
+    let dir = temp_dir("generation");
+    let shared = sample_shared_graph();
+    let snapshot_generation = shared.read().meta.generation;
+    write_snapshot(&dir, &shared, snapshot_generation);
+    // Append two WAL entries past the snapshot — each entry advances the
+    // sequence by 1 because WalWriter starts at snapshot_seq+1.
+    append_wal(&dir, snapshot_generation, &[node_created(60)]);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    let recovered_generation = recovered.read().meta.generation;
+    assert!(
+        recovered_generation > snapshot_generation,
+        "expected recovered generation {recovered_generation} to advance past \
+         snapshot generation {snapshot_generation} after WAL replay"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_rejects_graph_id_disagreeing_with_snapshot_meta() {
+    // META carries the canonical graph identity; recover() callers must agree.
+    // Regression guard for the bug where a hardcoded GraphId(1) fallback
+    // silently reconstructed under the wrong identity.
+    let dir = temp_dir("identity-mismatch");
+    let shared = sample_shared_graph(); // uses GraphId::new(7)
+    write_snapshot(&dir, &shared, 1);
+
+    let err = recover_err(&dir, GraphId::new(99));
+    assert!(matches!(
+        err,
+        GraphError::Provider(crate::ProviderError::Inconsistent { reason })
+            if reason.contains("CORE/META declares") && reason.contains("caller asserted")
+    ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_rejects_wal_recreating_tombstoned_id() {
+    // WAL streams must never recreate an id that has already been seen,
+    // even when the prior row is tombstoned. Regression guard for D11
+    // (no ID reuse).
+    let dir = temp_dir("tombstone-reuse");
+    let changes = vec![
+        node_created(1),
+        Change::NodeDeleted { id: NodeId::new(1) },
+        node_created(1), // illegal: id 1 was already allocated and tombstoned
+    ];
+    append_wal(&dir, 0, &changes);
+
+    let err = recover_err(&dir, GraphId::new(7));
+    let GraphError::Persist(PersistError::ProviderFailed { source, .. }) = &err else {
+        panic!("expected PersistError::ProviderFailed, got {err:?}");
+    };
+    let message = format!("{source}");
+    assert!(
+        message.contains("recreate") && message.contains("D11"),
+        "expected D11 reuse rejection, got: {message}",
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_round_trips_property_index_registrations() {
+    // Property index registrations live in CORE/SCMA; restart must surface
+    // the same registrations or indexed lookups regress to None. Regression
+    // guard for the empty-SCMA bug.
+    use crate::TypedIndexKind;
+
+    let dir = temp_dir("scma");
+    let shared = sample_shared_graph();
+    let label = intern("recover.node").unwrap();
+    let property = intern("recover.index").unwrap();
+    shared
+        .create_property_index(label, property, TypedIndexKind::I64)
+        .unwrap();
+    write_snapshot(&dir, &shared, shared.read().meta.generation);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    assert!(
+        recovered
+            .read()
+            .property_index_for(&label, &property)
+            .is_some(),
+        "registered property index must round-trip across recover()"
+    );
+    assert_eq!(recovered.read().property_index_count(), 1);
     let _ = fs::remove_dir_all(dir);
 }

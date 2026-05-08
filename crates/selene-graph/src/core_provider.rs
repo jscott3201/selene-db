@@ -69,12 +69,22 @@ impl CoreProvider {
 
     /// Drain the recovery accumulator into a graph snapshot.
     ///
+    /// `expected_graph_id` is the caller-asserted graph identity. If a
+    /// snapshot's `CORE/META` was applied and disagrees with this id,
+    /// recovery fails. If no `CORE/META` was applied (WAL-only or empty
+    /// recovery), `expected_graph_id` is used directly with default scalar
+    /// metadata fields.
+    ///
     /// # Errors
     ///
     /// Returns [`crate::GraphError::Provider`] if this provider was
-    /// constructed for live mode or if the accumulated section/changelog state
+    /// constructed for live mode, if META disagrees with
+    /// `expected_graph_id`, or if the accumulated section/changelog state
     /// cannot be materialized into graph columns.
-    pub fn finish_recovery(self: Arc<Self>) -> GraphResult<SeleneGraph> {
+    pub fn finish_recovery(
+        self: Arc<Self>,
+        expected_graph_id: selene_core::GraphId,
+    ) -> GraphResult<SeleneGraph> {
         let mut inner = self.inner.lock();
         match &mut *inner {
             CoreInner::Live { .. } => {
@@ -82,7 +92,7 @@ impl CoreProvider {
             }
             CoreInner::Recovery { state } => {
                 let state = std::mem::take(state);
-                state.into_graph()
+                state.into_graph(expected_graph_id)
             }
         }
     }
@@ -106,7 +116,7 @@ impl CoreProvider {
                     CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
                     CORE_NODE_SUB => encode_nodes(&graph),
                     CORE_EDGE_SUB => encode_edges(&graph),
-                    CORE_SCMA_SUB => encode_schemas(),
+                    CORE_SCMA_SUB => encode_schemas(&graph),
                     _ => Err(invalid_sub_tag(sub_tag)),
                 }
             }

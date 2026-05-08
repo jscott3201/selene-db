@@ -1,19 +1,20 @@
 //! Recovery-mode state for the core graph provider.
 
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
-use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap};
+use selene_core::{Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap};
 
 use crate::core_provider::sections::{
     EdgeRow, MetaPayload, NodeRow, SchemaEntry, SchemaKey, decode_edges, decode_meta, decode_nodes,
-    decode_schemas, default_recovered_meta,
+    decode_schemas,
 };
 use crate::core_provider::{
     CORE_EDGE_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB, inconsistent, invalid_payload,
 };
 use crate::graph::{GraphMeta, SeleneGraph};
 use crate::store::{edge_row_index, node_row_index};
+use crate::typed_index::TypedIndex;
 
 /// Accumulator populated by snapshot sections and WAL replay.
 #[derive(Default)]
@@ -66,9 +67,10 @@ impl RecoveryState {
                 labels,
                 properties,
             } => {
-                if self.nodes.get(id).is_some_and(|row| row.alive) {
+                if self.nodes.contains_key(id) {
                     return Err(inconsistent(format!(
-                        "WAL replay attempted to create already-live node {id}"
+                        "WAL replay attempted to recreate node {id}; node ids are never \
+                         reused once allocated (D11)"
                     )));
                 }
                 self.nodes.insert(
@@ -107,9 +109,10 @@ impl RecoveryState {
             } => {
                 require_live_node_ref(&self.nodes, *source)?;
                 require_live_node_ref(&self.nodes, *target)?;
-                if self.edges.get(id).is_some_and(|row| row.alive) {
+                if self.edges.contains_key(id) {
                     return Err(inconsistent(format!(
-                        "WAL replay attempted to create already-live edge {id}"
+                        "WAL replay attempted to recreate edge {id}; edge ids are never \
+                         reused once allocated (D11)"
                     )));
                 }
                 self.edges.insert(
@@ -139,8 +142,25 @@ impl RecoveryState {
         Ok(())
     }
 
-    pub(crate) fn into_graph(self) -> crate::GraphResult<SeleneGraph> {
-        let meta = self.meta.unwrap_or_else(default_recovered_meta);
+    pub(crate) fn into_graph(self, expected_graph_id: GraphId) -> crate::GraphResult<SeleneGraph> {
+        let meta = match self.meta {
+            Some(meta) => {
+                if meta.graph_id != expected_graph_id {
+                    return Err(crate::GraphError::Provider(inconsistent(format!(
+                        "CORE/META declares {} but caller asserted {} during recovery; \
+                         refusing to silently reconstruct under the wrong identity",
+                        meta.graph_id, expected_graph_id,
+                    ))));
+                }
+                meta
+            }
+            None => GraphMeta {
+                graph_id: expected_graph_id,
+                generation: 0,
+                next_node_id: 1,
+                next_edge_id: 1,
+            },
+        };
         let mut graph = SeleneGraph::new(meta.graph_id);
         graph.meta = meta;
 
@@ -157,6 +177,17 @@ impl RecoveryState {
             insert_edge_row(&mut graph, id, row)?;
         }
         graph.meta.next_edge_id = next_edge_id;
+
+        // Re-register property indexes from SCMA. The empty TypedIndex placeholders
+        // are filled by `rebuild_property_indexes` (called downstream via
+        // `try_from_graph`) so the registration set survives restart even though
+        // the entry contents are derived from primary state.
+        for (key, entry) in self.schemas {
+            graph.property_index.insert(
+                (key.label, key.property),
+                Arc::new(TypedIndex::new(entry.kind)),
+            );
+        }
         Ok(graph)
     }
 }

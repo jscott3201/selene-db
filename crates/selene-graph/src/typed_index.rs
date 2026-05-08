@@ -7,9 +7,10 @@ use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
 use selene_core::{IStr, Value};
+use serde::{Deserialize, Serialize};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum TypedIndexKind {
     /// Signed 64-bit integer. Backs [`Value::Int`].
     I64,
