@@ -309,6 +309,10 @@ D15 originally framed recovery as calls into `IndexProvider::read_section` and `
 
 `selene-gql` defines `pub trait ProcedureRegistry: Send + Sync` with two methods: `lookup(name: &str) -> Option<ProcedureMetadata>` for plan-time signature resolution, and `execute(handle: ProcedureHandle, args: &[Value]) -> Result<ProcedureResult, ProcedureError>` for runtime dispatch. `selene-pack` implements `ProcedureRegistry` for `ProcedurePackRegistry`. The planner and executor accept `&dyn ProcedureRegistry` (or `R: ProcedureRegistry` generic) parameters; the embedder constructs the concrete registry at startup and threads the reference through every `plan` and `execute` call. No `selene_pack::` references appear in `selene-gql` source. Linear dep chain (D8) preserved. The trait lives in selene-gql because the planner is the upstream consumer; selene-pack is downstream and implements it. Removes the F-013 contradiction where spec 08 pseudocode reached into selene-pack from above. Runtime details live in `_spec/08-iso-gql-planner-and-executor.md` §7.
 
+**D16 amendment — 2026-05-08 — `lookup` takes `&[IStr]` (BRIEF-23)**
+
+The original D16 specified `lookup(name: &str)`. The parser preserves quoted segments in `ProcedureCall.name: Vec<IStr>`, and joining segments with `.` is ambiguous when a segment itself contains `.`. BRIEF-23 changes the trait signature to `lookup(name: &[IStr]) -> Option<ProcedureMetadata>` so qualified-name structure flows through losslessly. `selene-pack` and `MockProcedureRegistry` key their internal maps by `Box<[IStr]>` or another owned segment-preserving form. String formatting for diagnostics happens at error-construction time only.
+
 ### D17 — Procedure tiers: per-tier concrete Context structs + per-tier dyn-compatible Procedure traits (2026-05-07)
 
 Three tiers (graph / mutation / persist) each get their own concrete Context struct and dyn-compatible Procedure trait:

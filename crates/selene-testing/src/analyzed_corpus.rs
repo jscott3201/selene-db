@@ -7,6 +7,7 @@
 use std::{error::Error, fmt, path::PathBuf};
 
 use crate::corpus::{CorpusCase, CorpusError, CorpusKind, Expectation, load_default_corpus};
+use selene_gql::{AnalyzedStatement, ProcedureRegistry, analyze, parse};
 
 /// One positive corpus case paired with caller-produced analysis output.
 #[derive(Clone, Debug)]
@@ -86,4 +87,19 @@ pub fn load_default_analyzed_corpus<T, E>(
             Ok(AnalyzedCorpusCase { case, analyzed })
         })
         .collect()
+}
+
+/// Load the default positive corpus and analyze it with a procedure registry.
+///
+/// # Errors
+///
+/// Returns [`AnalyzedCorpusError`] if the corpus cannot be loaded, if parsing a
+/// positive case fails, or if semantic analysis rejects a positive case.
+pub fn load_default_analyzed_gql_corpus(
+    registry: &dyn ProcedureRegistry,
+) -> Result<Vec<AnalyzedCorpusCase<AnalyzedStatement>>, AnalyzedCorpusError<String>> {
+    load_default_analyzed_corpus(|source| {
+        let statement = parse(source).map_err(|err| err.to_string())?;
+        analyze(statement, registry).map_err(|err| err.to_string())
+    })
 }

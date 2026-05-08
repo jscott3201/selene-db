@@ -1,10 +1,14 @@
 //! Analyzer negative binding tests.
 
-use selene_gql::{AnalysisError, analyze, parse};
+use selene_core::intern;
+use selene_gql::{
+    AnalysisError, EmptyProcedureRegistry, GqlType, ProcedureOutputColumn, analyze, parse,
+};
+use selene_testing::MockProcedureRegistry;
 
 fn analyze_one(source: &str) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement)
+    analyze(statement, &EmptyProcedureRegistry)
 }
 
 #[test]
@@ -54,8 +58,17 @@ fn case_branch_uses_outer_scope() {
 }
 
 #[test]
-fn yield_star_columns_are_not_available_until_registry_expansion() {
-    let err = analyze_one("MATCH (n) CALL pkg.fn() YIELD * RETURN col").expect_err("col not bound");
+fn unknown_name_after_yield_star_expansion_errors() {
+    let registry = MockProcedureRegistry::new().with_procedure(
+        vec![intern("pkg").unwrap(), intern("fn").unwrap()],
+        Vec::new(),
+        vec![ProcedureOutputColumn {
+            name: intern("out").unwrap(),
+            ty: GqlType::String,
+        }],
+    );
+    let statement = parse("MATCH (n) CALL pkg.fn() YIELD * RETURN col").expect("test input parses");
+    let err = analyze(statement, &registry).expect_err("col not bound");
     assert!(matches!(err, AnalysisError::UndefinedReference { .. }));
 }
 

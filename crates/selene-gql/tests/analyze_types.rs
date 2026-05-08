@@ -3,13 +3,14 @@
 use selene_core::intern;
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ConditionClause,
-    GqlStatus, GqlType, IsCheckKind, Literal, PipelineStatement, QueryPipeline, ReturnClause,
-    ReturnItem, Side, SourceSpan, Statement, TypeMismatchContext, ValueExpr, analyze, parse,
+    EmptyProcedureRegistry, GqlStatus, GqlType, IsCheckKind, Literal, PipelineStatement,
+    QueryPipeline, ReturnClause, ReturnItem, Side, SourceSpan, Statement, TypeMismatchContext,
+    ValueExpr, analyze, parse,
 };
 
 fn analyze_one(source: &str) -> Result<AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement)
+    analyze(statement, &EmptyProcedureRegistry)
 }
 
 fn type_mismatch(source: &str) -> (TypeMismatchContext, SourceSpan) {
@@ -97,7 +98,7 @@ fn parameter_stays_dynamic() {
 }
 
 #[test]
-fn function_call_stays_dynamic_until_brief_23() {
+fn function_call_expression_stays_dynamic_until_scalar_dispatch() {
     let analyzed = analyze_one("RETURN size([1,2,3]) AS n").unwrap();
     assert_eq!(projection_type(&analyzed, "n"), AnalyzedType::Dynamic);
 }
@@ -365,7 +366,7 @@ fn is_typed_unsupported_variant_errors_for_hand_built_ast() {
         span,
     });
 
-    let err = analyze(statement).unwrap_err();
+    let err = analyze(statement, &EmptyProcedureRegistry).unwrap_err();
     assert!(matches!(
         err,
         AnalysisError::TypeMismatch {

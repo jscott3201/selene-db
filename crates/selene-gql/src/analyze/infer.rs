@@ -12,6 +12,8 @@ use crate::{
 
 use self::numeric::{is_numeric, numeric_promotion};
 
+pub(crate) use self::numeric::argument_assignable;
+
 /// Infer a literal expression type.
 #[must_use]
 pub(crate) fn literal(literal: &Literal) -> AnalyzedType {

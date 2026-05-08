@@ -86,10 +86,55 @@ pub enum AnalysisError {
         #[label("incompatible type")]
         span: SourceSpan,
     },
+
+    /// Procedure name was not registered.
+    #[error("unknown procedure: {}", display_qualified_name(name))]
+    #[diagnostic(code(SLENE_GQL_42002))]
+    UnknownProcedure {
+        /// Qualified procedure name.
+        name: Box<[IStr]>,
+        /// Source span of the procedure call.
+        #[label("procedure is not registered")]
+        span: SourceSpan,
+    },
+
+    /// Procedure argument arity mismatch.
+    #[error(
+        "wrong argument count for {}: expected {expected}, found {actual}",
+        display_qualified_name(procedure)
+    )]
+    #[diagnostic(code(SLENE_GQL_42883))]
+    WrongArgumentCount {
+        /// Qualified procedure name.
+        procedure: Box<[IStr]>,
+        /// Expected argument count.
+        expected: usize,
+        /// Actual argument count.
+        actual: usize,
+        /// Source span of the procedure call.
+        #[label("wrong number of arguments")]
+        span: SourceSpan,
+    },
+
+    /// `YIELD col` referenced a column not in the procedure output schema.
+    #[error(
+        "unknown YIELD column {column} for procedure {}",
+        display_qualified_name(procedure)
+    )]
+    #[diagnostic(code(SLENE_GQL_42703))]
+    UnknownYieldColumn {
+        /// Qualified procedure name.
+        procedure: Box<[IStr]>,
+        /// Requested output column.
+        column: IStr,
+        /// Source span of the YIELD item.
+        #[label("column is not produced by this procedure")]
+        span: SourceSpan,
+    },
 }
 
 /// Operation or clause that produced a type mismatch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TypeMismatchContext {
     /// Binary arithmetic operator.
     BinaryArithmetic {
@@ -153,6 +198,15 @@ pub enum TypeMismatchContext {
         /// Condition clause kind.
         clause: ConditionClause,
     },
+    /// Procedure argument did not match the registered parameter type.
+    ProcedureArgument {
+        /// Qualified procedure name.
+        procedure: Box<[IStr]>,
+        /// Declared parameter name.
+        parameter: IStr,
+        /// Zero-based positional argument index.
+        position: usize,
+    },
 }
 
 impl std::fmt::Display for TypeMismatchContext {
@@ -181,8 +235,45 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::InListUnification => f.write_str("IN-list value"),
             Self::BetweenBounds { side } => write!(f, "{side} operand of BETWEEN"),
             Self::Condition { clause } => write!(f, "{clause} condition"),
+            Self::ProcedureArgument {
+                procedure,
+                parameter,
+                position,
+            } => {
+                write!(f, "argument {position} ({parameter}) of ")?;
+                fmt_qualified_name(f, procedure)
+            }
         }
     }
+}
+
+fn display_qualified_name(name: &[IStr]) -> QualifiedNameDisplay<'_> {
+    QualifiedNameDisplay(name)
+}
+
+struct QualifiedNameDisplay<'a>(&'a [IStr]);
+
+impl std::fmt::Display for QualifiedNameDisplay<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        fmt_qualified_name(f, self.0)
+    }
+}
+
+fn fmt_qualified_name(f: &mut std::fmt::Formatter<'_>, name: &[IStr]) -> std::fmt::Result {
+    let mut first = true;
+    for segment in name {
+        if !first {
+            f.write_str(".")?;
+        }
+        let text = segment.as_str();
+        if text.contains('.') || text.contains('"') {
+            write!(f, "\"{}\"", text.replace('"', "\"\""))?;
+        } else {
+            f.write_str(text)?;
+        }
+        first = false;
+    }
+    Ok(())
 }
 
 /// Expected type category for a type mismatch.
@@ -314,6 +405,9 @@ impl AnalysisError {
             Self::Shadow { .. } | Self::PatternKindMismatch { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
+            Self::UnknownProcedure { .. } => GqlStatus::INVALID_REFERENCE,
+            Self::WrongArgumentCount { .. } => GqlStatus::DATATYPE_MISMATCH,
+            Self::UnknownYieldColumn { .. } => GqlStatus::UNDEFINED_REFERENCE,
         }
     }
 

@@ -8,3 +8,6 @@
 
 pub mod analyzed_corpus;
 pub mod corpus;
+pub mod mock_procedure_registry;
+
+pub use mock_procedure_registry::{MockProcedureRegistry, default_corpus_registry};
