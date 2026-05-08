@@ -67,14 +67,17 @@ pub enum ParserError {
         hint: &'static str,
     },
 
-    /// Query introduced more distinct identifiers than the parser cap allows.
-    #[error("identifier limit exceeded ({limit})")]
-    #[diagnostic(code(SLENE_GQL_54000))]
-    IdentifierLimitExceeded {
-        /// Distinct identifier limit.
+    /// Query introduced more distinct interner admissions than the parser cap allows.
+    #[error("interner-admission budget exceeded ({limit})")]
+    #[diagnostic(
+        code(SLENE_GQL_54000),
+        help("queries are bounded to 8192 distinct new interner admissions per parse")
+    )]
+    InternerBudgetExceeded {
+        /// Distinct admission limit.
         limit: u32,
         /// Source span that crossed the limit.
-        #[label("introduces too many new names")]
+        #[label("introduces too many new interned strings")]
         span: SourceSpan,
     },
 
@@ -107,7 +110,7 @@ impl ParserError {
             Self::UnsupportedFeature { .. } | Self::NotImplemented { .. } => {
                 GqlStatus::FEATURE_NOT_SUPPORTED
             }
-            Self::IdentifierLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            Self::InternerBudgetExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
         }
     }
 

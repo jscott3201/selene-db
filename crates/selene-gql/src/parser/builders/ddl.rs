@@ -8,20 +8,24 @@ use crate::{
         ValidationMode,
     },
     error::ParserError,
+    parser::budget::InternerBudget,
 };
 
 use super::{Rule, expr, first_child, intern_pair, not_implemented, span, unexpected_pair};
 
-pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+pub(super) fn build_ddl_statement(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::ddl_statement);
     let inner = first_child(pair)?;
     match inner.as_rule() {
-        Rule::create_graph => build_create_graph(inner),
-        Rule::drop_graph => build_drop_graph(inner),
-        Rule::create_node_type => build_create_node_type(inner),
-        Rule::create_edge_type => build_create_edge_type(inner),
-        Rule::drop_node_type => build_drop_node_type(inner),
-        Rule::drop_edge_type => build_drop_edge_type(inner),
+        Rule::create_graph => build_create_graph(inner, budget),
+        Rule::drop_graph => build_drop_graph(inner, budget),
+        Rule::create_node_type => build_create_node_type(inner, budget),
+        Rule::create_edge_type => build_create_edge_type(inner, budget),
+        Rule::drop_node_type => build_drop_node_type(inner, budget),
+        Rule::drop_edge_type => build_drop_edge_type(inner, budget),
         Rule::show_node_types => Ok(DdlStatement::ShowNodeTypes(span(&inner))),
         Rule::show_edge_types => Ok(DdlStatement::ShowEdgeTypes(span(&inner))),
         Rule::create_trigger | Rule::drop_trigger | Rule::show_triggers => Err(not_implemented(
@@ -52,7 +56,10 @@ pub(super) fn build_ddl_statement(pair: Pair<'_, Rule>) -> Result<DdlStatement, 
     }
 }
 
-fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+fn build_create_graph(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
     let mut or_replace = false;
@@ -62,7 +69,7 @@ fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(intern_pair(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE GRAPH child")),
         }
     }
@@ -77,14 +84,17 @@ fn build_create_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError>
     })
 }
 
-fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+fn build_drop_graph(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
     let mut if_exists = false;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(intern_pair(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected DROP GRAPH child")),
         }
     }
@@ -96,7 +106,10 @@ fn build_drop_graph(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     })
 }
 
-fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+fn build_create_node_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut label = None;
     let mut extends = None;
@@ -109,9 +122,9 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident if label.is_none() => label = Some(intern_pair(child)?),
-            Rule::ident => extends = Some(intern_pair(child)?),
-            Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
+            Rule::ident if label.is_none() => label = Some(intern_pair(child, budget)?),
+            Rule::ident => extends = Some(intern_pair(child, budget)?),
+            Rule::type_prop_def_list => properties = build_type_prop_def_list(child, budget)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE NODE TYPE child")),
         }
@@ -130,7 +143,10 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
     })
 }
 
-fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+fn build_create_edge_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut label = None;
     let mut or_replace = false;
@@ -143,9 +159,9 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => label = Some(intern_pair(child)?),
-            Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child)?),
-            Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
+            Rule::ident => label = Some(intern_pair(child, budget)?),
+            Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child, budget)?),
+            Rule::type_prop_def_list => properties = build_type_prop_def_list(child, budget)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
             _ => return Err(unexpected_pair(child, "unexpected CREATE EDGE TYPE child")),
         }
@@ -164,9 +180,13 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
     })
 }
 
-fn build_drop_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+fn build_drop_node_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let (label, if_exists) = build_drop_type_parts(pair, "DROP NODE TYPE is missing label")?;
+    let (label, if_exists) =
+        build_drop_type_parts(pair, "DROP NODE TYPE is missing label", budget)?;
     Ok(DdlStatement::DropNodeType {
         label,
         if_exists,
@@ -174,9 +194,13 @@ fn build_drop_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserErro
     })
 }
 
-fn build_drop_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
+fn build_drop_edge_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let (label, if_exists) = build_drop_type_parts(pair, "DROP EDGE TYPE is missing label")?;
+    let (label, if_exists) =
+        build_drop_type_parts(pair, "DROP EDGE TYPE is missing label", budget)?;
     Ok(DdlStatement::DropEdgeType {
         label,
         if_exists,
@@ -187,6 +211,7 @@ fn build_drop_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserErro
 fn build_drop_type_parts(
     pair: Pair<'_, Rule>,
     missing: &'static str,
+    budget: &mut InternerBudget,
 ) -> Result<(selene_core::IStr, bool), ParserError> {
     let source_span = span(&pair);
     let mut label = None;
@@ -194,7 +219,7 @@ fn build_drop_type_parts(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
-            Rule::ident => label = Some(intern_pair(child)?),
+            Rule::ident => label = Some(intern_pair(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected DROP TYPE child")),
         }
     }
@@ -204,14 +229,20 @@ fn build_drop_type_parts(
     ))
 }
 
-fn build_type_prop_def_list(pair: Pair<'_, Rule>) -> Result<Vec<TypePropertyDef>, ParserError> {
+fn build_type_prop_def_list(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<TypePropertyDef>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::type_prop_def)
-        .map(build_type_prop_def)
+        .map(|child| build_type_prop_def(child, budget))
         .collect()
 }
 
-fn build_type_prop_def(pair: Pair<'_, Rule>) -> Result<TypePropertyDef, ParserError> {
+fn build_type_prop_def(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<TypePropertyDef, ParserError> {
     let source_span = span(&pair);
     let mut name = None;
     let mut gql_type = None;
@@ -219,9 +250,11 @@ fn build_type_prop_def(pair: Pair<'_, Rule>) -> Result<TypePropertyDef, ParserEr
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::ident => name = Some(intern_pair(child)?),
+            Rule::ident => name = Some(intern_pair(child, budget)?),
             Rule::type_name => gql_type = Some(expr::build_type_name(child)?),
-            Rule::type_prop_constraint => constraints.push(build_type_prop_constraint(child)?),
+            Rule::type_prop_constraint => {
+                constraints.push(build_type_prop_constraint(child, budget)?);
+            }
             _ => return Err(unexpected_pair(child, "unexpected type property child")),
         }
     }
@@ -238,7 +271,10 @@ fn build_type_prop_def(pair: Pair<'_, Rule>) -> Result<TypePropertyDef, ParserEr
     })
 }
 
-fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstraint, ParserError> {
+fn build_type_prop_constraint(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<TypePropertyConstraint, ParserError> {
     let source_span = span(&pair);
     let text = pair
         .as_str()
@@ -258,7 +294,7 @@ fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstr
                 ParserError::syntax("DEFAULT constraint is missing literal", source_span, None)
             })?;
         return Ok(TypePropertyConstraint::Default(
-            expr::build_value_expr(literal)?,
+            expr::build_value_expr(literal, budget)?,
             source_span,
         ));
     }
@@ -281,7 +317,12 @@ fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstr
     let mut children = pair.into_inner();
     match text.split_whitespace().next() {
         Some("FILL") => {
-            let value = child_interned(&mut children, source_span, "FILL is missing strategy")?;
+            let value = child_interned(
+                &mut children,
+                source_span,
+                "FILL is missing strategy",
+                budget,
+            )?;
             Ok(TypePropertyConstraint::Fill(value, source_span))
         }
         Some("INTERVAL") => {
@@ -290,11 +331,16 @@ fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstr
                 .ok_or_else(|| {
                     ParserError::syntax("INTERVAL is missing duration", source_span, None)
                 })
-                .and_then(expr::intern_string_literal)?;
+                .and_then(|pair| expr::intern_string_literal(pair, budget))?;
             Ok(TypePropertyConstraint::Interval(value, source_span))
         }
         Some("ENCODING") => {
-            let value = child_interned(&mut children, source_span, "ENCODING is missing name")?;
+            let value = child_interned(
+                &mut children,
+                source_span,
+                "ENCODING is missing name",
+                budget,
+            )?;
             Ok(TypePropertyConstraint::Encoding(value, source_span))
         }
         _ => Err(ParserError::syntax(
@@ -305,7 +351,10 @@ fn build_type_prop_constraint(pair: Pair<'_, Rule>) -> Result<TypePropertyConstr
     }
 }
 
-fn build_edge_endpoint(pair: Pair<'_, Rule>) -> Result<EdgeEndpointSpec, ParserError> {
+fn build_edge_endpoint(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<EdgeEndpointSpec, ParserError> {
     let source_span = span(&pair);
     let mut lists = pair
         .into_inner()
@@ -315,13 +364,13 @@ fn build_edge_endpoint(pair: Pair<'_, Rule>) -> Result<EdgeEndpointSpec, ParserE
         .ok_or_else(|| {
             ParserError::syntax("edge endpoint is missing source labels", source_span, None)
         })
-        .and_then(build_label_list)?;
+        .and_then(|pair| build_label_list(pair, budget))?;
     let to_labels = lists
         .next()
         .ok_or_else(|| {
             ParserError::syntax("edge endpoint is missing target labels", source_span, None)
         })
-        .and_then(build_label_list)?;
+        .and_then(|pair| build_label_list(pair, budget))?;
 
     Ok(EdgeEndpointSpec {
         from_labels,
@@ -330,10 +379,13 @@ fn build_edge_endpoint(pair: Pair<'_, Rule>) -> Result<EdgeEndpointSpec, ParserE
     })
 }
 
-fn build_label_list(pair: Pair<'_, Rule>) -> Result<Vec<selene_core::IStr>, ParserError> {
+fn build_label_list(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<selene_core::IStr>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::ident)
-        .map(intern_pair)
+        .map(|child| intern_pair(child, budget))
         .collect()
 }
 
@@ -353,9 +405,10 @@ fn child_interned(
     children: &mut pest::iterators::Pairs<'_, Rule>,
     source_span: SourceSpan,
     missing: &'static str,
+    budget: &mut InternerBudget,
 ) -> Result<selene_core::IStr, ParserError> {
     children
         .find(|child| child.as_rule() == Rule::ident)
         .ok_or_else(|| ParserError::syntax(missing, source_span, None))
-        .and_then(intern_pair)
+        .and_then(|pair| intern_pair(pair, budget))
 }

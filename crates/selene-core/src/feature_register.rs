@@ -81,6 +81,7 @@ feature_ids! {
     GP15 = "GP15" => "Graphs as procedure arguments";
     GP18 = "GP18" => "Mixed catalog/data transaction feature";
     GQ03 = "GQ03" => "Composite query: UNION";
+    GQ09 = "GQ09" => "Composite query: OTHERWISE";
     GQ15 = "GQ15" => "GROUP BY clause";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
@@ -212,6 +213,10 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         "mixed catalog/data transaction behavior remains forbidden in v1.0",
     ),
     (
+        FeatureId::GQ09,
+        "OTHERWISE is outside the selene-db v1.0 composite-query claim",
+    ),
+    (
         FeatureId::GT03,
         "multi-graph transactions are out of v1.0 scope",
     ),
@@ -225,7 +230,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GV20,
-        "FLOAT16 is deferred until a concrete consumer requires it",
+        "REAL spelling is outside the v1.0 claim; FLOAT16 remains deferred",
     ),
     (
         FeatureId::GV22,
