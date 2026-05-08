@@ -111,7 +111,7 @@ jobs:
           find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
       - name: fuzz parser
         working-directory: crates/selene-gql/fuzz
-        run: cargo +nightly fuzz run parse_gql -- -max_total_time=60
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=60
 
   deny:
     name: cargo-deny
