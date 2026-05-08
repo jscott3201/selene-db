@@ -129,7 +129,7 @@ with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 
 match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
 match_mode        = { ^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS" }
-path_selector     = { (^"ANY" | ^"ALL") ~ ^"SHORTEST" }
+path_selector     = { ^"ANY" ~ ^"SHORTEST"? | ^"ALL" ~ ^"SHORTEST"? }
 optional_modifier = { ^"OPTIONAL" }
 path_modifier     = { ^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL" }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
@@ -154,13 +154,14 @@ abbrev_right = { "->" }
 abbrev_left  = { "<-" ~ !("[") }
 abbrev_any   = { "-" ~ !("-" | "[" | ">" | ASCII_DIGIT) }
 
-edge_interior = { edge_var? ~ label_expr? ~ property_map? ~ inline_where? }
+edge_interior = { edge_var? ~ label_expr? ~ quantifier? ~ property_map? ~ inline_where? }
 edge_var      = { ident }
 
 // -- Quantifier -----------------------------------------------------
 
-quantifier = { "{" ~ quant_body ~ "}" | quant_star | quant_plus | quant_question }
+quantifier = { quant_star_range | "{" ~ quant_body ~ "}" | quant_star | quant_plus | quant_question }
 quant_body = { quant_range_full | quant_range_min | quant_range_max | quant_exact }
+quant_star_range = { "*" ~ uint ~ ".." ~ uint? }
 quant_star     = { "*" }
 quant_plus     = { "+" }
 quant_question = { "?" }
@@ -173,7 +174,7 @@ quant_range_max  = { "," ~ uint }
 
 label_expr = { ":" ~ label_or }
 label_or   = { label_and ~ ("|" ~ label_and)* }
-label_and  = { label_not ~ ("&" ~ label_not)* }
+label_and  = { label_not ~ (("&" | ":") ~ label_not)* }
 label_not  = { "!" ~ label_atom | label_atom }
 label_atom = { label_wildcard | ident }
 label_wildcard = { "%" }

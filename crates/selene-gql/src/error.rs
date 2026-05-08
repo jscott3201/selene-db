@@ -124,13 +124,15 @@ impl ParserError {
         }
     }
 
-    pub(crate) fn unsupported_bootstrap(span: SourceSpan) -> Self {
+    pub(crate) fn not_implemented(
+        message: impl Into<String>,
+        span: SourceSpan,
+        hint: Option<&'static str>,
+    ) -> Self {
         Self::NotImplemented {
-            message: "BRIEF-16 parser bootstrap only supports RETURN literal statements".into(),
+            message: message.into(),
             span,
-            hint: Some(
-                "MATCH, mutation, DDL, CALL, and expression builders land in later briefs".into(),
-            ),
+            hint: hint.map(str::to_owned),
         }
     }
 

@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::ast::span::SourceSpan;
+use crate::ast::{pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, types::GqlType};
 
 /// Value expression.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -17,6 +17,172 @@ pub enum ValueExpr {
         /// Source span of the variable reference.
         span: SourceSpan,
     },
+    /// Query parameter reference, such as `$name`.
+    Parameter {
+        /// Interned parameter name without the leading `$`.
+        name: IStr,
+        /// Source span of the parameter reference.
+        span: SourceSpan,
+    },
+    /// Property access, such as `n.name`.
+    PropertyAccess {
+        /// Target expression.
+        target: Box<ValueExpr>,
+        /// Interned property key.
+        key: IStr,
+        /// Source span of the full property access.
+        span: SourceSpan,
+    },
+    /// List element access, such as `items[0]`.
+    ListAccess {
+        /// Target list expression.
+        target: Box<ValueExpr>,
+        /// Index expression.
+        index: Box<ValueExpr>,
+        /// Source span of the full list access.
+        span: SourceSpan,
+    },
+    /// List literal.
+    ListLiteral {
+        /// Literal items.
+        items: Vec<ValueExpr>,
+        /// Source span of the list.
+        span: SourceSpan,
+    },
+    /// Record literal.
+    RecordLiteral {
+        /// Record fields in source order.
+        fields: Vec<(IStr, ValueExpr)>,
+        /// Source span of the record.
+        span: SourceSpan,
+    },
+    /// Binary operator expression.
+    BinaryOp {
+        /// Operator.
+        op: BinaryOp,
+        /// Left operand.
+        lhs: Box<ValueExpr>,
+        /// Right operand.
+        rhs: Box<ValueExpr>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
+    /// Unary operator expression.
+    UnaryOp {
+        /// Operator.
+        op: UnaryOp,
+        /// Operand.
+        operand: Box<ValueExpr>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
+    /// Function call, including aggregate-looking calls.
+    FunctionCall {
+        /// Interned function name.
+        name: IStr,
+        /// Function arguments.
+        args: Vec<ValueExpr>,
+        /// `true` for `count(*)`.
+        star: bool,
+        /// `true` when the call included `DISTINCT`.
+        distinct: bool,
+        /// Source span of the call.
+        span: SourceSpan,
+    },
+    /// `IS` predicate family.
+    IsCheck {
+        /// Checked operand.
+        operand: Box<ValueExpr>,
+        /// Predicate kind.
+        kind: IsCheckKind,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full predicate.
+        span: SourceSpan,
+    },
+    /// `[NOT] IN` predicate.
+    InList {
+        /// Checked operand.
+        operand: Box<ValueExpr>,
+        /// List values.
+        list: Vec<ValueExpr>,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full predicate.
+        span: SourceSpan,
+    },
+    /// `[NOT] LIKE` predicate.
+    Like {
+        /// Checked operand.
+        operand: Box<ValueExpr>,
+        /// Pattern expression.
+        pattern: Box<ValueExpr>,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full predicate.
+        span: SourceSpan,
+    },
+    /// `[NOT] BETWEEN` predicate.
+    Between {
+        /// Checked operand.
+        operand: Box<ValueExpr>,
+        /// Lower bound.
+        low: Box<ValueExpr>,
+        /// Upper bound.
+        high: Box<ValueExpr>,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full predicate.
+        span: SourceSpan,
+    },
+    /// `ALL_DIFFERENT(...)` predicate.
+    AllDifferent {
+        /// Items to compare.
+        items: Vec<ValueExpr>,
+        /// Source span of the predicate.
+        span: SourceSpan,
+    },
+    /// `SAME(...)` predicate.
+    Same {
+        /// Items to compare.
+        items: Vec<ValueExpr>,
+        /// Source span of the predicate.
+        span: SourceSpan,
+    },
+    /// `PROPERTY_EXISTS(target, 'key')` predicate.
+    PropertyExists {
+        /// Target expression.
+        target: Box<ValueExpr>,
+        /// Interned property key.
+        key: IStr,
+        /// Source span of the predicate.
+        span: SourceSpan,
+    },
+    /// `CASE` expression.
+    Case {
+        /// `(condition, value)` branches.
+        branches: Vec<(ValueExpr, ValueExpr)>,
+        /// Optional else branch.
+        else_branch: Option<Box<ValueExpr>>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
+    /// `EXISTS { MATCH ... }` subquery predicate.
+    Exists {
+        /// Match pattern.
+        pattern: Box<MatchClause>,
+        /// Whether the predicate was negated.
+        negated: bool,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
+    /// `COUNT { MATCH ... }` subquery expression.
+    CountSubquery {
+        /// Match pattern.
+        pattern: Box<MatchClause>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
 }
 
 impl ValueExpr {
@@ -25,9 +191,125 @@ impl ValueExpr {
     pub const fn span(&self) -> SourceSpan {
         match self {
             Self::Literal(literal) => literal.span(),
-            Self::Variable { span, .. } => *span,
+            Self::Variable { span, .. }
+            | Self::Parameter { span, .. }
+            | Self::PropertyAccess { span, .. }
+            | Self::ListAccess { span, .. }
+            | Self::ListLiteral { span, .. }
+            | Self::RecordLiteral { span, .. }
+            | Self::BinaryOp { span, .. }
+            | Self::UnaryOp { span, .. }
+            | Self::FunctionCall { span, .. }
+            | Self::IsCheck { span, .. }
+            | Self::InList { span, .. }
+            | Self::Like { span, .. }
+            | Self::Between { span, .. }
+            | Self::AllDifferent { span, .. }
+            | Self::Same { span, .. }
+            | Self::PropertyExists { span, .. }
+            | Self::Case { span, .. }
+            | Self::Exists { span, .. }
+            | Self::CountSubquery { span, .. } => *span,
         }
     }
+}
+
+/// Binary operator.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum BinaryOp {
+    /// Addition.
+    Add,
+    /// Subtraction.
+    Sub,
+    /// Multiplication.
+    Mul,
+    /// Division.
+    Div,
+    /// Remainder.
+    Mod,
+    /// Exponentiation.
+    Power,
+    /// Equality.
+    Eq,
+    /// Inequality.
+    Ne,
+    /// Less-than.
+    Lt,
+    /// Less-than-or-equal.
+    Le,
+    /// Greater-than.
+    Gt,
+    /// Greater-than-or-equal.
+    Ge,
+    /// Boolean conjunction.
+    And,
+    /// Boolean disjunction.
+    Or,
+    /// Boolean exclusive-or.
+    Xor,
+    /// String/list concatenation.
+    Concat,
+    /// `CONTAINS`.
+    Contains,
+    /// `STARTS WITH`.
+    StartsWith,
+    /// `ENDS WITH`.
+    EndsWith,
+}
+
+/// Unary operator.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum UnaryOp {
+    /// Numeric negation.
+    Negate,
+    /// Boolean negation.
+    Not,
+}
+
+/// `IS` predicate kind.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[non_exhaustive]
+pub enum IsCheckKind {
+    /// `IS NULL`.
+    Null,
+    /// `IS DIRECTED`.
+    Directed,
+    /// `IS LABELED`.
+    Labeled(LabelExpr),
+    /// `IS TRUE/FALSE/UNKNOWN`.
+    TruthValue(TruthValue),
+    /// `IS TYPED`.
+    Typed(GqlType),
+    /// `IS NORMALIZED`.
+    Normalized(NormalForm),
+    /// `IS SOURCE OF`.
+    SourceOf(Box<ValueExpr>),
+    /// `IS DESTINATION OF`.
+    DestinationOf(Box<ValueExpr>),
+}
+
+/// Three-valued boolean predicate target.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum TruthValue {
+    /// `TRUE`.
+    True,
+    /// `FALSE`.
+    False,
+    /// `UNKNOWN`.
+    Unknown,
+}
+
+/// Unicode normalization form.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum NormalForm {
+    /// NFC.
+    Nfc,
+    /// NFD.
+    Nfd,
+    /// NFKC.
+    Nfkc,
+    /// NFKD.
+    Nfkd,
 }
 
 /// Literal expression.

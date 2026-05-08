@@ -10,9 +10,17 @@ pub mod error;
 pub mod parser;
 
 pub use crate::ast::{
-    expr::{Literal, ValueExpr},
+    expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr},
+    pattern::{
+        EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern,
+        PathMode, PathSelector, PatternElement, Quantifier,
+    },
     span::SourceSpan,
-    statement::{ReturnItem, ReturnStatement, Statement},
+    statement::{
+        LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
+        QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, UnwindStatement, WithClause,
+    },
+    types::{GqlType, RecordType, ValueType},
 };
 pub use crate::error::{GqlStatus, ParserError};
 pub use crate::parser::parse;
