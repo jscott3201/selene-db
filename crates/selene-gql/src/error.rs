@@ -19,6 +19,8 @@ impl GqlStatus {
     pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"54000");
     /// Undefined reference.
     pub const UNDEFINED_REFERENCE: Self = Self(*b"42703");
+    /// Invalid reference.
+    pub const INVALID_REFERENCE: Self = Self(*b"42002");
     /// Duplicate object or binding name.
     pub const DUPLICATE_OBJECT: Self = Self(*b"42710");
     /// Datatype mismatch.

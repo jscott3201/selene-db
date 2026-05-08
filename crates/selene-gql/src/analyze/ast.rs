@@ -18,8 +18,6 @@ pub struct AnalyzedStatement {
     pub scopes: BindingScopeTree,
     /// Resolved binding references in source-walk order.
     pub references: Vec<BindingUse>,
-    /// `CALL ... YIELD *` wildcard occurrences awaiting BRIEF-23 expansion.
-    pub yield_stars: Vec<SourceSpan>,
     /// Inferred expression type cells.
     pub expr_types: ExprTypeTable,
     /// Expression-node to type-cell lookup for the owned statement AST.
@@ -33,7 +31,6 @@ impl AnalyzedStatement {
         statement: Statement,
         scopes: BindingScopeTree,
         references: Vec<BindingUse>,
-        yield_stars: Vec<SourceSpan>,
         expr_types: ExprTypeTable,
         expr_ids: ExprIdMap,
     ) -> Self {
@@ -42,7 +39,6 @@ impl AnalyzedStatement {
             statement: AnalyzedStatementKind::from_statement(statement),
             scopes,
             references,
-            yield_stars,
             expr_types,
             expr_ids,
             span,

@@ -9,6 +9,10 @@
 //! the embedder injects `&dyn ProcedureRegistry` into plan and execute calls.
 //! See `_spec/08-iso-gql-planner-and-executor.md` §7.
 
+use selene_core::IStr;
+
+use crate::GqlType;
+
 /// Registry interface consumed by the GQL planner and executor.
 ///
 /// Registration is intentionally not part of this trait. Concrete registries
@@ -16,7 +20,7 @@
 /// metadata lookup and runtime dispatch through an opaque handle.
 pub trait ProcedureRegistry: Send + Sync {
     /// Look up procedure metadata by canonical CALL-time name.
-    fn lookup(&self, name: &str) -> Option<ProcedureMetadata>;
+    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata>;
 
     /// Execute a previously planned procedure handle with evaluated arguments.
     fn execute(
@@ -31,6 +35,7 @@ pub trait ProcedureRegistry: Send + Sync {
 /// M2 will define the exact signature, tier, mutability, and capability fields.
 /// The important D16 boundary is that this type is owned by `selene-gql` and
 /// carries only data the planner can consume without importing `selene-pack`.
+#[derive(Clone, Debug)]
 pub struct ProcedureMetadata {
     /// Opaque handle returned to the executor after successful planning.
     pub handle: ProcedureHandle,
@@ -53,11 +58,57 @@ pub struct ProcedureMetadata {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProcedureHandle(u64);
 
-/// Input signature placeholder for M2.
-pub struct ProcedureSignature;
+impl ProcedureHandle {
+    /// Construct an opaque handle from a registry-defined raw value.
+    ///
+    /// `selene-gql` does not interpret the raw value. The concrete registry
+    /// chooses the encoding and receives the handle back unchanged through
+    /// [`ProcedureRegistry::execute`].
+    #[must_use]
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
 
-/// Output schema placeholder for M2.
-pub struct ProcedureOutputSchema;
+    /// Return the opaque raw value.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+
+/// Static signature used for plan-time argument validation.
+#[derive(Clone, Debug, Default)]
+pub struct ProcedureSignature {
+    /// Positional parameters in declaration order.
+    pub parameters: Vec<ProcedureParameter>,
+}
+
+/// One declared procedure parameter.
+#[derive(Clone, Debug)]
+pub struct ProcedureParameter {
+    /// Parameter name. Diagnostic-only; arguments are positional in v1.0.
+    pub name: IStr,
+    /// Expected static type for the corresponding positional argument.
+    pub ty: GqlType,
+    /// Whether a statically resolved `NULL` argument is accepted.
+    pub nullable: bool,
+}
+
+/// Output schema as a relation of named columns.
+#[derive(Clone, Debug, Default)]
+pub struct ProcedureOutputSchema {
+    /// Output columns in declaration order.
+    pub columns: Vec<ProcedureOutputColumn>,
+}
+
+/// One output column from a procedure call.
+#[derive(Clone, Debug)]
+pub struct ProcedureOutputColumn {
+    /// Column name matched against `YIELD col` references.
+    pub name: IStr,
+    /// Static type assigned to the YIELD binding.
+    pub ty: GqlType,
+}
 
 /// Execution tier advertised by a procedure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,3 +151,27 @@ pub enum ProcedureError {
 
 /// Placeholder value type; the final type lives in `selene-core`.
 pub struct Value;
+
+/// Registry with no registered procedures.
+///
+/// Use this for analyzer call sites that do not exercise CALL. Any procedure
+/// lookup returns `None`, and runtime execution remains out of scope until
+/// M5c defines the concrete execution value flow.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmptyProcedureRegistry;
+
+impl ProcedureRegistry for EmptyProcedureRegistry {
+    fn lookup(&self, _name: &[IStr]) -> Option<ProcedureMetadata> {
+        None
+    }
+
+    fn execute(
+        &self,
+        _handle: ProcedureHandle,
+        _args: &[Value],
+    ) -> Result<ProcedureResult, ProcedureError> {
+        // Why: D17's per-tier runtime execution model lands in M5c; BRIEF-23
+        // only consumes lookup() for analyzer-time signature metadata.
+        Err(ProcedureError::M2Placeholder)
+    }
+}

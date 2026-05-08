@@ -1,22 +1,46 @@
 //! Analyzer positive binding tests.
 
+use selene_core::{IStr, intern};
 use selene_gql::{
-    AnalysisError, BindingDeclKind, BindingUseKind, PipelineStatement, Statement, analyze, parse,
+    AnalysisError, BindingDeclKind, BindingUseKind, EmptyProcedureRegistry, GqlType,
+    PipelineStatement, ProcedureOutputColumn, ProcedureParameter, ProcedureRegistry, Statement,
+    analyze, parse,
 };
-use selene_testing::analyzed_corpus::load_default_analyzed_corpus;
+use selene_testing::analyzed_corpus::load_default_analyzed_gql_corpus;
+use selene_testing::{MockProcedureRegistry, default_corpus_registry};
 
 fn analyze_one(source: &str) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement)
+    analyze(statement, &EmptyProcedureRegistry)
+}
+
+fn analyze_with(
+    source: &str,
+    registry: &dyn ProcedureRegistry,
+) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
+    let statement = parse(source).expect("test input parses");
+    analyze(statement, registry)
+}
+
+fn pkg_fn_registry(
+    parameters: Vec<ProcedureParameter>,
+    output_columns: Vec<ProcedureOutputColumn>,
+) -> MockProcedureRegistry {
+    MockProcedureRegistry::new().with_procedure(
+        vec![istr("pkg"), istr("fn")],
+        parameters,
+        output_columns,
+    )
+}
+
+fn istr(value: &str) -> IStr {
+    intern(value).expect("test strings fit interner")
 }
 
 #[test]
 fn positive_corpus_analyzes_and_resolves_references() {
-    let positives = load_default_analyzed_corpus(|source| {
-        let statement = parse(source).map_err(|err| err.to_string())?;
-        analyze(statement).map_err(|err| err.to_string())
-    })
-    .expect("positive corpus analyzes");
+    let registry = default_corpus_registry();
+    let positives = load_default_analyzed_gql_corpus(&registry).expect("positive corpus analyzes");
     assert!(!positives.is_empty());
 
     for entry in positives {
@@ -60,18 +84,51 @@ fn order_by_alias_resolves_to_projection() {
 
 #[test]
 fn explicit_yield_columns_bind_by_visible_name() {
-    let analyzed = analyze_one("MATCH (n) CALL pkg.fn(n) YIELD col AS answer RETURN answer")
-        .expect("analyzes");
+    let registry = pkg_fn_registry(
+        vec![ProcedureParameter {
+            name: istr("node"),
+            ty: GqlType::NodeRef,
+            nullable: false,
+        }],
+        vec![ProcedureOutputColumn {
+            name: istr("col"),
+            ty: GqlType::String,
+        }],
+    );
+    let analyzed = analyze_with(
+        "MATCH (n) CALL pkg.fn(n) YIELD col AS answer RETURN answer",
+        &registry,
+    )
+    .expect("analyzes");
     assert!(analyzed.scopes.declarations().iter().any(|decl| decl.kind()
         == BindingDeclKind::YieldColumn
         && decl.name().as_str() == "answer"));
 }
 
 #[test]
-fn yield_star_records_wildcard_without_declaring_columns() {
-    let analyzed = analyze_one("CALL pkg.fn() YIELD *").expect("analyzes");
-    assert_eq!(analyzed.yield_stars.len(), 1);
-    assert!(analyzed.scopes.declarations().is_empty());
+fn yield_star_expands_registered_columns() {
+    let registry = pkg_fn_registry(
+        Vec::new(),
+        vec![
+            ProcedureOutputColumn {
+                name: istr("first"),
+                ty: GqlType::String,
+            },
+            ProcedureOutputColumn {
+                name: istr("second"),
+                ty: GqlType::Integer,
+            },
+        ],
+    );
+    let analyzed = analyze_with("CALL pkg.fn() YIELD *", &registry).expect("analyzes");
+    let yield_names = analyzed
+        .scopes
+        .declarations()
+        .iter()
+        .filter(|decl| decl.kind() == BindingDeclKind::YieldColumn)
+        .map(|decl| decl.name().as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(yield_names, ["first", "second"]);
 }
 
 #[test]
@@ -140,11 +197,15 @@ fn next_chain_threads_bindings_forward() {
 
 #[test]
 fn mixed_yield_star_binds_explicit_columns() {
-    // YIELD * combined with explicit YIELD items must still declare the
-    // named columns. Codex P2 on PR #25.
-    let analyzed =
-        analyze_one("CALL pkg.fn() YIELD *, result AS alias").expect("mixed YIELD analyses");
-    assert_eq!(analyzed.yield_stars.len(), 1);
+    let registry = pkg_fn_registry(
+        Vec::new(),
+        vec![ProcedureOutputColumn {
+            name: istr("result"),
+            ty: GqlType::String,
+        }],
+    );
+    let analyzed = analyze_with("CALL pkg.fn() YIELD *, result AS alias", &registry)
+        .expect("mixed YIELD analyses");
     assert!(
         analyzed
             .scopes

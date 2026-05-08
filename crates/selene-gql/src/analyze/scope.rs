@@ -127,16 +127,6 @@ impl BindingScopeTree {
         id
     }
 
-    pub(crate) fn declare_strict(
-        &mut self,
-        scope: ScopeId,
-        kind: BindingDeclKind,
-        name: IStr,
-        span: SourceSpan,
-    ) -> Result<BindingId, AnalysisError> {
-        self.declare_strict_typed(scope, kind, name, span, BindingDecl::default_type(kind))
-    }
-
     pub(crate) fn declare_strict_typed(
         &mut self,
         scope: ScopeId,

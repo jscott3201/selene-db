@@ -11,6 +11,7 @@ pub mod diagnostic;
 pub mod error;
 mod flagger;
 pub mod parser;
+pub mod procedure_registry;
 
 pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
@@ -43,3 +44,8 @@ pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
 pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_with_source};
+pub use crate::procedure_registry::{
+    EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
+    ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry,
+    ProcedureSignature, ProcedureTier,
+};

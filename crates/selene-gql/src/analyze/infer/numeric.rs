@@ -23,6 +23,20 @@ pub(crate) fn is_numeric(ty: &GqlType) -> bool {
     numeric_kind(ty).is_some()
 }
 
+/// Return true if `arg_ty` can flow into a procedure parameter of `param_ty`.
+pub(crate) fn argument_assignable(arg_ty: &GqlType, param_ty: &GqlType, nullable: bool) -> bool {
+    if matches!(arg_ty, GqlType::Null) {
+        return nullable;
+    }
+    if arg_ty == param_ty {
+        return true;
+    }
+    let (Some(arg), Some(param)) = (numeric_kind(arg_ty), numeric_kind(param_ty)) else {
+        return false;
+    };
+    numeric_assignable(arg, param)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NumericKind {
     Integer(IntegerKind),
@@ -91,6 +105,25 @@ fn numeric_kind(ty: &GqlType) -> Option<NumericKind> {
         GqlType::Float64 => NumericKind::Float(FloatKind::F64),
         _ => return None,
     })
+}
+
+fn numeric_assignable(arg: NumericKind, param: NumericKind) -> bool {
+    match (arg, param) {
+        (NumericKind::Integer(arg), NumericKind::Integer(param)) => integer_assignable(arg, param),
+        (NumericKind::Integer(_), NumericKind::Decimal | NumericKind::Float(_)) => true,
+        (NumericKind::Decimal, NumericKind::Decimal | NumericKind::Float(_)) => true,
+        (NumericKind::Float(arg), NumericKind::Float(param)) => arg <= param,
+        (NumericKind::Decimal | NumericKind::Float(_), NumericKind::Integer(_))
+        | (NumericKind::Float(_), NumericKind::Decimal) => false,
+    }
+}
+
+fn integer_assignable(arg: IntegerKind, param: IntegerKind) -> bool {
+    match (arg.signed, param.signed) {
+        (true, true) | (false, false) => arg.width <= param.width,
+        (true, false) => false,
+        (false, true) => param.width > arg.width,
+    }
 }
 
 fn integer_result(lhs: IntegerKind, rhs: IntegerKind) -> GqlType {
@@ -208,5 +241,81 @@ mod tests {
             numeric_promotion(&GqlType::Float, &GqlType::Float),
             Some(GqlType::Float)
         );
+    }
+
+    #[test]
+    fn argument_assignment_accepts_identity() {
+        assert!(argument_assignable(
+            &GqlType::String,
+            &GqlType::String,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_accepts_narrower_to_wider_numeric() {
+        assert!(argument_assignable(&GqlType::Int8, &GqlType::Int64, false));
+        assert!(argument_assignable(
+            &GqlType::Uint32,
+            &GqlType::Int64,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_rejects_wider_to_narrower_numeric() {
+        assert!(!argument_assignable(&GqlType::Int64, &GqlType::Int8, false));
+        assert!(!argument_assignable(
+            &GqlType::Int64,
+            &GqlType::Uint64,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_allows_tier_0_to_1_but_not_reverse() {
+        assert!(argument_assignable(
+            &GqlType::Integer,
+            &GqlType::Decimal,
+            false
+        ));
+        assert!(!argument_assignable(
+            &GqlType::Decimal,
+            &GqlType::Integer,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_allows_tier_1_to_2_but_not_reverse() {
+        assert!(argument_assignable(
+            &GqlType::Decimal,
+            &GqlType::Float64,
+            false
+        ));
+        assert!(!argument_assignable(
+            &GqlType::Float64,
+            &GqlType::Decimal,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_null_uses_nullable_flag() {
+        assert!(argument_assignable(&GqlType::Null, &GqlType::Integer, true));
+        assert!(!argument_assignable(
+            &GqlType::Null,
+            &GqlType::Integer,
+            false
+        ));
+    }
+
+    #[test]
+    fn argument_assignment_rejects_unrelated_families() {
+        assert!(!argument_assignable(
+            &GqlType::String,
+            &GqlType::Date,
+            false
+        ));
     }
 }

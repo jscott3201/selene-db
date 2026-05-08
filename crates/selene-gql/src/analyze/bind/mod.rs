@@ -11,7 +11,7 @@ pub(crate) mod transaction;
 use selene_core::IStr;
 
 use crate::{
-    SourceSpan, Statement, ValueExpr,
+    ProcedureRegistry, SourceSpan, Statement, ValueExpr,
     analyze::{
         ast::AnalyzedStatement,
         binding::{BindingDeclKind, BindingId, BindingUse, BindingUseKind},
@@ -22,8 +22,11 @@ use crate::{
 };
 
 /// Analyze one statement with the BRIEF-21 binding pass.
-pub(crate) fn bind_statement(stmt: Statement) -> Result<AnalyzedStatement, AnalysisError> {
-    let mut ctx = BindContext::new(stmt.span());
+pub(crate) fn bind_statement(
+    stmt: Statement,
+    registry: &dyn ProcedureRegistry,
+) -> Result<AnalyzedStatement, AnalysisError> {
+    let mut ctx = BindContext::new(stmt.span(), registry);
     match &stmt {
         Statement::Query(pipeline) => query::bind_query_pipeline(&mut ctx, pipeline)?,
         Statement::Composite { first, rest, .. } => {
@@ -66,26 +69,26 @@ pub(crate) fn bind_statement(stmt: Statement) -> Result<AnalyzedStatement, Analy
     Ok(ctx.finish(stmt))
 }
 
-pub(crate) struct BindContext {
+pub(crate) struct BindContext<'ctx> {
     scopes: BindingScopeTree,
     current: ScopeId,
     references: Vec<BindingUse>,
-    yield_stars: Vec<SourceSpan>,
     expr_types: ExprTypeTable,
     expr_ids: ExprIdMap,
+    registry: &'ctx dyn ProcedureRegistry,
 }
 
-impl BindContext {
-    fn new(root_span: SourceSpan) -> Self {
+impl<'ctx> BindContext<'ctx> {
+    fn new(root_span: SourceSpan, registry: &'ctx dyn ProcedureRegistry) -> Self {
         let scopes = BindingScopeTree::new(root_span);
         let current = scopes.root();
         Self {
             scopes,
             current,
             references: Vec::new(),
-            yield_stars: Vec::new(),
             expr_types: ExprTypeTable::default(),
             expr_ids: ExprIdMap::default(),
+            registry,
         }
     }
 
@@ -94,19 +97,9 @@ impl BindContext {
             stmt,
             self.scopes,
             self.references,
-            self.yield_stars,
             self.expr_types,
             self.expr_ids,
         )
-    }
-
-    pub(crate) fn declare_strict(
-        &mut self,
-        kind: BindingDeclKind,
-        name: IStr,
-        span: SourceSpan,
-    ) -> Result<BindingId, AnalysisError> {
-        self.scopes.declare_strict(self.current, kind, name, span)
     }
 
     pub(crate) fn declare_strict_typed(
@@ -173,10 +166,6 @@ impl BindContext {
         result
     }
 
-    pub(crate) fn record_yield_star(&mut self, span: SourceSpan) {
-        self.yield_stars.push(span);
-    }
-
     pub(crate) fn allocate_expr(&mut self, expr: &ValueExpr, ty: AnalyzedType) -> ExprId {
         let id = self.expr_types.push(ty);
         self.expr_ids.insert(expr, id);
@@ -222,5 +211,9 @@ impl BindContext {
 
     pub(crate) fn set_scope(&mut self, scope: ScopeId) {
         self.current = scope;
+    }
+
+    pub(crate) fn registry(&self) -> &'ctx dyn ProcedureRegistry {
+        self.registry
     }
 }
