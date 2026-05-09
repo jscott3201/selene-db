@@ -95,6 +95,20 @@ pub enum ParserError {
         span: SourceSpan,
     },
 
+    /// Query nesting exceeded the parser's recursion cap.
+    #[error("parser nesting limit exceeded ({limit})")]
+    #[diagnostic(
+        code(SLENE_GQL_54000),
+        help("queries are bounded to 64 nested grouping, list, and record delimiters")
+    )]
+    NestingLimitExceeded {
+        /// Maximum admitted syntactic nesting depth.
+        limit: u32,
+        /// Source span that crossed the limit.
+        #[label("exceeds parser nesting limit")]
+        span: SourceSpan,
+    },
+
     /// Source parsed at the grammar level, but no AST builder is implemented yet.
     ///
     /// Distinct from [`Self::SyntaxError`] (parse failed) and
@@ -124,7 +138,9 @@ impl ParserError {
             Self::UnsupportedFeature { .. } | Self::NotImplemented { .. } => {
                 GqlStatus::FEATURE_NOT_SUPPORTED
             }
-            Self::InternerBudgetExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            Self::InternerBudgetExceeded { .. } | Self::NestingLimitExceeded { .. } => {
+                GqlStatus::PROGRAM_LIMIT_EXCEEDED
+            }
         }
     }
 

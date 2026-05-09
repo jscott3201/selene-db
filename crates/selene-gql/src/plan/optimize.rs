@@ -10,6 +10,8 @@ mod registry;
 mod rule;
 pub mod rules;
 mod selectivity;
+#[cfg(any(test, feature = "test-harness"))]
+mod summary;
 mod walk;
 
 pub use context::{EdgeStatistics, OptimizeContext, PropertyHistogram, WanderJoinSampler};
@@ -17,8 +19,12 @@ pub use index_catalog::{
     CompositeIndexHandle, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind, IndexTarget,
     TypedIndexLookup,
 };
-pub use registry::DEFAULT_RULES;
+pub use registry::{DEFAULT_RULES, RULE_NAMES};
 pub use rule::{Rule, Transformed};
+#[cfg(any(test, feature = "test-harness"))]
+pub use summary::{
+    PatternSnapshot, PipelineOpSummary, PlanSnapshot, ScanSnapshot, optimize_summary,
+};
 
 use crate::plan::ExecutionPlan;
 

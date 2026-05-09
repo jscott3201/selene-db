@@ -25,3 +25,34 @@ pub static DEFAULT_RULES: &[&'static dyn Rule] = &[
     &SymmetryBreaking,
     &TopK,
 ];
+
+/// Stable names of [`DEFAULT_RULES`] entries, in rule execution order.
+pub static RULE_NAMES: &[&str] = &[
+    "constant_folding",
+    "and_splitting",
+    "filter_pushdown",
+    "node_filter_extraction",
+    "expand_filter_pushdown",
+    "composite_index_lookup",
+    "in_list_optimization",
+    "range_index_scan",
+    "index_order",
+    "predicate_reorder",
+    "wco_join",
+    "symmetry_breaking",
+    "top_k",
+];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rule_names_match_default_rules() {
+        let from_default = DEFAULT_RULES
+            .iter()
+            .map(|rule| rule.name())
+            .collect::<Vec<_>>();
+        assert_eq!(from_default, RULE_NAMES);
+    }
+}

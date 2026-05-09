@@ -1,0 +1,16 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: none
+output: [l, c]
+pattern:
+  bindings: 1 [n]
+  join_tree: Scan(n)
+  pattern_filters: 0
+  scans:
+    - n (Node): Linear residual=0 consumed=0
+  order_access: []
+pipeline:
+  - GroupBy(keys=1, aggs=[count(*)])
+  - Project(columns=[l,c])

@@ -9,6 +9,7 @@ use std::{
 use selene_gql::{ParserError, parse};
 
 const LIMIT: usize = 8_192;
+const NESTING_LIMIT: usize = 64;
 
 fn unique_prefix(name: &str) -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -103,6 +104,28 @@ fn over_budget_parse_does_not_pollute_global_interner() {
         selene_core::lookup(&canary).is_none(),
         "rejected over-budget parse leaked canary into the global interner: {canary}"
     );
+}
+
+#[test]
+fn rejects_excessive_syntax_nesting_before_pest_parse() {
+    let source = format!(
+        "LET x = {}0{} RETURN x",
+        "[".repeat(NESTING_LIMIT + 1),
+        "]".repeat(NESTING_LIMIT + 1)
+    );
+    let error = parse(&source).expect_err("over-nested parse rejects");
+    assert!(matches!(
+        error,
+        ParserError::NestingLimitExceeded { limit: 64, .. }
+    ));
+}
+
+#[test]
+fn nesting_guard_ignores_quoted_and_commented_delimiters() {
+    let noisy_string = "[".repeat(NESTING_LIMIT + 32);
+    let noisy_comment = "(".repeat(NESTING_LIMIT + 32);
+    let source = format!("// {noisy_comment}\nRETURN '{noisy_string}'");
+    parse(&source).expect("delimiters inside comments and strings are ignored by the guard");
 }
 
 #[test]

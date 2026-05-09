@@ -1,0 +1,18 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: wco_join, symmetry_breaking
+output: [a, b, c]
+pattern:
+  bindings: 3 [a, b, c]
+  join_tree: WCO(intersection=1, orderings=2)
+  pattern_filters: 0
+  scans:
+    - a (Node): Linear residual=0 consumed=0
+    - <anonymous-edge> (Edge): Linear residual=0 consumed=0
+    - <anonymous-edge> (Edge): Linear residual=0 consumed=0
+    - <anonymous-edge> (Edge): Linear residual=0 consumed=0
+  order_access: []
+pipeline:
+  - Project(columns=[a,b,c])
