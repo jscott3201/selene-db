@@ -197,7 +197,6 @@ fn collect_insert_node(
         node.binding,
         node.span,
         BindingDeclKind::InsertNode,
-        BindingDeclKind::NodePattern,
         scopes,
         references,
     ) else {
@@ -223,7 +222,6 @@ fn collect_insert_edge(
         edge.binding,
         edge.span,
         BindingDeclKind::InsertEdge,
-        BindingDeclKind::EdgePattern,
         scopes,
         references,
     ) else {
@@ -243,7 +241,6 @@ fn insert_binding(
     name: Option<IStr>,
     span: SourceSpan,
     insert_kind: BindingDeclKind,
-    reused_kind: BindingDeclKind,
     scopes: &BindingScopeTree,
     references: &[BindingUse],
 ) -> Option<Option<BindingId>> {
@@ -259,7 +256,7 @@ fn insert_binding(
         return (declaration.kind() == insert_kind).then_some(Some(declaration.id()));
     }
 
-    let reference = references
+    let _reference = references
         .iter()
         .find(|reference| {
             reference.name == name
@@ -267,14 +264,7 @@ fn insert_binding(
                 && reference.kind == BindingUseKind::PatternReuse
         })
         .expect("bound insert pattern has declaration or pattern-reuse reference");
-    let declaration = scopes
-        .declaration(reference.binding)
-        .expect("resolved binding has declaration");
-    match declaration.kind() {
-        kind if kind == insert_kind => Some(Some(reference.binding)),
-        kind if kind == reused_kind => None,
-        _ => None,
-    }
+    None
 }
 
 fn collect_set_item(

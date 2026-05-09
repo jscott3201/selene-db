@@ -2,9 +2,9 @@
 
 use selene_core::{IStr, intern};
 use selene_gql::{
-    AnalysisError, AnalyzedStatement, DeleteMode, ElementKind, EmptyProcedureRegistry, GqlType,
-    LabelExpr, MutationWriteSet, ProcedureMutability, ProcedureOutputColumn, ProcedureRegistry,
-    StatementCategory, WriteKind, analyze, parse,
+    AnalysisError, AnalyzedStatement, BindingId, DeleteMode, ElementKind, EmptyProcedureRegistry,
+    GqlType, LabelExpr, MutationWriteSet, ProcedureMutability, ProcedureOutputColumn,
+    ProcedureRegistry, SourceSpan, StatementCategory, WriteKind, analyze, parse,
 };
 use selene_testing::MockProcedureRegistry;
 
@@ -40,6 +40,15 @@ fn property_names(keys: &[IStr]) -> Vec<&str> {
     keys.iter().map(|key| key.as_str()).collect()
 }
 
+fn binding_name(analyzed: &AnalyzedStatement, binding: BindingId) -> &'static str {
+    analyzed
+        .scopes
+        .declaration(binding)
+        .expect("binding exists")
+        .name()
+        .as_str()
+}
+
 fn target_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> &'static str {
     let target = match kind {
         WriteKind::SetProperty { target, .. }
@@ -52,12 +61,21 @@ fn target_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> &'static str {
         }
         _ => panic!("unexpected future write kind"),
     };
-    analyzed
-        .scopes
-        .declaration(target)
-        .expect("target binding exists")
-        .name()
-        .as_str()
+    binding_name(analyzed, target)
+}
+
+fn insert_binding_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> Option<&'static str> {
+    let binding = match kind {
+        WriteKind::InsertNode { binding, .. } | WriteKind::InsertEdge { binding, .. } => *binding,
+        _ => panic!("expected insert write kind"),
+    };
+    binding.map(|binding| binding_name(analyzed, binding))
+}
+
+fn span_text(source: &str, span: SourceSpan) -> &str {
+    let start = span.byte_offset as usize;
+    let end = span.end() as usize;
+    &source[start..end]
 }
 
 fn registry_with_mutability(mutability: ProcedureMutability) -> MockProcedureRegistry {
@@ -163,6 +181,52 @@ fn insert_path_with_anonymous_edge_emits_edge_without_binding() {
         panic!("expected middle edge entry");
     };
     assert_eq!(binding, None);
+}
+
+#[test]
+fn insert_reused_binding_emits_no_duplicate_entry() {
+    let source = "INSERT (a) INSERT (a)-[:K]->(b)";
+    let analyzed = analyze_one(source).expect("analyzes");
+    let entries = &write_set(&analyzed).entries;
+
+    assert_eq!(entries.len(), 3);
+    assert_eq!(span_text(source, entries[0].span), "(a)");
+    assert_eq!(span_text(source, entries[2].span), "(b)");
+
+    let WriteKind::InsertNode {
+        binding: first_a,
+        label_expr,
+        property_keys,
+    } = &entries[0].kind
+    else {
+        panic!("expected first INSERT node");
+    };
+    let Some(first_a) = *first_a else {
+        panic!("expected first INSERT node binding");
+    };
+    assert_eq!(binding_name(&analyzed, first_a), "a");
+    assert!(label_expr.is_none());
+    assert!(property_keys.is_empty());
+
+    let WriteKind::InsertEdge { binding, .. } = entries[1].kind else {
+        panic!("expected anonymous INSERT edge");
+    };
+    assert_eq!(binding, None);
+
+    assert_eq!(insert_binding_name(&analyzed, &entries[2].kind), Some("b"));
+    let emitted_a_count = entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                &entry.kind,
+                WriteKind::InsertNode {
+                    binding: Some(binding),
+                    ..
+                } if *binding == first_a
+            )
+        })
+        .count();
+    assert_eq!(emitted_a_count, 1);
 }
 
 #[test]
