@@ -10,7 +10,7 @@ use selene_testing::MockProcedureRegistry;
 
 fn analyze_one(source: &str) -> Result<AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, &EmptyProcedureRegistry)
+    analyze(statement, &EmptyProcedureRegistry, None)
 }
 
 fn analyze_with(
@@ -18,7 +18,7 @@ fn analyze_with(
     registry: &dyn ProcedureRegistry,
 ) -> Result<AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, registry)
+    analyze(statement, registry, None)
 }
 
 fn write_set(analyzed: &AnalyzedStatement) -> &MutationWriteSet {

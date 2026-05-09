@@ -15,6 +15,7 @@ workspace = true
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-gql = { path = "../selene-gql", version = "0.0.0" }
+selene-graph = { path = "../selene-graph", version = "0.0.0" }
 thiserror.workspace = true
 
 [dev-dependencies]

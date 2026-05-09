@@ -146,15 +146,16 @@ impl BindingScopeTree {
                 prior_span,
             });
         }
-        Ok(self.declare_unchecked(scope, kind, name, span, ty))
+        Ok(self.declare_unchecked(scope, kind, name, span, ty, None))
     }
 
-    pub(crate) fn declare_or_reuse(
+    pub(crate) fn declare_or_reuse_with_labels(
         &mut self,
         scope: ScopeId,
         kind: BindingDeclKind,
         name: IStr,
         span: SourceSpan,
+        labels: Option<crate::LabelExpr>,
     ) -> Result<(BindingId, bool), AnalysisError> {
         if let Some(existing) = self.resolve(scope, name) {
             // Cross-element-kind reuse is a semantic error: a node variable
@@ -181,7 +182,14 @@ impl BindingScopeTree {
             return Ok((existing, true));
         }
         Ok((
-            self.declare_unchecked(scope, kind, name, span, BindingDecl::default_type(kind)),
+            self.declare_unchecked(
+                scope,
+                kind,
+                name,
+                span,
+                BindingDecl::default_type(kind),
+                labels,
+            ),
             false,
         ))
     }
@@ -208,9 +216,11 @@ impl BindingScopeTree {
         name: IStr,
         span: SourceSpan,
         ty: AnalyzedType,
+        labels: Option<crate::LabelExpr>,
     ) -> BindingId {
         let id = BindingId::new(self.decls.len() as u32);
-        self.decls.push(BindingDecl::new(kind, id, name, span, ty));
+        self.decls
+            .push(BindingDecl::new(kind, id, name, span, ty, labels));
         self.scopes[scope.get() as usize].locals.push(id);
         id
     }

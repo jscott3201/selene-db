@@ -1,0 +1,378 @@
+//! Closed-graph static schema validation tests.
+
+use selene_core::{IStr, LabelSet, PropertyValueType, intern};
+use selene_gql::{
+    AnalysisError, AnalyzedStatement, EdgeDirection, EdgePattern, EmptyProcedureRegistry,
+    GraphPattern, InsertStatement, LabelExpr, Literal, MutationPipeline, MutationStatement,
+    NodePattern, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
+};
+use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
+use selene_testing::{person_company_graph_type, person_only_graph_type};
+
+fn istr(value: &str) -> IStr {
+    intern(value).expect("test strings fit interner")
+}
+
+fn labels(values: &[&str]) -> LabelSet {
+    values.iter().map(|value| istr(value)).collect()
+}
+
+fn property(name: &str, value_type: PropertyValueType, required: bool) -> PropertyTypeDef {
+    PropertyTypeDef {
+        name: istr(name),
+        value_type,
+        required,
+    }
+}
+
+fn analyze_source(
+    source: &str,
+    schema: Option<&GraphTypeDef>,
+) -> Result<AnalyzedStatement, AnalysisError> {
+    let statement = parse(source).expect("test input parses");
+    analyze(statement, &EmptyProcedureRegistry, schema)
+}
+
+fn analyze_with_schema(
+    source: &str,
+    graph_type: &GraphTypeDef,
+) -> Result<AnalyzedStatement, AnalysisError> {
+    analyze_source(source, Some(graph_type))
+}
+
+fn schema_error(source: &str, graph_type: &GraphTypeDef) -> AnalysisError {
+    analyze_with_schema(source, graph_type).expect_err("schema validation rejects input")
+}
+
+fn label_expr(label: &str) -> Option<LabelExpr> {
+    Some(LabelExpr::Single(istr(label)))
+}
+
+fn string_expr(value: &str, span: SourceSpan) -> ValueExpr {
+    ValueExpr::Literal(Literal::String(istr(value), span))
+}
+
+fn node(name: &str, label: &str, name_value: &str, span: SourceSpan) -> PatternElement {
+    PatternElement::Node(NodePattern {
+        binding: Some(istr(name)),
+        label_expr: label_expr(label),
+        properties: vec![(istr("name"), string_expr(name_value, span))],
+        inline_where: None,
+        span,
+    })
+}
+
+fn edge(label: &str, direction: EdgeDirection, span: SourceSpan) -> PatternElement {
+    PatternElement::Edge(EdgePattern {
+        binding: None,
+        direction,
+        label_expr: label_expr(label),
+        properties: Vec::new(),
+        quantifier: None,
+        inline_where: None,
+        span,
+    })
+}
+
+fn ambiguous_property_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: istr("fixture.ambiguous"),
+        node_types: vec![
+            NodeTypeDef {
+                name: istr("Person"),
+                key_labels: LabelSet::single(istr("Person")),
+                properties: vec![
+                    property("name", PropertyValueType::String, true),
+                    property("flag", PropertyValueType::String, false),
+                ],
+            },
+            NodeTypeDef {
+                name: istr("ActivePerson"),
+                key_labels: labels(&["Person", "Active"]),
+                properties: vec![
+                    property("name", PropertyValueType::String, true),
+                    property("flag", PropertyValueType::Int, false),
+                ],
+            },
+        ],
+        edge_types: Vec::new(),
+    }
+    .validate()
+    .expect("fixture graph type is valid")
+}
+
+fn duplicate_edge_label_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: istr("fixture.duplicate_edge_label"),
+        node_types: vec![
+            NodeTypeDef {
+                name: istr("Person"),
+                key_labels: LabelSet::single(istr("Person")),
+                properties: vec![property("name", PropertyValueType::String, true)],
+            },
+            NodeTypeDef {
+                name: istr("Company"),
+                key_labels: LabelSet::single(istr("Company")),
+                properties: vec![property("name", PropertyValueType::String, true)],
+            },
+        ],
+        edge_types: vec![
+            EdgeTypeDef {
+                name: istr("WorksAt"),
+                label: istr("REL"),
+                source_node_type: 0,
+                target_node_type: 1,
+                properties: vec![property("since", PropertyValueType::Int, false)],
+            },
+            EdgeTypeDef {
+                name: istr("Knows"),
+                label: istr("REL"),
+                source_node_type: 0,
+                target_node_type: 0,
+                properties: vec![property("strength", PropertyValueType::Int, false)],
+            },
+        ],
+    }
+    .validate()
+    .expect("fixture graph type is valid")
+}
+
+#[test]
+fn schema_absent_skips_closed_graph_checks() {
+    analyze_source("INSERT (n { extra: 1 })", None).expect("open graph accepts insert");
+}
+
+#[test]
+fn validates_insert_node_and_edge_against_schema() {
+    let graph_type = person_company_graph_type();
+    analyze_with_schema("INSERT (n:Person { name: 'Alice' })", &graph_type).expect("valid node");
+    let source = concat!(
+        "INSERT ",
+        "(a:Person { name: 'Alice' })",
+        "-[:WORKS_AT { since: 2026 }]->",
+        "(b:Company { name: 'Acme' })"
+    );
+    analyze_with_schema(source, &graph_type).expect("valid edge");
+}
+
+#[test]
+fn rejects_unknown_node_type() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error("INSERT (n:Project { name: 'X' })", &graph_type);
+    assert_eq!(error.gqlstatus().as_str(), "22000");
+    assert!(matches!(error, AnalysisError::SchemaUnknownNodeType { .. }));
+}
+
+#[test]
+fn rejects_unknown_edge_type() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error(
+        "INSERT (a:Person { name: 'A' })-[:LIKES]->(b:Company { name: 'B' })",
+        &graph_type,
+    );
+    assert!(matches!(error, AnalysisError::SchemaUnknownEdgeType { .. }));
+}
+
+#[test]
+fn rejects_static_edge_endpoint_mismatch() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error(
+        "INSERT (a:Company { name: 'A' })-[:WORKS_AT]->(b:Person { name: 'B' })",
+        &graph_type,
+    );
+    assert!(matches!(
+        error,
+        AnalysisError::SchemaEdgeEndpointMismatch { .. }
+    ));
+}
+
+#[test]
+fn rejects_undeclared_property_on_insert_and_set() {
+    let graph_type = person_company_graph_type();
+    let insert_error = schema_error("INSERT (n:Person { name: 'Alice', age: 42 })", &graph_type);
+    assert!(matches!(
+        insert_error,
+        AnalysisError::SchemaUndeclaredProperty { .. }
+    ));
+
+    let set_error = schema_error("MATCH (n:Person) SET n.age = 42", &graph_type);
+    assert!(matches!(
+        set_error,
+        AnalysisError::SchemaUndeclaredProperty { .. }
+    ));
+}
+
+#[test]
+fn rejects_property_type_mismatch_on_insert_and_set() {
+    let graph_type = person_company_graph_type();
+    let insert_error = schema_error("INSERT (n:Person { name: 42 })", &graph_type);
+    assert!(matches!(
+        insert_error,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+
+    let set_error = schema_error("MATCH (n:Person) SET n.name = 42", &graph_type);
+    assert!(matches!(
+        set_error,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn rejects_missing_and_removed_required_property() {
+    let graph_type = person_company_graph_type();
+    let missing = schema_error("INSERT (n:Person)", &graph_type);
+    assert!(matches!(
+        missing,
+        AnalysisError::SchemaRequiredPropertyMissing { .. }
+    ));
+
+    let removed = schema_error("MATCH (n:Person) REMOVE n.name", &graph_type);
+    assert!(matches!(
+        removed,
+        AnalysisError::SchemaRequiredPropertyRemoved { .. }
+    ));
+}
+
+#[test]
+fn rejects_invalid_insert_label_forms() {
+    let graph_type = person_company_graph_type();
+    for source in [
+        "INSERT (n { name: 'Alice' })",
+        "INSERT (n:Person|Company { name: 'Alice' })",
+        "INSERT (n:!Person { name: 'Alice' })",
+        "INSERT (n:% { name: 'Alice' })",
+    ] {
+        let error = schema_error(source, &graph_type);
+        assert!(matches!(
+            error,
+            AnalysisError::SchemaInvalidInsertLabelExpr { .. }
+        ));
+    }
+}
+
+#[test]
+fn required_insert_property_can_be_supplied_by_later_set() {
+    let graph_type = person_only_graph_type();
+    analyze_with_schema("INSERT (n:Person) SET n.name = 'Alice'", &graph_type)
+        .expect("later SET property satisfies required property");
+    analyze_with_schema("INSERT (n:Person) SET n = { name: 'Alice' }", &graph_type)
+        .expect("later SET property map satisfies required property");
+
+    let error = schema_error("INSERT (n:Person) SET n :Active", &graph_type);
+    assert!(matches!(
+        error,
+        AnalysisError::SchemaRequiredPropertyMissing { .. }
+    ));
+}
+
+#[test]
+fn validates_static_candidate_sets_when_candidates_agree() {
+    let graph_type = person_company_graph_type();
+    analyze_with_schema("MATCH (n:Person) SET n.name = 'Alice'", &graph_type)
+        .expect("all Person candidates agree on name");
+    analyze_with_schema("MATCH (n:Person) REMOVE n.nickname", &graph_type)
+        .expect("all Person candidates agree nickname is optional");
+}
+
+#[test]
+fn defers_static_candidate_sets_when_candidates_disagree() {
+    let graph_type = ambiguous_property_graph_type();
+    analyze_with_schema("MATCH (n:Person) SET n.flag = 1", &graph_type)
+        .expect("candidate disagreement defers to runtime");
+}
+
+#[test]
+fn validates_static_label_transitions_when_all_candidates_have_a_target_type() {
+    let graph_type = person_company_graph_type();
+    analyze_with_schema("MATCH (n:Person) SET n :Active", &graph_type)
+        .expect("Person candidates can transition to declared label set");
+
+    let error = schema_error("MATCH (n:Company) SET n :Active", &graph_type);
+    assert!(matches!(error, AnalysisError::SchemaUnknownNodeType { .. }));
+}
+
+#[test]
+fn validates_edge_set_and_remove_when_edge_label_is_unique() {
+    let graph_type = person_company_graph_type();
+    analyze_with_schema(
+        "MATCH (a:Person)-[r:WORKS_AT]->(b:Company) SET r.since = 2026",
+        &graph_type,
+    )
+    .expect("valid edge property set");
+
+    let type_error = schema_error(
+        "MATCH (a:Person)-[r:WORKS_AT]->(b:Company) SET r.since = 'soon'",
+        &graph_type,
+    );
+    assert!(matches!(
+        type_error,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+
+    let undeclared = schema_error(
+        "MATCH (a:Person)-[r:WORKS_AT]->(b:Company) SET r.extra = 1",
+        &graph_type,
+    );
+    assert!(matches!(
+        undeclared,
+        AnalysisError::SchemaUndeclaredProperty { .. }
+    ));
+}
+
+#[test]
+fn defers_edge_set_when_label_has_multiple_edge_types() {
+    let graph_type = duplicate_edge_label_graph_type();
+    analyze_with_schema(
+        "MATCH (a:Person)-[r:REL]->(b:Company) SET r.extra = 1",
+        &graph_type,
+    )
+    .expect("shared edge label defers property validation");
+}
+
+#[test]
+fn edge_direction_matrix_checks_right_and_left_but_defers_undirected() {
+    let graph_type = person_company_graph_type();
+    analyze_with_schema(
+        "INSERT (a:Person { name: 'A' })-[:WORKS_AT]->(b:Company { name: 'B' })",
+        &graph_type,
+    )
+    .expect("right edge endpoints match");
+    analyze_with_schema(
+        "INSERT (b:Company { name: 'B' })<-[:WORKS_AT]-(a:Person { name: 'A' })",
+        &graph_type,
+    )
+    .expect("left edge endpoints match");
+
+    let pattern = GraphPattern {
+        path_binding: None,
+        elements: vec![
+            node("a", "Company", "A", SourceSpan::new(0, 1)),
+            edge("WORKS_AT", EdgeDirection::Undirected, SourceSpan::new(1, 1)),
+            node("b", "Person", "B", SourceSpan::new(2, 1)),
+        ],
+        span: SourceSpan::new(0, 3),
+    };
+    let statement = Statement::Mutate(MutationPipeline {
+        statements: vec![MutationStatement::Insert(InsertStatement {
+            patterns: vec![pattern],
+            span: SourceSpan::new(0, 3),
+        })],
+        terminator: None,
+        span: SourceSpan::new(0, 3),
+    });
+    analyze(statement, &EmptyProcedureRegistry, Some(&graph_type))
+        .expect("undirected INSERT edge endpoint check defers to runtime");
+}
+
+#[test]
+fn schema_validation_smoke_preserves_write_set() {
+    let graph_type = person_company_graph_type();
+    let analyzed = analyze_with_schema(
+        "INSERT (n:Person) SET n.name = 'Alice' RETURN n",
+        &graph_type,
+    )
+    .expect("valid mutation analyzes");
+    let write_set = analyzed.write_set.expect("mutation write-set");
+    assert_eq!(write_set.entries.len(), 2);
+}

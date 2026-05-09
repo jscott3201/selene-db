@@ -166,6 +166,10 @@ M5b analyzer foundation note — 2026-05-08 — semantic-analysis contract
 
 BRIEF-21 opens M5b by adding `selene-gql::analyze(statement)` as the first semantic pass: it resolves parser-stage variable references into stable `BindingId`s, records the lexical `BindingScopeTree`, and leaves every expression type cell as `AnalyzedType::Dynamic` for BRIEF-22. Spec 12 is maintained as a local `_spec/12-semantic-analysis.md` mirror with durable MCP spec node 478; `_spec/` remains local-only per the underscore-folder rule.
 
+M5b closure note — 2026-05-09 — analyzer read/write/schema foundation complete
+
+BRIEFs 21-25 close M5b. The analyzer entry point is now `selene-gql::analyze(statement, &registry, schema)`, where `schema: Option<&GraphTypeDef>` enables static GG02 validation for closed graphs and `None` preserves open-graph behavior. The analyzer now produces binding scopes, expression type cells, procedure/YIELD typing, statement category, mutation write sets, and statically decidable closed-graph schema errors. Runtime validation in `selene-graph` remains the backstop for dynamic or intentionally deferred cases.
+
 ### D3 — Schema model: both GG01 + GG02 (2026-05-07)
 
 v1.0 supports **both** open graphs (GG01, schemaless) and closed graphs (GG02, declared graph type). Per-graph choice at `CREATE GRAPH` time:
@@ -180,6 +184,10 @@ Implications:
 - A type-validator runs at commit for closed graphs; bypassed for open graphs. The validator is a separate module and feature-gated by GG02 in the claimed-features set.
 - Catalog stores graph-type definitions; `DROP GRAPH TYPE` requires no extant closed graphs of that type.
 - Tests must cover: GG01-only graph mutations, GG02 conformance failures, cross-graph queries that mix open and closed graphs (allowed).
+
+D3 BRIEF-25 closure annotation — 2026-05-09
+
+BRIEF-25 adds analyzer-side static validation for closed graphs by passing `Option<&GraphTypeDef>` into `selene-gql::analyze`. This is an early rejection layer only: open graphs (`None`) bypass it, closed graphs reject statically decidable unknown node/edge types, endpoint mismatches, undeclared properties, property type mismatches, missing/removed required properties, and invalid INSERT label forms. The runtime `selene_graph::type_validator` remains authoritative for commit-time checks and for deferred static gaps such as undirected INSERT edge endpoints, multi-edge-type-shared-label SET/REMOVE, and multi-candidate-disagree property checks. This introduces the first direct `selene-gql -> selene-graph` dependency, authorized by D8 for analyzer/schema integration.
 
 ### D5 amendment — selene-vector design specifics (2026-05-07, post second-research-pass)
 

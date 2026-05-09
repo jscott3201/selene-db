@@ -10,7 +10,7 @@ use selene_gql::{
 
 fn analyze_one(source: &str) -> Result<AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, &EmptyProcedureRegistry)
+    analyze(statement, &EmptyProcedureRegistry, None)
 }
 
 fn type_mismatch(source: &str) -> (TypeMismatchContext, SourceSpan) {
@@ -366,7 +366,7 @@ fn is_typed_unsupported_variant_errors_for_hand_built_ast() {
         span,
     });
 
-    let err = analyze(statement, &EmptyProcedureRegistry).unwrap_err();
+    let err = analyze(statement, &EmptyProcedureRegistry, None).unwrap_err();
     assert!(matches!(
         err,
         AnalysisError::TypeMismatch {

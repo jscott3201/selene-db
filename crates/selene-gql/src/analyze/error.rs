@@ -1,6 +1,6 @@
 //! Analyzer diagnostics.
 
-use selene_core::IStr;
+use selene_core::{IStr, LabelSet, PropertyValueType};
 
 use crate::{
     BinaryOp, GqlStatus, GqlType, ProcedureMutability, SourceSpan,
@@ -151,6 +151,146 @@ pub enum AnalysisError {
         #[label("read pipelines cannot invoke mutating procedures")]
         span: SourceSpan,
     },
+
+    /// Static closed-graph validation found no matching node type.
+    #[error("{labels:?} does not match any node type in graph type {graph_type}")]
+    #[diagnostic(code(SLENE_A_010))]
+    SchemaUnknownNodeType {
+        /// Observed static label set.
+        labels: LabelSet,
+        /// Bound graph type name.
+        graph_type: IStr,
+        /// Source span of the offending label expression or pattern.
+        #[label("unknown node type")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found no matching edge type.
+    #[error("edge label {label} does not match any edge type in graph type {graph_type}")]
+    #[diagnostic(code(SLENE_A_011))]
+    SchemaUnknownEdgeType {
+        /// Edge label.
+        label: IStr,
+        /// Bound graph type name.
+        graph_type: IStr,
+        /// Source span of the offending edge label.
+        #[label("unknown edge type")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found an edge endpoint mismatch.
+    #[error(
+        "edge label {label}: declared as {expected_source} -> {expected_target} but used as {observed_source:?} -> {observed_target:?}"
+    )]
+    #[diagnostic(code(SLENE_A_012))]
+    SchemaEdgeEndpointMismatch {
+        /// Edge label.
+        label: IStr,
+        /// Expected source node type name.
+        expected_source: IStr,
+        /// Expected target node type name.
+        expected_target: IStr,
+        /// Observed source label set.
+        observed_source: LabelSet,
+        /// Observed target label set.
+        observed_target: LabelSet,
+        /// Source span of the offending edge pattern.
+        #[label("endpoint types do not match edge declaration")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found an undeclared property.
+    #[error("property {property} is not declared by {declared_in} in graph type {graph_type}")]
+    #[diagnostic(code(SLENE_A_013))]
+    SchemaUndeclaredProperty {
+        /// Undeclared property key.
+        property: IStr,
+        /// Node or edge type name that was checked.
+        declared_in: IStr,
+        /// Bound graph type name.
+        graph_type: IStr,
+        /// Source span of the property write.
+        #[label("property is not declared")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found a property value type mismatch.
+    #[error("property {property} of {declared_in} declared {expected} but value is {found:?}")]
+    #[diagnostic(code(SLENE_A_014))]
+    SchemaPropertyTypeMismatch {
+        /// Property key.
+        property: IStr,
+        /// Node or edge type name that declared the property.
+        declared_in: IStr,
+        /// Expected runtime storage type.
+        expected: PropertyValueType,
+        /// Statically inferred GQL type.
+        found: GqlType,
+        /// Source span of the offending value expression.
+        #[label("value type is incompatible with property declaration")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found a missing required property.
+    #[error("required property {property} of {declared_in} missing at INSERT site")]
+    #[diagnostic(code(SLENE_A_015))]
+    SchemaRequiredPropertyMissing {
+        /// Required property key.
+        property: IStr,
+        /// Node or edge type name that declared the property.
+        declared_in: IStr,
+        /// Source span of the insert pattern.
+        #[label("required property is not supplied")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found a required property removal.
+    #[error("required property {property} of {declared_in} cannot be REMOVE'd")]
+    #[diagnostic(code(SLENE_A_016))]
+    SchemaRequiredPropertyRemoved {
+        /// Required property key.
+        property: IStr,
+        /// Node or edge type name that declared the property.
+        declared_in: IStr,
+        /// Source span of the remove item.
+        #[label("required property cannot be removed")]
+        span: SourceSpan,
+    },
+
+    /// Static closed-graph validation found an invalid INSERT label expression.
+    #[error("INSERT requires a single label or label conjunction; {form} is not allowed")]
+    #[diagnostic(code(SLENE_A_017))]
+    SchemaInvalidInsertLabelExpr {
+        /// Invalid label-expression form.
+        form: InvalidLabelForm,
+        /// Source span of the invalid pattern.
+        #[label("invalid INSERT label expression")]
+        span: SourceSpan,
+    },
+}
+
+/// Label-expression forms that cannot identify a fresh closed-graph INSERT type.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum InvalidLabelForm {
+    /// Label disjunction, such as `:Person|Company`.
+    Disjunction,
+    /// Label negation, such as `:!Person`.
+    Negation,
+    /// Label wildcard, such as `:%`.
+    Wildcard,
+    /// No label expression was present.
+    Missing,
+}
+
+impl std::fmt::Display for InvalidLabelForm {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Disjunction => "label disjunction",
+            Self::Negation => "label negation",
+            Self::Wildcard => "label wildcard",
+            Self::Missing => "missing label",
+        })
+    }
 }
 
 /// Operation or clause that produced a type mismatch.
@@ -431,6 +571,14 @@ impl AnalysisError {
             Self::MutatingProcedureInReadPipeline { .. } => {
                 GqlStatus::INVALID_TRANSACTION_STATE_MIXING
             }
+            Self::SchemaUnknownNodeType { .. }
+            | Self::SchemaUnknownEdgeType { .. }
+            | Self::SchemaEdgeEndpointMismatch { .. }
+            | Self::SchemaUndeclaredProperty { .. }
+            | Self::SchemaPropertyTypeMismatch { .. }
+            | Self::SchemaRequiredPropertyMissing { .. }
+            | Self::SchemaRequiredPropertyRemoved { .. }
+            | Self::SchemaInvalidInsertLabelExpr { .. } => GqlStatus::DATA_EXCEPTION,
         }
     }
 

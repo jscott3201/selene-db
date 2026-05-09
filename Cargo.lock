@@ -1351,6 +1351,7 @@ dependencies = [
  "proptest",
  "rstest",
  "selene-core",
+ "selene-graph",
  "selene-testing",
  "serde",
  "thiserror",
@@ -1403,6 +1404,7 @@ dependencies = [
  "proptest",
  "selene-core",
  "selene-gql",
+ "selene-graph",
  "thiserror",
 ]
 

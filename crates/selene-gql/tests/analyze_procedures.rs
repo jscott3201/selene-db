@@ -13,7 +13,7 @@ fn analyze_with(
     registry: &dyn ProcedureRegistry,
 ) -> Result<AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, registry)
+    analyze(statement, registry, None)
 }
 
 fn registry(
