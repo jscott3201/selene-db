@@ -1,8 +1,8 @@
 //! Read-query bind handling.
 
 use crate::{
-    LetBinding, LimitValue, OrderTerm, PipelineStatement, QueryPipeline, ReturnClause, ReturnItem,
-    UnwindStatement, ValueExpr, WithClause,
+    LetBinding, LimitValue, OrderTerm, PipelineStatement, ProcedureMutability, QueryPipeline,
+    ReturnClause, ReturnItem, UnwindStatement, ValueExpr, WithClause,
     analyze::{
         binding::BindingDeclKind,
         error::{AnalysisError, ConditionClause},
@@ -42,7 +42,20 @@ pub(crate) fn bind_pipeline_statement(
         PipelineStatement::Return(clause) => bind_return_clause(ctx, clause),
         PipelineStatement::With(clause) => bind_with_clause(ctx, clause),
         PipelineStatement::Call(call) => {
-            call::bind_procedure_call(ctx, call)?;
+            let metadata = call::lookup_metadata(ctx, call)?;
+            if matches!(
+                metadata.mutability,
+                ProcedureMutability::GraphWrite
+                    | ProcedureMutability::SchemaWrite
+                    | ProcedureMutability::Admin
+            ) {
+                return Err(AnalysisError::MutatingProcedureInReadPipeline {
+                    procedure: call.name.clone().into_boxed_slice(),
+                    mutability: metadata.mutability,
+                    span: call.span,
+                });
+            }
+            call::bind_procedure_call_with_metadata(ctx, call, metadata)?;
             Ok(())
         }
     }

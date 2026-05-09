@@ -7,9 +7,11 @@
 
 pub mod ast;
 pub mod binding;
+pub mod category;
 pub mod error;
 pub mod scope;
 pub mod types;
+pub mod write_set;
 
 pub(crate) mod bind;
 pub(crate) mod infer;
@@ -18,11 +20,13 @@ use crate::{ProcedureRegistry, Statement};
 
 pub use ast::{AnalyzedStatement, AnalyzedStatementKind};
 pub use binding::{BindingDecl, BindingDeclKind, BindingId, BindingUse, BindingUseKind};
+pub use category::StatementCategory;
 pub use error::{
     AnalysisError, ConditionClause, ExpectedType, PatternElementKind, Side, TypeMismatchContext,
 };
 pub use scope::{BindingScope, BindingScopeTree, ScopeId, ScopeKind};
 pub use types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable};
+pub use write_set::{ElementKind, MutationWriteSet, WriteKind, WriteSetEntry};
 
 /// Analyze a parsed GQL statement.
 ///

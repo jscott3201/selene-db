@@ -4,8 +4,10 @@ use crate::{
     DdlStatement, MutationPipeline, ProcedureCall, QueryPipeline, SetOp, SourceSpan, Statement,
     analyze::{
         binding::BindingUse,
+        category::StatementCategory,
         scope::{BindingScopeTree, ScopeId},
         types::{ExprIdMap, ExprTypeTable},
+        write_set::MutationWriteSet,
     },
 };
 
@@ -24,6 +26,10 @@ pub struct AnalyzedStatement {
     pub expr_ids: ExprIdMap,
     /// Span of the root statement.
     pub span: SourceSpan,
+    /// Per-statement classification for transaction-state enforcement.
+    pub category: StatementCategory,
+    /// Enumerated writes for mutation pipelines.
+    pub write_set: Option<MutationWriteSet>,
 }
 
 impl AnalyzedStatement {
@@ -33,6 +39,8 @@ impl AnalyzedStatement {
         references: Vec<BindingUse>,
         expr_types: ExprTypeTable,
         expr_ids: ExprIdMap,
+        category: StatementCategory,
+        write_set: Option<MutationWriteSet>,
     ) -> Self {
         let span = statement.span();
         Self {
@@ -42,6 +50,8 @@ impl AnalyzedStatement {
             expr_types,
             expr_ids,
             span,
+            category,
+            write_set,
         }
     }
 

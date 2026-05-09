@@ -15,9 +15,11 @@ use crate::{
     analyze::{
         ast::AnalyzedStatement,
         binding::{BindingDeclKind, BindingId, BindingUse, BindingUseKind},
+        category::{self, StatementCategory},
         error::AnalysisError,
         scope::{BindingScopeTree, ScopeId, ScopeKind},
         types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable},
+        write_set::{self, MutationWriteSet},
     },
 };
 
@@ -66,7 +68,16 @@ pub(crate) fn bind_statement(
         | Statement::Commit { span }
         | Statement::Rollback { span } => transaction::bind_transaction_control(&mut ctx, *span),
     }
-    Ok(ctx.finish(stmt))
+    let category = category::classify(&stmt, registry);
+    let write_set = match &stmt {
+        Statement::Mutate(pipeline) => Some(write_set::compute_write_set(
+            pipeline,
+            &ctx.scopes,
+            &ctx.references,
+        )),
+        _ => None,
+    };
+    Ok(ctx.finish(stmt, category, write_set))
 }
 
 pub(crate) struct BindContext<'ctx> {
@@ -92,13 +103,20 @@ impl<'ctx> BindContext<'ctx> {
         }
     }
 
-    fn finish(self, stmt: Statement) -> AnalyzedStatement {
+    fn finish(
+        self,
+        stmt: Statement,
+        category: StatementCategory,
+        write_set: Option<MutationWriteSet>,
+    ) -> AnalyzedStatement {
         AnalyzedStatement::new(
             stmt,
             self.scopes,
             self.references,
             self.expr_types,
             self.expr_ids,
+            category,
+            write_set,
         )
     }
 

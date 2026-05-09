@@ -2,7 +2,10 @@
 
 use selene_core::IStr;
 
-use crate::{BinaryOp, GqlStatus, GqlType, SourceSpan, analyze::binding::BindingDeclKind};
+use crate::{
+    BinaryOp, GqlStatus, GqlType, ProcedureMutability, SourceSpan,
+    analyze::binding::BindingDeclKind,
+};
 
 /// Semantic-analysis failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -129,6 +132,23 @@ pub enum AnalysisError {
         column: IStr,
         /// Source span of the YIELD item.
         #[label("column is not produced by this procedure")]
+        span: SourceSpan,
+    },
+
+    /// A read-only pipeline invoked a procedure declared as graph-writing,
+    /// schema-writing, or administrative.
+    #[error(
+        "mutating procedure {} cannot be invoked in a read pipeline",
+        display_qualified_name(procedure)
+    )]
+    #[diagnostic(code(SLENE_GQL_25G02))]
+    MutatingProcedureInReadPipeline {
+        /// Qualified procedure name.
+        procedure: Box<[IStr]>,
+        /// Declared procedure mutability.
+        mutability: ProcedureMutability,
+        /// Source span of the procedure call.
+        #[label("read pipelines cannot invoke mutating procedures")]
         span: SourceSpan,
     },
 }
@@ -408,6 +428,9 @@ impl AnalysisError {
             Self::UnknownProcedure { .. } => GqlStatus::INVALID_REFERENCE,
             Self::WrongArgumentCount { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownYieldColumn { .. } => GqlStatus::UNDEFINED_REFERENCE,
+            Self::MutatingProcedureInReadPipeline { .. } => {
+                GqlStatus::INVALID_TRANSACTION_STATE_MIXING
+            }
         }
     }
 
