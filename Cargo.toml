@@ -69,6 +69,8 @@ zstd = "0.13"
 selene-persist = { path = "crates/selene-persist", version = "0.0.0" }
 
 # Dev dependencies.
+criterion = "0.8"
+iai-callgrind = "0.16"
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 rstest = "0.26"
 insta = "1.47"

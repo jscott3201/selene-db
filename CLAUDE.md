@@ -115,6 +115,15 @@ bash .github/scripts/check-file-size.sh
 bash .github/scripts/check-no-secrets.sh
 bash .github/scripts/check-thirdparty-current.sh
 cargo +nightly fuzz run parse_gql -- -max_total_time=60
+
+# Benchmarks: use the serialized runner only. Criterion works locally on macOS;
+# iai-callgrind requires Linux/valgrind and is enforced in CI.
+scripts/run-benches.sh --profile quick --layer criterion
+scripts/run-benches.sh --profile full --layer criterion
+scripts/run-benches.sh --profile quick --layer iai
+
+# Forbidden: workspace bench execution can run bench binaries in parallel.
+# cargo bench --workspace
 ```
 
 ## Conventions

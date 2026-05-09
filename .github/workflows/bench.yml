@@ -1,0 +1,80 @@
+name: bench
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 8 * * 0"
+
+concurrency:
+  group: bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  criterion:
+    name: criterion quick
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: run criterion benches
+        run: scripts/run-benches.sh --profile quick --layer criterion
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: criterion-report
+          path: target/criterion
+          if-no-files-found: ignore
+
+  iai-callgrind:
+    name: iai-callgrind quick
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: install valgrind
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: run iai gates
+        run: scripts/run-benches.sh --profile quick --layer iai
+
+  bench-baseline-current:
+    name: iai baseline files
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check committed baseline files
+        run: bash .github/scripts/check-iai-baselines.sh
+
+  bench-invocation-lint:
+    name: bench invocation lint
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check bench invocation discipline
+        run: bash .github/scripts/check-bench-invocation.sh .
+
+  weekly-stress:
+    name: weekly criterion stress
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: run stress criterion benches
+        run: scripts/run-benches.sh --profile stress --layer criterion
