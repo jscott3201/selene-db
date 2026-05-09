@@ -2,8 +2,11 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, istr, node_ids, optimized};
-use selene_gql::ScanAccess;
+use exec_common::{
+    ExecFixture, LARGE_COUNTER_B, execute_pattern, istr, node_ids, optimized, planned,
+    set_first_scan_access,
+};
+use selene_gql::{IndexHandle, Literal, ScanAccess, SourceSpan};
 
 #[test]
 fn bitmap_union_scan_returns_small_in_list_matches() {
@@ -25,4 +28,25 @@ fn bitmap_union_scan_returns_small_in_list_matches() {
     let table = execute_pattern(pattern, &ctx);
 
     assert_eq!(node_ids(&table), vec![1, 3]);
+}
+
+#[test]
+fn bitmap_union_fallback_in_list_preserves_integer_precision() {
+    let fixture = ExecFixture::build();
+    let mut plan = planned("MATCH (n:Counter) RETURN n");
+    let pattern = plan.pattern_plan.as_mut().expect("pattern plan");
+    set_first_scan_access(
+        pattern,
+        ScanAccess::BitmapUnion {
+            handle: IndexHandle::new(9_002),
+            property: fixture.count,
+            keys: vec![Literal::Integer(LARGE_COUNTER_B, SourceSpan::new(0, 1))],
+        },
+    );
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+
+    let table = execute_pattern(pattern, &ctx);
+
+    assert_eq!(node_ids(&table), vec![6]);
 }

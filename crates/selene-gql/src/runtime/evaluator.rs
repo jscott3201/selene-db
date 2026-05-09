@@ -6,7 +6,7 @@ use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
     BinaryOp, IsCheckKind, Literal, SourceSpan, UnaryOp, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext, value_compare},
 };
 
 /// Evaluate a value expression against one binding-table row.
@@ -214,7 +214,7 @@ fn eval_equality(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, Executor
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    let equal = numeric_eq(&lhs, &rhs).unwrap_or(lhs == rhs);
+    let equal = value_compare::equal_non_null(&lhs, &rhs);
     Ok(Value::Bool(match op {
         BinaryOp::Eq => equal,
         BinaryOp::Ne => !equal,
@@ -231,7 +231,7 @@ fn eval_ordering(
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    let Some(ordering) = compare_values(&lhs, &rhs) else {
+    let Some(ordering) = value_compare::compare_non_null(&lhs, &rhs) else {
         return data_exception("values are not order-comparable", span);
     };
     Ok(Value::Bool(match op {
@@ -334,18 +334,6 @@ fn eval_in_list(
         Ok(Value::Null)
     } else {
         Ok(Value::Bool(negated))
-    }
-}
-
-fn numeric_eq(lhs: &Value, rhs: &Value) -> Option<bool> {
-    Some(as_f64(lhs)? == as_f64(rhs)?)
-}
-
-fn compare_values(lhs: &Value, rhs: &Value) -> Option<Ordering> {
-    match (lhs, rhs) {
-        (Value::Bool(lhs), Value::Bool(rhs)) => Some(lhs.cmp(rhs)),
-        (Value::String(lhs), Value::String(rhs)) => Some(lhs.as_str().cmp(rhs.as_str())),
-        _ => as_f64(lhs)?.partial_cmp(&as_f64(rhs)?),
     }
 }
 

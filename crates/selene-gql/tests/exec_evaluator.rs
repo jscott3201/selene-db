@@ -27,7 +27,15 @@ fn null_lit() -> ValueExpr {
     lit(Literal::Null(span()))
 }
 
-fn eval(expr: &ValueExpr) -> Value {
+fn int_lit(value: i64) -> ValueExpr {
+    lit(Literal::Integer(value, span()))
+}
+
+fn float_lit(value: f64) -> ValueExpr {
+    lit(Literal::Float(value, span()))
+}
+
+fn eval_result(expr: &ValueExpr) -> Result<Value, ExecutorError> {
     let caps = ImplDefinedCaps::default();
     let ctx = empty_graph_context(&caps);
     selene_gql::runtime::evaluate_for_test(
@@ -36,7 +44,10 @@ fn eval(expr: &ValueExpr) -> Value {
         &BindingTableSchema { columns: vec![] },
         &ctx,
     )
-    .expect("expression evaluates")
+}
+
+fn eval(expr: &ValueExpr) -> Value {
+    eval_result(expr).expect("expression evaluates")
 }
 
 #[test]
@@ -100,6 +111,44 @@ fn arithmetic_overflow_is_data_exception() {
         &ctx,
     )
     .expect_err("overflow errors");
+
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22000");
+}
+
+#[test]
+fn large_integer_equality_is_exact() {
+    let expr = ValueExpr::BinaryOp {
+        op: BinaryOp::Eq,
+        lhs: Box::new(int_lit(9_007_199_254_740_992)),
+        rhs: Box::new(int_lit(9_007_199_254_740_993)),
+        span: span(),
+    };
+
+    assert_eq!(eval(&expr), Value::Bool(false));
+}
+
+#[test]
+fn large_integer_in_list_is_exact() {
+    let expr = ValueExpr::InList {
+        operand: Box::new(int_lit(9_007_199_254_740_993)),
+        list: vec![int_lit(9_007_199_254_740_992)],
+        negated: false,
+        span: span(),
+    };
+
+    assert_eq!(eval(&expr), Value::Bool(false));
+}
+
+#[test]
+fn lossy_integer_float_ordering_is_data_exception() {
+    let expr = ValueExpr::BinaryOp {
+        op: BinaryOp::Gt,
+        lhs: Box::new(int_lit(9_007_199_254_740_993)),
+        rhs: Box::new(float_lit(9_007_199_254_740_992.0)),
+        span: span(),
+    };
+    let err = eval_result(&expr).expect_err("lossy comparison errors");
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
     assert_eq!(err.gqlstatus().as_str(), "22000");

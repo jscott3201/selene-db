@@ -2,8 +2,11 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, node_ids, optimized};
-use selene_gql::{ScanAccess, TypedIndexBounds};
+use exec_common::{
+    ExecFixture, LARGE_COUNTER_B, execute_pattern, node_ids, optimized, planned,
+    set_first_scan_access,
+};
+use selene_gql::{IndexHandle, IndexKind, Literal, ScanAccess, SourceSpan, TypedIndexBounds};
 
 #[test]
 fn typed_index_range_scan_uses_bounds_and_residuals() {
@@ -27,4 +30,29 @@ fn typed_index_range_scan_uses_bounds_and_residuals() {
     let table = execute_pattern(pattern, &ctx);
 
     assert_eq!(node_ids(&table), vec![1, 2]);
+}
+
+#[test]
+fn typed_index_fallback_equality_preserves_integer_precision() {
+    let fixture = ExecFixture::build();
+    let mut plan = planned("MATCH (n:Counter) RETURN n");
+    let pattern = plan.pattern_plan.as_mut().expect("pattern plan");
+    set_first_scan_access(
+        pattern,
+        ScanAccess::TypedIndexRange {
+            handle: IndexHandle::new(9_001),
+            property: fixture.count,
+            kind: IndexKind::Integer,
+            bounds: TypedIndexBounds::Equality(Literal::Integer(
+                LARGE_COUNTER_B,
+                SourceSpan::new(0, 1),
+            )),
+        },
+    );
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+
+    let table = execute_pattern(pattern, &ctx);
+
+    assert_eq!(node_ids(&table), vec![6]);
 }

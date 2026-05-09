@@ -11,7 +11,7 @@ use crate::{
     runtime::{Binding, BindingTable, BindingTableColumn, BindingTableSchema, ExecutorError},
 };
 
-use super::{TxContext, evaluator};
+use super::{TxContext, evaluator, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
 ///
@@ -442,17 +442,19 @@ fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
     match bounds {
         TypedIndexBounds::Equality(literal) => value_eq_non_null(value, &literal_value(literal)),
         TypedIndexBounds::GreaterThan(literal) => {
-            compare_values(value, &literal_value(literal)) == Some(std::cmp::Ordering::Greater)
+            value_compare::compare_non_null(value, &literal_value(literal))
+                == Some(std::cmp::Ordering::Greater)
         }
         TypedIndexBounds::GreaterEqual(literal) => matches!(
-            compare_values(value, &literal_value(literal)),
+            value_compare::compare_non_null(value, &literal_value(literal)),
             Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
         ),
         TypedIndexBounds::LessThan(literal) => {
-            compare_values(value, &literal_value(literal)) == Some(std::cmp::Ordering::Less)
+            value_compare::compare_non_null(value, &literal_value(literal))
+                == Some(std::cmp::Ordering::Less)
         }
         TypedIndexBounds::LessEqual(literal) => matches!(
-            compare_values(value, &literal_value(literal)),
+            value_compare::compare_non_null(value, &literal_value(literal)),
             Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
         ),
         TypedIndexBounds::Range {
@@ -461,10 +463,10 @@ fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
             hi,
             hi_inclusive,
         } => {
-            let Some(lo_order) = compare_values(value, &literal_value(lo)) else {
+            let Some(lo_order) = value_compare::compare_non_null(value, &literal_value(lo)) else {
                 return false;
             };
-            let Some(hi_order) = compare_values(value, &literal_value(hi)) else {
+            let Some(hi_order) = value_compare::compare_non_null(value, &literal_value(hi)) else {
                 return false;
             };
             let lo_ok = if *lo_inclusive {
@@ -505,27 +507,5 @@ fn value_eq_non_null(lhs: &Value, rhs: &Value) -> bool {
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return false;
     }
-    numeric_eq(lhs, rhs).unwrap_or(lhs == rhs)
-}
-
-fn numeric_eq(lhs: &Value, rhs: &Value) -> Option<bool> {
-    Some(as_f64(lhs)? == as_f64(rhs)?)
-}
-
-fn compare_values(lhs: &Value, rhs: &Value) -> Option<std::cmp::Ordering> {
-    match (lhs, rhs) {
-        (Value::Bool(lhs), Value::Bool(rhs)) => Some(lhs.cmp(rhs)),
-        (Value::String(lhs), Value::String(rhs)) => Some(lhs.as_str().cmp(rhs.as_str())),
-        _ => as_f64(lhs)?.partial_cmp(&as_f64(rhs)?),
-    }
-}
-
-fn as_f64(value: &Value) -> Option<f64> {
-    match value {
-        Value::Int(value) => Some(*value as f64),
-        Value::Uint(value) => Some(*value as f64),
-        Value::Float(value) => Some(*value),
-        Value::Float32(value) => Some(f64::from(*value)),
-        _ => None,
-    }
+    value_compare::equal_non_null(lhs, rhs)
 }

@@ -9,6 +9,7 @@ mod context;
 mod error;
 pub(crate) mod evaluator;
 mod scan;
+mod value_compare;
 
 pub use binding_table::{Binding, BindingTable};
 pub use context::TxContext;

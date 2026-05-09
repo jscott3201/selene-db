@@ -10,11 +10,16 @@ use selene_gql::{
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
 
+pub const LARGE_COUNTER_A: i64 = 9_007_199_254_740_992;
+pub const LARGE_COUNTER_B: i64 = 9_007_199_254_740_993;
+
 pub struct ExecFixture {
     pub graph: SharedGraph,
     pub person: IStr,
     pub sensor: IStr,
+    pub counter: IStr,
     pub age: IStr,
+    pub count: IStr,
     pub name: IStr,
     pub email: IStr,
     pub tenant: IStr,
@@ -26,8 +31,10 @@ impl ExecFixture {
     pub fn build() -> Self {
         let person = istr("Person");
         let sensor = istr("Sensor");
+        let counter = istr("Counter");
         let knows = istr("KNOWS");
         let age = istr("age");
+        let count = istr("count");
         let name = istr("name");
         let email = istr("email");
         let tenant = istr("tenant");
@@ -83,6 +90,18 @@ impl ExecFixture {
                 )
                 .expect("sensor inserts");
             mutator
+                .create_node(
+                    LabelSet::single(counter),
+                    props([(count, Value::Int(LARGE_COUNTER_A))]),
+                )
+                .expect("counter A inserts");
+            mutator
+                .create_node(
+                    LabelSet::single(counter),
+                    props([(count, Value::Int(LARGE_COUNTER_B))]),
+                )
+                .expect("counter B inserts");
+            mutator
                 .create_edge(knows, alice, bob, props([(score, Value::Int(1))]))
                 .expect("edge inserts");
             mutator
@@ -106,7 +125,9 @@ impl ExecFixture {
             graph,
             person,
             sensor,
+            counter,
             age,
+            count,
             name,
             email,
             tenant,
