@@ -31,6 +31,7 @@ fn variant_names(plan: &selene_gql::ExecutionPlan) -> Vec<&'static str> {
             PipelineOp::Unwind { .. } => "Unwind",
             PipelineOp::OrderBy(_) => "OrderBy",
             PipelineOp::Limit { .. } => "Limit",
+            PipelineOp::TopK { .. } => "TopK",
             PipelineOp::GroupBy { .. } => "GroupBy",
             PipelineOp::Distinct => "Distinct",
             PipelineOp::Union { .. } => "Union",

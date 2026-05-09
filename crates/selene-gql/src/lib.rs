@@ -48,11 +48,12 @@ pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind, ImplDefinedCaps,
-    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeOrEdgeScan, OrderKey,
-    PathPlan, PatternPlan, PipelineOp, PlannedCall, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyInit, ScanKind,
-    TxOp, YieldKind, plan,
+    CatalogOp, EdgeMatch, EdgeStatistics, ExecutionPlan, FilterPredicate, FilterPredicateKind,
+    ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp,
+    NodeOrEdgeScan, OptimizeContext, OrderKey, PathPlan, PatternPlan, PipelineOp, PlannedCall,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, PlannerError,
+    ProjectExpr, PropertyHistogram, PropertyInit, Rule, ScanKind, Transformed, TxOp,
+    WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
