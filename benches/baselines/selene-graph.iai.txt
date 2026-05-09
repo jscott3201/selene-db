@@ -1,0 +1,6 @@
+# bench_name	instructions	l1_misses	ll_misses
+node_fetch_1k	0	0	0
+label_index_1k	0	0	0
+typed_index_point_1k	0	0	0
+typed_index_range_1k	0	0	0
+mutation_commit_100	0	0	0

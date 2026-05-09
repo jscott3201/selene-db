@@ -1,0 +1,5 @@
+# bench_name	instructions	l1_misses	ll_misses
+wal_append_single_1k	0	0	0
+wal_replay_1k	0	0	0
+snapshot_read_1k	0	0	0
+full_recovery_1k	0	0	0

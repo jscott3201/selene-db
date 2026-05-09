@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "WAL and snapshot persistence formats for selene-db."
+autobenches = false
 
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
@@ -20,8 +21,23 @@ zstd.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+iai-callgrind.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+selene-testing = { path = "../selene-testing", version = "0.0.0" }
+
+[[bench]]
+name = "wal"
+harness = false
+
+[[bench]]
+name = "snapshot"
+harness = false
+
+[[bench]]
+name = "iai_gates"
+harness = false
 
 [lints]
 workspace = true

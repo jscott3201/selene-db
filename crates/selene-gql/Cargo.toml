@@ -7,6 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+autobenches = false
 
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
@@ -21,6 +22,8 @@ thiserror.workspace = true
 test-harness = []
 
 [dev-dependencies]
+criterion.workspace = true
+iai-callgrind.workspace = true
 insta.workspace = true
 proptest.workspace = true
 rstest.workspace = true
@@ -28,6 +31,26 @@ selene-testing = { path = "../selene-testing", version = "0.0.0" }
 
 [[test]]
 name = "plan_snapshot_corpus"
+required-features = ["test-harness"]
+
+[[bench]]
+name = "parse"
+harness = false
+required-features = ["test-harness"]
+
+[[bench]]
+name = "analyze"
+harness = false
+required-features = ["test-harness"]
+
+[[bench]]
+name = "plan_optimize"
+harness = false
+required-features = ["test-harness"]
+
+[[bench]]
+name = "iai_gates"
+harness = false
 required-features = ["test-harness"]
 
 [lints]

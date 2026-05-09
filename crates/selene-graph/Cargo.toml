@@ -7,6 +7,7 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+autobenches = false
 
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
@@ -27,8 +28,31 @@ tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
+iai-callgrind.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+selene-testing = { path = "../selene-testing", version = "0.0.0" }
+
+[[bench]]
+name = "single_graph"
+harness = false
+
+[[bench]]
+name = "bulk_mutation"
+harness = false
+
+[[bench]]
+name = "concurrent_read"
+harness = false
+
+[[bench]]
+name = "bfs"
+harness = false
+
+[[bench]]
+name = "iai_gates"
+harness = false
 
 [lints]
 workspace = true
