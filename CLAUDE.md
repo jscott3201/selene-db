@@ -98,6 +98,7 @@ All v1.0 architecture is settled. Canonical text lives in the linked spec sectio
 
 - **M5b closed (2026-05-09)** — analyzer entry: `analyze(stmt, &registry, schema)` produces binding scopes, expression type cells, procedure/YIELD typing, statement category, mutation write sets, and statically decidable closed-graph schema errors. Runtime `selene_graph::type_validator` remains the commit-time backstop.
 - **M5c opened (2026-05-09)** — lifts `AnalyzedStatement` into an optimized `ExecutionPlan`. Spec 13 (`_spec/13-iso-gql-planner.md`, local-only mirror) records implementation invariants. BRIEF-26 landed Plan IR + read-pipeline lowering; BRIEF-27 lowers mutations/DDL/CALL/transactions; BRIEFs 28–29 add the optimizer; BRIEF-30 closes M5c with the plan snapshot harness.
+- **M5c progress 2/5 (2026-05-09)** — BRIEF-27 closed mutation, DDL, CALL, and transaction-control lowering. Planner output is now complete for every v1.0-claimed statement shape (no `NotImplemented` hatches at the top-level dispatch). Adds 4 new `PlannerError` variants (`SLENE_P_013..017`) that defend against analyze→plan registry drift and interner cap exhaustion. BRIEFs 28–29 add the optimizer next.
 
 ## Build & test
 
