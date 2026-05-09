@@ -170,6 +170,10 @@ M5b closure note — 2026-05-09 — analyzer read/write/schema foundation comple
 
 BRIEFs 21-25 close M5b. The analyzer entry point is now `selene-gql::analyze(statement, &registry, schema)`, where `schema: Option<&GraphTypeDef>` enables static GG02 validation for closed graphs and `None` preserves open-graph behavior. The analyzer now produces binding scopes, expression type cells, procedure/YIELD typing, statement category, mutation write sets, and statically decidable closed-graph schema errors. Runtime validation in `selene-graph` remains the backstop for dynamic or intentionally deferred cases.
 
+M5c opening note — 2026-05-09 — planner foundation in flight
+
+M5c lifts M5b's `AnalyzedStatement` into an optimized `ExecutionPlan`. BRIEF-26 lays the foundation: a local-only spec 13 mirror (`_spec/13-iso-gql-planner.md`, durable MCP node created post-merge), Plan IR types in `crates/selene-gql/src/plan/`, and read-pipeline lowering for Query/Composite/Chained. Mutations, DDL, transactions, and CALL surface as planner `NotImplemented` in BRIEF-26 and complete in BRIEF-27. Optimizer framework and rules arrive in BRIEFs 28-29; M5c closure lands with BRIEF-30's plan snapshot harness.
+
 ### D3 — Schema model: both GG01 + GG02 (2026-05-07)
 
 v1.0 supports **both** open graphs (GG01, schemaless) and closed graphs (GG02, declared graph type). Per-graph choice at `CREATE GRAPH` time:

@@ -11,6 +11,7 @@ pub mod diagnostic;
 pub mod error;
 mod flagger;
 pub mod parser;
+pub mod plan;
 pub mod procedure_registry;
 
 pub use crate::analyze::{
@@ -45,6 +46,12 @@ pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
 pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_with_source};
+pub use crate::plan::{
+    Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
+    EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind, ImplDefinedCaps, JoinTree,
+    LimitAmount, MutationOp, NodeOrEdgeScan, OrderKey, PathPlan, PatternPlan, PipelineOp,
+    PlannedCall, PlannedYieldItem, PlannerError, ProjectExpr, ScanKind, plan,
+};
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
     ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry,
