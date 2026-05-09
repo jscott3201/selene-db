@@ -8,7 +8,7 @@ use selene_testing::MockProcedureRegistry;
 
 fn analyze_one(source: &str) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, &EmptyProcedureRegistry)
+    analyze(statement, &EmptyProcedureRegistry, None)
 }
 
 #[test]
@@ -68,7 +68,7 @@ fn unknown_name_after_yield_star_expansion_errors() {
         }],
     );
     let statement = parse("MATCH (n) CALL pkg.fn() YIELD * RETURN col").expect("test input parses");
-    let err = analyze(statement, &registry).expect_err("col not bound");
+    let err = analyze(statement, &registry, None).expect_err("col not bound");
     assert!(matches!(err, AnalysisError::UndefinedReference { .. }));
 }
 

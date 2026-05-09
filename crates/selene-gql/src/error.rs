@@ -25,6 +25,8 @@ impl GqlStatus {
     pub const DUPLICATE_OBJECT: Self = Self(*b"42710");
     /// Datatype mismatch.
     pub const DATATYPE_MISMATCH: Self = Self(*b"42883");
+    /// Data exception.
+    pub const DATA_EXCEPTION: Self = Self(*b"22000");
     /// Invalid transaction state: catalog/data statement mixing.
     pub const INVALID_TRANSACTION_STATE_MIXING: Self = Self(*b"25G02");
 

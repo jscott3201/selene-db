@@ -58,7 +58,7 @@ fn bind_node_pattern(
             PatternBindingMode::Match => BindingDeclKind::NodePattern,
             PatternBindingMode::Insert => BindingDeclKind::InsertNode,
         };
-        ctx.declare_or_reuse(kind, name, node.span)?;
+        ctx.declare_or_reuse_with_labels(kind, name, node.span, node.label_expr.clone())?;
     }
     if let Some(label) = &node.label_expr {
         bind_label_expr(label);
@@ -82,7 +82,7 @@ fn bind_edge_pattern(
             PatternBindingMode::Match => BindingDeclKind::EdgePattern,
             PatternBindingMode::Insert => BindingDeclKind::InsertEdge,
         };
-        ctx.declare_or_reuse(kind, name, edge.span)?;
+        ctx.declare_or_reuse_with_labels(kind, name, edge.span, edge.label_expr.clone())?;
     }
     if let Some(label) = &edge.label_expr {
         bind_label_expr(label);

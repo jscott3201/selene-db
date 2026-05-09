@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::{GqlType, SourceSpan, analyze::types::AnalyzedType};
+use crate::{GqlType, LabelExpr, SourceSpan, analyze::types::AnalyzedType};
 
 /// Stable, opaque identifier for a binding declaration.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -57,6 +57,8 @@ pub enum BindingDecl {
         span: SourceSpan,
         /// Static type of the binding.
         ty: AnalyzedType,
+        /// Static label predicate written on the pattern, when present.
+        labels: Option<LabelExpr>,
     },
     /// `MATCH ()-[e]->()`.
     EdgePattern {
@@ -68,6 +70,8 @@ pub enum BindingDecl {
         span: SourceSpan,
         /// Static type of the binding.
         ty: AnalyzedType,
+        /// Static label predicate written on the pattern, when present.
+        labels: Option<LabelExpr>,
     },
     /// `LET x = expr`.
     LetAlias {
@@ -123,6 +127,8 @@ pub enum BindingDecl {
         span: SourceSpan,
         /// Static type of the binding.
         ty: AnalyzedType,
+        /// Static label expression written on the inserted node.
+        labels: Option<LabelExpr>,
     },
     /// `INSERT ()-[e]->()`.
     InsertEdge {
@@ -134,6 +140,8 @@ pub enum BindingDecl {
         span: SourceSpan,
         /// Static type of the binding.
         ty: AnalyzedType,
+        /// Static label expression written on the inserted edge.
+        labels: Option<LabelExpr>,
     },
     /// `p = (...)`.
     PathBinding {
@@ -155,6 +163,7 @@ impl BindingDecl {
         name: IStr,
         span: SourceSpan,
         ty: AnalyzedType,
+        labels: Option<LabelExpr>,
     ) -> Self {
         match kind {
             BindingDeclKind::NodePattern => Self::NodePattern {
@@ -162,12 +171,14 @@ impl BindingDecl {
                 name,
                 span,
                 ty,
+                labels,
             },
             BindingDeclKind::EdgePattern => Self::EdgePattern {
                 binding,
                 name,
                 span,
                 ty,
+                labels,
             },
             BindingDeclKind::LetAlias => Self::LetAlias {
                 binding,
@@ -198,12 +209,14 @@ impl BindingDecl {
                 name,
                 span,
                 ty,
+                labels,
             },
             BindingDeclKind::InsertEdge => Self::InsertEdge {
                 binding,
                 name,
                 span,
                 ty,
+                labels,
             },
             BindingDeclKind::PathBinding => Self::PathBinding {
                 binding,
@@ -307,6 +320,47 @@ impl BindingDecl {
             Self::InsertNode { .. } => BindingDeclKind::InsertNode,
             Self::InsertEdge { .. } => BindingDeclKind::InsertEdge,
             Self::PathBinding { .. } => BindingDeclKind::PathBinding,
+        }
+    }
+
+    /// Return the pattern label expression attached to this binding declaration.
+    #[must_use]
+    pub const fn label_expr(&self) -> Option<&LabelExpr> {
+        match self {
+            Self::NodePattern { labels, .. }
+            | Self::EdgePattern { labels, .. }
+            | Self::InsertNode { labels, .. }
+            | Self::InsertEdge { labels, .. } => labels.as_ref(),
+            Self::LetAlias { .. }
+            | Self::UnwindAlias { .. }
+            | Self::ProjectionAlias { .. }
+            | Self::YieldColumn { .. }
+            | Self::PathBinding { .. } => None,
+        }
+    }
+
+    pub(crate) fn refine_label_expr(&mut self, next: Option<LabelExpr>) {
+        let Some(next) = next else {
+            return;
+        };
+        let labels = match self {
+            Self::NodePattern { labels, .. }
+            | Self::EdgePattern { labels, .. }
+            | Self::InsertNode { labels, .. }
+            | Self::InsertEdge { labels, .. } => labels,
+            Self::LetAlias { .. }
+            | Self::UnwindAlias { .. }
+            | Self::ProjectionAlias { .. }
+            | Self::YieldColumn { .. }
+            | Self::PathBinding { .. } => return,
+        };
+        match labels.take() {
+            Some(prior) => {
+                *labels = Some(LabelExpr::Conjunction(vec![prior, next]));
+            }
+            None => {
+                *labels = Some(next);
+            }
         }
     }
 }

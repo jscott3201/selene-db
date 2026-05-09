@@ -100,6 +100,6 @@ pub fn load_default_analyzed_gql_corpus(
 ) -> Result<Vec<AnalyzedCorpusCase<AnalyzedStatement>>, AnalyzedCorpusError<String>> {
     load_default_analyzed_corpus(|source| {
         let statement = parse(source).map_err(|err| err.to_string())?;
-        analyze(statement, registry).map_err(|err| err.to_string())
+        analyze(statement, registry, None).map_err(|err| err.to_string())
     })
 }

@@ -137,9 +137,19 @@ impl<'ctx> BindContext<'ctx> {
         name: IStr,
         span: SourceSpan,
     ) -> Result<BindingId, AnalysisError> {
-        let (binding, reused) = self
-            .scopes
-            .declare_or_reuse(self.current, kind, name, span)?;
+        self.declare_or_reuse_with_labels(kind, name, span, None)
+    }
+
+    pub(crate) fn declare_or_reuse_with_labels(
+        &mut self,
+        kind: BindingDeclKind,
+        name: IStr,
+        span: SourceSpan,
+        labels: Option<crate::LabelExpr>,
+    ) -> Result<BindingId, AnalysisError> {
+        let (binding, reused) =
+            self.scopes
+                .declare_or_reuse_with_labels(self.current, kind, name, span, labels)?;
         if reused {
             self.references.push(BindingUse {
                 name,

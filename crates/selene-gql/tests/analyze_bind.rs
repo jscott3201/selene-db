@@ -11,7 +11,7 @@ use selene_testing::{MockProcedureRegistry, default_corpus_registry};
 
 fn analyze_one(source: &str) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, &EmptyProcedureRegistry)
+    analyze(statement, &EmptyProcedureRegistry, None)
 }
 
 fn analyze_with(
@@ -19,7 +19,7 @@ fn analyze_with(
     registry: &dyn ProcedureRegistry,
 ) -> Result<selene_gql::AnalyzedStatement, AnalysisError> {
     let statement = parse(source).expect("test input parses");
-    analyze(statement, registry)
+    analyze(statement, registry, None)
 }
 
 fn pkg_fn_registry(
