@@ -163,7 +163,12 @@ pub struct EdgeMatch {
 }
 
 /// Pipeline operation over binding tables.
+///
+/// `#[non_exhaustive]` so future planner work (e.g., MERGE lowering, CALL
+/// subquery form, INDEX DDL via selene-pack) can add variants without
+/// breaking downstream pattern matches.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum PipelineOp {
     /// Retain rows satisfying a predicate.
     Filter(FilterPredicate),

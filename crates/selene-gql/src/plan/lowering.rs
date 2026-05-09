@@ -20,8 +20,13 @@ use crate::{
 
 /// Lower an analyzed statement into a literal, unoptimized execution plan.
 ///
-/// BRIEF-26 accepts `registry` to stabilize the M5c public API; CALL lowering
-/// returns `NotImplemented` until BRIEF-27 consumes the registry.
+/// Dispatches by [`AnalyzedStatementKind`]: queries / set-composed / NEXT-chained
+/// pipelines walk the read pipeline; mutations lower from the analyzer's
+/// [`MutationWriteSet`]; DDL lowers to a single [`PipelineOp::Catalog`];
+/// transaction control lowers to a single [`PipelineOp::Tx`]; top-level CALL
+/// looks up procedure metadata in `registry` and lowers to [`PipelineOp::Call`].
+///
+/// [`MutationWriteSet`]: crate::analyze::MutationWriteSet
 pub fn plan(
     analyzed: &AnalyzedStatement,
     registry: &dyn ProcedureRegistry,

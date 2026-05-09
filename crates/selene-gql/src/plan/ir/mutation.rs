@@ -54,7 +54,11 @@ pub struct PropertyInit {
 }
 
 /// Mutation operation over the upstream binding table.
+///
+/// `#[non_exhaustive]` so future write-side surfaces (MERGE, conditional
+/// upsert, etc.) can land without breaking downstream matches.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub enum MutationOp {
     /// Insert a node.
     InsertNode {
