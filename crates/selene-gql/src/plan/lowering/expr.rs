@@ -262,7 +262,29 @@ fn walk_is_check(kind: &crate::IsCheckKind, visit: &mut impl FnMut(&ValueExpr)) 
     }
 }
 
-/// Return true when `expr` is syntactically an aggregate-looking function call.
+/// Aggregate function names recognised by the planner. Mirrors the parser
+/// grammar's `aggregate_op` rule (lower-cased after `intern_lower`). A scalar
+/// function call with the same arity (e.g. `length(s)`) must not be lifted into
+/// `PipelineOp::GroupBy.aggregates`, so this list — not arity — is the gate.
+const AGGREGATE_NAMES: &[&str] = &[
+    "stddev_samp",
+    "stddev_pop",
+    "collect_list",
+    "collect",
+    "count",
+    "sum",
+    "average",
+    "avg",
+    "min",
+    "max",
+];
+
+/// Return aggregate metadata when `expr` is a recognised aggregate call.
+///
+/// `count(*)` and `count(DISTINCT x)` reach the planner via the parser's
+/// `aggregate_expr` rule with `star`/`distinct` set, while bare scalar function
+/// calls keep both flags false. Either way, the name must appear in
+/// [`AGGREGATE_NAMES`] for the planner to treat it as an aggregate.
 pub(crate) fn aggregate_name(expr: &ValueExpr) -> Option<(selene_core::IStr, bool, bool)> {
     let ValueExpr::FunctionCall {
         name,
@@ -273,5 +295,12 @@ pub(crate) fn aggregate_name(expr: &ValueExpr) -> Option<(selene_core::IStr, boo
     else {
         return None;
     };
-    (name.len() == 1).then_some((name[0], *star, *distinct))
+    if name.len() != 1 {
+        return None;
+    }
+    let segment = name[0];
+    AGGREGATE_NAMES
+        .iter()
+        .any(|candidate| segment.as_str() == *candidate)
+        .then_some((segment, *star, *distinct))
 }

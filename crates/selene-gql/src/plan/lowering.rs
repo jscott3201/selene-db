@@ -8,10 +8,10 @@ use selene_core::IStr;
 use crate::{
     LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, ReturnItem,
     ValueExpr, WithClause,
-    analyze::{AnalyzedStatement, AnalyzedStatementKind},
+    analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType},
     plan::{
-        Aggregate, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
-        LimitAmount, PipelineOp, PlannerError,
+        Aggregate, BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan,
+        ImplDefinedCaps, LimitAmount, PipelineOp, PlannerError, ProjectExpr,
     },
 };
 
@@ -55,11 +55,13 @@ fn lower_chained(
         return Ok(empty_plan());
     };
     let mut plan = lower_query_pipeline(first, analyzed)?;
+    // Per BRIEF-26 §O.C6, NEXT establishes a fresh binding scope. The chained
+    // plan's output_schema must reflect the final block's projection because
+    // each NEXT discards the prior block's columns.
     for block in rest {
-        plan.pipeline
-            .push(PipelineOp::Chain(Box::new(lower_query_pipeline(
-                block, analyzed,
-            )?)));
+        let inner = lower_query_pipeline(block, analyzed)?;
+        plan.output_schema = inner.output_schema.clone();
+        plan.pipeline.push(PipelineOp::Chain(Box::new(inner)));
     }
     Ok(plan)
 }
@@ -70,6 +72,7 @@ fn lower_query_pipeline(
 ) -> Result<ExecutionPlan, PlannerError> {
     let (matches, tail_start) = leading_matches(&pipeline.statements);
     let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed)?;
+    let mut visible = visible_after_pattern(pattern_plan.as_ref());
     let mut ops = Vec::new();
     let tail = &pipeline.statements[tail_start..];
     let mut index = 0;
@@ -85,18 +88,28 @@ fn lower_query_pipeline(
                 ops.push(PipelineOp::Filter(expr::filter_predicate(value, analyzed)?));
             }
             PipelineStatement::Let(bindings) => {
-                ops.push(PipelineOp::Project(
-                    bindings
-                        .iter()
-                        .map(|binding| {
-                            expr::project_expr(&binding.value, Some(binding.alias), analyzed)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                ));
+                let projects = bindings
+                    .iter()
+                    .map(|binding| {
+                        expr::project_expr(&binding.value, Some(binding.alias), analyzed)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                for project in &projects {
+                    visible.push(BindingTableColumn {
+                        name: project.alias,
+                        ty: project.ty.clone(),
+                    });
+                }
+                ops.push(PipelineOp::Project(projects));
             }
             PipelineStatement::Unwind(unwind) => {
+                let source = expr::project_expr(&unwind.source, None, analyzed)?;
+                visible.push(BindingTableColumn {
+                    name: Some(unwind.alias),
+                    ty: AnalyzedType::DYNAMIC,
+                });
                 ops.push(PipelineOp::Unwind {
-                    source: expr::project_expr(&unwind.source, None, analyzed)?,
+                    source,
                     alias: unwind.alias,
                     span: unwind.span,
                 });
@@ -124,13 +137,29 @@ fn lower_query_pipeline(
                 }
             }
             PipelineStatement::Limit(limit) => {
-                ops.push(PipelineOp::Limit {
-                    offset: LimitAmount::Literal(0),
-                    count: limit_amount(limit),
-                });
+                // Why: parsers may emit either `OFFSET .. LIMIT ..` or
+                // `LIMIT .. OFFSET ..`. Both forms must collapse to one
+                // `Limit { offset, count }` op so executors see "skip then
+                // take" semantics regardless of source order.
+                if let Some(PipelineStatement::Offset(offset)) = tail.get(index + 1) {
+                    ops.push(PipelineOp::Limit {
+                        offset: limit_amount(offset),
+                        count: limit_amount(limit),
+                    });
+                    index += 1;
+                } else {
+                    ops.push(PipelineOp::Limit {
+                        offset: LimitAmount::Literal(0),
+                        count: limit_amount(limit),
+                    });
+                }
             }
-            PipelineStatement::Return(clause) => lower_return(clause, analyzed, &mut ops)?,
-            PipelineStatement::With(clause) => lower_with(clause, analyzed, &mut ops)?,
+            PipelineStatement::Return(clause) => {
+                lower_return(clause, analyzed, &mut ops, &mut visible)?;
+            }
+            PipelineStatement::With(clause) => {
+                lower_with(clause, analyzed, &mut ops, &mut visible)?;
+            }
             PipelineStatement::Call(call) => {
                 return Err(PlannerError::NotImplemented {
                     feature: "PipelineStatement::Call",
@@ -143,7 +172,7 @@ fn lower_query_pipeline(
     Ok(ExecutionPlan {
         pattern_plan,
         pipeline: ops,
-        output_schema: output_schema(pipeline, analyzed)?,
+        output_schema: BindingTableSchema { columns: visible },
         impl_defined_caps: ImplDefinedCaps::default(),
     })
 }
@@ -152,6 +181,7 @@ fn lower_return(
     clause: &ReturnClause,
     analyzed: &AnalyzedStatement,
     ops: &mut Vec<PipelineOp>,
+    visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
     if let Some(keys) = &clause.group_by {
         ops.push(PipelineOp::GroupBy {
@@ -167,7 +197,14 @@ fn lower_return(
             having, analyzed,
         )?));
     }
-    ops.push(PipelineOp::Project(project_items(&clause.items, analyzed)?));
+    if clause.star {
+        // Why: RETURN * keeps the currently-visible binding table; emitting an
+        // empty Project would erase columns that output_schema still advertises.
+    } else {
+        let projects = project_items(&clause.items, analyzed)?;
+        *visible = projects_to_columns(&projects);
+        ops.push(PipelineOp::Project(projects));
+    }
     if clause.distinct {
         ops.push(PipelineOp::Distinct);
     }
@@ -178,6 +215,7 @@ fn lower_with(
     clause: &WithClause,
     analyzed: &AnalyzedStatement,
     ops: &mut Vec<PipelineOp>,
+    visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
     if let Some(keys) = &clause.group_by {
         ops.push(PipelineOp::GroupBy {
@@ -193,7 +231,9 @@ fn lower_with(
             having, analyzed,
         )?));
     }
-    ops.push(PipelineOp::Project(project_items(&clause.items, analyzed)?));
+    let projects = project_items(&clause.items, analyzed)?;
+    *visible = projects_to_columns(&projects);
+    ops.push(PipelineOp::Project(projects));
     if clause.distinct {
         ops.push(PipelineOp::Distinct);
     }
@@ -204,6 +244,31 @@ fn lower_with(
         )?));
     }
     Ok(())
+}
+
+fn projects_to_columns(projects: &[ProjectExpr]) -> Vec<BindingTableColumn> {
+    projects
+        .iter()
+        .map(|project| BindingTableColumn {
+            name: project.alias,
+            ty: project.ty.clone(),
+        })
+        .collect()
+}
+
+fn visible_after_pattern(pattern: Option<&crate::plan::PatternPlan>) -> Vec<BindingTableColumn> {
+    pattern
+        .map(|plan| {
+            plan.bindings
+                .iter()
+                .filter(|binding| binding.element != BindingElement::Path)
+                .map(|binding| BindingTableColumn {
+                    name: Some(binding.name),
+                    ty: binding.ty.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn project_items(
@@ -241,52 +306,6 @@ fn aggregates(
             })
         })
         .collect()
-}
-
-fn output_schema(
-    pipeline: &QueryPipeline,
-    analyzed: &AnalyzedStatement,
-) -> Result<BindingTableSchema, PlannerError> {
-    for statement in pipeline.statements.iter().rev() {
-        match statement {
-            PipelineStatement::Return(clause) if clause.star => {
-                return Ok(visible_schema(analyzed));
-            }
-            PipelineStatement::Return(clause) => return projection_schema(&clause.items, analyzed),
-            PipelineStatement::With(clause) => return projection_schema(&clause.items, analyzed),
-            _ => {}
-        }
-    }
-    Ok(visible_schema(analyzed))
-}
-
-fn visible_schema(analyzed: &AnalyzedStatement) -> BindingTableSchema {
-    BindingTableSchema {
-        columns: analyzed
-            .scopes
-            .declarations()
-            .iter()
-            .map(|decl| BindingTableColumn {
-                name: Some(decl.name()),
-                ty: decl.ty().clone(),
-            })
-            .collect(),
-    }
-}
-
-fn projection_schema(
-    items: &[ReturnItem],
-    analyzed: &AnalyzedStatement,
-) -> Result<BindingTableSchema, PlannerError> {
-    let mut columns = Vec::new();
-    for item in items {
-        let (_, ty) = expr::expr_cell(&item.expr, analyzed)?;
-        columns.push(BindingTableColumn {
-            name: column_name(&item.expr, item.alias),
-            ty,
-        });
-    }
-    Ok(BindingTableSchema { columns })
 }
 
 fn column_name(expr: &ValueExpr, alias: Option<IStr>) -> Option<IStr> {

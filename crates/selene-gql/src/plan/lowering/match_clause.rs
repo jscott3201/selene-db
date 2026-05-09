@@ -161,7 +161,7 @@ fn lower_graph_pattern(
                 span: edge.span,
             });
         };
-        let left_binding = leftmost_binding(&current);
+        let left_binding = chain_tail_binding(&current);
         let right_binding = node_binding(right, analyzed, &mut names, binding_ids)?;
         let edge_match = edge_match(
             edge,
@@ -404,13 +404,18 @@ fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
     left.intersection(right).copied().collect()
 }
 
-fn leftmost_binding(tree: &JoinTree) -> Option<BindingId> {
+/// Return the binding of the most-recently expanded chain tail, propagating
+/// `None` when the trailing element is anonymous so the caller does not
+/// silently fall back to an older named node from earlier in the chain.
+fn chain_tail_binding(tree: &JoinTree) -> Option<BindingId> {
     match tree {
         JoinTree::Scan(scan) => scan.binding,
-        JoinTree::Expand { edge, .. } => edge.right_binding.or(edge.left_binding),
-        JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => leftmost_binding(right),
+        JoinTree::Expand { edge, .. } => edge.right_binding,
+        JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
+            chain_tail_binding(right)
+        }
         JoinTree::WorstCaseOptimal { intersection } => {
-            intersection.first().and_then(leftmost_binding)
+            intersection.first().and_then(chain_tail_binding)
         }
         JoinTree::Subplan(_) => None,
     }

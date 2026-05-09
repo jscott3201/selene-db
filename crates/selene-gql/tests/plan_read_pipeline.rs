@@ -245,6 +245,131 @@ fn planner_errors_emit_xx500() {
 }
 
 #[test]
+fn return_star_after_with_uses_with_projection() {
+    // Why: prior planner walked `analyzed.scopes.declarations()` for RETURN *,
+    // leaking bindings discarded by a WITH boundary into the output schema.
+    let plan = plan_one("MATCH (n) WITH n AS x RETURN *");
+    let names: Vec<_> = plan
+        .output_schema
+        .columns
+        .iter()
+        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .collect();
+    assert!(
+        names.iter().any(|name| name == "x"),
+        "x must remain visible after WITH: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == "n"),
+        "n must not leak past WITH boundary: {names:?}"
+    );
+}
+
+#[test]
+fn return_star_does_not_emit_empty_project() {
+    // Why: RETURN * carries empty `clause.items`, so the prior unconditional
+    // `Project(project_items(...))` push produced an empty projection that an
+    // executor would interpret as "drop all columns".
+    let plan = plan_one("MATCH (n) RETURN *");
+    let empty_projects = plan
+        .pipeline
+        .iter()
+        .filter(|op| matches!(op, PipelineOp::Project(items) if items.is_empty()))
+        .count();
+    assert_eq!(empty_projects, 0, "got pipeline {:?}", variant_names(&plan));
+    assert!(
+        plan.output_schema
+            .columns
+            .iter()
+            .any(|column| column.name.is_some_and(|name| name.as_str() == "n")),
+        "RETURN * output_schema must still expose visible bindings"
+    );
+}
+
+#[test]
+fn chained_plan_output_schema_uses_last_block() {
+    // Why: NEXT establishes a fresh binding scope, so the outer plan's
+    // output_schema must reflect the final block's projection — not the
+    // first block's, which was the prior behavior.
+    let plan = plan_one("RETURN 1 AS a NEXT RETURN 2 AS b");
+    let names: Vec<_> = plan
+        .output_schema
+        .columns
+        .iter()
+        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .collect();
+    assert_eq!(names, vec!["b".to_string()]);
+}
+
+#[test]
+fn limit_then_offset_fuses_into_single_op() {
+    // Why: parsers can emit either source order. `LIMIT n OFFSET m` previously
+    // lowered to two sequential Limit ops, which means "take n then skip m" —
+    // the inverse of GQL semantics.
+    let plan = plan_one("RETURN 1 AS n LIMIT 10 OFFSET 5");
+    let limits: Vec<_> = plan
+        .pipeline
+        .iter()
+        .filter_map(|op| {
+            if let PipelineOp::Limit { offset, count } = op {
+                Some((offset.clone(), count.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(limits.len(), 1, "got pipeline {:?}", variant_names(&plan));
+    assert_eq!(limits[0].0, LimitAmount::Literal(5));
+    assert_eq!(limits[0].1, LimitAmount::Literal(10));
+}
+
+#[test]
+fn anonymous_intermediate_node_does_not_leak_to_next_edge() {
+    // Why: prior `leftmost_binding` fell back from `right_binding` to
+    // `left_binding`, so `(a)-[]->()-[]->(c)` reported the second edge's left
+    // endpoint as `Some(a)` instead of `None`, contradicting the parsed
+    // topology.
+    let plan = plan_one("MATCH (a)-[:K]->()-[:K]->(c) RETURN a, c");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let JoinTree::Expand {
+        edge: outer_edge, ..
+    } = &pattern.join_tree
+    else {
+        panic!("expected outer expand, got {:?}", pattern.join_tree);
+    };
+    assert!(outer_edge.right_binding.is_some());
+    assert_eq!(
+        outer_edge.left_binding, None,
+        "left_binding of the second edge must be None for anonymous middle node"
+    );
+}
+
+#[test]
+fn scalar_functions_are_not_classified_as_aggregates_in_group_by() {
+    // Why: prior `aggregate_name` returned Some for any single-segment
+    // function call, so scalar functions like `length` were lifted into
+    // `GroupBy.aggregates` even though they are pure scalars.
+    let plan =
+        plan_one("MATCH (n) RETURN length(n.name) AS l, count(*) AS c GROUP BY length(n.name)");
+    let mut aggregate_names: Vec<String> = Vec::new();
+    for op in &plan.pipeline {
+        if let PipelineOp::GroupBy { aggregates, .. } = op {
+            for aggregate in aggregates {
+                aggregate_names.push(aggregate.function.as_str().to_string());
+            }
+        }
+    }
+    assert!(
+        aggregate_names.iter().any(|name| name == "count"),
+        "count must remain an aggregate: {aggregate_names:?}"
+    );
+    assert!(
+        !aggregate_names.iter().any(|name| name == "length"),
+        "length must not be classified as an aggregate: {aggregate_names:?}"
+    );
+}
+
+#[test]
 fn sentinel_plan_shape_snapshot() {
     let plan = plan_one("MATCH (n:Person) WHERE n.age > 30 RETURN n.name AS name LIMIT 10");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
