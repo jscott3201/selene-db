@@ -81,6 +81,7 @@ fn rewrite_scan(
         let Some(lookup) = catalog.typed_index(crate::IndexTarget::Node, label, matched.key) else {
             continue;
         };
+        let property = matched.key;
         let mut keys = Vec::with_capacity(items.len());
         let mut all_match = true;
         for item in items {
@@ -100,6 +101,7 @@ fn rewrite_scan(
         scan.property_predicates.remove(index);
         scan.access = ScanAccess::BitmapUnion {
             handle: lookup.handle,
+            property,
             keys,
         };
         return true;

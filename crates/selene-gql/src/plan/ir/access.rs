@@ -26,6 +26,8 @@ pub enum ScanAccess {
     TypedIndexRange {
         /// Opaque catalog handle for the selected typed index.
         handle: IndexHandle,
+        /// Indexed property key.
+        property: IStr,
         /// Typed-index value kind.
         kind: IndexKind,
         /// Lookup bounds.
@@ -35,6 +37,8 @@ pub enum ScanAccess {
     BitmapUnion {
         /// Opaque catalog handle for the selected typed index.
         handle: IndexHandle,
+        /// Indexed property key.
+        property: IStr,
         /// Literal lookup keys.
         keys: Vec<Literal>,
     },

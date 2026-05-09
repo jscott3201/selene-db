@@ -13,6 +13,7 @@ mod flagger;
 pub mod parser;
 pub mod plan;
 pub mod procedure_registry;
+pub mod runtime;
 
 pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
@@ -62,3 +63,4 @@ pub use crate::procedure_registry::{
     ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry,
     ProcedureSignature, ProcedureTier,
 };
+pub use crate::runtime::{Binding, BindingTable, ExecutorError, TxContext, scan_pattern};

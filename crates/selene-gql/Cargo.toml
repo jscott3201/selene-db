@@ -16,6 +16,7 @@ miette.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 serde.workspace = true
+smallvec.workspace = true
 thiserror.workspace = true
 
 [features]
