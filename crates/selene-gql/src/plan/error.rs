@@ -83,6 +83,18 @@ pub enum PlannerError {
         #[label("metadata mismatch")]
         span: SourceSpan,
     },
+
+    /// The planner could not intern a static identifier because the process
+    /// interner has reached its configured cap.
+    #[error("planner could not intern static identifier during lowering: {detail}")]
+    #[diagnostic(code(SLENE_P_017))]
+    InternerCapExhausted {
+        /// Stable static identifier detail tag.
+        detail: &'static str,
+        /// Source span of the construct requiring the static identifier.
+        #[label("interner cap exhausted")]
+        span: SourceSpan,
+    },
 }
 
 impl PlannerError {
@@ -96,7 +108,8 @@ impl PlannerError {
             | Self::UnknownProcedure { .. }
             | Self::WriteSetMissing { .. }
             | Self::WriteSetPatternMismatch { .. }
-            | Self::ProcedureMetadataMismatch { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+            | Self::ProcedureMetadataMismatch { .. }
+            | Self::InternerCapExhausted { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
         }
     }
 }

@@ -1,11 +1,17 @@
 //! Procedure-call lowering.
 
+use std::collections::HashSet;
+
 use crate::{
-    ProcedureCall, ProcedureOutputColumn, ProcedureRegistry, YieldColumn,
-    analyze::{AnalyzedStatement, AnalyzedType},
+    GqlType, ProcedureCall, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
+    ProcedureRegistry, YieldColumn,
+    analyze::{
+        AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl, BindingDeclKind,
+        StatementCategory, infer,
+    },
     plan::{
         BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps, PipelineOp,
-        PlannedCall, PlannedYieldItem, PlannerError, YieldKind,
+        PlannedCall, PlannedYieldItem, PlannerError, ProjectExpr, YieldKind,
     },
 };
 
@@ -18,6 +24,18 @@ pub(crate) fn lower_top_level_call(
     analyzed: &AnalyzedStatement,
 ) -> Result<ExecutionPlan, PlannerError> {
     let planned = plan_call(call, registry, analyzed)?;
+    if matches!(analyzed.statement, AnalyzedStatementKind::Call(_)) {
+        // Why: in-pipeline CALLs live inside query statements whose
+        // analyzed.category describes the whole pipeline; only top-level CALL
+        // has a category that is exactly the call's mutability classification.
+        if classify_mutability(planned.mutability) != analyzed.category {
+            return Err(PlannerError::ProcedureMetadataMismatch {
+                procedure: planned.procedure.clone(),
+                detail: "mutability classification changed",
+                span: planned.span,
+            });
+        }
+    }
     let columns = yield_to_columns(&planned)?;
     Ok(ExecutionPlan {
         pattern_plan: None,
@@ -53,6 +71,8 @@ pub(crate) fn plan_call(
         .iter()
         .map(|arg| expr::project_expr(arg, None, analyzed))
         .collect::<Result<Vec<_>, _>>()?;
+    validate_signature(call, &metadata, &args, analyzed)?;
+
     let yield_cols = call
         .yield_items
         .iter()
@@ -65,6 +85,8 @@ pub(crate) fn plan_call(
             span: item.span,
         })
         .collect();
+
+    validate_output_schema(call, &metadata, analyzed)?;
 
     Ok(PlannedCall {
         procedure: call.name.clone().into_boxed_slice(),
@@ -86,13 +108,16 @@ pub(crate) fn yield_to_columns(
     }
 
     let mut columns = Vec::new();
-    if planned
+    let mut seen = HashSet::new();
+    let wildcard_span = planned
         .yield_cols
         .iter()
-        .any(|item| matches!(item.column, YieldKind::Star))
-    {
+        .find(|item| matches!(item.column, YieldKind::Star))
+        .map(|item| item.span);
+
+    if let Some(star_span) = wildcard_span {
         for col in &planned.output_schema.columns {
-            columns.push(binding_column(col, col.name));
+            push_binding_column(planned, &mut columns, &mut seen, col, col.name, star_span)?;
         }
     }
 
@@ -110,10 +135,140 @@ pub(crate) fn yield_to_columns(
                 detail: "yield column not in registry output schema",
                 span: item.span,
             })?;
-        columns.push(binding_column(col, item.alias.unwrap_or(name)));
+        push_binding_column(
+            planned,
+            &mut columns,
+            &mut seen,
+            col,
+            item.alias.unwrap_or(name),
+            item.span,
+        )?;
     }
 
     Ok(columns)
+}
+
+fn validate_signature(
+    call: &ProcedureCall,
+    metadata: &ProcedureMetadata,
+    args: &[ProjectExpr],
+    analyzed: &AnalyzedStatement,
+) -> Result<(), PlannerError> {
+    for (arg, parameter) in args.iter().zip(&metadata.signature.parameters) {
+        let arg_ty = analyzed.expr_types.get(arg.expr_id);
+        if let AnalyzedType::Resolved(found) = arg_ty
+            && !infer::argument_assignable(found, &parameter.ty, parameter.nullable)
+        {
+            let detail = if matches!(found, GqlType::Null) {
+                "signature parameter nullability changed"
+            } else {
+                "signature parameter type changed"
+            };
+            return Err(PlannerError::ProcedureMetadataMismatch {
+                procedure: call.name.clone().into_boxed_slice(),
+                detail,
+                span: arg.span,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_output_schema(
+    call: &ProcedureCall,
+    metadata: &ProcedureMetadata,
+    analyzed: &AnalyzedStatement,
+) -> Result<(), PlannerError> {
+    for decl in analyzed.scopes.declarations().iter().filter(|decl| {
+        decl.kind() == BindingDeclKind::YieldColumn && span_inside(decl.span(), call.span)
+    }) {
+        let Some(expected_ty) = expected_yield_type_for_decl(call, metadata, decl) else {
+            return Err(output_schema_changed(call, decl.span()));
+        };
+        if decl.ty() != &AnalyzedType::Resolved(expected_ty) {
+            return Err(output_schema_changed(call, decl.span()));
+        }
+    }
+    Ok(())
+}
+
+fn expected_yield_type_for_decl(
+    call: &ProcedureCall,
+    metadata: &ProcedureMetadata,
+    decl: &BindingDecl,
+) -> Option<GqlType> {
+    for item in &call.yield_items {
+        if item.span != decl.span() {
+            continue;
+        }
+        let YieldColumn::Named(source_name) = item.column else {
+            continue;
+        };
+        if item.alias.unwrap_or(source_name) == decl.name() {
+            return metadata
+                .output_schema
+                .columns
+                .iter()
+                .find(|candidate| candidate.name == source_name)
+                .map(|col| col.ty.clone());
+        }
+    }
+
+    if call
+        .yield_items
+        .iter()
+        .any(|item| item.span == decl.span() && matches!(item.column, YieldColumn::Star))
+    {
+        return metadata
+            .output_schema
+            .columns
+            .iter()
+            .find(|candidate| candidate.name == decl.name())
+            .map(|col| col.ty.clone());
+    }
+
+    None
+}
+
+fn output_schema_changed(call: &ProcedureCall, span: crate::SourceSpan) -> PlannerError {
+    PlannerError::ProcedureMetadataMismatch {
+        procedure: call.name.clone().into_boxed_slice(),
+        detail: "output column type changed",
+        span,
+    }
+}
+
+fn span_inside(inner: crate::SourceSpan, outer: crate::SourceSpan) -> bool {
+    inner.byte_offset >= outer.byte_offset && inner.end() <= outer.end()
+}
+
+const fn classify_mutability(mutability: ProcedureMutability) -> StatementCategory {
+    match mutability {
+        ProcedureMutability::Read => StatementCategory::ReadOnly,
+        ProcedureMutability::GraphWrite => StatementCategory::DataModifying,
+        ProcedureMutability::SchemaWrite | ProcedureMutability::Admin => {
+            StatementCategory::CatalogModifying
+        }
+    }
+}
+
+fn push_binding_column(
+    planned: &PlannedCall,
+    columns: &mut Vec<BindingTableColumn>,
+    seen: &mut HashSet<selene_core::IStr>,
+    col: &ProcedureOutputColumn,
+    name: selene_core::IStr,
+    span: crate::SourceSpan,
+) -> Result<(), PlannerError> {
+    if !seen.insert(name) {
+        return Err(PlannerError::ProcedureMetadataMismatch {
+            procedure: planned.procedure.clone(),
+            detail: "duplicate yield column after wildcard",
+            span,
+        });
+    }
+    columns.push(binding_column(col, name));
+    Ok(())
 }
 
 fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> BindingTableColumn {
@@ -129,29 +284,19 @@ mod defensive_tests {
 
     use super::*;
     use crate::{
-        GqlType, ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
-        ProcedureOutputSchema, ProcedureRegistry, ProcedureSignature, ProcedureTier, SourceSpan,
+        ProcedureHandle, ProcedureOutputSchema, ProcedureParameter, ProcedureSignature,
+        ProcedureTier, SourceSpan,
         procedure_registry::{ProcedureError, ProcedureResult, Value},
     };
 
-    #[derive(Clone, Copy)]
-    struct ChangedOutputRegistry;
+    #[derive(Clone)]
+    struct StaticRegistry {
+        metadata: ProcedureMetadata,
+    }
 
-    impl ProcedureRegistry for ChangedOutputRegistry {
+    impl ProcedureRegistry for StaticRegistry {
         fn lookup(&self, _name: &[selene_core::IStr]) -> Option<ProcedureMetadata> {
-            Some(ProcedureMetadata {
-                handle: ProcedureHandle::new(1),
-                signature: ProcedureSignature::default(),
-                output_schema: ProcedureOutputSchema {
-                    columns: vec![ProcedureOutputColumn {
-                        name: intern_with_admission("different").expect("test interner").0,
-                        ty: GqlType::String,
-                    }],
-                },
-                tier: ProcedureTier::Graph,
-                mutability: ProcedureMutability::Read,
-                capability_required: None,
-            })
+            Some(self.metadata.clone())
         }
 
         fn execute(
@@ -161,6 +306,152 @@ mod defensive_tests {
         ) -> Result<ProcedureResult, ProcedureError> {
             Err(ProcedureError::M2Placeholder)
         }
+    }
+
+    fn istr(value: &str) -> selene_core::IStr {
+        intern_with_admission(value).expect("test interner").0
+    }
+
+    fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
+        ProcedureParameter {
+            name: istr(name),
+            ty,
+            nullable,
+        }
+    }
+
+    fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
+        ProcedureOutputColumn {
+            name: istr(name),
+            ty,
+        }
+    }
+
+    fn registry(
+        parameters: Vec<ProcedureParameter>,
+        columns: Vec<ProcedureOutputColumn>,
+        mutability: ProcedureMutability,
+    ) -> StaticRegistry {
+        StaticRegistry {
+            metadata: ProcedureMetadata {
+                handle: ProcedureHandle::new(1),
+                signature: ProcedureSignature { parameters },
+                output_schema: ProcedureOutputSchema { columns },
+                tier: ProcedureTier::Graph,
+                mutability,
+                capability_required: None,
+            },
+        }
+    }
+
+    fn analyzed_with(source: &str, registry: &StaticRegistry) -> AnalyzedStatement {
+        let statement = crate::parser::parse(source).expect("test input parses");
+        crate::analyze::analyze(statement, registry, None).expect("test input analyzes")
+    }
+
+    fn assert_metadata_detail(err: PlannerError, expected: &'static str) {
+        let PlannerError::ProcedureMetadataMismatch { detail, .. } = err else {
+            panic!("expected metadata mismatch, got {err:?}");
+        };
+        assert_eq!(detail, expected);
+    }
+
+    #[test]
+    fn changed_parameter_type_reports_metadata_mismatch() {
+        let source = "CALL pkg.arg(1)";
+        let original = registry(
+            vec![param("value", GqlType::Integer, false)],
+            Vec::new(),
+            ProcedureMutability::Read,
+        );
+        let analyzed = analyzed_with(source, &original);
+        let changed = registry(
+            vec![param("value", GqlType::String, false)],
+            Vec::new(),
+            ProcedureMutability::Read,
+        );
+
+        let err =
+            crate::plan::plan(&analyzed, &changed).expect_err("signature type drift is rejected");
+        assert_metadata_detail(err, "signature parameter type changed");
+    }
+
+    #[test]
+    fn changed_parameter_nullability_reports_metadata_mismatch() {
+        let source = "CALL pkg.arg(NULL)";
+        let original = registry(
+            vec![param("value", GqlType::Integer, true)],
+            Vec::new(),
+            ProcedureMutability::Read,
+        );
+        let analyzed = analyzed_with(source, &original);
+        let changed = registry(
+            vec![param("value", GqlType::Integer, false)],
+            Vec::new(),
+            ProcedureMutability::Read,
+        );
+
+        let err = crate::plan::plan(&analyzed, &changed)
+            .expect_err("signature nullability drift is rejected");
+        assert_metadata_detail(err, "signature parameter nullability changed");
+    }
+
+    #[test]
+    fn changed_top_level_mutability_reports_metadata_mismatch() {
+        let source = "CALL pkg.work()";
+        let original = registry(Vec::new(), Vec::new(), ProcedureMutability::Read);
+        let analyzed = analyzed_with(source, &original);
+        let changed = registry(Vec::new(), Vec::new(), ProcedureMutability::GraphWrite);
+
+        let err = crate::plan::plan(&analyzed, &changed).expect_err("mutability drift is rejected");
+        assert_metadata_detail(err, "mutability classification changed");
+    }
+
+    #[test]
+    fn changed_output_column_type_reports_metadata_mismatch() {
+        let source = "CALL pkg.out() YIELD out";
+        let original = registry(
+            Vec::new(),
+            vec![output("out", GqlType::String)],
+            ProcedureMutability::Read,
+        );
+        let analyzed = analyzed_with(source, &original);
+        let changed = registry(
+            Vec::new(),
+            vec![output("out", GqlType::Integer)],
+            ProcedureMutability::Read,
+        );
+
+        let err = crate::plan::plan(&analyzed, &changed)
+            .expect_err("output column type drift is rejected");
+        assert_metadata_detail(err, "output column type changed");
+    }
+
+    #[test]
+    fn duplicate_wildcard_output_reports_metadata_mismatch() {
+        let source = "CALL pkg.out() YIELD *, outA AS first";
+        let original = registry(
+            Vec::new(),
+            vec![
+                output("outA", GqlType::String),
+                output("outB", GqlType::Integer),
+            ],
+            ProcedureMutability::Read,
+        );
+        let analyzed = analyzed_with(source, &original);
+        let changed = registry(
+            Vec::new(),
+            vec![
+                output("outA", GqlType::String),
+                output("outB", GqlType::Integer),
+                output("first", GqlType::String),
+            ],
+            ProcedureMutability::Read,
+        );
+
+        let err = crate::plan::plan(&analyzed, &changed)
+            .expect_err("wildcard output name drift is rejected");
+        assert_metadata_detail(err, "duplicate yield column after wildcard");
     }
 
     #[test]
@@ -176,10 +467,14 @@ mod defensive_tests {
                 alias: None,
                 span: SourceSpan::new(0, 3),
             }],
-            output_schema: ChangedOutputRegistry
-                .lookup(&[name])
-                .expect("metadata")
-                .output_schema,
+            output_schema: registry(
+                Vec::new(),
+                vec![output("different", GqlType::String)],
+                ProcedureMutability::Read,
+            )
+            .lookup(&[name])
+            .expect("metadata")
+            .output_schema,
             mutability: ProcedureMutability::Read,
             span: SourceSpan::new(0, 3),
         };

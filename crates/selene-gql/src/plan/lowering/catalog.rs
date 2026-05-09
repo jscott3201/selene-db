@@ -1,6 +1,6 @@
 //! DDL lowering.
 
-use selene_core::intern_with_admission;
+use selene_core::{IStr, intern_with_admission};
 
 use crate::{
     DdlStatement, GqlType, TypePropertyConstraint, TypePropertyDef,
@@ -98,7 +98,7 @@ pub(crate) fn lower_ddl(
     Ok(ExecutionPlan {
         pattern_plan: None,
         pipeline: vec![PipelineOp::Catalog(op)],
-        output_schema: ddl_output_schema(statement),
+        output_schema: ddl_output_schema(statement)?,
         impl_defined_caps: ImplDefinedCaps::default(),
     })
 }
@@ -155,30 +155,97 @@ fn lower_property_constraint(
     })
 }
 
-fn ddl_output_schema(statement: &DdlStatement) -> BindingTableSchema {
+fn ddl_output_schema(statement: &DdlStatement) -> Result<BindingTableSchema, PlannerError> {
+    ddl_output_schema_with(statement, intern_with_admission)
+}
+
+fn ddl_output_schema_with<F, E>(
+    statement: &DdlStatement,
+    intern: F,
+) -> Result<BindingTableSchema, PlannerError>
+where
+    F: FnMut(&str) -> Result<(IStr, bool), E>,
+{
     match statement {
-        DdlStatement::ShowNodeTypes(_) | DdlStatement::ShowEdgeTypes(_) => BindingTableSchema {
-            columns: vec![
-                BindingTableColumn {
-                    name: Some(
-                        intern_with_admission("label")
-                            .expect("static SHOW column name")
-                            .0,
-                    ),
-                    ty: AnalyzedType::Resolved(GqlType::String),
-                },
-                BindingTableColumn {
-                    name: Some(
-                        intern_with_admission("definition")
-                            .expect("static SHOW column name")
-                            .0,
-                    ),
-                    ty: AnalyzedType::DYNAMIC,
-                },
-            ],
-        },
-        _ => BindingTableSchema {
+        DdlStatement::ShowNodeTypes(span) => show_output_schema(
+            *span,
+            "static SHOW NODE TYPES column 'label'",
+            "static SHOW NODE TYPES column 'definition'",
+            intern,
+        ),
+        DdlStatement::ShowEdgeTypes(span) => show_output_schema(
+            *span,
+            "static SHOW EDGE TYPES column 'label'",
+            "static SHOW EDGE TYPES column 'definition'",
+            intern,
+        ),
+        _ => Ok(BindingTableSchema {
             columns: Vec::new(),
-        },
+        }),
+    }
+}
+
+fn show_output_schema<F, E>(
+    span: crate::SourceSpan,
+    label_detail: &'static str,
+    definition_detail: &'static str,
+    mut intern: F,
+) -> Result<BindingTableSchema, PlannerError>
+where
+    F: FnMut(&str) -> Result<(IStr, bool), E>,
+{
+    Ok(BindingTableSchema {
+        columns: vec![
+            BindingTableColumn {
+                name: Some(show_column_name("label", label_detail, span, &mut intern)?),
+                ty: AnalyzedType::Resolved(GqlType::String),
+            },
+            BindingTableColumn {
+                name: Some(show_column_name(
+                    "definition",
+                    definition_detail,
+                    span,
+                    &mut intern,
+                )?),
+                ty: AnalyzedType::DYNAMIC,
+            },
+        ],
+    })
+}
+
+fn show_column_name<F, E>(
+    value: &'static str,
+    detail: &'static str,
+    span: crate::SourceSpan,
+    admit_name: &mut F,
+) -> Result<IStr, PlannerError>
+where
+    F: FnMut(&str) -> Result<(IStr, bool), E>,
+{
+    admit_name(value)
+        .map(|(name, _was_new)| name)
+        .map_err(|_err| PlannerError::InternerCapExhausted { detail, span })
+}
+
+#[cfg(test)]
+mod defensive_tests {
+    use super::*;
+    use crate::SourceSpan;
+
+    #[test]
+    fn ddl_output_schema_reports_interner_cap_for_static_show_column() {
+        let err = ddl_output_schema_with(
+            &DdlStatement::ShowNodeTypes(SourceSpan::new(4, 15)),
+            |_value| Err(()),
+        )
+        .expect_err("static SHOW column intern failure is recoverable");
+
+        assert!(matches!(
+            err,
+            PlannerError::InternerCapExhausted {
+                detail: "static SHOW NODE TYPES column 'label'",
+                span,
+            } if span == SourceSpan::new(4, 15)
+        ));
     }
 }

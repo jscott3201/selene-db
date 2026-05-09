@@ -131,6 +131,39 @@ fn unknown_procedure_between_analyze_and_plan_is_defensive_error() {
 }
 
 #[test]
+fn yield_star_duplicate_after_registry_drift_is_defensive_error() {
+    let registry = registry();
+    let analyzed = analyzed("CALL pkg.all() YIELD *, outA AS first", &registry);
+    let drifted = MockProcedureRegistry::new().with_procedure(
+        vec![istr("pkg"), istr("all")],
+        Vec::new(),
+        vec![
+            ProcedureOutputColumn {
+                name: istr("outA"),
+                ty: GqlType::String,
+            },
+            ProcedureOutputColumn {
+                name: istr("outB"),
+                ty: GqlType::Integer,
+            },
+            ProcedureOutputColumn {
+                name: istr("first"),
+                ty: GqlType::String,
+            },
+        ],
+    );
+
+    let err = plan(&analyzed, &drifted).expect_err("wildcard collision is defensive error");
+    assert!(matches!(
+        err,
+        PlannerError::ProcedureMetadataMismatch {
+            detail: "duplicate yield column after wildcard",
+            ..
+        }
+    ));
+}
+
+#[test]
 fn sentinel_call_plan_shape_snapshot() {
     let registry = registry();
     let plan = plan_one("CALL pkg.all() YIELD *, outA AS first", &registry);
