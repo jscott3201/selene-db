@@ -73,6 +73,7 @@ fn rewrite_scan(
     remove_indices(&mut scan.property_predicates, &candidate.consumed_indices);
     scan.access = ScanAccess::TypedIndexRange {
         handle: candidate.handle,
+        property: candidate.property,
         kind: candidate.kind,
         bounds: candidate.bounds,
     };
@@ -81,6 +82,7 @@ fn rewrite_scan(
 
 struct Candidate {
     handle: crate::IndexHandle,
+    property: selene_core::IStr,
     kind: crate::IndexKind,
     bounds: TypedIndexBounds,
     consumed_indices: Vec<usize>,
@@ -111,6 +113,7 @@ fn best_candidate(
         consumed_indices.dedup();
         return Some(Candidate {
             handle: lookup.handle,
+            property: matched.key,
             kind: lookup.kind,
             bounds,
             consumed_indices,
