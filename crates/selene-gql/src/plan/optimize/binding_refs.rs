@@ -49,8 +49,8 @@ pub(crate) fn collect_binding_refs(
 ) -> Option<Vec<BindingId>> {
     let mut refs = Vec::new();
     let mut unresolved = false;
-    walk_expr(expr, &mut |sub| {
-        if let ValueExpr::Variable { name, .. } = sub {
+    walk_expr(expr, &mut |sub| match sub {
+        ValueExpr::Variable { name, .. } => {
             if let Some(binding) = bindings
                 .iter()
                 .find(|binding| binding.name == *name)
@@ -61,6 +61,15 @@ pub(crate) fn collect_binding_refs(
                 unresolved = true;
             }
         }
+        // Subquery patterns can reference outer bindings via pattern element
+        // names (e.g., `EXISTS ((n)-[:r]->(b))` references outer `n`) without
+        // emitting an explicit `Variable` expression. Trigger the unresolved
+        // fallback so callers preserve the parent's annotated `binding_refs`
+        // instead of silently dropping the subquery's outer references.
+        ValueExpr::Exists { .. } | ValueExpr::CountSubquery { .. } => {
+            unresolved = true;
+        }
+        _ => {}
     });
     if unresolved {
         return None;

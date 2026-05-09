@@ -35,12 +35,9 @@ pub(crate) fn estimate(
     if let Some(stats) = scan_ctx.statistics
         && let Some(matched) = match_property_predicate(pred, scan_ctx.bindings)
         && let Some(label) = label_for_binding(scan_ctx.bindings, matched.binding)
+        && let Some(histogram) = stats.property_histograms.get(&(label, matched.key))
     {
-        return stats
-            .property_histograms
-            .get(&(label, matched.key))
-            .map(|histogram| histogram.estimate_for(&pred.expr))
-            .unwrap_or(HEURISTIC_EQUALS);
+        return histogram.estimate_for(&pred.expr);
     }
 
     match pred.kind {

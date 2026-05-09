@@ -64,31 +64,27 @@ fn rewrite_scan(
     let Some(label) = single_label(&scan.label_predicate) else {
         return false;
     };
-    let mut candidates = equality_candidates(&scan.property_predicates, bindings);
+    let candidates = equality_candidates(&scan.property_predicates, bindings);
     if candidates.len() < 2 {
         return false;
     }
-    let properties = candidates
-        .iter()
-        .map(|candidate| candidate.key)
-        .collect::<Vec<_>>();
-    let Some(composite) = catalog.composite_index(crate::IndexTarget::Node, label, &properties)
+    // Try the full equality candidate set first, then progressively smaller
+    // subsets, so a query with predicates `(tenant, kind, status)` still uses
+    // a `(tenant, kind)` composite index — `status` stays in
+    // `property_predicates` as a residual filter.
+    let Some((composite, consumed_indices)) = find_composite_match(&candidates, label, catalog)
     else {
         return false;
     };
     let mut keys = Vec::with_capacity(composite.properties.len());
-    let mut consumed_indices = Vec::with_capacity(composite.properties.len());
     for property in &composite.properties {
-        let Some(position) = candidates
+        let candidate = candidates
             .iter()
-            .position(|candidate| candidate.key == *property)
-        else {
-            return false;
-        };
-        let candidate = candidates.swap_remove(position);
+            .find(|candidate| candidate.key == *property)
+            .expect("matched property is present in candidate set");
         keys.push((*property, candidate.literal.clone()));
-        consumed_indices.push(candidate.index);
     }
+    let mut consumed_indices = consumed_indices;
     consumed_indices.sort_unstable();
     consumed_indices.dedup();
     remove_indices(&mut scan.property_predicates, &consumed_indices);
@@ -98,6 +94,51 @@ fn rewrite_scan(
         keys,
     };
     true
+}
+
+/// Try the full equality candidate set first, then every smaller subset
+/// (down to size 2), preferring larger subsets. Returns the first matching
+/// composite index along with the candidate-`property_predicates` indices it
+/// consumed.
+fn find_composite_match(
+    candidates: &[EqualityCandidate],
+    label: IStr,
+    catalog: &dyn crate::IndexCatalog,
+) -> Option<(crate::CompositeIndexHandle, Vec<usize>)> {
+    let n = candidates.len();
+    debug_assert!(n <= 64, "subset enumeration assumes <= 64 candidates");
+    // From largest subset down to size 2; within each size, iterate masks in
+    // ascending order for deterministic plans when multiple indexes match.
+    for size in (2..=n).rev() {
+        let mut mask = (1u64 << size) - 1;
+        while mask < (1u64 << n) {
+            let subset_keys: Vec<IStr> = (0..n)
+                .filter(|i| (mask >> i) & 1 == 1)
+                .map(|i| candidates[i].key)
+                .collect();
+            if let Some(composite) =
+                catalog.composite_index(crate::IndexTarget::Node, label, &subset_keys)
+            {
+                let consumed: Vec<usize> = composite
+                    .properties
+                    .iter()
+                    .map(|property| {
+                        candidates
+                            .iter()
+                            .find(|candidate| candidate.key == *property)
+                            .map(|candidate| candidate.index)
+                            .expect("matched property in candidate set")
+                    })
+                    .collect();
+                return Some((composite, consumed));
+            }
+            // Gosper's hack: next mask with the same popcount, lexicographically.
+            let c = mask & mask.wrapping_neg();
+            let r = mask + c;
+            mask = (((r ^ mask) >> 2) / c) | r;
+        }
+    }
+    None
 }
 
 #[derive(Clone)]

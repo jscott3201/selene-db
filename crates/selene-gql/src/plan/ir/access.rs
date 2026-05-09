@@ -93,6 +93,7 @@ pub enum OrderAccess {
 
 /// Structural node-id ordering used by WCO symmetry breaking.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct NodeIdOrdering {
     /// Left-hand node binding.
     pub left: BindingId,

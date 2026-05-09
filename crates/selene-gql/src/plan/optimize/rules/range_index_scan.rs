@@ -127,8 +127,8 @@ fn bounds_for_property(
     kind: crate::IndexKind,
 ) -> Option<(TypedIndexBounds, Vec<usize>)> {
     let mut equality = None;
-    let mut lower = None;
-    let mut upper = None;
+    let mut lower: Option<(Literal, bool)> = None;
+    let mut upper: Option<(Literal, bool)> = None;
     let mut consumed = Vec::new();
 
     for (index, pred) in predicates.iter().enumerate().skip(first_index) {
@@ -147,12 +147,16 @@ fn bounds_for_property(
             }
             binding_refs::PropertyPredicateShape::Comparison { op, value } => {
                 let literal = compatible_literal(value, kind)?;
-                match op {
-                    BinaryOp::Gt => lower = Some((literal.clone(), false)),
-                    BinaryOp::Ge => lower = Some((literal.clone(), true)),
-                    BinaryOp::Lt => upper = Some((literal.clone(), false)),
-                    BinaryOp::Le => upper = Some((literal.clone(), true)),
+                let candidate = (literal.clone(), matches!(op, BinaryOp::Ge | BinaryOp::Le));
+                let tightened = match op {
+                    BinaryOp::Gt | BinaryOp::Ge => tighten_lower(lower.take(), candidate),
+                    BinaryOp::Lt | BinaryOp::Le => tighten_upper(upper.take(), candidate),
                     _ => continue,
+                }?;
+                match op {
+                    BinaryOp::Gt | BinaryOp::Ge => lower = Some(tightened),
+                    BinaryOp::Lt | BinaryOp::Le => upper = Some(tightened),
+                    _ => unreachable!("guarded above"),
                 }
                 consumed.push(index);
             }
@@ -177,20 +181,92 @@ fn bounds_for_property(
         return Some((TypedIndexBounds::Equality(literal), consumed));
     }
     match (lower, upper) {
-        (Some((lo, lo_inclusive)), Some((hi, hi_inclusive))) => Some((
-            TypedIndexBounds::Range {
-                lo,
-                lo_inclusive,
-                hi,
-                hi_inclusive,
-            },
-            consumed,
-        )),
+        (Some((lo, lo_inclusive)), Some((hi, hi_inclusive))) => {
+            // Contradictory bounds (lo > hi, or lo == hi with both exclusive) make the
+            // range empty; refuse the rewrite so the executor evaluates the predicates
+            // linearly and we don't paper over a possibly-buggy executor range path.
+            if !range_satisfiable(&lo, lo_inclusive, &hi, hi_inclusive) {
+                return None;
+            }
+            Some((
+                TypedIndexBounds::Range {
+                    lo,
+                    lo_inclusive,
+                    hi,
+                    hi_inclusive,
+                },
+                consumed,
+            ))
+        }
         (Some((literal, false)), None) => Some((TypedIndexBounds::GreaterThan(literal), consumed)),
         (Some((literal, true)), None) => Some((TypedIndexBounds::GreaterEqual(literal), consumed)),
         (None, Some((literal, false))) => Some((TypedIndexBounds::LessThan(literal), consumed)),
         (None, Some((literal, true))) => Some((TypedIndexBounds::LessEqual(literal), consumed)),
         (None, None) => None,
+    }
+}
+
+/// Combine two lower bounds, returning the tighter (higher) one, or `None`
+/// if the literals can't be ordered (e.g., NaN). Inclusive/exclusive ties go
+/// to the exclusive bound (it strictly excludes more rows).
+fn tighten_lower(
+    existing: Option<(Literal, bool)>,
+    candidate: (Literal, bool),
+) -> Option<(Literal, bool)> {
+    let Some(existing) = existing else {
+        return Some(candidate);
+    };
+    let ordering = compare_literals(&existing.0, &candidate.0)?;
+    Some(match ordering {
+        std::cmp::Ordering::Less => candidate,
+        std::cmp::Ordering::Greater => existing,
+        std::cmp::Ordering::Equal => {
+            // Same literal; exclusive (false) wins because it filters one more value.
+            (existing.0, existing.1 && candidate.1)
+        }
+    })
+}
+
+/// Combine two upper bounds, returning the tighter (lower) one.
+fn tighten_upper(
+    existing: Option<(Literal, bool)>,
+    candidate: (Literal, bool),
+) -> Option<(Literal, bool)> {
+    let Some(existing) = existing else {
+        return Some(candidate);
+    };
+    let ordering = compare_literals(&existing.0, &candidate.0)?;
+    Some(match ordering {
+        std::cmp::Ordering::Less => existing,
+        std::cmp::Ordering::Greater => candidate,
+        std::cmp::Ordering::Equal => (existing.0, existing.1 && candidate.1),
+    })
+}
+
+/// Compare two literals of the same kind. Returns `None` when the literals
+/// are non-orderable (e.g., NaN floats) or kinds differ.
+fn compare_literals(a: &Literal, b: &Literal) -> Option<std::cmp::Ordering> {
+    match (a, b) {
+        (Literal::Integer(lhs, _), Literal::Integer(rhs, _)) => Some(lhs.cmp(rhs)),
+        (Literal::Float(lhs, _), Literal::Float(rhs, _)) => lhs.partial_cmp(rhs),
+        (Literal::String(lhs, _), Literal::String(rhs, _)) => Some(lhs.as_str().cmp(rhs.as_str())),
+        (Literal::Bool(lhs, _), Literal::Bool(rhs, _)) => Some(lhs.cmp(rhs)),
+        _ => None,
+    }
+}
+
+/// Whether `[lo, hi]` (with the given inclusivities) contains at least one
+/// value of the literal kind. Returns `true` for any orderable, non-empty
+/// range; `false` for empty or non-orderable ranges (caller treats `false`
+/// as "refuse rewrite").
+fn range_satisfiable(lo: &Literal, lo_inclusive: bool, hi: &Literal, hi_inclusive: bool) -> bool {
+    let Some(ordering) = compare_literals(lo, hi) else {
+        return false;
+    };
+    match ordering {
+        std::cmp::Ordering::Less => true,
+        std::cmp::Ordering::Greater => false,
+        std::cmp::Ordering::Equal => lo_inclusive && hi_inclusive,
     }
 }
 
