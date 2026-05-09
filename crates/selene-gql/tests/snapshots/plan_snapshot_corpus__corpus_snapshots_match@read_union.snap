@@ -1,0 +1,10 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: none
+output: [n]
+pattern: none
+pipeline:
+  - Project(columns=[n])
+  - Union(op=UnionAll, rhs=pipeline=[Project], output=[n], pattern=none)

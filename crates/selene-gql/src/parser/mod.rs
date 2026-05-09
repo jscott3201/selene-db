@@ -2,6 +2,7 @@
 
 mod budget;
 mod builders;
+mod guard;
 
 use std::sync::Arc;
 
@@ -38,6 +39,7 @@ mod pest_impl {
 /// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
 /// intentionally land after BRIEF-17.
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
+    guard::validate(source)?;
     let mut pairs =
         GqlParser::parse(Rule::gql_program, source).map_err(|error| pest_error(source, error))?;
     let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;

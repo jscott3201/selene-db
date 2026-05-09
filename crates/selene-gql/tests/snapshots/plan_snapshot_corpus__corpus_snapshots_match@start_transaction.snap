@@ -1,0 +1,9 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: none
+output: []
+pattern: none
+pipeline:
+  - Tx(op=Start)

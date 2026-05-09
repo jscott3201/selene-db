@@ -1,0 +1,16 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: filter_pushdown, node_filter_extraction, range_index_scan, index_order, top_k
+output: [n]
+pattern:
+  bindings: 1 [n]
+  join_tree: Scan(n)
+  pattern_filters: 0
+  scans:
+    - n (Node): TypedIndexRange residual=0 consumed=0
+  order_access: [TypedIndex(Asc)]
+pipeline:
+  - Project(columns=[n])
+  - TopK(keys=1, offset=Literal(0), count=Literal(10))

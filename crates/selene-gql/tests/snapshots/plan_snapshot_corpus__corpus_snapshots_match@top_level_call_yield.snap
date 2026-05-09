@@ -1,0 +1,9 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: none
+output: [outA, outB, first]
+pattern: none
+pipeline:
+  - Call(name=pkg.all, args=0, yield=[*,outA as first])

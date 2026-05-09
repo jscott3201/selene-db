@@ -1,0 +1,16 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: filter_pushdown, expand_filter_pushdown
+output: [a, b]
+pattern:
+  bindings: 3 [a, b, e]
+  join_tree: Scan(a)->Expand(e->b)
+  pattern_filters: 0
+  scans:
+    - a (Node): Linear residual=0 consumed=0
+    - e (Edge): Linear residual=1 consumed=0
+  order_access: []
+pipeline:
+  - Project(columns=[a,b])
