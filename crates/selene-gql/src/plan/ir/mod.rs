@@ -194,6 +194,15 @@ pub enum PipelineOp {
         /// Rows to retain after offset.
         count: LimitAmount,
     },
+    /// Sort rows while retaining only the bounded top range.
+    TopK {
+        /// Sort keys preserved from the fused `OrderBy`.
+        keys: Vec<OrderKey>,
+        /// Rows to skip before yielding.
+        offset: LimitAmount,
+        /// Rows to retain after offset.
+        count: LimitAmount,
+    },
     /// Group and aggregate rows.
     GroupBy {
         /// Grouping keys.
