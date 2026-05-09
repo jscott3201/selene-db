@@ -29,6 +29,8 @@ impl GqlStatus {
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
     /// Invalid transaction state: catalog/data statement mixing.
     pub const INVALID_TRANSACTION_STATE_MIXING: Self = Self(*b"25G02");
+    /// Implementation-defined planner or executor failure.
+    pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"XX500");
 
     /// Return this status as its 5-character string form.
     #[must_use]
