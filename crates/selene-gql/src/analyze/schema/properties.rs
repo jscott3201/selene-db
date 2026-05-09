@@ -159,8 +159,7 @@ fn resolves_to(
 
 pub(super) fn find_set_value(
     analyzed: &AnalyzedStatement,
-    span: SourceSpan,
-    key: IStr,
+    value_span: SourceSpan,
 ) -> Option<&ValueExpr> {
     let AnalyzedStatementKind::Mutate(pipeline) = &analyzed.statement else {
         return None;
@@ -171,19 +170,13 @@ pub(super) fn find_set_value(
         };
         for item in items {
             match item {
-                SetItem::Property {
-                    key: item_key,
-                    value,
-                    span: item_span,
-                    ..
-                } if *item_key == key && *item_span == span => return Some(value),
-                SetItem::PropertyMerge {
-                    properties,
-                    span: item_span,
-                    ..
-                } if *item_span == span => {
-                    if let Some((_, value)) =
-                        properties.iter().find(|(item_key, _)| *item_key == key)
+                SetItem::Property { value, .. } if value.span() == value_span => {
+                    return Some(value);
+                }
+                SetItem::PropertyMerge { properties, .. } => {
+                    if let Some((_, value)) = properties
+                        .iter()
+                        .find(|(_, value)| value.span() == value_span)
                     {
                         return Some(value);
                     }
@@ -268,25 +261,22 @@ pub(super) fn validate_node_label_transition(
     span: SourceSpan,
     mutate: impl Fn(&mut LabelSet),
 ) -> Result<(), AnalysisError> {
-    let mut any_valid = false;
-    let mut last_labels = LabelSet::new();
-    for node_type in types {
+    let mut first_invalid = None;
+    for node_type in &types {
         let mut labels = node_type.key_labels.clone();
         mutate(&mut labels);
-        last_labels = labels.clone();
-        if graph_type.find_node_type(&labels).is_some() {
-            any_valid = true;
+        if graph_type.find_node_type(&labels).is_none() {
+            first_invalid.get_or_insert(labels);
         }
     }
-    if any_valid {
-        Ok(())
-    } else {
-        Err(AnalysisError::SchemaUnknownNodeType {
-            labels: last_labels,
+    if let Some(labels) = first_invalid {
+        return Err(AnalysisError::SchemaUnknownNodeType {
+            labels,
             graph_type: graph_type.name,
             span,
-        })
+        });
     }
+    Ok(())
 }
 
 pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlType) -> bool {

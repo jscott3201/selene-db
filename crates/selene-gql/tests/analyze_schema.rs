@@ -137,6 +137,37 @@ fn duplicate_edge_label_graph_type() -> GraphTypeDef {
     .expect("fixture graph type is valid")
 }
 
+fn label_transition_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: istr("fixture.label_transition"),
+        node_types: vec![
+            NodeTypeDef {
+                name: istr("Person"),
+                key_labels: LabelSet::single(istr("Person")),
+                properties: vec![property("name", PropertyValueType::String, true)],
+            },
+            NodeTypeDef {
+                name: istr("ActivePerson"),
+                key_labels: labels(&["Person", "Active"]),
+                properties: vec![property("name", PropertyValueType::String, true)],
+            },
+            NodeTypeDef {
+                name: istr("SeniorPerson"),
+                key_labels: labels(&["Person", "Senior"]),
+                properties: vec![property("name", PropertyValueType::String, true)],
+            },
+            NodeTypeDef {
+                name: istr("VisitorPerson"),
+                key_labels: labels(&["Person", "Visitor"]),
+                properties: vec![property("name", PropertyValueType::String, true)],
+            },
+        ],
+        edge_types: Vec::new(),
+    }
+    .validate()
+    .expect("fixture graph type is valid")
+}
+
 #[test]
 fn schema_absent_skips_closed_graph_checks() {
     analyze_source("INSERT (n { extra: 1 })", None).expect("open graph accepts insert");
@@ -174,10 +205,58 @@ fn rejects_unknown_edge_type() {
 }
 
 #[test]
+fn rejects_unknown_label_on_undirected_insert_edge() {
+    let graph_type = person_company_graph_type();
+    let pattern = GraphPattern {
+        path_binding: None,
+        elements: vec![
+            node("a", "Person", "A", SourceSpan::new(0, 1)),
+            edge("LIKES", EdgeDirection::Undirected, SourceSpan::new(1, 1)),
+            node("b", "Company", "B", SourceSpan::new(2, 1)),
+        ],
+        span: SourceSpan::new(0, 3),
+    };
+    let statement = Statement::Mutate(MutationPipeline {
+        statements: vec![MutationStatement::Insert(InsertStatement {
+            patterns: vec![pattern],
+            span: SourceSpan::new(0, 3),
+        })],
+        terminator: None,
+        span: SourceSpan::new(0, 3),
+    });
+    let error = analyze(statement, &EmptyProcedureRegistry, Some(&graph_type))
+        .expect_err("unknown edge label rejects before undirected defer");
+    assert!(matches!(error, AnalysisError::SchemaUnknownEdgeType { .. }));
+}
+
+#[test]
+fn rejects_unknown_label_when_endpoints_are_dynamic() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error("MATCH (a), (b) INSERT (a)-[:LIKES]->(b)", &graph_type);
+    assert!(matches!(error, AnalysisError::SchemaUnknownEdgeType { .. }));
+}
+
+#[test]
 fn rejects_static_edge_endpoint_mismatch() {
     let graph_type = person_company_graph_type();
     let error = schema_error(
         "INSERT (a:Company { name: 'A' })-[:WORKS_AT]->(b:Person { name: 'B' })",
+        &graph_type,
+    );
+    assert!(matches!(
+        error,
+        AnalysisError::SchemaEdgeEndpointMismatch { .. }
+    ));
+}
+
+#[test]
+fn reused_insert_node_uses_exact_endpoint_lookup() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error(
+        concat!(
+            "INSERT (n:Person { name: 'A' }) ",
+            "INSERT (n)-[:WORKS_AT]->(b:Person { name: 'B' })"
+        ),
         &graph_type,
     );
     assert!(matches!(
@@ -203,6 +282,16 @@ fn rejects_undeclared_property_on_insert_and_set() {
 }
 
 #[test]
+fn match_then_match_with_labels_uses_refined_labels_for_set_validation() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error("MATCH (n) MATCH (n:Person) SET n.foo = 1", &graph_type);
+    assert!(matches!(
+        error,
+        AnalysisError::SchemaUndeclaredProperty { .. }
+    ));
+}
+
+#[test]
 fn rejects_property_type_mismatch_on_insert_and_set() {
     let graph_type = person_company_graph_type();
     let insert_error = schema_error("INSERT (n:Person { name: 42 })", &graph_type);
@@ -214,6 +303,19 @@ fn rejects_property_type_mismatch_on_insert_and_set() {
     let set_error = schema_error("MATCH (n:Person) SET n.name = 42", &graph_type);
     assert!(matches!(
         set_error,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn rejects_duplicate_set_map_keys_with_mismatched_values() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error(
+        "MATCH (n:Person) SET n = { name: 'A', name: 1 }",
+        &graph_type,
+    );
+    assert!(matches!(
+        error,
         AnalysisError::SchemaPropertyTypeMismatch { .. }
     ));
 }
@@ -293,6 +395,13 @@ fn validates_static_label_transitions_when_all_candidates_have_a_target_type() {
 }
 
 #[test]
+fn rejects_label_transition_when_any_candidate_becomes_invalid() {
+    let graph_type = label_transition_graph_type();
+    let error = schema_error("MATCH (n:Person) SET n :Visitor", &graph_type);
+    assert!(matches!(error, AnalysisError::SchemaUnknownNodeType { .. }));
+}
+
+#[test]
 fn validates_edge_set_and_remove_when_edge_label_is_unique() {
     let graph_type = person_company_graph_type();
     analyze_with_schema(
@@ -317,6 +426,19 @@ fn validates_edge_set_and_remove_when_edge_label_is_unique() {
     assert!(matches!(
         undeclared,
         AnalysisError::SchemaUndeclaredProperty { .. }
+    ));
+}
+
+#[test]
+fn rejects_remove_required_edge_label() {
+    let graph_type = person_company_graph_type();
+    let error = schema_error(
+        "MATCH (a:Person)-[r:WORKS_AT]->(b:Company) REMOVE r :WORKS_AT",
+        &graph_type,
+    );
+    assert!(matches!(
+        error,
+        AnalysisError::SchemaRequiredEdgeLabelRemoved { .. }
     ));
 }
 

@@ -179,6 +179,7 @@ impl BindingScopeTree {
                     prior_span: prior_decl.span(),
                 });
             }
+            self.decls[existing.get() as usize].refine_label_expr(labels);
             return Ok((existing, true));
         }
         Ok((

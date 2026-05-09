@@ -267,6 +267,19 @@ pub enum AnalysisError {
         #[label("invalid INSERT label expression")]
         span: SourceSpan,
     },
+
+    /// Static closed-graph validation found removal of an edge's required label.
+    #[error("required edge label {label} of {declared_in} cannot be REMOVE'd")]
+    #[diagnostic(code(SLENE_A_018))]
+    SchemaRequiredEdgeLabelRemoved {
+        /// Required edge label.
+        label: IStr,
+        /// Edge type name that declared the label.
+        declared_in: IStr,
+        /// Source span of the remove item.
+        #[label("edge label cannot be removed")]
+        span: SourceSpan,
+    },
 }
 
 /// Label-expression forms that cannot identify a fresh closed-graph INSERT type.
@@ -578,7 +591,8 @@ impl AnalysisError {
             | Self::SchemaPropertyTypeMismatch { .. }
             | Self::SchemaRequiredPropertyMissing { .. }
             | Self::SchemaRequiredPropertyRemoved { .. }
-            | Self::SchemaInvalidInsertLabelExpr { .. } => GqlStatus::DATA_EXCEPTION,
+            | Self::SchemaInvalidInsertLabelExpr { .. }
+            | Self::SchemaRequiredEdgeLabelRemoved { .. } => GqlStatus::DATA_EXCEPTION,
         }
     }
 

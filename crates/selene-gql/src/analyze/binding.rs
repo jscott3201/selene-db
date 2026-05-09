@@ -338,6 +338,31 @@ impl BindingDecl {
             | Self::PathBinding { .. } => None,
         }
     }
+
+    pub(crate) fn refine_label_expr(&mut self, next: Option<LabelExpr>) {
+        let Some(next) = next else {
+            return;
+        };
+        let labels = match self {
+            Self::NodePattern { labels, .. }
+            | Self::EdgePattern { labels, .. }
+            | Self::InsertNode { labels, .. }
+            | Self::InsertEdge { labels, .. } => labels,
+            Self::LetAlias { .. }
+            | Self::UnwindAlias { .. }
+            | Self::ProjectionAlias { .. }
+            | Self::YieldColumn { .. }
+            | Self::PathBinding { .. } => return,
+        };
+        match labels.take() {
+            Some(prior) => {
+                *labels = Some(LabelExpr::Conjunction(vec![prior, next]));
+            }
+            None => {
+                *labels = Some(next);
+            }
+        }
+    }
 }
 
 /// Type of a resolved binding reference.

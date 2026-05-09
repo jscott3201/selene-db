@@ -128,6 +128,14 @@ fn validate_insert_edge(
     graph_type: &GraphTypeDef,
 ) -> Result<(), AnalysisError> {
     let label = insert_edge_label(edge)?;
+    if graph_type.first_edge_type_with_label(label).is_none() {
+        return Err(AnalysisError::SchemaUnknownEdgeType {
+            label,
+            graph_type: graph_type.name,
+            span: edge.span,
+        });
+    }
+
     if edge.direction == EdgeDirection::Undirected {
         if let Some(edge_type) = unique_edge_type(graph_type, label) {
             validate_insert_edge_properties(
@@ -155,13 +163,9 @@ fn validate_insert_edge(
     };
 
     let Some(edge_type) = graph_type.find_edge_type(label, source_type, target_type) else {
-        let Some(expected) = graph_type.first_edge_type_with_label(label) else {
-            return Err(AnalysisError::SchemaUnknownEdgeType {
-                label,
-                graph_type: graph_type.name,
-                span: edge.span,
-            });
-        };
+        let expected = graph_type
+            .first_edge_type_with_label(label)
+            .expect("edge label existence was checked before endpoint validation");
         return Err(AnalysisError::SchemaEdgeEndpointMismatch {
             label,
             expected_source: graph_type.node_types[expected.source_node_type as usize].name,
@@ -217,7 +221,16 @@ fn validate_non_insert_entry(
             target,
             element,
             key,
-        } => validate_set_property(*target, *element, *key, entry.span, analyzed, graph_type),
+            value_span,
+        } => validate_set_property(
+            *target,
+            *element,
+            *key,
+            *value_span,
+            entry.span,
+            analyzed,
+            graph_type,
+        ),
         WriteKind::SetLabel {
             target,
             element,
@@ -243,11 +256,12 @@ fn validate_set_property(
     target: BindingId,
     element: ElementKind,
     key: IStr,
+    value_span: SourceSpan,
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
 ) -> Result<(), AnalysisError> {
-    let Some(value) = find_set_value(analyzed, span, key) else {
+    let Some(value) = find_set_value(analyzed, value_span) else {
         return Ok(());
     };
     match target_declaration(analyzed, target, element, graph_type)? {
@@ -348,6 +362,13 @@ fn validate_remove_label(
         Some(TargetDeclaration::Node(types)) => {
             validate_node_label_transition(types, graph_type, span, |labels| {
                 labels.remove(&label);
+            })
+        }
+        Some(TargetDeclaration::Edge(edge_type)) if label == edge_type.label => {
+            Err(AnalysisError::SchemaRequiredEdgeLabelRemoved {
+                label,
+                declared_in: edge_type.name,
+                span,
             })
         }
         Some(TargetDeclaration::Edge(_)) | None => Ok(()),

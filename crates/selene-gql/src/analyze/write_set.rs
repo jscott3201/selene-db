@@ -57,6 +57,8 @@ pub enum WriteKind {
         element: ElementKind,
         /// Property key being written.
         key: IStr,
+        /// Source span of the value expression for this specific write.
+        value_span: SourceSpan,
     },
     /// `SET n :Label`.
     SetLabel {
@@ -275,7 +277,10 @@ fn collect_set_item(
 ) {
     match item {
         SetItem::Property {
-            target, key, span, ..
+            target,
+            key,
+            value,
+            span,
         } => {
             let (binding, element) = resolve_target(
                 *target,
@@ -290,6 +295,7 @@ fn collect_set_item(
                     target: binding,
                     element,
                     key: *key,
+                    value_span: value.span(),
                 },
             });
         }
@@ -305,13 +311,14 @@ fn collect_set_item(
                 scopes,
                 references,
             );
-            for (key, _) in properties {
+            for (key, value) in properties {
                 entries.push(WriteSetEntry {
                     span: *span,
                     kind: WriteKind::SetProperty {
                         target: binding,
                         element,
                         key: *key,
+                        value_span: value.span(),
                     },
                 });
             }

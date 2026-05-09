@@ -124,6 +124,16 @@ pub(super) fn endpoint_type(
     let Ok(labels) = static_label_set(expr) else {
         return Ok(None);
     };
+    if decl.kind() == BindingDeclKind::InsertNode {
+        return match exact_node_type(graph_type, &labels) {
+            Some((index, _)) => Ok(Some((index, labels))),
+            None => Err(AnalysisError::SchemaUnknownNodeType {
+                labels,
+                graph_type: graph_type.name,
+                span: decl.span(),
+            }),
+        };
+    }
     let candidates = candidate_node_types(graph_type, &labels);
     if candidates.is_empty() {
         return Err(AnalysisError::SchemaUnknownNodeType {
