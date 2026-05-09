@@ -1,0 +1,110 @@
+//! Expression-bearing planner IR rows.
+
+use selene_core::IStr;
+
+use crate::{
+    NullsPolicy, OrderDirection, SourceSpan, ValueExpr,
+    analyze::{AnalyzedType, BindingId, ExprId},
+};
+
+/// Limit or offset value carried to execution time.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LimitAmount {
+    /// Literal row count.
+    Literal(u64),
+    /// Parameter resolved by the executor.
+    Parameter(IStr),
+}
+
+/// Planned predicate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilterPredicate {
+    /// Predicate expression or property-map value expression.
+    pub expr: ValueExpr,
+    /// Analyzer expression ID for `expr`.
+    pub expr_id: ExprId,
+    /// Analyzer-inferred type for `expr`.
+    pub ty: AnalyzedType,
+    /// Referenced bindings, sorted and deduplicated.
+    pub binding_refs: Vec<BindingId>,
+    /// Predicate shape.
+    pub kind: FilterPredicateKind,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Predicate shape.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FilterPredicateKind {
+    /// Ordinary boolean expression.
+    Expression,
+    /// Property-map equality predicate attached to a node or edge pattern.
+    PropertyEquals {
+        /// Pattern element binding, if named.
+        binding: Option<BindingId>,
+        /// Property key.
+        key: IStr,
+    },
+}
+
+/// Planned projection expression.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectExpr {
+    /// Projected expression.
+    pub expr: ValueExpr,
+    /// Analyzer expression ID for `expr`.
+    pub expr_id: ExprId,
+    /// Analyzer-inferred type for `expr`.
+    pub ty: AnalyzedType,
+    /// Output alias, when present.
+    pub alias: Option<IStr>,
+    /// Referenced bindings, sorted and deduplicated.
+    pub binding_refs: Vec<BindingId>,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Planned sort key.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OrderKey {
+    /// Sorted expression.
+    pub expr: ValueExpr,
+    /// Analyzer expression ID for `expr`.
+    pub expr_id: ExprId,
+    /// Analyzer-inferred type for `expr`.
+    pub ty: AnalyzedType,
+    /// Sort direction.
+    pub direction: OrderDirection,
+    /// Optional null ordering policy.
+    pub nulls: Option<NullsPolicy>,
+    /// Referenced bindings, sorted and deduplicated.
+    pub binding_refs: Vec<BindingId>,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Planned aggregate call.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Aggregate {
+    /// Aggregate function name.
+    pub function: IStr,
+    /// Aggregate arguments.
+    pub args: Vec<AggregateArg>,
+    /// Whether the aggregate uses `*`.
+    pub star: bool,
+    /// Whether arguments are distinct.
+    pub distinct: bool,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Planned aggregate argument.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AggregateArg {
+    /// Argument expression.
+    pub expr: ValueExpr,
+    /// Analyzer expression ID for `expr`.
+    pub expr_id: ExprId,
+    /// Analyzer-inferred type for `expr`.
+    pub ty: AnalyzedType,
+}

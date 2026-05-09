@@ -1,7 +1,10 @@
 //! Analyzed-statement to plan lowering.
 
+mod call;
+mod catalog;
 mod expr;
 mod match_clause;
+mod mutation;
 
 use selene_core::IStr;
 
@@ -11,55 +14,61 @@ use crate::{
     analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType},
     plan::{
         Aggregate, BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan,
-        ImplDefinedCaps, LimitAmount, PipelineOp, PlannerError, ProjectExpr,
+        ImplDefinedCaps, LimitAmount, PipelineOp, PlannerError, ProjectExpr, TxOp,
     },
 };
 
 /// Lower an analyzed statement into a literal, unoptimized execution plan.
 ///
-/// BRIEF-26 accepts `registry` to stabilize the M5c public API; CALL lowering
-/// returns `NotImplemented` until BRIEF-27 consumes the registry.
+/// Dispatches by [`AnalyzedStatementKind`]: queries / set-composed / NEXT-chained
+/// pipelines walk the read pipeline; mutations lower from the analyzer's
+/// [`MutationWriteSet`]; DDL lowers to a single [`PipelineOp::Catalog`];
+/// transaction control lowers to a single [`PipelineOp::Tx`]; top-level CALL
+/// looks up procedure metadata in `registry` and lowers to [`PipelineOp::Call`].
+///
+/// [`MutationWriteSet`]: crate::analyze::MutationWriteSet
 pub fn plan(
     analyzed: &AnalyzedStatement,
-    _registry: &dyn ProcedureRegistry,
+    registry: &dyn ProcedureRegistry,
 ) -> Result<ExecutionPlan, PlannerError> {
     match &analyzed.statement {
-        AnalyzedStatementKind::Query(pipeline) => lower_query_pipeline(pipeline, analyzed),
+        AnalyzedStatementKind::Query(pipeline) => {
+            lower_query_pipeline(pipeline, registry, analyzed)
+        }
         AnalyzedStatementKind::Composite { first, rest, .. } => {
-            let mut plan = lower_query_pipeline(first, analyzed)?;
+            let mut plan = lower_query_pipeline(first, registry, analyzed)?;
             for (op, rhs) in rest {
                 plan.pipeline.push(PipelineOp::Union {
                     op: *op,
-                    rhs: Box::new(lower_query_pipeline(rhs, analyzed)?),
+                    rhs: Box::new(lower_query_pipeline(rhs, registry, analyzed)?),
                 });
             }
             Ok(plan)
         }
-        AnalyzedStatementKind::Chained { blocks, .. } => lower_chained(blocks, analyzed),
-        AnalyzedStatementKind::Mutate(_) => not_implemented("Statement::Mutate", analyzed.span),
-        AnalyzedStatementKind::Ddl(_) => not_implemented("Statement::Ddl", analyzed.span),
-        AnalyzedStatementKind::Call(_) => not_implemented("Statement::Call", analyzed.span),
-        AnalyzedStatementKind::StartTransaction(_)
-        | AnalyzedStatementKind::Commit(_)
-        | AnalyzedStatementKind::Rollback(_) => {
-            not_implemented("transaction-control statements", analyzed.span)
-        }
+        AnalyzedStatementKind::Chained { blocks, .. } => lower_chained(blocks, registry, analyzed),
+        AnalyzedStatementKind::Mutate(pipeline) => mutation::lower_mutation(pipeline, analyzed),
+        AnalyzedStatementKind::Ddl(statement) => catalog::lower_ddl(statement, analyzed),
+        AnalyzedStatementKind::Call(call) => call::lower_top_level_call(call, registry, analyzed),
+        AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
+        AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
+        AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
     }
 }
 
 fn lower_chained(
     blocks: &[QueryPipeline],
+    registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
 ) -> Result<ExecutionPlan, PlannerError> {
     let Some((first, rest)) = blocks.split_first() else {
         return Ok(empty_plan());
     };
-    let mut plan = lower_query_pipeline(first, analyzed)?;
+    let mut plan = lower_query_pipeline(first, registry, analyzed)?;
     // Per BRIEF-26 §O.C6, NEXT establishes a fresh binding scope. The chained
     // plan's output_schema must reflect the final block's projection because
     // each NEXT discards the prior block's columns.
     for block in rest {
-        let inner = lower_query_pipeline(block, analyzed)?;
+        let inner = lower_query_pipeline(block, registry, analyzed)?;
         plan.output_schema = inner.output_schema.clone();
         plan.pipeline.push(PipelineOp::Chain(Box::new(inner)));
     }
@@ -68,6 +77,7 @@ fn lower_chained(
 
 fn lower_query_pipeline(
     pipeline: &QueryPipeline,
+    registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
 ) -> Result<ExecutionPlan, PlannerError> {
     let (matches, tail_start) = leading_matches(&pipeline.statements);
@@ -164,10 +174,9 @@ fn lower_query_pipeline(
                 lower_with(clause, analyzed, &mut ops, &mut visible)?;
             }
             PipelineStatement::Call(call) => {
-                return Err(PlannerError::NotImplemented {
-                    feature: "PipelineStatement::Call",
-                    span: call.span,
-                });
+                let planned = call::plan_call(call, registry, analyzed)?;
+                visible.extend(call::yield_to_columns(&planned)?);
+                ops.push(PipelineOp::Call(planned));
             }
         }
         index += 1;
@@ -180,7 +189,7 @@ fn lower_query_pipeline(
     })
 }
 
-fn lower_return(
+pub(super) fn lower_return(
     clause: &ReturnClause,
     analyzed: &AnalyzedStatement,
     ops: &mut Vec<PipelineOp>,
@@ -243,7 +252,9 @@ fn projects_to_columns(projects: &[ProjectExpr]) -> Vec<BindingTableColumn> {
         .collect()
 }
 
-fn visible_after_pattern(pattern: Option<&crate::plan::PatternPlan>) -> Vec<BindingTableColumn> {
+pub(super) fn visible_after_pattern(
+    pattern: Option<&crate::plan::PatternPlan>,
+) -> Vec<BindingTableColumn> {
     pattern
         .map(|plan| {
             plan.bindings
@@ -362,8 +373,22 @@ fn empty_plan() -> ExecutionPlan {
     }
 }
 
-fn not_implemented<T>(feature: &'static str, span: crate::SourceSpan) -> Result<T, PlannerError> {
+pub(super) fn not_implemented<T>(
+    feature: &'static str,
+    span: crate::SourceSpan,
+) -> Result<T, PlannerError> {
     Err(PlannerError::NotImplemented { feature, span })
+}
+
+fn tx_plan(op: TxOp) -> ExecutionPlan {
+    ExecutionPlan {
+        pattern_plan: None,
+        pipeline: vec![PipelineOp::Tx(op)],
+        output_schema: BindingTableSchema {
+            columns: Vec::new(),
+        },
+        impl_defined_caps: ImplDefinedCaps::default(),
+    }
 }
 
 #[cfg(test)]

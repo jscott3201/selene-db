@@ -1,14 +1,26 @@
 //! Planner IR definitions.
 
-use selene_core::IStr;
+mod call;
+mod catalog;
+mod filter;
+mod mutation;
+mod tx;
 
 use crate::{
-    EdgeDirection, LabelExpr, NullsPolicy, OrderDirection, ProcedureHandle, ProcedureMutability,
-    ProcedureOutputSchema, SetOp, SourceSpan, ValueExpr,
-    analyze::{AnalyzedType, BindingId, ExprId},
+    EdgeDirection, LabelExpr, SetOp, SourceSpan,
+    analyze::{AnalyzedType, BindingId},
 };
 
-/// Literal execution plan produced by BRIEF-26 lowering.
+pub use call::{PlannedCall, PlannedYieldItem, YieldKind};
+pub use catalog::{CatalogOp, PlannedTypePropertyConstraint, PlannedTypePropertyDef};
+pub use filter::{
+    Aggregate, AggregateArg, FilterPredicate, FilterPredicateKind, LimitAmount, OrderKey,
+    ProjectExpr,
+};
+pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
+pub use tx::TxOp;
+
+/// Literal execution plan produced by planner lowering.
 #[derive(Clone, Debug)]
 pub struct ExecutionPlan {
     /// Optional leading pattern plan for query pipelines beginning with MATCH.
@@ -40,7 +52,7 @@ pub struct BindingDef {
     /// Analyzer-stable binding ID.
     pub binding: BindingId,
     /// Interned binding name.
-    pub name: IStr,
+    pub name: selene_core::IStr,
     /// Element kind represented by the binding.
     pub element: BindingElement,
     /// Analyzer-inferred binding type.
@@ -85,7 +97,7 @@ pub enum JoinTree {
         /// Right input.
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
-        key: Vec<IStr>,
+        key: Vec<selene_core::IStr>,
     },
     /// Left-outer join used for OPTIONAL MATCH.
     Outer {
@@ -94,7 +106,7 @@ pub enum JoinTree {
         /// Optional right input.
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
-        key: Vec<IStr>,
+        key: Vec<selene_core::IStr>,
     },
     /// Marker for future WCO rewrites.
     WorstCaseOptimal {
@@ -142,36 +154,34 @@ pub struct EdgeMatch {
     pub left_binding: Option<BindingId>,
     /// Binding on the syntactic right side of the edge, if named.
     pub right_binding: Option<BindingId>,
-    /// Label predicate on the syntactic right-side node, if any. Carried
-    /// here so anonymous targets retain their `:Label` constraint at
-    /// expansion time without leaking into the unscoped pattern filter list.
+    /// Label predicate on the syntactic right-side node, if any.
     pub right_label_predicate: Option<LabelExpr>,
     /// Property-map equality predicates on the syntactic right-side node.
-    /// Travel with the edge so anonymous targets keep their property
-    /// constraints scoped to the expansion.
     pub right_property_predicates: Vec<FilterPredicate>,
     /// Source span.
     pub span: SourceSpan,
 }
 
 /// Pipeline operation over binding tables.
+///
+/// `#[non_exhaustive]` so future planner work (e.g., MERGE lowering, CALL
+/// subquery form, INDEX DDL via selene-pack) can add variants without
+/// breaking downstream pattern matches.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum PipelineOp {
     /// Retain rows satisfying a predicate.
     Filter(FilterPredicate),
     /// Project expressions into output columns.
     Project(Vec<ProjectExpr>),
-    /// Extend the binding table with new aliases without dropping prior
-    /// columns. Used for `LET`, where analyzer semantics keep earlier
-    /// bindings in scope. `Project` would erase prior columns, breaking
-    /// downstream references.
+    /// Extend the binding table with new aliases without dropping prior columns.
     Let(Vec<ProjectExpr>),
     /// Expand a list expression to one row per element.
     Unwind {
         /// Source list expression.
         source: ProjectExpr,
         /// Alias bound to each list element.
-        alias: IStr,
+        alias: selene_core::IStr,
         /// Source span.
         span: SourceSpan,
     },
@@ -202,157 +212,14 @@ pub enum PipelineOp {
     },
     /// Evaluate a NEXT block after the current plan.
     Chain(Box<ExecutionPlan>),
-    /// Planned procedure call, fully populated in BRIEF-27.
+    /// Planned procedure call.
     Call(PlannedCall),
-    /// Mutation operation, fully lowered in BRIEF-27.
+    /// Mutation operation.
     Mutation(MutationOp),
-}
-
-/// Limit or offset value carried to execution time.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum LimitAmount {
-    /// Literal row count.
-    Literal(u64),
-    /// Parameter resolved by the executor.
-    Parameter(IStr),
-}
-
-/// Planned predicate.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FilterPredicate {
-    /// Predicate expression or property-map value expression.
-    pub expr: ValueExpr,
-    /// Analyzer expression ID for `expr`.
-    pub expr_id: ExprId,
-    /// Analyzer-inferred type for `expr`.
-    pub ty: AnalyzedType,
-    /// Referenced bindings, sorted and deduplicated.
-    pub binding_refs: Vec<BindingId>,
-    /// Predicate shape.
-    pub kind: FilterPredicateKind,
-    /// Source span.
-    pub span: SourceSpan,
-}
-
-/// Predicate shape.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum FilterPredicateKind {
-    /// Ordinary boolean expression.
-    Expression,
-    /// Property-map equality predicate attached to a node or edge pattern.
-    PropertyEquals {
-        /// Pattern element binding, if named.
-        binding: Option<BindingId>,
-        /// Property key.
-        key: IStr,
-    },
-}
-
-/// Planned projection expression.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProjectExpr {
-    /// Projected expression.
-    pub expr: ValueExpr,
-    /// Analyzer expression ID for `expr`.
-    pub expr_id: ExprId,
-    /// Analyzer-inferred type for `expr`.
-    pub ty: AnalyzedType,
-    /// Output alias, when present.
-    pub alias: Option<IStr>,
-    /// Referenced bindings, sorted and deduplicated.
-    pub binding_refs: Vec<BindingId>,
-    /// Source span.
-    pub span: SourceSpan,
-}
-
-/// Planned sort key.
-#[derive(Clone, Debug, PartialEq)]
-pub struct OrderKey {
-    /// Sorted expression.
-    pub expr: ValueExpr,
-    /// Analyzer expression ID for `expr`.
-    pub expr_id: ExprId,
-    /// Analyzer-inferred type for `expr`.
-    pub ty: AnalyzedType,
-    /// Sort direction.
-    pub direction: OrderDirection,
-    /// Optional null ordering policy.
-    pub nulls: Option<NullsPolicy>,
-    /// Referenced bindings, sorted and deduplicated.
-    pub binding_refs: Vec<BindingId>,
-    /// Source span.
-    pub span: SourceSpan,
-}
-
-/// Planned aggregate call.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Aggregate {
-    /// Aggregate function name.
-    pub function: IStr,
-    /// Aggregate arguments.
-    pub args: Vec<AggregateArg>,
-    /// Whether the aggregate uses `*`.
-    pub star: bool,
-    /// Whether arguments are distinct.
-    pub distinct: bool,
-    /// Source span.
-    pub span: SourceSpan,
-}
-
-/// Planned aggregate argument.
-#[derive(Clone, Debug, PartialEq)]
-pub struct AggregateArg {
-    /// Argument expression.
-    pub expr: ValueExpr,
-    /// Analyzer expression ID for `expr`.
-    pub expr_id: ExprId,
-    /// Analyzer-inferred type for `expr`.
-    pub ty: AnalyzedType,
-}
-
-/// Planned procedure call placeholder.
-#[derive(Clone, Debug)]
-pub struct PlannedCall {
-    /// Opaque procedure handle.
-    pub handle: ProcedureHandle,
-    /// Planned call arguments.
-    pub args: Vec<ProjectExpr>,
-    /// Requested yield columns.
-    pub yield_cols: Vec<PlannedYieldItem>,
-    /// Procedure output schema.
-    pub output_schema: ProcedureOutputSchema,
-    /// Procedure mutability class.
-    pub mutability: ProcedureMutability,
-    /// Source span.
-    pub span: SourceSpan,
-}
-
-/// Planned yield item.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PlannedYieldItem {
-    /// Source output column.
-    pub column: IStr,
-    /// Output alias, when present.
-    pub alias: Option<IStr>,
-}
-
-/// Mutation plan variants reserved for BRIEF-27.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum MutationOp {
-    /// Insert node placeholder.
-    InsertNode,
-    /// Insert edge placeholder.
-    InsertEdge,
-    /// Set property placeholder.
-    SetProperty,
-    /// Set label placeholder.
-    SetLabel,
-    /// Remove property placeholder.
-    RemoveProperty,
-    /// Remove label placeholder.
-    RemoveLabel,
-    /// Delete target placeholder.
-    DeleteTarget,
+    /// Catalog operation.
+    Catalog(CatalogOp),
+    /// Transaction-control operation.
+    Tx(TxOp),
 }
 
 /// Planner implementation-defined limits.
@@ -387,7 +254,7 @@ pub struct BindingTableSchema {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BindingTableColumn {
     /// Stable column name for aliases and bare variable projections.
-    pub name: Option<IStr>,
+    pub name: Option<selene_core::IStr>,
     /// Analyzer-inferred column type.
     pub ty: AnalyzedType,
 }
