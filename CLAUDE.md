@@ -117,7 +117,7 @@ bash .github/scripts/check-thirdparty-current.sh
 cargo +nightly fuzz run parse_gql -- -max_total_time=60
 
 # Benchmarks: use the serialized runner only. PR CI checks invocation hygiene
-# but does not execute benchmarks; run Criterion locally or trigger manual bench.yml.
+# but does not execute benchmarks; run Criterion locally.
 # iai-callgrind requires Linux/valgrind.
 scripts/run-benches.sh --profile quick --layer criterion
 scripts/run-benches.sh --profile full --layer criterion
