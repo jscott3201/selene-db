@@ -15,11 +15,11 @@ pub mod optimize;
 pub use error::PlannerError;
 pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind, ImplDefinedCaps,
-    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering,
-    NodeOrEdgeScan, OrderAccess, OrderKey, PathPlan, PatternPlan, PipelineOp, PlannedCall,
-    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, ScanAccess, ScanKind, TxOp, TypedIndexBounds, YieldKind,
+    BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
+    ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp,
+    NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, PathPlan, PatternPlan, PipelineOp,
+    PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem,
+    ProjectExpr, PropertyInit, ScanAccess, ScanKind, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;
 pub use optimize::{

@@ -6,79 +6,75 @@ use std::ops::Bound::{Excluded, Included, Unbounded};
 use selene_core::{EdgeId, IStr, LabelSet, NodeId, Value};
 
 use crate::{
-    BindingDef, BindingElement, FilterPredicate, FilterPredicateKind, JoinTree, LabelExpr, Literal,
-    NodeOrEdgeScan, PatternPlan, ScanAccess, ScanKind, TypedIndexBounds,
-    runtime::{Binding, BindingTable, BindingTableColumn, BindingTableSchema, ExecutorError},
+    BindingDef, FilterPredicate, FilterPredicateKind, LabelExpr, Literal, NodeOrEdgeScan,
+    PatternPlan, ScanAccess, ScanKind, TypedIndexBounds,
+    runtime::{Binding, BindingTableSchema, ExecutorError},
 };
 
 use super::{TxContext, evaluator, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
-///
-/// Later executor briefs own traversal over compound join trees. This helper
-/// consumes a concrete scan node plus its owning pattern so it can construct
-/// a binding-table schema from the pattern's binding definitions.
-pub fn scan_pattern(
+pub(crate) fn scan_pattern(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
+    schema: &BindingTableSchema,
+    seed: Option<&Binding>,
     ctx: &TxContext<'_>,
-) -> Result<BindingTable, ExecutorError> {
-    if !matches!(pattern.join_tree, JoinTree::Scan(_)) {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "scan_pattern requires a scan-rooted pattern",
-        });
-    }
+) -> Result<Vec<Binding>, ExecutorError> {
+    Ok(scan_entities(scan, pattern, schema, seed, ctx)?
+        .into_iter()
+        .map(|(_, binding)| binding)
+        .collect())
+}
 
-    let schema = schema_for_pattern(pattern);
-    let mut table = BindingTable::empty(schema);
+pub(crate) fn scan_entities(
+    scan: &NodeOrEdgeScan,
+    pattern: &PatternPlan,
+    schema: &BindingTableSchema,
+    seed: Option<&Binding>,
+    ctx: &TxContext<'_>,
+) -> Result<Vec<(Value, Binding)>, ExecutorError> {
+    let mut rows = Vec::new();
     for row in candidate_rows(scan, ctx) {
         if !label_matches_scan(scan, row, ctx) {
             continue;
         }
         let entity = entity_value(scan.kind, row);
-        let binding = binding_for_scan(scan, pattern, &table, entity.clone());
-        if predicates_pass(scan, pattern, &binding, table.schema(), &entity, ctx)? {
-            table.push_row(binding);
+        let Some(binding) = binding_for_scan(scan, pattern, schema, seed, entity.clone()) else {
+            continue;
+        };
+        if predicates_pass(scan, pattern, &binding, schema, &entity, ctx)? {
+            rows.push((entity, binding));
         }
     }
-    Ok(table)
-}
-
-fn schema_for_pattern(pattern: &PatternPlan) -> BindingTableSchema {
-    BindingTableSchema {
-        columns: pattern
-            .bindings
-            .iter()
-            .filter(|binding| {
-                matches!(
-                    binding.element,
-                    BindingElement::Node | BindingElement::Edge | BindingElement::Path
-                )
-            })
-            .map(|binding| BindingTableColumn {
-                name: Some(binding.name),
-                ty: binding.ty.clone(),
-            })
-            .collect(),
-    }
+    Ok(rows)
 }
 
 fn binding_for_scan(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
-    table: &BindingTable,
+    schema: &BindingTableSchema,
+    seed: Option<&Binding>,
     entity: Value,
-) -> Binding {
-    let mut values = Vec::with_capacity(table.schema().columns.len());
-    for column in &table.schema().columns {
-        let value = column
+) -> Option<Binding> {
+    let mut values = seed
+        .map(|row| row.values().to_vec())
+        .unwrap_or_else(|| vec![Value::Null; schema.columns.len()]);
+    values.resize(schema.columns.len(), Value::Null);
+    for (index, column) in schema.columns.iter().enumerate() {
+        if column
             .name
             .and_then(|name| binding_by_name(pattern, name))
-            .and_then(|binding| (Some(binding.binding) == scan.binding).then(|| entity.clone()))
-            .unwrap_or(Value::Null);
-        values.push(value);
+            .is_some_and(|binding| Some(binding.binding) == scan.binding)
+        {
+            if !matches!(values[index], Value::Null) && !value_eq_non_null(&values[index], &entity)
+            {
+                return None;
+            }
+            values[index] = entity.clone();
+        }
     }
-    Binding::new(values)
+    Some(Binding::new(values))
 }
 
 fn binding_by_name(pattern: &PatternPlan, name: IStr) -> Option<&BindingDef> {
@@ -181,10 +177,6 @@ fn typed_index_rows(
             ctx.snapshot()
                 .nodes_with_property_range(&label, &property, (lo, hi))
         }
-        TypedIndexBounds::InList(keys) => {
-            let rows = union_property_eq(scan, property, keys, ctx);
-            return rows.into_iter().collect();
-        }
     };
     indexed
         .map(|rows| rows.iter().collect())
@@ -272,7 +264,7 @@ fn linear_rows_filtered_by_bounds(
         .collect()
 }
 
-fn predicates_pass(
+pub(crate) fn predicates_pass(
     scan: &NodeOrEdgeScan,
     pattern: &PatternPlan,
     binding: &Binding,
@@ -280,11 +272,7 @@ fn predicates_pass(
     entity: &Value,
     ctx: &TxContext<'_>,
 ) -> Result<bool, ExecutorError> {
-    for predicate in scan
-        .property_predicates
-        .iter()
-        .chain(pattern.filters.iter())
-    {
+    for predicate in &scan.property_predicates {
         if !predicate_passes(predicate, pattern, binding, schema, entity, ctx)? {
             return Ok(false);
         }
@@ -292,7 +280,7 @@ fn predicates_pass(
     Ok(true)
 }
 
-fn predicate_passes(
+pub(crate) fn predicate_passes(
     predicate: &FilterPredicate,
     pattern: &PatternPlan,
     binding: &Binding,
@@ -336,7 +324,7 @@ fn predicate_passes(
     }
 }
 
-fn value_for_binding(
+pub(crate) fn value_for_binding(
     pattern: &PatternPlan,
     binding_id: crate::BindingId,
     binding: &Binding,
@@ -373,7 +361,7 @@ fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &TxContext<'_>) -> b
     }
 }
 
-fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
+pub(crate) fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
     match expr {
         LabelExpr::Single(label) => labels.contains(label),
         LabelExpr::Conjunction(parts) => parts.iter().all(|part| label_matches_node(part, labels)),
@@ -383,7 +371,7 @@ fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
     }
 }
 
-fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
+pub(crate) fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
     match expr {
         LabelExpr::Single(expected) => *expected == label,
         LabelExpr::Conjunction(parts) => parts.iter().all(|part| label_matches_edge(part, label)),
@@ -487,9 +475,6 @@ fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
             };
             lo_ok && hi_ok
         }
-        TypedIndexBounds::InList(keys) => keys
-            .iter()
-            .any(|key| value_eq_non_null(value, &literal_value(key))),
     }
 }
 

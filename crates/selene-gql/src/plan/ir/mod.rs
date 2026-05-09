@@ -112,6 +112,8 @@ pub enum JoinTree {
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
         key: Vec<selene_core::IStr>,
+        /// Planner-selected build input.
+        build_side: BuildSide,
     },
     /// Left-outer join used for OPTIONAL MATCH.
     Outer {
@@ -131,6 +133,15 @@ pub enum JoinTree {
     },
     /// Nested subplan placeholder.
     Subplan(Box<ExecutionPlan>),
+}
+
+/// Planner-selected hash-join build side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuildSide {
+    /// Build the hash table from the left input.
+    Left,
+    /// Build the hash table from the right input.
+    Right,
 }
 
 /// Node or edge scan.

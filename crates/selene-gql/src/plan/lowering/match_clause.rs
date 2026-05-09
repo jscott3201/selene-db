@@ -8,8 +8,8 @@ use crate::{
     EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PatternElement,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
-        BindingDef, BindingElement, EdgeMatch, FilterPredicate, JoinTree, NodeOrEdgeScan, PathPlan,
-        PatternPlan, PlannerError, ScanAccess, ScanKind,
+        BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, JoinTree,
+        NodeOrEdgeScan, PathPlan, PatternPlan, PlannerError, ScanAccess, ScanKind,
     },
 };
 
@@ -63,6 +63,7 @@ pub(crate) fn lower_match_prefix(
                         left: Box::new(left),
                         right: Box::new(tree),
                         key,
+                        build_side: BuildSide::Left,
                     },
                     all_names,
                 )
@@ -115,6 +116,7 @@ fn lower_match_clause(
                         left: Box::new(left),
                         right: Box::new(tree),
                         key,
+                        build_side: BuildSide::Left,
                     },
                     all_names,
                 )

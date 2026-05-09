@@ -5,7 +5,7 @@ use std::sync::Arc;
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, JoinTree, NodeOrEdgeScan, PatternPlan, ScanAccess,
-    TxContext, analyze, optimize, parse, plan, scan_pattern,
+    TxContext, analyze, execute_pattern as execute_pattern_plan, optimize, parse, plan,
 };
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
@@ -192,8 +192,7 @@ pub fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut NodeOrEdgeScan> {
 }
 
 pub fn execute_pattern(pattern: &PatternPlan, ctx: &TxContext<'_>) -> selene_gql::BindingTable {
-    let scan = first_scan(&pattern.join_tree).expect("pattern has a scan");
-    scan_pattern(scan, pattern, ctx).expect("scan executes")
+    execute_pattern_plan(pattern, ctx).expect("pattern executes")
 }
 
 pub fn node_ids(table: &selene_gql::BindingTable) -> Vec<u64> {
@@ -218,13 +217,49 @@ pub fn edge_ids(table: &selene_gql::BindingTable) -> Vec<u64> {
         .collect()
 }
 
+pub fn column_values(table: &selene_gql::BindingTable, name: &str) -> Vec<Value> {
+    let index = table
+        .schema()
+        .columns
+        .iter()
+        .position(|column| column.name.is_some_and(|column| column.as_str() == name))
+        .expect("column exists");
+    table
+        .rows()
+        .iter()
+        .map(|row| row.get(index).cloned().unwrap_or(Value::Null))
+        .collect()
+}
+
+pub fn node_ids_for(table: &selene_gql::BindingTable, name: &str) -> Vec<Option<u64>> {
+    column_values(table, name)
+        .into_iter()
+        .map(|value| match value {
+            Value::NodeRef(id) => Some(id.get()),
+            Value::Null => None,
+            other => panic!("expected node or null, got {other:?}"),
+        })
+        .collect()
+}
+
+pub fn edge_ids_for(table: &selene_gql::BindingTable, name: &str) -> Vec<Option<u64>> {
+    column_values(table, name)
+        .into_iter()
+        .map(|value| match value {
+            Value::EdgeRef(id) => Some(id.get()),
+            Value::Null => None,
+            other => panic!("expected edge or null, got {other:?}"),
+        })
+        .collect()
+}
+
 pub fn set_first_scan_access(pattern: &mut PatternPlan, access: ScanAccess) {
     first_scan_mut(&mut pattern.join_tree)
         .expect("pattern has a scan")
         .access = access;
 }
 
-fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+pub fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
     PropertyMap::from_pairs(pairs).expect("test properties fit caps")
 }
 
