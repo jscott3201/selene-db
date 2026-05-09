@@ -7,6 +7,11 @@ use selene_core::IStr;
 use crate::plan::{ExecutionPlan, ImplDefinedCaps};
 
 /// Context shared by all optimizer rules.
+///
+/// Marked `#[non_exhaustive]` so later optimizer briefs (e.g., BRIEF-29's
+/// `IndexCatalog` and selectivity hooks) can add fields without a breaking
+/// change.
+#[non_exhaustive]
 pub struct OptimizeContext<'a> {
     /// Implementation-defined planner limits.
     pub impl_defined_caps: &'a ImplDefinedCaps,
@@ -55,7 +60,11 @@ impl Default for OptimizeContext<'static> {
 }
 
 /// Skeleton statistics surface reserved for cost-aware optimizer rules.
+///
+/// Marked `#[non_exhaustive]` so cost-aware briefs (BRIEF-29) can extend
+/// the statistics surface without a breaking change.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct EdgeStatistics {
     /// Number of nodes containing each label.
     pub label_node_counts: HashMap<IStr, u64>,
@@ -71,6 +80,7 @@ pub struct EdgeStatistics {
 
 /// Placeholder histogram shape for future selectivity estimates.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct PropertyHistogram {
     /// Histogram buckets. Bucket semantics are defined by later briefs.
     pub buckets: Vec<u64>,

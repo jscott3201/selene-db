@@ -57,12 +57,32 @@ fn recurses_through_hash_join() {
 }
 
 #[test]
-fn recurses_through_outer_join() {
+fn skips_pushdown_under_outer_right() {
+    // Pushing `e.weight > 1` into the optional-side `Expand` would evaluate
+    // the predicate before null-extension, dropping unmatched-`a` rows that
+    // a post-OPTIONAL FILTER must keep. The predicate must stay in
+    // `pattern.filters` (which runs after null-extension).
     let plan = optimized_one("MATCH (a) OPTIONAL MATCH (a)-[e]->(b) FILTER e.weight > 1 RETURN a");
     let binding = binding_by_name(&plan, "e");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
     assert!(matches!(pattern.join_tree, JoinTree::Outer { .. }));
+    assert_eq!(edge_predicate_count(&pattern.join_tree, binding), 0);
+    assert_eq!(pattern.filters.len(), 1);
+}
+
+#[test]
+fn pushes_into_outer_left_subtree() {
+    // The preserved (left) side of `Outer` is a safe pushdown target —
+    // pushing into a left-side `Expand` doesn't change which rows survive
+    // null-extension on the right side.
+    let plan = optimized_one(
+        "MATCH (a)-[e]->(b) OPTIONAL MATCH (b)-[f]->(c) FILTER e.weight > 1 RETURN a",
+    );
+    let binding = binding_by_name(&plan, "e");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    assert!(matches!(pattern.join_tree, JoinTree::Outer { .. }));
     assert_eq!(edge_predicate_count(&pattern.join_tree, binding), 1);
+    assert!(pattern.filters.is_empty());
 }
 
 #[test]

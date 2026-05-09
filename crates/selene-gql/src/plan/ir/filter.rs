@@ -22,6 +22,17 @@ pub struct FilterPredicate {
     /// Predicate expression or property-map value expression.
     pub expr: ValueExpr,
     /// Analyzer expression ID for `expr`.
+    ///
+    /// Stable identifier carried through the plan for diagnostics, metrics,
+    /// and tracing. The plan does not retain the analyzer's `ExprTypeTable`,
+    /// so post-plan consumers must not assume `expr_id` indexes back to a
+    /// live type cell — read `ty` directly.
+    ///
+    /// **Optimizer caveat:** rules that decompose one predicate into several
+    /// (e.g., `AndSplitting`) may emit multiple `FilterPredicate`s sharing
+    /// the parent's `expr_id` until BRIEF-29 introduces an optimizer-side
+    /// fresh-id allocator. Bijection (`expr_id` ↔ `expr`) is guaranteed for
+    /// lowering output but not after optimization.
     pub expr_id: ExprId,
     /// Analyzer-inferred type for `expr`.
     pub ty: AnalyzedType,

@@ -71,8 +71,17 @@ where
     recurse_subplans(plan, &mut |subplan| rule.rewrite(subplan, ctx))
 }
 
-/// Visit every `Expand` edge in a join tree, excluding WCO and subplan
-/// boundaries.
+/// Visit `Expand` edges that are safe targets for filter pushdown.
+///
+/// Excludes WCO and `Subplan` boundaries (rules don't reach across those),
+/// and the optional-side subtree of any `JoinTree::Outer`.
+///
+/// Why: pushing a single-binding predicate into an `Expand` edge under
+/// `JoinTree::Outer.right` evaluates it before null-extension, dropping
+/// rows that a post-OPTIONAL `FILTER` would have null-extended and kept.
+/// Recursing only into `Outer.left` preserves the rule's preserved-side
+/// pushdown opportunities while leaving optional-side filters in
+/// `pattern.filters`, where they correctly run after null-extension.
 pub(crate) fn walk_expand_nodes(
     tree: &mut JoinTree,
     visit: &mut impl FnMut(&mut EdgeMatch) -> bool,
@@ -83,9 +92,10 @@ pub(crate) fn walk_expand_nodes(
             let changed_child = walk_expand_nodes(child, visit);
             visit(edge) | changed_child
         }
-        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+        JoinTree::HashJoin { left, right, .. } => {
             walk_expand_nodes(left, visit) | walk_expand_nodes(right, visit)
         }
+        JoinTree::Outer { left, .. } => walk_expand_nodes(left, visit),
     }
 }
 
