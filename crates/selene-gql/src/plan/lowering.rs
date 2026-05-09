@@ -100,7 +100,10 @@ fn lower_query_pipeline(
                         ty: project.ty.clone(),
                     });
                 }
-                ops.push(PipelineOp::Project(projects));
+                // Why: LET is an extend, not a project — earlier bindings stay
+                // visible. PipelineOp::Let preserves them; PipelineOp::Project
+                // would drop everything outside the new aliases.
+                ops.push(PipelineOp::Let(projects));
             }
             PipelineStatement::Unwind(unwind) => {
                 let source = expr::project_expr(&unwind.source, None, analyzed)?;
@@ -183,15 +186,7 @@ fn lower_return(
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
-    if let Some(keys) = &clause.group_by {
-        ops.push(PipelineOp::GroupBy {
-            keys: keys
-                .iter()
-                .map(|value| expr::project_expr(value, column_name(value, None), analyzed))
-                .collect::<Result<Vec<_>, _>>()?,
-            aggregates: aggregates(&clause.items, analyzed)?,
-        });
-    }
+    push_grouping(&clause.group_by, &clause.items, analyzed, ops)?;
     if let Some(having) = &clause.having {
         ops.push(PipelineOp::Filter(expr::filter_predicate(
             having, analyzed,
@@ -217,15 +212,7 @@ fn lower_with(
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
-    if let Some(keys) = &clause.group_by {
-        ops.push(PipelineOp::GroupBy {
-            keys: keys
-                .iter()
-                .map(|value| expr::project_expr(value, column_name(value, None), analyzed))
-                .collect::<Result<Vec<_>, _>>()?,
-            aggregates: aggregates(&clause.items, analyzed)?,
-        });
-    }
+    push_grouping(&clause.group_by, &clause.items, analyzed, ops)?;
     if let Some(having) = &clause.having {
         ops.push(PipelineOp::Filter(expr::filter_predicate(
             having, analyzed,
@@ -279,6 +266,36 @@ fn project_items(
         .iter()
         .map(|item| expr::project_expr(&item.expr, column_name(&item.expr, item.alias), analyzed))
         .collect()
+}
+
+/// Emit a `GroupBy` op when grouping is required.
+///
+/// An explicit `GROUP BY` is honored as-is. When `group_by` is absent but at
+/// least one projection item is an aggregate, the planner inserts an
+/// implicit grouping over the entire input (empty key list), matching GQL's
+/// rule that aggregate-only queries collapse to a single output row.
+fn push_grouping(
+    group_by: &Option<Vec<ValueExpr>>,
+    items: &[ReturnItem],
+    analyzed: &AnalyzedStatement,
+    ops: &mut Vec<PipelineOp>,
+) -> Result<(), PlannerError> {
+    let aggregate_items = aggregates(items, analyzed)?;
+    if let Some(keys) = group_by {
+        ops.push(PipelineOp::GroupBy {
+            keys: keys
+                .iter()
+                .map(|value| expr::project_expr(value, column_name(value, None), analyzed))
+                .collect::<Result<Vec<_>, _>>()?,
+            aggregates: aggregate_items,
+        });
+    } else if !aggregate_items.is_empty() {
+        ops.push(PipelineOp::GroupBy {
+            keys: Vec::new(),
+            aggregates: aggregate_items,
+        });
+    }
+    Ok(())
 }
 
 fn aggregates(

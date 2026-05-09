@@ -142,6 +142,14 @@ pub struct EdgeMatch {
     pub left_binding: Option<BindingId>,
     /// Binding on the syntactic right side of the edge, if named.
     pub right_binding: Option<BindingId>,
+    /// Label predicate on the syntactic right-side node, if any. Carried
+    /// here so anonymous targets retain their `:Label` constraint at
+    /// expansion time without leaking into the unscoped pattern filter list.
+    pub right_label_predicate: Option<LabelExpr>,
+    /// Property-map equality predicates on the syntactic right-side node.
+    /// Travel with the edge so anonymous targets keep their property
+    /// constraints scoped to the expansion.
+    pub right_property_predicates: Vec<FilterPredicate>,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -153,6 +161,11 @@ pub enum PipelineOp {
     Filter(FilterPredicate),
     /// Project expressions into output columns.
     Project(Vec<ProjectExpr>),
+    /// Extend the binding table with new aliases without dropping prior
+    /// columns. Used for `LET`, where analyzer semantics keep earlier
+    /// bindings in scope. `Project` would erase prior columns, breaking
+    /// downstream references.
+    Let(Vec<ProjectExpr>),
     /// Expand a list expression to one row per element.
     Unwind {
         /// Source list expression.

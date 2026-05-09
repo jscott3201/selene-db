@@ -5,13 +5,22 @@ use std::collections::BTreeSet;
 use selene_core::IStr;
 
 use crate::{
-    EdgePattern, GraphPattern, MatchClause, NodePattern, PathMode, PatternElement,
+    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PatternElement,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
         BindingDef, BindingElement, EdgeMatch, FilterPredicate, JoinTree, NodeOrEdgeScan, PathPlan,
         PatternPlan, PlannerError, ScanKind,
     },
 };
+
+/// Predicates collected from the syntactic right-side node of an edge
+/// expansion. Bundled so they ride the `EdgeMatch` instead of leaking into
+/// the unscoped pattern filter list.
+struct RightNode {
+    binding: Option<BindingId>,
+    label_predicate: Option<LabelExpr>,
+    property_predicates: Vec<FilterPredicate>,
+}
 
 use super::expr;
 
@@ -34,7 +43,17 @@ pub(crate) fn lower_match_prefix(
         let (tree, names) =
             lower_match_clause(clause, analyzed, &mut filters, &mut paths, &mut binding_ids)?;
         current = Some(match (current, clause.optional) {
-            (None, _) => (tree, names),
+            (None, false) => (tree, names),
+            (None, true) => {
+                // Why: a leading OPTIONAL MATCH lacks a left input to outer-join
+                // against. GQL semantics call for one null-extended row; the
+                // planner needs a unit-row scan or special leading marker we
+                // do not yet model. Defer until the executor surface lands.
+                return Err(PlannerError::NotImplemented {
+                    feature: "leading OPTIONAL MATCH (no preceding pipeline)",
+                    span: clause.span,
+                });
+            }
             (Some((left, left_names)), false) => {
                 let key = shared_names(&left_names, &names);
                 let mut all_names = left_names;
@@ -162,11 +181,11 @@ fn lower_graph_pattern(
             });
         };
         let left_binding = chain_tail_binding(&current);
-        let right_binding = node_binding(right, analyzed, &mut names, binding_ids)?;
+        let right_node = right_node_predicates(right, analyzed, filters, &mut names, binding_ids)?;
         let edge_match = edge_match(
             edge,
             left_binding,
-            right_binding,
+            right_node,
             analyzed,
             filters,
             &mut names,
@@ -177,9 +196,34 @@ fn lower_graph_pattern(
             direction: edge.direction,
             edge: edge_match,
         };
-        collect_node_predicates(right, right_binding, analyzed, filters)?;
     }
     Ok((current, names))
+}
+
+fn right_node_predicates(
+    node: &NodePattern,
+    analyzed: &AnalyzedStatement,
+    filters: &mut Vec<FilterPredicate>,
+    names: &mut BTreeSet<IStr>,
+    binding_ids: &mut BTreeSet<BindingId>,
+) -> Result<RightNode, PlannerError> {
+    let binding = node_binding(node, analyzed, names, binding_ids)?;
+    let property_predicates = node
+        .properties
+        .iter()
+        .map(|(key, value)| expr::property_predicate(binding, *key, value, analyzed))
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(where_clause) = &node.inline_where {
+        // Why: inline WHERE on an expanded right node may reference bindings
+        // outside the edge, so it stays in the pattern-level filter list
+        // rather than riding the EdgeMatch.
+        filters.push(expr::filter_predicate(where_clause, analyzed)?);
+    }
+    Ok(RightNode {
+        binding,
+        label_predicate: node.label_expr.clone(),
+        property_predicates,
+    })
 }
 
 fn node_scan(
@@ -207,25 +251,10 @@ fn node_scan(
     })
 }
 
-fn collect_node_predicates(
-    node: &NodePattern,
-    binding: Option<BindingId>,
-    analyzed: &AnalyzedStatement,
-    filters: &mut Vec<FilterPredicate>,
-) -> Result<(), PlannerError> {
-    for (key, value) in &node.properties {
-        filters.push(expr::property_predicate(binding, *key, value, analyzed)?);
-    }
-    if let Some(where_clause) = &node.inline_where {
-        filters.push(expr::filter_predicate(where_clause, analyzed)?);
-    }
-    Ok(())
-}
-
 fn edge_match(
     edge: &EdgePattern,
     left_binding: Option<BindingId>,
-    right_binding: Option<BindingId>,
+    right_node: RightNode,
     analyzed: &AnalyzedStatement,
     filters: &mut Vec<FilterPredicate>,
     names: &mut BTreeSet<IStr>,
@@ -245,7 +274,9 @@ fn edge_match(
         label_predicate: edge.label_expr.clone(),
         property_predicates,
         left_binding,
-        right_binding,
+        right_binding: right_node.binding,
+        right_label_predicate: right_node.label_predicate,
+        right_property_predicates: right_node.property_predicates,
         span: edge.span,
     })
 }
