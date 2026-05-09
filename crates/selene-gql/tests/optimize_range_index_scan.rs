@@ -1,0 +1,183 @@
+//! BRIEF-29 range-index optimizer tests.
+
+use selene_core::{IStr, intern};
+use selene_gql::{
+    EmptyProcedureRegistry, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess, TypedIndexBounds,
+    analyze, optimize, parse, plan,
+};
+use selene_testing::MockIndexCatalog;
+
+fn istr(value: &str) -> IStr {
+    intern(value).expect("test string interns")
+}
+
+fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
+    let statement = parse(source).expect("test input parses");
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("test input analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans");
+    let ctx = selene_gql::OptimizeContext::default().with_index_catalog(catalog);
+    optimize(plan, &ctx)
+}
+
+fn person_catalog() -> MockIndexCatalog {
+    MockIndexCatalog::new()
+        .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
+        .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
+}
+
+fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
+    match tree {
+        JoinTree::Scan(scan) => Some(scan),
+        JoinTree::Expand { child, .. } => first_scan(child),
+        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+            first_scan(left).or_else(|| first_scan(right))
+        }
+        JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => None,
+        _ => None,
+    }
+}
+
+#[test]
+fn rewrites_greater_than_to_typed_index_range() {
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age > 30 RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            bounds: TypedIndexBounds::GreaterThan(_),
+            ..
+        }
+    ));
+    assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn combines_lower_and_upper_range_bounds() {
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age >= 30 AND n.age < 60 RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            bounds: TypedIndexBounds::Range {
+                lo_inclusive: true,
+                hi_inclusive: false,
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
+fn leaves_type_mismatch_unchanged() {
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age = 'old' RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(scan.access, ScanAccess::Linear));
+    assert_eq!(scan.property_predicates.len(), 1);
+}
+
+#[test]
+fn sentinel_range_index_scan_snapshot() {
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age >= 30 AND n.age < 60 RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    let summary = match scan.access {
+        ScanAccess::TypedIndexRange {
+            bounds:
+                TypedIndexBounds::Range {
+                    lo_inclusive,
+                    hi_inclusive,
+                    ..
+                },
+            ..
+        } => format!(
+            "access=range\nlo_inclusive={lo_inclusive}\nhi_inclusive={hi_inclusive}\nresidual_filters={}",
+            scan.property_predicates.len()
+        ),
+        ref other => format!("unexpected={other:?}"),
+    };
+
+    insta::assert_snapshot!(summary, @r###"
+access=range
+lo_inclusive=true
+hi_inclusive=false
+residual_filters=0
+"###);
+}
+
+#[test]
+fn duplicate_lower_bounds_keep_the_tightest() {
+    // `age > 10 AND age > 5` must produce `> 10`, never `> 5` — using the
+    // weaker bound while removing both predicates would let rows with
+    // 5 < age <= 10 leak through the index scan.
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age > 10 AND n.age > 5 RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    let TypedIndexBounds::GreaterThan(literal) = bounds else {
+        panic!("expected GreaterThan bound, got {bounds:?}");
+    };
+    assert!(
+        matches!(literal, selene_gql::Literal::Integer(10, _)),
+        "expected tightest lower bound 10, got {literal:?}"
+    );
+    assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn duplicate_upper_bounds_keep_the_tightest() {
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age < 50 AND n.age < 100 RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::TypedIndexRange { bounds, .. } = &scan.access else {
+        panic!("expected typed-index range, got {:?}", scan.access);
+    };
+    let TypedIndexBounds::LessThan(literal) = bounds else {
+        panic!("expected LessThan bound, got {bounds:?}");
+    };
+    assert!(matches!(literal, selene_gql::Literal::Integer(50, _)));
+    assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn contradictory_combined_bounds_keep_residual_predicate() {
+    // `age > 10 AND age < 5` is empty. When `bounds_for_property` would
+    // produce a contradictory combined Range (lo=10, hi=5), it refuses the
+    // combined rewrite; the rule then falls back to single-predicate index
+    // access, leaving the other predicate as a residual filter so the
+    // executor can prove the empty result.
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.age > 10 AND n.age < 5 RETURN n",
+        &person_catalog(),
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(
+        matches!(scan.access, ScanAccess::TypedIndexRange { .. }),
+        "expected typed-index range; never the weaker single bound applied to both predicates"
+    );
+    // Exactly one predicate should remain as residual; the other was consumed.
+    assert_eq!(scan.property_predicates.len(), 1);
+}

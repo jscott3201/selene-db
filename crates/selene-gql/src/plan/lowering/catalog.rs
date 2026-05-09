@@ -100,6 +100,7 @@ pub(crate) fn lower_ddl(
         pipeline: vec![PipelineOp::Catalog(op)],
         output_schema: ddl_output_schema(statement)?,
         impl_defined_caps: ImplDefinedCaps::default(),
+        next_expr_id: super::next_expr_id(analyzed),
     })
 }
 

@@ -48,12 +48,14 @@ pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    CatalogOp, EdgeMatch, EdgeStatistics, ExecutionPlan, FilterPredicate, FilterPredicateKind,
-    ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp,
-    NodeOrEdgeScan, OptimizeContext, OrderKey, PathPlan, PatternPlan, PipelineOp, PlannedCall,
-    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, PlannerError,
-    ProjectExpr, PropertyHistogram, PropertyInit, Rule, ScanKind, Transformed, TxOp,
-    WanderJoinSampler, YieldKind, optimize, plan,
+    CatalogOp, CompositeIndexHandle, EdgeMatch, EdgeStatistics, EmptyIndexCatalog, ExecutionPlan,
+    FilterPredicate, FilterPredicateKind, ImplDefinedCaps, IndexCatalog, IndexHandle, IndexKind,
+    IndexTarget, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp,
+    NodeIdOrdering, NodeOrEdgeScan, OptimizeContext, OrderAccess, OrderKey, PathPlan, PatternPlan,
+    PipelineOp, PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
+    PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram, PropertyInit, Rule, ScanAccess,
+    ScanKind, Transformed, TxOp, TypedIndexBounds, TypedIndexLookup, WanderJoinSampler, YieldKind,
+    optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,

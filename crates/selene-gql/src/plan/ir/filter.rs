@@ -7,6 +7,8 @@ use crate::{
     analyze::{AnalyzedType, BindingId, ExprId},
 };
 
+use super::OrderAccess;
+
 /// Limit or offset value carried to execution time.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LimitAmount {
@@ -24,15 +26,11 @@ pub struct FilterPredicate {
     /// Analyzer expression ID for `expr`.
     ///
     /// Stable identifier carried through the plan for diagnostics, metrics,
-    /// and tracing. The plan does not retain the analyzer's `ExprTypeTable`,
-    /// so post-plan consumers must not assume `expr_id` indexes back to a
-    /// live type cell — read `ty` directly.
-    ///
-    /// **Optimizer caveat:** rules that decompose one predicate into several
-    /// (e.g., `AndSplitting`) may emit multiple `FilterPredicate`s sharing
-    /// the parent's `expr_id` until BRIEF-29 introduces an optimizer-side
-    /// fresh-id allocator. Bijection (`expr_id` ↔ `expr`) is guaranteed for
-    /// lowering output but not after optimization.
+    /// and tracing. Optimizer rules that synthesize predicates allocate fresh
+    /// IDs from the owning `ExecutionPlan`, preserving the `expr_id` to
+    /// expression bijection after lowering. The plan does not retain the
+    /// analyzer's `ExprTypeTable`, so post-plan consumers must read `ty`
+    /// directly instead of indexing back into analyzer-owned storage.
     pub expr_id: ExprId,
     /// Analyzer-inferred type for `expr`.
     pub ty: AnalyzedType,
@@ -40,6 +38,8 @@ pub struct FilterPredicate {
     pub binding_refs: Vec<BindingId>,
     /// Predicate shape.
     pub kind: FilterPredicateKind,
+    /// Whether an index-aware rule proved this predicate fully covered.
+    pub index_consumed: bool,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -90,6 +90,8 @@ pub struct OrderKey {
     pub nulls: Option<NullsPolicy>,
     /// Referenced bindings, sorted and deduplicated.
     pub binding_refs: Vec<BindingId>,
+    /// Optimizer-selected order access hint.
+    pub access: Option<OrderAccess>,
     /// Source span.
     pub span: SourceSpan,
 }

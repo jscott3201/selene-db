@@ -42,6 +42,7 @@ pub(crate) fn lower_top_level_call(
         pipeline: vec![PipelineOp::Call(planned)],
         output_schema: BindingTableSchema { columns },
         impl_defined_caps: ImplDefinedCaps::default(),
+        next_expr_id: super::next_expr_id(analyzed),
     })
 }
 

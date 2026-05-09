@@ -1,6 +1,6 @@
 //! BRIEF-28 filter-pushdown optimizer tests.
 
-use selene_gql::{EmptyProcedureRegistry, PipelineOp, analyze, optimize, parse, plan};
+use selene_gql::{EmptyProcedureRegistry, JoinTree, PipelineOp, analyze, optimize, parse, plan};
 
 fn optimized_one(source: &str) -> selene_gql::ExecutionPlan {
     let statement = parse(source).expect("test input parses");
@@ -23,11 +23,24 @@ fn variant_names(plan: &selene_gql::ExecutionPlan) -> Vec<&'static str> {
         .collect()
 }
 
+fn first_scan_filter_count(tree: &JoinTree) -> usize {
+    match tree {
+        JoinTree::Scan(scan) => scan.property_predicates.len(),
+        JoinTree::Expand { child, .. } => first_scan_filter_count(child),
+        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+            first_scan_filter_count(left) + first_scan_filter_count(right)
+        }
+        JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => 0,
+        _ => 0,
+    }
+}
+
 #[test]
 fn pushes_leading_filter_into_pattern() {
     let plan = optimized_one("MATCH (n) FILTER n.a > 1 RETURN n");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
-    assert_eq!(pattern.filters.len(), 1);
+    assert!(pattern.filters.is_empty());
+    assert_eq!(first_scan_filter_count(&pattern.join_tree), 1);
     assert_eq!(variant_names(&plan), ["Project"]);
 }
 
@@ -43,7 +56,8 @@ fn does_not_push_filter_after_let_boundary() {
 fn stops_at_first_non_filter_boundary() {
     let plan = optimized_one("MATCH (n) FILTER n.a > 1 LIMIT 10 FILTER n.b < 5 RETURN n");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
-    assert_eq!(pattern.filters.len(), 1);
+    assert!(pattern.filters.is_empty());
+    assert_eq!(first_scan_filter_count(&pattern.join_tree), 1);
     assert_eq!(variant_names(&plan), ["Limit", "Filter", "Project"]);
 }
 
@@ -59,12 +73,14 @@ fn sentinel_filter_pushdown_snapshot() {
     let plan = optimized_one("MATCH (n) FILTER n.a > 1 LIMIT 10 FILTER n.b < 5 RETURN n");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
     let summary = format!(
-        "pattern_filters={}\npipeline={}",
+        "pattern_filters={}\nscan_filters={}\npipeline={}",
         pattern.filters.len(),
+        first_scan_filter_count(&pattern.join_tree),
         variant_names(&plan).join(","),
     );
     insta::assert_snapshot!(summary, @r###"
-pattern_filters=1
+pattern_filters=0
+scan_filters=1
 pipeline=Limit,Filter,Project
 "###);
 }

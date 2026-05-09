@@ -35,6 +35,7 @@ fn edge_predicate_count(tree: &JoinTree, binding: BindingId) -> usize {
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             edge_predicate_count(left, binding) + edge_predicate_count(right, binding)
         }
+        _ => 0,
     }
 }
 
@@ -96,6 +97,7 @@ fn worst_case_optimal_intersection_is_opaque() {
     let original = pattern.join_tree.clone();
     pattern.join_tree = JoinTree::WorstCaseOptimal {
         intersection: vec![original],
+        node_id_ordering: Vec::new(),
     };
 
     let optimized = optimize(plan, &selene_gql::OptimizeContext::default());

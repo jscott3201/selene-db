@@ -37,6 +37,7 @@ pub(crate) fn filter_predicate(
         ty,
         binding_refs: binding_refs_in(expr, analyzed)?,
         kind: FilterPredicateKind::Expression,
+        index_consumed: false,
         span: expr.span(),
     })
 }
@@ -62,6 +63,7 @@ pub(crate) fn property_predicate(
         ty,
         binding_refs,
         kind: FilterPredicateKind::PropertyEquals { binding, key },
+        index_consumed: false,
         span: value.span(),
     })
 }
@@ -79,6 +81,7 @@ pub(crate) fn order_key(
         direction: term.direction,
         nulls: term.nulls,
         binding_refs: binding_refs_in(&term.expr, analyzed)?,
+        access: None,
         span: term.span,
     })
 }

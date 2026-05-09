@@ -1,5 +1,6 @@
 //! Planner IR definitions.
 
+mod access;
 mod call;
 mod catalog;
 mod filter;
@@ -8,9 +9,10 @@ mod tx;
 
 use crate::{
     EdgeDirection, LabelExpr, SetOp, SourceSpan,
-    analyze::{AnalyzedType, BindingId},
+    analyze::{AnalyzedType, BindingId, ExprId},
 };
 
+pub use access::{NodeIdOrdering, OrderAccess, ScanAccess, TypedIndexBounds};
 pub use call::{PlannedCall, PlannedYieldItem, YieldKind};
 pub use catalog::{CatalogOp, PlannedTypePropertyConstraint, PlannedTypePropertyDef};
 pub use filter::{
@@ -31,6 +33,17 @@ pub struct ExecutionPlan {
     pub output_schema: BindingTableSchema,
     /// Planner implementation-defined limits.
     pub impl_defined_caps: ImplDefinedCaps,
+    /// Next optimizer-owned expression ID for this plan.
+    pub next_expr_id: ExprId,
+}
+
+impl ExecutionPlan {
+    /// Allocate a fresh expression ID for optimizer-synthesized expressions.
+    pub(crate) fn alloc_expr_id(&mut self) -> ExprId {
+        let id = self.next_expr_id;
+        self.next_expr_id = ExprId::new(id.get().saturating_add(1));
+        id
+    }
 }
 
 /// Pattern-matching subplan for the leading MATCH prefix.
@@ -78,6 +91,7 @@ pub enum BindingElement {
 
 /// Pattern join tree.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub enum JoinTree {
     /// Scan nodes or edges.
     Scan(NodeOrEdgeScan),
@@ -112,6 +126,8 @@ pub enum JoinTree {
     WorstCaseOptimal {
         /// Intersected subplans.
         intersection: Vec<JoinTree>,
+        /// Node-id orderings used to break symmetric WCO traversals.
+        node_id_ordering: Vec<NodeIdOrdering>,
     },
     /// Nested subplan placeholder.
     Subplan(Box<ExecutionPlan>),
@@ -128,6 +144,8 @@ pub struct NodeOrEdgeScan {
     pub label_predicate: Option<LabelExpr>,
     /// Inline property predicates from the pattern.
     pub property_predicates: Vec<FilterPredicate>,
+    /// Optimizer-selected access path.
+    pub access: ScanAccess,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -158,6 +176,8 @@ pub struct EdgeMatch {
     pub right_label_predicate: Option<LabelExpr>,
     /// Property-map equality predicates on the syntactic right-side node.
     pub right_property_predicates: Vec<FilterPredicate>,
+    /// Optimizer-selected access path.
+    pub access: ScanAccess,
     /// Source span.
     pub span: SourceSpan,
 }
@@ -233,6 +253,7 @@ pub enum PipelineOp {
 
 /// Planner implementation-defined limits.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ImplDefinedCaps {
     /// Maximum accepted variable-length quantifier upper bound.
     pub max_quantifier: u32,
@@ -240,6 +261,8 @@ pub struct ImplDefinedCaps {
     pub max_optimizer_iterations: u32,
     /// Default maximum path length for future path execution.
     pub max_path_length: u32,
+    /// Maximum number of expand nodes WCO cycle detection will inspect.
+    pub max_wco_traversal_nodes: u32,
 }
 
 impl Default for ImplDefinedCaps {
@@ -248,6 +271,7 @@ impl Default for ImplDefinedCaps {
             max_quantifier: 100,
             max_optimizer_iterations: 8,
             max_path_length: 32,
+            max_wco_traversal_nodes: 64,
         }
     }
 }

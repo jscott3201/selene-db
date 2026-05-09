@@ -11,7 +11,7 @@ use selene_core::IStr;
 use crate::{
     LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, ReturnItem,
     ValueExpr, WithClause,
-    analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType},
+    analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId},
     plan::{
         Aggregate, BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan,
         ImplDefinedCaps, LimitAmount, PipelineOp, PlannerError, ProjectExpr, TxOp,
@@ -186,6 +186,7 @@ fn lower_query_pipeline(
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },
         impl_defined_caps: ImplDefinedCaps::default(),
+        next_expr_id: next_expr_id(analyzed),
     })
 }
 
@@ -370,6 +371,7 @@ fn empty_plan() -> ExecutionPlan {
             columns: Vec::new(),
         },
         impl_defined_caps: ImplDefinedCaps::default(),
+        next_expr_id: ExprId::new(0),
     }
 }
 
@@ -388,7 +390,12 @@ fn tx_plan(op: TxOp) -> ExecutionPlan {
             columns: Vec::new(),
         },
         impl_defined_caps: ImplDefinedCaps::default(),
+        next_expr_id: ExprId::new(0),
     }
+}
+
+pub(super) fn next_expr_id(analyzed: &AnalyzedStatement) -> ExprId {
+    ExprId::new(analyzed.expr_types.len() as u32)
 }
 
 #[cfg(test)]

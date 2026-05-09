@@ -3,13 +3,20 @@
 //! The optimizer is intentionally infallible: lowering owns planner errors,
 //! while rules either rewrite a plan or leave it unchanged.
 
+mod binding_refs;
 mod context;
+mod index_catalog;
 mod registry;
 mod rule;
 pub mod rules;
+mod selectivity;
 mod walk;
 
 pub use context::{EdgeStatistics, OptimizeContext, PropertyHistogram, WanderJoinSampler};
+pub use index_catalog::{
+    CompositeIndexHandle, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind, IndexTarget,
+    TypedIndexLookup,
+};
 pub use registry::DEFAULT_RULES;
 pub use rule::{Rule, Transformed};
 
@@ -65,6 +72,7 @@ mod tests {
                 columns: Vec::new(),
             },
             impl_defined_caps: caps,
+            next_expr_id: crate::ExprId::new(0),
         }
     }
 
