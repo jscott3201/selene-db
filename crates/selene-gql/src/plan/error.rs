@@ -1,5 +1,7 @@
 //! Planner diagnostics.
 
+use selene_core::IStr;
+
 use crate::{GqlStatus, SourceSpan, analyze::BindingId};
 
 /// Query-planning failure.
@@ -38,6 +40,49 @@ pub enum PlannerError {
         #[label("missing expression type")]
         span: SourceSpan,
     },
+
+    /// The procedure registry passed to planning no longer contains a
+    /// procedure that was resolved during analysis.
+    #[error("procedure {procedure:?} not found in registry during planning")]
+    #[diagnostic(code(SLENE_P_013))]
+    UnknownProcedure {
+        /// Qualified procedure name.
+        procedure: Box<[IStr]>,
+        /// Source span of the procedure call.
+        #[label("unknown procedure")]
+        span: SourceSpan,
+    },
+
+    /// A mutation statement reached the planner without its analyzer write set.
+    #[error("mutation statement reached planner without analyzer write set")]
+    #[diagnostic(code(SLENE_P_014))]
+    WriteSetMissing {
+        /// Source span of the mutation pipeline.
+        #[label("missing write set")]
+        span: SourceSpan,
+    },
+
+    /// Analyzer write-set order and planner AST walk disagreed.
+    #[error("write-set entry could not be paired with an INSERT AST element")]
+    #[diagnostic(code(SLENE_P_015))]
+    WriteSetPatternMismatch {
+        /// Source span of the unmatched write site.
+        #[label("unmatched write-set entry")]
+        span: SourceSpan,
+    },
+
+    /// Procedure registry metadata changed between analysis and planning.
+    #[error("procedure {procedure:?} metadata changed between analyze and plan: {detail}")]
+    #[diagnostic(code(SLENE_P_016))]
+    ProcedureMetadataMismatch {
+        /// Qualified procedure name.
+        procedure: Box<[IStr]>,
+        /// Stable mismatch detail tag.
+        detail: &'static str,
+        /// Source span of the procedure call or yield item.
+        #[label("metadata mismatch")]
+        span: SourceSpan,
+    },
 }
 
 impl PlannerError {
@@ -47,7 +92,11 @@ impl PlannerError {
         match self {
             Self::NotImplemented { .. }
             | Self::BindingResolutionLost { .. }
-            | Self::ExpressionTypeMissing { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+            | Self::ExpressionTypeMissing { .. }
+            | Self::UnknownProcedure { .. }
+            | Self::WriteSetMissing { .. }
+            | Self::WriteSetPatternMismatch { .. }
+            | Self::ProcedureMetadataMismatch { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
         }
     }
 }

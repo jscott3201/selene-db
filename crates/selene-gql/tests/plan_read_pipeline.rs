@@ -37,6 +37,8 @@ fn variant_names(plan: &selene_gql::ExecutionPlan) -> Vec<&'static str> {
             PipelineOp::Chain(_) => "Chain",
             PipelineOp::Call(_) => "Call",
             PipelineOp::Mutation(_) => "Mutation",
+            PipelineOp::Catalog(_) => "Catalog",
+            PipelineOp::Tx(_) => "Tx",
         })
         .collect()
 }

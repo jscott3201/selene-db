@@ -13,8 +13,9 @@ mod lowering;
 pub use error::PlannerError;
 pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind, ImplDefinedCaps, JoinTree,
-    LimitAmount, MutationOp, NodeOrEdgeScan, OrderKey, PathPlan, PatternPlan, PipelineOp,
-    PlannedCall, PlannedYieldItem, ProjectExpr, ScanKind,
+    CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind, ImplDefinedCaps,
+    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeOrEdgeScan, OrderKey,
+    PathPlan, PatternPlan, PipelineOp, PlannedCall, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr, PropertyInit, ScanKind, TxOp, YieldKind,
 };
 pub use lowering::plan;
