@@ -9,7 +9,7 @@ use crate::{
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
         BindingDef, BindingElement, EdgeMatch, FilterPredicate, JoinTree, NodeOrEdgeScan, PathPlan,
-        PatternPlan, PlannerError, ScanKind,
+        PatternPlan, PlannerError, ScanAccess, ScanKind,
     },
 };
 
@@ -247,6 +247,7 @@ fn node_scan(
         kind: ScanKind::Node,
         label_predicate: node.label_expr.clone(),
         property_predicates,
+        access: ScanAccess::Linear,
         span: node.span,
     })
 }
@@ -277,6 +278,7 @@ fn edge_match(
         right_binding: right_node.binding,
         right_label_predicate: right_node.label_predicate,
         right_property_predicates: right_node.property_predicates,
+        access: ScanAccess::Linear,
         span: edge.span,
     })
 }
@@ -445,7 +447,7 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<BindingId> {
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
         }
-        JoinTree::WorstCaseOptimal { intersection } => {
+        JoinTree::WorstCaseOptimal { intersection, .. } => {
             intersection.first().and_then(chain_tail_binding)
         }
         JoinTree::Subplan(_) => None,

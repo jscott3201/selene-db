@@ -131,6 +131,7 @@ fn empty_plan() -> ExecutionPlan {
             columns: Vec::new(),
         },
         impl_defined_caps: Default::default(),
+        next_expr_id: crate::ExprId::new(0),
     }
 }
 

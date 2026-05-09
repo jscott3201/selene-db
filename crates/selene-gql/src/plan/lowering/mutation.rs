@@ -108,6 +108,7 @@ pub(crate) fn lower_mutation(
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },
         impl_defined_caps: ImplDefinedCaps::default(),
+        next_expr_id: super::next_expr_id(analyzed),
     })
 }
 

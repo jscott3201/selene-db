@@ -4,8 +4,8 @@ use crate::{
     BinaryOp, GqlType, ValueExpr,
     analyze::AnalyzedType,
     plan::{
-        ExecutionPlan, FilterPredicate, FilterPredicateKind, PipelineOp,
-        optimize::{OptimizeContext, Rule, Transformed, walk},
+        BindingDef, ExecutionPlan, FilterPredicate, FilterPredicateKind, PipelineOp,
+        optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
     },
 };
 
@@ -23,10 +23,22 @@ impl Rule for AndSplitting {
         ctx: &OptimizeContext<'_>,
     ) -> Transformed<ExecutionPlan> {
         let mut changed = false;
-        if let Some(pattern) = &mut plan.pattern_plan {
-            changed |= split_predicate_vec(&mut pattern.filters);
+        let pattern_bindings = plan
+            .pattern_plan
+            .as_ref()
+            .map(|pattern| pattern.bindings.clone())
+            .unwrap_or_default();
+        if plan.pattern_plan.is_some() {
+            let mut filters = {
+                let pattern = plan.pattern_plan.as_mut().expect("pattern checked");
+                std::mem::take(&mut pattern.filters)
+            };
+            changed |= split_predicate_vec(&mut filters, &pattern_bindings, &mut plan);
+            plan.pattern_plan.as_mut().expect("pattern checked").filters = filters;
         }
-        changed |= split_pipeline_filters(&mut plan.pipeline);
+        let mut pipeline = std::mem::take(&mut plan.pipeline);
+        changed |= split_pipeline_filters(&mut pipeline, &pattern_bindings, &mut plan);
+        plan.pipeline = pipeline;
 
         let nested = walk::recurse_rule_subplans(plan, self, ctx);
         changed |= nested.changed;
@@ -37,13 +49,17 @@ impl Rule for AndSplitting {
     }
 }
 
-fn split_pipeline_filters(pipeline: &mut Vec<PipelineOp>) -> bool {
+fn split_pipeline_filters(
+    pipeline: &mut Vec<PipelineOp>,
+    bindings: &[BindingDef],
+    plan: &mut ExecutionPlan,
+) -> bool {
     let mut changed = false;
     let mut rewritten = Vec::with_capacity(pipeline.len());
     for op in pipeline.drain(..) {
         match op {
             PipelineOp::Filter(pred) => {
-                let predicates = split_predicate(pred);
+                let predicates = split_predicate(pred, bindings, plan);
                 changed |= predicates.len() > 1;
                 rewritten.extend(predicates.into_iter().map(PipelineOp::Filter));
             }
@@ -54,11 +70,15 @@ fn split_pipeline_filters(pipeline: &mut Vec<PipelineOp>) -> bool {
     changed
 }
 
-fn split_predicate_vec(predicates: &mut Vec<FilterPredicate>) -> bool {
+fn split_predicate_vec(
+    predicates: &mut Vec<FilterPredicate>,
+    bindings: &[BindingDef],
+    plan: &mut ExecutionPlan,
+) -> bool {
     let mut changed = false;
     let mut rewritten = Vec::with_capacity(predicates.len());
     for pred in predicates.drain(..) {
-        let split = split_predicate(pred);
+        let split = split_predicate(pred, bindings, plan);
         changed |= split.len() > 1;
         rewritten.extend(split);
     }
@@ -66,7 +86,11 @@ fn split_predicate_vec(predicates: &mut Vec<FilterPredicate>) -> bool {
     changed
 }
 
-fn split_predicate(pred: FilterPredicate) -> Vec<FilterPredicate> {
+fn split_predicate(
+    pred: FilterPredicate,
+    bindings: &[BindingDef],
+    plan: &mut ExecutionPlan,
+) -> Vec<FilterPredicate> {
     if pred.kind != FilterPredicateKind::Expression {
         return vec![pred];
     }
@@ -78,13 +102,18 @@ fn split_predicate(pred: FilterPredicate) -> Vec<FilterPredicate> {
 
     exprs
         .into_iter()
-        .map(|expr| FilterPredicate {
-            span: expr.span(),
-            expr,
-            expr_id: pred.expr_id,
-            ty: AnalyzedType::Resolved(GqlType::Boolean),
-            binding_refs: pred.binding_refs.clone(),
-            kind: FilterPredicateKind::Expression,
+        .map(|expr| {
+            let binding_refs = binding_refs::collect_binding_refs(&expr, bindings)
+                .unwrap_or_else(|| pred.binding_refs.clone());
+            FilterPredicate {
+                span: expr.span(),
+                expr,
+                expr_id: plan.alloc_expr_id(),
+                ty: AnalyzedType::Resolved(GqlType::Boolean),
+                binding_refs,
+                kind: FilterPredicateKind::Expression,
+                index_consumed: false,
+            }
         })
         .collect()
 }
