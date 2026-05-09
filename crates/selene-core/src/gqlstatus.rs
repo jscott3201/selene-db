@@ -18,6 +18,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
     ("22023", "data-exception-invalid-parameter-value"),
+    ("25G02", "invalid-transaction-state-mixing"),
     ("42002", "invalid-reference"),
     ("42601", "syntax-error-or-access-rule-violation"),
     ("42703", "undefined-reference"),

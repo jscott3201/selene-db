@@ -16,8 +16,9 @@ pub mod procedure_registry;
 pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
     BindingDeclKind, BindingId, BindingScope, BindingScopeTree, BindingUse, BindingUseKind,
-    ConditionClause, ExpectedType, ExprId, ExprIdMap, ExprTypeTable, ScopeId, ScopeKind, Side,
-    TypeMismatchContext, analyze,
+    ConditionClause, ElementKind, ExpectedType, ExprId, ExprIdMap, ExprTypeTable, MutationWriteSet,
+    ScopeId, ScopeKind, Side, StatementCategory, TypeMismatchContext, WriteKind, WriteSetEntry,
+    analyze,
 };
 pub use crate::ast::{
     call::{ProcedureCall, YieldColumn, YieldItem},

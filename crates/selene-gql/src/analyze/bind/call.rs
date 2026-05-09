@@ -4,7 +4,7 @@ use selene_core::IStr;
 
 use super::{BindContext, expr};
 use crate::{
-    ProcedureCall, ProcedureOutputColumn, YieldColumn,
+    ProcedureCall, ProcedureMetadata, ProcedureOutputColumn, YieldColumn,
     analyze::{
         binding::BindingDeclKind,
         error::{AnalysisError, ExpectedType, TypeMismatchContext},
@@ -17,13 +17,29 @@ pub(crate) fn bind_procedure_call(
     ctx: &mut BindContext,
     call: &ProcedureCall,
 ) -> Result<(), AnalysisError> {
+    let metadata = lookup_metadata(ctx, call)?;
+    bind_procedure_call_with_metadata(ctx, call, metadata)
+}
+
+pub(crate) fn lookup_metadata(
+    ctx: &BindContext,
+    call: &ProcedureCall,
+) -> Result<ProcedureMetadata, AnalysisError> {
     let procedure = call.name.clone().into_boxed_slice();
-    let Some(metadata) = ctx.registry().lookup(&call.name) else {
-        return Err(AnalysisError::UnknownProcedure {
+    ctx.registry()
+        .lookup(&call.name)
+        .ok_or(AnalysisError::UnknownProcedure {
             name: procedure,
             span: call.span,
-        });
-    };
+        })
+}
+
+pub(crate) fn bind_procedure_call_with_metadata(
+    ctx: &mut BindContext,
+    call: &ProcedureCall,
+    metadata: ProcedureMetadata,
+) -> Result<(), AnalysisError> {
+    let procedure = call.name.clone().into_boxed_slice();
 
     let expected = metadata.signature.parameters.len();
     let actual = call.args.len();

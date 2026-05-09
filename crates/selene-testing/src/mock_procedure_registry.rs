@@ -46,6 +46,36 @@ impl MockProcedureRegistry {
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
     ) {
+        self.insert_procedure_with_mutability(
+            name,
+            parameters,
+            output_columns,
+            ProcedureMutability::Read,
+        );
+    }
+
+    /// Register a procedure with a specific mutability and return the updated
+    /// registry.
+    #[must_use]
+    pub fn with_procedure_mutability(
+        mut self,
+        name: Vec<IStr>,
+        parameters: Vec<ProcedureParameter>,
+        output_columns: Vec<ProcedureOutputColumn>,
+        mutability: ProcedureMutability,
+    ) -> Self {
+        self.insert_procedure_with_mutability(name, parameters, output_columns, mutability);
+        self
+    }
+
+    /// Register a procedure with a specific mutability in place.
+    pub fn insert_procedure_with_mutability(
+        &mut self,
+        name: Vec<IStr>,
+        parameters: Vec<ProcedureParameter>,
+        output_columns: Vec<ProcedureOutputColumn>,
+        mutability: ProcedureMutability,
+    ) {
         let handle = ProcedureHandle::new(self.next_handle);
         self.next_handle += 1;
         self.procedures.insert(
@@ -57,7 +87,7 @@ impl MockProcedureRegistry {
                     columns: output_columns,
                 },
                 tier: ProcedureTier::Graph,
-                mutability: ProcedureMutability::Read,
+                mutability,
                 capability_required: None,
             },
         );
