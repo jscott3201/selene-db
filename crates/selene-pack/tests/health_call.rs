@@ -127,7 +127,10 @@ fn selene_health_inside_explicit_tx_sees_uncommitted_inserts_via_real_registry()
 
 #[test]
 fn selene_health_rejects_runtime_arguments() {
+    let runtime_registry = ProcedurePackRegistry::with_builtins();
+    let runtime_handle = runtime_health_handle(&runtime_registry);
     let planning_registry = PlanningRegistry::health_with_signature(
+        runtime_handle,
         ProcedureMutability::Read,
         ProcedureTier::Graph,
         vec![ProcedureParameter {
@@ -136,7 +139,6 @@ fn selene_health_rejects_runtime_arguments() {
             nullable: false,
         }],
     );
-    let runtime_registry = ProcedurePackRegistry::with_builtins();
     let plan = planned("CALL selene.health(42) YIELD graph_id", &planning_registry);
     let graph = SharedGraph::new(GraphId::new(4104));
     let mut session = Session::new(&graph);
@@ -155,12 +157,14 @@ fn selene_health_rejects_runtime_arguments() {
 
 #[test]
 fn registry_execute_reports_tier_mismatch_expected_from_entry_actual_from_context() {
+    let runtime_registry = ProcedurePackRegistry::with_builtins();
+    let runtime_handle = runtime_health_handle(&runtime_registry);
     let planning_registry = PlanningRegistry::health_with_signature(
+        runtime_handle,
         ProcedureMutability::GraphWrite,
         ProcedureTier::Mutation,
         Vec::new(),
     );
-    let runtime_registry = ProcedurePackRegistry::with_builtins();
     let plan = planned(health_source(), &planning_registry);
     let graph = SharedGraph::new(GraphId::new(4105));
     let mut session = Session::new(&graph);
@@ -210,6 +214,7 @@ struct PlanningRegistry {
 
 impl PlanningRegistry {
     fn health_with_signature(
+        handle: ProcedureHandle,
         mutability: ProcedureMutability,
         tier: ProcedureTier,
         parameters: Vec<ProcedureParameter>,
@@ -218,7 +223,7 @@ impl PlanningRegistry {
         metadata.insert(
             vec![istr("selene"), istr("health")].into_boxed_slice(),
             ProcedureMetadata {
-                handle: ProcedureHandle::new(1),
+                handle,
                 signature: ProcedureSignature { parameters },
                 output_schema: ProcedureOutputSchema {
                     columns: vec![
@@ -257,4 +262,11 @@ fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
         name: istr(name),
         ty,
     }
+}
+
+fn runtime_health_handle(registry: &ProcedurePackRegistry) -> ProcedureHandle {
+    registry
+        .lookup(&[istr("selene"), istr("health")])
+        .expect("with_builtins() registers selene.health")
+        .handle
 }
