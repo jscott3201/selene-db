@@ -1,5 +1,3 @@
-use std::mem;
-
 use selene_core::Value;
 
 use crate::{
@@ -56,26 +54,13 @@ impl AggregateSlot {
     }
 
     pub(super) fn finalize_values(self) -> Result<Vec<Value>, ExecutorError> {
-        let alias = self.aggregate.alias;
-        let function = self.aggregate.function;
         let value = self.state.finalize(self.aggregate.span)?;
-        if alias.is_some_and(|alias| alias != function) {
-            Ok(vec![value.clone(), value])
-        } else {
-            Ok(vec![value])
-        }
+        Ok(vec![value])
     }
 }
 
 pub(super) fn output_names(aggregate: &Aggregate) -> Vec<selene_core::IStr> {
-    let mut names = vec![aggregate.alias.unwrap_or(aggregate.function)];
-    if aggregate
-        .alias
-        .is_some_and(|alias| alias != aggregate.function)
-    {
-        names.push(aggregate.function);
-    }
-    names
+    vec![aggregate.output_name]
 }
 
 #[derive(Clone, Copy)]
@@ -308,11 +293,9 @@ fn count_to_value(count: u64, span: SourceSpan) -> Result<Value, ExecutorError> 
 }
 
 fn values_equal_for_distinct(lhs: &Value, rhs: &Value) -> bool {
-    if mem::discriminant(lhs) != mem::discriminant(rhs) {
-        return false;
-    }
     match (lhs, rhs) {
         (Value::Null, Value::Null) => true,
+        (Value::Null, _) | (_, Value::Null) => false,
         _ => value_compare::equal_non_null(lhs, rhs),
     }
 }

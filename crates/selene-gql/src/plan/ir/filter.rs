@@ -99,6 +99,10 @@ pub struct OrderKey {
 /// Planned aggregate call.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aggregate {
+    /// Analyzer expression ID for the aggregate call.
+    pub aggregate_id: ExprId,
+    /// Executor-private synthesized output column name.
+    pub output_name: IStr,
     /// Aggregate function name.
     pub function: IStr,
     /// Aggregate arguments.
@@ -107,8 +111,6 @@ pub struct Aggregate {
     pub star: bool,
     /// Whether arguments are distinct.
     pub distinct: bool,
-    /// Output alias, when present.
-    pub alias: Option<IStr>,
     /// Analyzer-inferred aggregate result type.
     pub ty: AnalyzedType,
     /// Source span.
