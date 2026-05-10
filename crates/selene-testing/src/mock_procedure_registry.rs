@@ -137,6 +137,12 @@ impl MockProcedureRegistry {
     pub fn insert_result(&mut self, handle: ProcedureHandle, result: ProcedureResult) {
         self.results.insert(handle, result);
     }
+
+    /// Return the deterministic runtime result registered for a procedure handle.
+    #[must_use]
+    pub fn result_for(&self, handle: ProcedureHandle) -> Option<&ProcedureResult> {
+        self.results.get(&handle)
+    }
 }
 
 impl ProcedureRegistry for MockProcedureRegistry {

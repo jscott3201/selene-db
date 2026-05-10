@@ -6,6 +6,6 @@ schema:
 - first :: Resolved(String)
 - second :: Resolved(Integer)
 rows:
-- ["alpha", 10]
 - ["beta", 20]
+- ["alpha", 10]
 delta: nodes=+0 edges=+0 schema_changed=false

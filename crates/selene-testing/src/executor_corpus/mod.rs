@@ -6,7 +6,7 @@ pub mod fixtures;
 
 use selene_core::{IStr, Value, intern};
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutionPlan, IndexHandle, IndexKind, JoinTree, ProcedureHandle,
+    EmptyProcedureRegistry, ExecutionPlan, IndexHandle, IndexKind, JoinTree, ProcedureRegistry,
     ProcedureResult, ScanAccess, analyze, optimize, parse, plan,
 };
 
@@ -83,16 +83,26 @@ impl ExecutorCorpus {
 
     #[must_use]
     pub fn standard_mock_registry() -> MockProcedureRegistry {
-        crate::PlanCorpus::standard_mock_registry().with_result(
-            ProcedureHandle::new(1),
-            ProcedureResult {
-                rows: vec![
-                    vec![Value::String(istr("alpha")), Value::Int(10)],
-                    vec![Value::String(istr("beta")), Value::Int(20)],
-                ],
-            },
-        )
+        with_standard_call_result(crate::PlanCorpus::standard_mock_registry())
     }
+}
+
+fn with_standard_call_result(mut registry: MockProcedureRegistry) -> MockProcedureRegistry {
+    let pkg_all = [istr("pkg"), istr("all")];
+    let handle = registry
+        .lookup(&pkg_all)
+        .expect("standard mock registry registers pkg.all")
+        .handle;
+    registry.insert_result(
+        handle,
+        ProcedureResult {
+            rows: vec![
+                vec![Value::String(istr("alpha")), Value::Int(10)],
+                vec![Value::String(istr("beta")), Value::Int(20)],
+            ],
+        },
+    );
+    registry
 }
 
 use ExecutorCorpusCategory::*;
@@ -406,4 +416,41 @@ fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut selene_gql::NodeOrEdgeScan
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("executor fixture strings fit the interner")
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_gql::{GqlType, ProcedureHandle, ProcedureOutputColumn};
+
+    use super::*;
+
+    #[test]
+    fn standard_call_result_uses_lookup_handle_not_raw_literal() {
+        let registry = with_standard_call_result(
+            MockProcedureRegistry::new()
+                .with_procedure(vec![istr("pkg"), istr("before")], Vec::new(), Vec::new())
+                .with_procedure(
+                    vec![istr("pkg"), istr("all")],
+                    Vec::new(),
+                    vec![
+                        ProcedureOutputColumn {
+                            name: istr("outA"),
+                            ty: GqlType::String,
+                        },
+                        ProcedureOutputColumn {
+                            name: istr("outB"),
+                            ty: GqlType::Integer,
+                        },
+                    ],
+                ),
+        );
+
+        let handle = registry
+            .lookup(&[istr("pkg"), istr("all")])
+            .expect("pkg.all is registered")
+            .handle;
+        assert_eq!(handle.raw(), 2);
+        assert!(registry.result_for(handle).is_some());
+        assert!(registry.result_for(ProcedureHandle::new(1)).is_none());
+    }
 }

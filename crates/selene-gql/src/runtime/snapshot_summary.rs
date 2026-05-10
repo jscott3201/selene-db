@@ -166,11 +166,7 @@ impl PlaceholderTable {
 }
 
 fn raw_row_key(values: &[Value]) -> String {
-    values
-        .iter()
-        .map(raw_value_key)
-        .collect::<Vec<_>>()
-        .join("\u{1f}")
+    raw_sequence_key("row:[", "]", values.iter().map(raw_value_key))
 }
 
 fn raw_value_key(value: &Value) -> String {
@@ -185,14 +181,7 @@ fn raw_value_key(value: &Value) -> String {
         Value::Decimal(value) => format!("decimal:{value}"),
         Value::String(value) => format!("string:{}", value.as_str()),
         Value::Bytes(value) => format!("bytes:{}", hex_bytes(value)),
-        Value::List(values) => format!(
-            "list:[{}]",
-            values
-                .iter()
-                .map(raw_value_key)
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
+        Value::List(values) => raw_sequence_key("list:[", "]", values.iter().map(raw_value_key)),
         Value::Record(record) => raw_record_key(record),
         Value::RecordTyped(record) => raw_typed_record_key(record),
         Value::Path(path) => raw_path_key(path),
@@ -220,45 +209,69 @@ fn raw_record_key(record: &Record) -> String {
         Record::Open(fields) => {
             let mut rendered = fields
                 .iter()
-                .map(|(key, value)| format!("{}:{}", key.as_str(), raw_value_key(value)))
+                .map(|(key, value)| {
+                    raw_sequence_key(
+                        "field:",
+                        "",
+                        [key.as_str().to_owned(), raw_value_key(value)],
+                    )
+                })
                 .collect::<Vec<_>>();
             rendered.sort();
-            format!("record:{{{}}}", rendered.join(","))
+            raw_sequence_key("record:{", "}", rendered)
         }
         _ => "<record::unknown>".to_owned(),
     }
 }
 
 fn raw_typed_record_key(record: &RecordTyped) -> String {
-    let values = record
-        .values
-        .iter()
-        .map(|value| value.as_ref().map_or("_".to_owned(), raw_value_key))
-        .collect::<Vec<_>>()
-        .join(",");
-    format!("record_typed:{}:[{}]", record.type_id.get(), values)
+    let values = record.values.iter().map(|value| {
+        value.as_ref().map_or_else(
+            || "none".to_owned(),
+            |value| format!("some:{}", raw_value_key(value)),
+        )
+    });
+    raw_sequence_key(
+        &format!("record_typed:{}:[", record.type_id.get()),
+        "]",
+        values,
+    )
 }
 
 fn raw_path_key(path: &Path) -> String {
-    format!(
-        "path:{}:{}:[{}]",
-        path.graph.get(),
-        path.start.get(),
-        path.segments
-            .iter()
-            .map(raw_path_segment_key)
-            .collect::<Vec<_>>()
-            .join(",")
+    raw_sequence_key(
+        &format!("path:{}:{}:[", path.graph.get(), path.start.get()),
+        "]",
+        path.segments.iter().map(raw_path_segment_key),
     )
 }
 
 fn raw_path_segment_key(segment: &PathSegment) -> String {
     format!(
-        "{}:{:?}:{}",
+        "segment:{}:{:?}:{}",
         segment.edge.get(),
         segment.direction,
         segment.node.get()
     )
+}
+
+fn raw_sequence_key(
+    prefix: &str,
+    suffix: &str,
+    elements: impl IntoIterator<Item = String>,
+) -> String {
+    let mut output = String::from(prefix);
+    for element in elements {
+        append_length_prefixed(&mut output, &element);
+    }
+    output.push_str(suffix);
+    output
+}
+
+fn append_length_prefixed(output: &mut String, value: &str) {
+    output.push_str(&value.len().to_string());
+    output.push(':');
+    output.push_str(value);
 }
 
 fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
@@ -350,7 +363,7 @@ fn render_path(path: &Path, placeholders: &mut PlaceholderTable) -> String {
         .join(", ");
     format!(
         "Path(graph={}, start={start}, segments=[{segments}])",
-        path.graph.get()
+        path.graph.get(),
     )
 }
 
@@ -366,7 +379,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{NodeId, Value};
+    use selene_core::{NodeId, Value, intern_with_admission};
 
     use crate::{
         Binding, BindingTable, BindingTableColumn, BindingTableSchema, analyze::AnalyzedType,
@@ -398,6 +411,28 @@ mod tests {
             ],
         );
         assert_eq!(summary_for(&lhs), summary_for(&rhs));
+    }
+
+    #[test]
+    fn raw_list_keys_are_injective_when_string_elements_contain_commas() {
+        let lhs = Value::List(vec![
+            Value::String(intern_with_admission("a").expect("test string interns").0),
+            Value::String(
+                intern_with_admission("b,string:c")
+                    .expect("test string interns")
+                    .0,
+            ),
+        ]);
+        let rhs = Value::List(vec![
+            Value::String(
+                intern_with_admission("a,string:b")
+                    .expect("test string interns")
+                    .0,
+            ),
+            Value::String(intern_with_admission("c").expect("test string interns").0),
+        ]);
+
+        assert_ne!(raw_value_key(&lhs), raw_value_key(&rhs));
     }
 
     fn summary_for(table: &BindingTable) -> ExecutorSnapshot {
