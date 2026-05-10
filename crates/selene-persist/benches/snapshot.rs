@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! Criterion benches for snapshot read/write and recovery.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use std::sync::{Arc, Mutex};

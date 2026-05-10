@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! Criterion benches for single-snapshot graph read hot paths.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

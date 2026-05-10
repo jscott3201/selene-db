@@ -124,6 +124,8 @@ cargo +nightly fuzz run parse_gql -- -max_total_time=60
 # Benchmarks: use the serialized runner only. PR CI checks invocation hygiene
 # but does not execute benchmarks; run Criterion locally.
 # iai-callgrind requires Linux/valgrind.
+# Bench binaries use mimalloc as the global allocator; library crates are
+# allocator-agnostic. See _design/perf-baselines.md §3.6.
 scripts/run-benches.sh --profile quick --layer criterion
 scripts/run-benches.sh --profile full --layer criterion
 scripts/run-benches.sh --profile quick --layer iai

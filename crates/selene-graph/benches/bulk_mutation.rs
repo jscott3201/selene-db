@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! Criterion benches for graph mutation commit hot paths.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};

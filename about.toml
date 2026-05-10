@@ -35,3 +35,16 @@ license = "MIT"
 path = "LICENSE"
 checksum = "635111a955495b5d8d34b8052f69656e8e45f6437f9266329077b9aad5fbe8d3"
 license = "MIT"
+
+# libmimalloc-sys ships the Rust wrapper MIT license at the crate root and
+# the bundled C allocator MIT license under c_src. Default cargo-about
+# discovery can choose differently across environments; pin the allocator
+# license so THIRDPARTY.md is deterministic and names the Microsoft/Daan
+# Leijen copyright carried by the code actually linked into bench binaries.
+[libmimalloc-sys.clarify]
+license = "MIT"
+
+[[libmimalloc-sys.clarify.files]]
+path = "c_src/mimalloc/v3/LICENSE"
+checksum = "82ade5d7d9b029044b5fbbc326207fc47c2d44ee4dd71e8a559c36d728217de9"
+license = "MIT"

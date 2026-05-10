@@ -30,6 +30,7 @@ uuid.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 iai-callgrind.workspace = true
+mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 selene-testing = { path = "../selene-testing", version = "0.0.0" }
