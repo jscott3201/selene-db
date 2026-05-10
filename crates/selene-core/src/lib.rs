@@ -32,7 +32,7 @@ pub mod schema;
 pub mod value;
 pub mod value_adapter;
 
-pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange};
+pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind};
 pub use codec::{Codec, CodecError};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{

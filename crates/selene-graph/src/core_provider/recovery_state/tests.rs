@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, GraphId, GraphTypeId, LabelSet, NodeTypeRef, PredefinedValueType, PropertyDef,
-    SchemaChange, ValueType, ValueTypeCardinality, intern,
+    Change, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeRef, PredefinedValueType, PropertyDef,
+    PropertyMap, SchemaChange, SchemaPropertyIndexKind, Value, ValueType, ValueTypeCardinality,
+    intern,
 };
 use selene_persist::RecoveryProvider;
 use smallvec::smallvec;
 
-use crate::core_provider::sections::{encode_graph_types, encode_meta};
-use crate::core_provider::{CORE_GTYP_SUB, CORE_META_SUB, CoreProvider};
+use crate::core_provider::sections::{encode_graph_types, encode_meta, encode_schemas};
+use crate::core_provider::{CORE_GTYP_SUB, CORE_META_SUB, CORE_SCMA_SUB, CoreProvider};
 use crate::{
     EdgeTypeDef, GraphError, GraphTypeDef, IndexProvider, NodeTypeDef, ProviderError, SharedGraph,
-    SubTag,
+    SubTag, TypedIndexKind,
 };
 
 fn test_graph_type_id() -> GraphTypeId {
@@ -92,6 +93,10 @@ fn core_string_property(name: &str, required: bool) -> PropertyDef {
         nullable: !required,
         default: None,
     }
+}
+
+fn props(pairs: impl IntoIterator<Item = (selene_core::IStr, Value)>) -> PropertyMap {
+    PropertyMap::from_pairs(pairs).unwrap()
 }
 
 #[test]
@@ -260,4 +265,180 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
         GraphError::Provider(ProviderError::Inconsistent { reason })
             if reason.contains("WAL NodeTypeAdded references missing graph type index 0")
     ));
+}
+
+#[test]
+fn wal_replay_restores_property_index_created_after_node_state() {
+    let provider = CoreProvider::new_for_recovery();
+    let label = intern("RecoveredPerson").unwrap();
+    let property = intern("age").unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(label),
+            properties: props([(property, Value::Int(42))]),
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::PropertyIndexCreated {
+                label,
+                property,
+                kind: SchemaPropertyIndexKind::I64,
+            },
+        },
+    )
+    .unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let rows = recovered
+        .nodes_with_property_eq(&label, &property, &Value::Int(42))
+        .unwrap();
+    assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
+    assert_eq!(recovered.property_index_count(), 1);
+}
+
+#[test]
+fn wal_replay_drops_property_index_registered_in_snapshot_scma() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let label = intern("SnapshotPerson").unwrap();
+    let property = intern("age").unwrap();
+    shared
+        .create_property_index(label, property, TypedIndexKind::I64)
+        .unwrap();
+    let snapshot = shared.read();
+    let provider = CoreProvider::new_for_recovery();
+    IndexProvider::read_section(
+        provider.as_ref(),
+        SubTag(CORE_SCMA_SUB),
+        &encode_schemas(&snapshot).unwrap(),
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::PropertyIndexDropped { label, property },
+        },
+    )
+    .unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    assert_eq!(recovered.property_index_count(), 0);
+    assert!(recovered.property_index_for(&label, &property).is_none());
+}
+
+#[test]
+fn wal_replay_property_index_create_drop_create_sequence_uses_last_event() {
+    let provider = CoreProvider::new_for_recovery();
+    let label = intern("SequencePerson").unwrap();
+    let property = intern("age").unwrap();
+    for change in [
+        SchemaChange::PropertyIndexCreated {
+            label,
+            property,
+            kind: SchemaPropertyIndexKind::I64,
+        },
+        SchemaChange::PropertyIndexDropped { label, property },
+        SchemaChange::PropertyIndexCreated {
+            label,
+            property,
+            kind: SchemaPropertyIndexKind::I64,
+        },
+    ] {
+        RecoveryProvider::on_change(
+            provider.as_ref(),
+            &Change::SchemaChanged {
+                graph: GraphId::new(1),
+                change,
+            },
+        )
+        .unwrap();
+    }
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    assert!(recovered.property_index_for(&label, &property).is_some());
+    assert_eq!(recovered.property_index_count(), 1);
+}
+
+#[test]
+fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
+    let base = empty_runtime_graph_type();
+    let snapshot = closed_graph_snapshot(base.clone());
+    let provider = CoreProvider::new_for_recovery();
+    load_closed_snapshot(provider.as_ref(), &snapshot);
+    let label = intern("IndexedSensor").unwrap();
+    let property = intern("reading").unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::NodeTypeAdded {
+                graph_type: test_graph_type_id(),
+                label,
+                def: selene_core::NodeTypeDef::new(LabelSet::single(label)),
+            },
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::PropertyIndexCreated {
+                label,
+                property,
+                kind: SchemaPropertyIndexKind::I64,
+            },
+        },
+    )
+    .unwrap();
+
+    let recovered = provider
+        .finish_recovery(GraphId::new(1), Some(Arc::new(base)))
+        .unwrap();
+    assert_eq!(
+        recovered.meta.bound_type.as_ref().unwrap().node_types[0].name,
+        label
+    );
+    assert!(recovered.property_index_for(&label, &property).is_some());
+}
+
+#[test]
+fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
+    let provider = CoreProvider::new_for_recovery();
+    let label = intern("DriftPerson").unwrap();
+    let property = intern("age").unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::PropertyIndexCreated {
+                label,
+                property,
+                kind: SchemaPropertyIndexKind::I64,
+            },
+        },
+    )
+    .unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(label),
+            properties: props([(property, Value::String(intern("not-an-int").unwrap()))]),
+        },
+    )
+    .unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let rows = recovered
+        .nodes_with_property_eq(&label, &property, &Value::Int(42))
+        .unwrap();
+    assert!(rows.is_empty());
+    assert!(recovered.property_index_for(&label, &property).is_some());
 }

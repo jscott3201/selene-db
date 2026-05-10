@@ -13,10 +13,8 @@ description = "Built-in procedure pack registry for selene-db"
 papaya.workspace = true
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-gql = { path = "../selene-gql", version = "0.0.0" }
-thiserror.workspace = true
-
-[dev-dependencies]
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
+thiserror.workspace = true
 
 [lints]
 workspace = true

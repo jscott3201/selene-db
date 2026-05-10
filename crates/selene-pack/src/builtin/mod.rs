@@ -1,5 +1,7 @@
 //! Built-in procedure definitions.
 
+pub(crate) mod create_index;
+pub(crate) mod drop_index;
 pub(crate) mod health;
 
 use selene_gql::{

@@ -10,7 +10,10 @@ use selene_gql::{
 };
 
 use crate::{
-    builtin::{GraphProcedureBuiltIn, MutationProcedureBuiltIn, health::SeleneHealth},
+    builtin::{
+        GraphProcedureBuiltIn, MutationProcedureBuiltIn, create_index::SeleneCreateIndex,
+        drop_index::SeleneDropIndex, health::SeleneHealth,
+    },
     error::RegistryError,
 };
 
@@ -47,6 +50,8 @@ impl ProcedurePackRegistry {
     pub fn with_builtins() -> Result<Self, RegistryError> {
         ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(SeleneHealth)
+            .with_mutation_builtin(SeleneCreateIndex)
+            .with_mutation_builtin(SeleneDropIndex)
             .build()
     }
 }
@@ -116,7 +121,6 @@ impl ProcedurePackRegistryBuilder {
         self
     }
 
-    #[allow(dead_code)] // Reserved for BRIEF-42's first mutation-tier built-in.
     pub(crate) fn with_mutation_builtin<T>(mut self, builtin: T) -> Self
     where
         T: MutationProcedureBuiltIn,

@@ -230,6 +230,14 @@ fn schema_change_postcard_round_trip() {
             label: edge_label,
             def: EdgeTypeDef::new(edge_label, NodeTypeRef(node_label), NodeTypeRef(node_label)),
         },
+        SchemaChange::NodeTypeDropped {
+            graph_type: graph_type_id,
+            name: node_label,
+        },
+        SchemaChange::EdgeTypeDropped {
+            graph_type: graph_type_id,
+            name: edge_label,
+        },
         SchemaChange::RecordTypeAdded {
             graph_type: graph_type_id,
             def: RecordTypeDef {
@@ -251,6 +259,15 @@ fn schema_change_postcard_round_trip() {
             pack_name: istr("serde.pack"),
             version: istr("1.0.0"),
             reason,
+        },
+        SchemaChange::PropertyIndexCreated {
+            label: node_label,
+            property: istr("serde.schema.indexed"),
+            kind: SchemaPropertyIndexKind::I64,
+        },
+        SchemaChange::PropertyIndexDropped {
+            label: node_label,
+            property: istr("serde.schema.indexed"),
         },
     ];
     for change in changes {

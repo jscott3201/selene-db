@@ -1,6 +1,7 @@
 //! Typed mutation funnel per spec 03 section 4.3.
 
 mod catalog;
+mod property_index;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

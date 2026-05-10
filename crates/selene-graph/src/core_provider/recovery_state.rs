@@ -19,7 +19,7 @@ use crate::core_provider::{
 use crate::graph::{GraphMeta, SeleneGraph};
 use crate::graph_types::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 use crate::store::{edge_row_index, node_row_index};
-use crate::typed_index::TypedIndex;
+use crate::typed_index::{TypedIndex, TypedIndexKind};
 
 /// Accumulator populated by snapshot sections and WAL replay.
 #[derive(Default)]
@@ -27,6 +27,7 @@ pub(crate) struct RecoveryState {
     meta: Option<MetaPayload>,
     graph_types: BTreeMap<u32, Arc<GraphTypeDef>>,
     pending_schema_changes: Vec<SchemaChange>,
+    pending_property_index_changes: Vec<PendingIndex>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
@@ -34,6 +35,19 @@ pub(crate) struct RecoveryState {
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PendingIndex {
+    Create {
+        label: IStr,
+        property: IStr,
+        kind: TypedIndexKind,
+    },
+    Drop {
+        label: IStr,
+        property: IStr,
+    },
+}
 
 impl RecoveryState {
     /// Construct an empty recovery accumulator.
@@ -157,7 +171,9 @@ impl RecoveryState {
                 row.alive = false;
             }
             Change::SchemaChanged { change, .. } => {
-                if is_catalog_schema_change(change) {
+                if let Some(pending) = pending_property_index_change(change) {
+                    self.pending_property_index_changes.push(pending);
+                } else if is_catalog_schema_change(change) {
                     self.pending_schema_changes.push(change.clone());
                 }
             }
@@ -269,6 +285,7 @@ impl RecoveryState {
                 Arc::new(TypedIndex::new(entry.kind)),
             );
         }
+        replay_property_index_changes(&mut graph, &self.pending_property_index_changes)?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
             crate::type_validator::validate_entity_state(&graph, type_def).map_err(|error| {
                 crate::GraphError::Provider(inconsistent(format!(
@@ -280,6 +297,25 @@ impl RecoveryState {
     }
 }
 
+fn pending_property_index_change(change: &SchemaChange) -> Option<PendingIndex> {
+    match change {
+        SchemaChange::PropertyIndexCreated {
+            label,
+            property,
+            kind,
+        } => Some(PendingIndex::Create {
+            label: *label,
+            property: *property,
+            kind: typed_kind_from(*kind),
+        }),
+        SchemaChange::PropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
+            label: *label,
+            property: *property,
+        }),
+        _ => None,
+    }
+}
+
 fn is_catalog_schema_change(change: &SchemaChange) -> bool {
     matches!(
         change,
@@ -288,6 +324,43 @@ fn is_catalog_schema_change(change: &SchemaChange) -> bool {
             | SchemaChange::NodeTypeDropped { .. }
             | SchemaChange::EdgeTypeDropped { .. }
     )
+}
+
+fn replay_property_index_changes(
+    graph: &mut SeleneGraph,
+    changes: &[PendingIndex],
+) -> crate::GraphResult<()> {
+    for change in changes {
+        match *change {
+            PendingIndex::Create {
+                label,
+                property,
+                kind,
+            } => {
+                let index = crate::property_index::build_property_index_lenient(
+                    graph, label, property, kind,
+                )?;
+                graph
+                    .property_index
+                    .insert((label, property), Arc::new(index));
+            }
+            PendingIndex::Drop { label, property } => {
+                graph.property_index.remove(&(label, property));
+            }
+        }
+    }
+    Ok(())
+}
+
+const fn typed_kind_from(kind: selene_core::SchemaPropertyIndexKind) -> TypedIndexKind {
+    match kind {
+        selene_core::SchemaPropertyIndexKind::I64 => TypedIndexKind::I64,
+        selene_core::SchemaPropertyIndexKind::F64 => TypedIndexKind::F64,
+        selene_core::SchemaPropertyIndexKind::String => TypedIndexKind::String,
+        selene_core::SchemaPropertyIndexKind::Date => TypedIndexKind::Date,
+        selene_core::SchemaPropertyIndexKind::LocalDateTime => TypedIndexKind::LocalDateTime,
+        selene_core::SchemaPropertyIndexKind::Uuid => TypedIndexKind::Uuid,
+    }
 }
 
 fn replay_schema_changes(
