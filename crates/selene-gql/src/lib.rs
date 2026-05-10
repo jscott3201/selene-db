@@ -59,11 +59,12 @@ pub use crate::plan::{
     TypedIndexBounds, TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
-    EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
-    ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry,
-    ProcedureSignature, ProcedureTier,
+    EmptyProcedureRegistry, ProcedureError, ProcedureHandle, ProcedureMetadata,
+    ProcedureMutability, ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter,
+    ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier, Value,
 };
 pub use crate::runtime::{
-    AdaptiveOptimizer, Binding, BindingTable, ExecutorError, Session, StatementOutput, TxContext,
-    execute_pattern, execute_pipeline, execute_statement,
+    AdaptiveOptimizer, Binding, BindingTable, ExecutorError, GraphContext, MutationContext,
+    ProcedureContext, Session, StatementOutput, TxContext, execute_pattern, execute_pipeline,
+    execute_statement,
 };

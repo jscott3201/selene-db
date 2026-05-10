@@ -3,7 +3,7 @@
 mod exec_common;
 
 use exec_common::{ExecFixture, execute_pattern, planned};
-use selene_gql::{ExecutorError, JoinTree};
+use selene_gql::{EmptyProcedureRegistry, ExecutorError, JoinTree};
 
 #[test]
 fn wco_marker_unwraps_to_inner_join_tree_in_phase_a() {
@@ -11,7 +11,8 @@ fn wco_marker_unwraps_to_inner_join_tree_in_phase_a() {
     let plan = planned("MATCH (a)-[:KNOWS]->(b) RETURN a, b");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
     let caps = plan.impl_defined_caps;
-    let ctx = selene_gql::TxContext::read_only(fixture.graph.read(), &caps);
+    let ctx =
+        selene_gql::TxContext::read_only(fixture.graph.read(), &caps, &EmptyProcedureRegistry);
     let expected = execute_pattern(pattern, &ctx);
 
     let mut wrapped = pattern.clone();
@@ -36,7 +37,8 @@ fn wco_with_empty_intersection_returns_implementation_defined() {
         node_id_ordering: Vec::new(),
     };
     let caps = plan.impl_defined_caps;
-    let ctx = selene_gql::TxContext::read_only(fixture.graph.read(), &caps);
+    let ctx =
+        selene_gql::TxContext::read_only(fixture.graph.read(), &caps, &EmptyProcedureRegistry);
 
     let err = selene_gql::execute_pattern(pattern, &ctx).expect_err("wco marker errors");
 
@@ -59,7 +61,8 @@ fn wco_with_multiple_branches_returns_implementation_defined() {
         node_id_ordering: Vec::new(),
     };
     let caps = plan.impl_defined_caps;
-    let ctx = selene_gql::TxContext::read_only(fixture.graph.read(), &caps);
+    let ctx =
+        selene_gql::TxContext::read_only(fixture.graph.read(), &caps, &EmptyProcedureRegistry);
 
     let err = selene_gql::execute_pattern(pattern, &ctx).expect_err("wco marker errors");
 

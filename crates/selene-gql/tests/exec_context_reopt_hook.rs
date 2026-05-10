@@ -9,8 +9,8 @@ use std::sync::{
 
 use selene_core::GraphId;
 use selene_gql::{
-    AdaptiveOptimizer, Binding, BindingTable, BindingTableSchema, ImplDefinedCaps, PipelineOpId,
-    TxContext, execute_pipeline,
+    AdaptiveOptimizer, Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry,
+    ImplDefinedCaps, PipelineOpId, TxContext, execute_pipeline,
 };
 use selene_graph::SeleneGraph;
 
@@ -41,6 +41,7 @@ fn tx_context_with_reopt_hook_carries_through_dispatch() {
     let mut ctx = TxContext::read_only_with_reopt(
         Arc::new(SeleneGraph::new(GraphId::new(1_001))),
         &caps,
+        &EmptyProcedureRegistry,
         &hook,
     );
     let plan = exec_common::planned("RETURN 1 AS n");

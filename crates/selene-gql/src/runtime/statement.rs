@@ -22,7 +22,7 @@ pub enum StatementOutput {
 pub fn execute_statement(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
-    _registry: &dyn ProcedureRegistry,
+    registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
     if session.aborted && plan.category != StatementCategory::TransactionControl {
         return Err(ExecutorError::InFailedTransaction {
@@ -30,9 +30,9 @@ pub fn execute_statement(
         });
     }
     match plan.category {
-        StatementCategory::ReadOnly => execute_read_only(plan, session),
+        StatementCategory::ReadOnly => execute_read_only(plan, session, registry),
         StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
-            execute_write(plan, session)
+            execute_write(plan, session, registry)
         }
         StatementCategory::TransactionControl => execute_transaction_control(plan, session),
     }
@@ -41,13 +41,14 @@ pub fn execute_statement(
 fn execute_read_only(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
     let snapshot = session.graph().read();
     let table = if let Some(txn) = session.active_txn.as_mut() {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, txn);
+        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn);
         execute_plan(plan, &mut ctx)?
     } else {
-        let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps);
+        let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps, registry);
         execute_plan(plan, &mut ctx)?
     };
     Ok(output_from_table(plan, table))
@@ -56,16 +57,18 @@ fn execute_read_only(
 fn execute_write(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
     if session.active_txn.is_some() {
-        return execute_inside_explicit_tx(plan, session);
+        return execute_inside_explicit_tx(plan, session, registry);
     }
-    execute_auto_commit(plan, session)
+    execute_auto_commit(plan, session, registry)
 }
 
 fn execute_inside_explicit_tx(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
     let snapshot = session.graph().read();
     let txn = session
@@ -74,7 +77,7 @@ fn execute_inside_explicit_tx(
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "explicit-TX path entered without active transaction",
         })?;
-    let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, txn);
+    let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn);
     let result = execute_plan(plan, &mut ctx);
     if result.is_err() {
         session.aborted = true;
@@ -85,12 +88,13 @@ fn execute_inside_explicit_tx(
 fn execute_auto_commit(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
     let snapshot = session.graph().read();
     let principal = session.principal();
     let mut txn = session.graph().begin_write();
     let result = {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, &mut txn);
+        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, &mut txn);
         execute_plan(plan, &mut ctx)
     };
     match result {

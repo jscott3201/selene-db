@@ -6,6 +6,7 @@
 
 mod binding_table;
 mod context;
+mod context_tiers;
 mod error;
 pub(crate) mod evaluator;
 mod expand;
@@ -23,6 +24,7 @@ mod wco;
 
 pub use binding_table::{Binding, BindingTable};
 pub use context::{AdaptiveOptimizer, TxContext};
+pub use context_tiers::{GraphContext, MutationContext, ProcedureContext};
 pub use error::ExecutorError;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;

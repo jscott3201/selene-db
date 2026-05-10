@@ -5,9 +5,8 @@ use std::collections::HashMap;
 use selene_core::{IStr, intern};
 use selene_gql::{
     GqlType, ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
-    ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureSignature,
-    ProcedureTier,
-    procedure_registry::{ProcedureError, ProcedureResult, Value},
+    ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
+    ProcedureSignature, ProcedureTier, Value, procedure_registry::ProcedureError,
 };
 
 /// Test registry implementing selene-gql's planner-facing procedure boundary.
@@ -68,6 +67,20 @@ impl MockProcedureRegistry {
         self
     }
 
+    /// Register a procedure with explicit mutability and tier metadata.
+    #[must_use]
+    pub fn with_procedure_tier(
+        mut self,
+        name: Vec<IStr>,
+        parameters: Vec<ProcedureParameter>,
+        output_columns: Vec<ProcedureOutputColumn>,
+        mutability: ProcedureMutability,
+        tier: ProcedureTier,
+    ) -> Self {
+        self.insert_procedure_with_tier(name, parameters, output_columns, mutability, tier);
+        self
+    }
+
     /// Register a procedure with a specific mutability in place.
     pub fn insert_procedure_with_mutability(
         &mut self,
@@ -75,6 +88,24 @@ impl MockProcedureRegistry {
         parameters: Vec<ProcedureParameter>,
         output_columns: Vec<ProcedureOutputColumn>,
         mutability: ProcedureMutability,
+    ) {
+        self.insert_procedure_with_tier(
+            name,
+            parameters,
+            output_columns,
+            mutability,
+            tier_for_mutability(mutability),
+        );
+    }
+
+    /// Register a procedure with explicit mutability and tier metadata in place.
+    pub fn insert_procedure_with_tier(
+        &mut self,
+        name: Vec<IStr>,
+        parameters: Vec<ProcedureParameter>,
+        output_columns: Vec<ProcedureOutputColumn>,
+        mutability: ProcedureMutability,
+        tier: ProcedureTier,
     ) {
         let handle = ProcedureHandle::new(self.next_handle);
         self.next_handle += 1;
@@ -86,7 +117,7 @@ impl MockProcedureRegistry {
                 output_schema: ProcedureOutputSchema {
                     columns: output_columns,
                 },
-                tier: ProcedureTier::Graph,
+                tier,
                 mutability,
                 capability_required: None,
             },
@@ -103,8 +134,18 @@ impl ProcedureRegistry for MockProcedureRegistry {
         &self,
         _handle: ProcedureHandle,
         _args: &[Value],
+        _ctx: &mut selene_gql::ProcedureContext<'_, '_>,
     ) -> Result<ProcedureResult, ProcedureError> {
-        Err(ProcedureError::M2Placeholder)
+        Err(ProcedureError::UnknownProcedure { name: Box::new([]) })
+    }
+}
+
+const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
+    match mutability {
+        ProcedureMutability::Read => ProcedureTier::Graph,
+        ProcedureMutability::GraphWrite
+        | ProcedureMutability::SchemaWrite
+        | ProcedureMutability::Admin => ProcedureTier::Mutation,
     }
 }
 

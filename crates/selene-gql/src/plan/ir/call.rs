@@ -2,9 +2,11 @@
 
 use selene_core::IStr;
 
-use crate::{ProcedureHandle, ProcedureMutability, ProcedureOutputSchema, SourceSpan};
+use crate::{
+    ProcedureHandle, ProcedureMutability, ProcedureOutputSchema, ProcedureTier, SourceSpan,
+};
 
-use super::ProjectExpr;
+use super::{BindingTableColumn, ProjectExpr};
 
 /// Planned procedure call.
 #[derive(Clone, Debug)]
@@ -19,6 +21,10 @@ pub struct PlannedCall {
     pub yield_cols: Vec<PlannedYieldItem>,
     /// Procedure output schema.
     pub output_schema: ProcedureOutputSchema,
+    /// Yielded binding-table schema appended by this CALL.
+    pub yield_schema: Vec<BindingTableColumn>,
+    /// Procedure execution tier.
+    pub tier: ProcedureTier,
     /// Procedure mutability class.
     pub mutability: ProcedureMutability,
     /// Source span.

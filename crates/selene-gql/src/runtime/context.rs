@@ -5,7 +5,7 @@ use std::{fmt, sync::Arc};
 use selene_graph::{Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
-    SourceSpan,
+    ProcedureRegistry, SourceSpan,
     plan::{ImplDefinedCaps, PipelineOpId},
     runtime::ExecutorError,
 };
@@ -26,6 +26,7 @@ pub trait AdaptiveOptimizer: Send + Sync {
 pub struct TxContext<'a, 'g> {
     snapshot: Arc<SeleneGraph>,
     impl_defined_caps: &'a ImplDefinedCaps,
+    registry: &'a dyn ProcedureRegistry,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
@@ -33,10 +34,15 @@ pub struct TxContext<'a, 'g> {
 impl<'a, 'g> TxContext<'a, 'g> {
     /// Construct a read-only context over an immutable graph snapshot.
     #[must_use]
-    pub fn read_only(snapshot: Arc<SeleneGraph>, impl_defined_caps: &'a ImplDefinedCaps) -> Self {
+    pub fn read_only(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+    ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
+            registry,
             reopt_hook: None,
             write_txn: None,
         }
@@ -47,11 +53,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
     pub fn read_only_with_reopt(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
         reopt_hook: &'a dyn AdaptiveOptimizer,
     ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
+            registry,
             reopt_hook: Some(reopt_hook),
             write_txn: None,
         }
@@ -62,11 +70,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
     pub fn write(
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
     ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
+            registry,
             reopt_hook: None,
             write_txn: Some(txn),
         }
@@ -134,8 +144,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
 
     /// Borrow the planner/executor implementation-defined caps.
     #[must_use]
-    pub const fn impl_defined_caps(&self) -> &ImplDefinedCaps {
+    pub const fn impl_defined_caps(&self) -> &'a ImplDefinedCaps {
         self.impl_defined_caps
+    }
+
+    /// Borrow the procedure registry for this statement.
+    #[must_use]
+    pub const fn registry(&self) -> &'a dyn ProcedureRegistry {
+        self.registry
     }
 
     /// Borrow the adaptive optimizer hook, when one was supplied.

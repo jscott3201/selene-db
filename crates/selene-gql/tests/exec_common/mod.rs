@@ -138,7 +138,11 @@ impl ExecFixture {
     }
 
     pub fn context_caps<'a>(&self, plan: &'a ExecutionPlan) -> TxContext<'a, 'a> {
-        TxContext::read_only(self.graph.read(), &plan.impl_defined_caps)
+        TxContext::read_only(
+            self.graph.read(),
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+        )
     }
 
     pub fn index_catalog(&self) -> MockIndexCatalog {
@@ -307,6 +311,7 @@ pub fn empty_graph_context(caps: &selene_gql::ImplDefinedCaps) -> TxContext<'_, 
     TxContext::read_only(
         Arc::new(selene_graph::SeleneGraph::new(GraphId::new(999))),
         caps,
+        &EmptyProcedureRegistry,
     )
 }
 

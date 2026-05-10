@@ -1,6 +1,6 @@
 //! Executor diagnostics and GQLSTATUS mapping.
 
-use crate::{GqlStatus, SourceSpan};
+use crate::{GqlStatus, ProcedureError, SourceSpan};
 
 /// Query execution failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -78,6 +78,18 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Procedure registry execution failed.
+    #[error("procedure execution failed: {source}")]
+    #[diagnostic(code(SLENE_X_PROC))]
+    Procedure {
+        /// Underlying procedure error.
+        #[source]
+        source: ProcedureError,
+        /// Source span for the CALL site.
+        #[label("procedure failed")]
+        span: SourceSpan,
+    },
+
     /// Implementation-defined executor surface not supported by this brief.
     #[error("implementation-defined executor failure: {detail}")]
     #[diagnostic(code(SLENE_X_XX500))]
@@ -99,6 +111,7 @@ impl ExecutorError {
             | Self::NoActiveTransaction { .. }
             | Self::InFailedTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
             Self::GraphMutation { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+            Self::Procedure { source, .. } => source.gqlstatus(),
             Self::ImplementationDefined { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
         }
     }

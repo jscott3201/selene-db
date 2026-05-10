@@ -4,7 +4,7 @@ mod exec_common;
 
 use exec_common::{ExecFixture, edge_ids_for, execute_pattern, istr, node_ids_for, planned, props};
 use selene_core::{GraphId, LabelSet};
-use selene_gql::{ImplDefinedCaps, TxContext};
+use selene_gql::{EmptyProcedureRegistry, ImplDefinedCaps, TxContext};
 use selene_graph::SharedGraph;
 
 #[test]
@@ -76,7 +76,7 @@ fn expand_both_dedups_self_loops_to_one_row() {
     }
     let plan = planned("MATCH (a:LoopNode)-[e:LOOPS]-(b) RETURN a, e, b");
     let caps = ImplDefinedCaps::default();
-    let ctx = TxContext::read_only(graph.read(), &caps);
+    let ctx = TxContext::read_only(graph.read(), &caps, &EmptyProcedureRegistry);
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
 
     let table = execute_pattern(pattern, &ctx);

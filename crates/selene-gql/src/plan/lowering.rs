@@ -208,7 +208,7 @@ fn lower_query_pipeline(
             }
             PipelineStatement::Call(call) => {
                 let planned = call::plan_call(call, registry, analyzed)?;
-                visible.extend(call::yield_to_columns(&planned)?);
+                visible.extend(planned.yield_schema.clone());
                 ops.push(PipelineOp::Call(planned));
             }
         }
