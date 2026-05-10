@@ -259,9 +259,19 @@ fn collect_join_tree_types(tree: &JoinTree, types: &mut BTreeMap<ExprId, Analyze
             collect_filter_types(&edge.property_predicates, types);
             collect_filter_types(&edge.right_property_predicates, types);
         }
-        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+        JoinTree::HashJoin { left, right, .. } => {
             collect_join_tree_types(left, types);
             collect_join_tree_types(right, types);
+        }
+        JoinTree::Outer {
+            left,
+            right,
+            right_filters,
+            ..
+        } => {
+            collect_join_tree_types(left, types);
+            collect_join_tree_types(right, types);
+            collect_filter_types(right_filters, types);
         }
         JoinTree::WorstCaseOptimal { intersection, .. } => {
             for child in intersection {
@@ -401,9 +411,19 @@ fn collect_join_tree_predicates<'a>(tree: &'a JoinTree, predicates: &mut Vec<&'a
             predicates.extend(&edge.property_predicates);
             predicates.extend(&edge.right_property_predicates);
         }
-        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+        JoinTree::HashJoin { left, right, .. } => {
             collect_join_tree_predicates(left, predicates);
             collect_join_tree_predicates(right, predicates);
+        }
+        JoinTree::Outer {
+            left,
+            right,
+            right_filters,
+            ..
+        } => {
+            collect_join_tree_predicates(left, predicates);
+            collect_join_tree_predicates(right, predicates);
+            predicates.extend(right_filters);
         }
         JoinTree::WorstCaseOptimal { intersection, .. } => {
             for child in intersection {
@@ -450,9 +470,19 @@ fn assert_join_tree_refs(tree: &JoinTree, allowed: &BTreeSet<BindingId>, slug: &
             assert_pattern_filter_refs(&edge.property_predicates, allowed, slug);
             assert_pattern_filter_refs(&edge.right_property_predicates, allowed, slug);
         }
-        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+        JoinTree::HashJoin { left, right, .. } => {
             assert_join_tree_refs(left, allowed, slug);
             assert_join_tree_refs(right, allowed, slug);
+        }
+        JoinTree::Outer {
+            left,
+            right,
+            right_filters,
+            ..
+        } => {
+            assert_join_tree_refs(left, allowed, slug);
+            assert_join_tree_refs(right, allowed, slug);
+            assert_pattern_filter_refs(right_filters, allowed, slug);
         }
         JoinTree::WorstCaseOptimal { intersection, .. } => {
             for child in intersection {

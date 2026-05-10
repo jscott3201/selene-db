@@ -490,6 +490,7 @@ fn push_visible_binding(
             })?;
     visible.push(BindingTableColumn {
         name: Some(declaration.name()),
+        hidden: None,
         ty: declaration.ty().clone(),
     });
     Ok(())

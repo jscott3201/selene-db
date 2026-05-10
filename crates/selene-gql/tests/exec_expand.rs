@@ -88,6 +88,23 @@ fn expand_both_dedups_self_loops_to_one_row() {
 }
 
 #[test]
+fn expand_chains_through_anonymous_intermediate_node() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (a:Person)-[:KNOWS]->()-[:KNOWS]->(b) RETURN a, b");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+
+    let table = execute_pattern(pattern, &ctx);
+    let mut pairs = node_ids_for(&table, "a")
+        .into_iter()
+        .zip(node_ids_for(&table, "b"))
+        .collect::<Vec<_>>();
+    pairs.sort();
+
+    assert_eq!(pairs, vec![(Some(1), Some(4))]);
+}
+
+#[test]
 fn expand_filters_edges_by_label_predicate() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (a)-[:MISSING]->(b) RETURN a, b");

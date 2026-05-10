@@ -107,6 +107,7 @@ fn lower_query_pipeline(
                 for project in &projects {
                     visible.push(BindingTableColumn {
                         name: project.alias,
+                        hidden: None,
                         ty: project.ty.clone(),
                     });
                 }
@@ -119,6 +120,7 @@ fn lower_query_pipeline(
                 let source = expr::project_expr(&unwind.source, None, analyzed)?;
                 visible.push(BindingTableColumn {
                     name: Some(unwind.alias),
+                    hidden: None,
                     ty: AnalyzedType::DYNAMIC,
                 });
                 ops.push(PipelineOp::Unwind {
@@ -248,6 +250,7 @@ fn projects_to_columns(projects: &[ProjectExpr]) -> Vec<BindingTableColumn> {
         .iter()
         .map(|project| BindingTableColumn {
             name: project.alias,
+            hidden: None,
             ty: project.ty.clone(),
         })
         .collect()
@@ -263,6 +266,7 @@ pub(super) fn visible_after_pattern(
                 .filter(|binding| binding.element != BindingElement::Path)
                 .map(|binding| BindingTableColumn {
                     name: Some(binding.name),
+                    hidden: None,
                     ty: binding.ty.clone(),
                 })
                 .collect()

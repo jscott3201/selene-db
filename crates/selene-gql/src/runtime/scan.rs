@@ -6,12 +6,12 @@ use std::ops::Bound::{Excluded, Included, Unbounded};
 use selene_core::{EdgeId, IStr, LabelSet, NodeId, Value};
 
 use crate::{
-    BindingDef, FilterPredicate, FilterPredicateKind, LabelExpr, Literal, NodeOrEdgeScan,
-    PatternPlan, ScanAccess, ScanKind, TypedIndexBounds,
+    FilterPredicate, FilterPredicateKind, LabelExpr, Literal, NodeOrEdgeScan, PatternPlan,
+    ScanAccess, ScanKind, TypedIndexBounds,
     runtime::{Binding, BindingTableSchema, ExecutorError},
 };
 
-use super::{TxContext, evaluator, value_compare};
+use super::{TxContext, evaluator, pattern, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
 pub(crate) fn scan_pattern(
@@ -40,7 +40,7 @@ pub(crate) fn scan_entities(
             continue;
         }
         let entity = entity_value(scan.kind, row);
-        let Some(binding) = binding_for_scan(scan, pattern, schema, seed, entity.clone()) else {
+        let Some(binding) = binding_for_scan(scan, pattern, schema, seed, entity.clone())? else {
             continue;
         };
         if predicates_pass(scan, pattern, &binding, schema, &entity, ctx)? {
@@ -56,29 +56,18 @@ fn binding_for_scan(
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
     entity: Value,
-) -> Option<Binding> {
+) -> Result<Option<Binding>, ExecutorError> {
     let mut values = seed
         .map(|row| row.values().to_vec())
         .unwrap_or_else(|| vec![Value::Null; schema.columns.len()]);
     values.resize(schema.columns.len(), Value::Null);
-    for (index, column) in schema.columns.iter().enumerate() {
-        if column
-            .name
-            .and_then(|name| binding_by_name(pattern, name))
-            .is_some_and(|binding| Some(binding.binding) == scan.binding)
-        {
-            if !matches!(values[index], Value::Null) && !value_eq_non_null(&values[index], &entity)
-            {
-                return None;
-            }
-            values[index] = entity.clone();
-        }
+    if !pattern::set_binding_value(&mut values, pattern, schema, scan.binding, entity.clone())? {
+        return Ok(None);
     }
-    Some(Binding::new(values))
-}
-
-fn binding_by_name(pattern: &PatternPlan, name: IStr) -> Option<&BindingDef> {
-    pattern.bindings.iter().find(|binding| binding.name == name)
+    if !pattern::set_hidden_value(&mut values, schema, scan.hidden_binding, entity)? {
+        return Ok(None);
+    }
+    Ok(Some(Binding::new(values)))
 }
 
 fn candidate_rows(scan: &NodeOrEdgeScan, ctx: &TxContext<'_>) -> Vec<u32> {

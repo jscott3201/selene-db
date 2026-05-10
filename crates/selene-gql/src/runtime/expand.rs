@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
-    EdgeDirection, EdgeMatch, JoinTree, PatternPlan, ScanKind,
+    EdgeDirection, EdgeMatch, JoinTree, PatternPlan,
     runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
 };
 
@@ -17,10 +17,6 @@ pub(crate) fn execute(
     direction: EdgeDirection,
     env: pattern::WalkContext<'_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
-    if edge.left_binding.is_none() {
-        return execute_anonymous_source(child, edge, direction, env);
-    }
-
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut rows = Vec::new();
     let mut state = ExpandState {
@@ -32,41 +28,6 @@ pub(crate) fn execute(
     };
     for row in child_rows {
         let Some(source) = source_node(edge, env.pattern, env.schema, &row)? else {
-            continue;
-        };
-        expand_from_source(source, &row, direction, &mut state)?;
-    }
-    Ok(rows)
-}
-
-fn execute_anonymous_source(
-    child: &JoinTree,
-    edge: &EdgeMatch,
-    direction: EdgeDirection,
-    env: pattern::WalkContext<'_, '_, '_>,
-) -> Result<Vec<Binding>, ExecutorError> {
-    let JoinTree::Scan(scan_node) = child else {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "expand source binding missing",
-        });
-    };
-    if scan_node.kind != ScanKind::Node || scan_node.binding.is_some() {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "expand source binding missing",
-        });
-    }
-
-    let mut rows = Vec::new();
-    let mut state = ExpandState {
-        edge,
-        pattern_plan: env.pattern,
-        schema: env.schema,
-        ctx: env.ctx,
-        output: &mut rows,
-    };
-    for (entity, row) in scan::scan_entities(scan_node, env.pattern, env.schema, env.seed, env.ctx)?
-    {
-        let Value::NodeRef(source) = entity else {
             continue;
         };
         expand_from_source(source, &row, direction, &mut state)?;
@@ -88,10 +49,14 @@ fn source_node(
     schema: &BindingTableSchema,
     row: &Binding,
 ) -> Result<Option<NodeId>, ExecutorError> {
-    let Some(binding) = edge.left_binding else {
-        return Ok(None);
+    let index = if let Some(binding) = edge.left_binding {
+        pattern::binding_index(pattern_plan, schema, binding)
+    } else if let Some(hidden) = edge.left_hidden_binding {
+        pattern::hidden_index(schema, hidden)
+    } else {
+        None
     };
-    let Some(index) = pattern::binding_index(pattern_plan, schema, binding) else {
+    let Some(index) = index else {
         return Err(ExecutorError::ImplementationDefined {
             detail: "expand source binding column missing",
         });
@@ -170,11 +135,27 @@ fn maybe_emit(
     )? {
         return Ok(());
     }
+    if !pattern::set_hidden_value(
+        &mut values,
+        state.schema,
+        state.edge.hidden_binding,
+        Value::EdgeRef(edge_id),
+    )? {
+        return Ok(());
+    }
     if !pattern::set_binding_value(
         &mut values,
         state.pattern_plan,
         state.schema,
         state.edge.right_binding,
+        Value::NodeRef(right_node),
+    )? {
+        return Ok(());
+    }
+    if !pattern::set_hidden_value(
+        &mut values,
+        state.schema,
+        state.edge.right_hidden_binding,
         Value::NodeRef(right_node),
     )? {
         return Ok(());

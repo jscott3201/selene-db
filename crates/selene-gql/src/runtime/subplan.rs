@@ -13,6 +13,7 @@ pub(crate) fn execute(
     seed: Option<&Binding>,
     ctx: &TxContext<'_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
+    ensure_phase_a_compatible(plan, seed)?;
     let Some(pattern_plan) = &plan.pattern_plan else {
         return Err(ExecutorError::ImplementationDefined {
             detail: "Subplan without pattern plan",
@@ -24,4 +25,21 @@ pub(crate) fn execute(
         .iter()
         .map(|row| pattern::project_row_to_schema(row, table.schema(), schema, seed))
         .collect())
+}
+
+fn ensure_phase_a_compatible(
+    plan: &ExecutionPlan,
+    seed: Option<&Binding>,
+) -> Result<(), ExecutorError> {
+    if seed.is_some() {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "correlated subplans not yet supported",
+        });
+    }
+    if !plan.pipeline.is_empty() {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "Subplan pipeline ops not yet supported",
+        });
+    }
+    Ok(())
 }

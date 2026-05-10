@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 use crate::{
-    JoinTree,
+    FilterPredicate, JoinTree,
     runtime::{Binding, ExecutorError},
 };
 
@@ -13,6 +13,7 @@ pub(crate) fn execute(
     left: &JoinTree,
     right: &JoinTree,
     key: &[IStr],
+    right_filters: &[FilterPredicate],
     env: pattern::WalkContext<'_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let left_rows = pattern::walk_join_tree(left, env)?;
@@ -27,6 +28,15 @@ pub(crate) fn execute(
         let right_rows = pattern::walk_join_tree(right, right_env)?;
         let mut matched = false;
         for right_row in right_rows {
+            if !pattern::filter_predicates_pass(
+                right_filters,
+                env.pattern,
+                &right_row,
+                env.schema,
+                env.ctx,
+            )? {
+                continue;
+            }
             if !pattern::rows_match_on_key(&left_row, &right_row, env.schema, key)? {
                 continue;
             }

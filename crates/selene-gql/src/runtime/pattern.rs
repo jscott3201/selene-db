@@ -1,10 +1,12 @@
 //! Pattern join-tree executor.
 
+use std::collections::BTreeMap;
+
 use selene_core::{IStr, Value};
 
 use crate::{
-    BindingElement, BindingId, BindingTableColumn, BindingTableSchema, FilterPredicate, JoinTree,
-    PatternPlan,
+    AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
+    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind,
     runtime::{Binding, BindingTable, ExecutorError, TxContext},
 };
 
@@ -62,29 +64,81 @@ pub(crate) fn walk_join_tree(
             key,
             build_side,
         } => hash_join::execute(left, right, key, *build_side, env),
-        JoinTree::Outer { left, right, key } => outer::execute(left, right, key, env),
+        JoinTree::Outer {
+            left,
+            right,
+            key,
+            right_filters,
+        } => outer::execute(left, right, key, right_filters, env),
         JoinTree::WorstCaseOptimal { intersection, .. } => wco::execute_phase_a(intersection, env),
         JoinTree::Subplan(plan) => subplan::execute(plan, env.schema, env.seed, env.ctx),
     }
 }
 
 pub(crate) fn schema_for_pattern(pattern: &PatternPlan) -> BindingTableSchema {
-    BindingTableSchema {
-        columns: pattern
-            .bindings
-            .iter()
-            .filter(|binding| {
-                matches!(
-                    binding.element,
-                    BindingElement::Node | BindingElement::Edge | BindingElement::Path
-                )
-            })
-            .map(|binding| BindingTableColumn {
-                name: Some(binding.name),
-                ty: binding.ty.clone(),
-            })
-            .collect(),
+    let mut columns = pattern
+        .bindings
+        .iter()
+        .filter(|binding| {
+            matches!(
+                binding.element,
+                BindingElement::Node | BindingElement::Edge | BindingElement::Path
+            )
+        })
+        .map(|binding| BindingTableColumn {
+            name: Some(binding.name),
+            hidden: None,
+            ty: binding.ty.clone(),
+        })
+        .collect::<Vec<_>>();
+    let mut hidden = BTreeMap::new();
+    collect_hidden_slots(&pattern.join_tree, &mut hidden);
+    columns.extend(hidden.into_iter().map(|(hidden, ty)| BindingTableColumn {
+        name: None,
+        hidden: Some(hidden),
+        ty,
+    }));
+    BindingTableSchema { columns }
+}
+
+fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, AnalyzedType>) {
+    match tree {
+        JoinTree::Scan(scan) => {
+            insert_hidden(slots, scan.hidden_binding, scan.kind);
+        }
+        JoinTree::Expand { child, edge, .. } => {
+            collect_hidden_slots(child, slots);
+            insert_hidden(slots, edge.left_hidden_binding, ScanKind::Node);
+            insert_hidden(slots, edge.hidden_binding, ScanKind::Edge);
+            insert_hidden(slots, edge.right_hidden_binding, ScanKind::Node);
+        }
+        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+            collect_hidden_slots(left, slots);
+            collect_hidden_slots(right, slots);
+        }
+        JoinTree::WorstCaseOptimal { intersection, .. } => {
+            for tree in intersection {
+                collect_hidden_slots(tree, slots);
+            }
+        }
+        JoinTree::Subplan(_) => {}
     }
+}
+
+fn insert_hidden(
+    slots: &mut BTreeMap<HiddenBindingId, AnalyzedType>,
+    hidden: Option<HiddenBindingId>,
+    kind: ScanKind,
+) {
+    let Some(hidden) = hidden else {
+        return;
+    };
+    slots.entry(hidden).or_insert_with(|| {
+        AnalyzedType::Resolved(match kind {
+            ScanKind::Node => GqlType::NodeRef,
+            ScanKind::Edge => GqlType::EdgeRef,
+        })
+    });
 }
 
 pub(crate) fn binding_index(
@@ -106,6 +160,13 @@ pub(crate) fn column_index(schema: &BindingTableSchema, name: IStr) -> Option<us
         .position(|column| column.name == Some(name))
 }
 
+pub(crate) fn hidden_index(schema: &BindingTableSchema, hidden: HiddenBindingId) -> Option<usize> {
+    schema
+        .columns
+        .iter()
+        .position(|column| column.hidden == Some(hidden))
+}
+
 pub(crate) fn set_binding_value(
     values: &mut [Value],
     pattern: &PatternPlan,
@@ -119,6 +180,29 @@ pub(crate) fn set_binding_value(
     let Some(index) = binding_index(pattern, schema, binding_id) else {
         return Err(ExecutorError::ImplementationDefined {
             detail: "binding column missing from pattern schema",
+        });
+    };
+    if !matches!(values[index], Value::Null)
+        && !value_compare::equal_non_null(&values[index], &value)
+    {
+        return Ok(false);
+    }
+    values[index] = value;
+    Ok(true)
+}
+
+pub(crate) fn set_hidden_value(
+    values: &mut [Value],
+    schema: &BindingTableSchema,
+    hidden: Option<HiddenBindingId>,
+    value: Value,
+) -> Result<bool, ExecutorError> {
+    let Some(hidden) = hidden else {
+        return Ok(true);
+    };
+    let Some(index) = hidden_index(schema, hidden) else {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "hidden binding column missing from pattern schema",
         });
     };
     if !matches!(values[index], Value::Null)
@@ -215,7 +299,17 @@ fn pattern_filters_pass(
     schema: &BindingTableSchema,
     ctx: &TxContext<'_>,
 ) -> Result<bool, ExecutorError> {
-    for predicate in &pattern.filters {
+    filter_predicates_pass(&pattern.filters, pattern, row, schema, ctx)
+}
+
+pub(crate) fn filter_predicates_pass(
+    predicates: &[FilterPredicate],
+    pattern: &PatternPlan,
+    row: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &TxContext<'_>,
+) -> Result<bool, ExecutorError> {
+    for predicate in predicates {
         if !filter_predicate_passes(predicate, pattern, row, schema, ctx)? {
             return Ok(false);
         }

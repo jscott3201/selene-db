@@ -199,6 +199,7 @@ where
         columns: vec![
             BindingTableColumn {
                 name: Some(show_column_name("label", label_detail, span, &mut intern)?),
+                hidden: None,
                 ty: AnalyzedType::Resolved(GqlType::String),
             },
             BindingTableColumn {
@@ -208,6 +209,7 @@ where
                     span,
                     &mut intern,
                 )?),
+                hidden: None,
                 ty: AnalyzedType::DYNAMIC,
             },
         ],
