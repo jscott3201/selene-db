@@ -1,0 +1,9 @@
+---
+source: crates/selene-gql/tests/executor_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+schema:
+- <empty>
+rows:
+- <empty>
+delta: nodes=+1 edges=+0 schema_changed=false

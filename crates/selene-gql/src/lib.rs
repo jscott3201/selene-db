@@ -68,3 +68,9 @@ pub use crate::runtime::{
     ProcedureContext, Session, StatementOutput, TxContext, execute_pattern, execute_pipeline,
     execute_statement,
 };
+
+#[cfg(any(test, feature = "test-harness"))]
+pub use crate::runtime::{
+    ExecutorSnapshot, ExecutorSummaryInput, NetGraphDelta, RowOrderPolicy, SnapshotColumn,
+    executor_summary,
+};

@@ -1,0 +1,10 @@
+---
+source: crates/selene-gql/tests/executor_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+schema:
+- label :: Resolved(String)
+- definition :: Dynamic
+rows:
+- ["Person", "CREATE NODE TYPE :Person (name :: STRING)"]
+delta: nodes=+0 edges=+0 schema_changed=false
