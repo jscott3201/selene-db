@@ -8,6 +8,7 @@ use selene_gql::{
     ExecutorError, GqlType, PipelineOp, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
     RecordType, SourceSpan, TxContext, analyze, execute_pipeline, parse, plan,
 };
+use selene_graph::EdgeTypeDef;
 use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph};
 
 use exec_common::istr;
@@ -51,6 +52,14 @@ fn person_graph(id: u64) -> SharedGraph {
             }],
             edge_types: Vec::new(),
         })
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn closed_graph_with_type(id: u64, graph_type: GraphTypeDef) -> SharedGraph {
+    SharedGraph::builder(GraphId::new(id))
+        .bound_to(graph_type)
         .unwrap()
         .build()
         .unwrap()
@@ -148,6 +157,32 @@ fn show_node_types_after_create_in_same_statement_includes_new_type() {
 }
 
 #[test]
+fn show_node_types_renders_key_labels_not_internal_name() {
+    let graph = closed_graph_with_type(
+        3717,
+        GraphTypeDef {
+            name: istr("catalog.asymmetric.graph"),
+            node_types: vec![NodeTypeDef {
+                name: istr("types.person"),
+                key_labels: LabelSet::single(istr("Person")),
+                properties: Vec::new(),
+            }],
+            edge_types: Vec::new(),
+        },
+    );
+    let plan = planned("SHOW NODE TYPES");
+    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+
+    let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
+
+    assert_eq!(table.rows()[0].values()[0], Value::String(istr("Person")));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(istr("CREATE NODE TYPE :Person ()"))
+    );
+}
+
+#[test]
 fn create_edge_type_resolves_endpoints_created_earlier_in_same_statement() {
     let graph = empty_closed_graph(3703);
     let mut plan = planned("CREATE EDGE TYPE :WORKS_AT (FROM :Person TO :Company)");
@@ -184,6 +219,75 @@ fn show_edge_types_renders_round_trippable_definition() {
         "CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person, since :: DATE)"
     );
     parse(definition.as_str()).expect("definition round-trips through parser");
+}
+
+#[test]
+fn show_edge_types_renders_label_not_internal_name() {
+    let person = istr("Person");
+    let knows = istr("KNOWS");
+    let graph = closed_graph_with_type(
+        3718,
+        GraphTypeDef {
+            name: istr("catalog.edge.asymmetric.graph"),
+            node_types: vec![NodeTypeDef {
+                name: istr("types.person"),
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+            }],
+            edge_types: vec![EdgeTypeDef {
+                name: istr("types.knows"),
+                label: knows,
+                source_node_type: 0,
+                target_node_type: 0,
+                properties: Vec::new(),
+            }],
+        },
+    );
+    let plan = planned("SHOW EDGE TYPES");
+    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+
+    let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
+
+    assert_eq!(table.rows()[0].values()[0], Value::String(knows));
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(istr("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)"))
+    );
+}
+
+#[test]
+fn show_edge_types_renders_multi_label_endpoint_labels() {
+    let knows = istr("KNOWS");
+    let labels = LabelSet::from_iter([istr("Person"), istr("Active")]);
+    let graph = closed_graph_with_type(
+        3719,
+        GraphTypeDef {
+            name: istr("catalog.edge.multilabel.graph"),
+            node_types: vec![NodeTypeDef {
+                name: istr("types.active_person"),
+                key_labels: labels,
+                properties: Vec::new(),
+            }],
+            edge_types: vec![EdgeTypeDef {
+                name: istr("types.knows"),
+                label: knows,
+                source_node_type: 0,
+                target_node_type: 0,
+                properties: Vec::new(),
+            }],
+        },
+    );
+    let plan = planned("SHOW EDGE TYPES");
+    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+
+    let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
+
+    assert_eq!(
+        table.rows()[0].values()[1],
+        Value::String(istr(
+            "CREATE EDGE TYPE :KNOWS (FROM :Person:Active TO :Person:Active)"
+        ))
+    );
 }
 
 #[test]
@@ -224,6 +328,24 @@ fn catalog_op_without_write_txn_returns_invalid_transaction_state() {
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
         .expect_err("catalog DDL needs write tx");
+
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidTransactionState {
+            detail: "catalog op invoked without write transaction",
+            ..
+        }
+    ));
+}
+
+#[test]
+fn create_edge_type_without_write_txn_returns_invalid_transaction_state() {
+    let graph = empty_closed_graph(3720);
+    let plan = planned("CREATE EDGE TYPE :KNOWS (FROM :Missing TO :Missing)");
+    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+
+    let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
+        .expect_err("catalog DDL needs write tx before endpoint lookup");
 
     assert!(matches!(
         err,

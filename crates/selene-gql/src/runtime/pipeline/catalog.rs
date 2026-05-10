@@ -35,6 +35,7 @@ pub(super) fn execute(
             span,
         } => {
             reject_create_flags(*or_replace, *if_not_exists, extends, *validation_mode)?;
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             let properties = property_defs(properties)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_node_type(*label, LabelSet::single(*label), properties)
@@ -51,6 +52,7 @@ pub(super) fn execute(
             span,
         } => {
             reject_create_flags(*or_replace, *if_not_exists, &None, *validation_mode)?;
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             let endpoints = endpoints
                 .as_ref()
                 .ok_or(ExecutorError::ImplementationDefined {
@@ -256,7 +258,10 @@ fn show_node_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
             graph_type
                 .node_types
                 .iter()
-                .map(|node_type| show_row(node_type.name, &render_node_type_def(node_type)))
+                .map(|node_type| {
+                    let label = render_node_label_name(&node_type.key_labels);
+                    show_row(&label, &render_node_type_def(node_type))
+                })
                 .collect::<Result<Vec<_>, _>>()
         })
         .transpose()?
@@ -275,7 +280,10 @@ fn show_edge_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
                 .edge_types
                 .iter()
                 .map(|edge_type| {
-                    show_row(edge_type.name, &render_edge_type_def(graph_type, edge_type))
+                    show_row(
+                        edge_type.label.as_str(),
+                        &render_edge_type_def(graph_type, edge_type),
+                    )
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -284,9 +292,9 @@ fn show_edge_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
     Ok(BindingTable::new(show_schema()?, rows))
 }
 
-fn show_row(label: IStr, definition: &str) -> Result<Binding, ExecutorError> {
+fn show_row(label: &str, definition: &str) -> Result<Binding, ExecutorError> {
     Ok(Binding::new([
-        Value::String(label),
+        Value::String(intern_runtime(label)?),
         Value::String(intern_runtime(definition)?),
     ]))
 }
@@ -318,36 +326,48 @@ fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
 
 fn render_node_type_def(node_type: &NodeTypeDef) -> String {
     format!(
-        "CREATE NODE TYPE :{} ({})",
-        node_type.name,
+        "CREATE NODE TYPE {} ({})",
+        render_node_label_set(&node_type.key_labels),
         render_properties(&node_type.properties)
     )
 }
 
 fn render_edge_type_def(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
-    let source = endpoint_label(graph_type, edge_type.source_node_type);
-    let target = endpoint_label(graph_type, edge_type.target_node_type);
+    let source = render_endpoint(graph_type, edge_type.source_node_type);
+    let target = render_endpoint(graph_type, edge_type.target_node_type);
     let properties = render_properties(&edge_type.properties);
     if properties.is_empty() {
         format!(
-            "CREATE EDGE TYPE :{} (FROM :{} TO :{})",
-            edge_type.name, source, target
+            "CREATE EDGE TYPE :{} (FROM {} TO {})",
+            edge_type.label, source, target
         )
     } else {
         format!(
-            "CREATE EDGE TYPE :{} (FROM :{} TO :{}, {})",
-            edge_type.name, source, target, properties
+            "CREATE EDGE TYPE :{} (FROM {} TO {}, {})",
+            edge_type.label, source, target, properties
         )
     }
 }
 
-fn endpoint_label(graph_type: &GraphTypeDef, index: u32) -> IStr {
-    graph_type.node_types[index as usize]
-        .key_labels
+fn render_endpoint(graph_type: &GraphTypeDef, index: u32) -> String {
+    render_node_label_set(&graph_type.node_types[index as usize].key_labels)
+}
+
+fn render_node_label_set(labels: &LabelSet) -> String {
+    let label = render_node_label_name(labels);
+    if label.is_empty() {
+        String::new()
+    } else {
+        format!(":{label}")
+    }
+}
+
+fn render_node_label_name(labels: &LabelSet) -> String {
+    labels
         .iter()
-        .next()
-        .copied()
-        .expect("graph type validation ensures endpoint label exists")
+        .map(|label| label.as_str())
+        .collect::<Vec<_>>()
+        .join(":")
 }
 
 fn render_properties(properties: &[PropertyTypeDef]) -> String {

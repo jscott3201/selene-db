@@ -10,7 +10,7 @@ use selene_persist::{
     WalConfig, WalWriter,
 };
 
-use crate::{CORE_PROVIDER_TAG, GraphError, ProviderTag, SharedGraph};
+use crate::{CORE_PROVIDER_TAG, GraphError, GraphTypeDef, ProviderTag, SharedGraph};
 
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -146,6 +146,14 @@ fn node_created(id: u64) -> Change {
     }
 }
 
+fn empty_closed_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: intern("recover.closed.graph").unwrap(),
+        node_types: Vec::new(),
+        edge_types: Vec::new(),
+    }
+}
+
 #[test]
 fn recover_from_empty_dir_returns_empty_graph() {
     let dir = temp_dir("empty");
@@ -196,6 +204,37 @@ fn recover_from_wal_only_replays_changes_to_state() {
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 1);
     assert!(snapshot.outgoing_edges(NodeId::new(1)).is_some());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_closed_wal_only_replays_catalog_ddl() {
+    let dir = temp_dir("closed-schema-wal-only");
+    let graph_id = GraphId::new(19);
+    let base = empty_closed_graph_type();
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let sensor = intern("Sensor").unwrap();
+    let changes = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node_type(sensor, LabelSet::single(sensor), Vec::new())
+            .unwrap();
+        txn.commit().unwrap().changes
+    };
+    append_wal(&dir, 0, &changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    assert_eq!(graph_type.node_types.len(), 1);
+    assert_eq!(graph_type.node_types[0].name, sensor);
+    assert_eq!(
+        graph_type.node_types[0].key_labels,
+        LabelSet::single(sensor)
+    );
     let _ = fs::remove_dir_all(dir);
 }
 

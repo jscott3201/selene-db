@@ -114,6 +114,24 @@ impl<'a, 'g> TxContext<'a, 'g> {
             .ok_or(ExecutorError::InvalidTransactionState { detail, span })
     }
 
+    /// Confirm a write transaction is attached without borrowing its mutator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::InvalidTransactionState`] when the current
+    /// context is read-only.
+    pub fn ensure_write_txn(
+        &self,
+        detail: &'static str,
+        span: SourceSpan,
+    ) -> Result<(), ExecutorError> {
+        if self.write_txn.is_some() {
+            Ok(())
+        } else {
+            Err(ExecutorError::InvalidTransactionState { detail, span })
+        }
+    }
+
     /// Borrow the planner/executor implementation-defined caps.
     #[must_use]
     pub const fn impl_defined_caps(&self) -> &ImplDefinedCaps {
