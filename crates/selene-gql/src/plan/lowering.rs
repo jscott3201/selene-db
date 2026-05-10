@@ -31,7 +31,7 @@ pub fn plan(
     analyzed: &AnalyzedStatement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<ExecutionPlan, PlannerError> {
-    match &analyzed.statement {
+    let mut plan = match &analyzed.statement {
         AnalyzedStatementKind::Query(pipeline) => {
             lower_query_pipeline(pipeline, registry, analyzed)
         }
@@ -52,7 +52,9 @@ pub fn plan(
         AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
-    }
+    }?;
+    plan.refresh_pipeline_op_high_water();
+    Ok(plan)
 }
 
 fn lower_chained(

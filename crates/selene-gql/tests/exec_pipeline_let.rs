@@ -4,7 +4,9 @@ mod exec_common;
 
 use exec_common::{ExecFixture, column_values, execute_pattern, planned};
 use selene_core::Value;
-use selene_gql::{ExecutorError, PipelineOp, execute_pipeline};
+use selene_gql::{
+    Binding, BindingTable, BindingTableSchema, ExecutorError, PipelineOp, execute_pipeline,
+};
 
 #[test]
 fn let_extends_schema_preserving_existing_columns() {
@@ -52,6 +54,22 @@ fn let_evaluates_expression_per_row_against_existing_bindings() {
         column_values(&extended, "doubled"),
         vec![Value::Int(60), Value::Int(84), Value::Int(110)]
     );
+}
+
+#[test]
+fn let_evaluates_items_in_order_with_progressive_visibility() {
+    let fixture = ExecFixture::build();
+    let plan = planned("LET a = 1, b = a + 1 RETURN a, b");
+    let ctx = fixture.context_caps(&plan);
+    let input = BindingTable::new(
+        BindingTableSchema { columns: vec![] },
+        vec![Binding::empty()],
+    );
+
+    let table = execute_pipeline(&plan.pipeline, input, &ctx).expect("pipeline executes");
+
+    assert_eq!(column_values(&table, "a"), vec![Value::Int(1)]);
+    assert_eq!(column_values(&table, "b"), vec![Value::Int(2)]);
 }
 
 #[test]

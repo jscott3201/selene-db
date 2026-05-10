@@ -71,6 +71,41 @@ impl ExecutionPlan {
         self.next_pipeline_op_id = PipelineOpId::new(id.get().saturating_add(1));
         id
     }
+
+    /// Recompute the pipeline-op ID high-water mark after lowering or rewrite.
+    pub(crate) fn refresh_pipeline_op_high_water(&mut self) {
+        if let Some(pattern) = &mut self.pattern_plan {
+            refresh_join_tree_pipeline_op_high_water(&mut pattern.join_tree);
+        }
+        for op in &mut self.pipeline {
+            match op {
+                PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+                    rhs.refresh_pipeline_op_high_water();
+                }
+                _ => {}
+            }
+        }
+        // Today pipeline ops do not carry stable IDs, so the next ID is len().
+        // When ops gain stored IDs, this must scan for max(existing_id) + 1.
+        self.next_pipeline_op_id = PipelineOpId::new(self.pipeline.len() as u32);
+    }
+}
+
+fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
+    match tree {
+        JoinTree::Scan(_) => {}
+        JoinTree::Expand { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
+        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+            refresh_join_tree_pipeline_op_high_water(left);
+            refresh_join_tree_pipeline_op_high_water(right);
+        }
+        JoinTree::WorstCaseOptimal { intersection, .. } => {
+            for branch in intersection {
+                refresh_join_tree_pipeline_op_high_water(branch);
+            }
+        }
+        JoinTree::Subplan(plan) => plan.refresh_pipeline_op_high_water(),
+    }
 }
 
 /// Pattern-matching subplan for the leading MATCH prefix.
