@@ -95,12 +95,14 @@ pub(crate) fn lower_ddl(
         DdlStatement::ShowEdgeTypes(span) => CatalogOp::ShowEdgeTypes(*span),
     };
 
+    let next_pipeline_op_id = crate::PipelineOpId::new(1);
     Ok(ExecutionPlan {
         pattern_plan: None,
         pipeline: vec![PipelineOp::Catalog(op)],
         output_schema: ddl_output_schema(statement)?,
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: super::next_expr_id(analyzed),
+        next_pipeline_op_id,
     })
 }
 

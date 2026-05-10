@@ -50,6 +50,11 @@ pub fn evaluate(
             let value = evaluate(operand, binding, schema, ctx)?;
             eval_in_list(value, list, *negated, *span, binding, schema, ctx)
         }
+        ValueExpr::ListLiteral { items, .. } => items
+            .iter()
+            .map(|item| evaluate(item, binding, schema, ctx))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::List),
         ValueExpr::FunctionCall { .. } => Err(ExecutorError::ImplementationDefined {
             detail: "function call evaluation not implemented",
         }),
@@ -64,7 +69,6 @@ pub fn evaluate(
         }),
         ValueExpr::Parameter { .. }
         | ValueExpr::ListAccess { .. }
-        | ValueExpr::ListLiteral { .. }
         | ValueExpr::RecordLiteral { .. }
         | ValueExpr::IsCheck { .. }
         | ValueExpr::Like { .. }

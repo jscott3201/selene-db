@@ -1,0 +1,74 @@
+//! Pipeline Let executor tests.
+
+mod exec_common;
+
+use exec_common::{ExecFixture, column_values, execute_pattern, planned};
+use selene_core::Value;
+use selene_gql::{ExecutorError, PipelineOp, execute_pipeline};
+
+#[test]
+fn let_extends_schema_preserving_existing_columns() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (n:Person) LET doubled = n.age + n.age RETURN n, doubled");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+    let table = execute_pattern(pattern, &ctx);
+    let let_op = plan
+        .pipeline
+        .iter()
+        .find(|op| matches!(op, PipelineOp::Let(_)))
+        .expect("let op")
+        .clone();
+
+    let extended = execute_pipeline(&[let_op], table, &ctx).expect("let executes");
+
+    let names = extended
+        .schema()
+        .columns
+        .iter()
+        .filter_map(|column| column.name.map(|name| name.as_str().to_owned()))
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"n".to_owned()));
+    assert!(names.contains(&"doubled".to_owned()));
+}
+
+#[test]
+fn let_evaluates_expression_per_row_against_existing_bindings() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (n:Person) LET doubled = n.age + n.age RETURN n, doubled");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+    let table = execute_pattern(pattern, &ctx);
+    let let_op = plan
+        .pipeline
+        .iter()
+        .find(|op| matches!(op, PipelineOp::Let(_)))
+        .expect("let op")
+        .clone();
+
+    let extended = execute_pipeline(&[let_op], table, &ctx).expect("let executes");
+
+    assert_eq!(
+        column_values(&extended, "doubled"),
+        vec![Value::Int(60), Value::Int(84), Value::Int(110)]
+    );
+}
+
+#[test]
+fn let_propagates_evaluator_errors() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (n:Person) LET bad = 1 / 0 RETURN bad");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+    let table = execute_pattern(pattern, &ctx);
+    let let_op = plan
+        .pipeline
+        .iter()
+        .find(|op| matches!(op, PipelineOp::Let(_)))
+        .expect("let op")
+        .clone();
+
+    let err = execute_pipeline(&[let_op], table, &ctx).expect_err("let errors");
+
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+}

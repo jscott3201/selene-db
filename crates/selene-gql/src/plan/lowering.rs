@@ -183,12 +183,14 @@ fn lower_query_pipeline(
         }
         index += 1;
     }
+    let next_pipeline_op_id = crate::PipelineOpId::new(ops.len() as u32);
     Ok(ExecutionPlan {
         pattern_plan,
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: next_expr_id(analyzed),
+        next_pipeline_op_id,
     })
 }
 
@@ -376,6 +378,7 @@ fn empty_plan() -> ExecutionPlan {
         },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: ExprId::new(0),
+        next_pipeline_op_id: crate::PipelineOpId::new(0),
     }
 }
 
@@ -395,6 +398,7 @@ fn tx_plan(op: TxOp) -> ExecutionPlan {
         },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: ExprId::new(0),
+        next_pipeline_op_id: crate::PipelineOpId::new(1),
     }
 }
 
