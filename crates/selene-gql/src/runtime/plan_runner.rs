@@ -1,0 +1,106 @@
+//! Standalone execution-plan runner used by recursive runtime operators.
+
+use crate::{
+    BindingTableSchema, ExecutionPlan,
+    runtime::{Binding, BindingTable, ExecutorError, TxContext, pattern, pipeline},
+};
+
+pub(crate) fn execute_plan(
+    plan: &ExecutionPlan,
+    ctx: &TxContext<'_>,
+) -> Result<BindingTable, ExecutorError> {
+    let table = match &plan.pattern_plan {
+        Some(pattern_plan) => pattern::execute_pattern(pattern_plan, ctx)?,
+        None => seed_table(),
+    };
+    pipeline::execute_pipeline(plan.pipeline.as_slice(), table, ctx)
+}
+
+pub(crate) fn seed_table() -> BindingTable {
+    BindingTable::new(
+        BindingTableSchema {
+            columns: Vec::new(),
+        },
+        vec![Binding::empty()],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use selene_core::{GraphId, LabelSet, Value};
+    use selene_graph::SharedGraph;
+
+    use crate::{
+        EmptyProcedureRegistry, ExecutionPlan, analyze, parse, plan,
+        runtime::{TxContext, plan_runner::execute_plan},
+    };
+
+    fn planned(source: &str) -> ExecutionPlan {
+        let statement = parse(source).expect("test input parses");
+        let analyzed =
+            analyze(statement, &EmptyProcedureRegistry, None).expect("test input analyzes");
+        plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans")
+    }
+
+    fn context(plan: &ExecutionPlan) -> TxContext<'_> {
+        TxContext::read_only(
+            Arc::new(selene_graph::SeleneGraph::new(GraphId::new(991))),
+            &plan.impl_defined_caps,
+        )
+    }
+
+    #[test]
+    fn execute_plan_with_no_pattern_plan_seeds_single_empty_row() {
+        let plan = planned("RETURN 1 AS n");
+        let ctx = context(&plan);
+
+        let table = execute_plan(&plan, &ctx).expect("plan executes");
+
+        assert_eq!(table.row_count(), 1);
+        assert_eq!(table.rows()[0].values(), &[Value::Int(1)]);
+    }
+
+    #[test]
+    fn execute_plan_with_pattern_plan_runs_pattern_then_pipeline() {
+        let graph = SharedGraph::new(GraphId::new(992));
+        {
+            let mut txn = graph.begin_write();
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(LabelSet::new(), Default::default())
+                .expect("node inserts");
+            txn.commit().expect("fixture commits");
+        }
+        let plan = planned("MATCH (n) RETURN n");
+        let ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+
+        let table = execute_plan(&plan, &ctx).expect("plan executes");
+
+        assert_eq!(table.row_count(), 1);
+        assert!(matches!(table.rows()[0].values(), [Value::NodeRef(_)]));
+    }
+
+    #[test]
+    fn execute_plan_returns_pattern_table_when_pipeline_empty() {
+        let graph = SharedGraph::new(GraphId::new(993));
+        {
+            let mut txn = graph.begin_write();
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(LabelSet::new(), Default::default())
+                .expect("node inserts");
+            txn.commit().expect("fixture commits");
+        }
+        let mut plan = planned("MATCH (n) RETURN n");
+        plan.pipeline.clear();
+        let ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+
+        let table = execute_plan(&plan, &ctx).expect("plan executes");
+
+        assert_eq!(table.row_count(), 1);
+        assert_eq!(table.schema().columns.len(), 1);
+        assert!(matches!(table.rows()[0].values(), [Value::NodeRef(_)]));
+    }
+}

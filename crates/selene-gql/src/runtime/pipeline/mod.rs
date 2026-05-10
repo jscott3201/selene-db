@@ -1,6 +1,7 @@
 //! Binding-table pipeline executor.
 
 mod aggregate;
+mod chain;
 mod distinct;
 mod filter;
 mod group_by;
@@ -9,6 +10,7 @@ mod limit;
 mod order_by;
 mod project;
 mod top_k;
+mod union;
 mod unwind;
 
 use crate::{
@@ -43,9 +45,9 @@ pub fn execute_pipeline(
                 group_by::execute(keys, aggregates, table, ctx)?
             }
             PipelineOp::Distinct => distinct::execute(table),
-            PipelineOp::Union { .. }
-            | PipelineOp::Chain(_)
-            | PipelineOp::Call(_)
+            PipelineOp::Union { op, rhs } => union::execute(*op, rhs, table, ctx)?,
+            PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
+            PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
             | PipelineOp::Tx(_) => {
