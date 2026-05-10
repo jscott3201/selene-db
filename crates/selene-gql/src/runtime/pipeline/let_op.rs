@@ -6,7 +6,7 @@ use crate::{
 pub(super) fn execute(
     items: &[ProjectExpr],
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let input_schema = table.schema().clone();
     let new_columns = items

@@ -6,7 +6,7 @@ use crate::{
 pub(super) fn execute(
     items: &[ProjectExpr],
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let input_schema = table.schema().clone();
     let output_schema = schema_for_items(items);
@@ -28,7 +28,7 @@ fn project_value(
     item: &ProjectExpr,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<selene_core::Value, ExecutorError> {
     evaluator::evaluate(&item.expr, row, schema, ctx)
 }

@@ -7,7 +7,7 @@ use crate::{
     analyze::{BindingId, ElementKind},
 };
 
-use super::ProjectExpr;
+use super::{BindingTableColumn, ProjectExpr};
 
 /// Plan-private identity for one INSERT pattern element.
 ///
@@ -34,7 +34,12 @@ impl InsertSiteId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InsertEndpointRef {
     /// Endpoint resolves to an existing or freshly named binding.
-    Binding(BindingId),
+    Binding {
+        /// Analyzer binding identity.
+        binding: BindingId,
+        /// Planner-assigned binding-table column index.
+        column_index: u32,
+    },
     /// Endpoint resolves to an anonymous inserted node site.
     InsertedNode(InsertSiteId),
 }
@@ -70,6 +75,10 @@ pub enum MutationOp {
         label_expr: Option<LabelExpr>,
         /// Property initializers from the pattern.
         property_inits: Vec<PropertyInit>,
+        /// Output column populated with the created node ID, when named.
+        output_column_index: Option<u32>,
+        /// Output schema column appended by this insert, when named.
+        output_column: Option<BindingTableColumn>,
         /// Source span.
         span: SourceSpan,
     },
@@ -89,6 +98,10 @@ pub enum MutationOp {
         direction: EdgeDirection,
         /// Property initializers from the pattern.
         property_inits: Vec<PropertyInit>,
+        /// Output column populated with the created edge ID, when named.
+        output_column_index: Option<u32>,
+        /// Output schema column appended by this insert, when named.
+        output_column: Option<BindingTableColumn>,
         /// Source span.
         span: SourceSpan,
     },
@@ -98,6 +111,8 @@ pub enum MutationOp {
         target: BindingId,
         /// Target element kind.
         element: ElementKind,
+        /// Planner-assigned input column containing the target element ID.
+        target_column_index: u32,
         /// Property key.
         key: IStr,
         /// Planned value expression.
@@ -111,6 +126,8 @@ pub enum MutationOp {
         target: BindingId,
         /// Target element kind.
         element: ElementKind,
+        /// Planner-assigned input column containing the target element ID.
+        target_column_index: u32,
         /// Label to add.
         label: IStr,
         /// Source span.
@@ -122,6 +139,8 @@ pub enum MutationOp {
         target: BindingId,
         /// Target element kind.
         element: ElementKind,
+        /// Planner-assigned input column containing the target element ID.
+        target_column_index: u32,
         /// Property key.
         key: IStr,
         /// Source span.
@@ -133,6 +152,8 @@ pub enum MutationOp {
         target: BindingId,
         /// Target element kind.
         element: ElementKind,
+        /// Planner-assigned input column containing the target element ID.
+        target_column_index: u32,
         /// Label to remove.
         label: IStr,
         /// Source span.
@@ -144,6 +165,8 @@ pub enum MutationOp {
         target: BindingId,
         /// Target element kind.
         element: ElementKind,
+        /// Planner-assigned input column containing the target element ID.
+        target_column_index: u32,
         /// Delete mode.
         mode: DeleteMode,
         /// Source span.

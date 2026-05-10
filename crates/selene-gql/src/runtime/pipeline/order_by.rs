@@ -13,7 +13,7 @@ use crate::{
 pub(super) fn execute(
     keys: &[OrderKey],
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let schema = table.schema().clone();
     let mut keyed_rows = table
@@ -47,7 +47,7 @@ pub(super) fn evaluate_key_tuple(
     keys: &[OrderKey],
     row: &Binding,
     schema: &crate::BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     keys.iter()
         .map(|key| evaluator::evaluate(&key.expr, row, schema, ctx))

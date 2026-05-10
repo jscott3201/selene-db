@@ -15,7 +15,7 @@ use super::{evaluator, expand, hash_join, outer, scan, subplan, value_compare, w
 /// Execute a pattern plan and produce its initial binding table.
 pub fn execute_pattern(
     pattern: &PatternPlan,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let schema = schema_for_pattern(pattern);
     let env = WalkContext {
@@ -38,16 +38,16 @@ pub fn execute_pattern(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct WalkContext<'a, 'seed, 'ctx> {
+pub(crate) struct WalkContext<'a, 'seed, 'ctx, 'g> {
     pub(crate) pattern: &'a PatternPlan,
     pub(crate) schema: &'a BindingTableSchema,
     pub(crate) seed: Option<&'seed Binding>,
-    pub(crate) ctx: &'a TxContext<'ctx>,
+    pub(crate) ctx: &'a TxContext<'ctx, 'g>,
 }
 
 pub(crate) fn walk_join_tree(
     tree: &JoinTree,
-    env: WalkContext<'_, '_, '_>,
+    env: WalkContext<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     match tree {
         JoinTree::Scan(scan_node) => {
@@ -298,7 +298,7 @@ fn pattern_filters_pass(
     pattern: &PatternPlan,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<bool, ExecutorError> {
     filter_predicates_pass(&pattern.filters, pattern, row, schema, ctx)
 }
@@ -308,7 +308,7 @@ pub(crate) fn filter_predicates_pass(
     pattern: &PatternPlan,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<bool, ExecutorError> {
     for predicate in predicates {
         if !filter_predicate_passes(predicate, pattern, row, schema, ctx)? {
@@ -323,7 +323,7 @@ fn filter_predicate_passes(
     pattern: &PatternPlan,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<bool, ExecutorError> {
     if predicate.index_consumed {
         return Ok(true);

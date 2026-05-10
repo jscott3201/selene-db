@@ -2,14 +2,15 @@
 
 use smallvec::SmallVec;
 
-use selene_core::{IStr, Value};
+use selene_core::{IStr, NodeId, Value};
 
-use crate::plan::BindingTableSchema;
+use crate::plan::{BindingTableSchema, InsertSiteId};
 
 /// One executor binding-table row.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Binding {
     values: SmallVec<[Value; 8]>,
+    insert_sites: SmallVec<[(InsertSiteId, NodeId); 4]>,
 }
 
 impl Binding {
@@ -18,6 +19,7 @@ impl Binding {
     pub fn new(values: impl IntoIterator<Item = Value>) -> Self {
         Self {
             values: values.into_iter().collect(),
+            insert_sites: SmallVec::new(),
         }
     }
 
@@ -26,6 +28,17 @@ impl Binding {
     pub fn empty() -> Self {
         Self {
             values: SmallVec::new(),
+            insert_sites: SmallVec::new(),
+        }
+    }
+
+    pub(crate) fn with_insert_sites(
+        values: impl IntoIterator<Item = Value>,
+        insert_sites: SmallVec<[(InsertSiteId, NodeId); 4]>,
+    ) -> Self {
+        Self {
+            values: values.into_iter().collect(),
+            insert_sites,
         }
     }
 
@@ -39,6 +52,22 @@ impl Binding {
     #[must_use]
     pub fn get(&self, index: usize) -> Option<&Value> {
         self.values.get(index)
+    }
+
+    pub(crate) fn insert_sites(&self) -> &[(InsertSiteId, NodeId)] {
+        &self.insert_sites
+    }
+
+    pub(crate) fn inserted_node(&self, site_id: InsertSiteId) -> Option<NodeId> {
+        self.insert_sites
+            .iter()
+            .find_map(|(site, id)| (*site == site_id).then_some(*id))
+    }
+}
+
+impl PartialEq for Binding {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.values == rhs.values
     }
 }
 

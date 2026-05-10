@@ -21,7 +21,7 @@ fn table() -> BindingTable {
     )
 }
 
-fn ctx<'a>(caps: &'a ImplDefinedCaps) -> TxContext<'a> {
+fn ctx<'a>(caps: &'a ImplDefinedCaps) -> TxContext<'a, 'a> {
     exec_common::empty_graph_context(caps)
 }
 
@@ -29,14 +29,14 @@ mod exec_common;
 
 fn execute(offset: u64, count: u64) -> BindingTable {
     let caps = ImplDefinedCaps::default();
-    let ctx = ctx(&caps);
+    let mut ctx = ctx(&caps);
     execute_pipeline(
         &[PipelineOp::Limit {
             offset: LimitAmount::Literal(offset),
             count: LimitAmount::Literal(count),
         }],
         table(),
-        &ctx,
+        &mut ctx,
     )
     .expect("limit executes")
 }
@@ -73,7 +73,7 @@ fn limit_with_count_beyond_input_saturates() {
 #[test]
 fn limit_parameter_is_implementation_defined_until_parameter_binding_lands() {
     let caps = ImplDefinedCaps::default();
-    let ctx = ctx(&caps);
+    let mut ctx = ctx(&caps);
 
     let err = execute_pipeline(
         &[PipelineOp::Limit {
@@ -81,7 +81,7 @@ fn limit_parameter_is_implementation_defined_until_parameter_binding_lands() {
             count: LimitAmount::Literal(1),
         }],
         table(),
-        &ctx,
+        &mut ctx,
     )
     .expect_err("parameter limit errors");
 

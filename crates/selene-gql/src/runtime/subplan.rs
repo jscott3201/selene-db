@@ -11,7 +11,7 @@ pub(crate) fn execute(
     plan: &ExecutionPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     ensure_phase_a_compatible(plan, seed)?;
     let Some(pattern_plan) = &plan.pattern_plan else {

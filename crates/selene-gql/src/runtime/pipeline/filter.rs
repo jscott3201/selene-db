@@ -8,7 +8,7 @@ use crate::{
 pub(super) fn execute(
     predicate: &FilterPredicate,
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     if predicate.index_consumed {
         return Err(ExecutorError::ImplementationDefined {

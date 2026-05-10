@@ -24,7 +24,7 @@ impl AggregateSlot {
         &mut self,
         row: &Binding,
         schema: &BindingTableSchema,
-        ctx: &TxContext<'_>,
+        ctx: &mut TxContext<'_, '_>,
     ) -> Result<(), ExecutorError> {
         if matches!(self.state, AggregateState::CountStar { .. }) {
             return self.state.observe(None, self.aggregate.span);

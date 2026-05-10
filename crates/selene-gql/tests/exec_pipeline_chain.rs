@@ -67,12 +67,12 @@ fn correlated_next_returns_planner_not_implemented() {
 fn chain_rhs_can_be_composite_union_plan() {
     let rhs = planned("RETURN 1 AS b UNION ALL RETURN 2 AS b");
     let caps = ImplDefinedCaps::default();
-    let ctx = exec_common::empty_graph_context(&caps);
+    let mut ctx = exec_common::empty_graph_context(&caps);
 
     let table = execute_pipeline(
         &[PipelineOp::Chain(Box::new(rhs))],
         int_table("a", &[99]),
-        &ctx,
+        &mut ctx,
     )
     .expect("chain executes");
 
@@ -115,7 +115,7 @@ fn chain_rhs_sees_same_snapshot_as_lhs() {
         "MATCH (n:Person) RETURN n.name AS name \
          NEXT MATCH (m:Person) RETURN m.name AS name",
     );
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     {
         let mut txn = fixture.graph.begin_write();
         let mut mutator = txn.mutator();
@@ -129,7 +129,7 @@ fn chain_rhs_sees_same_snapshot_as_lhs() {
     }
     let input = execute_pattern(plan.pattern_plan.as_ref().expect("lhs pattern"), &ctx);
 
-    let table = execute_pipeline(&plan.pipeline, input, &ctx).expect("chain executes");
+    let table = execute_pipeline(&plan.pipeline, input, &mut ctx).expect("chain executes");
     let names = column_values(&table, "name");
 
     assert_eq!(names.len(), 3);

@@ -61,6 +61,12 @@ impl<'g> WriteTxn<'g> {
         Mutator::new(self, Origin::Local)
     }
 
+    /// Borrow the transaction-local working graph.
+    #[must_use]
+    pub fn read(&self) -> &SeleneGraph {
+        &self.working
+    }
+
     /// Commit without caller principal bytes.
     pub fn commit(self) -> GraphResult<CommitOutcome> {
         self.commit_with_principal(None)

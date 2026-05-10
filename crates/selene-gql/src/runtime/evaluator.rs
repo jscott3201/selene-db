@@ -14,7 +14,7 @@ pub fn evaluate(
     expr: &ValueExpr,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<Value, ExecutorError> {
     match expr {
         ValueExpr::Literal(literal) => Ok(literal_value(literal)),
@@ -106,7 +106,7 @@ fn lookup_variable(
 fn property_access(
     target: &Value,
     key: selene_core::IStr,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<Value, ExecutorError> {
     match target {
         Value::Null => Ok(Value::Null),
@@ -118,7 +118,7 @@ fn property_access(
     }
 }
 
-fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &TxContext<'_>) -> Value {
+fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &TxContext<'_, '_>) -> Value {
     ctx.snapshot()
         .node_properties(id)
         .and_then(|properties| properties.get(&key))
@@ -126,7 +126,7 @@ fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &TxContext<'_>) -
         .unwrap_or(Value::Null)
 }
 
-fn property_from_edge(id: EdgeId, key: selene_core::IStr, ctx: &TxContext<'_>) -> Value {
+fn property_from_edge(id: EdgeId, key: selene_core::IStr, ctx: &TxContext<'_, '_>) -> Value {
     ctx.snapshot()
         .edge_properties(id)
         .and_then(|properties| properties.get(&key))
@@ -314,7 +314,7 @@ fn eval_in_list(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<Value, ExecutorError> {
     if matches!(value, Value::Null) {
         return Ok(Value::Null);

@@ -9,12 +9,12 @@ use selene_gql::{ExecutorError, execute_pipeline};
 fn execute_no_pattern(source: &str) -> selene_gql::BindingTable {
     let plan = planned(source);
     let fixture = ExecFixture::build();
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let input = selene_gql::BindingTable::new(
         selene_gql::BindingTableSchema { columns: vec![] },
         vec![selene_gql::Binding::empty()],
     );
-    execute_pipeline(&plan.pipeline, input, &ctx).expect("pipeline executes")
+    execute_pipeline(&plan.pipeline, input, &mut ctx).expect("pipeline executes")
 }
 
 #[test]
@@ -45,10 +45,10 @@ fn project_handles_anonymous_alias() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (n:Person) RETURN n.name");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let table = execute_pattern(pattern, &ctx);
 
-    let projected = execute_pipeline(&plan.pipeline, table, &ctx).expect("project executes");
+    let projected = execute_pipeline(&plan.pipeline, table, &mut ctx).expect("project executes");
 
     assert_eq!(projected.schema().columns[0].name, None);
     assert_eq!(projected.row_count(), 3);
@@ -58,13 +58,13 @@ fn project_handles_anonymous_alias() {
 fn project_propagates_evaluator_errors() {
     let plan = planned("RETURN 1 / 0 AS bad");
     let fixture = ExecFixture::build();
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let input = selene_gql::BindingTable::new(
         selene_gql::BindingTableSchema { columns: vec![] },
         vec![selene_gql::Binding::empty()],
     );
 
-    let err = execute_pipeline(&plan.pipeline, input, &ctx).expect_err("project errors");
+    let err = execute_pipeline(&plan.pipeline, input, &mut ctx).expect_err("project errors");
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
 }

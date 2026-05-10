@@ -11,7 +11,7 @@ pub(super) fn execute(
     op: SetOp,
     rhs: &ExecutionPlan,
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     match op {
         SetOp::Union | SetOp::UnionAll => {

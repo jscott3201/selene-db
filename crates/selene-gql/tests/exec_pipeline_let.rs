@@ -13,7 +13,7 @@ fn let_extends_schema_preserving_existing_columns() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (n:Person) LET doubled = n.age + n.age RETURN n, doubled");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let table = execute_pattern(pattern, &ctx);
     let let_op = plan
         .pipeline
@@ -22,7 +22,7 @@ fn let_extends_schema_preserving_existing_columns() {
         .expect("let op")
         .clone();
 
-    let extended = execute_pipeline(&[let_op], table, &ctx).expect("let executes");
+    let extended = execute_pipeline(&[let_op], table, &mut ctx).expect("let executes");
 
     let names = extended
         .schema()
@@ -39,7 +39,7 @@ fn let_evaluates_expression_per_row_against_existing_bindings() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (n:Person) LET doubled = n.age + n.age RETURN n, doubled");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let table = execute_pattern(pattern, &ctx);
     let let_op = plan
         .pipeline
@@ -48,7 +48,7 @@ fn let_evaluates_expression_per_row_against_existing_bindings() {
         .expect("let op")
         .clone();
 
-    let extended = execute_pipeline(&[let_op], table, &ctx).expect("let executes");
+    let extended = execute_pipeline(&[let_op], table, &mut ctx).expect("let executes");
 
     assert_eq!(
         column_values(&extended, "doubled"),
@@ -60,13 +60,13 @@ fn let_evaluates_expression_per_row_against_existing_bindings() {
 fn let_evaluates_items_in_order_with_progressive_visibility() {
     let fixture = ExecFixture::build();
     let plan = planned("LET a = 1, b = a + 1 RETURN a, b");
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let input = BindingTable::new(
         BindingTableSchema { columns: vec![] },
         vec![Binding::empty()],
     );
 
-    let table = execute_pipeline(&plan.pipeline, input, &ctx).expect("pipeline executes");
+    let table = execute_pipeline(&plan.pipeline, input, &mut ctx).expect("pipeline executes");
 
     assert_eq!(column_values(&table, "a"), vec![Value::Int(1)]);
     assert_eq!(column_values(&table, "b"), vec![Value::Int(2)]);
@@ -77,7 +77,7 @@ fn let_propagates_evaluator_errors() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (n:Person) LET bad = 1 / 0 RETURN bad");
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let table = execute_pattern(pattern, &ctx);
     let let_op = plan
         .pipeline
@@ -86,7 +86,7 @@ fn let_propagates_evaluator_errors() {
         .expect("let op")
         .clone();
 
-    let err = execute_pipeline(&[let_op], table, &ctx).expect_err("let errors");
+    let err = execute_pipeline(&[let_op], table, &mut ctx).expect_err("let errors");
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
 }

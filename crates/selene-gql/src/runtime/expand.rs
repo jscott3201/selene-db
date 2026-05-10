@@ -15,7 +15,7 @@ pub(crate) fn execute(
     child: &JoinTree,
     edge: &EdgeMatch,
     direction: EdgeDirection,
-    env: pattern::WalkContext<'_, '_, '_>,
+    env: pattern::WalkContext<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut rows = Vec::new();
@@ -35,11 +35,11 @@ pub(crate) fn execute(
     Ok(rows)
 }
 
-struct ExpandState<'a, 'ctx, 'out> {
+struct ExpandState<'a, 'ctx, 'g, 'out> {
     edge: &'a EdgeMatch,
     pattern_plan: &'a PatternPlan,
     schema: &'a BindingTableSchema,
-    ctx: &'a TxContext<'ctx>,
+    ctx: &'a TxContext<'ctx, 'g>,
     output: &'out mut Vec<Binding>,
 }
 
@@ -74,7 +74,7 @@ fn expand_from_source(
     source: NodeId,
     row: &Binding,
     direction: EdgeDirection,
-    state: &mut ExpandState<'_, '_, '_>,
+    state: &mut ExpandState<'_, '_, '_, '_>,
 ) -> Result<(), ExecutorError> {
     let mut seen = BTreeSet::new();
     match direction {
@@ -116,7 +116,7 @@ fn maybe_emit(
     edge_id: EdgeId,
     right_node: NodeId,
     row: &Binding,
-    state: &mut ExpandState<'_, '_, '_>,
+    state: &mut ExpandState<'_, '_, '_, '_>,
 ) -> Result<(), ExecutorError> {
     if !edge_label_matches(state.edge, edge_id, state.ctx)
         || !right_node_matches(state.edge, right_node, state.ctx)
@@ -185,7 +185,7 @@ fn maybe_emit(
     Ok(())
 }
 
-fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &TxContext<'_>) -> bool {
+fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &TxContext<'_, '_>) -> bool {
     let Some(label_expr) = &edge.label_predicate else {
         return true;
     };
@@ -194,7 +194,7 @@ fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &TxContext<'_>) ->
         .is_some_and(|label| scan::label_matches_edge(label_expr, *label))
 }
 
-fn right_node_matches(edge: &EdgeMatch, node: NodeId, ctx: &TxContext<'_>) -> bool {
+fn right_node_matches(edge: &EdgeMatch, node: NodeId, ctx: &TxContext<'_, '_>) -> bool {
     let Some(label_expr) = &edge.right_label_predicate else {
         return true;
     };
@@ -209,7 +209,7 @@ fn predicates_pass(
     row: &Binding,
     schema: &BindingTableSchema,
     entity: &Value,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<bool, ExecutorError> {
     for predicate in predicates {
         if !scan::predicate_passes(predicate, pattern_plan, row, schema, entity, ctx)? {

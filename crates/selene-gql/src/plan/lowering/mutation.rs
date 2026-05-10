@@ -6,8 +6,8 @@ use crate::{
     InsertStatement, MatchClause, MutationPipeline, MutationStatement, MutationTerminator,
     NodePattern, PatternElement, RemoveItem, SetItem, SourceSpan, ValueExpr,
     analyze::{
-        AnalyzedStatement, BindingDeclKind, BindingId, BindingUseKind, MutationWriteSet, WriteKind,
-        WriteSetEntry,
+        AnalyzedStatement, BindingDeclKind, BindingId, BindingUseKind, ElementKind,
+        MutationWriteSet, WriteKind, WriteSetEntry,
     },
     plan::{
         BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps, InsertEndpointRef,
@@ -62,10 +62,10 @@ pub(crate) fn lower_mutation(
                 &mut ops,
             )?,
             MutationStatement::Set(items) => {
-                lower_set_items(items, write_set, &mut cursor, analyzed, &mut ops)?;
+                lower_set_items(items, write_set, &mut cursor, analyzed, &visible, &mut ops)?;
             }
             MutationStatement::Remove(items) => {
-                lower_remove_items(items, write_set, &mut cursor, &mut ops)?;
+                lower_remove_items(items, write_set, &mut cursor, analyzed, &visible, &mut ops)?;
             }
             MutationStatement::Delete(statement) => {
                 for _ in &statement.items {
@@ -78,9 +78,12 @@ pub(crate) fn lower_mutation(
                     else {
                         return Err(mismatch(entry.span));
                     };
+                    let target_column_index =
+                        mutation_target_column_index(target, element, analyzed, &visible)?;
                     ops.push(PipelineOp::Mutation(MutationOp::DeleteTarget {
                         target,
                         element,
+                        target_column_index,
                         mode,
                         span: entry.span,
                     }));
@@ -160,6 +163,7 @@ fn lower_insert(
             }
         }
 
+        let mut pending = Vec::new();
         for (index, element) in pattern.elements.iter().enumerate() {
             let Some(site_id) = sites.get(&index).copied() else {
                 continue;
@@ -175,38 +179,15 @@ fn lower_insert(
                     else {
                         return Err(mismatch(entry.span));
                     };
-                    ops.push(PipelineOp::Mutation(MutationOp::InsertNode {
+                    pending.push(PendingInsert::Node {
                         site_id,
                         binding,
                         label_expr,
                         property_inits: property_inits(&node.properties, analyzed)?,
                         span: node.span,
-                    }));
-                    if let Some(binding) = binding {
-                        push_visible_binding(binding, analyzed, visible)?;
-                    }
+                    });
                 }
                 PatternElement::Edge(edge) => {
-                    let left = endpoint_ref(
-                        pattern
-                            .elements
-                            .get(index.wrapping_sub(1))
-                            .ok_or_else(|| mismatch(edge.span))?,
-                        index.wrapping_sub(1),
-                        &sites,
-                        analyzed,
-                        edge.span,
-                    )?;
-                    let right = endpoint_ref(
-                        pattern
-                            .elements
-                            .get(index + 1)
-                            .ok_or_else(|| mismatch(edge.span))?,
-                        index + 1,
-                        &sites,
-                        analyzed,
-                        edge.span,
-                    )?;
                     let entry = consume_entry(write_set, cursor, edge.span)?;
                     let WriteKind::InsertEdge {
                         binding,
@@ -216,24 +197,112 @@ fn lower_insert(
                     else {
                         return Err(mismatch(entry.span));
                     };
-                    ops.push(PipelineOp::Mutation(MutationOp::InsertEdge {
+                    pending.push(PendingInsert::Edge {
+                        index,
                         site_id,
                         binding,
                         label_expr,
-                        left,
-                        right,
                         direction: edge.direction,
                         property_inits: property_inits(&edge.properties, analyzed)?,
                         span: edge.span,
-                    }));
-                    if let Some(binding) = binding {
-                        push_visible_binding(binding, analyzed, visible)?;
-                    }
+                    });
                 }
+            }
+        }
+
+        for item in &pending {
+            if let PendingInsert::Node {
+                site_id,
+                binding,
+                label_expr,
+                property_inits,
+                span,
+            } = item
+            {
+                let (output_column_index, output_column) =
+                    push_insert_output(*binding, analyzed, visible)?;
+                ops.push(PipelineOp::Mutation(MutationOp::InsertNode {
+                    site_id: *site_id,
+                    binding: *binding,
+                    label_expr: label_expr.clone(),
+                    property_inits: property_inits.clone(),
+                    output_column_index,
+                    output_column: output_column.clone(),
+                    span: *span,
+                }));
+            }
+        }
+        for item in pending {
+            if let PendingInsert::Edge {
+                index,
+                site_id,
+                binding,
+                label_expr,
+                direction,
+                property_inits,
+                span,
+            } = item
+            {
+                let left = endpoint_ref(
+                    pattern
+                        .elements
+                        .get(index.wrapping_sub(1))
+                        .ok_or_else(|| mismatch(span))?,
+                    index.wrapping_sub(1),
+                    &sites,
+                    analyzed,
+                    visible,
+                    span,
+                )?;
+                let right = endpoint_ref(
+                    pattern
+                        .elements
+                        .get(index + 1)
+                        .ok_or_else(|| mismatch(span))?,
+                    index + 1,
+                    &sites,
+                    analyzed,
+                    visible,
+                    span,
+                )?;
+                let (output_column_index, output_column) =
+                    push_insert_output(binding, analyzed, visible)?;
+                ops.push(PipelineOp::Mutation(MutationOp::InsertEdge {
+                    site_id,
+                    binding,
+                    label_expr,
+                    left,
+                    right,
+                    direction,
+                    property_inits,
+                    output_column_index,
+                    output_column,
+                    span,
+                }));
             }
         }
     }
     Ok(())
+}
+
+#[derive(Clone)]
+enum PendingInsert {
+    Node {
+        site_id: InsertSiteId,
+        binding: Option<BindingId>,
+        label_expr: Option<crate::LabelExpr>,
+        property_inits: Vec<PropertyInit>,
+        span: SourceSpan,
+    },
+    Edge {
+        index: usize,
+        site_id: InsertSiteId,
+        binding: Option<BindingId>,
+        label_expr: Option<crate::LabelExpr>,
+        direction: crate::EdgeDirection,
+        property_inits: Vec<PropertyInit>,
+        span: SourceSpan,
+    },
 }
 
 fn lower_set_items(
@@ -241,6 +310,7 @@ fn lower_set_items(
     write_set: &MutationWriteSet,
     cursor: &mut usize,
     analyzed: &AnalyzedStatement,
+    visible: &[BindingTableColumn],
     ops: &mut Vec<PipelineOp>,
 ) -> Result<(), PlannerError> {
     for item in items {
@@ -261,9 +331,12 @@ fn lower_set_items(
                 if entry_key != *key {
                     return Err(mismatch(entry.span));
                 }
+                let target_column_index =
+                    mutation_target_column_index(target, element, analyzed, visible)?;
                 ops.push(PipelineOp::Mutation(MutationOp::SetProperty {
                     target,
                     element,
+                    target_column_index,
                     key: *key,
                     value: expr::project_expr(value, None, analyzed)?,
                     span: entry.span,
@@ -286,9 +359,12 @@ fn lower_set_items(
                     if entry_key != *key {
                         return Err(mismatch(entry.span));
                     }
+                    let target_column_index =
+                        mutation_target_column_index(target, element, analyzed, visible)?;
                     ops.push(PipelineOp::Mutation(MutationOp::SetProperty {
                         target,
                         element,
+                        target_column_index,
                         key: *key,
                         value: expr::project_expr(value, None, analyzed)?,
                         span: entry.span,
@@ -308,9 +384,12 @@ fn lower_set_items(
                 if entry_label != *label {
                     return Err(mismatch(entry.span));
                 }
+                let target_column_index =
+                    mutation_target_column_index(target, element, analyzed, visible)?;
                 ops.push(PipelineOp::Mutation(MutationOp::SetLabel {
                     target,
                     element,
+                    target_column_index,
                     label: *label,
                     span: entry.span,
                 }));
@@ -324,6 +403,8 @@ fn lower_remove_items(
     items: &[RemoveItem],
     write_set: &MutationWriteSet,
     cursor: &mut usize,
+    analyzed: &AnalyzedStatement,
+    visible: &[BindingTableColumn],
     ops: &mut Vec<PipelineOp>,
 ) -> Result<(), PlannerError> {
     for item in items {
@@ -341,9 +422,12 @@ fn lower_remove_items(
                 if entry_key != *key {
                     return Err(mismatch(entry.span));
                 }
+                let target_column_index =
+                    mutation_target_column_index(target, element, analyzed, visible)?;
                 ops.push(PipelineOp::Mutation(MutationOp::RemoveProperty {
                     target,
                     element,
+                    target_column_index,
                     key: *key,
                     span: entry.span,
                 }));
@@ -361,9 +445,12 @@ fn lower_remove_items(
                 if entry_label != *label {
                     return Err(mismatch(entry.span));
                 }
+                let target_column_index =
+                    mutation_target_column_index(target, element, analyzed, visible)?;
                 ops.push(PipelineOp::Mutation(MutationOp::RemoveLabel {
                     target,
                     element,
+                    target_column_index,
                     label: *label,
                     span: entry.span,
                 }));
@@ -414,13 +501,17 @@ fn endpoint_ref(
     index: usize,
     sites: &HashMap<usize, InsertSiteId>,
     analyzed: &AnalyzedStatement,
+    visible: &[BindingTableColumn],
     span: SourceSpan,
 ) -> Result<InsertEndpointRef, PlannerError> {
     let PatternElement::Node(node) = element else {
         return Err(mismatch(span));
     };
     if let Some(binding) = named_node_endpoint(node, analyzed)? {
-        return Ok(InsertEndpointRef::Binding(binding));
+        return Ok(InsertEndpointRef::Binding {
+            binding,
+            column_index: binding_column_index(binding, analyzed, visible)?,
+        });
     }
     sites
         .get(&index)
@@ -477,11 +568,10 @@ fn pattern_reuse_binding(
         .map(|reference| reference.binding)
 }
 
-fn push_visible_binding(
+fn visible_column_for_binding(
     binding: BindingId,
     analyzed: &AnalyzedStatement,
-    visible: &mut Vec<BindingTableColumn>,
-) -> Result<(), PlannerError> {
+) -> Result<BindingTableColumn, PlannerError> {
     let declaration =
         analyzed
             .scopes
@@ -490,12 +580,60 @@ fn push_visible_binding(
                 binding,
                 span: analyzed.span,
             })?;
-    visible.push(BindingTableColumn {
+    Ok(BindingTableColumn {
         name: Some(declaration.name()),
         hidden: None,
         ty: declaration.ty().clone(),
-    });
-    Ok(())
+    })
+}
+
+fn push_insert_output(
+    binding: Option<BindingId>,
+    analyzed: &AnalyzedStatement,
+    visible: &mut Vec<BindingTableColumn>,
+) -> Result<(Option<u32>, Option<BindingTableColumn>), PlannerError> {
+    let Some(binding) = binding else {
+        return Ok((None, None));
+    };
+    let index = u32::try_from(visible.len()).expect("binding table column count fits u32");
+    let column = visible_column_for_binding(binding, analyzed)?;
+    visible.push(column.clone());
+    Ok((Some(index), Some(column)))
+}
+
+fn binding_column_index(
+    binding: BindingId,
+    analyzed: &AnalyzedStatement,
+    visible: &[BindingTableColumn],
+) -> Result<u32, PlannerError> {
+    let declaration =
+        analyzed
+            .scopes
+            .declaration(binding)
+            .ok_or(PlannerError::BindingResolutionLost {
+                binding,
+                span: analyzed.span,
+            })?;
+    let index = visible
+        .iter()
+        .position(|column| column.name == Some(declaration.name()))
+        .ok_or(PlannerError::BindingResolutionLost {
+            binding,
+            span: declaration.span(),
+        })?;
+    Ok(u32::try_from(index).expect("binding table column count fits u32"))
+}
+
+fn mutation_target_column_index(
+    binding: BindingId,
+    element: ElementKind,
+    analyzed: &AnalyzedStatement,
+    visible: &[BindingTableColumn],
+) -> Result<u32, PlannerError> {
+    match element {
+        ElementKind::Node | ElementKind::Edge => binding_column_index(binding, analyzed, visible),
+        ElementKind::Path | ElementKind::Alias => Ok(0),
+    }
 }
 
 fn consume_entry(

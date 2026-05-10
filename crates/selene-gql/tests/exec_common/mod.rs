@@ -137,7 +137,7 @@ impl ExecFixture {
         }
     }
 
-    pub fn context_caps<'a>(&self, plan: &'a ExecutionPlan) -> TxContext<'a> {
+    pub fn context_caps<'a>(&self, plan: &'a ExecutionPlan) -> TxContext<'a, 'a> {
         TxContext::read_only(self.graph.read(), &plan.impl_defined_caps)
     }
 
@@ -192,7 +192,7 @@ pub fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut NodeOrEdgeScan> {
     }
 }
 
-pub fn execute_pattern(pattern: &PatternPlan, ctx: &TxContext<'_>) -> selene_gql::BindingTable {
+pub fn execute_pattern(pattern: &PatternPlan, ctx: &TxContext<'_, '_>) -> selene_gql::BindingTable {
     execute_pattern_plan(pattern, ctx).expect("pattern executes")
 }
 
@@ -220,7 +220,7 @@ pub fn execute_plan(
     fixture: &ExecFixture,
     plan: &ExecutionPlan,
 ) -> Result<selene_gql::BindingTable, selene_gql::ExecutorError> {
-    let ctx = fixture.context_caps(plan);
+    let mut ctx = fixture.context_caps(plan);
     let input = if let Some(pattern) = &plan.pattern_plan {
         execute_pattern(pattern, &ctx)
     } else {
@@ -231,7 +231,7 @@ pub fn execute_plan(
             vec![selene_gql::Binding::empty()],
         )
     };
-    execute_pipeline(&plan.pipeline, input, &ctx)
+    execute_pipeline(&plan.pipeline, input, &mut ctx)
 }
 
 pub fn node_ids(table: &selene_gql::BindingTable) -> Vec<u64> {
@@ -303,7 +303,7 @@ pub fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
 }
 
 #[allow(dead_code)]
-pub fn empty_graph_context(caps: &selene_gql::ImplDefinedCaps) -> TxContext<'_> {
+pub fn empty_graph_context(caps: &selene_gql::ImplDefinedCaps) -> TxContext<'_, '_> {
     TxContext::read_only(
         Arc::new(selene_graph::SeleneGraph::new(GraphId::new(999))),
         caps,

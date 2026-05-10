@@ -9,7 +9,7 @@ use selene_gql::{Binding, BindingTable, BindingTableSchema, execute_pipeline};
 fn execute_read(source: &str) -> BindingTable {
     let fixture = ExecFixture::build();
     let plan = planned(source);
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     let input = if let Some(pattern) = &plan.pattern_plan {
         execute_pattern(pattern, &ctx)
     } else {
@@ -18,7 +18,7 @@ fn execute_read(source: &str) -> BindingTable {
             vec![Binding::empty()],
         )
     };
-    execute_pipeline(&plan.pipeline, input, &ctx).expect("read pipeline executes")
+    execute_pipeline(&plan.pipeline, input, &mut ctx).expect("read pipeline executes")
 }
 
 #[test]
