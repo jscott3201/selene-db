@@ -47,13 +47,20 @@ fn chain_discards_lhs_rows_when_rhs_has_no_input_refs() {
 }
 
 #[test]
-fn chain_can_reference_prior_terminal_scope() {
-    let table = execute_read("UNWIND [1, 2] AS a RETURN a NEXT RETURN a + 10 AS b");
+fn correlated_next_returns_planner_not_implemented() {
+    use selene_gql::{EmptyProcedureRegistry, PlannerError, analyze, parse, plan};
 
-    assert_eq!(
-        column_values(&table, "b"),
-        vec![Value::Int(11), Value::Int(12)]
-    );
+    let parsed = parse("UNWIND [1, 2] AS a RETURN a NEXT RETURN a + 10 AS b").expect("parses");
+    let analyzed = analyze(parsed, &EmptyProcedureRegistry, None).expect("analyzes");
+    let err = plan(&analyzed, &EmptyProcedureRegistry).expect_err("correlated NEXT rejected");
+
+    assert!(matches!(
+        err,
+        PlannerError::NotImplemented {
+            feature: "correlated NEXT (RHS references prior-block bindings)",
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -100,9 +107,13 @@ fn nested_chain_blocks_each_replace_schema() {
 #[test]
 fn chain_rhs_sees_same_snapshot_as_lhs() {
     let fixture = ExecFixture::build();
+    // Use distinct binding names in each block so the rhs is uncorrelated;
+    // reusing `n` across NEXT triggers the analyzer's boundary=false binding
+    // reuse and would (correctly) be rejected as correlated NEXT by the
+    // planner's BRIEF-35 §O guard.
     let plan = planned(
         "MATCH (n:Person) RETURN n.name AS name \
-         NEXT MATCH (n:Person) RETURN n.name AS name",
+         NEXT MATCH (m:Person) RETURN m.name AS name",
     );
     let ctx = fixture.context_caps(&plan);
     {

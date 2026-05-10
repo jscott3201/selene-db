@@ -8,7 +8,8 @@ mod match_clause;
 mod mutation;
 
 use crate::{
-    LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, WithClause,
+    LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, SourceSpan,
+    WithClause,
     analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId},
     plan::{
         BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
@@ -66,13 +67,42 @@ fn lower_chained(
     let mut plan = lower_query_pipeline(first, registry, analyzed)?;
     // Per BRIEF-26 §O.C6, NEXT establishes a fresh binding scope. The chained
     // plan's output_schema must reflect the final block's projection because
-    // each NEXT discards the prior block's columns.
+    // each NEXT discards the prior block's columns. Correlated NEXT (rhs
+    // references prior-block bindings) is a Phase A scope reduction per
+    // BRIEF-35 §O — surface as `PlannerError::NotImplemented` rather than
+    // silently lose the carried bindings at runtime.
     for block in rest {
+        assert_no_correlated_next(block.span, analyzed)?;
         let inner = lower_query_pipeline(block, registry, analyzed)?;
         plan.output_schema = inner.output_schema.clone();
         plan.pipeline.push(PipelineOp::Chain(Box::new(inner)));
     }
     Ok(plan)
+}
+
+fn assert_no_correlated_next(
+    block_span: SourceSpan,
+    analyzed: &AnalyzedStatement,
+) -> Result<(), PlannerError> {
+    for reference in &analyzed.references {
+        if !span_contains(block_span, reference.span) {
+            continue;
+        }
+        let Some(decl) = analyzed.scopes.declaration(reference.binding) else {
+            continue;
+        };
+        if !span_contains(block_span, decl.span()) {
+            return Err(PlannerError::NotImplemented {
+                feature: "correlated NEXT (RHS references prior-block bindings)",
+                span: reference.span,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn span_contains(outer: SourceSpan, inner: SourceSpan) -> bool {
+    outer.byte_offset <= inner.byte_offset && inner.end() <= outer.end()
 }
 
 fn lower_query_pipeline(
