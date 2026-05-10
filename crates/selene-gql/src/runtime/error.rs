@@ -39,6 +39,33 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// `START TRANSACTION` was requested while an explicit transaction exists.
+    #[error("transaction already active")]
+    #[diagnostic(code(SLENE_X_25000))]
+    TransactionAlreadyActive {
+        /// Source span for the transaction-control statement.
+        #[label("transaction already active")]
+        span: SourceSpan,
+    },
+
+    /// `COMMIT` or `ROLLBACK` was requested without an explicit transaction.
+    #[error("no active transaction")]
+    #[diagnostic(code(SLENE_X_25000))]
+    NoActiveTransaction {
+        /// Source span for the transaction-control statement.
+        #[label("no active transaction")]
+        span: SourceSpan,
+    },
+
+    /// Statement was issued while the explicit transaction is aborted.
+    #[error("statement issued against aborted explicit transaction")]
+    #[diagnostic(code(SLENE_X_25P02))]
+    InFailedTransaction {
+        /// Source span for the rejected statement.
+        #[label("aborted transaction; issue ROLLBACK to recover")]
+        span: SourceSpan,
+    },
+
     /// The graph mutation funnel rejected a write.
     #[error("graph mutation failed: {source}")]
     #[diagnostic(code(SLENE_X_XX501))]
@@ -67,7 +94,10 @@ impl ExecutorError {
         match self {
             Self::DataException { .. } => GqlStatus::DATA_EXCEPTION,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
-            Self::InvalidTransactionState { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
+            Self::InvalidTransactionState { .. }
+            | Self::TransactionAlreadyActive { .. }
+            | Self::NoActiveTransaction { .. }
+            | Self::InFailedTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
             Self::GraphMutation { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
             Self::ImplementationDefined { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
         }

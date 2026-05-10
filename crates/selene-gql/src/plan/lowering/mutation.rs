@@ -108,6 +108,7 @@ pub(crate) fn lower_mutation(
 
     let next_pipeline_op_id = crate::PipelineOpId::new(ops.len() as u32);
     Ok(ExecutionPlan {
+        category: analyzed.category,
         pattern_plan,
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },

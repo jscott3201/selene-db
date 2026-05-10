@@ -64,7 +64,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use crate::{
-        EmptyProcedureRegistry, ImplDefinedCaps, PipelineOp, analyze, parse,
+        EmptyProcedureRegistry, ImplDefinedCaps, PipelineOp, StatementCategory, analyze, parse,
         plan::{
             BindingTableSchema, ExecutionPlan,
             optimize::{OptimizeContext, Rule, Transformed, optimize, optimize_with_rules},
@@ -74,6 +74,7 @@ mod tests {
 
     fn empty_plan(caps: ImplDefinedCaps) -> ExecutionPlan {
         ExecutionPlan {
+            category: StatementCategory::ReadOnly,
             pattern_plan: None,
             pipeline: Vec::new(),
             output_schema: BindingTableSchema {

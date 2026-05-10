@@ -64,6 +64,6 @@ pub use crate::procedure_registry::{
     ProcedureSignature, ProcedureTier,
 };
 pub use crate::runtime::{
-    AdaptiveOptimizer, Binding, BindingTable, ExecutorError, TxContext, execute_pattern,
-    execute_pipeline,
+    AdaptiveOptimizer, Binding, BindingTable, ExecutorError, Session, StatementOutput, TxContext,
+    execute_pattern, execute_pipeline, execute_statement,
 };
