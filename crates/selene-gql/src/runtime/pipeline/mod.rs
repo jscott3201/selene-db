@@ -1,6 +1,7 @@
 //! Binding-table pipeline executor.
 
 mod aggregate;
+mod catalog;
 mod chain;
 mod distinct;
 mod filter;
@@ -49,7 +50,8 @@ pub fn execute_pipeline(
             PipelineOp::Union { op, rhs } => union::execute(*op, rhs, table, ctx)?,
             PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
             PipelineOp::Mutation(mutation) => mutation::execute(mutation, table, ctx)?,
-            PipelineOp::Call(_) | PipelineOp::Catalog(_) | PipelineOp::Tx(_) => {
+            PipelineOp::Catalog(catalog) => catalog::execute(catalog, table, ctx)?,
+            PipelineOp::Call(_) | PipelineOp::Tx(_) => {
                 return Err(ExecutorError::ImplementationDefined {
                     detail: "pipeline op not implemented",
                 });

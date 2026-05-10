@@ -110,8 +110,14 @@ impl<'g> WriteTxn<'g> {
         let next_edge_id = working.meta.next_edge_id;
 
         if let Some(type_def) = working.meta.bound_type.as_deref() {
+            let schema_changed = changes
+                .iter()
+                .any(|change| matches!(change, Change::SchemaChanged { .. }));
             for change in &changes {
                 crate::type_validator::validate_change(change, &working, type_def)?;
+            }
+            if schema_changed {
+                crate::type_validator::validate_entity_state(&working, type_def)?;
             }
         }
 

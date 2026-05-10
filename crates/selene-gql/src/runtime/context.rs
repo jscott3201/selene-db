@@ -91,12 +91,27 @@ impl<'a, 'g> TxContext<'a, 'g> {
     /// Returns [`ExecutorError::InvalidTransactionState`] when a mutation
     /// operator executes in a read-only context.
     pub fn mutator(&mut self) -> Result<Mutator<'_, 'g>, ExecutorError> {
-        self.write_txn.as_deref_mut().map(WriteTxn::mutator).ok_or(
-            ExecutorError::InvalidTransactionState {
-                detail: "mutation invoked without write transaction",
-                span: SourceSpan::default(),
-            },
+        self.mutator_with_span(
+            "mutation invoked without write transaction",
+            SourceSpan::default(),
         )
+    }
+
+    /// Borrow the statement mutator with a caller-specific diagnostic.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::InvalidTransactionState`] when the current
+    /// context is read-only.
+    pub fn mutator_with_span(
+        &mut self,
+        detail: &'static str,
+        span: SourceSpan,
+    ) -> Result<Mutator<'_, 'g>, ExecutorError> {
+        self.write_txn
+            .as_deref_mut()
+            .map(WriteTxn::mutator)
+            .ok_or(ExecutorError::InvalidTransactionState { detail, span })
     }
 
     /// Borrow the planner/executor implementation-defined caps.
