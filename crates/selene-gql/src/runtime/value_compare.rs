@@ -7,6 +7,13 @@ use selene_core::Value;
 const F32_SIGNIFICAND_BITS: u32 = 24;
 const F64_SIGNIFICAND_BITS: u32 = 53;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub(crate) enum NullSortOrder {
+    First,
+    Last,
+}
+
 pub(crate) fn equal_non_null(lhs: &Value, rhs: &Value) -> bool {
     debug_assert!(!matches!(lhs, Value::Null));
     debug_assert!(!matches!(rhs, Value::Null));
@@ -20,6 +27,33 @@ pub(crate) fn compare_non_null(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Bool(lhs), Value::Bool(rhs)) => Some(lhs.cmp(rhs)),
         (Value::String(lhs), Value::String(rhs)) => Some(lhs.as_str().cmp(rhs.as_str())),
         _ => numeric_compare(lhs, rhs),
+    }
+}
+
+pub(crate) fn compare_for_sort(lhs: &Value, rhs: &Value, nulls: NullSortOrder) -> Ordering {
+    match (lhs, rhs) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Null, _) => match nulls {
+            NullSortOrder::First => Ordering::Less,
+            NullSortOrder::Last => Ordering::Greater,
+        },
+        (_, Value::Null) => match nulls {
+            NullSortOrder::First => Ordering::Greater,
+            NullSortOrder::Last => Ordering::Less,
+        },
+        _ => compare_non_null_for_sort(lhs, rhs),
+    }
+}
+
+fn compare_non_null_for_sort(lhs: &Value, rhs: &Value) -> Ordering {
+    match (lhs, rhs) {
+        (Value::Float(lhs), Value::Float(rhs)) => lhs.total_cmp(rhs),
+        (Value::Float32(lhs), Value::Float32(rhs)) => lhs.total_cmp(rhs),
+        (Value::Float(lhs), Value::Float32(rhs)) => lhs.total_cmp(&f64::from(*rhs)),
+        (Value::Float32(lhs), Value::Float(rhs)) => f64::from(*lhs).total_cmp(rhs),
+        _ => numeric_compare(lhs, rhs)
+            .or_else(|| compare_non_null(lhs, rhs))
+            .unwrap_or_else(|| value_rank(lhs).cmp(&value_rank(rhs))),
     }
 }
 
@@ -59,6 +93,39 @@ fn numeric_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
         }
         _ => return None,
     })
+}
+
+fn value_rank(value: &Value) -> u8 {
+    match value {
+        Value::Bool(_) => 0,
+        Value::Int(_) => 1,
+        Value::Uint(_) => 2,
+        Value::Int128(_) => 3,
+        Value::Uint128(_) => 4,
+        Value::Float(_) => 5,
+        Value::Float32(_) => 6,
+        Value::Decimal(_) => 7,
+        Value::String(_) => 8,
+        Value::Bytes(_) => 9,
+        Value::List(_) => 10,
+        Value::Record(_) => 11,
+        Value::RecordTyped(_) => 12,
+        Value::Path(_) => 13,
+        Value::NodeRef(_) => 14,
+        Value::EdgeRef(_) => 15,
+        Value::GraphRef(_) => 16,
+        Value::TableRef(_) => 17,
+        Value::ZonedDateTime(_) => 18,
+        Value::LocalDateTime(_) => 19,
+        Value::Date(_) => 20,
+        Value::ZonedTime(_) => 21,
+        Value::LocalTime(_) => 22,
+        Value::Duration(_) => 23,
+        Value::Extended { .. } => 24,
+        Value::Null => 25,
+        Value::Uuid(_) => 26,
+        _ => 27,
+    }
 }
 
 fn numeric_compare(lhs: &Value, rhs: &Value) -> Option<Ordering> {

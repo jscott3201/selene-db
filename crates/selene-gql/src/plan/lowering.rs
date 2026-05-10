@@ -305,7 +305,7 @@ fn push_grouping(
         ops.push(PipelineOp::GroupBy {
             keys: keys
                 .iter()
-                .map(|value| expr::project_expr(value, column_name(value, None), analyzed))
+                .map(|value| expr::project_expr(value, group_key_alias(value, items), analyzed))
                 .collect::<Result<Vec<_>, _>>()?,
             aggregates: aggregate_items,
         });
@@ -330,6 +330,7 @@ fn aggregates(
                     ValueExpr::FunctionCall { args, .. } => args,
                     _ => unreachable!("aggregate_name only matches function calls"),
                 };
+                let (_, ty) = expr::expr_cell(&item.expr, analyzed)?;
                 Ok(Aggregate {
                     function,
                     args: args
@@ -338,11 +339,21 @@ fn aggregates(
                         .collect::<Result<Vec<_>, _>>()?,
                     star,
                     distinct,
+                    alias: item.alias,
+                    ty,
                     span: item.span,
                 })
             })
         })
         .collect()
+}
+
+fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<IStr> {
+    items
+        .iter()
+        .find(|item| item.expr == *expr)
+        .and_then(|item| column_name(&item.expr, item.alias))
+        .or_else(|| column_name(expr, None))
 }
 
 fn column_name(expr: &ValueExpr, alias: Option<IStr>) -> Option<IStr> {

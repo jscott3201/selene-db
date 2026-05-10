@@ -55,9 +55,10 @@ pub fn evaluate(
             .map(|item| evaluate(item, binding, schema, ctx))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::List),
-        ValueExpr::FunctionCall { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "function call evaluation not implemented",
-        }),
+        ValueExpr::FunctionCall { name, .. } => aggregate_column_value(name, binding, schema)
+            .ok_or(ExecutorError::ImplementationDefined {
+                detail: "function call evaluation not implemented",
+            }),
         ValueExpr::Case { .. } => Err(ExecutorError::ImplementationDefined {
             detail: "CASE evaluation not implemented",
         }),
@@ -101,6 +102,28 @@ fn lookup_variable(
             name: name.as_str().to_owned(),
             span,
         })
+}
+
+fn aggregate_column_value(
+    name: &[selene_core::IStr],
+    binding: &Binding,
+    schema: &BindingTableSchema,
+) -> Option<Value> {
+    if name.len() != 1 || !is_aggregate_name(name[0]) {
+        return None;
+    }
+    schema
+        .columns
+        .iter()
+        .position(|column| column.name == Some(name[0]))
+        .and_then(|index| binding.get(index).cloned())
+}
+
+fn is_aggregate_name(name: selene_core::IStr) -> bool {
+    matches!(
+        name.as_str(),
+        "count" | "sum" | "avg" | "average" | "min" | "max" | "collect" | "collect_list"
+    )
 }
 
 fn property_access(

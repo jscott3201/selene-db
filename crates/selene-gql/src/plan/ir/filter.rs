@@ -107,6 +107,10 @@ pub struct Aggregate {
     pub star: bool,
     /// Whether arguments are distinct.
     pub distinct: bool,
+    /// Output alias, when present.
+    pub alias: Option<IStr>,
+    /// Analyzer-inferred aggregate result type.
+    pub ty: AnalyzedType,
     /// Source span.
     pub span: SourceSpan,
 }

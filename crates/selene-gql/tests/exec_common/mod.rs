@@ -5,7 +5,8 @@ use std::sync::Arc;
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, JoinTree, NodeOrEdgeScan, PatternPlan, ScanAccess,
-    TxContext, analyze, execute_pattern as execute_pattern_plan, optimize, parse, plan,
+    TxContext, analyze, execute_pattern as execute_pattern_plan, execute_pipeline, optimize, parse,
+    plan,
 };
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_testing::MockIndexCatalog;
@@ -193,6 +194,44 @@ pub fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut NodeOrEdgeScan> {
 
 pub fn execute_pattern(pattern: &PatternPlan, ctx: &TxContext<'_>) -> selene_gql::BindingTable {
     execute_pattern_plan(pattern, ctx).expect("pattern executes")
+}
+
+pub fn execute_read(source: &str) -> selene_gql::BindingTable {
+    let fixture = ExecFixture::build();
+    let plan = planned(source);
+    execute_plan(&fixture, &plan).expect("read pipeline executes")
+}
+
+pub fn execute_optimized_read(source: &str) -> selene_gql::BindingTable {
+    let fixture = ExecFixture::build();
+    let plan = optimized(source, &fixture.index_catalog());
+    execute_plan(&fixture, &plan).expect("read pipeline executes")
+}
+
+pub fn execute_read_result(
+    source: &str,
+) -> Result<selene_gql::BindingTable, selene_gql::ExecutorError> {
+    let fixture = ExecFixture::build();
+    let plan = planned(source);
+    execute_plan(&fixture, &plan)
+}
+
+pub fn execute_plan(
+    fixture: &ExecFixture,
+    plan: &ExecutionPlan,
+) -> Result<selene_gql::BindingTable, selene_gql::ExecutorError> {
+    let ctx = fixture.context_caps(plan);
+    let input = if let Some(pattern) = &plan.pattern_plan {
+        execute_pattern(pattern, &ctx)
+    } else {
+        selene_gql::BindingTable::new(
+            selene_gql::BindingTableSchema {
+                columns: Vec::new(),
+            },
+            vec![selene_gql::Binding::empty()],
+        )
+    };
+    execute_pipeline(&plan.pipeline, input, &ctx)
 }
 
 pub fn node_ids(table: &selene_gql::BindingTable) -> Vec<u64> {
