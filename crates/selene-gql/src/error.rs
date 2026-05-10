@@ -27,6 +27,8 @@ impl GqlStatus {
     pub const DATATYPE_MISMATCH: Self = Self(*b"42883");
     /// Data exception.
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
+    /// Invalid transaction state.
+    pub const INVALID_TRANSACTION_STATE: Self = Self(*b"25000");
     /// Invalid transaction state: catalog/data statement mixing.
     pub const INVALID_TRANSACTION_STATE_MIXING: Self = Self(*b"25G02");
     /// Implementation-defined planner or executor failure.

@@ -15,7 +15,7 @@ use crate::{
 pub(super) fn execute(
     rhs: &ExecutionPlan,
     _input: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     execute_plan(rhs, ctx)
 }

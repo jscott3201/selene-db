@@ -7,6 +7,7 @@ mod filter;
 mod group_by;
 mod let_op;
 mod limit;
+mod mutation;
 mod order_by;
 mod project;
 mod top_k;
@@ -22,7 +23,7 @@ use crate::{
 pub fn execute_pipeline(
     pipeline: &[PipelineOp],
     mut table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     for op in pipeline {
         table = match op {
@@ -47,10 +48,8 @@ pub fn execute_pipeline(
             PipelineOp::Distinct => distinct::execute(table),
             PipelineOp::Union { op, rhs } => union::execute(*op, rhs, table, ctx)?,
             PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
-            PipelineOp::Call(_)
-            | PipelineOp::Mutation(_)
-            | PipelineOp::Catalog(_)
-            | PipelineOp::Tx(_) => {
+            PipelineOp::Mutation(mutation) => mutation::execute(mutation, table, ctx)?,
+            PipelineOp::Call(_) | PipelineOp::Catalog(_) | PipelineOp::Tx(_) => {
                 return Err(ExecutorError::ImplementationDefined {
                     detail: "pipeline op not implemented",
                 });

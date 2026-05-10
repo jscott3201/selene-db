@@ -161,6 +161,16 @@ impl SeleneGraph {
         self.adjacency_in.get(&target)
     }
 
+    /// Return true when an alive node has at least one incident edge.
+    #[must_use]
+    pub fn node_has_incident_edges(&self, id: NodeId) -> bool {
+        self.outgoing_edges(id)
+            .is_some_and(|entry| !entry.is_empty())
+            || self
+                .incoming_edges(id)
+                .is_some_and(|entry| !entry.is_empty())
+    }
+
     /// Return the bitmap of node rows carrying `label`.
     #[must_use]
     pub fn nodes_with_label(&self, label: &IStr) -> Option<&RoaringBitmap> {

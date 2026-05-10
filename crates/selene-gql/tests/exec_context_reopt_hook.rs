@@ -38,7 +38,7 @@ fn tx_context_with_reopt_hook_carries_through_dispatch() {
     let hook = CountingHook {
         observed: AtomicU64::new(0),
     };
-    let ctx = TxContext::read_only_with_reopt(
+    let mut ctx = TxContext::read_only_with_reopt(
         Arc::new(SeleneGraph::new(GraphId::new(1_001))),
         &caps,
         &hook,
@@ -49,7 +49,7 @@ fn tx_context_with_reopt_hook_carries_through_dispatch() {
         vec![Binding::empty()],
     );
 
-    let output = execute_pipeline(&plan.pipeline, input, &ctx).expect("pipeline executes");
+    let output = execute_pipeline(&plan.pipeline, input, &mut ctx).expect("pipeline executes");
 
     assert!(ctx.reopt_hook().is_some());
     assert_eq!(output.row_count(), 1);

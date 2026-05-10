@@ -10,7 +10,7 @@ pub(super) fn execute(
     alias: IStr,
     span: SourceSpan,
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let input_schema = table.schema().clone();
     let mut output_schema = input_schema.clone();

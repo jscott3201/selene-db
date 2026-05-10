@@ -19,7 +19,7 @@ pub(crate) fn scan_pattern(
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     Ok(scan_entities(scan, pattern, schema, seed, ctx)?
         .into_iter()
@@ -32,7 +32,7 @@ pub(crate) fn scan_entities(
     pattern: &PatternPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<Vec<(Value, Binding)>, ExecutorError> {
     let mut rows = Vec::new();
     for row in candidate_rows(scan, ctx) {
@@ -70,7 +70,7 @@ fn binding_for_scan(
     Ok(Some(Binding::new(values)))
 }
 
-fn candidate_rows(scan: &NodeOrEdgeScan, ctx: &TxContext<'_>) -> Vec<u32> {
+fn candidate_rows(scan: &NodeOrEdgeScan, ctx: &TxContext<'_, '_>) -> Vec<u32> {
     match &scan.access {
         ScanAccess::Linear => linear_rows(scan.kind, ctx),
         ScanAccess::LabelIndex { .. } => label_index_rows(scan, ctx),
@@ -84,14 +84,14 @@ fn candidate_rows(scan: &NodeOrEdgeScan, ctx: &TxContext<'_>) -> Vec<u32> {
     }
 }
 
-fn linear_rows(kind: ScanKind, ctx: &TxContext<'_>) -> Vec<u32> {
+fn linear_rows(kind: ScanKind, ctx: &TxContext<'_, '_>) -> Vec<u32> {
     match kind {
         ScanKind::Node => ctx.snapshot().node_store.alive.iter().collect(),
         ScanKind::Edge => ctx.snapshot().edge_store.alive.iter().collect(),
     }
 }
 
-fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &TxContext<'_>) -> Vec<u32> {
+fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &TxContext<'_, '_>) -> Vec<u32> {
     let Some(label) = single_label(&scan.label_predicate) else {
         return linear_rows(scan.kind, ctx);
     };
@@ -113,7 +113,7 @@ fn typed_index_rows(
     scan: &NodeOrEdgeScan,
     property: IStr,
     bounds: &TypedIndexBounds,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Vec<u32> {
     if scan.kind != ScanKind::Node {
         return linear_rows_filtered_by_bounds(scan, property, bounds, ctx);
@@ -176,7 +176,7 @@ fn bitmap_union_rows(
     scan: &NodeOrEdgeScan,
     property: IStr,
     keys: &[Literal],
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Vec<u32> {
     union_property_eq(scan, property, keys, ctx)
         .into_iter()
@@ -187,7 +187,7 @@ fn union_property_eq(
     scan: &NodeOrEdgeScan,
     property: IStr,
     keys: &[Literal],
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> BTreeSet<u32> {
     if scan.kind != ScanKind::Node {
         return linear_rows(scan.kind, ctx)
@@ -225,7 +225,7 @@ fn union_property_eq(
 fn composite_lookup_rows(
     scan: &NodeOrEdgeScan,
     keys: &[(IStr, Literal)],
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
@@ -242,7 +242,7 @@ fn linear_rows_filtered_by_bounds(
     scan: &NodeOrEdgeScan,
     property: IStr,
     bounds: &TypedIndexBounds,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
@@ -259,7 +259,7 @@ pub(crate) fn predicates_pass(
     binding: &Binding,
     schema: &BindingTableSchema,
     entity: &Value,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<bool, ExecutorError> {
     for predicate in &scan.property_predicates {
         if !predicate_passes(predicate, pattern, binding, schema, entity, ctx)? {
@@ -275,7 +275,7 @@ pub(crate) fn predicate_passes(
     binding: &Binding,
     schema: &BindingTableSchema,
     entity: &Value,
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> Result<bool, ExecutorError> {
     if predicate.index_consumed {
         return Ok(true);
@@ -330,7 +330,7 @@ pub(crate) fn value_for_binding(
     binding.get(index).cloned()
 }
 
-fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &TxContext<'_>) -> bool {
+fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &TxContext<'_, '_>) -> bool {
     let Some(label_expr) = &scan.label_predicate else {
         return true;
     };
@@ -389,7 +389,7 @@ fn property_matches_any(
     row: u32,
     property: IStr,
     keys: &[Literal],
-    ctx: &TxContext<'_>,
+    ctx: &TxContext<'_, '_>,
 ) -> bool {
     property_value(kind, row, property, ctx).is_some_and(|value| {
         keys.iter()
@@ -401,7 +401,7 @@ fn property_value<'a>(
     kind: ScanKind,
     row: u32,
     property: IStr,
-    ctx: &'a TxContext<'_>,
+    ctx: &'a TxContext<'_, '_>,
 ) -> Option<&'a Value> {
     match kind {
         ScanKind::Node => ctx

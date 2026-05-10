@@ -32,14 +32,14 @@ fn execute_manual_set_op(
 ) -> Result<BindingTable, ExecutorError> {
     let rhs = planned(rhs_source);
     let caps = ImplDefinedCaps::default();
-    let ctx = exec_common::empty_graph_context(&caps);
+    let mut ctx = exec_common::empty_graph_context(&caps);
     execute_pipeline(
         &[PipelineOp::Union {
             op,
             rhs: Box::new(rhs),
         }],
         input,
-        &ctx,
+        &mut ctx,
     )
 }
 
@@ -152,7 +152,7 @@ fn union_rhs_sees_same_snapshot_as_lhs() {
         "MATCH (n:Person) RETURN n.name AS name \
          UNION ALL MATCH (n:Person) RETURN n.name AS name",
     );
-    let ctx = fixture.context_caps(&plan);
+    let mut ctx = fixture.context_caps(&plan);
     {
         let mut txn = fixture.graph.begin_write();
         let mut mutator = txn.mutator();
@@ -166,7 +166,7 @@ fn union_rhs_sees_same_snapshot_as_lhs() {
     }
     let input = execute_pattern(plan.pattern_plan.as_ref().expect("lhs pattern"), &ctx);
 
-    let table = execute_pipeline(&plan.pipeline, input, &ctx).expect("union executes");
+    let table = execute_pipeline(&plan.pipeline, input, &mut ctx).expect("union executes");
     let names = column_values(&table, "name");
 
     assert_eq!(names.len(), 6);

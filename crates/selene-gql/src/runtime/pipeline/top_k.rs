@@ -14,7 +14,7 @@ pub(super) fn execute(
     offset: &LimitAmount,
     count: &LimitAmount,
     table: BindingTable,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let offset = limit::literal_amount(offset)?;
     let count = limit::literal_amount(count)?;

@@ -7,7 +7,7 @@ use crate::{
 
 pub(crate) fn execute_plan(
     plan: &ExecutionPlan,
-    ctx: &TxContext<'_>,
+    ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let table = match &plan.pattern_plan {
         Some(pattern_plan) => pattern::execute_pattern(pattern_plan, ctx)?,
@@ -44,7 +44,7 @@ mod tests {
         plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans")
     }
 
-    fn context(plan: &ExecutionPlan) -> TxContext<'_> {
+    fn context(plan: &ExecutionPlan) -> TxContext<'_, '_> {
         TxContext::read_only(
             Arc::new(selene_graph::SeleneGraph::new(GraphId::new(991))),
             &plan.impl_defined_caps,
@@ -54,9 +54,9 @@ mod tests {
     #[test]
     fn execute_plan_with_no_pattern_plan_seeds_single_empty_row() {
         let plan = planned("RETURN 1 AS n");
-        let ctx = context(&plan);
+        let mut ctx = context(&plan);
 
-        let table = execute_plan(&plan, &ctx).expect("plan executes");
+        let table = execute_plan(&plan, &mut ctx).expect("plan executes");
 
         assert_eq!(table.row_count(), 1);
         assert_eq!(table.rows()[0].values(), &[Value::Int(1)]);
@@ -74,9 +74,9 @@ mod tests {
             txn.commit().expect("fixture commits");
         }
         let plan = planned("MATCH (n) RETURN n");
-        let ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+        let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
 
-        let table = execute_plan(&plan, &ctx).expect("plan executes");
+        let table = execute_plan(&plan, &mut ctx).expect("plan executes");
 
         assert_eq!(table.row_count(), 1);
         assert!(matches!(table.rows()[0].values(), [Value::NodeRef(_)]));
@@ -95,9 +95,9 @@ mod tests {
         }
         let mut plan = planned("MATCH (n) RETURN n");
         plan.pipeline.clear();
-        let ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+        let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
 
-        let table = execute_plan(&plan, &ctx).expect("plan executes");
+        let table = execute_plan(&plan, &mut ctx).expect("plan executes");
 
         assert_eq!(table.row_count(), 1);
         assert_eq!(table.schema().columns.len(), 1);

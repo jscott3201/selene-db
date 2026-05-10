@@ -45,22 +45,22 @@ fn insert_anonymous_edge_endpoints_use_insert_site_refs() {
     else {
         panic!("expected anonymous left node");
     };
+    let MutationOp::InsertNode {
+        site_id: right_id,
+        binding: None,
+        ..
+    } = ops[1]
+    else {
+        panic!("expected anonymous right node");
+    };
     let MutationOp::InsertEdge {
         left,
         right,
         site_id: edge_id,
         ..
-    } = ops[1]
-    else {
-        panic!("expected inserted edge");
-    };
-    let MutationOp::InsertNode {
-        site_id: right_id,
-        binding: None,
-        ..
     } = ops[2]
     else {
-        panic!("expected anonymous right node");
+        panic!("expected inserted edge");
     };
     assert_eq!(*left, InsertEndpointRef::InsertedNode(*left_id));
     assert_eq!(*right, InsertEndpointRef::InsertedNode(*right_id));
@@ -93,11 +93,11 @@ fn reused_insert_node_is_skipped_but_remains_endpoint_binding() {
     let plan = plan_one("INSERT (a) INSERT (a)-[:K]->(b) RETURN *");
     let ops = mutation_ops(&plan);
     assert_eq!(ops.len(), 3);
-    let MutationOp::InsertEdge { left, right, .. } = ops[1] else {
+    let MutationOp::InsertEdge { left, right, .. } = ops[2] else {
         panic!("expected middle edge");
     };
-    assert!(matches!(left, InsertEndpointRef::Binding(_)));
-    assert!(matches!(right, InsertEndpointRef::Binding(_)));
+    assert!(matches!(left, InsertEndpointRef::Binding { .. }));
+    assert!(matches!(right, InsertEndpointRef::Binding { .. }));
     assert_eq!(column_names(&plan.output_schema.columns), ["a", "b"]);
 }
 
@@ -182,8 +182,8 @@ fn sentinel_mutation_plan_shape_snapshot() {
         .join("\n");
     insta::assert_snapshot!(summary, @r###"
 node:0:binding=false
-edge:1:InsertedNode(InsertSiteId(0)):InsertedNode(InsertSiteId(2))
 node:2:binding=false
+edge:1:InsertedNode(InsertSiteId(0)):InsertedNode(InsertSiteId(2))
 "###);
 }
 

@@ -14,7 +14,7 @@ pub(crate) fn execute(
     right: &JoinTree,
     key: &[IStr],
     build_side: BuildSide,
-    env: pattern::WalkContext<'_, '_, '_>,
+    env: pattern::WalkContext<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     match build_side {
         BuildSide::Left => execute_ordered(left, right, key, env, true),
@@ -26,7 +26,7 @@ fn execute_ordered(
     build_tree: &JoinTree,
     probe_tree: &JoinTree,
     key: &[IStr],
-    env: pattern::WalkContext<'_, '_, '_>,
+    env: pattern::WalkContext<'_, '_, '_, '_>,
     build_is_left: bool,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let build_rows = pattern::walk_join_tree(build_tree, env)?;

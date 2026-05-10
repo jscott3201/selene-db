@@ -27,8 +27,8 @@ fn table(values: Vec<Value>) -> BindingTable {
 
 fn distinct(values: Vec<Value>) -> BindingTable {
     let caps = ImplDefinedCaps::default();
-    let ctx = exec_common::empty_graph_context(&caps);
-    execute_pipeline(&[PipelineOp::Distinct], table(values), &ctx).expect("distinct executes")
+    let mut ctx = exec_common::empty_graph_context(&caps);
+    execute_pipeline(&[PipelineOp::Distinct], table(values), &mut ctx).expect("distinct executes")
 }
 
 #[test]
