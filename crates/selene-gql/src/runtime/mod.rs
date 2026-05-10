@@ -13,6 +13,7 @@ mod hash_join;
 mod outer;
 mod pattern;
 mod pipeline;
+mod plan_runner;
 mod scan;
 mod subplan;
 mod value_compare;
@@ -23,6 +24,7 @@ pub use context::{AdaptiveOptimizer, TxContext};
 pub use error::ExecutorError;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
+pub(crate) use plan_runner::execute_plan;
 
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};
 
