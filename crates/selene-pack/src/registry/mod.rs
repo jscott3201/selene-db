@@ -34,25 +34,20 @@ impl ProcedurePackRegistry {
         }
     }
 
-    /// Return a builder for a custom registry.
-    #[must_use]
-    pub const fn builder() -> ProcedurePackRegistryBuilder {
-        ProcedurePackRegistryBuilder::new()
-    }
-
     /// Construct the standard platform built-in registry.
-    #[must_use]
-    pub fn with_builtins() -> Self {
-        Self::builder()
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if a platform built-in fails to register —
+    /// notably [`RegistryError::InternerCapExhausted`] when the embedder has
+    /// already filled the global string interner. Embedders that want
+    /// infallible-or-panic semantics can call `.expect(...)` at the call site;
+    /// this surface intentionally does not panic so an operational resource
+    /// limit is recoverable.
+    pub fn with_builtins() -> Result<Self, RegistryError> {
+        ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(SeleneHealth)
             .build()
-            .expect("platform built-ins are valid")
-    }
-}
-
-impl Default for ProcedurePackRegistry {
-    fn default() -> Self {
-        Self::with_builtins()
     }
 }
 
@@ -91,16 +86,18 @@ impl ProcedureRegistry for ProcedurePackRegistry {
 ///
 /// Built-ins are accepted only before [`build`](Self::build). The frozen
 /// [`ProcedurePackRegistry`] retains no handle allocator or registration API.
+///
+/// `pub(crate)` for BRIEF-41 (Q8): v1.0 platform built-ins are the only
+/// supported registration path. Manifest-driven extension registration
+/// lands in BRIEF-43; the public registration API will be revisited then.
 #[derive(Default)]
-pub struct ProcedurePackRegistryBuilder {
+pub(crate) struct ProcedurePackRegistryBuilder {
     pending: Vec<PendingEntry>,
     next_handle: u64,
 }
 
 impl ProcedurePackRegistryBuilder {
-    /// Construct an empty builder.
-    #[must_use]
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             pending: Vec::new(),
             next_handle: 1,
@@ -132,14 +129,7 @@ impl ProcedurePackRegistryBuilder {
         self
     }
 
-    /// Freeze this builder into a runtime registry.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`RegistryError`] when static built-in metadata is malformed,
-    /// conflicts with another registration, or attempts to register a tier that
-    /// v1.0 does not support.
-    pub fn build(self) -> Result<ProcedurePackRegistry, RegistryError> {
+    pub(crate) fn build(self) -> Result<ProcedurePackRegistry, RegistryError> {
         Ok(ProcedurePackRegistry {
             storage: Arc::new(RegistryStorage::from_pending(self.pending)?),
         })
@@ -245,7 +235,7 @@ mod tests {
 
     #[test]
     fn duplicate_name_with_different_hash_errors() {
-        let err = ProcedurePackRegistry::builder()
+        let err = ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(TestGraphBuiltin {
                 name: &["dup", "proc"],
                 tier: ProcedureTier::Graph,
@@ -273,7 +263,7 @@ mod tests {
 
     #[test]
     fn duplicate_name_with_same_hash_is_idempotent() {
-        let registry = ProcedurePackRegistry::builder()
+        let registry = ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(TestGraphBuiltin {
                 name: &["dup", "same"],
                 tier: ProcedureTier::Graph,
@@ -297,7 +287,7 @@ mod tests {
 
     #[test]
     fn register_persist_tier_returns_persist_tier_not_in_v1() {
-        let err = ProcedurePackRegistry::builder()
+        let err = ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(TestGraphBuiltin {
                 name: &["persist", "later"],
                 tier: ProcedureTier::Persist,
@@ -311,7 +301,7 @@ mod tests {
 
     #[test]
     fn tier_mismatch_reports_declared_and_attempted_tiers() {
-        let err = ProcedurePackRegistry::builder()
+        let err = ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(TestGraphBuiltin {
                 name: &["wrong", "tier"],
                 tier: ProcedureTier::Mutation,
@@ -332,7 +322,7 @@ mod tests {
 
     #[test]
     fn mutation_builtin_registration_uses_mutation_tier() {
-        let registry = ProcedurePackRegistry::builder()
+        let registry = ProcedurePackRegistryBuilder::new()
             .with_mutation_builtin(TestMutationBuiltin)
             .build()
             .expect("mutation built-in registers");
@@ -344,5 +334,99 @@ mod tests {
         let metadata = registry.lookup(&name).expect("mutation procedure exists");
 
         assert_eq!(metadata.tier, ProcedureTier::Mutation);
+    }
+
+    /// Regression: BRIEF-41 round-1 Codex F1.
+    /// Until BRIEF-48 lands real content hashes, two registrations of the
+    /// same name MUST conflict even when both hashes are the `[0u8; 32]`
+    /// placeholder, so a silently-dropped second implementation is
+    /// impossible.
+    #[test]
+    fn duplicate_name_with_default_placeholder_hash_always_conflicts() {
+        let err = ProcedurePackRegistryBuilder::new()
+            .with_graph_builtin(TestGraphBuiltin {
+                name: &["dup", "placeholder"],
+                tier: ProcedureTier::Graph,
+                hash: [0_u8; 32],
+            })
+            .with_graph_builtin(TestGraphBuiltin {
+                name: &["dup", "placeholder"],
+                tier: ProcedureTier::Graph,
+                hash: [0_u8; 32],
+            })
+            .build()
+            .expect_err("placeholder hash is never idempotent");
+
+        assert!(matches!(err, RegistryError::Conflict { .. }));
+    }
+
+    /// Regression: BRIEF-41 round-1 Codex F3.
+    /// A built-in declaring `Graph` tier with a write mutability surfaces
+    /// at build time rather than slipping through to a runtime
+    /// `ProcedureError::TierMismatch` from BRIEF-39's executor-side
+    /// `validate_call_tier`.
+    #[test]
+    fn mutability_inconsistent_with_declared_tier_returns_mutability_tier_mismatch() {
+        #[derive(Clone, Copy)]
+        struct GraphTierGraphWriteMutability;
+
+        impl BuiltInMetadata for GraphTierGraphWriteMutability {
+            fn name(&self) -> &'static [&'static str] {
+                &["inconsistent", "mutability"]
+            }
+            fn tier(&self) -> ProcedureTier {
+                ProcedureTier::Graph
+            }
+            fn mutability(&self) -> ProcedureMutability {
+                ProcedureMutability::GraphWrite
+            }
+            fn signature_static(&self) -> &'static [StaticParameter] {
+                &[]
+            }
+            fn output_columns_static(&self) -> &'static [StaticOutputColumn] {
+                &OUTPUTS
+            }
+        }
+
+        impl GraphProcedureBuiltIn for GraphTierGraphWriteMutability {
+            fn execute(
+                &self,
+                _ctx: &selene_gql::GraphContext<'_>,
+                _args: &[Value],
+            ) -> Result<ProcedureResult, ProcedureError> {
+                Ok(ProcedureResult { rows: Vec::new() })
+            }
+        }
+
+        let err = ProcedurePackRegistryBuilder::new()
+            .with_graph_builtin(GraphTierGraphWriteMutability)
+            .build()
+            .expect_err("graph tier + GraphWrite mutability is inconsistent");
+
+        assert!(matches!(
+            err,
+            RegistryError::MutabilityTierMismatch {
+                declared_tier: ProcedureTier::Graph,
+                declared_mutability: ProcedureMutability::GraphWrite,
+                expected_tier: ProcedureTier::Mutation,
+                ..
+            }
+        ));
+    }
+
+    /// Regression: BRIEF-41 round-1 Codex F5.
+    /// `with_builtins()` returns `Result` so an `InternerCapExhausted`
+    /// surface is recoverable. The happy path returns the platform
+    /// registry; embedders that want infallible-or-panic semantics call
+    /// `.expect(...)` at their call site, not from inside selene-pack.
+    #[test]
+    fn with_builtins_returns_ok_on_clean_interner() {
+        let registry = ProcedurePackRegistry::with_builtins()
+            .expect("platform built-ins register cleanly in tests");
+        let name = [
+            selene_core::intern("selene").expect("interns"),
+            selene_core::intern("health").expect("interns"),
+        ];
+        assert!(registry.lookup(&name).is_some());
     }
 }

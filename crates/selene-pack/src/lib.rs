@@ -13,7 +13,7 @@ mod error;
 mod registry;
 
 pub use error::RegistryError;
-pub use registry::{ProcedurePackRegistry, ProcedurePackRegistryBuilder};
+pub use registry::ProcedurePackRegistry;
 pub use selene_core::IStr;
 pub use selene_gql::{
     GraphContext, MutationContext, ProcedureContext, ProcedureError, ProcedureHandle,

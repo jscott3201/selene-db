@@ -17,7 +17,15 @@ use crate::{
     error::RegistryError,
 };
 
+use selene_gql::ProcedureMutability;
+
 pub(crate) type NameKey = Box<[IStr]>;
+
+/// Sentinel content hash treated as "not yet computed". Until BRIEF-48 fills in
+/// real `blake3` canonical hashing, every built-in returns this placeholder;
+/// duplicate-name registration against the placeholder always conflicts so
+/// silently dropping a different implementation is impossible.
+const PLACEHOLDER_CONTENT_HASH: [u8; 32] = [0_u8; 32];
 
 #[derive(Clone)]
 pub(crate) enum TierEntry {
@@ -99,7 +107,12 @@ impl RegistryStorage {
         for pending_entry in pending {
             let metadata = pending_entry.entry.metadata();
             let name = intern_name(metadata.name())?;
-            validate_tier(&name, metadata.tier(), pending_entry.attempted_tier)?;
+            validate_tier(
+                &name,
+                metadata.mutability(),
+                metadata.tier(),
+                pending_entry.attempted_tier,
+            )?;
             let hash = metadata.content_hash();
 
             if let Some(existing) = staged.get(&name) {
@@ -110,7 +123,12 @@ impl RegistryStorage {
                         attempted: pending_entry.attempted_tier,
                     });
                 }
-                if existing.hash != hash {
+                // Until BRIEF-48 lands real content hashes, any duplicate is a
+                // conflict. Identical non-placeholder hashes are idempotent so
+                // BRIEF-48's hashing path is forward-compatible.
+                let unstable_hash =
+                    existing.hash == PLACEHOLDER_CONTENT_HASH || hash == PLACEHOLDER_CONTENT_HASH;
+                if unstable_hash || existing.hash != hash {
                     return Err(RegistryError::Conflict {
                         name,
                         existing_hash: existing.hash,
@@ -160,6 +178,7 @@ struct StagedEntry {
 
 fn validate_tier(
     name: &NameKey,
+    mutability: ProcedureMutability,
     declared: ProcedureTier,
     attempted: ProcedureTier,
 ) -> Result<(), RegistryError> {
@@ -171,6 +190,24 @@ fn validate_tier(
             name: name.clone(),
             declared,
             attempted,
+        });
+    }
+    // Mirror selene_gql::runtime::pipeline::call::context::tier_for_mutability:
+    // a read-mutability builtin must declare Graph (or Persist, rejected above)
+    // tier; any write mutability must declare Mutation. Catching this drift at
+    // construction prevents BRIEF-39 E21 from surfacing it as a runtime error.
+    let expected_for_mutability = match mutability {
+        ProcedureMutability::Read => ProcedureTier::Graph,
+        ProcedureMutability::GraphWrite
+        | ProcedureMutability::SchemaWrite
+        | ProcedureMutability::Admin => ProcedureTier::Mutation,
+    };
+    if declared != expected_for_mutability {
+        return Err(RegistryError::MutabilityTierMismatch {
+            name: name.clone(),
+            declared_tier: declared,
+            declared_mutability: mutability,
+            expected_tier: expected_for_mutability,
         });
     }
     Ok(())

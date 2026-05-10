@@ -51,7 +51,8 @@ fn row_values(output: StatementOutput) -> Vec<Value> {
 
 #[test]
 fn call_selene_health_yields_engine_state_columns() {
-    let registry = ProcedurePackRegistry::with_builtins();
+    let registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
     let graph = SharedGraph::new(GraphId::new(4101));
 
     let values = row_values(execute(health_source(), &graph, &registry));
@@ -59,9 +60,9 @@ fn call_selene_health_yields_engine_state_columns() {
     assert_eq!(
         values,
         vec![
-            Value::Int(4101),
-            Value::Int(0),
-            Value::Int(0),
+            Value::Uint(4101),
+            Value::Uint(0),
+            Value::Uint(0),
             Value::Bool(false),
         ]
     );
@@ -69,7 +70,8 @@ fn call_selene_health_yields_engine_state_columns() {
 
 #[test]
 fn call_selene_health_yields_updated_counts_after_mutation() {
-    let registry = ProcedurePackRegistry::with_builtins();
+    let registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
     let graph = SharedGraph::new(GraphId::new(4102));
     let mut txn = graph.begin_write();
     let a = txn
@@ -90,9 +92,9 @@ fn call_selene_health_yields_updated_counts_after_mutation() {
     assert_eq!(
         values,
         vec![
-            Value::Int(4102),
-            Value::Int(2),
-            Value::Int(1),
+            Value::Uint(4102),
+            Value::Uint(2),
+            Value::Uint(1),
             Value::Bool(false),
         ]
     );
@@ -100,7 +102,8 @@ fn call_selene_health_yields_updated_counts_after_mutation() {
 
 #[test]
 fn selene_health_inside_explicit_tx_sees_uncommitted_inserts_via_real_registry() {
-    let registry = ProcedurePackRegistry::with_builtins();
+    let registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
     let graph = SharedGraph::new(GraphId::new(4103));
     let mut session = Session::new(&graph);
 
@@ -116,9 +119,9 @@ fn selene_health_inside_explicit_tx_sees_uncommitted_inserts_via_real_registry()
     assert_eq!(
         values,
         vec![
-            Value::Int(4103),
-            Value::Int(1),
-            Value::Int(0),
+            Value::Uint(4103),
+            Value::Uint(1),
+            Value::Uint(0),
             Value::Bool(false),
         ]
     );
@@ -127,7 +130,8 @@ fn selene_health_inside_explicit_tx_sees_uncommitted_inserts_via_real_registry()
 
 #[test]
 fn selene_health_rejects_runtime_arguments() {
-    let runtime_registry = ProcedurePackRegistry::with_builtins();
+    let runtime_registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
     let runtime_handle = runtime_health_handle(&runtime_registry);
     let planning_registry = PlanningRegistry::health_with_signature(
         runtime_handle,
@@ -157,7 +161,8 @@ fn selene_health_rejects_runtime_arguments() {
 
 #[test]
 fn registry_execute_reports_tier_mismatch_expected_from_entry_actual_from_context() {
-    let runtime_registry = ProcedurePackRegistry::with_builtins();
+    let runtime_registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
     let runtime_handle = runtime_health_handle(&runtime_registry);
     let planning_registry = PlanningRegistry::health_with_signature(
         runtime_handle,
@@ -186,7 +191,8 @@ fn registry_execute_reports_tier_mismatch_expected_from_entry_actual_from_contex
 
 #[test]
 fn top_level_call_yield_without_trailing_return_executes() {
-    let registry = ProcedurePackRegistry::with_builtins();
+    let registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
     let graph = SharedGraph::new(GraphId::new(4106));
 
     let output = execute(
@@ -196,7 +202,7 @@ fn top_level_call_yield_without_trailing_return_executes() {
     );
 
     let values = row_values(output);
-    assert_eq!(values, vec![Value::Int(4106), Value::Bool(false)]);
+    assert_eq!(values, vec![Value::Uint(4106), Value::Bool(false)]);
 }
 
 #[test]

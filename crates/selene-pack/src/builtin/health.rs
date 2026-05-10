@@ -10,15 +10,15 @@ use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn,
 static HEALTH_OUTPUTS: [StaticOutputColumn; 4] = [
     StaticOutputColumn {
         name: "graph_id",
-        ty: GqlType::Integer,
+        ty: GqlType::Uint64,
     },
     StaticOutputColumn {
         name: "node_count",
-        ty: GqlType::Integer,
+        ty: GqlType::Uint64,
     },
     StaticOutputColumn {
         name: "edge_count",
-        ty: GqlType::Integer,
+        ty: GqlType::Uint64,
     },
     StaticOutputColumn {
         name: "schema_bound",
@@ -67,20 +67,11 @@ impl GraphProcedureBuiltIn for SeleneHealth {
         let snapshot = ctx.snapshot();
         Ok(ProcedureResult {
             rows: vec![vec![
-                i64_value(snapshot.graph_id().get(), "graph_id")?,
-                i64_value(snapshot.node_count(), "node_count")?,
-                i64_value(snapshot.edge_count(), "edge_count")?,
+                Value::Uint(snapshot.graph_id().get()),
+                Value::Uint(snapshot.node_count() as u64),
+                Value::Uint(snapshot.edge_count() as u64),
                 Value::Bool(snapshot.meta.bound_type.is_some()),
             ]],
         })
     }
-}
-
-fn i64_value(value: impl TryInto<i64>, detail: &'static str) -> Result<Value, ProcedureError> {
-    value
-        .try_into()
-        .map(Value::Int)
-        .map_err(|_| ProcedureError::Internal {
-            detail: format!("selene.health {detail} exceeds INTEGER range"),
-        })
 }

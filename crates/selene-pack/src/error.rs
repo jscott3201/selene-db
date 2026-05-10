@@ -1,7 +1,7 @@
 //! Registry construction errors.
 
 use selene_core::IStr;
-use selene_gql::ProcedureTier;
+use selene_gql::{ProcedureMutability, ProcedureTier};
 
 /// Failure while building a frozen procedure-pack registry.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -46,5 +46,25 @@ pub enum RegistryError {
     InternerCapExhausted {
         /// Stable detail naming the static metadata string.
         detail: String,
+    },
+    /// The built-in's declared tier is inconsistent with its declared mutability.
+    ///
+    /// Mirrors `selene_gql::runtime::pipeline::call::context::validate_call_tier`'s
+    /// `tier_for_mutability` mapping: `Read` ↔ `Graph` (or `Persist`); any write
+    /// mutability ↔ `Mutation`. Surfacing this at build prevents a runtime
+    /// `ProcedureError::TierMismatch` after planning succeeds.
+    #[error(
+        "procedure mutability/tier inconsistency for {name:?}: declared tier {declared_tier:?} \
+         with mutability {declared_mutability:?}, but mutability implies tier {expected_tier:?}"
+    )]
+    MutabilityTierMismatch {
+        /// Canonical procedure name.
+        name: Box<[IStr]>,
+        /// Tier declared by the built-in metadata.
+        declared_tier: ProcedureTier,
+        /// Mutability declared by the built-in metadata.
+        declared_mutability: ProcedureMutability,
+        /// Tier implied by the declared mutability.
+        expected_tier: ProcedureTier,
     },
 }
