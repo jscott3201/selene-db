@@ -22,6 +22,23 @@ pub use filter::{
 pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
 pub use tx::TxOp;
 
+/// Identifier for a pipeline op within one execution plan.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[repr(transparent)]
+pub struct PipelineOpId(u32);
+
+impl PipelineOpId {
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// Return the zero-based op identifier.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// Literal execution plan produced by planner lowering.
 #[derive(Clone, Debug)]
 pub struct ExecutionPlan {
@@ -35,6 +52,8 @@ pub struct ExecutionPlan {
     pub impl_defined_caps: ImplDefinedCaps,
     /// Next optimizer-owned expression ID for this plan.
     pub next_expr_id: ExprId,
+    /// Next executor-observable pipeline op ID for this plan.
+    pub next_pipeline_op_id: PipelineOpId,
 }
 
 impl ExecutionPlan {
@@ -43,6 +62,49 @@ impl ExecutionPlan {
         let id = self.next_expr_id;
         self.next_expr_id = ExprId::new(id.get().saturating_add(1));
         id
+    }
+
+    /// Allocate a fresh pipeline op ID for future adaptive execution hooks.
+    #[allow(dead_code)]
+    pub(crate) fn alloc_pipeline_op_id(&mut self) -> PipelineOpId {
+        let id = self.next_pipeline_op_id;
+        self.next_pipeline_op_id = PipelineOpId::new(id.get().saturating_add(1));
+        id
+    }
+
+    /// Recompute the pipeline-op ID high-water mark after lowering or rewrite.
+    pub(crate) fn refresh_pipeline_op_high_water(&mut self) {
+        if let Some(pattern) = &mut self.pattern_plan {
+            refresh_join_tree_pipeline_op_high_water(&mut pattern.join_tree);
+        }
+        for op in &mut self.pipeline {
+            match op {
+                PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+                    rhs.refresh_pipeline_op_high_water();
+                }
+                _ => {}
+            }
+        }
+        // Today pipeline ops do not carry stable IDs, so the next ID is len().
+        // When ops gain stored IDs, this must scan for max(existing_id) + 1.
+        self.next_pipeline_op_id = PipelineOpId::new(self.pipeline.len() as u32);
+    }
+}
+
+fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
+    match tree {
+        JoinTree::Scan(_) => {}
+        JoinTree::Expand { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
+        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+            refresh_join_tree_pipeline_op_high_water(left);
+            refresh_join_tree_pipeline_op_high_water(right);
+        }
+        JoinTree::WorstCaseOptimal { intersection, .. } => {
+            for branch in intersection {
+                refresh_join_tree_pipeline_op_high_water(branch);
+            }
+        }
+        JoinTree::Subplan(plan) => plan.refresh_pipeline_op_high_water(),
     }
 }
 

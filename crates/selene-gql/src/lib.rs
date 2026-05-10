@@ -53,14 +53,17 @@ pub use crate::plan::{
     ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, ImplDefinedCaps,
     IndexCatalog, IndexHandle, IndexKind, IndexTarget, InsertEndpointRef, InsertSiteId, JoinTree,
     LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OptimizeContext, OrderAccess,
-    OrderKey, PathPlan, PatternPlan, PipelineOp, PlannedCall, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram,
-    PropertyInit, Rule, ScanAccess, ScanKind, Transformed, TxOp, TypedIndexBounds,
-    TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
+    OrderKey, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, PlannerError,
+    ProjectExpr, PropertyHistogram, PropertyInit, Rule, ScanAccess, ScanKind, Transformed, TxOp,
+    TypedIndexBounds, TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
     ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry,
     ProcedureSignature, ProcedureTier,
 };
-pub use crate::runtime::{Binding, BindingTable, ExecutorError, TxContext, execute_pattern};
+pub use crate::runtime::{
+    AdaptiveOptimizer, Binding, BindingTable, ExecutorError, TxContext, execute_pattern,
+    execute_pipeline,
+};

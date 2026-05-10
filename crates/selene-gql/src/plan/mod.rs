@@ -18,7 +18,7 @@ pub use ir::{
     BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
     HiddenBindingId, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount,
     MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, PathPlan, PatternPlan,
-    PipelineOp, PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
+    PipelineOp, PipelineOpId, PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
     PlannedYieldItem, ProjectExpr, PropertyInit, ScanAccess, ScanKind, TxOp, TypedIndexBounds,
     YieldKind,
 };

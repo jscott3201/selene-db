@@ -218,6 +218,7 @@ pub(crate) fn merge_rows(left: &Binding, right: &Binding, schema: &BindingTableS
     let mut values = Vec::with_capacity(schema.columns.len());
     for index in 0..schema.columns.len() {
         let left_value = left.get(index).cloned().unwrap_or(Value::Null);
+        // Null is the row-local unbound sentinel; prefer the bound side.
         if matches!(left_value, Value::Null) {
             values.push(right.get(index).cloned().unwrap_or(Value::Null));
         } else {

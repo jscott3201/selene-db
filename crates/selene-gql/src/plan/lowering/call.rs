@@ -37,12 +37,14 @@ pub(crate) fn lower_top_level_call(
         }
     }
     let columns = yield_to_columns(&planned)?;
+    let next_pipeline_op_id = crate::PipelineOpId::new(1);
     Ok(ExecutionPlan {
         pattern_plan: None,
         pipeline: vec![PipelineOp::Call(planned)],
         output_schema: BindingTableSchema { columns },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: super::next_expr_id(analyzed),
+        next_pipeline_op_id,
     })
 }
 

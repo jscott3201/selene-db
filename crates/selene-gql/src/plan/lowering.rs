@@ -31,7 +31,7 @@ pub fn plan(
     analyzed: &AnalyzedStatement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<ExecutionPlan, PlannerError> {
-    match &analyzed.statement {
+    let mut plan = match &analyzed.statement {
         AnalyzedStatementKind::Query(pipeline) => {
             lower_query_pipeline(pipeline, registry, analyzed)
         }
@@ -52,7 +52,9 @@ pub fn plan(
         AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
-    }
+    }?;
+    plan.refresh_pipeline_op_high_water();
+    Ok(plan)
 }
 
 fn lower_chained(
@@ -183,12 +185,14 @@ fn lower_query_pipeline(
         }
         index += 1;
     }
+    let next_pipeline_op_id = crate::PipelineOpId::new(ops.len() as u32);
     Ok(ExecutionPlan {
         pattern_plan,
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: next_expr_id(analyzed),
+        next_pipeline_op_id,
     })
 }
 
@@ -376,6 +380,7 @@ fn empty_plan() -> ExecutionPlan {
         },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: ExprId::new(0),
+        next_pipeline_op_id: crate::PipelineOpId::new(0),
     }
 }
 
@@ -395,6 +400,7 @@ fn tx_plan(op: TxOp) -> ExecutionPlan {
         },
         impl_defined_caps: ImplDefinedCaps::default(),
         next_expr_id: ExprId::new(0),
+        next_pipeline_op_id: crate::PipelineOpId::new(1),
     }
 }
 

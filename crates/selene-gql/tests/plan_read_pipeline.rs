@@ -329,6 +329,35 @@ fn limit_then_offset_fuses_into_single_op() {
 }
 
 #[test]
+fn plan_records_next_pipeline_op_id_high_water_mark() {
+    let plan = plan_one("RETURN 1 AS n LIMIT 10");
+
+    assert_eq!(plan.next_pipeline_op_id.get(), plan.pipeline.len() as u32);
+}
+
+#[test]
+fn composite_plan_refreshes_next_pipeline_op_id_after_union_append() {
+    let plan = plan_one("RETURN 1 AS n UNION ALL RETURN 2 AS n");
+
+    assert_eq!(plan.next_pipeline_op_id.get(), plan.pipeline.len() as u32);
+    let Some(PipelineOp::Union { rhs, .. }) = plan.pipeline.last() else {
+        panic!("expected union op");
+    };
+    assert_eq!(rhs.next_pipeline_op_id.get(), rhs.pipeline.len() as u32);
+}
+
+#[test]
+fn chained_plan_refreshes_next_pipeline_op_id_after_chain_append() {
+    let plan = plan_one("RETURN 1 AS n NEXT RETURN 2 AS n");
+
+    assert_eq!(plan.next_pipeline_op_id.get(), plan.pipeline.len() as u32);
+    let Some(PipelineOp::Chain(rhs)) = plan.pipeline.last() else {
+        panic!("expected chain op");
+    };
+    assert_eq!(rhs.next_pipeline_op_id.get(), rhs.pipeline.len() as u32);
+}
+
+#[test]
 fn anonymous_intermediate_node_does_not_leak_to_next_edge() {
     // Why: prior `leftmost_binding` fell back from `right_binding` to
     // `left_binding`, so `(a)-[]->()-[]->(c)` reported the second edge's left

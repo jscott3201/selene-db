@@ -77,6 +77,10 @@ impl BindingTable {
         &self.rows
     }
 
+    pub(crate) fn into_parts(self) -> (BindingTableSchema, Vec<Binding>) {
+        (self.schema, self.rows)
+    }
+
     /// Iterate rows in storage order.
     pub fn iter(&self) -> impl Iterator<Item = &Binding> {
         self.rows.iter()

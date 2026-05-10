@@ -51,9 +51,11 @@ pub(crate) fn optimize_with_rules(
             changed |= transformed.changed;
         }
         if !changed {
+            plan.refresh_pipeline_op_high_water();
             return plan;
         }
     }
+    plan.refresh_pipeline_op_high_water();
     plan
 }
 
@@ -79,6 +81,7 @@ mod tests {
             },
             impl_defined_caps: caps,
             next_expr_id: crate::ExprId::new(0),
+            next_pipeline_op_id: crate::PipelineOpId::new(0),
         }
     }
 
@@ -148,6 +151,47 @@ mod tests {
         assert_eq!(rule.calls.load(Ordering::SeqCst), 3);
         assert!(
             optimized.pipeline.is_empty() || matches!(optimized.pipeline[0], PipelineOp::Distinct)
+        );
+    }
+
+    #[test]
+    fn optimizer_refreshes_pipeline_op_id_high_water_after_rewrite() {
+        struct AppendDistinct {
+            calls: AtomicUsize,
+        }
+
+        impl Rule for AppendDistinct {
+            fn name(&self) -> &'static str {
+                "append_distinct"
+            }
+
+            fn rewrite(
+                &self,
+                mut plan: ExecutionPlan,
+                _ctx: &OptimizeContext<'_>,
+            ) -> Transformed<ExecutionPlan> {
+                if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    plan.pipeline.push(PipelineOp::Distinct);
+                    Transformed::changed(plan)
+                } else {
+                    Transformed::unchanged(plan)
+                }
+            }
+        }
+
+        let caps = ImplDefinedCaps::default();
+        let ctx = OptimizeContext::new(&caps);
+        let rule = Box::leak(Box::new(AppendDistinct {
+            calls: AtomicUsize::new(0),
+        }));
+        let rules: [&'static dyn Rule; 1] = [rule];
+
+        let optimized = optimize_with_rules(empty_plan(caps), &rules, &ctx);
+
+        assert_eq!(optimized.pipeline.len(), 1);
+        assert_eq!(
+            optimized.next_pipeline_op_id.get(),
+            optimized.pipeline.len() as u32
         );
     }
 }
