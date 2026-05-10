@@ -1,7 +1,7 @@
 //! Shared optimizer walkers.
 
 use crate::{
-    IsCheckKind, PatternElement, ValueExpr,
+    IsCheckKind, PatternElement, StatementCategory, ValueExpr,
     plan::{
         BindingTableSchema, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, JoinTree,
         MutationOp, PipelineOp, PlannedTypePropertyConstraint, Transformed,
@@ -125,6 +125,7 @@ fn recurse_plan_box(
 
 fn empty_plan() -> ExecutionPlan {
     ExecutionPlan {
+        category: StatementCategory::ReadOnly,
         pattern_plan: None,
         pipeline: Vec::new(),
         output_schema: BindingTableSchema {

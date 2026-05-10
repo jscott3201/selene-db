@@ -9,7 +9,7 @@ mod tx;
 
 use crate::{
     EdgeDirection, LabelExpr, SetOp, SourceSpan,
-    analyze::{AnalyzedType, BindingId, ExprId},
+    analyze::{AnalyzedType, BindingId, ExprId, StatementCategory},
 };
 
 pub use access::{NodeIdOrdering, OrderAccess, ScanAccess, TypedIndexBounds};
@@ -42,6 +42,8 @@ impl PipelineOpId {
 /// Literal execution plan produced by planner lowering.
 #[derive(Clone, Debug)]
 pub struct ExecutionPlan {
+    /// Analyzer-derived statement category used by top-level execution.
+    pub category: StatementCategory,
     /// Optional leading pattern plan for query pipelines beginning with MATCH.
     pub pattern_plan: Option<PatternPlan>,
     /// Binding-table operations after the leading pattern phase.

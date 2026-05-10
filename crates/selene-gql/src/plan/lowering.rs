@@ -10,7 +10,7 @@ mod mutation;
 use crate::{
     LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, SourceSpan,
     WithClause,
-    analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId},
+    analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId, StatementCategory},
     plan::{
         BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
         LimitAmount, PipelineOp, PlannerError, ProjectExpr, TxOp,
@@ -52,6 +52,7 @@ pub fn plan(
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
     }?;
+    plan.category = analyzed.category;
     plan.refresh_pipeline_op_high_water();
     Ok(plan)
 }
@@ -215,6 +216,7 @@ fn lower_query_pipeline(
     }
     let next_pipeline_op_id = crate::PipelineOpId::new(ops.len() as u32);
     Ok(ExecutionPlan {
+        category: analyzed.category,
         pattern_plan,
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },
@@ -345,6 +347,7 @@ fn limit_amount(value: &LimitValue) -> LimitAmount {
 
 fn empty_plan() -> ExecutionPlan {
     ExecutionPlan {
+        category: StatementCategory::ReadOnly,
         pattern_plan: None,
         pipeline: Vec::new(),
         output_schema: BindingTableSchema {
@@ -365,6 +368,7 @@ pub(super) fn not_implemented<T>(
 
 fn tx_plan(op: TxOp) -> ExecutionPlan {
     ExecutionPlan {
+        category: StatementCategory::TransactionControl,
         pattern_plan: None,
         pipeline: vec![PipelineOp::Tx(op)],
         output_schema: BindingTableSchema {

@@ -97,6 +97,7 @@ pub(crate) fn lower_ddl(
 
     let next_pipeline_op_id = crate::PipelineOpId::new(1);
     Ok(ExecutionPlan {
+        category: analyzed.category,
         pattern_plan: None,
         pipeline: vec![PipelineOp::Catalog(op)],
         output_schema: ddl_output_schema(statement)?,

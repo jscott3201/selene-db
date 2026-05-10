@@ -12,6 +12,7 @@ mod mutation;
 mod order_by;
 mod project;
 mod top_k;
+pub(crate) mod tx;
 mod union;
 mod unwind;
 
@@ -51,9 +52,14 @@ pub fn execute_pipeline(
             PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
             PipelineOp::Mutation(mutation) => mutation::execute(mutation, table, ctx)?,
             PipelineOp::Catalog(catalog) => catalog::execute(catalog, table, ctx)?,
-            PipelineOp::Call(_) | PipelineOp::Tx(_) => {
+            PipelineOp::Call(_) => {
                 return Err(ExecutorError::ImplementationDefined {
                     detail: "pipeline op not implemented",
+                });
+            }
+            PipelineOp::Tx(_) => {
+                return Err(ExecutorError::ImplementationDefined {
+                    detail: "TX op surfaced inside execute_pipeline; should be dispatched at statement level",
                 });
             }
         };
