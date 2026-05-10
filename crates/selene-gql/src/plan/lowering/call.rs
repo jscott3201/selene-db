@@ -36,7 +36,7 @@ pub(crate) fn lower_top_level_call(
             });
         }
     }
-    let columns = yield_to_columns(&planned)?;
+    let columns = planned.yield_schema.clone();
     let next_pipeline_op_id = crate::PipelineOpId::new(1);
     Ok(ExecutionPlan {
         category: analyzed.category,
@@ -92,15 +92,19 @@ pub(crate) fn plan_call(
 
     validate_output_schema(call, &metadata, analyzed)?;
 
-    Ok(PlannedCall {
+    let mut planned = PlannedCall {
         procedure: call.name.clone().into_boxed_slice(),
         handle: metadata.handle,
         args,
         yield_cols,
         output_schema: metadata.output_schema,
+        yield_schema: Vec::new(),
+        tier: metadata.tier,
         mutability: metadata.mutability,
         span: call.span,
-    })
+    };
+    planned.yield_schema = yield_to_columns(&planned)?;
+    Ok(planned)
 }
 
 /// Convert planned yield items into binding-table columns.
@@ -308,8 +312,9 @@ mod defensive_tests {
             &self,
             _handle: ProcedureHandle,
             _args: &[Value],
+            _ctx: &mut crate::ProcedureContext<'_, '_>,
         ) -> Result<ProcedureResult, ProcedureError> {
-            Err(ProcedureError::M2Placeholder)
+            Ok(ProcedureResult { rows: Vec::new() })
         }
     }
 
@@ -480,6 +485,8 @@ mod defensive_tests {
             .lookup(&[name])
             .expect("metadata")
             .output_schema,
+            yield_schema: Vec::new(),
+            tier: ProcedureTier::Graph,
             mutability: ProcedureMutability::Read,
             span: SourceSpan::new(0, 3),
         };

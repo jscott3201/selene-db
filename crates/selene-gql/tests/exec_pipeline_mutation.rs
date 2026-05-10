@@ -32,7 +32,12 @@ fn run_write(
     let snapshot = graph.read();
     let mut txn = graph.begin_write();
     let result = {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, &mut txn);
+        let mut ctx = TxContext::write(
+            snapshot,
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+            &mut txn,
+        );
         let input = if let Some(pattern) = &plan.pattern_plan {
             execute_pattern(pattern, &ctx)?
         } else {
@@ -346,7 +351,11 @@ fn match_after_insert_in_same_statement_sees_inserted_node() {
 fn mutation_without_write_txn_returns_invalid_transaction_state() {
     let graph = empty_graph();
     let plan = planned("INSERT (n:Person) RETURN n");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect_err("write errors");
 
@@ -371,7 +380,12 @@ fn mutator_error_surfaces_as_graph_mutation_executor_error() {
     );
     let snapshot = graph.read();
     let mut txn = graph.begin_write();
-    let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, &mut txn);
+    let mut ctx = TxContext::write(
+        snapshot,
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+        &mut txn,
+    );
 
     let err = execute_pipeline(&plan.pipeline, table, &mut ctx).expect_err("write errors");
 
@@ -458,7 +472,12 @@ fn mutation_aborts_op_on_first_row_error_no_partial_rollback() {
     let snapshot = graph.read();
     let mut txn = graph.begin_write();
     let result = {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, &mut txn);
+        let mut ctx = TxContext::write(
+            snapshot,
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+            &mut txn,
+        );
         execute_pipeline(&plan.pipeline, table, &mut ctx)
     };
 

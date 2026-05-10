@@ -1,6 +1,7 @@
 //! Binding-table pipeline executor.
 
 mod aggregate;
+mod call;
 mod catalog;
 mod chain;
 mod distinct;
@@ -52,11 +53,7 @@ pub fn execute_pipeline(
             PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
             PipelineOp::Mutation(mutation) => mutation::execute(mutation, table, ctx)?,
             PipelineOp::Catalog(catalog) => catalog::execute(catalog, table, ctx)?,
-            PipelineOp::Call(_) => {
-                return Err(ExecutorError::ImplementationDefined {
-                    detail: "pipeline op not implemented",
-                });
-            }
+            PipelineOp::Call(call) => call::execute(call, table, ctx)?,
             PipelineOp::Tx(_) => {
                 return Err(ExecutorError::ImplementationDefined {
                     detail: "TX op surfaced inside execute_pipeline; should be dispatched at statement level",

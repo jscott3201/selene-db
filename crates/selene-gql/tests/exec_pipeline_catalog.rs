@@ -78,7 +78,12 @@ fn run_write(
     let snapshot = graph.read();
     let mut txn = graph.begin_write();
     let result = {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, &mut txn);
+        let mut ctx = TxContext::write(
+            snapshot,
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+            &mut txn,
+        );
         execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
     };
     match result {
@@ -124,7 +129,11 @@ fn create_node_type_creates_type_and_preserves_input_row() {
 fn show_node_types_on_open_graph_returns_empty_schemaful_table() {
     let graph = SharedGraph::new(GraphId::new(3701));
     let plan = planned("SHOW NODE TYPES");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
@@ -171,7 +180,11 @@ fn show_node_types_renders_key_labels_not_internal_name() {
         },
     );
     let plan = planned("SHOW NODE TYPES");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
@@ -244,7 +257,11 @@ fn show_edge_types_renders_label_not_internal_name() {
         },
     );
     let plan = planned("SHOW EDGE TYPES");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
@@ -278,7 +295,11 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
         },
     );
     let plan = planned("SHOW EDGE TYPES");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
@@ -324,7 +345,11 @@ fn open_graph_create_node_type_returns_data_exception() {
 fn catalog_op_without_write_txn_returns_invalid_transaction_state() {
     let graph = empty_closed_graph(3707);
     let plan = planned("CREATE NODE TYPE :Person ()");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
         .expect_err("catalog DDL needs write tx");
@@ -342,7 +367,11 @@ fn catalog_op_without_write_txn_returns_invalid_transaction_state() {
 fn create_edge_type_without_write_txn_returns_invalid_transaction_state() {
     let graph = empty_closed_graph(3720);
     let plan = planned("CREATE EDGE TYPE :KNOWS (FROM :Missing TO :Missing)");
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+    );
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
         .expect_err("catalog DDL needs write tx before endpoint lookup");

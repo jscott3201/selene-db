@@ -48,6 +48,7 @@ mod tests {
         TxContext::read_only(
             Arc::new(selene_graph::SeleneGraph::new(GraphId::new(991))),
             &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
         )
     }
 
@@ -74,7 +75,11 @@ mod tests {
             txn.commit().expect("fixture commits");
         }
         let plan = planned("MATCH (n) RETURN n");
-        let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+        let mut ctx = TxContext::read_only(
+            graph.read(),
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+        );
 
         let table = execute_plan(&plan, &mut ctx).expect("plan executes");
 
@@ -95,7 +100,11 @@ mod tests {
         }
         let mut plan = planned("MATCH (n) RETURN n");
         plan.pipeline.clear();
-        let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps);
+        let mut ctx = TxContext::read_only(
+            graph.read(),
+            &plan.impl_defined_caps,
+            &EmptyProcedureRegistry,
+        );
 
         let table = execute_plan(&plan, &mut ctx).expect("plan executes");
 

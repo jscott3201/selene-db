@@ -9,9 +9,11 @@
 //! the embedder injects `&dyn ProcedureRegistry` into plan and execute calls.
 //! See `_spec/08-iso-gql-planner-and-executor.md` §7.
 
+pub use selene_core::Value;
+
 use selene_core::IStr;
 
-use crate::GqlType;
+use crate::{GqlStatus, GqlType, runtime::ProcedureContext};
 
 /// Registry interface consumed by the GQL planner and executor.
 ///
@@ -27,6 +29,7 @@ pub trait ProcedureRegistry: Send + Sync {
         &self,
         handle: ProcedureHandle,
         args: &[Value],
+        ctx: &mut ProcedureContext<'_, '_>,
     ) -> Result<ProcedureResult, ProcedureError>;
 }
 
@@ -135,22 +138,64 @@ pub enum ProcedureMutability {
 }
 
 /// Result returned by procedure execution.
-///
-/// M2 will define whether this is a binding table, scalar value, unit value, or
-/// tagged union of those shapes.
-pub struct ProcedureResult;
-
-/// Procedure dispatch failure.
-#[derive(Debug, thiserror::Error)]
-pub enum ProcedureError {
-    /// Placeholder until M2 defines concrete lookup, validation, and runtime
-    /// failure variants.
-    #[error("M2 work")]
-    M2Placeholder,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ProcedureResult {
+    /// Output rows aligned with [`ProcedureMetadata::output_schema`].
+    pub rows: Vec<Vec<Value>>,
 }
 
-/// Placeholder value type; the final type lives in `selene-core`.
-pub struct Value;
+/// Procedure dispatch failure.
+#[derive(Clone, Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ProcedureError {
+    /// The procedure handle was unknown to the registry.
+    #[error("unknown procedure")]
+    UnknownProcedure {
+        /// Best-effort procedure name. May be empty for defensive handle-only paths.
+        name: Box<[IStr]>,
+    },
+    /// The registry rejected evaluated arguments.
+    #[error("invalid procedure argument: {detail}")]
+    InvalidArgument {
+        /// Stable diagnostic detail.
+        detail: String,
+    },
+    /// The registry rejected a missing or denied capability.
+    #[error("procedure capability violation: {capability}")]
+    Capability {
+        /// Capability name required by the procedure.
+        capability: String,
+    },
+    /// Procedure tier metadata was internally inconsistent.
+    #[error("procedure tier mismatch: expected {expected:?}, actual {actual:?}")]
+    TierMismatch {
+        /// Tier implied by procedure mutability.
+        expected: ProcedureTier,
+        /// Tier reported by the registry.
+        actual: ProcedureTier,
+    },
+    /// Registry-internal failure or contract violation.
+    #[error("procedure internal error: {detail}")]
+    Internal {
+        /// Stable diagnostic detail.
+        detail: String,
+    },
+}
+
+impl ProcedureError {
+    /// Map this procedure failure to a GQLSTATUS code.
+    #[must_use]
+    pub const fn gqlstatus(&self) -> GqlStatus {
+        match self {
+            Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,
+            Self::InvalidArgument { .. } => GqlStatus::INVALID_PROCEDURE_ARGUMENT,
+            Self::Capability { .. } => GqlStatus::CAPABILITY_VIOLATION,
+            Self::TierMismatch { .. } | Self::Internal { .. } => {
+                GqlStatus::IMPLEMENTATION_DEFINED_ERROR
+            }
+        }
+    }
+}
 
 /// Registry with no registered procedures.
 ///
@@ -169,9 +214,8 @@ impl ProcedureRegistry for EmptyProcedureRegistry {
         &self,
         _handle: ProcedureHandle,
         _args: &[Value],
+        _ctx: &mut ProcedureContext<'_, '_>,
     ) -> Result<ProcedureResult, ProcedureError> {
-        // Why: D17's per-tier runtime execution model lands in M5c; BRIEF-23
-        // only consumes lookup() for analyzer-time signature metadata.
-        Err(ProcedureError::M2Placeholder)
+        Err(ProcedureError::UnknownProcedure { name: Box::new([]) })
     }
 }
