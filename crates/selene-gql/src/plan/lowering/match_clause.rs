@@ -8,18 +8,68 @@ use crate::{
     EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PatternElement,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
-        BindingDef, BindingElement, EdgeMatch, FilterPredicate, JoinTree, NodeOrEdgeScan, PathPlan,
-        PatternPlan, PlannerError, ScanAccess, ScanKind,
+        BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, HiddenBindingId,
+        JoinTree, NodeOrEdgeScan, PathPlan, PatternPlan, PlannerError, ScanAccess, ScanKind,
     },
 };
+
+struct LoweredClause {
+    tree: JoinTree,
+    names: BTreeSet<IStr>,
+    filters: Vec<FilterPredicate>,
+}
 
 /// Predicates collected from the syntactic right-side node of an edge
 /// expansion. Bundled so they ride the `EdgeMatch` instead of leaking into
 /// the unscoped pattern filter list.
 struct RightNode {
     binding: Option<BindingId>,
+    hidden_binding: Option<HiddenBindingId>,
     label_predicate: Option<LabelExpr>,
     property_predicates: Vec<FilterPredicate>,
+}
+
+struct EdgeLoweringContext<'a, 's> {
+    analyzed: &'a AnalyzedStatement,
+    filters: &'s mut Vec<FilterPredicate>,
+    names: &'s mut BTreeSet<IStr>,
+    binding_ids: &'s mut BTreeSet<BindingId>,
+    hidden: &'s mut HiddenAllocator,
+}
+
+#[derive(Clone, Copy)]
+enum TailBinding {
+    Named(BindingId),
+    Hidden(HiddenBindingId),
+}
+
+impl TailBinding {
+    const fn named(self) -> Option<BindingId> {
+        match self {
+            Self::Named(binding) => Some(binding),
+            Self::Hidden(_) => None,
+        }
+    }
+
+    const fn hidden(self) -> Option<HiddenBindingId> {
+        match self {
+            Self::Named(_) => None,
+            Self::Hidden(binding) => Some(binding),
+        }
+    }
+}
+
+#[derive(Default)]
+struct HiddenAllocator {
+    next: u32,
+}
+
+impl HiddenAllocator {
+    fn next(&mut self) -> HiddenBindingId {
+        let id = HiddenBindingId::new(self.next);
+        self.next += 1;
+        id
+    }
 }
 
 use super::expr;
@@ -36,14 +86,18 @@ pub(crate) fn lower_match_prefix(
     let mut filters = Vec::new();
     let mut paths = Vec::new();
     let mut binding_ids = BTreeSet::new();
+    let mut hidden = HiddenAllocator::default();
     let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
 
     for clause in clauses {
         reject_unsupported_clause(clause)?;
-        let (tree, names) =
-            lower_match_clause(clause, analyzed, &mut filters, &mut paths, &mut binding_ids)?;
+        let lowered =
+            lower_match_clause(clause, analyzed, &mut paths, &mut binding_ids, &mut hidden)?;
         current = Some(match (current, clause.optional) {
-            (None, false) => (tree, names),
+            (None, false) => {
+                filters.extend(lowered.filters);
+                (lowered.tree, lowered.names)
+            }
             (None, true) => {
                 // Why: a leading OPTIONAL MATCH lacks a left input to outer-join
                 // against. GQL semantics call for one null-extended row; the
@@ -55,27 +109,33 @@ pub(crate) fn lower_match_prefix(
                 });
             }
             (Some((left, left_names)), false) => {
-                let key = shared_names(&left_names, &names);
+                let key = shared_names(&left_names, &lowered.names);
                 let mut all_names = left_names;
-                all_names.extend(names);
+                all_names.extend(lowered.names);
+                filters.extend(lowered.filters);
                 (
                     JoinTree::HashJoin {
                         left: Box::new(left),
-                        right: Box::new(tree),
+                        right: Box::new(lowered.tree),
                         key,
+                        build_side: BuildSide::Left,
                     },
                     all_names,
                 )
             }
             (Some((left, left_names)), true) => {
-                let key = shared_names(&left_names, &names);
+                let key = shared_names(&left_names, &lowered.names);
+                let (right_filters, global_filters) =
+                    split_optional_filters(lowered.filters, &left_names, analyzed);
+                filters.extend(global_filters);
                 let mut all_names = left_names;
-                all_names.extend(names);
+                all_names.extend(lowered.names);
                 (
                     JoinTree::Outer {
                         left: Box::new(left),
-                        right: Box::new(tree),
+                        right: Box::new(lowered.tree),
                         key,
+                        right_filters,
                     },
                     all_names,
                 )
@@ -97,13 +157,15 @@ pub(crate) fn lower_match_prefix(
 fn lower_match_clause(
     clause: &MatchClause,
     analyzed: &AnalyzedStatement,
-    filters: &mut Vec<FilterPredicate>,
     paths: &mut Vec<PathPlan>,
     binding_ids: &mut BTreeSet<BindingId>,
-) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
+    hidden: &mut HiddenAllocator,
+) -> Result<LoweredClause, PlannerError> {
+    let mut filters = Vec::new();
     let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
     for pattern in &clause.patterns {
-        let (tree, names) = lower_graph_pattern(pattern, analyzed, filters, paths, binding_ids)?;
+        let (tree, names) =
+            lower_graph_pattern(pattern, analyzed, &mut filters, paths, binding_ids, hidden)?;
         current = Some(match current {
             None => (tree, names),
             Some((left, left_names)) => {
@@ -115,6 +177,7 @@ fn lower_match_clause(
                         left: Box::new(left),
                         right: Box::new(tree),
                         key,
+                        build_side: BuildSide::Left,
                     },
                     all_names,
                 )
@@ -124,9 +187,14 @@ fn lower_match_clause(
     if let Some(where_clause) = &clause.where_clause {
         filters.push(expr::filter_predicate(where_clause, analyzed)?);
     }
-    current.ok_or(PlannerError::NotImplemented {
+    let (tree, names) = current.ok_or(PlannerError::NotImplemented {
         feature: "empty graph pattern",
         span: clause.span,
+    })?;
+    Ok(LoweredClause {
+        tree,
+        names,
+        filters,
     })
 }
 
@@ -136,6 +204,7 @@ fn lower_graph_pattern(
     filters: &mut Vec<FilterPredicate>,
     paths: &mut Vec<PathPlan>,
     binding_ids: &mut BTreeSet<BindingId>,
+    hidden: &mut HiddenAllocator,
 ) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
     if let Some(name) = pattern.path_binding {
         let binding = binding_for_decl(name, pattern.span, BindingDeclKind::PathBinding, analyzed)?;
@@ -160,6 +229,7 @@ fn lower_graph_pattern(
         filters,
         &mut names,
         binding_ids,
+        hidden,
     )?);
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
@@ -181,16 +251,16 @@ fn lower_graph_pattern(
             });
         };
         let left_binding = chain_tail_binding(&current);
-        let right_node = right_node_predicates(right, analyzed, filters, &mut names, binding_ids)?;
-        let edge_match = edge_match(
-            edge,
-            left_binding,
-            right_node,
+        let right_node =
+            right_node_predicates(right, analyzed, filters, &mut names, binding_ids, hidden)?;
+        let mut edge_ctx = EdgeLoweringContext {
             analyzed,
             filters,
-            &mut names,
+            names: &mut names,
             binding_ids,
-        )?;
+            hidden,
+        };
+        let edge_match = edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
         current = JoinTree::Expand {
             child: Box::new(current),
             direction: edge.direction,
@@ -206,8 +276,10 @@ fn right_node_predicates(
     filters: &mut Vec<FilterPredicate>,
     names: &mut BTreeSet<IStr>,
     binding_ids: &mut BTreeSet<BindingId>,
+    hidden: &mut HiddenAllocator,
 ) -> Result<RightNode, PlannerError> {
     let binding = node_binding(node, analyzed, names, binding_ids)?;
+    let hidden_binding = binding.is_none().then(|| hidden.next());
     let property_predicates = node
         .properties
         .iter()
@@ -221,6 +293,7 @@ fn right_node_predicates(
     }
     Ok(RightNode {
         binding,
+        hidden_binding,
         label_predicate: node.label_expr.clone(),
         property_predicates,
     })
@@ -232,8 +305,10 @@ fn node_scan(
     filters: &mut Vec<FilterPredicate>,
     names: &mut BTreeSet<IStr>,
     binding_ids: &mut BTreeSet<BindingId>,
+    hidden: &mut HiddenAllocator,
 ) -> Result<NodeOrEdgeScan, PlannerError> {
     let binding = node_binding(node, analyzed, names, binding_ids)?;
+    let hidden_binding = binding.is_none().then(|| hidden.next());
     let property_predicates = node
         .properties
         .iter()
@@ -244,6 +319,7 @@ fn node_scan(
     }
     Ok(NodeOrEdgeScan {
         binding,
+        hidden_binding,
         kind: ScanKind::Node,
         label_predicate: node.label_expr.clone(),
         property_predicates,
@@ -254,28 +330,30 @@ fn node_scan(
 
 fn edge_match(
     edge: &EdgePattern,
-    left_binding: Option<BindingId>,
+    left_binding: Option<TailBinding>,
     right_node: RightNode,
-    analyzed: &AnalyzedStatement,
-    filters: &mut Vec<FilterPredicate>,
-    names: &mut BTreeSet<IStr>,
-    binding_ids: &mut BTreeSet<BindingId>,
+    ctx: &mut EdgeLoweringContext<'_, '_>,
 ) -> Result<EdgeMatch, PlannerError> {
-    let binding = edge_binding(edge, analyzed, names, binding_ids)?;
+    let binding = edge_binding(edge, ctx.analyzed, ctx.names, ctx.binding_ids)?;
+    let hidden_binding = binding.is_none().then(|| ctx.hidden.next());
     let property_predicates = edge
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, *key, value, ctx.analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &edge.inline_where {
-        filters.push(expr::filter_predicate(where_clause, analyzed)?);
+        ctx.filters
+            .push(expr::filter_predicate(where_clause, ctx.analyzed)?);
     }
     Ok(EdgeMatch {
         binding,
+        hidden_binding,
         label_predicate: edge.label_expr.clone(),
         property_predicates,
-        left_binding,
+        left_binding: left_binding.and_then(TailBinding::named),
+        left_hidden_binding: left_binding.and_then(TailBinding::hidden),
         right_binding: right_node.binding,
+        right_hidden_binding: right_node.hidden_binding,
         right_label_predicate: right_node.label_predicate,
         right_property_predicates: right_node.property_predicates,
         access: ScanAccess::Linear,
@@ -380,6 +458,42 @@ fn same_element(found: BindingDeclKind, expected: BindingDeclKind) -> bool {
     )
 }
 
+fn split_optional_filters(
+    filters: Vec<FilterPredicate>,
+    left_names: &BTreeSet<IStr>,
+    analyzed: &AnalyzedStatement,
+) -> (Vec<FilterPredicate>, Vec<FilterPredicate>) {
+    let mut right_filters = Vec::new();
+    let mut global_filters = Vec::new();
+    for filter in filters {
+        if references_optional_binding(&filter, left_names, analyzed) {
+            right_filters.push(filter);
+        } else {
+            global_filters.push(filter);
+        }
+    }
+    (right_filters, global_filters)
+}
+
+fn references_optional_binding(
+    filter: &FilterPredicate,
+    left_names: &BTreeSet<IStr>,
+    analyzed: &AnalyzedStatement,
+) -> bool {
+    filter.binding_refs.iter().any(|binding| {
+        binding_name(*binding, analyzed).is_some_and(|name| !left_names.contains(&name))
+    })
+}
+
+fn binding_name(binding: BindingId, analyzed: &AnalyzedStatement) -> Option<IStr> {
+    analyzed
+        .scopes
+        .declarations()
+        .iter()
+        .find(|decl| decl.id() == binding)
+        .map(BindingDecl::name)
+}
+
 fn binding_defs(
     analyzed: &AnalyzedStatement,
     binding_ids: &BTreeSet<BindingId>,
@@ -440,10 +554,16 @@ fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
 /// Return the binding of the most-recently expanded chain tail, propagating
 /// `None` when the trailing element is anonymous so the caller does not
 /// silently fall back to an older named node from earlier in the chain.
-fn chain_tail_binding(tree: &JoinTree) -> Option<BindingId> {
+fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
     match tree {
-        JoinTree::Scan(scan) => scan.binding,
-        JoinTree::Expand { edge, .. } => edge.right_binding,
+        JoinTree::Scan(scan) => scan
+            .binding
+            .map(TailBinding::Named)
+            .or_else(|| scan.hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::Expand { edge, .. } => edge
+            .right_binding
+            .map(TailBinding::Named)
+            .or_else(|| edge.right_hidden_binding.map(TailBinding::Hidden)),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
         }

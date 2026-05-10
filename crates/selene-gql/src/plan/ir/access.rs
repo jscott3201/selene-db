@@ -78,8 +78,6 @@ pub enum TypedIndexBounds {
         /// Whether the upper bound is inclusive.
         hi_inclusive: bool,
     },
-    /// Multiple exact lookup keys.
-    InList(Vec<Literal>),
 }
 
 /// Sort-key access hint selected by optimizer rules.

@@ -25,6 +25,7 @@ fn linear_edge_scan_returns_edge_refs() {
     let edge_scan = match &pattern.join_tree {
         JoinTree::Expand { edge, .. } => NodeOrEdgeScan {
             binding: edge.binding,
+            hidden_binding: edge.hidden_binding,
             kind: ScanKind::Edge,
             label_predicate: edge.label_predicate.clone(),
             property_predicates: edge.property_predicates.clone(),

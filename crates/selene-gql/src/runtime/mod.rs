@@ -8,13 +8,19 @@ mod binding_table;
 mod context;
 mod error;
 pub(crate) mod evaluator;
+mod expand;
+mod hash_join;
+mod outer;
+mod pattern;
 mod scan;
+mod subplan;
 mod value_compare;
+mod wco;
 
 pub use binding_table::{Binding, BindingTable};
 pub use context::TxContext;
 pub use error::ExecutorError;
-pub use scan::scan_pattern;
+pub use pattern::execute_pattern;
 
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};
 

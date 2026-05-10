@@ -147,8 +147,18 @@ fn walk_join_tree_exprs(
                 | walk_predicates(&mut edge.right_property_predicates, visit);
             changed_child | changed_edge
         }
-        JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
+        JoinTree::HashJoin { left, right, .. } => {
             walk_join_tree_exprs(left, visit) | walk_join_tree_exprs(right, visit)
+        }
+        JoinTree::Outer {
+            left,
+            right,
+            right_filters,
+            ..
+        } => {
+            walk_join_tree_exprs(left, visit)
+                | walk_join_tree_exprs(right, visit)
+                | walk_predicates(right_filters, visit)
         }
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
     }

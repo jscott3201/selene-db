@@ -275,6 +275,7 @@ fn push_binding_column(
 fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> BindingTableColumn {
     BindingTableColumn {
         name: Some(name),
+        hidden: None,
         ty: AnalyzedType::Resolved(col.ty.clone()),
     }
 }

@@ -49,18 +49,18 @@ pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    CatalogOp, CompositeIndexHandle, EdgeMatch, EdgeStatistics, EmptyIndexCatalog, ExecutionPlan,
-    FilterPredicate, FilterPredicateKind, ImplDefinedCaps, IndexCatalog, IndexHandle, IndexKind,
-    IndexTarget, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp,
-    NodeIdOrdering, NodeOrEdgeScan, OptimizeContext, OrderAccess, OrderKey, PathPlan, PatternPlan,
-    PipelineOp, PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram, PropertyInit, Rule, ScanAccess,
-    ScanKind, Transformed, TxOp, TypedIndexBounds, TypedIndexLookup, WanderJoinSampler, YieldKind,
-    optimize, plan,
+    BuildSide, CatalogOp, CompositeIndexHandle, EdgeMatch, EdgeStatistics, EmptyIndexCatalog,
+    ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, ImplDefinedCaps,
+    IndexCatalog, IndexHandle, IndexKind, IndexTarget, InsertEndpointRef, InsertSiteId, JoinTree,
+    LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OptimizeContext, OrderAccess,
+    OrderKey, PathPlan, PatternPlan, PipelineOp, PlannedCall, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram,
+    PropertyInit, Rule, ScanAccess, ScanKind, Transformed, TxOp, TypedIndexBounds,
+    TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
     ProcedureOutputColumn, ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry,
     ProcedureSignature, ProcedureTier,
 };
-pub use crate::runtime::{Binding, BindingTable, ExecutorError, TxContext, scan_pattern};
+pub use crate::runtime::{Binding, BindingTable, ExecutorError, TxContext, execute_pattern};

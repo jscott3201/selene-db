@@ -112,6 +112,8 @@ pub enum JoinTree {
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
         key: Vec<selene_core::IStr>,
+        /// Planner-selected build input.
+        build_side: BuildSide,
     },
     /// Left-outer join used for OPTIONAL MATCH.
     Outer {
@@ -121,6 +123,8 @@ pub enum JoinTree {
         right: Box<JoinTree>,
         /// Shared binding names used as the join key.
         key: Vec<selene_core::IStr>,
+        /// Predicates scoped to the optional right side.
+        right_filters: Vec<FilterPredicate>,
     },
     /// Marker for future WCO rewrites.
     WorstCaseOptimal {
@@ -133,11 +137,38 @@ pub enum JoinTree {
     Subplan(Box<ExecutionPlan>),
 }
 
+/// Planner-selected hash-join build side.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuildSide {
+    /// Build the hash table from the left input.
+    Left,
+    /// Build the hash table from the right input.
+    Right,
+}
+
+/// Executor-private binding slot for anonymous pattern elements.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct HiddenBindingId(u32);
+
+impl HiddenBindingId {
+    pub(crate) const fn new(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// Return this hidden slot's zero-based numeric index.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
 /// Node or edge scan.
 #[derive(Clone, Debug, PartialEq)]
 pub struct NodeOrEdgeScan {
     /// Named binding, or `None` for anonymous pattern elements.
     pub binding: Option<BindingId>,
+    /// Executor-private slot for anonymous scan elements.
+    pub hidden_binding: Option<HiddenBindingId>,
     /// Scan kind.
     pub kind: ScanKind,
     /// Label predicate attached to the scanned element.
@@ -164,14 +195,20 @@ pub enum ScanKind {
 pub struct EdgeMatch {
     /// Named edge binding, or `None` for anonymous edge patterns.
     pub binding: Option<BindingId>,
+    /// Executor-private slot for anonymous edge patterns.
+    pub hidden_binding: Option<HiddenBindingId>,
     /// Label predicate attached to the edge.
     pub label_predicate: Option<LabelExpr>,
     /// Inline property predicates from the edge pattern.
     pub property_predicates: Vec<FilterPredicate>,
     /// Binding on the syntactic left side of the edge, if named.
     pub left_binding: Option<BindingId>,
+    /// Executor-private slot on the syntactic left side of the edge.
+    pub left_hidden_binding: Option<HiddenBindingId>,
     /// Binding on the syntactic right side of the edge, if named.
     pub right_binding: Option<BindingId>,
+    /// Executor-private slot on the syntactic right side of the edge.
+    pub right_hidden_binding: Option<HiddenBindingId>,
     /// Label predicate on the syntactic right-side node, if any.
     pub right_label_predicate: Option<LabelExpr>,
     /// Property-map equality predicates on the syntactic right-side node.
@@ -288,6 +325,8 @@ pub struct BindingTableSchema {
 pub struct BindingTableColumn {
     /// Stable column name for aliases and bare variable projections.
     pub name: Option<selene_core::IStr>,
+    /// Executor-private anonymous pattern slot.
+    pub hidden: Option<HiddenBindingId>,
     /// Analyzer-inferred column type.
     pub ty: AnalyzedType,
 }
