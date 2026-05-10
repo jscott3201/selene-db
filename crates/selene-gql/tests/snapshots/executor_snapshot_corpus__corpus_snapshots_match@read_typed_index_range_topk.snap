@@ -1,0 +1,10 @@
+---
+source: crates/selene-gql/tests/executor_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+schema:
+- name :: Dynamic
+rows:
+- ["b"]
+- ["c"]
+delta: nodes=+0 edges=+0 schema_changed=false

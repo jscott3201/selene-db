@@ -13,6 +13,7 @@ use selene_gql::{
 #[derive(Debug, Default)]
 pub struct MockProcedureRegistry {
     procedures: HashMap<Box<[IStr]>, ProcedureMetadata>,
+    results: HashMap<ProcedureHandle, ProcedureResult>,
     next_handle: u64,
 }
 
@@ -22,6 +23,7 @@ impl MockProcedureRegistry {
     pub fn new() -> Self {
         Self {
             procedures: HashMap::new(),
+            results: HashMap::new(),
             next_handle: 1,
         }
     }
@@ -123,6 +125,24 @@ impl MockProcedureRegistry {
             },
         );
     }
+
+    /// Register a deterministic runtime result for a procedure handle.
+    #[must_use]
+    pub fn with_result(mut self, handle: ProcedureHandle, result: ProcedureResult) -> Self {
+        self.results.insert(handle, result);
+        self
+    }
+
+    /// Register a deterministic runtime result in place.
+    pub fn insert_result(&mut self, handle: ProcedureHandle, result: ProcedureResult) {
+        self.results.insert(handle, result);
+    }
+
+    /// Return the deterministic runtime result registered for a procedure handle.
+    #[must_use]
+    pub fn result_for(&self, handle: ProcedureHandle) -> Option<&ProcedureResult> {
+        self.results.get(&handle)
+    }
 }
 
 impl ProcedureRegistry for MockProcedureRegistry {
@@ -132,11 +152,14 @@ impl ProcedureRegistry for MockProcedureRegistry {
 
     fn execute(
         &self,
-        _handle: ProcedureHandle,
+        handle: ProcedureHandle,
         _args: &[Value],
         _ctx: &mut selene_gql::ProcedureContext<'_, '_>,
     ) -> Result<ProcedureResult, ProcedureError> {
-        Err(ProcedureError::UnknownProcedure { name: Box::new([]) })
+        self.results
+            .get(&handle)
+            .cloned()
+            .ok_or(ProcedureError::UnknownProcedure { name: Box::new([]) })
     }
 }
 

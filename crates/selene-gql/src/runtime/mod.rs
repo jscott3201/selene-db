@@ -17,6 +17,8 @@ mod pipeline;
 mod plan_runner;
 mod scan;
 mod session;
+#[cfg(any(test, feature = "test-harness"))]
+mod snapshot_summary;
 mod statement;
 mod subplan;
 mod value_compare;
@@ -30,6 +32,11 @@ pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
 pub(crate) use plan_runner::execute_plan;
 pub use session::Session;
+#[cfg(any(test, feature = "test-harness"))]
+pub use snapshot_summary::{
+    ExecutorSnapshot, ExecutorSummaryInput, NetGraphDelta, RowOrderPolicy, SnapshotColumn,
+    executor_summary,
+};
 pub use statement::{StatementOutput, execute_statement};
 
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};

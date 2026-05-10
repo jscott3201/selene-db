@@ -1,0 +1,12 @@
+---
+source: crates/selene-gql/tests/executor_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+schema:
+- n :: Resolved(NodeRef)
+rows:
+- [#node_0]
+- [#node_1]
+- [#node_2]
+- [#node_3]
+delta: nodes=+0 edges=+0 schema_changed=false

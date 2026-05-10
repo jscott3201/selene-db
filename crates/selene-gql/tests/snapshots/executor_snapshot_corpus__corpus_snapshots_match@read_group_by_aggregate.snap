@@ -1,0 +1,12 @@
+---
+source: crates/selene-gql/tests/executor_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+schema:
+- tenant :: Dynamic
+- c :: Dynamic
+- s :: Dynamic
+rows:
+- ["t1", 2, 4]
+- ["t2", 2, 6]
+delta: nodes=+0 edges=+0 schema_changed=false
