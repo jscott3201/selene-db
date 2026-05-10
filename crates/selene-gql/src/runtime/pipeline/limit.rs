@@ -16,7 +16,7 @@ pub(super) fn execute(
     Ok(BindingTable::new(schema, rows[start..end].to_vec()))
 }
 
-fn literal_amount(amount: &LimitAmount) -> Result<u64, ExecutorError> {
+pub(super) fn literal_amount(amount: &LimitAmount) -> Result<u64, ExecutorError> {
     match amount {
         LimitAmount::Literal(value) => Ok(*value),
         LimitAmount::Parameter(_) => Err(ExecutorError::ImplementationDefined {
@@ -25,7 +25,7 @@ fn literal_amount(amount: &LimitAmount) -> Result<u64, ExecutorError> {
     }
 }
 
-fn u64_to_bounded_usize(value: u64, upper_bound: usize) -> usize {
+pub(super) fn u64_to_bounded_usize(value: u64, upper_bound: usize) -> usize {
     usize::try_from(value)
         .unwrap_or(usize::MAX)
         .min(upper_bound)

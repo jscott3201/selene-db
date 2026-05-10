@@ -16,12 +16,21 @@ pub(super) fn execute(
         .map(|row| {
             let values = items
                 .iter()
-                .map(|item| evaluator::evaluate(&item.expr, row, &input_schema, ctx))
+                .map(|item| project_value(item, row, &input_schema, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Binding::new(values))
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;
     Ok(BindingTable::new(output_schema, rows))
+}
+
+fn project_value(
+    item: &ProjectExpr,
+    row: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &TxContext<'_>,
+) -> Result<selene_core::Value, ExecutorError> {
+    evaluator::evaluate(&item.expr, row, schema, ctx)
 }
 
 pub(super) fn schema_for_items(items: &[ProjectExpr]) -> BindingTableSchema {

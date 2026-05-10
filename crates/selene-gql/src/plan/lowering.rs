@@ -1,20 +1,18 @@
 //! Analyzed-statement to plan lowering.
 
+mod aggregate;
 mod call;
 mod catalog;
 mod expr;
 mod match_clause;
 mod mutation;
 
-use selene_core::IStr;
-
 use crate::{
-    LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, ReturnItem,
-    ValueExpr, WithClause,
+    LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, WithClause,
     analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId},
     plan::{
-        Aggregate, BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan,
-        ImplDefinedCaps, LimitAmount, PipelineOp, PlannerError, ProjectExpr, TxOp,
+        BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
+        LimitAmount, PipelineOp, PlannerError, ProjectExpr, TxOp,
     },
 };
 
@@ -202,17 +200,26 @@ pub(super) fn lower_return(
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
-    push_grouping(&clause.group_by, &clause.items, analyzed, ops)?;
+    let aggregate_rewrite = aggregate::push_grouping(
+        &clause.group_by,
+        &clause.items,
+        clause.having.as_ref(),
+        analyzed,
+        ops,
+    )?;
     if let Some(having) = &clause.having {
-        ops.push(PipelineOp::Filter(expr::filter_predicate(
-            having, analyzed,
+        ops.push(PipelineOp::Filter(aggregate::filter_predicate(
+            having,
+            analyzed,
+            &aggregate_rewrite.names_by_expr_id,
         )?));
     }
     if clause.star {
         // Why: RETURN * keeps the currently-visible binding table; emitting an
         // empty Project would erase columns that output_schema still advertises.
     } else {
-        let projects = project_items(&clause.items, analyzed)?;
+        let projects =
+            aggregate::project_items(&clause.items, analyzed, &aggregate_rewrite.names_by_expr_id)?;
         *visible = projects_to_columns(&projects);
         ops.push(PipelineOp::Project(projects));
     }
@@ -228,13 +235,22 @@ fn lower_with(
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
-    push_grouping(&clause.group_by, &clause.items, analyzed, ops)?;
+    let aggregate_rewrite = aggregate::push_grouping(
+        &clause.group_by,
+        &clause.items,
+        clause.having.as_ref(),
+        analyzed,
+        ops,
+    )?;
     if let Some(having) = &clause.having {
-        ops.push(PipelineOp::Filter(expr::filter_predicate(
-            having, analyzed,
+        ops.push(PipelineOp::Filter(aggregate::filter_predicate(
+            having,
+            analyzed,
+            &aggregate_rewrite.names_by_expr_id,
         )?));
     }
-    let projects = project_items(&clause.items, analyzed)?;
+    let projects =
+        aggregate::project_items(&clause.items, analyzed, &aggregate_rewrite.names_by_expr_id)?;
     *visible = projects_to_columns(&projects);
     ops.push(PipelineOp::Project(projects));
     if clause.distinct {
@@ -276,80 +292,6 @@ pub(super) fn visible_after_pattern(
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn project_items(
-    items: &[ReturnItem],
-    analyzed: &AnalyzedStatement,
-) -> Result<Vec<crate::ProjectExpr>, PlannerError> {
-    items
-        .iter()
-        .map(|item| expr::project_expr(&item.expr, column_name(&item.expr, item.alias), analyzed))
-        .collect()
-}
-
-/// Emit a `GroupBy` op when grouping is required.
-///
-/// An explicit `GROUP BY` is honored as-is. When `group_by` is absent but at
-/// least one projection item is an aggregate, the planner inserts an
-/// implicit grouping over the entire input (empty key list), matching GQL's
-/// rule that aggregate-only queries collapse to a single output row.
-fn push_grouping(
-    group_by: &Option<Vec<ValueExpr>>,
-    items: &[ReturnItem],
-    analyzed: &AnalyzedStatement,
-    ops: &mut Vec<PipelineOp>,
-) -> Result<(), PlannerError> {
-    let aggregate_items = aggregates(items, analyzed)?;
-    if let Some(keys) = group_by {
-        ops.push(PipelineOp::GroupBy {
-            keys: keys
-                .iter()
-                .map(|value| expr::project_expr(value, column_name(value, None), analyzed))
-                .collect::<Result<Vec<_>, _>>()?,
-            aggregates: aggregate_items,
-        });
-    } else if !aggregate_items.is_empty() {
-        ops.push(PipelineOp::GroupBy {
-            keys: Vec::new(),
-            aggregates: aggregate_items,
-        });
-    }
-    Ok(())
-}
-
-fn aggregates(
-    items: &[ReturnItem],
-    analyzed: &AnalyzedStatement,
-) -> Result<Vec<Aggregate>, PlannerError> {
-    items
-        .iter()
-        .filter_map(|item| {
-            expr::aggregate_name(&item.expr).map(|(function, star, distinct)| {
-                let args = match &item.expr {
-                    ValueExpr::FunctionCall { args, .. } => args,
-                    _ => unreachable!("aggregate_name only matches function calls"),
-                };
-                Ok(Aggregate {
-                    function,
-                    args: args
-                        .iter()
-                        .map(|arg| expr::aggregate_arg(arg, analyzed))
-                        .collect::<Result<Vec<_>, _>>()?,
-                    star,
-                    distinct,
-                    span: item.span,
-                })
-            })
-        })
-        .collect()
-}
-
-fn column_name(expr: &ValueExpr, alias: Option<IStr>) -> Option<IStr> {
-    alias.or(match expr {
-        ValueExpr::Variable { name, .. } => Some(*name),
-        _ => None,
-    })
 }
 
 fn leading_matches(statements: &[PipelineStatement]) -> (Vec<&crate::MatchClause>, usize) {
@@ -412,7 +354,7 @@ pub(super) fn next_expr_id(analyzed: &AnalyzedStatement) -> ExprId {
 mod defensive_tests {
     use super::*;
     use crate::{
-        EmptyProcedureRegistry, Literal, SourceSpan, Statement,
+        EmptyProcedureRegistry, Literal, ReturnItem, SourceSpan, Statement, ValueExpr,
         analyze::{BindingId, BindingScopeTree, ExprIdMap, ExprTypeTable, StatementCategory},
         parse,
     };

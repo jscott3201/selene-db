@@ -307,6 +307,7 @@ fn collect_pipeline_types(op: &PipelineOp, types: &mut BTreeMap<ExprId, Analyzed
                 record_project_type(key, types);
             }
             for aggregate in aggregates {
+                types.insert(aggregate.aggregate_id, aggregate.ty.clone());
                 for arg in &aggregate.args {
                     record_aggregate_arg_type(arg, types);
                 }
