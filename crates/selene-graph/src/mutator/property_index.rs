@@ -1,0 +1,83 @@
+//! Property-index mutation methods for the transaction mutator.
+
+use std::sync::Arc;
+
+use selene_core::{Change, IStr, SchemaChange, SchemaPropertyIndexKind};
+
+use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
+
+impl<'tx, 'g> Mutator<'tx, 'g> {
+    /// Register a durable node property index in the active write transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::PropertyIndexAlreadyExists`] if the pair already
+    /// exists, or [`GraphError::IndexValueRejected`] if any existing non-null
+    /// value for `(label, property)` cannot be admitted to `kind`.
+    pub fn create_property_index(
+        &mut self,
+        label: IStr,
+        property: IStr,
+        kind: TypedIndexKind,
+    ) -> GraphResult<()> {
+        if self
+            .txn
+            .working
+            .property_index
+            .contains_key(&(label, property))
+        {
+            return Err(GraphError::PropertyIndexAlreadyExists { label, property });
+        }
+        let index =
+            crate::property_index::build_property_index(&self.txn.working, label, property, kind)?;
+        self.txn
+            .working
+            .property_index
+            .insert((label, property), Arc::new(index));
+        self.txn.changes.push(Change::SchemaChanged {
+            graph: self.txn.working.graph_id(),
+            change: SchemaChange::PropertyIndexCreated {
+                label,
+                property,
+                kind: schema_kind_from(kind),
+            },
+        });
+        Ok(())
+    }
+
+    /// Drop a durable node property index from the active write transaction.
+    ///
+    /// The operation is idempotent. Dropping an absent index succeeds and emits
+    /// no WAL change.
+    pub fn drop_property_index(&mut self, label: IStr, property: IStr) -> GraphResult<()> {
+        if self
+            .txn
+            .working
+            .property_index
+            .remove(&(label, property))
+            .is_none()
+        {
+            return Ok(());
+        }
+        self.txn.changes.push(Change::SchemaChanged {
+            graph: self.txn.working.graph_id(),
+            change: SchemaChange::PropertyIndexDropped { label, property },
+        });
+        Ok(())
+    }
+}
+
+const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
+    match kind {
+        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
+        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
+        TypedIndexKind::String => SchemaPropertyIndexKind::String,
+        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
+        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
+        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
+    }
+}
+
+#[cfg(test)]
+#[path = "property_index/tests.rs"]
+mod tests;

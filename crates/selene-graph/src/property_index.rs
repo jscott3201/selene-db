@@ -127,7 +127,7 @@ pub(crate) fn build_property_index(
 /// that was accepted at runtime (with documented kind drift in open
 /// graphs) does not fail recovery — drift is recoverable, fictional
 /// indexes are not.
-fn build_property_index_lenient(
+pub(crate) fn build_property_index_lenient(
     graph: &crate::SeleneGraph,
     label: IStr,
     property: IStr,

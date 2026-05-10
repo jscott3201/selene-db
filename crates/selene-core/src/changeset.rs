@@ -318,6 +318,42 @@ pub enum SchemaChange {
         /// Interned short reason.
         reason: IStr,
     },
+    /// Property index creation.
+    PropertyIndexCreated {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property key.
+        property: IStr,
+        /// Declared index value kind.
+        kind: SchemaPropertyIndexKind,
+    },
+    /// Property index deletion.
+    PropertyIndexDropped {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property key.
+        property: IStr,
+    },
+}
+
+/// Schema-level property index value kind.
+///
+/// This mirrors `selene_graph::TypedIndexKind` without making `selene-core`
+/// depend on graph storage internals.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SchemaPropertyIndexKind {
+    /// Signed 64-bit integer.
+    I64,
+    /// Finite 64-bit floating-point value.
+    F64,
+    /// Interned string.
+    String,
+    /// Civil date.
+    Date,
+    /// Civil local date-time.
+    LocalDateTime,
+    /// UUID.
+    Uuid,
 }
 
 fn sorted_deduped(values: impl IntoIterator<Item = IStr>) -> SmallVec<[IStr; 2]> {
@@ -615,8 +651,17 @@ mod tests {
                 graph_type: graph_type_id,
                 def: record,
             },
+            SchemaChange::PropertyIndexCreated {
+                label: node_label,
+                property: istr("change.schema.indexed"),
+                kind: SchemaPropertyIndexKind::I64,
+            },
+            SchemaChange::PropertyIndexDropped {
+                label: node_label,
+                property: istr("change.schema.indexed"),
+            },
         ];
-        assert_eq!(variants.len(), 7);
+        assert_eq!(variants.len(), 9);
     }
 
     proptest! {

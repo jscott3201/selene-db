@@ -30,7 +30,6 @@ const PLACEHOLDER_CONTENT_HASH: [u8; 32] = [0_u8; 32];
 #[derive(Clone)]
 pub(crate) enum TierEntry {
     Graph(Arc<dyn GraphProcedureBuiltIn>),
-    #[allow(dead_code)] // Reserved for BRIEF-42's first mutation-tier built-in.
     Mutation(Arc<dyn MutationProcedureBuiltIn>),
 }
 
@@ -73,7 +72,6 @@ impl PendingEntry {
         }
     }
 
-    #[allow(dead_code)] // Reserved for BRIEF-42's first mutation-tier built-in.
     pub(crate) fn mutation(
         handle: ProcedureHandle,
         builtin: impl MutationProcedureBuiltIn,
