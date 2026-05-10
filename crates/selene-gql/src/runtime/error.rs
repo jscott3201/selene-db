@@ -57,6 +57,15 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Statement was issued while the explicit transaction is aborted.
+    #[error("statement issued against aborted explicit transaction")]
+    #[diagnostic(code(SLENE_X_25P02))]
+    InFailedTransaction {
+        /// Source span for the rejected statement.
+        #[label("aborted transaction; issue ROLLBACK to recover")]
+        span: SourceSpan,
+    },
+
     /// The graph mutation funnel rejected a write.
     #[error("graph mutation failed: {source}")]
     #[diagnostic(code(SLENE_X_XX501))]
@@ -87,7 +96,8 @@ impl ExecutorError {
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::InvalidTransactionState { .. }
             | Self::TransactionAlreadyActive { .. }
-            | Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
+            | Self::NoActiveTransaction { .. }
+            | Self::InFailedTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
             Self::GraphMutation { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
             Self::ImplementationDefined { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
         }

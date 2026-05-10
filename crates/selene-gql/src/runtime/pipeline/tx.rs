@@ -22,10 +22,18 @@ fn start(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput,
         return Err(ExecutorError::TransactionAlreadyActive { span });
     }
     session.active_txn = Some(session.graph().begin_write());
+    session.aborted = false;
     Ok(StatementOutput::Empty)
 }
 
 fn commit(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput, ExecutorError> {
+    if session.aborted {
+        if let Some(txn) = session.active_txn.take() {
+            txn.rollback();
+        }
+        session.aborted = false;
+        return Err(ExecutorError::InFailedTransaction { span });
+    }
     let txn = session
         .active_txn
         .take()
@@ -41,5 +49,6 @@ fn rollback(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutp
         .take()
         .ok_or(ExecutorError::NoActiveTransaction { span })?;
     txn.rollback();
+    session.aborted = false;
     Ok(StatementOutput::Empty)
 }

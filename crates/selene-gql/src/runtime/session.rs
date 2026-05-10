@@ -9,6 +9,7 @@ pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
+    pub(crate) aborted: bool,
 }
 
 impl<'g> Session<'g> {
@@ -19,6 +20,7 @@ impl<'g> Session<'g> {
             graph,
             principal: None,
             active_txn: None,
+            aborted: false,
         }
     }
 
@@ -29,6 +31,7 @@ impl<'g> Session<'g> {
             graph,
             principal: Some(principal),
             active_txn: None,
+            aborted: false,
         }
     }
 
@@ -50,10 +53,17 @@ impl<'g> Session<'g> {
         self.active_txn.is_some()
     }
 
+    /// Return true when the active explicit transaction is aborted.
+    #[must_use]
+    pub const fn is_aborted(&self) -> bool {
+        self.aborted
+    }
+
     /// Roll back and clear the explicit transaction, when one is active.
     pub fn abort(&mut self) {
         if let Some(txn) = self.active_txn.take() {
             txn.rollback();
         }
+        self.aborted = false;
     }
 }

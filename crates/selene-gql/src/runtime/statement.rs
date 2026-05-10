@@ -24,6 +24,11 @@ pub fn execute_statement(
     session: &mut Session<'_>,
     _registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    if session.aborted && plan.category != StatementCategory::TransactionControl {
+        return Err(ExecutorError::InFailedTransaction {
+            span: SourceSpan::default(),
+        });
+    }
     match plan.category {
         StatementCategory::ReadOnly => execute_read_only(plan, session),
         StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
@@ -38,8 +43,13 @@ fn execute_read_only(
     session: &mut Session<'_>,
 ) -> Result<StatementOutput, ExecutorError> {
     let snapshot = session.graph().read();
-    let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps);
-    let table = execute_plan(plan, &mut ctx)?;
+    let table = if let Some(txn) = session.active_txn.as_mut() {
+        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, txn);
+        execute_plan(plan, &mut ctx)?
+    } else {
+        let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps);
+        execute_plan(plan, &mut ctx)?
+    };
     Ok(output_from_table(plan, table))
 }
 
@@ -61,10 +71,15 @@ fn execute_inside_explicit_tx(
     let txn = session
         .active_txn
         .as_mut()
-        .expect("checked active transaction above");
+        .ok_or(ExecutorError::ImplementationDefined {
+            detail: "explicit-TX path entered without active transaction",
+        })?;
     let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, txn);
-    let table = execute_plan(plan, &mut ctx)?;
-    Ok(output_from_table(plan, table))
+    let result = execute_plan(plan, &mut ctx);
+    if result.is_err() {
+        session.aborted = true;
+    }
+    result.map(|table| output_from_table(plan, table))
 }
 
 fn execute_auto_commit(
