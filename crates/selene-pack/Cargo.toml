@@ -1,0 +1,22 @@
+[package]
+name = "selene-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Built-in procedure pack registry for selene-db"
+
+[dependencies]
+papaya.workspace = true
+selene-core = { path = "../selene-core", version = "0.0.0" }
+selene-gql = { path = "../selene-gql", version = "0.0.0" }
+thiserror.workspace = true
+
+[dev-dependencies]
+selene-graph = { path = "../selene-graph", version = "0.0.0" }
+
+[lints]
+workspace = true
