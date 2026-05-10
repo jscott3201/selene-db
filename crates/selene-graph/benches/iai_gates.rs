@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! iai-callgrind gates for deterministic graph hot paths.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use iai_callgrind::{
     Callgrind, EventKind, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main,
 };

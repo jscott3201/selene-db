@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! Criterion benches for adjacency traversal.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use std::collections::{HashSet, VecDeque};

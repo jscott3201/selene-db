@@ -185,6 +185,8 @@ jobs:
       - uses: actions/checkout@v4
       - run: bash .github/scripts/check-bench-invocation.sh .
       - run: bash .github/scripts/check-bench-invocation.test.sh
+      - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
+      - run: bash .github/scripts/check-mimalloc-dev-dep.test.sh
       - run: bash scripts/run-benches.test.sh
 
   thirdparty-current:

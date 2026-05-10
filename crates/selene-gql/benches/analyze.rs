@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! Criterion benches for plan-corpus analysis throughput.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};

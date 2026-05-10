@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! iai-callgrind gates for plan-only GQL compilation hot paths.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use iai_callgrind::{

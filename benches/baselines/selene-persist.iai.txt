@@ -1,3 +1,6 @@
+# Bench binaries use mimalloc 0.1 as the global allocator (INFRA-04).
+# Counts intentionally remain zero placeholders; real capture is non-gating.
+# Refresh procedure: scripts/run-benches.sh --layer iai --profile quick
 # bench_name	instructions	l1_misses	ll_misses
 wal_append_single_1k	0	0	0
 wal_replay_1k	0	0	0

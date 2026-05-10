@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! iai-callgrind gates for deterministic persistence hot paths.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use std::sync::{Arc, Mutex};

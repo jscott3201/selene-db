@@ -1,6 +1,9 @@
 #![allow(missing_docs)]
 //! Criterion bench for concurrent lock-free snapshot reads.
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
