@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
-use selene_core::{Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap};
+use selene_core::{
+    Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PredefinedValueType, PropertyDiff,
+    PropertyMap, PropertyValueType, SchemaChange, ValueType,
+};
 
 use crate::core_provider::sections::{
     EdgeRow, MetaPayload, NodeRow, SchemaEntry, SchemaKey, decode_edges, decode_graph_types,
@@ -14,7 +17,7 @@ use crate::core_provider::{
     invalid_payload,
 };
 use crate::graph::{GraphMeta, SeleneGraph};
-use crate::graph_types::GraphTypeDef;
+use crate::graph_types::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 use crate::store::{edge_row_index, node_row_index};
 use crate::typed_index::TypedIndex;
 
@@ -23,11 +26,14 @@ use crate::typed_index::TypedIndex;
 pub(crate) struct RecoveryState {
     meta: Option<MetaPayload>,
     graph_types: BTreeMap<u32, Arc<GraphTypeDef>>,
+    pending_schema_changes: Vec<SchemaChange>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     sequence: u64,
 }
+
+const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
 
 impl RecoveryState {
     /// Construct an empty recovery accumulator.
@@ -150,7 +156,12 @@ impl RecoveryState {
                 let row = require_live_edge(&mut self.edges, *id)?;
                 row.alive = false;
             }
-            Change::SchemaChanged { .. } | Change::IndexExtensionEvent { .. } => {}
+            Change::SchemaChanged { change, .. } => {
+                if is_catalog_schema_change(change) {
+                    self.pending_schema_changes.push(change.clone());
+                }
+            }
+            Change::IndexExtensionEvent { .. } => {}
         }
         Ok(())
     }
@@ -190,7 +201,7 @@ impl RecoveryState {
                 };
                 // Reconcile snapshot binding with caller's assertion. Either
                 // side disagreeing is closed/open drift the user must surface.
-                let bound_type = match (&snapshot_bound_type, &expected_bound_type) {
+                let mut bound_type = match (&snapshot_bound_type, &expected_bound_type) {
                     (Some(snap), Some(caller)) if snap.as_ref() != caller.as_ref() => {
                         return Err(crate::GraphError::Provider(inconsistent(
                             "CORE/META bound_type disagrees with caller-supplied \
@@ -207,6 +218,7 @@ impl RecoveryState {
                     }
                     (None, None) => None,
                 };
+                replay_schema_changes(&mut bound_type, &self.pending_schema_changes)?;
                 GraphMeta {
                     graph_id: meta.graph_id,
                     generation: meta.generation,
@@ -218,13 +230,17 @@ impl RecoveryState {
             // F2: WAL-only recovery preserves the caller's binding so a
             // closed-graph crash before the first snapshot does not silently
             // downgrade to open and skip GG02 validation forever after.
-            None => GraphMeta {
-                graph_id: expected_graph_id,
-                generation: 0,
-                next_node_id: 1,
-                next_edge_id: 1,
-                bound_type: expected_bound_type.clone(),
-            },
+            None => {
+                let mut bound_type = expected_bound_type.clone();
+                replay_schema_changes(&mut bound_type, &self.pending_schema_changes)?;
+                GraphMeta {
+                    graph_id: expected_graph_id,
+                    generation: 0,
+                    next_node_id: 1,
+                    next_edge_id: 1,
+                    bound_type,
+                }
+            }
         };
         let mut graph = SeleneGraph::new(meta.graph_id);
         graph.meta = meta;
@@ -261,6 +277,197 @@ impl RecoveryState {
             })?;
         }
         Ok(graph)
+    }
+}
+
+fn is_catalog_schema_change(change: &SchemaChange) -> bool {
+    matches!(
+        change,
+        SchemaChange::NodeTypeAdded { .. }
+            | SchemaChange::EdgeTypeAdded { .. }
+            | SchemaChange::NodeTypeDropped { .. }
+            | SchemaChange::EdgeTypeDropped { .. }
+    )
+}
+
+fn replay_schema_changes(
+    bound_type: &mut Option<Arc<GraphTypeDef>>,
+    changes: &[SchemaChange],
+) -> Result<(), crate::GraphError> {
+    if changes.is_empty() {
+        return Ok(());
+    }
+    let Some(base) = bound_type.as_deref() else {
+        let variant = schema_change_variant(&changes[0]);
+        return Err(crate::GraphError::Provider(inconsistent(format!(
+            "WAL {variant} references missing graph type index {V1_BOUND_GRAPH_TYPE_INDEX}"
+        ))));
+    };
+    let mut graph_type = base.clone();
+    for change in changes {
+        apply_schema_change(&mut graph_type, change).map_err(crate::GraphError::Provider)?;
+    }
+    graph_type.validate_ref()?;
+    *bound_type = Some(Arc::new(graph_type));
+    Ok(())
+}
+
+fn apply_schema_change(
+    graph_type: &mut GraphTypeDef,
+    change: &SchemaChange,
+) -> Result<(), crate::ProviderError> {
+    match change {
+        SchemaChange::NodeTypeAdded { label, def, .. } => {
+            // Why: snapshot sections store the bound graph type at recovery
+            // index 0 in v1.0. SchemaChange.graph_type uses the durable
+            // catalog id space, so replay maps every catalog type DDL event
+            // onto that single recovery-state entry until multi-bound-type
+            // work replaces the constant.
+            graph_type
+                .node_types
+                .push(runtime_node_type_def(*label, def)?);
+        }
+        SchemaChange::EdgeTypeAdded { label, def, .. } => {
+            graph_type
+                .edge_types
+                .push(runtime_edge_type_def(graph_type, *label, def)?);
+        }
+        SchemaChange::NodeTypeDropped { name, .. } => {
+            *graph_type = graph_type.without_node_type(*name).ok_or_else(|| {
+                inconsistent(format!(
+                    "WAL NodeTypeDropped references unknown type {name}"
+                ))
+            })?;
+        }
+        SchemaChange::EdgeTypeDropped { name, .. } => {
+            *graph_type = graph_type.without_edge_type(*name).ok_or_else(|| {
+                inconsistent(format!(
+                    "WAL EdgeTypeDropped references unknown type {name}"
+                ))
+            })?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn runtime_node_type_def(
+    label: IStr,
+    def: &selene_core::NodeTypeDef,
+) -> Result<NodeTypeDef, crate::ProviderError> {
+    Ok(NodeTypeDef {
+        name: label,
+        key_labels: def.labels.clone(),
+        properties: runtime_properties(&def.properties)?,
+    })
+}
+
+fn runtime_edge_type_def(
+    graph_type: &GraphTypeDef,
+    label: IStr,
+    def: &selene_core::EdgeTypeDef,
+) -> Result<EdgeTypeDef, crate::ProviderError> {
+    let source_node_type = graph_type
+        .find_node_type_index(&LabelSet::single(def.source_node_type.0))
+        .ok_or_else(|| {
+            inconsistent(format!(
+                "WAL EdgeTypeAdded references unknown source node type {}",
+                def.source_node_type.0
+            ))
+        })?;
+    let target_node_type = graph_type
+        .find_node_type_index(&LabelSet::single(def.target_node_type.0))
+        .ok_or_else(|| {
+            inconsistent(format!(
+                "WAL EdgeTypeAdded references unknown target node type {}",
+                def.target_node_type.0
+            ))
+        })?;
+    Ok(EdgeTypeDef {
+        name: label,
+        label: def.label,
+        source_node_type,
+        target_node_type,
+        properties: runtime_properties(&def.properties)?,
+    })
+}
+
+fn runtime_properties(
+    properties: &[selene_core::PropertyDef],
+) -> Result<Vec<PropertyTypeDef>, crate::ProviderError> {
+    properties
+        .iter()
+        .map(|property| {
+            Ok(PropertyTypeDef {
+                name: property.name,
+                value_type: runtime_value_type(&property.value_type)?,
+                required: !property.nullable || property.value_type.not_null,
+            })
+        })
+        .collect()
+}
+
+fn runtime_value_type(value_type: &ValueType) -> Result<PropertyValueType, crate::ProviderError> {
+    if value_type.list_of.is_some() {
+        return Ok(PropertyValueType::List);
+    }
+    if value_type.record.is_some() {
+        return Ok(PropertyValueType::RecordTyped);
+    }
+    if value_type.union.is_some() {
+        return Err(inconsistent(
+            "WAL property definition uses unsupported union value type",
+        ));
+    }
+    let Some(predefined) = value_type.predefined else {
+        return Ok(PropertyValueType::Null);
+    };
+    Ok(match predefined {
+        PredefinedValueType::Bool => PropertyValueType::Bool,
+        PredefinedValueType::Int
+        | PredefinedValueType::Int8
+        | PredefinedValueType::Int16
+        | PredefinedValueType::Int32
+        | PredefinedValueType::Int64 => PropertyValueType::Int,
+        PredefinedValueType::Int128 => PropertyValueType::Int128,
+        PredefinedValueType::Uint
+        | PredefinedValueType::Uint8
+        | PredefinedValueType::Uint16
+        | PredefinedValueType::Uint32
+        | PredefinedValueType::Uint64 => PropertyValueType::Uint,
+        PredefinedValueType::Uint128 => PropertyValueType::Uint128,
+        PredefinedValueType::Float | PredefinedValueType::Float64 => PropertyValueType::Float,
+        PredefinedValueType::Float32 => PropertyValueType::Float32,
+        PredefinedValueType::Decimal => PropertyValueType::Decimal,
+        PredefinedValueType::String => PropertyValueType::String,
+        PredefinedValueType::Bytes => PropertyValueType::Bytes,
+        PredefinedValueType::Date => PropertyValueType::Date,
+        PredefinedValueType::LocalTime => PropertyValueType::LocalTime,
+        PredefinedValueType::ZonedTime => PropertyValueType::ZonedTime,
+        PredefinedValueType::LocalDateTime => PropertyValueType::LocalDateTime,
+        PredefinedValueType::ZonedDateTime => PropertyValueType::ZonedDateTime,
+        PredefinedValueType::Duration => PropertyValueType::Duration,
+        PredefinedValueType::NodeRef => PropertyValueType::NodeRef,
+        PredefinedValueType::EdgeRef => PropertyValueType::EdgeRef,
+        PredefinedValueType::GraphRef => PropertyValueType::GraphRef,
+        PredefinedValueType::TableRef => PropertyValueType::TableRef,
+        PredefinedValueType::Path => PropertyValueType::Path,
+        PredefinedValueType::Uuid => PropertyValueType::Uuid,
+        PredefinedValueType::Extended(_) => {
+            return Err(inconsistent(
+                "WAL property definition uses unsupported extended value type",
+            ));
+        }
+    })
+}
+
+fn schema_change_variant(change: &SchemaChange) -> &'static str {
+    match change {
+        SchemaChange::NodeTypeAdded { .. } => "NodeTypeAdded",
+        SchemaChange::EdgeTypeAdded { .. } => "EdgeTypeAdded",
+        SchemaChange::NodeTypeDropped { .. } => "NodeTypeDropped",
+        SchemaChange::EdgeTypeDropped { .. } => "EdgeTypeDropped",
+        _ => "SchemaChanged",
     }
 }
 
@@ -389,3 +596,6 @@ fn edge_hole_label() -> Result<IStr, crate::GraphError> {
     let _ = CELL.set(label);
     Ok(label)
 }
+
+#[cfg(test)]
+mod tests;

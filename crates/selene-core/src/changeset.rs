@@ -272,6 +272,20 @@ pub enum SchemaChange {
         /// Edge type definition.
         def: EdgeTypeDef,
     },
+    /// Node type deletion.
+    NodeTypeDropped {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Dropped node type name.
+        name: IStr,
+    },
+    /// Edge type deletion.
+    EdgeTypeDropped {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Dropped edge type name.
+        name: IStr,
+    },
     /// Record type addition.
     RecordTypeAdded {
         /// Owning graph type.
@@ -589,12 +603,20 @@ mod tests {
                 label: edge_label,
                 def: edge,
             },
+            SchemaChange::NodeTypeDropped {
+                graph_type: graph_type_id,
+                name: node_label,
+            },
+            SchemaChange::EdgeTypeDropped {
+                graph_type: graph_type_id,
+                name: edge_label,
+            },
             SchemaChange::RecordTypeAdded {
                 graph_type: graph_type_id,
                 def: record,
             },
         ];
-        assert_eq!(variants.len(), 5);
+        assert_eq!(variants.len(), 7);
     }
 
     proptest! {

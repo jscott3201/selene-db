@@ -82,6 +82,12 @@ impl SeleneGraph {
         }
     }
 
+    /// Return this graph snapshot's stable graph ID.
+    #[must_use]
+    pub const fn graph_id(&self) -> GraphId {
+        self.meta.graph_id
+    }
+
     /// Number of alive nodes.
     #[must_use]
     pub fn node_count(&self) -> usize {

@@ -59,6 +59,15 @@ impl GraphTypeDef {
             .and_then(|index| u32::try_from(index).ok())
     }
 
+    /// Return the node-type index matching `name`.
+    #[must_use]
+    pub fn node_type_index_for(&self, name: IStr) -> Option<u32> {
+        self.node_types
+            .iter()
+            .position(|node_type| node_type.name == name)
+            .and_then(|index| u32::try_from(index).ok())
+    }
+
     /// Return the edge type for `(label, source_node_type, target_node_type)`.
     #[must_use]
     pub fn find_edge_type(
@@ -80,6 +89,34 @@ impl GraphTypeDef {
         self.edge_types
             .iter()
             .find(|edge_type| edge_type.label == label)
+    }
+
+    /// Return a copy with the named node type removed.
+    ///
+    /// Edge endpoint indexes are intentionally not rewritten. Callers that
+    /// cannot tolerate positional drift must reject the drop before using this
+    /// helper.
+    #[must_use]
+    pub fn without_node_type(&self, name: IStr) -> Option<Self> {
+        let index = self
+            .node_types
+            .iter()
+            .position(|node_type| node_type.name == name)?;
+        let mut next = self.clone();
+        next.node_types.remove(index);
+        Some(next)
+    }
+
+    /// Return a copy with the named edge type removed.
+    #[must_use]
+    pub fn without_edge_type(&self, name: IStr) -> Option<Self> {
+        let index = self
+            .edge_types
+            .iter()
+            .position(|edge_type| edge_type.name == name)?;
+        let mut next = self.clone();
+        next.edge_types.remove(index);
+        Some(next)
     }
 
     /// Validate the type without consuming it.
@@ -357,11 +394,34 @@ mod tests {
         );
         assert_eq!(graph_type.find_node_type_index(&person), Some(0));
         assert_eq!(
+            graph_type.node_type_index_for(label("types.company")),
+            Some(1)
+        );
+        assert_eq!(
             graph_type
                 .find_edge_type(label("WORKS_AT"), 0, 1)
                 .map(|edge_type| edge_type.name),
             Some(label("types.works_at"))
         );
+    }
+
+    #[test]
+    fn without_helpers_remove_named_type_without_reindexing() {
+        let graph_type = valid_type();
+
+        let without_node = graph_type
+            .without_node_type(label("types.person"))
+            .expect("node type removed");
+        assert_eq!(without_node.node_types.len(), 1);
+        assert_eq!(without_node.edge_types[0].source_node_type, 0);
+        assert_eq!(without_node.edge_types[0].target_node_type, 1);
+
+        let without_edge = graph_type
+            .without_edge_type(label("types.works_at"))
+            .expect("edge type removed");
+        assert!(without_edge.edge_types.is_empty());
+        assert!(graph_type.without_node_type(label("missing")).is_none());
+        assert!(graph_type.without_edge_type(label("missing")).is_none());
     }
 
     #[test]
