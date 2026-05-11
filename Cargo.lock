@@ -2171,6 +2171,7 @@ name = "selene-pack"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "insta",
  "jiff",
  "jsonschema",
  "papaya",
@@ -2179,9 +2180,11 @@ dependencies = [
  "selene-gql",
  "selene-graph",
  "selene-persist",
+ "selene-testing",
  "semver",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 

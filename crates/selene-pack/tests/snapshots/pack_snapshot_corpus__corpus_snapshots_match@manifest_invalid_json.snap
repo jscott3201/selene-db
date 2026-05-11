@@ -1,0 +1,6 @@
+---
+source: crates/selene-pack/tests/pack_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+manifest:
+- ERR variant=InvalidJson gate=manifest_syntax_and_schema

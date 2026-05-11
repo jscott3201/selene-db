@@ -15,6 +15,8 @@ mod history;
 mod manifest;
 mod registry;
 mod reserved;
+#[cfg(any(test, feature = "test-harness"))]
+mod snapshot_summary;
 
 pub use activation::{
     ActivationEntry, ActivationError, ActivationRegistry, ActivationStatus, Active, ContentHash,
@@ -39,4 +41,8 @@ pub use selene_gql::{
     ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn, ProcedureOutputSchema,
     ProcedureParameter, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
     Value,
+};
+#[cfg(any(test, feature = "test-harness"))]
+pub use snapshot_summary::{
+    PackFixtureKind, PackSnapshot, PackSnapshotInput, PackSnapshotSection, pack_summary,
 };

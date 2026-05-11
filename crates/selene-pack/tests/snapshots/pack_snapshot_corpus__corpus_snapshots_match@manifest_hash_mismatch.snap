@@ -1,0 +1,6 @@
+---
+source: crates/selene-pack/tests/pack_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+manifest:
+- ERR variant=ContentHashMismatch gate=content_hash_consistency declared="blake3:1111111111111111111111111111111111111111111111111111111111111111" computed="blake3:2d728de8f519e40f10f2e6cdc567ab4bd7925e7c8ef26b76f3662dbd7a1c92c6"

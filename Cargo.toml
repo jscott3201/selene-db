@@ -84,6 +84,7 @@ proptest = { version = "1.11", default-features = false, features = ["std"] }
 rstest = "0.26"
 insta = "1.47"
 postcard = { version = "1.1", features = ["alloc"] }
+tempfile = "3.27"
 
 [profile.release]
 opt-level = 3
