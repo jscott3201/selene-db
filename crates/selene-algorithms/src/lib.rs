@@ -24,12 +24,14 @@
 //! itself stays independent of the GQL surface.
 
 pub mod catalog;
+pub mod centrality;
 pub mod error;
 pub mod pathfinding;
 pub mod projection;
 pub mod structural;
 
 pub use catalog::{ProjectionCatalog, ProjectionRef};
+pub use centrality::{PageRankConfig, betweenness, pagerank};
 pub use error::AlgorithmsError;
 pub use pathfinding::{PathResult, PathfindingError, apsp, dijkstra, sssp};
 pub use projection::{GraphProjection, ProjNeighbor, ProjectionConfig};
