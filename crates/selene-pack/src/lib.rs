@@ -10,9 +10,14 @@
 
 mod builtin;
 mod error;
+mod manifest;
 mod registry;
 
 pub use error::RegistryError;
+pub use manifest::{
+    MANIFEST_SCHEMA_DRAFT, ManifestError, ManifestMutability, ManifestProcedureEntry,
+    ManifestSchemaRef, ManifestTier, ProcedurePackManifest, manifest_json_schema, parse_manifest,
+};
 pub use registry::ProcedurePackRegistry;
 pub use selene_core::IStr;
 pub use selene_gql::{
