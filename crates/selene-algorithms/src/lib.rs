@@ -8,11 +8,12 @@
 //!
 //! # Crate organization
 //!
-//! BRIEF-50 (this opener) ships only the projection foundation. Subsequent
-//! briefs add modules for structural (WCC, SCC, …), pathfinding (Dijkstra,
-//! SSSP, APSP), centrality (PageRank, betweenness), and community (label
-//! propagation, Louvain, triangle count) algorithms. See spec 16 §3 for the
-//! brief sequence.
+//! BRIEF-50 landed the projection foundation; BRIEF-51 adds the
+//! [`ProjectionCatalog`] named cache with generation-based staleness
+//! detection. Subsequent briefs add modules for structural (WCC, SCC, …),
+//! pathfinding (Dijkstra, SSSP, APSP), centrality (PageRank, betweenness),
+//! and community (label propagation, Louvain, triangle count) algorithms.
+//! See spec 16 §3 for the brief sequence.
 //!
 //! # Dependency boundary
 //!
@@ -22,8 +23,10 @@
 //! adapts these algorithms to procedure-pack tiers; the algorithms crate
 //! itself stays independent of the GQL surface.
 
+pub mod catalog;
 pub mod error;
 pub mod projection;
 
+pub use catalog::{ProjectionCatalog, ProjectionRef};
 pub use error::AlgorithmsError;
 pub use projection::{GraphProjection, ProjNeighbor, ProjectionConfig};

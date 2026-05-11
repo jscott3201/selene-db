@@ -37,4 +37,15 @@ pub enum AlgorithmsError {
         /// The offending node ID.
         id: NodeId,
     },
+
+    /// `ProjectionCatalog::ensure_fresh` (or another catalog operation that
+    /// requires the named projection to already exist) was called with a name
+    /// that is not registered. The catalog is a caching surface, not a
+    /// projection factory; callers register projections explicitly via
+    /// `project()` before referencing them.
+    #[error("no projection registered for name {name:?}")]
+    NoSuchProjection {
+        /// The unrecognized projection name.
+        name: String,
+    },
 }
