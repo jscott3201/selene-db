@@ -8,11 +8,17 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod activation;
 mod builtin;
 mod error;
 mod manifest;
 mod registry;
 
+pub use activation::{
+    ActivationEntry, ActivationError, ActivationRegistry, ActivationStatus, Active, ContentHash,
+    Deprecated, Disabled, LifecycleEvent, LifecycleSink, NoopSink, Principal, Staged, Uploaded,
+    Validating,
+};
 pub use error::RegistryError;
 pub use manifest::{
     ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES, MANIFEST_SCHEMA_DRAFT,
