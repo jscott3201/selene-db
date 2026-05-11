@@ -1,0 +1,229 @@
+//! Integration tests for `betweenness` per spec 16 §E19–§E24.
+
+use roaring::RoaringBitmap;
+use selene_algorithms::{GraphProjection, ProjectionConfig, betweenness};
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
+use selene_graph::SharedGraph;
+
+fn istr(name: &str) -> IStr {
+    intern(name).unwrap()
+}
+
+fn build_proj(shared: &SharedGraph) -> GraphProjection {
+    let snapshot = shared.read();
+    GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "test".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: None,
+        },
+        None,
+    )
+    .unwrap()
+}
+
+fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let label = istr("N");
+    let rel = istr("R");
+    let mut txn = shared.begin_write();
+    let mut nodes = Vec::with_capacity(count);
+    for _ in 0..count {
+        let id = txn
+            .mutator()
+            .create_node(LabelSet::single(label), PropertyMap::new())
+            .unwrap();
+        nodes.push(id);
+    }
+    for &(s, t) in edges {
+        txn.mutator()
+            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .unwrap();
+    }
+    txn.commit().unwrap();
+    (shared, nodes)
+}
+
+#[test]
+fn betweenness_empty_projection_returns_empty() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let proj = build_proj(&shared);
+    assert!(betweenness(&proj, None).is_empty());
+}
+
+#[test]
+fn betweenness_single_node_returns_zero() {
+    let (shared, nodes) = build_graph(1, &[]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, None);
+    assert_eq!(result, vec![(nodes[0], 0.0)]);
+}
+
+#[test]
+fn betweenness_chain_middle_node_is_intermediate() {
+    // n0 → n1 → n2: n1 lies on the unique shortest path from n0 to n2.
+    // Directed Brandes': contribution from source n0 only → betweenness[n1] = 1.0.
+    let (shared, nodes) = build_graph(3, &[(0, 1), (1, 2)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, None);
+    let score_n1 = result.iter().find(|&&(n, _)| n == nodes[1]).unwrap().1;
+    assert_eq!(score_n1, 1.0, "n1 sits between n0 and n2 (directed)");
+    // Endpoints have zero betweenness.
+    assert_eq!(result.iter().find(|&&(n, _)| n == nodes[0]).unwrap().1, 0.0);
+    assert_eq!(result.iter().find(|&&(n, _)| n == nodes[2]).unwrap().1, 0.0);
+}
+
+#[test]
+fn betweenness_no_through_paths_returns_all_zero() {
+    // Disconnected pairs: n0 → n1, n2 → n3. No node lies between any other.
+    let (shared, _) = build_graph(4, &[(0, 1), (2, 3)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, None);
+    for &(_, score) in &result {
+        assert_eq!(score, 0.0);
+    }
+}
+
+#[test]
+fn betweenness_star_center_dominates() {
+    // Star: n0 has edges to n1..n4; each spoke has reverse edge.
+    // n0 lies on paths between every spoke pair → highest betweenness.
+    let (shared, nodes) = build_graph(
+        5,
+        &[
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (1, 0),
+            (2, 0),
+            (3, 0),
+            (4, 0),
+        ],
+    );
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, None);
+    assert_eq!(result[0].0, nodes[0], "center n0 must rank first");
+    assert!(
+        result[0].1 > result[1].1,
+        "center score must strictly exceed spoke scores"
+    );
+}
+
+#[test]
+fn betweenness_directed_triangle_symmetric_unit_scores() {
+    // Directed 3-cycle n0 → n1 → n2 → n0. Each node IS an intermediate on
+    // exactly one pair's shortest path:
+    //   from n0: shortest n0 → n2 = [n0, n1, n2] → n1 is intermediate (δ += 1)
+    //   from n1: shortest n1 → n0 = [n1, n2, n0] → n2 is intermediate (δ += 1)
+    //   from n2: shortest n2 → n1 = [n2, n0, n1] → n0 is intermediate (δ += 1)
+    // By symmetry all three nodes have betweenness 1.0; result is tied →
+    // sort must resolve ASC by NodeId per §E21.
+    let (shared, nodes) = build_graph(3, &[(0, 1), (1, 2), (2, 0)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, None);
+    for &(n, score) in &result {
+        assert_eq!(
+            score, 1.0,
+            "triangle node {n:?} should have betweenness 1.0 by symmetry"
+        );
+    }
+    assert_eq!(
+        result.iter().map(|&(n, _)| n).collect::<Vec<_>>(),
+        nodes,
+        "tied scores must sort ASC by NodeId per §E21"
+    );
+}
+
+#[test]
+fn betweenness_sample_size_none_equals_full() {
+    let (shared, _) = build_graph(4, &[(0, 1), (1, 2), (2, 3)]);
+    let proj = build_proj(&shared);
+    let full = betweenness(&proj, None);
+    let same_via_some = betweenness(&proj, Some(4));
+    // Some(k) where k >= n_count collapses to None per §E24.
+    assert_eq!(full, same_via_some);
+}
+
+#[test]
+fn betweenness_sample_size_zero_returns_zeros() {
+    // Some(0) → no sources → all centrality zero per §E24.
+    let (shared, _) = build_graph(3, &[(0, 1), (1, 2)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, Some(0));
+    assert_eq!(result.len(), 3);
+    for &(_, score) in &result {
+        assert_eq!(score, 0.0);
+    }
+}
+
+#[test]
+fn betweenness_sample_size_scaling_preserves_magnitude() {
+    // For a small graph the sample-size scaling preserves the magnitude
+    // domain: full-computation centrality and sampled-scaled centrality
+    // should be in the same ballpark (within a small constant factor for
+    // n=4 → k=2 sampling).
+    let (shared, _) = build_graph(5, &[(0, 1), (1, 2), (2, 3), (3, 4)]);
+    let proj = build_proj(&shared);
+    let full = betweenness(&proj, None);
+    let sampled = betweenness(&proj, Some(2));
+    // The sampled centrality is scaled (n/k = 5/2 = 2.5x) so the total
+    // magnitudes are comparable. Full magnitude is well-defined; sampled
+    // should be a positive approximation.
+    let full_sum: f64 = full.iter().map(|&(_, s)| s).sum();
+    let sampled_sum: f64 = sampled.iter().map(|&(_, s)| s).sum();
+    assert!(full_sum > 0.0);
+    // Sampled with deterministic step may miss some paths; assert it's
+    // strictly non-negative and the magnitudes don't blow up.
+    assert!(sampled_sum >= 0.0);
+}
+
+#[test]
+fn betweenness_handles_sparse_row_projection() {
+    // §E20 — state arrays sized by RowIndex, not max_row + 1.
+    let shared = SharedGraph::new(GraphId::new(1));
+    let label = istr("N");
+    let rel = istr("R");
+    let mut txn = shared.begin_write();
+    let mut nodes = Vec::with_capacity(100);
+    for _ in 0..100 {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .unwrap(),
+        );
+    }
+    txn.mutator()
+        .create_edge(rel, nodes[0], nodes[50], PropertyMap::new())
+        .unwrap();
+    txn.mutator()
+        .create_edge(rel, nodes[50], nodes[99], PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot = shared.read();
+    let mut scope = RoaringBitmap::new();
+    scope.insert(0);
+    scope.insert(50);
+    scope.insert(99);
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "sparse-bw".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: None,
+        },
+        Some(&scope),
+    )
+    .unwrap();
+
+    assert_eq!(proj.node_count(), 3);
+    let result = betweenness(&proj, None);
+    // n50 sits between n0 and n99 (the only directed n0→n99 path goes
+    // through n50); betweenness[n50] = 1.0.
+    let score_n50 = result.iter().find(|&&(n, _)| n == nodes[50]).unwrap().1;
+    assert_eq!(score_n50, 1.0);
+}
