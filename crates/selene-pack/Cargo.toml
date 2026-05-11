@@ -17,13 +17,11 @@ schemars.workspace = true
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-gql = { path = "../selene-gql", version = "0.0.0" }
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
+selene-persist.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-selene-persist.workspace = true
 
 [lints]
 workspace = true

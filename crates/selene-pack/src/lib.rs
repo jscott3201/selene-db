@@ -11,6 +11,7 @@
 mod activation;
 mod builtin;
 mod error;
+mod history;
 mod manifest;
 mod registry;
 mod reserved;
@@ -21,6 +22,7 @@ pub use activation::{
     Staged, Uploaded, Validating,
 };
 pub use error::RegistryError;
+pub use history::PackHistorySource;
 pub use manifest::{
     ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES, MANIFEST_SCHEMA_DRAFT,
     MANIFEST_VALIDATION_COVERAGE, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH,

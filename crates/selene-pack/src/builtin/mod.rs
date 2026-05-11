@@ -3,6 +3,7 @@
 pub(crate) mod create_index;
 pub(crate) mod drop_index;
 pub(crate) mod health;
+pub(crate) mod pack_history;
 
 use selene_gql::{
     GqlType, GraphContext, MutationContext, ProcedureError, ProcedureMutability, ProcedureResult,

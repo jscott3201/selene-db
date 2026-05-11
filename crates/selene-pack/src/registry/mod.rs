@@ -12,9 +12,10 @@ use selene_gql::{
 use crate::{
     builtin::{
         GraphProcedureBuiltIn, MutationProcedureBuiltIn, create_index::SeleneCreateIndex,
-        drop_index::SeleneDropIndex, health::SeleneHealth,
+        drop_index::SeleneDropIndex, health::SeleneHealth, pack_history::SelenePackHistory,
     },
     error::RegistryError,
+    history::PackHistorySource,
 };
 
 use storage::{PendingEntry, RegistryStorage, TierEntry};
@@ -50,6 +51,28 @@ impl ProcedurePackRegistry {
     pub fn with_builtins() -> Result<Self, RegistryError> {
         ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(SeleneHealth)
+            .with_mutation_builtin(SeleneCreateIndex)
+            .with_mutation_builtin(SeleneDropIndex)
+            .build()
+    }
+
+    /// Construct the standard platform built-in registry plus
+    /// `selene.pack.history` reading from `history_source`.
+    ///
+    /// Use this constructor when the embedder has wired a WAL-writing provider
+    /// and wants pack history queryable from GQL. Embedders that do not need
+    /// history call [`Self::with_builtins`] instead; `selene.pack.history` is not
+    /// registered there.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if a platform built-in fails to register.
+    pub fn with_builtins_and_history(
+        history_source: Arc<dyn PackHistorySource>,
+    ) -> Result<Self, RegistryError> {
+        ProcedurePackRegistryBuilder::new()
+            .with_graph_builtin(SeleneHealth)
+            .with_graph_builtin(SelenePackHistory::new(history_source))
             .with_mutation_builtin(SeleneCreateIndex)
             .with_mutation_builtin(SeleneDropIndex)
             .build()
