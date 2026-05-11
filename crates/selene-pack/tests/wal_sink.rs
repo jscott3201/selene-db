@@ -499,6 +499,53 @@ fn direct_record_disabled_event_commits_payload() {
 }
 
 #[test]
+#[should_panic(expected = "GraphCommitSink anchor mismatch")]
+fn graph_commit_sink_panics_on_anchor_mismatch() {
+    let graph = Arc::new(SharedGraph::new(GraphId::new(46)));
+    // Constructing with a different anchor than the graph identity must panic
+    // (per Codex P2 — mismatched audit attribution would corrupt history).
+    let _sink = GraphCommitSink::new(graph, GraphId::new(99));
+}
+
+#[test]
+fn validation_failed_error_field_is_string_not_interned() {
+    // Regression for Codex P2: `ValidationFailed.error` must not be admitted
+    // to the global IStr interner; repeated malformed manifests would drain
+    // capacity. Two different free-form error strings round-trip as distinct
+    // payload bytes without contaminating the interner.
+    let (sink, provider) = sink_with_recorder();
+    sink.record(&LifecycleEvent::ValidationFailed {
+        pack_name: None,
+        principal: principal(),
+        error: "offset 0: unexpected EOF".to_owned(),
+        at: ts(1),
+    })
+    .unwrap();
+    sink.record(&LifecycleEvent::ValidationFailed {
+        pack_name: None,
+        principal: principal(),
+        error: "offset 17: trailing comma".to_owned(),
+        at: ts(2),
+    })
+    .unwrap();
+    let events = lifecycle_events(&provider.changes());
+    let errors = events
+        .iter()
+        .filter_map(|event| match event {
+            PackLifecycleEvent::ValidationFailed { error, .. } => Some(error.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        errors,
+        vec![
+            "offset 0: unexpected EOF".to_owned(),
+            "offset 17: trailing comma".to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn graph_commit_sink_records_empty_optional_validation_pack_name() {
     let (sink, provider) = sink_with_recorder();
     sink.record(&LifecycleEvent::ValidationFailed {
@@ -512,6 +559,6 @@ fn graph_commit_sink_records_empty_optional_validation_pack_name() {
     assert!(matches!(
         lifecycle_events(&provider.changes()).as_slice(),
         [PackLifecycleEvent::ValidationFailed { pack_name: None, error, .. }]
-            if *error == istr("missing pack name")
+            if error == "missing pack name"
     ));
 }

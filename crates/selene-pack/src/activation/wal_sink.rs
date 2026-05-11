@@ -22,8 +22,21 @@ pub struct GraphCommitSink {
 
 impl GraphCommitSink {
     /// Construct a graph-commit lifecycle sink anchored to `graph_anchor`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `graph_anchor` disagrees with the supplied
+    /// [`SharedGraph`]'s identity. Mismatched inputs would emit
+    /// `Change::SchemaChanged { graph: graph_anchor, .. }` against a graph
+    /// the sink does not actually mutate, corrupting per-graph audit
+    /// attribution. The two ids must match at construction time.
     #[must_use]
     pub fn new(graph: Arc<SharedGraph>, graph_anchor: GraphId) -> Self {
+        let actual = graph.read().graph_id();
+        assert_eq!(
+            actual, graph_anchor,
+            "GraphCommitSink anchor mismatch: supplied {graph_anchor:?} but SharedGraph identity is {actual:?}",
+        );
         Self {
             graph,
             graph_anchor,
@@ -87,7 +100,11 @@ fn lifecycle_to_payload_with(
         } => PackLifecycleEvent::ValidationFailed {
             pack_name: pack_name.as_deref().map(&mut intern_value).transpose()?,
             principal: principal.as_istr(),
-            error: intern_value(error)?,
+            // `error` is free-form diagnostic text; do not admit it to the
+            // global IStr interner (per Codex P2 — repeated invalid uploads
+            // would otherwise drain interner capacity and break unrelated
+            // lifecycle records with `SinkRefused`).
+            error: error.clone(),
             at: *at,
         },
         LifecycleEvent::Staged {

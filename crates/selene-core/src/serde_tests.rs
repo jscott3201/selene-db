@@ -245,11 +245,37 @@ fn schema_change_postcard_round_trip() {
                 fields: smallvec![property_def("serde.schema.field")],
             },
         },
+        // Reserved discriminants: kept for postcard ABI stability so future
+        // additions never re-number `PropertyIndex*` or
+        // `ProcedurePackLifecycle`.
+        SchemaChange::ProcedurePackActivated {
+            pack_name: istr("serde.pack"),
+            version: istr("0.0.0"),
+        },
+        SchemaChange::ProcedurePackDeprecated {
+            pack_name: istr("serde.pack"),
+            version: istr("0.0.0"),
+            reason: istr("serde.reason"),
+        },
+        SchemaChange::ProcedurePackDisabled {
+            pack_name: istr("serde.pack"),
+            version: istr("0.0.0"),
+            reason: istr("serde.reason"),
+        },
+        SchemaChange::PropertyIndexCreated {
+            label: node_label,
+            property: istr("serde.schema.indexed"),
+            kind: SchemaPropertyIndexKind::I64,
+        },
+        SchemaChange::PropertyIndexDropped {
+            label: node_label,
+            property: istr("serde.schema.indexed"),
+        },
         SchemaChange::ProcedurePackLifecycle {
             event: PackLifecycleEvent::ValidationFailed {
                 pack_name: Some(istr("serde.pack")),
                 principal: istr("serde.principal"),
-                error: istr("serde.error"),
+                error: "serde.error".to_owned(),
                 at: jiff::Timestamp::new(1, 0).unwrap(),
             },
         },
@@ -283,15 +309,6 @@ fn schema_change_postcard_round_trip() {
                 principal: istr("serde.principal"),
                 at: jiff::Timestamp::new(5, 0).unwrap(),
             },
-        },
-        SchemaChange::PropertyIndexCreated {
-            label: node_label,
-            property: istr("serde.schema.indexed"),
-            kind: SchemaPropertyIndexKind::I64,
-        },
-        SchemaChange::PropertyIndexDropped {
-            label: node_label,
-            property: istr("serde.schema.indexed"),
         },
     ];
     for change in changes {

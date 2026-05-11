@@ -19,7 +19,14 @@ pub enum PackLifecycleEvent {
         /// Caller identity that attempted activation.
         principal: IStr,
         /// Human-readable validation error.
-        error: IStr,
+        ///
+        /// Free-form diagnostic text produced by manifest parsing. Stored as
+        /// `String` rather than interned `IStr` because the contents vary
+        /// with every malformed input (offsets, snippets, etc.); admitting
+        /// each variant into the global interner would eventually exhaust
+        /// the cap and start failing unrelated lifecycle records with
+        /// `SinkRefused`.
+        error: String,
         /// Caller-injected event timestamp.
         at: Timestamp,
     },

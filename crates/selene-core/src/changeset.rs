@@ -293,10 +293,46 @@ pub enum SchemaChange {
         /// Record type definition.
         def: RecordTypeDef,
     },
-    /// Procedure-pack lifecycle audit event.
-    ProcedurePackLifecycle {
-        /// Pack lifecycle event payload.
-        event: PackLifecycleEvent,
+    /// Reserved — legacy procedure-pack activation placeholder.
+    ///
+    /// Retained at this position so the `postcard` discriminant of every
+    /// subsequent variant stays stable. No selene-db code emits this variant;
+    /// recovery does not act on it. New code emits
+    /// [`SchemaChange::ProcedurePackLifecycle`] instead.
+    #[doc(hidden)]
+    ProcedurePackActivated {
+        /// Procedure pack name.
+        pack_name: IStr,
+        /// Procedure pack version.
+        version: IStr,
+    },
+    /// Reserved — legacy procedure-pack deprecation placeholder.
+    ///
+    /// Retained for `postcard` ABI stability (see
+    /// [`SchemaChange::ProcedurePackActivated`]). No selene-db code emits or
+    /// applies this variant.
+    #[doc(hidden)]
+    ProcedurePackDeprecated {
+        /// Procedure pack name.
+        pack_name: IStr,
+        /// Procedure pack version.
+        version: IStr,
+        /// Interned short reason.
+        reason: IStr,
+    },
+    /// Reserved — legacy procedure-pack disable placeholder.
+    ///
+    /// Retained for `postcard` ABI stability (see
+    /// [`SchemaChange::ProcedurePackActivated`]). No selene-db code emits or
+    /// applies this variant.
+    #[doc(hidden)]
+    ProcedurePackDisabled {
+        /// Procedure pack name.
+        pack_name: IStr,
+        /// Procedure pack version.
+        version: IStr,
+        /// Interned short reason.
+        reason: IStr,
     },
     /// Property index creation.
     PropertyIndexCreated {
@@ -313,6 +349,16 @@ pub enum SchemaChange {
         label: IStr,
         /// Indexed property key.
         property: IStr,
+    },
+    /// Procedure-pack lifecycle audit event.
+    ///
+    /// Declared after [`SchemaChange::PropertyIndexDropped`] so the
+    /// `postcard` discriminants of all earlier variants remain stable across
+    /// BRIEF-46. The legacy `ProcedurePack*` variants above this entry are
+    /// retained but never emitted; new code emits `ProcedurePackLifecycle`.
+    ProcedurePackLifecycle {
+        /// Pack lifecycle event payload.
+        event: PackLifecycleEvent,
     },
 }
 
@@ -643,7 +689,7 @@ mod tests {
                 event: PackLifecycleEvent::ValidationFailed {
                     pack_name: Some(istr("change.schema.pack")),
                     principal: istr("change.schema.principal"),
-                    error: istr("change.schema.error"),
+                    error: "change.schema.error".to_owned(),
                     at: jiff::Timestamp::new(1, 0).unwrap(),
                 },
             },
