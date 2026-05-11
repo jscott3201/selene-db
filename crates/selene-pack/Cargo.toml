@@ -24,5 +24,17 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[features]
+test-harness = []
+
+[dev-dependencies]
+insta.workspace = true
+selene-testing = { path = "../selene-testing", version = "0.0.0" }
+tempfile.workspace = true
+
+[[test]]
+name = "pack_snapshot_corpus"
+required-features = ["test-harness"]
+
 [lints]
 workspace = true

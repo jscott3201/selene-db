@@ -14,6 +14,7 @@ pub mod corpus;
 pub mod executor_corpus;
 pub mod mock_index_catalog;
 pub mod mock_procedure_registry;
+pub mod pack_corpus;
 pub mod plan_corpus;
 
 pub use bench_fixtures::BenchFixture;
@@ -25,4 +26,10 @@ pub use executor_corpus::{
 };
 pub use mock_index_catalog::MockIndexCatalog;
 pub use mock_procedure_registry::{MockProcedureRegistry, default_corpus_registry};
+pub use pack_corpus::{
+    GATE_COVERAGE, LIFECYCLE_EVENT_COVERAGE, PackCorpus, PackCorpusCategory, PackCorpusEntry,
+    PackCorpusFixture, PackGate, PackHistoryWalEntry, PackLifecycleEventKind,
+    PackLifecycleEventPayload, PackLifecycleSinkMode, PackLifecycleStep, PackManifestFixture,
+    SyntheticManifestSpec, SyntheticMutability, SyntheticProcedureSpec, SyntheticTier,
+};
 pub use plan_corpus::{PlanCorpus, PlanCorpusCategory, PlanCorpusEntry, PlanCorpusRegistry};

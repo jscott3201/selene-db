@@ -1,0 +1,6 @@
+---
+source: crates/selene-pack/tests/pack_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+manifest:
+- ERR variant=PersistTierInManifest gate=persist_tier_rejected name="demo.persist"

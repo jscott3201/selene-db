@@ -1,0 +1,14 @@
+---
+source: crates/selene-pack/tests/pack_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+events:
+- [0] kind=staged pack_name="snap" content_hash="blake3:8e4fcca9cf5990c58ed3b84343fd21b21b83d0e6f4e25d3e0f72a74c75c74f65" principal="snapshot.first" at=1970-01-01T00:00:02Z
+- [1] kind=activated pack_name="snap" content_hash="blake3:8e4fcca9cf5990c58ed3b84343fd21b21b83d0e6f4e25d3e0f72a74c75c74f65" principal="snapshot.first" at=1970-01-01T00:00:03Z
+- [2] kind=staged pack_name="snap" content_hash="blake3:8e4fcca9cf5990c58ed3b84343fd21b21b83d0e6f4e25d3e0f72a74c75c74f65" principal="snapshot.second" at=1970-01-01T00:00:06Z
+
+registry:
+- "snap" -> status=Active content_hash="blake3:8e4fcca9cf5990c58ed3b84343fd21b21b83d0e6f4e25d3e0f72a74c75c74f65" principal="snapshot.first" activated_at=1970-01-01T00:00:03Z deprecated_at=NULL
+
+error:
+- variant=PackAlreadyActive gate=registry_conflict_detection pack_name="snap"
