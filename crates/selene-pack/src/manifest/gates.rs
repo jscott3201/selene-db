@@ -27,7 +27,7 @@
 //! | `ContentHashCanonical` | BRIEF-48 deferred |
 //! | `ContentHashConsistency` | BRIEF-48 deferred |
 //! | `ActivationLifecycleAtomicity` | BRIEF-46 deferred |
-//! | `RegistryConflictDetection` | BRIEF-46 deferred |
+//! | `RegistryConflictDetection` | activation seal conflict detection |
 
 /// Maximum procedure entries accepted in one procedure-pack manifest.
 pub const MAX_PROCEDURES_PER_PACK: usize = 256;
@@ -88,7 +88,7 @@ pub enum Gate {
     ContentHashConsistency,
     /// Activation lifecycle atomicity enforcement, deferred to BRIEF-46.
     ActivationLifecycleAtomicity,
-    /// Registry conflict detection enforcement, deferred to BRIEF-46.
+    /// Registry conflict detection enforcement at activation seal time.
     RegistryConflictDetection,
 }
 
@@ -183,7 +183,7 @@ impl Gate {
             Self::ContentHashCanonical => "canonical content hash is enforced",
             Self::ContentHashConsistency => "content hash matches manifest payload",
             Self::ActivationLifecycleAtomicity => "activation lifecycle is atomic",
-            Self::RegistryConflictDetection => "registry conflicts are detected",
+            Self::RegistryConflictDetection => "activation registry conflicts are detected",
         }
     }
 }
@@ -241,12 +241,11 @@ pub const MANIFEST_VALIDATION_COVERAGE: &[Gate] = &[
 ];
 
 /// Activation-seal gates enforced in v1.0.
-pub const ACTIVATION_SEAL_COVERAGE: &[Gate] = &[];
+pub const ACTIVATION_SEAL_COVERAGE: &[Gate] = &[Gate::RegistryConflictDetection];
 
 /// Known validation gates deferred to later M5e briefs.
 pub const DEFERRED_GATES: &[Gate] = &[
     Gate::ContentHashCanonical,
     Gate::ContentHashConsistency,
     Gate::ActivationLifecycleAtomicity,
-    Gate::RegistryConflictDetection,
 ];
