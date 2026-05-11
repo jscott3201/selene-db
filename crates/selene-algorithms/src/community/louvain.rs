@@ -70,9 +70,14 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
     // community[d] = current community ID (encoded as a dense index initially).
     let mut community: Vec<u32> = (0..n as u32).collect();
 
-    // weighted_degree[d] = sum of (out + in) edge weights for node d. Edges
-    // referencing rows outside the projection scope are skipped (matches the
-    // §E26 / dense-remap contract).
+    // weighted_degree[d] = undirected degree under selene-db's directed-
+    // storage convention: sum of outgoing + incoming neighbor weights. A
+    // bidirectional undirected edge stored as two directed edges contributes
+    // to both sums (correct: undirected degree counts each endpoint once,
+    // matching the modularity invariant `Σ d_i = 2 · total_weight` where
+    // total_weight is the outgoing-only sum). Edges referencing rows outside
+    // the projection scope are skipped (matches §E26 / dense-remap contract).
+    // (Brief-back-reviewer-55 P1-rec: clarify undirected interpretation.)
     let mut weighted_degree: Vec<f64> = vec![0.0; n];
     for d in 0..n as u32 {
         let node = idx.node_id_of(d);
