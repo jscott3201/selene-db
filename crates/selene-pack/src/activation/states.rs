@@ -11,7 +11,7 @@ use super::{
 use crate::{ProcedurePackManifest, parse_manifest};
 
 /// Uploaded procedure-pack bytes awaiting validation.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Uploaded {
     raw_bytes: Vec<u8>,
     principal: Principal,
@@ -88,7 +88,7 @@ impl Uploaded {
 }
 
 /// Parsed and validated pack ready to be staged.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Validating {
     manifest: ProcedurePackManifest,
     raw_bytes: Vec<u8>,
@@ -157,7 +157,7 @@ impl Validating {
 }
 
 /// Staged pack awaiting activation.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Staged {
     manifest: ProcedurePackManifest,
     content_hash: ContentHash,
@@ -239,7 +239,13 @@ impl Staged {
 }
 
 /// Active pack occupying its pack name.
-#[derive(Clone, Debug)]
+///
+/// State structs are intentionally NOT `Clone`. The typestate token is the
+/// sole owner of the in-flight lifecycle; cloning would let a stale token
+/// replay `deprecate`/`disable` against a registry entry that has since been
+/// reassigned to a different lifecycle of the same pack name, corrupting
+/// occupancy state.
+#[derive(Debug)]
 pub struct Active {
     manifest: ProcedurePackManifest,
     content_hash: ContentHash,
@@ -320,7 +326,7 @@ impl Active {
 }
 
 /// Deprecated pack that still occupies its pack name.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Deprecated {
     manifest: ProcedurePackManifest,
     content_hash: ContentHash,
@@ -413,7 +419,7 @@ impl Deprecated {
 }
 
 /// Disabled terminal lifecycle state.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Disabled {
     manifest: ProcedurePackManifest,
     content_hash: ContentHash,

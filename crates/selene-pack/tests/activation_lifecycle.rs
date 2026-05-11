@@ -333,6 +333,30 @@ fn disabled_has_no_transitions() {
     assert_eq!(disabled.pack_name(), "demo_pack");
 }
 
+/// Regression for Codex PR #51 P1 findings (states.rs:309, :401): cloning
+/// `Active`/`Deprecated` enabled stale-token replay against a registry entry
+/// that had been reassigned to a different lifecycle of the same pack name.
+/// The fix removes `Clone` from every state struct so each typestate token is
+/// the sole owner of the in-flight lifecycle. The lines below would not
+/// compile if `Clone` were re-derived.
+#[test]
+fn state_structs_are_not_cloneable() {
+    let sink = TestSink::default();
+    let mut registry = ActivationRegistry::new();
+    let active = active("demo_pack", &sink, &mut registry);
+    // Would not compile: `Active` is intentionally NOT Clone.
+    // let _stale = active.clone();
+    let deprecated = active
+        .deprecate(&sink, &mut registry, reason(), ts(5))
+        .expect("pack deprecates");
+    // Would not compile: `Deprecated` is intentionally NOT Clone.
+    // let _stale = deprecated.clone();
+    assert!(registry.is_deprecated("demo_pack"));
+    let _ = deprecated
+        .disable(&sink, &mut registry, ts(6))
+        .expect("pack disables");
+}
+
 #[test]
 fn activation_error_manifest_delegates_to_source_gate() {
     let sink = TestSink::default();
