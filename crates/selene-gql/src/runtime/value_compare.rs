@@ -17,7 +17,9 @@ pub(crate) enum NullSortOrder {
 pub(crate) fn equal_non_null(lhs: &Value, rhs: &Value) -> bool {
     debug_assert!(!matches!(lhs, Value::Null));
     debug_assert!(!matches!(rhs, Value::Null));
-    numeric_equal(lhs, rhs).unwrap_or(lhs == rhs)
+    numeric_equal(lhs, rhs)
+        .or_else(|| string_equal(lhs, rhs))
+        .unwrap_or(lhs == rhs)
 }
 
 pub(crate) fn compare_non_null(lhs: &Value, rhs: &Value) -> Option<Ordering> {
@@ -26,6 +28,9 @@ pub(crate) fn compare_non_null(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     match (lhs, rhs) {
         (Value::Bool(lhs), Value::Bool(rhs)) => Some(lhs.cmp(rhs)),
         (Value::String(lhs), Value::String(rhs)) => Some(lhs.as_str().cmp(rhs.as_str())),
+        (Value::String(lhs), Value::ExternalString(rhs)) => Some(lhs.as_str().cmp(rhs.as_ref())),
+        (Value::ExternalString(lhs), Value::String(rhs)) => Some(lhs.as_ref().cmp(rhs.as_str())),
+        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => Some(lhs.cmp(rhs)),
         _ => numeric_compare(lhs, rhs),
     }
 }
@@ -126,6 +131,16 @@ fn numeric_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
     })
 }
 
+fn string_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
+    Some(match (lhs, rhs) {
+        (Value::String(lhs), Value::String(rhs)) => lhs.as_str() == rhs.as_str(),
+        (Value::String(lhs), Value::ExternalString(rhs)) => lhs.as_str() == rhs.as_ref(),
+        (Value::ExternalString(lhs), Value::String(rhs)) => lhs.as_ref() == rhs.as_str(),
+        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs == rhs,
+        _ => return None,
+    })
+}
+
 fn value_rank(value: &Value) -> u8 {
     match value {
         Value::Bool(_) => 0,
@@ -137,24 +152,25 @@ fn value_rank(value: &Value) -> u8 {
         Value::Float32(_) => 6,
         Value::Decimal(_) => 7,
         Value::String(_) => 8,
-        Value::Bytes(_) => 9,
-        Value::List(_) => 10,
-        Value::Record(_) => 11,
-        Value::RecordTyped(_) => 12,
-        Value::Path(_) => 13,
-        Value::NodeRef(_) => 14,
-        Value::EdgeRef(_) => 15,
-        Value::GraphRef(_) => 16,
-        Value::TableRef(_) => 17,
-        Value::ZonedDateTime(_) => 18,
-        Value::LocalDateTime(_) => 19,
-        Value::Date(_) => 20,
-        Value::ZonedTime(_) => 21,
-        Value::LocalTime(_) => 22,
-        Value::Duration(_) => 23,
-        Value::Extended { .. } => 24,
-        Value::Null => 25,
-        Value::Uuid(_) => 26,
+        Value::ExternalString(_) => 9,
+        Value::Bytes(_) => 10,
+        Value::List(_) => 11,
+        Value::Record(_) => 12,
+        Value::RecordTyped(_) => 13,
+        Value::Path(_) => 14,
+        Value::NodeRef(_) => 15,
+        Value::EdgeRef(_) => 16,
+        Value::GraphRef(_) => 17,
+        Value::TableRef(_) => 18,
+        Value::ZonedDateTime(_) => 19,
+        Value::LocalDateTime(_) => 20,
+        Value::Date(_) => 21,
+        Value::ZonedTime(_) => 22,
+        Value::LocalTime(_) => 23,
+        Value::Duration(_) => 24,
+        Value::Extended { .. } => 25,
+        Value::Null => 26,
+        Value::Uuid(_) => 27,
         _ => 27,
     }
 }
@@ -228,9 +244,26 @@ fn u64_representable_by_binary_float(value: u64, significand_bits: u32) -> bool 
 mod tests {
     use std::{cmp::Ordering, sync::Arc};
 
-    use selene_core::{EdgeId, NodeId, Value};
+    use selene_core::{EdgeId, NodeId, Value, intern_with_admission};
 
-    use super::{NullSortOrder, compare_for_sort};
+    use super::{NullSortOrder, compare_for_sort, compare_non_null, equal_non_null};
+
+    #[test]
+    fn string_comparison_accepts_external_string_payloads() {
+        let interned = Value::String(intern_with_admission("same").unwrap().0);
+        let external_same = Value::ExternalString(Arc::from("same"));
+        let external_later = Value::ExternalString(Arc::from("zzz"));
+
+        assert!(equal_non_null(&interned, &external_same));
+        assert_eq!(
+            compare_non_null(&interned, &external_same),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            compare_non_null(&interned, &external_later),
+            Some(Ordering::Less)
+        );
+    }
 
     #[test]
     fn compare_for_sort_orders_temporal_payloads() {

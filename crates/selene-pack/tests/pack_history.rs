@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use jiff::{Timestamp, tz::TimeZone};
 use selene_core::{
     Change, GraphId, HlcTimestamp, IStr, LabelSet, NodeId, Origin, PackLifecycleEvent, PropertyMap,
-    SchemaChange, Value, intern,
+    SchemaChange, Value, intern, lookup,
 };
 use selene_gql::{
     AnalysisError, ExecutionPlan, ExecutorError, GqlType, ProcedureError, ProcedureMutability,
@@ -94,8 +94,12 @@ fn empty_wal() -> PathBuf {
 }
 
 fn lifecycle(event: PackLifecycleEvent) -> Change {
+    lifecycle_in(GRAPH_ID, event)
+}
+
+fn lifecycle_in(graph: GraphId, event: PackLifecycleEvent) -> Change {
     Change::SchemaChanged {
-        graph: GRAPH_ID,
+        graph,
         change: SchemaChange::ProcedurePackLifecycle { event },
     }
 }
@@ -199,9 +203,10 @@ fn kind(row: &[Value]) -> &'static str {
     value.as_str()
 }
 
-fn string_cell(row: &[Value], index: usize) -> Option<&'static str> {
+fn string_cell(row: &[Value], index: usize) -> Option<&str> {
     match row.get(index).expect("column index in range") {
         Value::String(value) => Some(value.as_str()),
+        Value::ExternalString(value) => Some(value.as_ref()),
         Value::Null => None,
         other => panic!("expected string or null, got {other:?}"),
     }
@@ -219,6 +224,17 @@ fn assert_internal_error(err: ExecutorError, label: &str) {
 
 fn placeholder_hash() -> String {
     format!("sha256:{}", "0".repeat(64))
+}
+
+fn content_hash_string(hash: &[u8; 32]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity("sha256:".len() + hash.len() * 2);
+    out.push_str("sha256:");
+    for byte in hash {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 #[test]
@@ -325,6 +341,22 @@ fn mixed_wal_skips_non_lifecycle_and_legacy_variants() {
 }
 
 #[test]
+fn multi_graph_wal_returns_only_current_graph_lifecycle() {
+    let path = write_wal(&[vec![
+        lifecycle_in(GraphId::new(99), staged("other_graph_pack", 1)),
+        lifecycle_in(GRAPH_ID, staged("current_graph_pack", 2)),
+    ]]);
+    let registry = registry_for_path(&path);
+
+    let rows = execute_history_rows(&registry);
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(kind(&rows[0]), "staged");
+    assert_eq!(string_cell(&rows[0], 1), Some("current_graph_pack"));
+    let _ = fs::remove_file(path);
+}
+
+#[test]
 fn deprecated_row_carries_reason() {
     let path = write_wal(&[vec![lifecycle(deprecated("demo_pack", 1))]]);
     let registry = registry_for_path(&path);
@@ -356,6 +388,71 @@ fn source_error_surfaces_as_internal() {
     let err = execute_history_err(&registry);
 
     assert_internal_error(err, "history source unavailable");
+}
+
+#[test]
+fn error_text_uses_external_string_not_global_interner() {
+    let error_text = format!(
+        "the test error text {} {}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    assert!(lookup(&error_text).is_none(), "test setup: error is unseen");
+    let path = write_wal(&[vec![lifecycle(validation_failed(
+        Some("demo_pack"),
+        &error_text,
+        1,
+    ))]]);
+    let registry = registry_for_path(&path);
+
+    let rows = execute_history_rows(&registry);
+    let rows_again = execute_history_rows(&registry);
+
+    assert!(matches!(&rows[0][5], Value::ExternalString(value) if value.as_ref() == error_text));
+    assert!(
+        matches!(&rows_again[0][5], Value::ExternalString(value) if value.as_ref() == error_text)
+    );
+    assert!(
+        lookup(&error_text).is_none(),
+        "history projection must not admit validation error text"
+    );
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn content_hash_uses_external_string_not_global_interner() {
+    let hash = [7_u8; 32];
+    let hash_text = content_hash_string(&hash);
+    assert!(lookup(&hash_text).is_none(), "test setup: hash is unseen");
+    let path = write_wal(&[vec![
+        lifecycle(PackLifecycleEvent::Staged {
+            pack_name: istr("first_pack"),
+            content_hash: hash,
+            principal: istr("history.principal"),
+            at: ts(1),
+        }),
+        lifecycle(PackLifecycleEvent::Staged {
+            pack_name: istr("second_pack"),
+            content_hash: hash,
+            principal: istr("history.principal"),
+            at: ts(2),
+        }),
+    ]]);
+    let registry = registry_for_path(&path);
+
+    let rows = execute_history_rows(&registry);
+
+    assert_eq!(rows.len(), 2);
+    assert!(matches!(&rows[0][2], Value::ExternalString(value) if value.as_ref() == hash_text));
+    assert!(matches!(&rows[1][2], Value::ExternalString(value) if value.as_ref() == hash_text));
+    assert!(
+        lookup(&hash_text).is_none(),
+        "history projection must not admit content hashes"
+    );
+    let _ = fs::remove_file(path);
 }
 
 #[test]

@@ -78,7 +78,7 @@ fn matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     }
 
     match ty {
-        GqlType::String => matches!(value, Value::String(_)),
+        GqlType::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
         GqlType::Boolean => matches!(value, Value::Bool(_)),
         GqlType::Integer
         | GqlType::Int8

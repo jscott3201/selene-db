@@ -88,7 +88,7 @@ impl BuiltInMetadata for SelenePackHistory {
 impl GraphProcedureBuiltIn for SelenePackHistory {
     fn execute(
         &self,
-        _ctx: &GraphContext<'_>,
+        ctx: &GraphContext<'_>,
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         if !args.is_empty() {
@@ -97,6 +97,7 @@ impl GraphProcedureBuiltIn for SelenePackHistory {
             });
         }
 
+        let current_graph = ctx.snapshot().graph_id();
         let reader = self.source.open_wal_reader()?;
         let stream = reader
             .iterate(|_header| true)
@@ -109,9 +110,11 @@ impl GraphProcedureBuiltIn for SelenePackHistory {
                 .map_err(map_persist_err("pack history WAL entry decode failed"))?;
             for change in entry.changes {
                 if let Change::SchemaChanged {
+                    graph,
                     change: SchemaChange::ProcedurePackLifecycle { event },
                     ..
                 } = change
+                    && graph == current_graph
                 {
                     rows.push(event_to_row(&event)?);
                 }
@@ -148,7 +151,7 @@ pub(crate) fn event_to_row_with(
             Value::Null,
             Value::String(*principal),
             Value::Null,
-            string_value(error, &mut intern_value)?,
+            external_string_value(error),
             timestamp_value(*at),
         ]),
         PackLifecycleEvent::Staged {
@@ -159,7 +162,7 @@ pub(crate) fn event_to_row_with(
         } => Ok(vec![
             string_value("staged", &mut intern_value)?,
             Value::String(*pack_name),
-            string_value(&content_hash_string(content_hash), &mut intern_value)?,
+            external_string_value(&content_hash_string(content_hash)),
             Value::String(*principal),
             Value::Null,
             Value::Null,
@@ -173,7 +176,7 @@ pub(crate) fn event_to_row_with(
         } => Ok(vec![
             string_value("activated", &mut intern_value)?,
             Value::String(*pack_name),
-            string_value(&content_hash_string(content_hash), &mut intern_value)?,
+            external_string_value(&content_hash_string(content_hash)),
             Value::String(*principal),
             Value::Null,
             Value::Null,
@@ -221,6 +224,10 @@ fn string_value(
     intern_value: &mut impl FnMut(&str) -> Result<IStr, ProcedureError>,
 ) -> Result<Value, ProcedureError> {
     intern_value(value).map(Value::String)
+}
+
+fn external_string_value(value: &str) -> Value {
+    Value::ExternalString(Arc::from(value))
 }
 
 fn timestamp_value(at: jiff::Timestamp) -> Value {

@@ -180,6 +180,7 @@ fn raw_value_key(value: &Value) -> String {
         Value::Float32(value) => format!("float32:{:08x}", value.to_bits()),
         Value::Decimal(value) => format!("decimal:{value}"),
         Value::String(value) => format!("string:{}", value.as_str()),
+        Value::ExternalString(value) => format!("external_string:{}", value.as_ref()),
         Value::Bytes(value) => format!("bytes:{}", hex_bytes(value)),
         Value::List(values) => raw_sequence_key("list:[", "]", values.iter().map(raw_value_key)),
         Value::Record(record) => raw_record_key(record),
@@ -285,6 +286,7 @@ fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
         Value::Float32(value) => format!("{value:?}f32"),
         Value::Decimal(value) => value.to_string(),
         Value::String(value) => format!("\"{}\"", value.as_str()),
+        Value::ExternalString(value) => format!("\"{}\"", value.as_ref()),
         Value::Bytes(value) => format!("0x{}", hex_bytes(value)),
         Value::List(values) => format!(
             "[{}]",

@@ -41,6 +41,18 @@ pub enum Value {
     Decimal(#[serde(with = "serde_decimal_str")] rust_decimal::Decimal),
     /// Interned string value.
     String(IStr),
+    /// Non-interned string sourced from outside the global interner namespace.
+    ///
+    /// Use this variant when surfacing high-cardinality or free-form text from a
+    /// source the engine cannot admit to the global [`IStr`] pool without
+    /// risking cap exhaustion: validation diagnostic strings, per-row content
+    /// hashes, external system payloads.
+    ///
+    /// `Value::ExternalString` and `Value::String` are not equal under
+    /// [`PartialEq`] even if their underlying `&str` content matches. `Value`
+    /// equality is variant-strict; GQL string-content equality is handled by
+    /// executor comparison logic.
+    ExternalString(#[serde(with = "serde_arc_str")] Arc<str>),
     /// Byte-string value.
     Bytes(Arc<[u8]>),
     /// List value.
@@ -99,6 +111,7 @@ impl PartialEq for Value {
             (Self::Float32(lhs), Self::Float32(rhs)) => lhs == rhs,
             (Self::Decimal(lhs), Self::Decimal(rhs)) => lhs == rhs,
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
+            (Self::ExternalString(lhs), Self::ExternalString(rhs)) => lhs == rhs,
             (Self::Bytes(lhs), Self::Bytes(rhs)) => lhs == rhs,
             (Self::List(lhs), Self::List(rhs)) => lhs == rhs,
             (Self::Record(lhs), Self::Record(rhs)) => lhs == rhs,
@@ -241,6 +254,27 @@ mod serde_decimal_str {
     }
 }
 
+mod serde_arc_str {
+    use std::sync::Arc;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S>(value: &Arc<str>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.as_ref().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Arc<str>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let owned = String::deserialize(deserializer)?;
+        Ok(Arc::from(owned.into_boxed_str()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
@@ -261,6 +295,7 @@ mod tests {
             Value::Bool(true),
             Value::Int(42),
             Value::String(intern("name").unwrap()),
+            Value::ExternalString(Arc::from("external name")),
             Value::Bytes(Arc::from([1_u8, 2, 3])),
             Value::NodeRef(NodeId::new(1)),
             Value::Null,
@@ -297,6 +332,18 @@ mod tests {
     #[test]
     fn value_discriminant_size_is_stable_on_this_target() {
         assert!(std::mem::size_of::<Value>() >= std::mem::size_of::<usize>());
+    }
+
+    #[test]
+    fn external_string_equality_is_variant_strict() {
+        let interned = Value::String(intern("same text").unwrap());
+        let external = Value::ExternalString(Arc::from("same text"));
+
+        assert_eq!(
+            Value::ExternalString(Arc::from("same text")),
+            Value::ExternalString(Arc::from("same text"))
+        );
+        assert_ne!(interned, external);
     }
 
     proptest! {

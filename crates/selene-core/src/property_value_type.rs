@@ -95,6 +95,7 @@ impl PropertyValueType {
             Value::Float32(_) => Some(Self::Float32),
             Value::Decimal(_) => Some(Self::Decimal),
             Value::String(_) => Some(Self::String),
+            Value::ExternalString(_) => Some(Self::String),
             Value::Bytes(_) => Some(Self::Bytes),
             Value::List(_) => Some(Self::List),
             Value::Record(_) => Some(Self::Record),
@@ -199,6 +200,10 @@ mod tests {
             (
                 PropertyValueType::String,
                 Value::String(intern("property-value-type.string").unwrap()),
+            ),
+            (
+                PropertyValueType::String,
+                Value::ExternalString(Arc::from("property-value-type.external-string")),
             ),
             (
                 PropertyValueType::Bytes,
