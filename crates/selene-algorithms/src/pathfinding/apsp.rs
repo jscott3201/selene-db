@@ -37,7 +37,13 @@ pub fn apsp(
     // each sssp call returns ASC by target (which it does per §E17), then
     // the final `result` is already sorted. A defensive sort at the end
     // tolerates any future SSSP reordering without breaking §E18.
-    let mut result: Vec<(NodeId, NodeId, f64)> = Vec::with_capacity(n * n);
+    //
+    // Why no `Vec::with_capacity(n * n)` preallocation (PR #59 Codex P2):
+    // sparse graphs have far fewer than n² reachable pairs, and n=10_000 (a
+    // plausible `max_nodes`) would reserve 2.4 GB up front even if the
+    // result has only thousands of pairs. Let the Vec grow naturally; the
+    // amortized cost is bounded by the actual result size.
+    let mut result: Vec<(NodeId, NodeId, f64)> = Vec::new();
     for source in proj.iter_nodes() {
         for (target, cost) in sssp(proj, source)? {
             if source != target {

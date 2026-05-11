@@ -239,6 +239,35 @@ fn dijkstra_equal_cost_paths_tie_break_by_smallest_predecessor_nodeid() {
 }
 
 #[test]
+fn dijkstra_tie_break_smaller_predecessor_popped_after_larger() {
+    // §E16 + PR #59 Codex P1 counter-example: the smaller-NodeId predecessor
+    // is popped AFTER the larger-NodeId predecessor; without the equal-cost
+    // rewrite rule, prev[target] would lock in the larger-NodeId predecessor.
+    //
+    // Layout: n0 has two outgoing edges to intermediates (n1 and n2);
+    // intermediates each have one edge to target (n3). The total cost to n3
+    // is 5 via BOTH paths, but the in-heap order pops n2 BEFORE n1 because
+    // n0 → n2 is cheaper than n0 → n1:
+    //   n0 --4--> n1 --1--> n3 (total 5; predecessor n1; n1 is the §E16 winner)
+    //   n0 --1--> n2 --4--> n3 (total 5; predecessor n2; popped first)
+    //
+    // Without the fix, prev[n3] = n2 (locked in by strict-less-than rewrite).
+    // With the fix, the equal-cost branch sees `1 (n1) < 2 (n2)` in dense
+    // index space and rewrites prev[n3] = n1.
+    let (shared, nodes) =
+        build_weighted_graph(4, &[(0, 1, 4.0), (1, 3, 1.0), (0, 2, 1.0), (2, 3, 4.0)]);
+    let proj = build_proj_weighted(&shared);
+    let result = dijkstra(&proj, nodes[0], nodes[3]).unwrap().unwrap();
+    assert_eq!(result.cost, 5.0);
+    assert_eq!(
+        result.nodes,
+        vec![nodes[0], nodes[1], nodes[3]],
+        "tie-break must pick path via n1 (smaller predecessor NodeId), even \
+         though n2 reached n3 first via the larger-predecessor route"
+    );
+}
+
+#[test]
 fn dijkstra_infinity_weight_accepted_no_path_emitted() {
     // §E15 — +INFINITY weight is accepted (no error). But the strict
     // less-than rewrite rule (§E16) means `0.0 + INF` is NOT less than

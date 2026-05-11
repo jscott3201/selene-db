@@ -105,12 +105,17 @@ pub fn dijkstra(
     });
 
     while let Some(DijkstraEntry { dense, cost }) = heap.pop() {
-        if dense == to_dense {
-            return Ok(Some(reconstruct(from_dense, to_dense, &prev, &idx, cost)));
-        }
         // Lazy stale-entry pruning per §O.10: stale heap copies skipped here.
         if cost > dist[dense as usize] {
             continue;
+        }
+        // Early-exit per PR #59 Codex P1 (line 109): if the target is already
+        // settled and pop cost exceeds dist[to_dense], no further relaxation
+        // can produce an equal- or smaller-cost path to to_dense (pop cost is
+        // monotonic, edge weights are non-negative). Returning earlier than
+        // this can lock in the wrong predecessor under §E16 tie-break.
+        if dist[to_dense as usize].is_finite() && cost > dist[to_dense as usize] {
+            break;
         }
 
         let source_node = idx.node_id_of(dense);
@@ -134,20 +139,35 @@ pub fn dijkstra(
             }
 
             let new_cost = cost + nb.weight;
-            // Why: strict less-than only (per §E16); equal-cost paths skip
-            // the rewrite, so the first-discovered chain (smallest dense via
-            // the secondary tie-break) wins.
             if new_cost < dist[next_dense as usize] {
+                // Strict improvement: new shortest path found.
                 dist[next_dense as usize] = new_cost;
                 prev[next_dense as usize] = dense;
                 heap.push(DijkstraEntry {
                     dense: next_dense,
                     cost: new_cost,
                 });
+            } else if new_cost == dist[next_dense as usize]
+                && prev[next_dense as usize] != u32::MAX
+                && dense < prev[next_dense as usize]
+            {
+                // Equal-cost tie-break per §E16 + PR #59 Codex P1 (line 142):
+                // when an alternative path reaches `next` at the same cost
+                // but via a smaller predecessor dense index (= smaller NodeId
+                // per §E03 ASC ordering), rewrite `prev` to that predecessor.
+                // No heap push: cost didn't decrease, so no new relaxations
+                // are needed from `next` (its dist is unchanged).
+                prev[next_dense as usize] = dense;
             }
         }
     }
-    Ok(None)
+
+    if dist[to_dense as usize].is_finite() {
+        let total = dist[to_dense as usize];
+        Ok(Some(reconstruct(from_dense, to_dense, &prev, &idx, total)))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Walk `prev[]` backwards from `to_dense` to `from_dense`, returning the
