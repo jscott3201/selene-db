@@ -8,7 +8,7 @@ This is a **marathon, not a sprint**. No shortcuts. Every decision should optimi
 
 ## Status
 
-Active implementation. Architecture is settled (D1–D19, see Decision log). Workspace contains **6 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack` (opened 2026-05-10 with BRIEF-41). `selene-algorithms` remains to be built. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) opened 2026-05-10**, currently 6/9 briefs merged. See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
+Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **6 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack` (opened 2026-05-10 with BRIEF-41). `selene-algorithms` remains to be built. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs merged, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) opens next**. See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
 
 ## North star: ISO/IEC 39075:2024
 
@@ -58,19 +58,19 @@ v1.0 mandatory (every consumer pulls these), with dependency direction:
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-core` | none | Foundation types: `Value` (4 mandatory ISO types + `Value::Extended`), `IStr`, `PropertyMap`, `LabelSet`, schema types, `Codec`, `Origin`, `Changeset`. |
+| `selene-core` | none | Foundation types: `Value` (4 mandatory ISO types + `Value::Extended` + `Value::ExternalString(Arc<str>)` for high-cardinality non-interning string projection per D20), `IStr`, `PropertyMap`, `LabelSet`, schema types, `Codec`, `Origin`, `Changeset` (includes `SchemaChange::ProcedurePackLifecycle { event: PackLifecycleEvent }` for D18 audit). |
 | `selene-graph` | core | In-memory property graph: ArcSwap+RwLock+imbl, RoaringBitmap label index, TypedIndex, `IndexProvider` trait, `Mutator` write funnel, `GraphTypeDef` runtime binding. |
 | `selene-persist` | core | WAL (`SLDB` magic) + snapshot (`SLSN` TLV-tagged sections) + recovery. **Never sees `Graph`** — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-gql` | core, graph | ISO GQL parser (pest), AST, semantic analyzer, planner, optimizer, executor, `ProcedureRegistry` trait. |
-| `selene-pack` (TBD) | core, graph, gql | Procedure-pack registry, validator, activation state machine, native procedure runtime. |
-| `selene-algorithms` (TBD) | core, graph | Graph algorithms (PageRank, WCC, SCC, Dijkstra, etc.); independent of GQL. |
-| `selene-testing` | core, graph | Test fixtures and synthetic graph generators. |
+| `selene-pack` | core, graph, gql, persist | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate-sealed activation state machine, atomic mutation-funnel audit (`GraphCommitSink`), canonical blake3 content_hash, 4 platform built-ins (`selene.health`, `selene.create_index`, `selene.drop_index`, `selene.pack.history`). Spec 15 records M5e implementation invariants (E24–E84). |
+| `selene-algorithms` (TBD) | core, graph | Graph algorithms (PageRank, WCC, SCC, Dijkstra, etc.); independent of GQL. M5f. |
+| `selene-testing` | core, graph | Test fixtures, synthetic graph generators, and pure-mirror snapshot-harness DSLs (e.g., `pack_corpus` per D21). Consumed via `[dev-dependencies]` only. |
 
 Opt-in extension crates depend on the mandatory crates plus the procedure-pack/index hooks: `selene-vector` (HNSW + vector procedures, D5); future `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-fulltext`. **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
 
 ## Decision log
 
-All v1.0 architecture is settled. Canonical text lives in the linked spec section; this table is the breadcrumb index. Fields named in a row reflect the *current* shape after any amendments.
+All v1.0 architecture is settled. D1–D19 are the foundational decisions; D20+ records load-bearing structural patterns established during M5e implementation. Canonical text lives in the linked spec section; this table is the breadcrumb index. Fields named in a row reflect the *current* shape after any amendments.
 
 | ID | Decision | Canonical home |
 |---|---|---|
@@ -93,6 +93,8 @@ All v1.0 architecture is settled. Canonical text lives in the linked spec sectio
 | D17 | Procedure tiers: per-tier concrete `Context` structs + per-tier dyn-compatible `Procedure` traits | `_spec/05` §3 |
 | D18 | Pack lifecycle audit: WAL-only via the same mutation funnel; no parallel ledger | `_spec/05` §5 |
 | D19 | GG02 catalog: per-graph immutable `bound_type: Option<Arc<GraphTypeDef>>` runtime binding, persisted via `CORE/GTYP` | `_spec/02` §6, `_spec/03` §3 |
+| D20 | `Value::ExternalString(Arc<str>)` is the canonical surface for engine-produced strings that must NOT enter the global `IStr` pool (high-cardinality / free-form text: validation diagnostics, content hashes, future external-system payloads). `PartialEq` is variant-strict; cross-variant string equality lives at the executor layer (`selene-gql::runtime::value_compare`). | `_spec/15` E74 (BRIEF-47) |
+| D21 | Snapshot harness pattern: pure-mirror DSL in `selene-testing` (zero production-crate imports), renderer + integration test + golden `.snap` files in the target crate, `test-harness` feature + `[[test]] required-features` gate, drift-detection tests deriving coverage from observed execution (not author-declared metadata). Dep direction is `target -> selene-testing` as dev-dep. | `_spec/13` (BRIEF-30 plan), `_spec/14` (BRIEF-40 executor), `_spec/15` E81–E84 (BRIEF-49 pack) |
 
 ## Milestone log
 
