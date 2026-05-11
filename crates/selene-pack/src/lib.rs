@@ -24,12 +24,12 @@ pub use activation::{
 pub use error::RegistryError;
 pub use history::PackHistorySource;
 pub use manifest::{
-    ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES, MANIFEST_SCHEMA_DRAFT,
-    MANIFEST_VALIDATION_COVERAGE, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH,
-    MAX_PROCEDURES_PER_PACK, ManifestError, ManifestMutability, ManifestProcedureEntry,
-    ManifestSchemaRef, ManifestTier, PLACEHOLDER_CONTENT_HASH, PROCEDURE_LEVEL_GATES,
-    ProcedurePackManifest, SCHEMA_VERSION_SUPPORTED, WAL_AUDIT_COVERAGE, manifest_json_schema,
-    parse_manifest,
+    ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, FINAL_VALIDATION_COVERAGE, Gate,
+    MANIFEST_LEVEL_GATES, MANIFEST_SCHEMA_DRAFT, MANIFEST_VALIDATION_COVERAGE,
+    MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH, MAX_PROCEDURES_PER_PACK,
+    ManifestError, ManifestMutability, ManifestProcedureEntry, ManifestSchemaRef, ManifestTier,
+    PROCEDURE_LEVEL_GATES, ProcedurePackManifest, SCHEMA_VERSION_SUPPORTED, WAL_AUDIT_COVERAGE,
+    manifest_json_schema, parse_manifest,
 };
 pub use registry::ProcedurePackRegistry;
 pub use reserved::{RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE};

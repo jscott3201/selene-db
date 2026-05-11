@@ -32,11 +32,19 @@ pub enum ManifestError {
         /// Version supported by this binary.
         supported: u32,
     },
-    /// The manifest content hash is not the v1.0 placeholder.
-    #[error("unsupported manifest content hash {content_hash}")]
-    UnsupportedContentHash {
+    /// The manifest content hash is not canonical blake3 lowercase hex.
+    #[error("invalid manifest content hash format {content_hash}")]
+    InvalidContentHashFormat {
         /// Manifest content hash value.
         content_hash: String,
+    },
+    /// The manifest content hash does not match the canonical manifest payload.
+    #[error("manifest content hash {declared} does not match computed hash {computed}")]
+    ContentHashMismatch {
+        /// Hash declared by the manifest.
+        declared: String,
+        /// Hash computed from the canonical manifest payload.
+        computed: String,
     },
     /// The manifest package version is not valid semver.
     #[error("invalid manifest package version {pack_version}: {detail}")]
@@ -197,7 +205,8 @@ impl ManifestError {
             }
             Self::DeserializeError { .. } => Gate::ManifestTypedShape,
             Self::UnsupportedSchemaVersion { .. } => Gate::ManifestSchemaVersionSupported,
-            Self::UnsupportedContentHash { .. } => Gate::ContentHashPlaceholderRecognized,
+            Self::InvalidContentHashFormat { .. } => Gate::ContentHashCanonical,
+            Self::ContentHashMismatch { .. } => Gate::ContentHashConsistency,
             Self::InvalidPackVersion { .. } => Gate::PackVersionWellFormed,
             Self::InvalidPackName { .. } => Gate::PackNameLexical,
             Self::InvalidProcedureName { .. } => Gate::ProcedureNameLexical,

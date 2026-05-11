@@ -1,23 +1,17 @@
 //! Manifest validation gate coverage tests.
 
+mod common;
+
+use common::manifest_fixture::{build_manifest_value_with_canonical_hash, parse_value};
 use selene_pack::{
-    ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES,
-    MANIFEST_VALIDATION_COVERAGE, ManifestError, ManifestMutability, ManifestTier,
-    PLACEHOLDER_CONTENT_HASH, PROCEDURE_LEVEL_GATES, ProcedurePackManifest, WAL_AUDIT_COVERAGE,
-    parse_manifest,
+    ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, FINAL_VALIDATION_COVERAGE, Gate,
+    MANIFEST_LEVEL_GATES, MANIFEST_VALIDATION_COVERAGE, ManifestError, ManifestMutability,
+    ManifestTier, PROCEDURE_LEVEL_GATES, ProcedurePackManifest, WAL_AUDIT_COVERAGE,
 };
 use serde_json::{Value, json};
 
 fn valid_manifest() -> Value {
-    json!({
-        "schema_version": 1,
-        "pack_name": "demo_pack",
-        "pack_version": "1.2.3",
-        "content_hash": PLACEHOLDER_CONTENT_HASH,
-        "procedures": [
-            valid_procedure("demo_pack.echo")
-        ]
-    })
+    build_manifest_value_with_canonical_hash("demo_pack")
 }
 
 fn valid_procedure(name: &str) -> Value {
@@ -29,11 +23,6 @@ fn valid_procedure(name: &str) -> Value {
         "output_schema": { "inline": { "type": "object" } },
         "capability_required": null
     })
-}
-
-fn parse_value(value: Value) -> Result<ProcedurePackManifest, ManifestError> {
-    let bytes = serde_json::to_vec(&value).expect("test JSON serializes");
-    parse_manifest(&bytes)
 }
 
 #[test]
@@ -59,6 +48,19 @@ fn manifest_coverage_is_concatenation_of_sub_slices() {
     let expected = MANIFEST_LEVEL_GATES
         .iter()
         .chain(PROCEDURE_LEVEL_GATES.iter())
+        .chain(FINAL_VALIDATION_COVERAGE.iter())
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert_eq!(MANIFEST_VALIDATION_COVERAGE, expected.as_slice());
+}
+
+#[test]
+fn manifest_coverage_is_three_sub_slice_concatenation() {
+    let expected = MANIFEST_LEVEL_GATES
+        .iter()
+        .chain(PROCEDURE_LEVEL_GATES.iter())
+        .chain(FINAL_VALIDATION_COVERAGE.iter())
         .copied()
         .collect::<Vec<_>>();
 
@@ -137,11 +139,21 @@ fn mapping_integrity_compiles() {
         Gate::ManifestSchemaVersionSupported
     );
     assert_eq!(
-        ManifestError::UnsupportedContentHash {
+        ManifestError::InvalidContentHashFormat {
             content_hash: "sha256:bad".to_owned()
         }
         .gate(),
-        Gate::ContentHashPlaceholderRecognized
+        Gate::ContentHashCanonical
+    );
+    assert_eq!(
+        ManifestError::ContentHashMismatch {
+            declared: "blake3:0000000000000000000000000000000000000000000000000000000000000000"
+                .to_owned(),
+            computed: "blake3:1111111111111111111111111111111111111111111111111111111111111111"
+                .to_owned(),
+        }
+        .gate(),
+        Gate::ContentHashConsistency
     );
     assert_eq!(
         ManifestError::InvalidPackVersion {

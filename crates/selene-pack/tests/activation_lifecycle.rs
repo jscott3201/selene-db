@@ -1,13 +1,19 @@
 //! Procedure-pack activation lifecycle tests.
 
+mod common;
+
+use common::manifest_fixture::{
+    build_default_manifest, build_manifest_json_with_canonical_hash,
+    build_manifest_value_with_canonical_hash,
+};
 use std::sync::Mutex;
 
 use jiff::Timestamp;
 use selene_core::intern;
 use selene_pack::{
     ACTIVATION_SEAL_COVERAGE, ActivationError, ActivationRegistry, ActivationStatus, ContentHash,
-    DEFERRED_GATES, Gate, LifecycleEvent, LifecycleSink, NoopSink, PLACEHOLDER_CONTENT_HASH,
-    Principal, Uploaded, WAL_AUDIT_COVERAGE,
+    DEFERRED_GATES, Gate, LifecycleEvent, LifecycleSink, NoopSink, Principal, Uploaded,
+    WAL_AUDIT_COVERAGE,
 };
 use serde_json::{Value, json};
 
@@ -55,26 +61,15 @@ fn reason() -> selene_core::IStr {
 }
 
 fn manifest_bytes(pack_name: &str) -> Vec<u8> {
-    serde_json::to_vec(&manifest_value(pack_name)).expect("manifest JSON serializes")
+    build_manifest_json_with_canonical_hash(pack_name)
 }
 
 fn manifest_value(pack_name: &str) -> Value {
-    json!({
-        "schema_version": 1,
-        "pack_name": pack_name,
-        "pack_version": "1.2.3",
-        "content_hash": PLACEHOLDER_CONTENT_HASH,
-        "procedures": [
-            {
-                "name": format!("{pack_name}.echo"),
-                "tier": "graph",
-                "mutability": "read",
-                "input_schema": { "inline": { "type": "object" } },
-                "output_schema": { "inline": { "type": "object" } },
-                "capability_required": null
-            }
-        ]
-    })
+    build_manifest_value_with_canonical_hash(pack_name)
+}
+
+fn expected_content_hash(pack_name: &str) -> ContentHash {
+    ContentHash::from_validated_manifest(&build_default_manifest(pack_name))
 }
 
 fn uploaded(pack_name: &str) -> Uploaded {
@@ -116,18 +111,19 @@ fn linear_lifecycle_succeeds() {
 }
 
 #[test]
-fn staged_event_emitted_with_content_hash_placeholder() {
+fn staged_event_emitted_with_canonical_content_hash() {
     let sink = TestSink::default();
     let staged = staged("demo_pack", &sink);
+    let expected = expected_content_hash("demo_pack");
 
-    assert_eq!(staged.content_hash(), ContentHash::placeholder());
+    assert_eq!(staged.content_hash(), expected);
     assert!(matches!(
         &sink.events()[0],
         LifecycleEvent::Staged {
             pack_name,
             content_hash,
             ..
-        } if pack_name == "demo_pack" && content_hash.is_placeholder()
+        } if pack_name == "demo_pack" && *content_hash == expected
     ));
 }
 
@@ -431,16 +427,17 @@ fn timestamp_injected_argument_is_recorded_verbatim() {
 }
 
 #[test]
-fn content_hash_placeholder_at_staged_and_active() {
+fn content_hash_is_canonical_at_staged_and_active() {
     let sink = TestSink::default();
     let mut registry = ActivationRegistry::new();
     let staged = staged("demo_pack", &sink);
+    let expected = expected_content_hash("demo_pack");
 
-    assert!(staged.content_hash().is_placeholder());
+    assert_eq!(staged.content_hash(), expected);
     let active = staged
         .activate(&sink, &mut registry, ts(4))
         .expect("pack activates");
-    assert!(active.content_hash().is_placeholder());
+    assert_eq!(active.content_hash(), expected);
 }
 
 #[test]

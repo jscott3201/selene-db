@@ -1,5 +1,11 @@
 //! GraphCommitSink integration tests.
 
+mod common;
+
+use common::manifest_fixture::{
+    build_default_manifest, build_manifest_json_with_canonical_hash,
+    build_manifest_value_with_canonical_hash,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -12,7 +18,7 @@ use selene_core::{
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 use selene_pack::{
     ActivationError, ActivationRegistry, GraphCommitSink, LifecycleEvent, LifecycleSink, NoopSink,
-    PLACEHOLDER_CONTENT_HASH, Principal, RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE, Uploaded,
+    Principal, RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE, Uploaded,
 };
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig, WalReader, WalWriter};
 use serde_json::{Value, json};
@@ -160,24 +166,15 @@ fn reason() -> IStr {
 }
 
 fn manifest_bytes(pack_name: &str) -> Vec<u8> {
-    serde_json::to_vec(&manifest_value(pack_name)).expect("manifest serializes")
+    build_manifest_json_with_canonical_hash(pack_name)
 }
 
 fn manifest_value(pack_name: &str) -> Value {
-    json!({
-        "schema_version": 1,
-        "pack_name": pack_name,
-        "pack_version": "1.2.3",
-        "content_hash": PLACEHOLDER_CONTENT_HASH,
-        "procedures": [{
-            "name": format!("{pack_name}.echo"),
-            "tier": "graph",
-            "mutability": "read",
-            "input_schema": { "inline": { "type": "object" } },
-            "output_schema": { "inline": { "type": "object" } },
-            "capability_required": null
-        }]
-    })
+    build_manifest_value_with_canonical_hash(pack_name)
+}
+
+fn expected_content_hash(pack_name: &str) -> [u8; 32] {
+    selene_pack::ContentHash::from_validated_manifest(&build_default_manifest(pack_name)).as_bytes()
 }
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -235,7 +232,7 @@ fn staged_event_commits_to_graph_funnel() {
         lifecycle_events(&provider.changes()).as_slice(),
         [PackLifecycleEvent::Staged { pack_name, content_hash, principal: p, at }]
             if *pack_name == istr("demo_pack")
-                && *content_hash == [0_u8; 32]
+                && *content_hash == expected_content_hash("demo_pack")
                 && *p == principal().as_istr()
                 && *at == ts(3)
     ));
@@ -251,7 +248,8 @@ fn activated_event_commits_to_graph_funnel() {
     assert!(matches!(
         lifecycle_events(&provider.changes()).as_slice(),
         [_, PackLifecycleEvent::Activated { pack_name, content_hash, .. }]
-            if *pack_name == istr("demo_pack") && *content_hash == [0_u8; 32]
+            if *pack_name == istr("demo_pack")
+                && *content_hash == expected_content_hash("demo_pack")
     ));
 }
 
@@ -392,11 +390,13 @@ fn staged_and_activated_carry_content_hash_only_where_expected() {
     let events = lifecycle_events(&provider.changes());
     assert!(matches!(
         &events[0],
-        PackLifecycleEvent::Staged { content_hash, .. } if *content_hash == [0_u8; 32]
+        PackLifecycleEvent::Staged { content_hash, .. }
+            if *content_hash == expected_content_hash("demo_pack")
     ));
     assert!(matches!(
         &events[1],
-        PackLifecycleEvent::Activated { content_hash, .. } if *content_hash == [0_u8; 32]
+        PackLifecycleEvent::Activated { content_hash, .. }
+            if *content_hash == expected_content_hash("demo_pack")
     ));
 }
 

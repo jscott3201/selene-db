@@ -222,14 +222,14 @@ fn assert_internal_error(err: ExecutorError, label: &str) {
     ));
 }
 
-fn placeholder_hash() -> String {
-    format!("sha256:{}", "0".repeat(64))
+fn zero_content_hash() -> String {
+    content_hash_string(&[0_u8; 32])
 }
 
 fn content_hash_string(hash: &[u8; 32]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity("sha256:".len() + hash.len() * 2);
-    out.push_str("sha256:");
+    let mut out = String::with_capacity("blake3:".len() + hash.len() * 2);
+    out.push_str("blake3:");
     for byte in hash {
         out.push(HEX[(byte >> 4) as usize] as char);
         out.push(HEX[(byte & 0x0f) as usize] as char);
@@ -258,7 +258,7 @@ fn staged_event_returns_hash_row() {
     assert_eq!(rows.len(), 1);
     assert_eq!(kind(&rows[0]), "staged");
     assert_eq!(string_cell(&rows[0], 1), Some("demo_pack"));
-    assert_eq!(string_cell(&rows[0], 2), Some(placeholder_hash().as_str()));
+    assert_eq!(string_cell(&rows[0], 2), Some(zero_content_hash().as_str()));
     let _ = fs::remove_file(path);
 }
 
