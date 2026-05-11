@@ -247,6 +247,29 @@ fn pagerank_handles_sparse_row_projection() {
 }
 
 #[test]
+fn pagerank_dangling_heavy_graph_mass_preserved() {
+    // PR #60 Codex P1 regression: graph with many dangling nodes used to be
+    // O(N²) per iteration. Verify correctness on a fixture with all-but-one
+    // nodes dangling: only n0 has an out-edge to n1; n2/n3/n4 are dangling.
+    // Σ score must still converge to 1.0 under the bulk-apply formulation.
+    let (shared, _) = build_graph(5, &[(0, 1)]);
+    let proj = build_proj(&shared);
+    let result = pagerank(&proj, default_config());
+    let total: f64 = result.iter().map(|&(_, s)| s).sum();
+    assert!(
+        (total - 1.0).abs() < 1e-6,
+        "dangling-heavy graph must preserve mass under bulk-apply; got {total}"
+    );
+    // Sanity: every score is finite and positive.
+    for &(nid, score) in &result {
+        assert!(
+            score.is_finite() && score > 0.0,
+            "node {nid:?} score must be finite + positive; got {score}"
+        );
+    }
+}
+
+#[test]
 fn pagerank_zero_damping_pure_teleport() {
     // damping = 0 → all probability goes to teleport (1/N for each).
     let (shared, _) = build_graph(4, &[(0, 1), (1, 2), (2, 3), (3, 0)]);

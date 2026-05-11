@@ -181,6 +181,47 @@ fn betweenness_sample_size_scaling_preserves_magnitude() {
 }
 
 #[test]
+fn betweenness_sampling_spans_full_index_range_includes_tail() {
+    // PR #60 Codex P2 regression: prior step=n/k formula would yield
+    // sources [0,1,2,3] for n=5, k=4 — skipping index 4 (the tail). The
+    // endpoint-aware formula `i * (n - 1) / (k - 1)` produces sources
+    // [0,1,2,4] — landing at BOTH endpoints.
+    //
+    // Discriminating fixture: chain n4 → n0 → n1 → n2 → n3 (note n4 is the
+    // HEAD of the chain in graph-flow terms, but its NodeId is the largest
+    // and thus the dense-index tail). The only way `n0` gets nonzero
+    // betweenness is when n4 is sampled as a source (n4 is the only node
+    // with n0 as a downstream intermediate on its shortest paths).
+    //
+    // OLD sampling [0,1,2,3]: source 4 missing → centrality[n0] = 0.
+    // NEW sampling [0,1,2,4]: source 4 included → centrality[n0] > 0.
+    let (shared, nodes) = build_graph(5, &[(4, 0), (0, 1), (1, 2), (2, 3)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, Some(4));
+
+    let score_n0 = result.iter().find(|&&(n, _)| n == nodes[0]).unwrap().1;
+    assert!(
+        score_n0 > 0.0,
+        "endpoint-aware sampling must include n4 (dense tail); n0 should \
+         then receive δ contribution from n4's shortest paths. Got 0.0."
+    );
+}
+
+#[test]
+fn betweenness_sample_size_one_returns_single_source_result() {
+    // §E24 amendment: Some(1) on n>1 samples a single source at dense
+    // index 0 (the endpoint-aware formula divides by zero for k=1, so it's
+    // special-cased).
+    let (shared, nodes) = build_graph(3, &[(0, 1), (1, 2)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, Some(1));
+    // From source n0 only: n1 lies between n0 and n2 → δ(n1) = 1.
+    // Scaled by n/k = 3/1 = 3.
+    let score_n1 = result.iter().find(|&&(n, _)| n == nodes[1]).unwrap().1;
+    assert_eq!(score_n1, 3.0, "Some(1) samples n0 only; n1 betweenness × 3");
+}
+
+#[test]
 fn betweenness_handles_sparse_row_projection() {
     // §E20 — state arrays sized by RowIndex, not max_row + 1.
     let shared = SharedGraph::new(GraphId::new(1));

@@ -75,23 +75,32 @@ pub fn pagerank(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, 
             *slot = teleport;
         }
 
-        // Accumulate damping * score[u] / out_degree(u) contributions.
-        // Dangling nodes (out_degree = 0) redistribute to all N including
-        // self per §E23 + §O.4.
+        // Accumulate damping * score[u] / out_degree(u) contributions for
+        // nodes with out-edges; collect dangling mass for a single bulk
+        // redistribute pass at the end of the iteration.
+        //
+        // Why bulk-apply dangling mass (PR #60 Codex P1):
+        // Naively iterating `for slot in new_scores.iter_mut()` per dangling
+        // node yields O(N * D) per iteration — quadratic when D ≈ N on
+        // sink-heavy graphs. Accumulating total dangling mass and applying
+        // `damping * dangling_mass / N` once to every node is mathematically
+        // equivalent (sums commute) and runs in O(N + E) regardless of D.
+        let mut dangling_mass = 0.0;
         for u in 0..n_usize {
             let neighbors = &out_neighbors_dense[u];
-            let out_degree = neighbors.len();
-            if out_degree > 0 {
-                let contribution = config.damping * scores[u] / out_degree as f64;
+            if neighbors.is_empty() {
+                dangling_mass += scores[u];
+            } else {
+                let contribution = config.damping * scores[u] / neighbors.len() as f64;
                 for &v in neighbors {
                     new_scores[v as usize] += contribution;
                 }
-            } else {
-                // Dangling: spread to all N (including self) per Brin-Page.
-                let contribution = config.damping * scores[u] / n_f64;
-                for slot in new_scores.iter_mut() {
-                    *slot += contribution;
-                }
+            }
+        }
+        if dangling_mass > 0.0 {
+            let spread = config.damping * dangling_mass / n_f64;
+            for slot in new_scores.iter_mut() {
+                *slot += spread;
             }
         }
 

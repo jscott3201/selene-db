@@ -59,11 +59,24 @@ pub fn betweenness(proj: &GraphProjection, sample_size: Option<usize>) -> Vec<(N
     let mut centrality: Vec<f64> = vec![0.0; n];
 
     // Determine source dense indices per §E24.
+    //
+    // Why endpoint-aware spacing (PR #60 Codex P2):
+    // The donor's `step = n / k` indexing biases toward low dense indices
+    // because integer floor division never reaches the tail. For example
+    // `n=5, k=4` would yield sources `[0, 1, 2, 3]` and never sample dense
+    // index 4 — systematically skewing approximate betweenness by NodeId
+    // ordering rather than graph structure. Use `i * (n - 1) / (k - 1)`
+    // (integer math) instead, which lands at both endpoints and spreads the
+    // intermediate samples evenly: `n=5, k=4` → `[0, 1, 2, 4]`; `n=10, k=3`
+    // → `[0, 4, 9]`. The k == 1 case degenerates to a single sample at
+    // index 0 (the formula divides by zero otherwise).
     let (sources, scale): (Vec<u32>, f64) = match sample_size {
         Some(0) => (Vec::new(), 1.0),
-        Some(k) if k < n => {
-            let step = n / k;
-            let sampled: Vec<u32> = (0..k).map(|i| (i * step) as u32).collect();
+        Some(1) if n > 1 => (vec![0u32], n as f64),
+        Some(k) if k < n && k >= 2 => {
+            let span = n - 1;
+            let divisor = k - 1;
+            let sampled: Vec<u32> = (0..k).map(|i| ((i * span) / divisor) as u32).collect();
             (sampled, n as f64 / k as f64)
         }
         _ => ((0..n as u32).collect(), 1.0),
