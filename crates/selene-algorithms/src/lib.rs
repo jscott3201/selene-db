@@ -25,11 +25,13 @@
 
 pub mod catalog;
 pub mod error;
+pub mod pathfinding;
 pub mod projection;
 pub mod structural;
 
 pub use catalog::{ProjectionCatalog, ProjectionRef};
 pub use error::AlgorithmsError;
+pub use pathfinding::{PathResult, PathfindingError, apsp, dijkstra, sssp};
 pub use projection::{GraphProjection, ProjNeighbor, ProjectionConfig};
 pub use structural::{
     TopoSortError, articulation_points, bridges, scc, scc_count, topological_sort, wcc, wcc_count,
