@@ -1,0 +1,23 @@
+[package]
+name = "selene-algorithms"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Graph algorithms for selene-db (projection, structural, pathfinding, centrality, community)"
+
+[dependencies]
+selene-core = { path = "../selene-core", version = "0.0.0" }
+selene-graph = { path = "../selene-graph", version = "0.0.0" }
+roaring.workspace = true
+smallvec.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

@@ -94,6 +94,18 @@ impl SeleneGraph {
         self.node_store.alive.len() as usize
     }
 
+    /// Bitmap of alive node *row indices*.
+    ///
+    /// Returned bitmap is row-indexed (matching `nodes_with_label`), not
+    /// `NodeId`-indexed; consumers convert to `NodeId` via
+    /// `selene_core::NodeId::new(row as u64 + 1)` (the inverse of
+    /// `selene_graph::store::node_row_index`). Used by `selene-algorithms` to
+    /// seed the "all alive nodes" baseline of a `GraphProjection`.
+    #[must_use]
+    pub fn live_nodes(&self) -> &RoaringBitmap {
+        &self.node_store.alive
+    }
+
     /// Number of alive edges.
     #[must_use]
     pub fn edge_count(&self) -> usize {

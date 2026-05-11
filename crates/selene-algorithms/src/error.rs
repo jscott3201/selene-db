@@ -1,0 +1,40 @@
+//! Error surface for `selene-algorithms`.
+//!
+//! Per spec 16 §3 E04, weight extraction is infallible — there are no
+//! `WeightProperty*` variants. The starter enum carries only consumer-facing
+//! variants algorithms raise to signal "your input is not algorithm-meaningful."
+//!
+//! `#[non_exhaustive]` lets BRIEFs 52–55 (structural / pathfinding / centrality
+//! / community) extend with algorithm-specific variants without breaking the
+//! crate's public API.
+
+use selene_core::NodeId;
+use thiserror::Error;
+
+/// Errors raised by `selene-algorithms` surfaces.
+///
+/// `GraphProjection::build` cannot raise these — they exist for algorithm
+/// surfaces (BRIEFs 52–55) that need to refuse meaningless inputs (e.g.,
+/// PageRank on a projection with zero nodes, or a path query against a node
+/// the projection does not contain).
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum AlgorithmsError {
+    /// Algorithm refuses an empty projection because the result is undefined or
+    /// useless for the caller (e.g., centrality scores over zero nodes).
+    ///
+    /// `reason` describes why the algorithm requires a non-empty input.
+    #[error("empty projection: {reason}")]
+    EmptyProjection {
+        /// Why the algorithm requires a non-empty projection.
+        reason: &'static str,
+    },
+
+    /// Algorithm received a `NodeId` that is not part of the projection
+    /// (e.g., source node for single-source pathfinding not in scope).
+    #[error("node {id:?} is not part of this projection")]
+    NodeNotInProjection {
+        /// The offending node ID.
+        id: NodeId,
+    },
+}

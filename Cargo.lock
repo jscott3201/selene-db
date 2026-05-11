@@ -2098,6 +2098,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "selene-algorithms"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "roaring",
+ "selene-core",
+ "selene-graph",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
 name = "selene-core"
 version = "0.0.0"
 dependencies = [
