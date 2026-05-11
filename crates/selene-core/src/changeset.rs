@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use crate::{
     CoreError, CoreResult, EdgeId, EdgeTypeDef, GraphId, GraphType, GraphTypeId, IStr, LabelSet,
-    NodeId, NodeTypeDef, PropertyMap, RecordTypeDef, Value,
+    NodeId, NodeTypeDef, PackLifecycleEvent, PropertyMap, RecordTypeDef, Value,
 };
 
 /// A graph, schema, or extension-provider change carried by the WAL.
@@ -293,30 +293,10 @@ pub enum SchemaChange {
         /// Record type definition.
         def: RecordTypeDef,
     },
-    /// Procedure pack activation audit event.
-    ProcedurePackActivated {
-        /// Procedure pack name.
-        pack_name: IStr,
-        /// Procedure pack version.
-        version: IStr,
-    },
-    /// Procedure pack deprecation audit event.
-    ProcedurePackDeprecated {
-        /// Procedure pack name.
-        pack_name: IStr,
-        /// Procedure pack version.
-        version: IStr,
-        /// Interned short reason.
-        reason: IStr,
-    },
-    /// Procedure pack disable audit event.
-    ProcedurePackDisabled {
-        /// Procedure pack name.
-        pack_name: IStr,
-        /// Procedure pack version.
-        version: IStr,
-        /// Interned short reason.
-        reason: IStr,
+    /// Procedure-pack lifecycle audit event.
+    ProcedurePackLifecycle {
+        /// Pack lifecycle event payload.
+        event: PackLifecycleEvent,
     },
     /// Property index creation.
     PropertyIndexCreated {
@@ -575,23 +555,31 @@ mod tests {
     #[test]
     fn schema_change_procedure_pack_lifecycle() {
         let name = istr("pack");
-        let version = istr("1.0.0");
         let reason = istr("retired");
-        let activated = SchemaChange::ProcedurePackActivated {
-            pack_name: name,
-            version,
+        let staged = SchemaChange::ProcedurePackLifecycle {
+            event: PackLifecycleEvent::Staged {
+                pack_name: name,
+                content_hash: [0_u8; 32],
+                principal: istr("principal"),
+                at: jiff::Timestamp::new(1, 0).unwrap(),
+            },
         };
-        let deprecated = SchemaChange::ProcedurePackDeprecated {
-            pack_name: name,
-            version,
-            reason,
+        let deprecated = SchemaChange::ProcedurePackLifecycle {
+            event: PackLifecycleEvent::Deprecated {
+                pack_name: name,
+                reason,
+                principal: istr("principal"),
+                at: jiff::Timestamp::new(2, 0).unwrap(),
+            },
         };
-        let disabled = SchemaChange::ProcedurePackDisabled {
-            pack_name: name,
-            version,
-            reason,
+        let disabled = SchemaChange::ProcedurePackLifecycle {
+            event: PackLifecycleEvent::Disabled {
+                pack_name: name,
+                principal: istr("principal"),
+                at: jiff::Timestamp::new(3, 0).unwrap(),
+            },
         };
-        assert_ne!(activated, deprecated);
+        assert_ne!(staged, deprecated);
         assert_ne!(deprecated, disabled);
     }
 
@@ -651,6 +639,14 @@ mod tests {
                 graph_type: graph_type_id,
                 def: record,
             },
+            SchemaChange::ProcedurePackLifecycle {
+                event: PackLifecycleEvent::ValidationFailed {
+                    pack_name: Some(istr("change.schema.pack")),
+                    principal: istr("change.schema.principal"),
+                    error: istr("change.schema.error"),
+                    at: jiff::Timestamp::new(1, 0).unwrap(),
+                },
+            },
             SchemaChange::PropertyIndexCreated {
                 label: node_label,
                 property: istr("change.schema.indexed"),
@@ -661,7 +657,7 @@ mod tests {
                 property: istr("change.schema.indexed"),
             },
         ];
-        assert_eq!(variants.len(), 9);
+        assert_eq!(variants.len(), 10);
     }
 
     proptest! {

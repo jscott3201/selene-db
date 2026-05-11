@@ -175,6 +175,10 @@ impl RecoveryState {
                     self.pending_property_index_changes.push(pending);
                 } else if is_catalog_schema_change(change) {
                     self.pending_schema_changes.push(change.clone());
+                } else if matches!(change, SchemaChange::ProcedurePackLifecycle { .. }) {
+                    // Procedure-pack lifecycle changes are pure audit history.
+                    // BRIEF-47 reads them from the WAL directly; graph-state
+                    // recovery intentionally has no materialized state to update.
                 }
             }
             Change::IndexExtensionEvent { .. } => {}

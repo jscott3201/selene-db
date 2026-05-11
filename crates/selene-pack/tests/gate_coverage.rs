@@ -3,7 +3,8 @@
 use selene_pack::{
     ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES,
     MANIFEST_VALIDATION_COVERAGE, ManifestError, ManifestMutability, ManifestTier,
-    PLACEHOLDER_CONTENT_HASH, PROCEDURE_LEVEL_GATES, ProcedurePackManifest, parse_manifest,
+    PLACEHOLDER_CONTENT_HASH, PROCEDURE_LEVEL_GATES, ProcedurePackManifest, WAL_AUDIT_COVERAGE,
+    parse_manifest,
 };
 use serde_json::{Value, json};
 
@@ -40,10 +41,17 @@ fn every_gate_appears_in_exactly_one_coverage_slice() {
     for gate in Gate::ALL {
         let count = usize::from(MANIFEST_VALIDATION_COVERAGE.contains(gate))
             + usize::from(ACTIVATION_SEAL_COVERAGE.contains(gate))
+            + usize::from(WAL_AUDIT_COVERAGE.contains(gate))
             + usize::from(DEFERRED_GATES.contains(gate));
 
         assert_eq!(count, 1, "gate {} appears {count} times", gate.id());
     }
+}
+
+#[test]
+fn wal_audit_coverage_contains_activation_lifecycle_atomicity_only() {
+    assert_eq!(WAL_AUDIT_COVERAGE, &[Gate::ActivationLifecycleAtomicity]);
+    assert!(!DEFERRED_GATES.contains(&Gate::ActivationLifecycleAtomicity));
 }
 
 #[test]
