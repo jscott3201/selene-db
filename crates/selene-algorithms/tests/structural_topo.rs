@@ -138,6 +138,28 @@ fn topo_self_loop_is_cycle() {
 }
 
 #[test]
+fn topo_per_batch_tie_break_is_level_batched_not_global_ordered() {
+    // Documents the §E12 per-batch sort behavior: with edges `n1 -> n2` and
+    // isolated `n3`, both n1 and n3 are zero-in-degree at the start. The
+    // per-batch sort emits the entire current batch [n1, n3] in ASC order
+    // BEFORE checking newly-zero nodes (n2 becomes ready mid-batch); n2 is
+    // then drained in the next batch.
+    //
+    // A "global ordered frontier" formulation would produce [n1, n2, n3]
+    // instead. Both are valid topological orders; per-batch matches donor
+    // `aether-db-algorithms/src/structural.rs:266-329`. This test asserts
+    // the chosen per-batch behavior so future reviewers see the intent.
+    let (shared, nodes) = build_graph(3, &[(0, 1)]);
+    let proj = build_proj(&shared);
+    let result = topological_sort(&proj).unwrap();
+    assert_eq!(
+        result,
+        vec![(nodes[0], 0), (nodes[2], 1), (nodes[1], 2)],
+        "per-batch sort: [n1, n3] emitted first, then [n2]"
+    );
+}
+
+#[test]
 fn topo_positions_are_dense_zero_based() {
     // Positions must form 0..N with no gaps regardless of NodeId values.
     let (shared, nodes) = build_graph(5, &[(0, 1), (1, 2), (2, 3), (3, 4)]);

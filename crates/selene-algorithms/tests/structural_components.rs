@@ -2,6 +2,7 @@
 //! directed views respectively (spec 16 §E09–§E12; BRIEF-52).
 
 use proptest::prelude::*;
+use roaring::RoaringBitmap;
 use selene_algorithms::{GraphProjection, ProjectionConfig, scc, scc_count, wcc, wcc_count};
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::SharedGraph;
@@ -221,6 +222,86 @@ fn scc_self_loop_is_own_scc() {
     assert_eq!(
         result,
         vec![(nodes[0], nodes[0].get()), (nodes[1], nodes[1].get())]
+    );
+    assert_eq!(scc_count(&proj), 2);
+}
+
+// ---------------------------------------------------------------------------
+// Sparse-row sizing (spec 16 §E11 dense-row remap)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn wcc_handles_sparse_row_projection() {
+    // Build 100 nodes; restrict the projection via a scope bitmap to rows
+    // {0, 50, 99}. After the §E11 amendment, state arrays MUST be sized by
+    // live count (3), not max_row + 1 (100). The test asserts correctness;
+    // memory savings are implicit (allocating 100x for 3 nodes would not
+    // fail the test but would be observable under heap profiling).
+    let (shared, nodes) = build_graph(100, &[]);
+    let snapshot = shared.read();
+    let mut scope = RoaringBitmap::new();
+    scope.insert(0);
+    scope.insert(50);
+    scope.insert(99);
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "sparse".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: None,
+        },
+        Some(&scope),
+    )
+    .unwrap();
+
+    assert_eq!(proj.node_count(), 3);
+    let result = wcc(&proj);
+    // Three isolated nodes → three components; each is its own component_id.
+    assert_eq!(
+        result,
+        vec![
+            (nodes[0], nodes[0].get()),
+            (nodes[50], nodes[50].get()),
+            (nodes[99], nodes[99].get()),
+        ]
+    );
+    assert_eq!(wcc_count(&proj), 3);
+}
+
+#[test]
+fn scc_handles_sparse_row_projection() {
+    // Same fixture as the WCC test, but with two edges among the scoped
+    // nodes: n51 -> n52 and n52 -> n51 form a 2-cycle. Need to include 51/52
+    // (rows 50/51) in scope along with row 99 (isolated).
+    let (shared, nodes) = build_graph(100, &[(50, 51), (51, 50)]);
+    let snapshot = shared.read();
+    let mut scope = RoaringBitmap::new();
+    scope.insert(50);
+    scope.insert(51);
+    scope.insert(99);
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "sparse-scc".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: None,
+        },
+        Some(&scope),
+    )
+    .unwrap();
+
+    assert_eq!(proj.node_count(), 3);
+    let result = scc(&proj);
+    let cycle_root = nodes[50].get();
+    assert_eq!(
+        result,
+        vec![
+            (nodes[50], cycle_root),
+            (nodes[51], cycle_root),
+            (nodes[99], nodes[99].get()),
+        ]
     );
     assert_eq!(scc_count(&proj), 2);
 }

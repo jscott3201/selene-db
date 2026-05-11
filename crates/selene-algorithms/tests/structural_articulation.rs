@@ -145,6 +145,43 @@ fn articulation_disconnected_components_handled_independently() {
 }
 
 #[test]
+fn articulation_parallel_edges_are_not_bridges() {
+    // Two parallel directed edges n1 -> n2. The undirected view has
+    // multiplicity 2 between n1 and n2; removing either edge leaves the
+    // graph connected → no bridge per spec 16 §E10 amendment.
+    let (shared, _) = build_graph(2, &[(0, 1), (0, 1)]);
+    let proj = build_proj(&shared);
+    assert!(
+        bridges(&proj).is_empty(),
+        "parallel-edge pair must NOT be reported as a bridge"
+    );
+    assert!(articulation_points(&proj).is_empty());
+}
+
+#[test]
+fn articulation_anti_parallel_edges_are_not_bridges() {
+    // n1 -> n2 and n2 -> n1 — anti-parallel single edges. Undirected
+    // multiplicity = 2; removing either leaves connectivity intact.
+    let (shared, _) = build_graph(2, &[(0, 1), (1, 0)]);
+    let proj = build_proj(&shared);
+    assert!(
+        bridges(&proj).is_empty(),
+        "anti-parallel edge pair must NOT be reported as a bridge"
+    );
+    assert!(articulation_points(&proj).is_empty());
+}
+
+#[test]
+fn articulation_parallel_edge_in_chain_still_finds_other_bridges() {
+    // n1 = n2 - n3 (two parallel edges between n1 and n2; single edge
+    // n2 - n3). Bridges: only (n2, n3). APs: only n2.
+    let (shared, nodes) = build_graph(3, &[(0, 1), (0, 1), (1, 2)]);
+    let proj = build_proj(&shared);
+    assert_eq!(bridges(&proj), vec![(nodes[1], nodes[2])]);
+    assert_eq!(articulation_points(&proj), vec![nodes[1]]);
+}
+
+#[test]
 fn articulation_bridge_endpoints_canonicalized_min_max() {
     // Insert edges where source > target to ensure bridge endpoints are
     // emitted as (min, max) per §E12.

@@ -9,8 +9,11 @@
 //! ## Algorithm directionality (spec 16 §E10)
 //!
 //! - [`wcc`], [`articulation_points`], [`bridges`] treat the projection as
-//!   **undirected** (union of out-neighbors and in-neighbors per node, deduped
-//!   then sorted by row).
+//!   **undirected** (union of out-neighbors and in-neighbors per node, sorted
+//!   ASC by dense index). For `articulation_points` and `bridges` edge
+//!   multiplicity is preserved (no `HashSet` dedupe) — parallel edges must be
+//!   visible to the lowlink rule, else single-of-many-parallel edges would be
+//!   falsely reported as bridges.
 //! - [`scc`], [`topological_sort`] use **directed** adjacency (only
 //!   out-neighbors).
 //!
@@ -22,14 +25,17 @@
 
 mod articulation;
 mod components;
+mod row_index;
 mod topo;
 
 pub use articulation::{articulation_points, bridges};
 pub use components::{scc, scc_count, wcc, wcc_count};
 pub use topo::{TopoSortError, topological_sort};
 
-/// Sentinel value used by DFS state arrays to mark unvisited rows.
+pub(crate) use row_index::RowIndex;
+
+/// Sentinel value used by DFS state arrays to mark unvisited dense indices.
 ///
-/// Set to `u32::MAX` so any valid row index (`< proj.max_row() + 1 ≤ u32::MAX`)
+/// Set to `u32::MAX` so any valid dense index (`< row_index.len() ≤ u32::MAX`)
 /// is distinguishable from "not yet discovered."
 pub(crate) const SENTINEL: u32 = u32::MAX;

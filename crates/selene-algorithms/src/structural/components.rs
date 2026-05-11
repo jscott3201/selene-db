@@ -3,13 +3,20 @@
 //! Both surfaces follow donor `aether-db-algorithms/src/structural.rs:91-258`:
 //! component IDs are remapped to the smallest NodeId in each component (per
 //! spec 16 §E12), and Tarjan's DFS is an iterative work-stack walk (per E11).
+//!
+//! State arrays are sized by **live-node count** via [`RowIndex`], not by
+//! `max_row + 1`. Why: a sparse projection (label filter, scope intersection,
+//! or long-lived graph with tombstoned deletes per D11) can have a max row
+//! orders of magnitude larger than the live count; sizing by max_row would tie
+//! memory to the largest historical NodeId and risk OOM on small live
+//! subgraphs (spec 16 §E11 amendment from PR #58 Codex review).
 
 use std::collections::HashMap;
 
 use selene_core::NodeId;
 
 use crate::projection::GraphProjection;
-use crate::structural::SENTINEL;
+use crate::structural::{RowIndex, SENTINEL};
 
 // ---------------------------------------------------------------------------
 // Weakly Connected Components (undirected)
@@ -25,19 +32,17 @@ use crate::structural::SENTINEL;
 /// ordered ASC by `NodeId` (matches `iter_nodes()` per spec 16 §E03/§E12).
 #[must_use]
 pub fn wcc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
-    let Some(max_row) = proj.max_row() else {
+    let idx = RowIndex::new(proj);
+    if idx.is_empty() {
         return Vec::new();
-    };
-    let mut uf = UnionFind::new(max_row as usize + 1);
-    union_all_edges(proj, &mut uf);
+    }
+    let mut uf = UnionFind::new(idx.len());
+    union_all_edges(proj, &idx, &mut uf);
 
-    // First pass: collect (NodeId, current_root_row) for every projection node.
-    let mut pairs: Vec<(NodeId, u32)> = proj
-        .iter_nodes()
-        .map(|nid| {
-            let row = node_row(nid);
-            (nid, uf.find(row))
-        })
+    // First pass: collect (NodeId, current_root_dense) for every projection
+    // node.
+    let mut pairs: Vec<(NodeId, u32)> = (0..idx.len() as u32)
+        .map(|d| (idx.node_id_of(d), uf.find(d)))
         .collect();
 
     // Compute the minimum NodeId per current root to canonicalize component IDs
@@ -69,41 +74,47 @@ pub fn wcc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
 /// union-find roots, avoiding the result-Vec allocation.
 #[must_use]
 pub fn wcc_count(proj: &GraphProjection) -> usize {
-    let Some(max_row) = proj.max_row() else {
+    let idx = RowIndex::new(proj);
+    if idx.is_empty() {
         return 0;
-    };
-    let mut uf = UnionFind::new(max_row as usize + 1);
-    union_all_edges(proj, &mut uf);
+    }
+    let mut uf = UnionFind::new(idx.len());
+    union_all_edges(proj, &idx, &mut uf);
 
     let mut count = 0usize;
-    for nid in proj.iter_nodes() {
-        let row = node_row(nid);
-        if uf.find(row) == row {
+    for d in 0..idx.len() as u32 {
+        if uf.find(d) == d {
             count += 1;
         }
     }
     count
 }
 
-/// Union every projection edge (directed → undirected) into `uf`.
-fn union_all_edges(proj: &GraphProjection, uf: &mut UnionFind) {
-    for nid in proj.iter_nodes() {
-        let row = node_row(nid);
+/// Union every projection edge (directed → undirected) into `uf`. Edges whose
+/// endpoints land outside the projection scope are skipped — matches the
+/// in-degree counting guard in topological-sort.
+fn union_all_edges(proj: &GraphProjection, idx: &RowIndex, uf: &mut UnionFind) {
+    for d in 0..idx.len() as u32 {
+        let nid = idx.node_id_of(d);
         for nb in proj.out_neighbors(nid) {
-            uf.union(row, node_row(nb.node_id));
+            if let Some(other) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                uf.union(d, other);
+            }
         }
-        // `in_neighbors` is redundant after every out-edge is unioned (each edge
-        // appears once in `out_neighbors(source)` and once in
+        // `in_neighbors` is redundant after every out-edge is unioned (each
+        // edge appears once in `out_neighbors(source)` and once in
         // `in_neighbors(target)`), but iterating in_neighbors as well does no
-        // harm and guarantees the undirected closure even if a future projection
-        // ever stored asymmetric out/in adjacency.
+        // harm and guarantees the undirected closure even if a future
+        // projection ever stored asymmetric out/in adjacency.
         for nb in proj.in_neighbors(nid) {
-            uf.union(row, node_row(nb.node_id));
+            if let Some(other) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                uf.union(d, other);
+            }
         }
     }
 }
 
-/// Path-compressing union-find with union-by-rank.
+/// Path-compressing union-find with union-by-rank. Sized by live-node count.
 struct UnionFind {
     parent: Vec<u32>,
     rank: Vec<u8>,
@@ -156,15 +167,18 @@ impl UnionFind {
 /// for an empty projection. Pairs are sorted ASC by `NodeId` per spec 16 §E12.
 #[must_use]
 pub fn scc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
-    let state = run_tarjan(proj);
+    let idx = RowIndex::new(proj);
+    let state = run_tarjan(proj, &idx);
 
-    let mut result: Vec<(NodeId, u64)> = Vec::with_capacity(proj.node_count());
+    let mut result: Vec<(NodeId, u64)> = Vec::with_capacity(idx.len());
     for component in &state.components {
-        let min_row = *component.iter().min().expect("SCC component is non-empty");
-        let min_node = NodeId::new(u64::from(min_row) + 1);
-        for &row in component {
-            let node = NodeId::new(u64::from(row) + 1);
-            result.push((node, min_node.get()));
+        let min_node = component
+            .iter()
+            .map(|&d| idx.node_id_of(d).get())
+            .min()
+            .expect("SCC component is non-empty");
+        for &d in component {
+            result.push((idx.node_id_of(d), min_node));
         }
     }
     result.sort_by_key(|&(nid, _)| nid.get());
@@ -174,22 +188,24 @@ pub fn scc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
 /// Count strongly connected components.
 #[must_use]
 pub fn scc_count(proj: &GraphProjection) -> usize {
-    let state = run_tarjan(proj);
+    let idx = RowIndex::new(proj);
+    let state = run_tarjan(proj, &idx);
     state.components.len()
 }
 
 struct TarjanState {
     /// Monotonic discovery counter.
     index: u32,
-    /// Stack of in-progress rows (Tarjan's "S").
+    /// Stack of in-progress dense indices (Tarjan's "S").
     stack: Vec<u32>,
-    /// `on_stack[row]` = true while `row` is on `stack`.
+    /// `on_stack[dense]` = true while `dense` is on `stack`.
     on_stack: Vec<bool>,
-    /// `indices[row]` = discovery time; `SENTINEL` while unvisited.
+    /// `indices[dense]` = discovery time; `SENTINEL` while unvisited.
     indices: Vec<u32>,
-    /// `lowlinks[row]` = lowest discovery time reachable from `row`'s subtree.
+    /// `lowlinks[dense]` = lowest discovery time reachable from `dense`'s
+    /// subtree.
     lowlinks: Vec<u32>,
-    /// Completed components, one `Vec<u32>` per SCC.
+    /// Completed components, one `Vec<u32>` (dense indices) per SCC.
     components: Vec<Vec<u32>>,
 }
 
@@ -206,14 +222,11 @@ impl TarjanState {
     }
 }
 
-fn run_tarjan(proj: &GraphProjection) -> TarjanState {
-    let size = proj.max_row().map_or(0, |m| m as usize + 1);
-    let mut state = TarjanState::with_capacity(size);
-
-    for nid in proj.iter_nodes() {
-        let row = node_row(nid);
-        if state.indices[row as usize] == SENTINEL {
-            tarjan_strongconnect(&mut state, row, proj);
+fn run_tarjan(proj: &GraphProjection, idx: &RowIndex) -> TarjanState {
+    let mut state = TarjanState::with_capacity(idx.len());
+    for d in 0..idx.len() as u32 {
+        if state.indices[d as usize] == SENTINEL {
+            tarjan_strongconnect(&mut state, d, proj, idx);
         }
     }
     state
@@ -221,27 +234,32 @@ fn run_tarjan(proj: &GraphProjection) -> TarjanState {
 
 /// Iterative Tarjan strongconnect with an explicit call stack (donor pattern,
 /// `aether-db-algorithms/src/structural.rs:193-258`).
-fn tarjan_strongconnect(state: &mut TarjanState, start: u32, proj: &GraphProjection) {
-    // Frame: (current_row, next_neighbor_index_into_cached_list).
+fn tarjan_strongconnect(
+    state: &mut TarjanState,
+    start: u32,
+    proj: &GraphProjection,
+    idx: &RowIndex,
+) {
+    // Frame: (current_dense, next_neighbor_index_into_cached_list).
     let mut call_stack: Vec<(u32, usize)> = Vec::new();
-    // Per-DFS neighbor cache: row → list of out-neighbor rows. Filled lazily on
-    // first visit so we don't re-walk `proj.out_neighbors` on every
-    // resume-from-child iteration.
+    // Per-DFS neighbor cache: dense → list of out-neighbor dense indices.
+    // Filled lazily on first visit so we don't re-walk `proj.out_neighbors` on
+    // every resume-from-child iteration. Neighbors outside the projection
+    // scope are dropped at build time.
     let mut neighbors_cache: HashMap<u32, Vec<u32>> = HashMap::new();
 
-    let si = start as usize;
-    state.indices[si] = state.index;
-    state.lowlinks[si] = state.index;
+    state.indices[start as usize] = state.index;
+    state.lowlinks[start as usize] = state.index;
     state.index += 1;
     state.stack.push(start);
-    state.on_stack[si] = true;
+    state.on_stack[start as usize] = true;
     call_stack.push((start, 0));
 
     while let Some(&mut (v, ref mut ni)) = call_stack.last_mut() {
         let neighbors = neighbors_cache.entry(v).or_insert_with(|| {
-            proj.out_neighbors(NodeId::new(u64::from(v) + 1))
+            proj.out_neighbors(idx.node_id_of(v))
                 .iter()
-                .map(|nb| node_row(nb.node_id))
+                .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
                 .collect()
         });
 
@@ -273,7 +291,8 @@ fn tarjan_strongconnect(state: &mut TarjanState, start: u32, proj: &GraphProject
             }
 
             if state.lowlinks[fi] == state.indices[fi] {
-                // `finished` is the root of an SCC; pop the stack until we hit it.
+                // `finished` is the root of an SCC; pop the stack until we
+                // hit it.
                 let mut component = Vec::new();
                 while let Some(w) = state.stack.pop() {
                     state.on_stack[w as usize] = false;
@@ -292,14 +311,13 @@ fn tarjan_strongconnect(state: &mut TarjanState, start: u32, proj: &GraphProject
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Map a `NodeId` (1-based per selene-graph) to its row index (0-based).
+/// Map a `NodeId` (1-based per selene-graph) to its sparse row index
+/// (0-based). Used at the projection boundary to look up neighbor rows before
+/// converting to dense indices via [`RowIndex`].
 ///
-/// Why: BRIEF-50's CSR row indexing invariant — `NodeId::new(row + 1)` is the
-/// inverse. All structural algorithms operate on row indices internally
-/// because state arrays are sized to `max_row + 1` per spec 16 §E11.
+/// Why: `NodeId::new(0)` is the TOMBSTONE sentinel; alive nodes start at row
+/// 0 with `NodeId(1)`. Spec 16 §E11.
 #[inline]
-fn node_row(nid: NodeId) -> u32 {
-    // Subtract 1 because NodeId::new(0) is the TOMBSTONE sentinel; alive nodes
-    // start at row 0 with NodeId(1).
+fn node_sparse_row(nid: NodeId) -> u32 {
     (nid.get() - 1) as u32
 }
