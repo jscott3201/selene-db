@@ -213,7 +213,10 @@ impl ManifestError {
             Self::ProcedureSchemaCompileFailed { field, .. } => match *field {
                 "input_schema" => Gate::ProcedureInputSchemaCompiles,
                 "output_schema" => Gate::ProcedureOutputSchemaCompiles,
-                _ => Gate::ProcedureInputSchemaCompiles,
+                other => unreachable!(
+                    "ProcedureSchemaCompileFailed.field must be input_schema or output_schema, \
+                     got {other:?}"
+                ),
             },
             Self::ProcedureCapabilityMalformed { .. } => Gate::ProcedureCapabilityFormat,
             Self::ProcedureNameTooLong { .. } => Gate::ProcedureNameLengthBounded,
