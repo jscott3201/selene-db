@@ -1,0 +1,7 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "empty", nodes: 0, edges: 0 }
+INVOCATION { algorithm: "wcc", params: "" }
+RESULT EMPTY

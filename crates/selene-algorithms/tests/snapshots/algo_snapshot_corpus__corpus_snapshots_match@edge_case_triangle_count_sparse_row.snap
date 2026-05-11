@@ -1,0 +1,10 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "sparse-row-triangle{total=100,scope=3}", nodes: 3, edges: 3 }
+INVOCATION { algorithm: "triangle_count", params: "" }
+RESULT
+  n10 -> count=1
+  n50 -> count=1
+  n90 -> count=1

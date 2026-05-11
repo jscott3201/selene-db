@@ -18,7 +18,16 @@ smallvec.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 proptest.workspace = true
+selene-testing = { path = "../selene-testing", version = "0.0.0" }
+
+[features]
+test-harness = []
+
+[[test]]
+name = "algo_snapshot_corpus"
+required-features = ["test-harness"]
 
 [lints]
 workspace = true

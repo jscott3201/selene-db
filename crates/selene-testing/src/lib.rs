@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod algo_corpus;
 pub mod analyzed_corpus;
 pub mod bench_fixtures;
 pub mod bench_profiles;
@@ -17,6 +18,10 @@ pub mod mock_procedure_registry;
 pub mod pack_corpus;
 pub mod plan_corpus;
 
+pub use algo_corpus::{
+    ALGORITHM_COVERAGE, AlgoCorpus, AlgoCorpusCategory, AlgoCorpusEntry, AlgoCorpusGraph,
+    AlgoCorpusInvocation, AlgoSurface,
+};
 pub use bench_fixtures::BenchFixture;
 pub use bench_profiles::BenchProfile;
 pub use closed_graph_fixtures::{person_company_graph_type, person_only_graph_type};

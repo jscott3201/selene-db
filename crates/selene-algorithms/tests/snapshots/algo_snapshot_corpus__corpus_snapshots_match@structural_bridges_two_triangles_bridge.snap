@@ -1,0 +1,7 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "two-triangles-bridge", nodes: 6, edges: 14 }
+INVOCATION { algorithm: "bridges", params: "" }
+RESULT EMPTY

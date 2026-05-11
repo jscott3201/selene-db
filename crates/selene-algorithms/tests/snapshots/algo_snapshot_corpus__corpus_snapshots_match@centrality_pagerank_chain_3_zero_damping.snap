@@ -1,0 +1,10 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "chain-3", nodes: 3, edges: 2 }
+INVOCATION { algorithm: "pagerank", params: "damping=0.00 max_iter=10 tolerance=0.000001" }
+RESULT
+  n0 -> 0.333333
+  n1 -> 0.333333
+  n2 -> 0.333333
