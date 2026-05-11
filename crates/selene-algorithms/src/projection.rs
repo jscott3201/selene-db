@@ -230,4 +230,14 @@ impl GraphProjection {
     pub fn edge_labels(&self) -> &[IStr] {
         &self.edge_labels
     }
+
+    /// Maximum row index in the projection's node bitmap, if any.
+    ///
+    /// Used by intra-crate algorithm modules to size state arrays
+    /// (e.g., Tarjan's `disc` / `low` arrays sized to `max_row + 1` per
+    /// donor `aether-db-algorithms/src/structural.rs:162`).
+    #[must_use]
+    pub(crate) fn max_row(&self) -> Option<u32> {
+        self.nodes.max()
+    }
 }
