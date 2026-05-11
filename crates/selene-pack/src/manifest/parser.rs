@@ -205,9 +205,11 @@ fn validate_schema_path(
         Some("path must be relative")
     } else if path.as_bytes().get(1) == Some(&b':') {
         Some("windows drive prefixes are not allowed")
-    } else if path.split(['/', '\\']).any(|component| component == "..") {
+    } else if path.contains('\\') {
+        Some("windows-style separators are not allowed; use '/'")
+    } else if path.split('/').any(|component| component == "..") {
         Some("parent directory components are not allowed")
-    } else if path.split(['/', '\\']).any(str::is_empty) {
+    } else if path.split('/').any(str::is_empty) {
         Some("empty path components are not allowed")
     } else {
         None

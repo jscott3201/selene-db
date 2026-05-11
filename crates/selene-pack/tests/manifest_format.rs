@@ -2,12 +2,11 @@
 
 use selene_pack::{
     MANIFEST_SCHEMA_DRAFT, ManifestError, ManifestMutability, ManifestSchemaRef, ManifestTier,
-    ProcedurePackManifest, manifest_json_schema, parse_manifest,
+    PLACEHOLDER_CONTENT_HASH, ProcedurePackManifest, manifest_json_schema, parse_manifest,
 };
 use serde_json::{Value, json};
 
-const PLACEHOLDER_HASH: &str =
-    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+const PLACEHOLDER_HASH: &str = PLACEHOLDER_CONTENT_HASH;
 
 fn valid_manifest() -> Value {
     json!({
@@ -394,6 +393,10 @@ fn unsafe_schema_paths_are_rejected() {
         r"C:\schemas\input.json",
         r"\\server\share\input.json",
         "schemas//input.json",
+        // Per §O C12: manifests are POSIX-only paths. A non-leading `\` must be
+        // rejected so a Windows-style relative path cannot slip through the
+        // leading-separator and drive-prefix checks.
+        r"subdir\file.json",
     ] {
         let mut value = valid_manifest();
         only_procedure_mut(&mut value).insert(

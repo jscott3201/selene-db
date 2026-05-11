@@ -16,7 +16,8 @@ mod registry;
 pub use error::RegistryError;
 pub use manifest::{
     MANIFEST_SCHEMA_DRAFT, ManifestError, ManifestMutability, ManifestProcedureEntry,
-    ManifestSchemaRef, ManifestTier, ProcedurePackManifest, manifest_json_schema, parse_manifest,
+    ManifestSchemaRef, ManifestTier, PLACEHOLDER_CONTENT_HASH, ProcedurePackManifest,
+    SCHEMA_VERSION_SUPPORTED, manifest_json_schema, parse_manifest,
 };
 pub use registry::ProcedurePackRegistry;
 pub use selene_core::IStr;
