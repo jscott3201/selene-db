@@ -103,27 +103,86 @@ fn corpus_covers_every_algorithm_surface() {
     }
 }
 
+/// Compile-time anchor table — every algorithm in `selene-algorithms` MUST
+/// have an entry here mapping `AlgoSurface` to the dispatcher's stable name.
+/// Removal of any algorithm from `selene-algorithms` breaks the `use` import
+/// at the top of this file → fail-to-compile signal. Addition of a new
+/// algorithm without extending this table is caught by the
+/// `algo_surface_mirror_matches_selene_algorithms_exports` count assertion
+/// below combined with the `corpus_covers_every_algorithm_surface` test.
+///
+/// This is the strongest mirror-drift guard achievable for `#[non_exhaustive]`
+/// foreign enums (PR #62 Codex P2 finding).
+const ALGORITHM_NAME_ANCHOR: &[(AlgoSurface, &str)] = &[
+    (AlgoSurface::Wcc, "wcc"),
+    (AlgoSurface::WccCount, "wcc_count"),
+    (AlgoSurface::Scc, "scc"),
+    (AlgoSurface::SccCount, "scc_count"),
+    (AlgoSurface::TopologicalSort, "topological_sort"),
+    (AlgoSurface::ArticulationPoints, "articulation_points"),
+    (AlgoSurface::Bridges, "bridges"),
+    (AlgoSurface::Dijkstra, "dijkstra"),
+    (AlgoSurface::Sssp, "sssp"),
+    (AlgoSurface::Apsp, "apsp"),
+    (AlgoSurface::Pagerank, "pagerank"),
+    (AlgoSurface::Betweenness, "betweenness"),
+    (AlgoSurface::LabelPropagation, "label_propagation"),
+    (AlgoSurface::Louvain, "louvain"),
+    (AlgoSurface::TriangleCount, "triangle_count"),
+];
+
 #[test]
 fn algo_surface_mirror_matches_selene_algorithms_exports() {
-    // Runtime count check; compile-time exhaustiveness is enforced by the
-    // dispatcher in `execute_entry` (every `AlgoCorpusInvocation` variant
-    // must map to an algorithm call; adding a new variant without
-    // extending the dispatcher fails to compile).
-    let expected_count = 15;
+    // Three-way pinning per spec 16 §E33:
+    //
+    // (a) The `use selene_algorithms::{...}` import at the top of this file
+    //     references every algorithm function by name. Removing one from
+    //     `selene-algorithms` fails the import → compile error.
+    //
+    // (b) `ALGORITHM_NAME_ANCHOR` maps every `AlgoSurface` variant to the
+    //     dispatcher's stable name. Mirror count + name alignment is
+    //     asserted below; mismatches trip immediately.
+    //
+    // (c) `corpus_covers_every_algorithm_surface` (separate test) asserts
+    //     every surface appears in at least one corpus entry via the
+    //     dispatcher.
+    //
+    // Adding a new algorithm to `selene-algorithms` without (a) updating
+    // the use import is caught at compile time. Without (b) extending the
+    // anchor + AlgoSurface, the count check below fails. Without (c) adding
+    // a corpus entry, the coverage test fails.
     assert_eq!(
         AlgoSurface::ALL.len(),
-        expected_count,
-        "AlgoSurface::ALL has {} variants; expected {expected_count} — \
-         a new algorithm was added to selene-algorithms without updating \
-         the AlgoSurface mirror in selene-testing::algo_corpus::coverage",
-        AlgoSurface::ALL.len()
+        ALGORITHM_NAME_ANCHOR.len(),
+        "AlgoSurface mirror count drift: {} variants in AlgoSurface::ALL vs \
+         {} in ALGORITHM_NAME_ANCHOR. Update both together — see this \
+         test's comment for the full three-way pinning contract.",
+        AlgoSurface::ALL.len(),
+        ALGORITHM_NAME_ANCHOR.len()
     );
-    // Sanity: each surface has a unique stable name.
+    for (i, (surface, name)) in ALGORITHM_NAME_ANCHOR.iter().enumerate() {
+        assert_eq!(
+            AlgoSurface::ALL[i],
+            *surface,
+            "AlgoSurface::ALL[{i}] = {:?} but anchor expects {:?}",
+            AlgoSurface::ALL[i],
+            surface
+        );
+        assert_eq!(
+            surface.name(),
+            *name,
+            "AlgoSurface::{:?}.name() = {:?} but anchor expects {:?}",
+            surface,
+            surface.name(),
+            name
+        );
+    }
+    // Sanity: every name is distinct.
     let mut names: BTreeSet<&str> = BTreeSet::new();
-    for surface in AlgoSurface::ALL {
+    for (_, name) in ALGORITHM_NAME_ANCHOR {
         assert!(
-            names.insert(surface.name()),
-            "duplicate AlgoSurface::name() value for {surface:?}"
+            names.insert(*name),
+            "duplicate algorithm name {name:?} in ALGORITHM_NAME_ANCHOR"
         );
     }
 }

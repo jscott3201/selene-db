@@ -2228,7 +2228,6 @@ name = "selene-testing"
 version = "0.0.0"
 dependencies = [
  "proptest",
- "selene-algorithms",
  "selene-core",
  "selene-gql",
  "selene-graph",

@@ -220,11 +220,21 @@ fn render_result(result: &AlgoResult<'_>, out: &mut Vec<String>) {
     }
 }
 
-/// Render a `NodeId` as `n<sparse_row>` per §E31. Assumes `NodeId.get() >= 1`
+/// Render a `NodeId` as `n<sparse_row>` per §E31. Requires `NodeId.get() >= 1`
 /// (the §E20 invariant in selene-graph's store: row 0 = NodeId 1; row N-1 =
 /// NodeId N). Corpus fixtures are append-only so the row mapping is always
 /// `row = NodeId.get() - 1`.
+///
+/// Rejects `NodeId(0)` — the tombstone sentinel per D11 — with a distinct
+/// `<tombstone>` token rather than saturating to `n0`. This protects the
+/// snapshot harness's role as a drift catcher: if an algorithm regresses
+/// and surfaces a tombstone, the alias must NOT collide with a valid row 0
+/// node. (PR #62 Codex P2 finding.)
 fn render_node(nid: NodeId) -> String {
-    let row = nid.get().saturating_sub(1);
+    let raw = nid.get();
+    if raw == 0 {
+        return "<tombstone>".to_string();
+    }
+    let row = raw - 1;
     format!("n{}", row)
 }
