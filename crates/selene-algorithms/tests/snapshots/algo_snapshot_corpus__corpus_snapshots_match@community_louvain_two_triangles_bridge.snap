@@ -1,0 +1,13 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "two-triangles-bridge", nodes: 6, edges: 14 }
+INVOCATION { algorithm: "louvain", params: "max_iter=50" }
+RESULT
+  n0 -> community=2 level=0
+  n1 -> community=2 level=0
+  n2 -> community=2 level=0
+  n3 -> community=6 level=0
+  n4 -> community=6 level=0
+  n5 -> community=6 level=0

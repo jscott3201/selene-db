@@ -1,0 +1,11 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "k4-bidir", nodes: 4, edges: 12 }
+INVOCATION { algorithm: "triangle_count", params: "" }
+RESULT
+  n0 -> count=3
+  n1 -> count=3
+  n2 -> count=3
+  n3 -> count=3

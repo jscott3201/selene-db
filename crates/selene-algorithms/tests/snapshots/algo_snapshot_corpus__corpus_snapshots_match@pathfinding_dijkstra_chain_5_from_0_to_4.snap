@@ -1,0 +1,8 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "chain-5", nodes: 5, edges: 4 }
+INVOCATION { algorithm: "dijkstra", params: "from=n0 to=n4" }
+RESULT PATH cost=4.000000
+  nodes: [n0, n1, n2, n3, n4]

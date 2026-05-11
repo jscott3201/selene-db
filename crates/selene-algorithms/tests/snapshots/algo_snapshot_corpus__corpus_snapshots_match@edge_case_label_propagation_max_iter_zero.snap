@@ -1,0 +1,10 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "k3-directed-cycle", nodes: 3, edges: 3 }
+INVOCATION { algorithm: "label_propagation", params: "max_iter=0" }
+RESULT
+  n0 -> label=1
+  n1 -> label=2
+  n2 -> label=3

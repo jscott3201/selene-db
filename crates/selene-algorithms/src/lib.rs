@@ -29,6 +29,8 @@ pub mod community;
 pub mod error;
 pub mod pathfinding;
 pub mod projection;
+#[cfg(any(test, feature = "test-harness"))]
+pub mod snapshot_summary;
 pub mod structural;
 
 pub use catalog::{ProjectionCatalog, ProjectionRef};
@@ -37,6 +39,10 @@ pub use community::{label_propagation, louvain, triangle_count};
 pub use error::AlgorithmsError;
 pub use pathfinding::{PathResult, PathfindingError, apsp, dijkstra, sssp};
 pub use projection::{GraphProjection, ProjNeighbor, ProjectionConfig};
+#[cfg(any(test, feature = "test-harness"))]
+pub use snapshot_summary::{
+    AlgoResult, AlgoSnapshot, AlgoSnapshotInput, GraphSummary, algo_summary,
+};
 pub use structural::{
     TopoSortError, articulation_points, bridges, scc, scc_count, topological_sort, wcc, wcc_count,
 };

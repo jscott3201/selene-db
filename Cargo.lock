@@ -2101,11 +2101,13 @@ dependencies = [
 name = "selene-algorithms"
 version = "0.0.0"
 dependencies = [
+ "insta",
  "parking_lot",
  "proptest",
  "roaring",
  "selene-core",
  "selene-graph",
+ "selene-testing",
  "smallvec",
  "thiserror",
 ]

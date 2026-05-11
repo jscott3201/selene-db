@@ -1,0 +1,13 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "star-bidir-5", nodes: 6, edges: 10 }
+INVOCATION { algorithm: "pagerank", params: "damping=0.85 max_iter=100 tolerance=0.000001" }
+RESULT
+  n0 -> 0.472973
+  n1 -> 0.105405
+  n2 -> 0.105405
+  n3 -> 0.105405
+  n4 -> 0.105405
+  n5 -> 0.105405

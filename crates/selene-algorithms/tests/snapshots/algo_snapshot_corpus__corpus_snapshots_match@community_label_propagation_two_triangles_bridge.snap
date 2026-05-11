@@ -1,0 +1,13 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "two-triangles-bridge", nodes: 6, edges: 14 }
+INVOCATION { algorithm: "label_propagation", params: "max_iter=50" }
+RESULT
+  n0 -> label=2
+  n1 -> label=2
+  n2 -> label=2
+  n3 -> label=2
+  n4 -> label=2
+  n5 -> label=2

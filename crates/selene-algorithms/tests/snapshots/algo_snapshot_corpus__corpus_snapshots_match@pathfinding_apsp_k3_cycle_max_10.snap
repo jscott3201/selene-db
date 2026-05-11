@@ -1,0 +1,13 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "k3-directed-cycle", nodes: 3, edges: 3 }
+INVOCATION { algorithm: "apsp", params: "max_nodes=10" }
+RESULT
+  n0 -> n1 cost=1.000000
+  n0 -> n2 cost=2.000000
+  n1 -> n0 cost=2.000000
+  n1 -> n2 cost=1.000000
+  n2 -> n0 cost=1.000000
+  n2 -> n1 cost=2.000000

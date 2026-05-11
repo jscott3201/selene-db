@@ -1,0 +1,10 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "k3-directed-cycle", nodes: 3, edges: 3 }
+INVOCATION { algorithm: "betweenness", params: "sample_size=full" }
+RESULT
+  n0 -> 1.000000
+  n1 -> 1.000000
+  n2 -> 1.000000

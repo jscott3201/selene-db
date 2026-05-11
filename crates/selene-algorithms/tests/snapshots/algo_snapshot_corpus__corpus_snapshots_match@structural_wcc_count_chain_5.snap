@@ -1,0 +1,7 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "chain-5", nodes: 5, edges: 4 }
+INVOCATION { algorithm: "wcc_count", params: "" }
+RESULT COUNT 1

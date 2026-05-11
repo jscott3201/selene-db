@@ -1,0 +1,12 @@
+---
+source: crates/selene-algorithms/tests/algo_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+GRAPH { fixture: "chain-5", nodes: 5, edges: 4 }
+INVOCATION { algorithm: "topological_sort", params: "" }
+RESULT
+  n0 -> position=0
+  n1 -> position=1
+  n2 -> position=2
+  n3 -> position=3
+  n4 -> position=4
