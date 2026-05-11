@@ -2101,6 +2101,7 @@ dependencies = [
 name = "selene-algorithms"
 version = "0.0.0"
 dependencies = [
+ "parking_lot",
  "proptest",
  "roaring",
  "selene-core",

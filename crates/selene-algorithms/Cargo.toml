@@ -12,6 +12,7 @@ description = "Graph algorithms for selene-db (projection, structural, pathfindi
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
+parking_lot.workspace = true
 roaring.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
