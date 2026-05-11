@@ -8,6 +8,31 @@ pub const GATE_COVERAGE: &[PackGate] = PackGate::ALL;
 /// Every pack lifecycle event kind the corpus must exercise at least once.
 pub const LIFECYCLE_EVENT_COVERAGE: &[PackLifecycleEventKind] = PackLifecycleEventKind::ALL;
 
+/// Manifest-validation path gates for successful manifest fixtures.
+pub const MANIFEST_PATH_GATES_AS_DECLARED: &[PackGate] = &[
+    PackGate::ManifestSyntaxAndSchema,
+    PackGate::ManifestTypedShape,
+    PackGate::ManifestSchemaVersionSupported,
+    PackGate::PackVersionWellFormed,
+    PackGate::PackNameLexical,
+    PackGate::PackProcedureCountBounded,
+    PackGate::ProcedureNamesUnique,
+    PackGate::ProcedureNameLexical,
+    PackGate::ReservedNamespace,
+    PackGate::ProcedureWithinPack,
+    PackGate::PersistTierRejected,
+    PackGate::TierMutabilityConsistency,
+    PackGate::ProcedureNameLengthBounded,
+    PackGate::InlineSchemaSizeBounded,
+    PackGate::InlineSchemaMetaValid,
+    PackGate::PathSchemaSafety,
+    PackGate::ProcedureInputSchemaCompiles,
+    PackGate::ProcedureOutputSchemaCompiles,
+    PackGate::ProcedureCapabilityFormat,
+    PackGate::ContentHashCanonical,
+    PackGate::ContentHashConsistency,
+];
+
 /// Stable mirror of `selene_pack::Gate` variants in declaration order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum PackGate {

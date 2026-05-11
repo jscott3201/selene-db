@@ -5,7 +5,10 @@
 pub mod coverage;
 pub mod fixtures;
 
-pub use coverage::{GATE_COVERAGE, LIFECYCLE_EVENT_COVERAGE, PackGate, PackLifecycleEventKind};
+pub use coverage::{
+    GATE_COVERAGE, LIFECYCLE_EVENT_COVERAGE, MANIFEST_PATH_GATES_AS_DECLARED, PackGate,
+    PackLifecycleEventKind,
+};
 pub use fixtures::{
     PackCorpusFixture, PackHistoryWalEntry, PackLifecycleEventPayload, PackLifecycleSinkMode,
     PackLifecycleStep, PackManifestFixture, SyntheticManifestSpec, SyntheticMutability,
@@ -291,7 +294,7 @@ const ENTRIES: &[PackCorpusEntry] = &[
             manifest: Synthetic(&MINIMAL_MANIFEST),
         },
         category: Manifest,
-        covered_gates: GATE_COVERAGE,
+        covered_gates: MANIFEST_PATH_GATES_AS_DECLARED,
         covered_events: &[],
     },
     entry!(

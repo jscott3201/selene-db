@@ -1,5 +1,6 @@
 //! Lifecycle script runner for pack snapshots.
 
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 use jiff::Timestamp;
@@ -8,14 +9,18 @@ use selene_pack::{
     ActivationError, ActivationRegistry, Active, Deprecated, LifecycleEvent, LifecycleSink,
     Principal, Staged, Uploaded, Validating,
 };
-use selene_testing::{PackLifecycleSinkMode, PackLifecycleStep};
+use selene_testing::{PackGate, PackLifecycleSinkMode, PackLifecycleStep};
 
+use super::coverage_helpers::{
+    LIFECYCLE_PATH_GATES_ACTIVATE, LIFECYCLE_PATH_GATES_STAGE, MANIFEST_PATH_GATES, gate_to_pack,
+};
 use super::manifest_materializer::upload_bytes;
 
 pub struct LifecycleRunResult {
     pub events: Vec<LifecycleEvent>,
     pub registry: ActivationRegistry,
     pub error: Option<ActivationError>,
+    pub observed_gates: BTreeSet<PackGate>,
 }
 
 pub fn run_lifecycle_script(
@@ -26,6 +31,7 @@ pub fn run_lifecycle_script(
     let mut registry = ActivationRegistry::new();
     let mut state = LifecycleState::Empty;
     let mut error = None;
+    let mut observed_gates = BTreeSet::new();
 
     for (step_index, step) in script.iter().enumerate() {
         let now = timestamp(step_index as i64);
@@ -45,8 +51,14 @@ pub fn run_lifecycle_script(
                     panic!("Validate step requires Uploaded state");
                 };
                 match uploaded.validate(&sink, now) {
-                    Ok(validating) => state = LifecycleState::Validating(validating),
+                    Ok(validating) => {
+                        observed_gates.extend(MANIFEST_PATH_GATES.iter().copied());
+                        state = LifecycleState::Validating(validating);
+                    }
                     Err(err) => {
+                        if let ActivationError::Manifest { source } = &err {
+                            observed_gates.insert(gate_to_pack(source.gate()));
+                        }
                         state = LifecycleState::Failed;
                         error = Some(err);
                     }
@@ -56,6 +68,7 @@ pub fn run_lifecycle_script(
                 let LifecycleState::Validating(validating) = state else {
                     panic!("Stage step requires Validating state");
                 };
+                observed_gates.extend(LIFECYCLE_PATH_GATES_STAGE.iter().copied());
                 match validating.stage(&sink, now) {
                     Ok(staged) => state = LifecycleState::Staged(staged),
                     Err(err) => {
@@ -68,6 +81,7 @@ pub fn run_lifecycle_script(
                 let LifecycleState::Staged(staged) = state else {
                     panic!("Activate step requires Staged state");
                 };
+                observed_gates.extend(LIFECYCLE_PATH_GATES_ACTIVATE.iter().copied());
                 match staged.activate(&sink, &mut registry, now) {
                     Ok(active) => state = LifecycleState::Active(active),
                     Err(err) => {
@@ -114,6 +128,7 @@ pub fn run_lifecycle_script(
         events: sink.events(),
         registry,
         error,
+        observed_gates,
     }
 }
 

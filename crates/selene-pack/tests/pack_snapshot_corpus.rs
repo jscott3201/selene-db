@@ -8,12 +8,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use selene_gql::{
-    ProcedureError, Session, StatementOutput, analyze, execute_statement, parse, plan,
+    BindingTable, ProcedureError, Session, StatementOutput, analyze, execute_statement, parse, plan,
 };
 use selene_graph::SharedGraph;
 use selene_pack::{
-    Gate, PackFixtureKind, PackHistorySource, PackSnapshotInput, ProcedurePackRegistry,
-    pack_summary,
+    Gate, ManifestError, PackFixtureKind, PackHistorySource, PackSnapshot, PackSnapshotInput,
+    ProcedurePackRegistry, pack_summary,
 };
 use selene_persist::WalReader;
 use selene_testing::{
@@ -21,6 +21,9 @@ use selene_testing::{
     PackCorpusFixture, PackGate, PackManifestFixture,
 };
 
+use pack_snapshot_support::coverage_helpers::{
+    MANIFEST_PATH_GATES, gate_to_pack, history_event_kind, lifecycle_event_kind,
+};
 use pack_snapshot_support::lifecycle_runner::run_lifecycle_script;
 use pack_snapshot_support::manifest_materializer::materialize_manifest;
 use pack_snapshot_support::wal_fixture::{HISTORY_GRAPH_ID, write_history_wal};
@@ -28,7 +31,7 @@ use pack_snapshot_support::wal_fixture::{HISTORY_GRAPH_ID, write_history_wal};
 #[test]
 fn corpus_snapshots_match() {
     for entry in PackCorpus::m5e().entries() {
-        let snapshot = execute_entry(entry);
+        let snapshot = execute_entry_observed(entry).snapshot;
         insta::with_settings!({ snapshot_suffix => entry.slug }, {
             insta::assert_snapshot!(snapshot.to_string());
         });
@@ -62,20 +65,22 @@ fn corpus_categories_covered() {
 
 #[test]
 fn corpus_covers_every_gate() {
-    let actual = PackCorpus::m5e()
-        .entries()
-        .flat_map(|entry| entry.covered_gates.iter().copied())
-        .collect::<BTreeSet<_>>();
+    let mut actual = BTreeSet::new();
+    for entry in PackCorpus::m5e().entries() {
+        let execution = execute_entry_observed(entry);
+        actual.extend(execution.observed_gates.iter().copied());
+    }
     let expected = GATE_COVERAGE.iter().copied().collect::<BTreeSet<_>>();
-    assert_eq!(actual, expected);
+    assert_eq!(actual, expected, "observed gates differ from GATE_COVERAGE");
 }
 
 #[test]
 fn corpus_covers_every_lifecycle_event_kind() {
-    let actual = PackCorpus::m5e()
-        .entries()
-        .flat_map(|entry| entry.covered_events.iter().copied())
-        .collect::<BTreeSet<_>>();
+    let mut actual = BTreeSet::new();
+    for entry in PackCorpus::m5e().entries() {
+        let execution = execute_entry_observed(entry);
+        actual.extend(execution.observed_events.iter().copied());
+    }
     let expected = LIFECYCLE_EVENT_COVERAGE
         .iter()
         .copied()
@@ -111,42 +116,87 @@ fn error_manifest_fixtures_observed_gates_match_declared() {
     }
 }
 
-fn execute_entry(entry: &PackCorpusEntry) -> selene_pack::PackSnapshot {
+struct EntryExecution {
+    snapshot: PackSnapshot,
+    observed_gates: BTreeSet<PackGate>,
+    observed_events: BTreeSet<selene_testing::PackLifecycleEventKind>,
+}
+
+fn execute_entry_observed(entry: &PackCorpusEntry) -> EntryExecution {
     match &entry.fixture {
         PackCorpusFixture::ManifestParse { manifest } => {
             let result = materialize_manifest(manifest);
-            pack_summary(&PackSnapshotInput {
+            let observed_gates = observed_manifest_gates(result.as_ref());
+            let snapshot = pack_summary(&PackSnapshotInput {
                 fixture_kind: PackFixtureKind::ManifestParse {
                     result: result.as_ref(),
                 },
-            })
+            });
+            EntryExecution {
+                snapshot,
+                observed_gates,
+                observed_events: BTreeSet::new(),
+            }
         }
         PackCorpusFixture::LifecycleRun { script, sink_mode } => {
             let result = run_lifecycle_script(script, *sink_mode);
-            pack_summary(&PackSnapshotInput {
+            let observed_events = result
+                .events
+                .iter()
+                .map(lifecycle_event_kind)
+                .collect::<BTreeSet<_>>();
+            let snapshot = pack_summary(&PackSnapshotInput {
                 fixture_kind: PackFixtureKind::LifecycleRun {
                     events: &result.events,
                     final_registry: &result.registry,
                     error: result.error.as_ref(),
                 },
-            })
+            });
+            EntryExecution {
+                snapshot,
+                observed_gates: result.observed_gates,
+                observed_events,
+            }
         }
         PackCorpusFixture::HashCanonical { manifest } => {
             let manifest = expect_manifest(manifest, entry.slug);
-            pack_summary(&PackSnapshotInput {
+            let snapshot = pack_summary(&PackSnapshotInput {
                 fixture_kind: PackFixtureKind::HashCanonical {
                     manifest: &manifest,
                 },
-            })
+            });
+            EntryExecution {
+                snapshot,
+                observed_gates: MANIFEST_PATH_GATES.iter().copied().collect(),
+                observed_events: BTreeSet::new(),
+            }
         }
         PackCorpusFixture::HistoryReplay { entries } => {
             let wal = write_history_wal(entries);
-            let rows = execute_history_rows(wal.path().to_path_buf());
-            pack_summary(&PackSnapshotInput {
-                fixture_kind: PackFixtureKind::HistoryRows { rows: &rows },
-            })
+            let table = execute_history_table(wal.path().to_path_buf());
+            let observed_events = entries
+                .iter()
+                .filter_map(history_event_kind)
+                .collect::<BTreeSet<_>>();
+            let snapshot = pack_summary(&PackSnapshotInput {
+                fixture_kind: PackFixtureKind::HistoryRows { table: &table },
+            });
+            EntryExecution {
+                snapshot,
+                observed_gates: BTreeSet::new(),
+                observed_events,
+            }
         }
         _ => unreachable!("unknown pack corpus fixture"),
+    }
+}
+
+fn observed_manifest_gates(
+    result: Result<&selene_pack::ProcedurePackManifest, &ManifestError>,
+) -> BTreeSet<PackGate> {
+    match result {
+        Ok(_) => MANIFEST_PATH_GATES.iter().copied().collect(),
+        Err(error) => [gate_to_pack(error.gate())].into_iter().collect(),
     }
 }
 
@@ -172,7 +222,7 @@ impl PackHistorySource for PathHistorySource {
     }
 }
 
-fn execute_history_rows(path: PathBuf) -> Vec<Vec<selene_core::Value>> {
+fn execute_history_table(path: PathBuf) -> BindingTable {
     let registry = ProcedurePackRegistry::with_builtins_and_history(Arc::new(PathHistorySource {
         path: Arc::new(path),
     }))
@@ -187,37 +237,4 @@ fn execute_history_rows(path: PathBuf) -> Vec<Vec<selene_core::Value>> {
         panic!("expected history rows");
     };
     table
-        .rows()
-        .iter()
-        .map(|row| row.values().to_vec())
-        .collect()
-}
-
-fn gate_to_pack(gate: Gate) -> PackGate {
-    match gate {
-        Gate::ManifestSyntaxAndSchema => PackGate::ManifestSyntaxAndSchema,
-        Gate::ManifestTypedShape => PackGate::ManifestTypedShape,
-        Gate::ManifestSchemaVersionSupported => PackGate::ManifestSchemaVersionSupported,
-        Gate::PackVersionWellFormed => PackGate::PackVersionWellFormed,
-        Gate::PackNameLexical => PackGate::PackNameLexical,
-        Gate::PackProcedureCountBounded => PackGate::PackProcedureCountBounded,
-        Gate::ProcedureNamesUnique => PackGate::ProcedureNamesUnique,
-        Gate::ProcedureNameLexical => PackGate::ProcedureNameLexical,
-        Gate::ProcedureWithinPack => PackGate::ProcedureWithinPack,
-        Gate::ReservedNamespace => PackGate::ReservedNamespace,
-        Gate::PersistTierRejected => PackGate::PersistTierRejected,
-        Gate::TierMutabilityConsistency => PackGate::TierMutabilityConsistency,
-        Gate::InlineSchemaSizeBounded => PackGate::InlineSchemaSizeBounded,
-        Gate::InlineSchemaMetaValid => PackGate::InlineSchemaMetaValid,
-        Gate::PathSchemaSafety => PackGate::PathSchemaSafety,
-        Gate::ProcedureInputSchemaCompiles => PackGate::ProcedureInputSchemaCompiles,
-        Gate::ProcedureOutputSchemaCompiles => PackGate::ProcedureOutputSchemaCompiles,
-        Gate::ProcedureCapabilityFormat => PackGate::ProcedureCapabilityFormat,
-        Gate::ProcedureNameLengthBounded => PackGate::ProcedureNameLengthBounded,
-        Gate::ContentHashCanonical => PackGate::ContentHashCanonical,
-        Gate::ContentHashConsistency => PackGate::ContentHashConsistency,
-        Gate::ActivationLifecycleAtomicity => PackGate::ActivationLifecycleAtomicity,
-        Gate::RegistryConflictDetection => PackGate::RegistryConflictDetection,
-        _ => panic!("unknown selene_pack::Gate variant"),
-    }
 }

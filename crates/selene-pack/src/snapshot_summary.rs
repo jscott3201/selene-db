@@ -3,6 +3,7 @@
 use std::fmt;
 
 use selene_core::Value;
+use selene_gql::BindingTable;
 
 use crate::manifest::{canonical_bytes_for_hashing, hex_lower};
 use crate::{
@@ -42,8 +43,8 @@ pub enum PackFixtureKind<'a> {
     },
     /// Rows projected from `selene.pack.history`.
     HistoryRows {
-        /// Already-projected history rows.
-        rows: &'a [Vec<Value>],
+        /// Already-projected history result table.
+        table: &'a BindingTable,
     },
 }
 
@@ -74,7 +75,7 @@ pub fn pack_summary(input: &PackSnapshotInput<'_>) -> PackSnapshot {
             error,
         } => lifecycle_summary(events, final_registry, *error),
         PackFixtureKind::HashCanonical { manifest } => hash_summary(manifest),
-        PackFixtureKind::HistoryRows { rows } => history_summary(rows),
+        PackFixtureKind::HistoryRows { table } => history_summary(table),
     }
 }
 
@@ -198,14 +199,20 @@ fn hash_summary(manifest: &ProcedurePackManifest) -> PackSnapshot {
     }
 }
 
-fn history_summary(rows: &[Vec<Value>]) -> PackSnapshot {
+fn history_summary(table: &BindingTable) -> PackSnapshot {
     PackSnapshot {
         sections: vec![PackSnapshotSection {
             title: "history",
-            lines: rows
+            lines: table
+                .rows()
                 .iter()
                 .enumerate()
-                .map(|(index, row)| format!("[{index}] {}", render_history_row(row)))
+                .map(|(index, row)| {
+                    format!(
+                        "[{index}] {}",
+                        render_history_row(table.schema(), row.values())
+                    )
+                })
                 .collect(),
         }],
     }
@@ -443,18 +450,10 @@ fn render_activation_error(error: &ActivationError) -> String {
     }
 }
 
-fn render_history_row(row: &[Value]) -> String {
+fn render_history_row(schema: &selene_gql::BindingTableSchema, row: &[Value]) -> String {
     let mut columns = Vec::new();
-    let names = [
-        "kind",
-        "pack_name",
-        "content_hash",
-        "principal",
-        "reason",
-        "error",
-        "at",
-    ];
-    for (name, value) in names.into_iter().zip(row.iter()) {
+    for (column, value) in schema.columns.iter().zip(row.iter()) {
+        let name = column.name.map_or("<unnamed>", |name| name.as_str());
         columns.push(format!("{name}={}", render_value(value)));
     }
     columns.join(" ")
@@ -480,4 +479,46 @@ fn timestamp(value: jiff::Timestamp) -> String {
 
 fn quoted(value: &str) -> String {
     format!("{value:?}")
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::{Value, intern};
+    use selene_gql::{AnalyzedType, Binding, BindingTableColumn, BindingTableSchema};
+
+    use super::{BindingTable, history_summary};
+
+    #[test]
+    fn history_render_uses_schema_column_names() {
+        let names = [
+            "kind",
+            "pack_name",
+            "content_hash",
+            "principal",
+            "reason",
+            "error",
+            "at",
+            "note",
+        ];
+        let schema = BindingTableSchema {
+            columns: names
+                .iter()
+                .map(|name| BindingTableColumn {
+                    name: Some(intern(name).expect("test column name interns")),
+                    hidden: None,
+                    ty: AnalyzedType::Dynamic,
+                })
+                .collect(),
+        };
+        let table = BindingTable::new(schema, vec![Binding::new(vec![Value::Null; names.len()])]);
+
+        let rendered = history_summary(&table).to_string();
+
+        for name in names {
+            assert!(
+                rendered.contains(&format!("{name}=NULL")),
+                "history rendering omitted schema column {name}: {rendered}"
+            );
+        }
+    }
 }
