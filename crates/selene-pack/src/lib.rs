@@ -15,9 +15,11 @@ mod registry;
 
 pub use error::RegistryError;
 pub use manifest::{
-    MANIFEST_SCHEMA_DRAFT, ManifestError, ManifestMutability, ManifestProcedureEntry,
-    ManifestSchemaRef, ManifestTier, PLACEHOLDER_CONTENT_HASH, ProcedurePackManifest,
-    SCHEMA_VERSION_SUPPORTED, manifest_json_schema, parse_manifest,
+    ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES, MANIFEST_SCHEMA_DRAFT,
+    MANIFEST_VALIDATION_COVERAGE, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH,
+    MAX_PROCEDURES_PER_PACK, ManifestError, ManifestMutability, ManifestProcedureEntry,
+    ManifestSchemaRef, ManifestTier, PLACEHOLDER_CONTENT_HASH, PROCEDURE_LEVEL_GATES,
+    ProcedurePackManifest, SCHEMA_VERSION_SUPPORTED, manifest_json_schema, parse_manifest,
 };
 pub use registry::ProcedurePackRegistry;
 pub use selene_core::IStr;

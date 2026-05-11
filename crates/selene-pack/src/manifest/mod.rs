@@ -1,6 +1,7 @@
 //! Procedure-pack manifest parsing and JSON Schema generation.
 
 mod error;
+mod gates;
 mod parser;
 mod procedures;
 mod schema;
@@ -9,6 +10,11 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use error::ManifestError;
+pub use gates::{
+    ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES,
+    MANIFEST_VALIDATION_COVERAGE, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH,
+    MAX_PROCEDURES_PER_PACK, PROCEDURE_LEVEL_GATES,
+};
 pub use parser::parse_manifest;
 pub use procedures::{ManifestMutability, ManifestProcedureEntry, ManifestSchemaRef, ManifestTier};
 pub use schema::{MANIFEST_SCHEMA_DRAFT, manifest_json_schema};

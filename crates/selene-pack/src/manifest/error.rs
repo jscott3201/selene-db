@@ -1,5 +1,7 @@
 //! Manifest parsing and validation errors.
 
+use super::Gate;
+
 /// Failure while parsing or validating a procedure-pack manifest.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -127,4 +129,94 @@ pub enum ManifestError {
         /// Stable detail string.
         detail: &'static str,
     },
+    /// Manifest procedure count exceeds the v1.0 bound.
+    #[error("manifest declares {count} procedures, exceeding limit {limit}")]
+    PackProcedureCountExceedsBound {
+        /// Procedure count found in the manifest.
+        count: usize,
+        /// Maximum accepted procedure count.
+        limit: usize,
+    },
+    /// Inline schema serialized size exceeds the v1.0 bound.
+    #[error(
+        "inline schema for procedure {procedure_name} field {field} is {size} bytes, exceeding \
+         limit {limit}"
+    )]
+    InlineSchemaSizeExceedsBound {
+        /// Raw procedure name.
+        procedure_name: String,
+        /// Field containing the inline schema.
+        field: &'static str,
+        /// Serialized size in bytes.
+        size: usize,
+        /// Maximum accepted serialized size.
+        limit: usize,
+    },
+    /// Inline procedure schema failed JSON Schema compilation.
+    #[error(
+        "inline schema for procedure {procedure_name} field {field} failed to compile: {}",
+        errors.join("; ")
+    )]
+    ProcedureSchemaCompileFailed {
+        /// Raw procedure name.
+        procedure_name: String,
+        /// Field containing the inline schema.
+        field: &'static str,
+        /// Compilation errors.
+        errors: Vec<String>,
+    },
+    /// Capability declaration does not follow the v1.0 lexical shape.
+    #[error("malformed capability {capability} for procedure {procedure_name}: {detail}")]
+    ProcedureCapabilityMalformed {
+        /// Raw procedure name.
+        procedure_name: String,
+        /// Raw capability declaration.
+        capability: String,
+        /// Stable detail string.
+        detail: &'static str,
+    },
+    /// Procedure name exceeds the v1.0 byte-length bound.
+    #[error("procedure name {procedure_name} is {length} bytes, exceeding limit {limit}")]
+    ProcedureNameTooLong {
+        /// Raw procedure name.
+        procedure_name: String,
+        /// Procedure name byte length.
+        length: usize,
+        /// Maximum accepted byte length.
+        limit: usize,
+    },
+}
+
+impl ManifestError {
+    /// Validation gate that owns this manifest error variant.
+    #[must_use]
+    pub fn gate(&self) -> Gate {
+        match self {
+            Self::InvalidJson { .. } | Self::SchemaViolation { .. } => {
+                Gate::ManifestSyntaxAndSchema
+            }
+            Self::DeserializeError { .. } => Gate::ManifestTypedShape,
+            Self::UnsupportedSchemaVersion { .. } => Gate::ManifestSchemaVersionSupported,
+            Self::UnsupportedContentHash { .. } => Gate::ContentHashPlaceholderRecognized,
+            Self::InvalidPackVersion { .. } => Gate::PackVersionWellFormed,
+            Self::InvalidPackName { .. } => Gate::PackNameLexical,
+            Self::InvalidProcedureName { .. } => Gate::ProcedureNameLexical,
+            Self::ProcedureNameOutsidePack { .. } => Gate::ProcedureWithinPack,
+            Self::ReservedNamespaceConflict { .. } => Gate::ReservedNamespace,
+            Self::DuplicateProcedureName { .. } => Gate::ProcedureNamesUnique,
+            Self::MutabilityTierMismatch { .. } => Gate::TierMutabilityConsistency,
+            Self::PersistTierInManifest { .. } => Gate::PersistTierRejected,
+            Self::InvalidInlineSchema { .. } => Gate::InlineSchemaMetaValid,
+            Self::InvalidSchemaPath { .. } => Gate::PathSchemaSafety,
+            Self::PackProcedureCountExceedsBound { .. } => Gate::PackProcedureCountBounded,
+            Self::InlineSchemaSizeExceedsBound { .. } => Gate::InlineSchemaSizeBounded,
+            Self::ProcedureSchemaCompileFailed { field, .. } => match *field {
+                "input_schema" => Gate::ProcedureInputSchemaCompiles,
+                "output_schema" => Gate::ProcedureOutputSchemaCompiles,
+                _ => Gate::ProcedureInputSchemaCompiles,
+            },
+            Self::ProcedureCapabilityMalformed { .. } => Gate::ProcedureCapabilityFormat,
+            Self::ProcedureNameTooLong { .. } => Gate::ProcedureNameLengthBounded,
+        }
+    }
 }
