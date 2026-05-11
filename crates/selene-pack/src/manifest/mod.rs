@@ -13,7 +13,7 @@ pub use error::ManifestError;
 pub use gates::{
     ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, Gate, MANIFEST_LEVEL_GATES,
     MANIFEST_VALIDATION_COVERAGE, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH,
-    MAX_PROCEDURES_PER_PACK, PROCEDURE_LEVEL_GATES,
+    MAX_PROCEDURES_PER_PACK, PROCEDURE_LEVEL_GATES, WAL_AUDIT_COVERAGE,
 };
 pub use parser::parse_manifest;
 pub use procedures::{ManifestMutability, ManifestProcedureEntry, ManifestSchemaRef, ManifestTier};

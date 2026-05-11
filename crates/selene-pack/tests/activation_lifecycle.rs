@@ -7,7 +7,7 @@ use selene_core::intern;
 use selene_pack::{
     ACTIVATION_SEAL_COVERAGE, ActivationError, ActivationRegistry, ActivationStatus, ContentHash,
     DEFERRED_GATES, Gate, LifecycleEvent, LifecycleSink, NoopSink, PLACEHOLDER_CONTENT_HASH,
-    Principal, Uploaded,
+    Principal, Uploaded, WAL_AUDIT_COVERAGE,
 };
 use serde_json::{Value, json};
 
@@ -448,6 +448,7 @@ fn gate_partition_drift_test_still_passes() {
     for gate in Gate::ALL {
         let count = usize::from(selene_pack::MANIFEST_VALIDATION_COVERAGE.contains(gate))
             + usize::from(ACTIVATION_SEAL_COVERAGE.contains(gate))
+            + usize::from(WAL_AUDIT_COVERAGE.contains(gate))
             + usize::from(DEFERRED_GATES.contains(gate));
 
         assert_eq!(count, 1, "gate {} appears {count} times", gate.id());

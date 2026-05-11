@@ -2177,6 +2177,7 @@ dependencies = [
  "selene-core",
  "selene-gql",
  "selene-graph",
+ "selene-persist",
  "semver",
  "serde",
  "serde_json",

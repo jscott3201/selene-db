@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeRef, PredefinedValueType, PropertyDef,
-    PropertyMap, SchemaChange, SchemaPropertyIndexKind, Value, ValueType, ValueTypeCardinality,
-    intern,
+    Change, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeRef, PackLifecycleEvent,
+    PredefinedValueType, PropertyDef, PropertyMap, SchemaChange, SchemaPropertyIndexKind, Value,
+    ValueType, ValueTypeCardinality, intern,
 };
 use selene_persist::RecoveryProvider;
 use smallvec::smallvec;
@@ -265,6 +265,31 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
         GraphError::Provider(ProviderError::Inconsistent { reason })
             if reason.contains("WAL NodeTypeAdded references missing graph type index 0")
     ));
+}
+
+#[test]
+fn wal_replay_procedure_pack_lifecycle_is_graph_state_noop() {
+    let provider = CoreProvider::new_for_recovery();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::ProcedurePackLifecycle {
+                event: PackLifecycleEvent::Activated {
+                    pack_name: intern("demo_pack").unwrap(),
+                    content_hash: [0_u8; 32],
+                    principal: intern("recovery.principal").unwrap(),
+                    at: jiff::Timestamp::new(1, 0).unwrap(),
+                },
+            },
+        },
+    )
+    .unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    assert_eq!(recovered.node_count(), 0);
+    assert_eq!(recovered.edge_count(), 0);
+    assert_eq!(recovered.property_index_count(), 0);
 }
 
 #[test]

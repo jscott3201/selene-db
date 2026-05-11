@@ -26,6 +26,7 @@ pub mod identity;
 pub mod istr;
 pub mod label_set;
 pub mod origin;
+pub mod pack_lifecycle;
 pub mod property_map;
 pub mod property_value_type;
 pub mod schema;
@@ -47,6 +48,7 @@ pub use istr::{
 };
 pub use label_set::LabelSet;
 pub use origin::Origin;
+pub use pack_lifecycle::PackLifecycleEvent;
 pub use property_map::PropertyMap;
 pub use property_value_type::PropertyValueType;
 pub use schema::{

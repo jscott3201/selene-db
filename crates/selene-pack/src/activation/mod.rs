@@ -6,6 +6,7 @@ mod events;
 mod principal;
 mod registry;
 mod states;
+mod wal_sink;
 
 pub use content_hash::ContentHash;
 pub use error::ActivationError;
@@ -13,3 +14,4 @@ pub use events::{LifecycleEvent, LifecycleSink, NoopSink};
 pub use principal::Principal;
 pub use registry::{ActivationEntry, ActivationRegistry, ActivationStatus};
 pub use states::{Active, Deprecated, Disabled, Staged, Uploaded, Validating};
+pub use wal_sink::GraphCommitSink;
