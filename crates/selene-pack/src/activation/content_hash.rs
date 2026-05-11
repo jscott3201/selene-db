@@ -1,6 +1,6 @@
-//! Procedure-pack content hash placeholder.
+//! Procedure-pack content hash.
 
-use crate::ProcedurePackManifest;
+use crate::{ProcedurePackManifest, manifest::canonical_bytes_for_hashing};
 
 /// Typed procedure-pack content hash.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -8,16 +8,10 @@ use crate::ProcedurePackManifest;
 pub struct ContentHash([u8; 32]);
 
 impl ContentHash {
-    /// Return the v1.0 placeholder hash.
+    /// Compute the content hash over canonical bytes.
     #[must_use]
-    pub const fn placeholder() -> Self {
-        Self([0_u8; 32])
-    }
-
-    /// Return true when this hash is the v1.0 placeholder.
-    #[must_use]
-    pub fn is_placeholder(self) -> bool {
-        self.0 == [0_u8; 32]
+    pub fn compute(canonical_bytes: &[u8]) -> Self {
+        Self(blake3::hash(canonical_bytes).into())
     }
 
     /// Return this content hash as raw bytes.
@@ -28,11 +22,10 @@ impl ContentHash {
 
     /// Compute the typed content hash from a validated manifest.
     ///
-    /// BRIEF-45 returns the placeholder unconditionally because
-    /// [`parse_manifest`](crate::parse_manifest) already enforces the placeholder
-    /// manifest string. BRIEF-48 will replace this body with canonical hashing.
+    /// The manifest is re-canonicalized with its `content_hash` field set to
+    /// the fixed sentinel before hashing.
     #[must_use]
-    pub fn from_validated_manifest(_manifest: &ProcedurePackManifest) -> Self {
-        Self::placeholder()
+    pub fn from_validated_manifest(manifest: &ProcedurePackManifest) -> Self {
+        Self::compute(&canonical_bytes_for_hashing(manifest))
     }
 }

@@ -5,11 +5,12 @@ use std::collections::HashSet;
 use serde_json::Value;
 
 use super::{
-    Gate, MANIFEST_LEVEL_GATES, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH,
-    MAX_PROCEDURES_PER_PACK, ManifestError, ManifestMutability, ManifestProcedureEntry,
-    ManifestSchemaRef, ManifestTier, PLACEHOLDER_CONTENT_HASH, PROCEDURE_LEVEL_GATES,
-    ProcedurePackManifest, SCHEMA_VERSION_SUPPORTED, manifest_json_schema,
+    FINAL_VALIDATION_COVERAGE, Gate, MANIFEST_LEVEL_GATES, MAX_INLINE_SCHEMA_SIZE_BYTES,
+    MAX_PROCEDURE_NAME_LENGTH, MAX_PROCEDURES_PER_PACK, ManifestError, ManifestMutability,
+    ManifestProcedureEntry, ManifestSchemaRef, ManifestTier, PROCEDURE_LEVEL_GATES,
+    ProcedurePackManifest, SCHEMA_VERSION_SUPPORTED, hex_lower, manifest_json_schema,
 };
+use crate::ContentHash;
 
 /// Parse and validate a procedure-pack manifest from JSON bytes.
 ///
@@ -53,6 +54,9 @@ fn validate_manifest_invariants(manifest: &ProcedurePackManifest) -> Result<(), 
             enforce_procedure_gate(*gate, procedure, manifest)?;
         }
     }
+    for gate in FINAL_VALIDATION_COVERAGE {
+        enforce_final_gate(*gate, manifest)?;
+    }
     Ok(())
 }
 
@@ -63,7 +67,6 @@ fn enforce_manifest_gate(
     match gate {
         Gate::ManifestSyntaxAndSchema | Gate::ManifestTypedShape => Ok(()),
         Gate::ManifestSchemaVersionSupported => validate_schema_version(manifest),
-        Gate::ContentHashPlaceholderRecognized => validate_content_hash(manifest),
         Gate::PackVersionWellFormed => validate_pack_version(manifest),
         Gate::PackNameLexical => validate_pack_name(manifest),
         Gate::PackProcedureCountBounded => validate_procedure_count(manifest),
@@ -122,7 +125,6 @@ fn enforce_procedure_gate(
         Gate::ManifestSyntaxAndSchema
         | Gate::ManifestTypedShape
         | Gate::ManifestSchemaVersionSupported
-        | Gate::ContentHashPlaceholderRecognized
         | Gate::PackVersionWellFormed
         | Gate::PackNameLexical
         | Gate::PackProcedureCountBounded
@@ -132,6 +134,36 @@ fn enforce_procedure_gate(
         | Gate::ActivationLifecycleAtomicity
         | Gate::RegistryConflictDetection => {
             unreachable!("non-procedure gate in procedure-level validation slice")
+        }
+    }
+}
+
+fn enforce_final_gate(gate: Gate, manifest: &ProcedurePackManifest) -> Result<(), ManifestError> {
+    match gate {
+        Gate::ContentHashCanonical => validate_content_hash_format(manifest).map(|_| ()),
+        Gate::ContentHashConsistency => validate_content_hash_consistency(manifest),
+        Gate::ManifestSyntaxAndSchema
+        | Gate::ManifestTypedShape
+        | Gate::ManifestSchemaVersionSupported
+        | Gate::PackVersionWellFormed
+        | Gate::PackNameLexical
+        | Gate::PackProcedureCountBounded
+        | Gate::ProcedureNamesUnique
+        | Gate::ProcedureNameLexical
+        | Gate::ProcedureWithinPack
+        | Gate::ReservedNamespace
+        | Gate::PersistTierRejected
+        | Gate::TierMutabilityConsistency
+        | Gate::InlineSchemaSizeBounded
+        | Gate::InlineSchemaMetaValid
+        | Gate::PathSchemaSafety
+        | Gate::ProcedureInputSchemaCompiles
+        | Gate::ProcedureOutputSchemaCompiles
+        | Gate::ProcedureCapabilityFormat
+        | Gate::ProcedureNameLengthBounded
+        | Gate::ActivationLifecycleAtomicity
+        | Gate::RegistryConflictDetection => {
+            unreachable!("non-final gate in final validation slice")
         }
     }
 }
@@ -146,13 +178,60 @@ fn validate_schema_version(manifest: &ProcedurePackManifest) -> Result<(), Manif
     Ok(())
 }
 
-fn validate_content_hash(manifest: &ProcedurePackManifest) -> Result<(), ManifestError> {
-    if manifest.content_hash != PLACEHOLDER_CONTENT_HASH {
-        return Err(ManifestError::UnsupportedContentHash {
+fn validate_content_hash_format(
+    manifest: &ProcedurePackManifest,
+) -> Result<[u8; 32], ManifestError> {
+    let Some((prefix, hex_part)) = manifest.content_hash.split_once(':') else {
+        return Err(ManifestError::InvalidContentHashFormat {
+            content_hash: manifest.content_hash.clone(),
+        });
+    };
+    if prefix != "blake3"
+        || hex_part.len() != 64
+        || !hex_part
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    {
+        return Err(ManifestError::InvalidContentHashFormat {
             content_hash: manifest.content_hash.clone(),
         });
     }
+    decode_hash_hex(hex_part).ok_or_else(|| ManifestError::InvalidContentHashFormat {
+        content_hash: manifest.content_hash.clone(),
+    })
+}
+
+fn validate_content_hash_consistency(
+    manifest: &ProcedurePackManifest,
+) -> Result<(), ManifestError> {
+    let declared_bytes = validate_content_hash_format(manifest)?;
+    let computed = ContentHash::from_validated_manifest(manifest);
+    if computed.as_bytes() != declared_bytes {
+        return Err(ManifestError::ContentHashMismatch {
+            declared: manifest.content_hash.clone(),
+            computed: format!("blake3:{}", hex_lower(&computed.as_bytes())),
+        });
+    }
     Ok(())
+}
+
+fn decode_hash_hex(hex: &str) -> Option<[u8; 32]> {
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut out = [0_u8; 32];
+    for (idx, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
+        out[idx] = (hex_nibble(chunk[0])? << 4) | hex_nibble(chunk[1])?;
+    }
+    Some(out)
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        _ => None,
+    }
 }
 
 fn validate_pack_version(manifest: &ProcedurePackManifest) -> Result<(), ManifestError> {

@@ -10,11 +10,13 @@ use selene_persist::PersistError;
 
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
 use crate::history::PackHistorySource;
+use crate::manifest::hex_lower;
 
 // Static output schema. Nullability is implicit (per ProcedureOutputColumn contract):
 //   - kind         : always populated
 //   - pack_name    : NULL on ValidationFailed when manifest parse failed
-//   - content_hash : NULL on Deprecated/Disabled (no hash in payload per BRIEF-46 E63)
+//   - content_hash : "blake3:<64-hex>" on Staged/Activated, NULL on
+//                    Deprecated/Disabled (no hash in payload per BRIEF-46 E63)
 //                    and on ValidationFailed (no hash before validation succeeds)
 //   - principal    : always populated
 //   - reason       : NULL except on Deprecated
@@ -235,13 +237,9 @@ fn timestamp_value(at: jiff::Timestamp) -> Value {
 }
 
 fn content_hash_string(hash: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity("sha256:".len() + hash.len() * 2);
-    out.push_str("sha256:");
-    for byte in hash {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
+    let mut out = String::with_capacity("blake3:".len() + hash.len() * 2);
+    out.push_str("blake3:");
+    out.push_str(&hex_lower(hash));
     out
 }
 

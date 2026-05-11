@@ -2170,6 +2170,7 @@ dependencies = [
 name = "selene-pack"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "jiff",
  "jsonschema",
  "papaya",

@@ -12,7 +12,7 @@ use selene_gql::{
 use crate::{
     builtin::{
         BuiltInMetadata, GraphProcedureBuiltIn, MutationProcedureBuiltIn, StaticOutputColumn,
-        StaticParameter,
+        StaticParameter, UNSTABLE_BUILTIN_CONTENT_HASH,
     },
     error::RegistryError,
 };
@@ -20,12 +20,6 @@ use crate::{
 use selene_gql::ProcedureMutability;
 
 pub(crate) type NameKey = Box<[IStr]>;
-
-/// Sentinel content hash treated as "not yet computed". Until BRIEF-48 fills in
-/// real `blake3` canonical hashing, every built-in returns this placeholder;
-/// duplicate-name registration against the placeholder always conflicts so
-/// silently dropping a different implementation is impossible.
-const PLACEHOLDER_CONTENT_HASH: [u8; 32] = [0_u8; 32];
 
 #[derive(Clone)]
 pub(crate) enum TierEntry {
@@ -121,11 +115,10 @@ impl RegistryStorage {
                         attempted: pending_entry.attempted_tier,
                     });
                 }
-                // Until BRIEF-48 lands real content hashes, any duplicate is a
-                // conflict. Identical non-placeholder hashes are idempotent so
-                // BRIEF-48's hashing path is forward-compatible.
-                let unstable_hash =
-                    existing.hash == PLACEHOLDER_CONTENT_HASH || hash == PLACEHOLDER_CONTENT_HASH;
+                // Built-ins without manifest-derived hashes are not stable
+                // enough for idempotent duplicate admission.
+                let unstable_hash = existing.hash == UNSTABLE_BUILTIN_CONTENT_HASH
+                    || hash == UNSTABLE_BUILTIN_CONTENT_HASH;
                 if unstable_hash || existing.hash != hash {
                     return Err(RegistryError::Conflict {
                         name,

@@ -364,25 +364,25 @@ mod tests {
     }
 
     /// Regression: BRIEF-41 round-1 Codex F1.
-    /// Until BRIEF-48 lands real content hashes, two registrations of the
-    /// same name MUST conflict even when both hashes are the `[0u8; 32]`
-    /// placeholder, so a silently-dropped second implementation is
+    /// Built-ins without stable manifest-derived hashes use the local
+    /// `[0u8; 32]` unstable sentinel; duplicate registrations with that
+    /// sentinel MUST conflict so a silently-dropped second implementation is
     /// impossible.
     #[test]
-    fn duplicate_name_with_default_placeholder_hash_always_conflicts() {
+    fn duplicate_name_with_unstable_builtin_hash_always_conflicts() {
         let err = ProcedurePackRegistryBuilder::new()
             .with_graph_builtin(TestGraphBuiltin {
-                name: &["dup", "placeholder"],
+                name: &["dup", "unstable"],
                 tier: ProcedureTier::Graph,
                 hash: [0_u8; 32],
             })
             .with_graph_builtin(TestGraphBuiltin {
-                name: &["dup", "placeholder"],
+                name: &["dup", "unstable"],
                 tier: ProcedureTier::Graph,
                 hash: [0_u8; 32],
             })
             .build()
-            .expect_err("placeholder hash is never idempotent");
+            .expect_err("unstable built-in hash is never idempotent");
 
         assert!(matches!(err, RegistryError::Conflict { .. }));
     }

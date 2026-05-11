@@ -171,7 +171,7 @@ mod tests {
         let principal = Principal::new(intern("graph_commit_sink.principal").unwrap());
         let event = LifecycleEvent::Staged {
             pack_name: "graph_commit_sink.pack".to_owned(),
-            content_hash: ContentHash::placeholder(),
+            content_hash: ContentHash::compute(b"graph commit sink test content hash"),
             principal,
             at: Timestamp::new(1, 0).unwrap(),
         };

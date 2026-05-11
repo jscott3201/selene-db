@@ -1,35 +1,18 @@
 //! Procedure-pack manifest parsing and schema tests.
 
+mod common;
+
+use common::manifest_fixture::{
+    build_manifest_value_with_canonical_hash, parse_value, value_with_canonical_hash,
+};
 use selene_pack::{
     MANIFEST_SCHEMA_DRAFT, ManifestError, ManifestMutability, ManifestSchemaRef, ManifestTier,
-    PLACEHOLDER_CONTENT_HASH, ProcedurePackManifest, manifest_json_schema, parse_manifest,
+    ProcedurePackManifest, manifest_json_schema, parse_manifest,
 };
 use serde_json::{Value, json};
 
-const PLACEHOLDER_HASH: &str = PLACEHOLDER_CONTENT_HASH;
-
 fn valid_manifest() -> Value {
-    json!({
-        "schema_version": 1,
-        "pack_name": "demo_pack",
-        "pack_version": "1.2.3",
-        "content_hash": PLACEHOLDER_HASH,
-        "procedures": [
-            {
-                "name": "demo_pack.echo",
-                "tier": "graph",
-                "mutability": "read",
-                "input_schema": { "inline": { "type": "object" } },
-                "output_schema": { "inline": { "type": "object" } },
-                "capability_required": null
-            }
-        ]
-    })
-}
-
-fn parse_value(value: Value) -> Result<ProcedurePackManifest, ManifestError> {
-    let bytes = serde_json::to_vec(&value).expect("test JSON serializes");
-    parse_manifest(&bytes)
+    build_manifest_value_with_canonical_hash("demo_pack")
 }
 
 fn only_procedure_mut(value: &mut Value) -> &mut serde_json::Map<String, Value> {
@@ -159,9 +142,10 @@ fn reserved_selene_namespace_is_rejected() {
 
 #[test]
 fn selene_prefix_is_allowed_when_first_segment_differs() {
-    let mut value = valid_manifest();
+    let mut value = build_manifest_value_with_canonical_hash("selene_extensions");
     value["pack_name"] = json!("selene_extensions");
     only_procedure_mut(&mut value).insert("name".to_owned(), json!("selene_extensions.health"));
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("non-reserved selene prefix parses");
 
@@ -221,6 +205,7 @@ fn path_schema_ref_parses_without_checking_existence() {
         "input_schema".to_owned(),
         json!({ "path": { "relative_to": "schemas/input.json" } }),
     );
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("path schema ref parses");
 
@@ -234,6 +219,7 @@ fn path_schema_ref_parses_without_checking_existence() {
 fn capability_declaration_parses_when_present() {
     let mut value = valid_manifest();
     only_procedure_mut(&mut value).insert("capability_required".to_owned(), json!("read:journal"));
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("capability declaration parses");
 
@@ -254,16 +240,16 @@ fn capability_declaration_is_optional() {
 }
 
 #[test]
-fn non_placeholder_content_hash_is_rejected() {
+fn non_blake3_content_hash_is_rejected() {
     let mut value = valid_manifest();
     value["content_hash"] =
         json!("sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
 
-    let err = parse_value(value).expect_err("non-placeholder hash fails");
+    let err = parse_value(value).expect_err("non-blake3 hash fails");
 
     assert!(matches!(
         err,
-        ManifestError::UnsupportedContentHash { content_hash }
+        ManifestError::InvalidContentHashFormat { content_hash }
             if content_hash.starts_with("sha256:ffff")
     ));
 }

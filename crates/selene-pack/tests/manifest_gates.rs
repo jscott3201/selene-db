@@ -1,21 +1,18 @@
 //! Manifest gate behavior tests.
 
+mod common;
+
+use common::manifest_fixture::{
+    build_manifest_value_with_canonical_hash, parse_value, value_with_canonical_hash,
+};
 use selene_pack::{
     Gate, MAX_INLINE_SCHEMA_SIZE_BYTES, MAX_PROCEDURE_NAME_LENGTH, MAX_PROCEDURES_PER_PACK,
-    ManifestError, PLACEHOLDER_CONTENT_HASH, ProcedurePackManifest, parse_manifest,
+    ManifestError,
 };
 use serde_json::{Value, json};
 
 fn valid_manifest() -> Value {
-    json!({
-        "schema_version": 1,
-        "pack_name": "demo_pack",
-        "pack_version": "1.2.3",
-        "content_hash": PLACEHOLDER_CONTENT_HASH,
-        "procedures": [
-            valid_procedure("demo_pack.echo")
-        ]
-    })
+    build_manifest_value_with_canonical_hash("demo_pack")
 }
 
 fn valid_procedure(name: &str) -> Value {
@@ -27,11 +24,6 @@ fn valid_procedure(name: &str) -> Value {
         "output_schema": { "inline": { "type": "object" } },
         "capability_required": null
     })
-}
-
-fn parse_value(value: Value) -> Result<ProcedurePackManifest, ManifestError> {
-    let bytes = serde_json::to_vec(&value).expect("test JSON serializes");
-    parse_manifest(&bytes)
 }
 
 fn only_procedure_mut(value: &mut Value) -> &mut serde_json::Map<String, Value> {
@@ -72,6 +64,7 @@ fn procedure_count_at_max_succeeds() {
         .map(|idx| valid_procedure(&format!("demo_pack.proc_{idx}")))
         .collect::<Vec<_>>();
     value["procedures"] = Value::Array(procedures);
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("max procedure count parses");
 
@@ -85,6 +78,7 @@ fn inline_schema_at_max_size_succeeds() {
         "input_schema".to_owned(),
         json!({ "inline": schema_with_serialized_size(MAX_INLINE_SCHEMA_SIZE_BYTES) }),
     );
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("max inline schema size parses");
 
@@ -96,6 +90,7 @@ fn procedure_name_at_max_length_succeeds() {
     let mut value = valid_manifest();
     let name = procedure_name_with_length(MAX_PROCEDURE_NAME_LENGTH);
     only_procedure_mut(&mut value).insert("name".to_owned(), json!(name));
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("max procedure name length parses");
 
@@ -106,6 +101,7 @@ fn procedure_name_at_max_length_succeeds() {
 fn valid_capability_format_parses() {
     let mut value = valid_manifest();
     only_procedure_mut(&mut value).insert("capability_required".to_owned(), json!("read:journal"));
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("valid capability parses");
 
@@ -126,6 +122,7 @@ fn valid_inline_schemas_compile() {
         "output_schema".to_owned(),
         json!({ "inline": { "type": "integer" } }),
     );
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("valid inline schemas compile");
 
@@ -143,6 +140,7 @@ fn path_schema_skips_compile_check() {
         "output_schema".to_owned(),
         json!({ "path": { "relative_to": "schemas/output.json" } }),
     );
+    let value = value_with_canonical_hash(value);
 
     let manifest = parse_value(value).expect("path schemas are not loaded in BRIEF-44");
 

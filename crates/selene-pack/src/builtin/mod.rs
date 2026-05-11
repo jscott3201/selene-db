@@ -10,6 +10,14 @@ use selene_gql::{
     ProcedureTier, Value,
 };
 
+/// Local sentinel for built-in procedures that do not carry user-pack manifests.
+///
+/// This is distinct from the deleted user-pack content-hash placeholder.
+/// Future work may assign deterministic hashes derived from built-in code
+/// identity; until then, registry duplicate detection must not depend on
+/// built-in hash differentiation.
+pub(crate) const UNSTABLE_BUILTIN_CONTENT_HASH: [u8; 32] = [0_u8; 32];
+
 /// Static parameter metadata exposed by a built-in.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct StaticParameter {
@@ -47,10 +55,9 @@ pub(crate) trait BuiltInMetadata: Send + Sync + 'static {
     /// Static output-column metadata.
     fn output_columns_static(&self) -> &'static [StaticOutputColumn];
 
-    /// Stable content hash. BRIEF-48 replaces the zero placeholder with a
-    /// manifest-derived hash.
+    /// Stable content hash for registry duplicate detection.
     fn content_hash(&self) -> [u8; 32] {
-        [0_u8; 32]
+        UNSTABLE_BUILTIN_CONTENT_HASH
     }
 }
 
@@ -76,10 +83,43 @@ pub(crate) trait MutationProcedureBuiltIn: BuiltInMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::{BuiltInMetadata, health::SeleneHealth};
+    use std::sync::Arc;
+
+    use selene_gql::ProcedureError;
+    use selene_persist::WalReader;
+
+    use crate::history::PackHistorySource;
+
+    use super::{
+        BuiltInMetadata, UNSTABLE_BUILTIN_CONTENT_HASH, create_index::SeleneCreateIndex,
+        drop_index::SeleneDropIndex, health::SeleneHealth, pack_history::SelenePackHistory,
+    };
+
+    struct DummyHistory;
+
+    impl PackHistorySource for DummyHistory {
+        fn open_wal_reader(&self) -> Result<WalReader, ProcedureError> {
+            panic!("metadata test must not execute pack history")
+        }
+    }
 
     #[test]
-    fn builtin_content_hash_defaults_to_zero_until_manifest_hash_lands() {
-        assert_eq!(SeleneHealth.content_hash(), [0_u8; 32]);
+    fn builtin_content_hash_defaults_to_unstable_sentinel() {
+        assert_eq!(SeleneHealth.content_hash(), UNSTABLE_BUILTIN_CONTENT_HASH);
+    }
+
+    #[test]
+    fn every_platform_builtin_uses_unstable_content_hash_sentinel() {
+        let history = SelenePackHistory::new(Arc::new(DummyHistory));
+        let builtins: [&dyn BuiltInMetadata; 4] = [
+            &SeleneHealth,
+            &SeleneCreateIndex,
+            &SeleneDropIndex,
+            &history,
+        ];
+
+        for builtin in builtins {
+            assert_eq!(builtin.content_hash(), UNSTABLE_BUILTIN_CONTENT_HASH);
+        }
     }
 }

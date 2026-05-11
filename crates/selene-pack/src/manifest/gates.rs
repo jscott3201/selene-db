@@ -7,7 +7,6 @@
 //! | `ManifestSyntaxAndSchema` | `InvalidJson`, `SchemaViolation` |
 //! | `ManifestTypedShape` | `DeserializeError` |
 //! | `ManifestSchemaVersionSupported` | `UnsupportedSchemaVersion` |
-//! | `ContentHashPlaceholderRecognized` | `UnsupportedContentHash` |
 //! | `PackVersionWellFormed` | `InvalidPackVersion` |
 //! | `PackNameLexical` | `InvalidPackName` |
 //! | `PackProcedureCountBounded` | `PackProcedureCountExceedsBound` |
@@ -24,8 +23,8 @@
 //! | `ProcedureOutputSchemaCompiles` | `ProcedureSchemaCompileFailed { field: "output_schema" }` |
 //! | `ProcedureCapabilityFormat` | `ProcedureCapabilityMalformed` |
 //! | `ProcedureNameLengthBounded` | `ProcedureNameTooLong` |
-//! | `ContentHashCanonical` | BRIEF-48 deferred |
-//! | `ContentHashConsistency` | BRIEF-48 deferred |
+//! | `ContentHashCanonical` | `InvalidContentHashFormat` |
+//! | `ContentHashConsistency` | `ContentHashMismatch` |
 //! | `ActivationLifecycleAtomicity` | `WAL_AUDIT_COVERAGE` (BRIEF-46) |
 //! | `RegistryConflictDetection` | activation seal conflict detection |
 
@@ -48,8 +47,6 @@ pub enum Gate {
     ManifestTypedShape,
     /// Manifest `schema_version` is supported by this binary.
     ManifestSchemaVersionSupported,
-    /// Manifest `content_hash` is the BRIEF-43 placeholder.
-    ContentHashPlaceholderRecognized,
     /// Manifest `pack_version` is valid semver.
     PackVersionWellFormed,
     /// Manifest `pack_name` follows canonical lexical rules.
@@ -82,9 +79,9 @@ pub enum Gate {
     ProcedureCapabilityFormat,
     /// Procedure name byte length is within the v1.0 bound.
     ProcedureNameLengthBounded,
-    /// Canonical content hash enforcement, deferred to BRIEF-48.
+    /// Manifest `content_hash` follows canonical blake3 format.
     ContentHashCanonical,
-    /// Content hash consistency enforcement, deferred to BRIEF-48.
+    /// Manifest `content_hash` matches canonical manifest payload.
     ContentHashConsistency,
     /// Activation lifecycle atomicity enforcement through graph-commit audit.
     ActivationLifecycleAtomicity,
@@ -98,7 +95,6 @@ impl Gate {
         Self::ManifestSyntaxAndSchema,
         Self::ManifestTypedShape,
         Self::ManifestSchemaVersionSupported,
-        Self::ContentHashPlaceholderRecognized,
         Self::PackVersionWellFormed,
         Self::PackNameLexical,
         Self::PackProcedureCountBounded,
@@ -128,7 +124,6 @@ impl Gate {
             Self::ManifestSyntaxAndSchema => "manifest_syntax_and_schema",
             Self::ManifestTypedShape => "manifest_typed_shape",
             Self::ManifestSchemaVersionSupported => "manifest_schema_version_supported",
-            Self::ContentHashPlaceholderRecognized => "content_hash_placeholder_recognized",
             Self::PackVersionWellFormed => "pack_version_well_formed",
             Self::PackNameLexical => "pack_name_lexical",
             Self::PackProcedureCountBounded => "pack_procedure_count_bounded",
@@ -161,9 +156,6 @@ impl Gate {
             }
             Self::ManifestTypedShape => "manifest JSON deserializes into the typed shape",
             Self::ManifestSchemaVersionSupported => "manifest schema_version is supported",
-            Self::ContentHashPlaceholderRecognized => {
-                "manifest content_hash uses the v1.0 placeholder"
-            }
             Self::PackVersionWellFormed => "manifest pack_version is valid semver",
             Self::PackNameLexical => "manifest pack_name is a canonical ASCII segment",
             Self::PackProcedureCountBounded => "manifest procedure count is within bounds",
@@ -193,12 +185,15 @@ pub const MANIFEST_LEVEL_GATES: &[Gate] = &[
     Gate::ManifestSyntaxAndSchema,
     Gate::ManifestTypedShape,
     Gate::ManifestSchemaVersionSupported,
-    Gate::ContentHashPlaceholderRecognized,
     Gate::PackVersionWellFormed,
     Gate::PackNameLexical,
     Gate::PackProcedureCountBounded,
     Gate::ProcedureNamesUnique,
 ];
+
+/// Final manifest-validation gates, evaluated after procedure-level gates.
+pub const FINAL_VALIDATION_COVERAGE: &[Gate] =
+    &[Gate::ContentHashCanonical, Gate::ContentHashConsistency];
 
 /// Procedure-level gates, evaluated for each procedure in source order.
 pub const PROCEDURE_LEVEL_GATES: &[Gate] = &[
@@ -221,7 +216,6 @@ pub const MANIFEST_VALIDATION_COVERAGE: &[Gate] = &[
     Gate::ManifestSyntaxAndSchema,
     Gate::ManifestTypedShape,
     Gate::ManifestSchemaVersionSupported,
-    Gate::ContentHashPlaceholderRecognized,
     Gate::PackVersionWellFormed,
     Gate::PackNameLexical,
     Gate::PackProcedureCountBounded,
@@ -238,6 +232,8 @@ pub const MANIFEST_VALIDATION_COVERAGE: &[Gate] = &[
     Gate::ProcedureInputSchemaCompiles,
     Gate::ProcedureOutputSchemaCompiles,
     Gate::ProcedureCapabilityFormat,
+    Gate::ContentHashCanonical,
+    Gate::ContentHashConsistency,
 ];
 
 /// Activation-seal gates enforced in v1.0.
@@ -247,4 +243,4 @@ pub const ACTIVATION_SEAL_COVERAGE: &[Gate] = &[Gate::RegistryConflictDetection]
 pub const WAL_AUDIT_COVERAGE: &[Gate] = &[Gate::ActivationLifecycleAtomicity];
 
 /// Known validation gates deferred to later M5e briefs.
-pub const DEFERRED_GATES: &[Gate] = &[Gate::ContentHashCanonical, Gate::ContentHashConsistency];
+pub const DEFERRED_GATES: &[Gate] = &[];
