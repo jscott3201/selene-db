@@ -380,6 +380,37 @@ fn pq_write_qunt_below_threshold_emits_empty_and_stats_deferred() {
 }
 
 #[test]
+fn pq_stats_returns_deferred_below_threshold_without_store() {
+    let source = provider(config_pq(8, DistanceMetric::L2, false, 256));
+    apply_events(&source, deterministic_events(100, 8, 69));
+
+    let err = source
+        .quantization_stats()
+        .expect_err("PQ stats deferred below training threshold");
+
+    assert!(matches!(
+        err,
+        VectorError::PqTrainingDeferred {
+            observed_vectors: 100,
+            required: 256
+        }
+    ));
+}
+
+#[test]
+fn pq_stats_returns_ok_none_above_threshold_without_store() {
+    let source = provider(config_pq(8, DistanceMetric::L2, false, 256));
+    apply_events(&source, deterministic_events(300, 8, 70));
+
+    assert!(
+        source
+            .quantization_stats()
+            .expect("above-threshold PQ without QUNT is transient no-store")
+            .is_none()
+    );
+}
+
+#[test]
 fn pq_search_falls_back_to_f32_when_training_deferred() {
     let pq = provider(config_pq(8, DistanceMetric::L2, false, 256));
     let f32 = provider(config(8, DistanceMetric::L2, false, false));

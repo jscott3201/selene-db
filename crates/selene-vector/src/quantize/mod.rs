@@ -61,7 +61,11 @@ impl PqParams {
     /// Derive the default PQ parameters for `dim`.
     #[must_use]
     pub fn default_for_dim(dim: usize) -> Self {
-        let m_subspaces = (dim / 8).max(1).min(dim.max(1));
+        let target = (dim / 8).max(1);
+        let m_subspaces = (1..=target)
+            .rev()
+            .find(|m| dim.is_multiple_of(*m))
+            .unwrap_or(1);
         Self {
             m_subspaces,
             k_centroids: Self::K_CENTROIDS_V1,
@@ -235,5 +239,28 @@ impl QuantizedStore {
             Self::Sq8(store) => store.approx_norm(node_idx),
             Self::Pq(store) => store.approx_norm(node_idx),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PqParams;
+
+    #[test]
+    fn pq_default_for_dim_always_passes_validate_for_dim() {
+        for dim in 1..=512 {
+            let params = PqParams::default_for_dim(dim);
+            params.validate_for_dim(dim).unwrap_or_else(|err| {
+                panic!("default_for_dim({dim}) fails validate_for_dim: {err:?}")
+            });
+        }
+    }
+
+    #[test]
+    fn pq_default_for_dim_17_uses_valid_divisor() {
+        let params = PqParams::default_for_dim(17);
+
+        assert_eq!(params.m_subspaces, 1);
+        params.validate_for_dim(17).unwrap();
     }
 }

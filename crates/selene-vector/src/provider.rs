@@ -109,10 +109,13 @@ impl HnswProvider {
         }
         if self.config.quantization.enabled && self.config.quantization.method == QuantMethod::Pq {
             let params = PqParams::resolve(self.config.dim, self.config.quantization.pq);
-            return Err(VectorError::PqTrainingDeferred {
-                observed_vectors: snapshot.len(),
-                required: params.train_min_vectors,
-            });
+            let observed = snapshot.len();
+            if observed < params.train_min_vectors {
+                return Err(VectorError::PqTrainingDeferred {
+                    observed_vectors: observed,
+                    required: params.train_min_vectors,
+                });
+            }
         }
         Ok(None)
     }
