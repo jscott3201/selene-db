@@ -56,9 +56,16 @@ jobs:
           fi
 
   clippy:
-    name: clippy
+    name: clippy (${{ matrix.os }})
+    # Matrix runs on both Linux (CI host) and macOS (dev host) since we ship to both
+    # per project_post_m5f_priorities. matrix.os values are workflow-defined constants
+    # (not user input), so no command-injection surface here.
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -74,9 +81,14 @@ jobs:
           fi
 
   test:
-    name: test
+    name: test (${{ matrix.os }})
+    # Linux + macOS matrix per project_post_m5f_priorities (Windows is out of scope).
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -91,6 +103,7 @@ jobs:
 
   parse-fuzz:
     name: parse-fuzz
+    # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
