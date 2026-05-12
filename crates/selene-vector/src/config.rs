@@ -112,6 +112,9 @@ impl HnswConfig {
         if self.m < 2 {
             return Err(invalid_config("m must be at least 2"));
         }
+        if self.m > u16::MAX as usize {
+            return Err(invalid_config("m must be less than or equal to u16::MAX"));
+        }
         if self.ef_construction < self.m {
             return Err(invalid_config(
                 "ef_construction must be greater than or equal to m",

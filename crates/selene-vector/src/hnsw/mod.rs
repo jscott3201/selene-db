@@ -5,10 +5,14 @@
 //! higher layers are progressively sparser routing layers. BRIEF-58 freezes
 //! this read surface without adding insertion, search, or snapshot codecs.
 
+pub mod build;
 pub mod distance;
 mod graph;
+pub mod params;
 
+pub use build::{insert_node, random_layer, random_layer_default};
 pub use graph::{HnswGraph, HnswNode};
+pub use params::HnswParams;
 
 /// Provider-local HNSW row index.
 ///

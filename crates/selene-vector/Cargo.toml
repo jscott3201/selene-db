@@ -18,7 +18,9 @@ test-harness = []
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
 arc-swap.workspace = true
+fastrand.workspace = true
 parking_lot.workspace = true
+rkyv.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 miette.workspace = true

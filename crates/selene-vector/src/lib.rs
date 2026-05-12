@@ -4,7 +4,8 @@
 //! crate set. It owns the `VECT` [`selene_graph::IndexProvider`] registration
 //! and the future `vector.*` procedure-pack namespace.
 //!
-//! BRIEF-58 adds the read-only HNSW graph shape and scalar distance kernels:
+//! BRIEF-59 adds the read-only HNSW graph shape, scalar distance kernels,
+//! fresh-vector insertion, and replay of `IndexExtensionEvent` payloads:
 //!
 //! ```
 //! use selene_vector::distance::{cosine_similarity, dot_product, l2_squared};
@@ -16,8 +17,8 @@
 //! assert_eq!(cosine_similarity(&a, &b), 0.0);
 //! ```
 //!
-//! HNSW graph construction, search, snapshot bodies, procedure registration,
-//! quantization, and the D21 snapshot harness land in later M8 briefs.
+//! HNSW search, snapshot bodies, procedure registration, quantization, and the
+//! D21 snapshot harness land in later M8 briefs.
 //!
 //! The Rust crate name is `selene-vector`, while the procedure-pack name is
 //! `vector`. Future procedures therefore register as `vector.knn`,
@@ -26,9 +27,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub(crate) mod builder;
 pub mod config;
 pub mod error;
 pub mod hnsw;
+pub mod payload;
 pub mod procedures;
 pub mod provider;
 pub(crate) mod snapshot;
@@ -36,6 +39,7 @@ pub(crate) mod snapshot;
 pub use config::{DistanceMetric, HnswConfig};
 pub use error::VectorError;
 pub use hnsw::distance;
-pub use hnsw::{HnswGraph, HnswNode};
+pub use hnsw::{HnswGraph, HnswNode, HnswParams, insert_node, random_layer, random_layer_default};
+pub use payload::{PAYLOAD_MAGIC, VectorOp, VectorUpsertPayloadV1};
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;
