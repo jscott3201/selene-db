@@ -1,0 +1,301 @@
+//! Vector snapshot harness — closes M8 per BRIEF-64.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use selene_testing::{
+    ERROR_KIND_COVERAGE, ErrorInductionKind, MAGIC_COVERAGE, METRIC_COVERAGE, OP_COVERAGE,
+    QUANT_METHOD_COVERAGE, QuantMethodMirror, SURFACE_COVERAGE, VectorConfigSpec, VectorCorpus,
+    VectorCorpusCategory, VectorCorpusEntry, VectorCorpusGraph, VectorCorpusInvocation,
+    VectorErrorKindMirror, VectorMagicMirror, VectorMetricMirror, VectorOpMirror,
+    VectorQuantizationSpec,
+};
+use selene_vector::snapshot_summary::{
+    distance_metric_anchor, magic_constants, quant_method_anchor, vector_error_kind_for,
+    vector_op_anchor,
+};
+use selene_vector::{DistanceMetric, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, QuantMethod, VectorOp};
+
+mod vector_snapshot_support;
+
+use vector_snapshot_support::{
+    canonical_error_for_kind, config_from_spec, execute_entry, provider_with_graph,
+};
+
+#[test]
+fn corpus_snapshots_match() {
+    for entry in VectorCorpus::m8().entries() {
+        let snapshot = execute_entry(entry);
+        if cfg!(feature = "simd-simsimd") {
+            assert!(
+                !snapshot.to_string().is_empty(),
+                "SIMD smoke path produced an empty snapshot for {}",
+                entry.slug
+            );
+        } else {
+            insta::with_settings!({ snapshot_suffix => entry.slug }, {
+                insta::assert_snapshot!(snapshot.to_string());
+            });
+        }
+    }
+}
+
+#[test]
+fn corpus_slugs_are_unique() {
+    let mut seen = BTreeSet::new();
+    for entry in VectorCorpus::m8().entries() {
+        assert!(seen.insert(entry.slug), "duplicate slug {}", entry.slug);
+    }
+}
+
+#[test]
+fn corpus_categories_covered() {
+    let actual = VectorCorpus::m8()
+        .entries()
+        .map(|entry| entry.category)
+        .collect::<BTreeSet<_>>();
+    for expected in VectorCorpusCategory::ALL {
+        assert!(
+            actual.contains(expected),
+            "category {expected:?} has no corpus entry"
+        );
+    }
+}
+
+#[test]
+fn corpus_covers_every_vector_surface() {
+    let actual = covered(|entry| entry.covered_surfaces);
+    for surface in SURFACE_COVERAGE {
+        assert!(
+            actual.contains(surface),
+            "surface {} has no corpus entry",
+            surface.name()
+        );
+    }
+}
+
+#[test]
+fn corpus_covers_every_distance_metric() {
+    let actual = covered(|entry| entry.covered_metrics);
+    for metric in METRIC_COVERAGE {
+        assert!(
+            actual.contains(metric),
+            "metric {} has no corpus entry",
+            metric.name()
+        );
+    }
+}
+
+#[test]
+fn corpus_covers_every_vector_op() {
+    let actual = covered(|entry| entry.covered_ops);
+    for op in OP_COVERAGE {
+        assert!(actual.contains(op), "op {} has no corpus entry", op.name());
+    }
+}
+
+#[test]
+fn corpus_covers_every_vector_error_variant() {
+    let actual = covered(|entry| entry.covered_errors);
+    for kind in ERROR_KIND_COVERAGE {
+        assert!(
+            actual.contains(kind),
+            "error kind {} has no corpus entry",
+            kind.name()
+        );
+    }
+}
+
+#[test]
+fn corpus_covers_every_payload_magic() {
+    let actual = covered(|entry| entry.covered_magics);
+    for magic in MAGIC_COVERAGE {
+        assert!(
+            actual.contains(magic),
+            "magic {} has no corpus entry",
+            magic.name()
+        );
+    }
+}
+
+#[test]
+fn corpus_covers_every_quant_method() {
+    let actual = covered(|entry| entry.covered_quant_methods);
+    for method in QUANT_METHOD_COVERAGE {
+        assert!(
+            actual.contains(method),
+            "quant method {} has no corpus entry",
+            method.name()
+        );
+    }
+}
+
+#[test]
+fn distance_metric_mirror_matches_anchor() {
+    assert_anchor_names(
+        VectorMetricMirror::ALL.iter().map(|metric| metric.name()),
+        distance_metric_anchor().iter().map(|(name, _)| *name),
+    );
+}
+
+#[test]
+fn vector_error_kind_mirror_matches_kind_function() {
+    let errors = VectorErrorKindMirror::ALL
+        .iter()
+        .copied()
+        .map(canonical_error_for_kind)
+        .collect::<Vec<_>>();
+    assert_eq!(errors.len(), VectorErrorKindMirror::ALL.len());
+    for (mirror, error) in VectorErrorKindMirror::ALL.iter().copied().zip(&errors) {
+        assert_eq!(vector_error_kind_for(error).name(), mirror.name());
+    }
+}
+
+#[test]
+fn vector_op_mirror_matches_anchor() {
+    assert_anchor_names(
+        VectorOpMirror::ALL.iter().map(|op| op.name()),
+        vector_op_anchor().iter().map(|(name, _)| *name),
+    );
+}
+
+#[test]
+fn payload_magic_mirror_matches_constants() {
+    assert_anchor_names(
+        VectorMagicMirror::ALL.iter().map(|magic| magic.name()),
+        magic_constants().iter().map(|(name, _)| *name),
+    );
+    let expected = [
+        ("VECU", PAYLOAD_MAGIC),
+        ("VECB", PAYLOAD_MAGIC_BULK),
+        ("VGRP", *b"VGRP"),
+        ("VVEC", *b"VVEC"),
+        ("VQNT", *b"VQNT"),
+    ];
+    assert_eq!(magic_constants(), expected);
+}
+
+#[test]
+fn quant_method_mirror_matches_anchor() {
+    assert_anchor_names(
+        QuantMethodMirror::ALL.iter().map(|method| method.name()),
+        quant_method_anchor().iter().map(|(name, _)| *name),
+    );
+}
+
+#[test]
+fn corpus_fixture_graphs_build_successfully() {
+    for graph in VectorCorpusGraph::ALL {
+        let config = match graph {
+            VectorCorpusGraph::DeterministicL2_100 => config_from_spec(VectorConfigSpec::new(
+                8,
+                VectorMetricMirror::Cosine,
+                VectorQuantizationSpec::DISABLED,
+            )),
+            _ => config_from_spec(VectorConfigSpec::new(
+                4,
+                VectorMetricMirror::Cosine,
+                VectorQuantizationSpec::DISABLED,
+            )),
+        };
+        let _ = provider_with_graph(*graph, config);
+    }
+}
+
+#[test]
+fn error_fixtures_split_api_vs_synthetic() {
+    let synthetic_only = [
+        VectorErrorKindMirror::DimensionMismatch,
+        VectorErrorKindMirror::SectionDecodeFailed,
+        VectorErrorKindMirror::SectionEncodeFailed,
+        VectorErrorKindMirror::EncodeFailed,
+        VectorErrorKindMirror::InternalIndexExhausted,
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+
+    for entry in VectorCorpus::m8().entries() {
+        let Some(kind) = entry.invocation.induction_kind() else {
+            continue;
+        };
+        let expected = match &entry.invocation {
+            VectorCorpusInvocation::DeliberateApiError { kind, .. }
+                if synthetic_only.contains(kind) =>
+            {
+                panic!("synthetic-only kind {} appears as Api", kind.name());
+            }
+            VectorCorpusInvocation::DeliberateSyntheticError { kind, .. }
+                if !synthetic_only.contains(kind) =>
+            {
+                panic!("api-reachable kind {} appears as Synthetic", kind.name());
+            }
+            VectorCorpusInvocation::DeliberateApiError { .. } => ErrorInductionKind::Api,
+            VectorCorpusInvocation::DeliberateSyntheticError { .. } => {
+                ErrorInductionKind::Synthetic
+            }
+            _ => unreachable!("induction_kind filtered non-error invocation"),
+        };
+        assert_eq!(kind, expected, "{} induction kind drift", entry.slug);
+    }
+}
+
+#[test]
+fn vector_corpus_has_no_selene_vector_imports() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../selene-testing/src/vector_corpus");
+    for path in rust_files(&root) {
+        let contents = std::fs::read_to_string(&path).expect("read vector corpus source");
+        for (line_no, line) in contents.lines().enumerate() {
+            assert!(
+                !line.trim_start().starts_with("use selene_vector"),
+                "{}:{} imports selene_vector",
+                path.display(),
+                line_no + 1
+            );
+        }
+    }
+}
+
+#[test]
+fn use_import_gate_mentions_public_vector_surface() {
+    let _ = (
+        DistanceMetric::Cosine,
+        VectorOp::Insert,
+        QuantMethod::Sq8,
+        PAYLOAD_MAGIC,
+        PAYLOAD_MAGIC_BULK,
+    );
+}
+
+fn covered<T>(field: impl Fn(&VectorCorpusEntry) -> &'static [T]) -> BTreeSet<T>
+where
+    T: Copy + Ord + 'static,
+{
+    let mut actual = BTreeSet::new();
+    for entry in VectorCorpus::m8().entries() {
+        actual.extend(field(entry).iter().copied());
+    }
+    actual
+}
+
+fn assert_anchor_names<'a>(
+    expected: impl Iterator<Item = &'a str>,
+    observed: impl Iterator<Item = &'a str>,
+) {
+    let expected = expected.collect::<Vec<_>>();
+    let observed = observed.collect::<Vec<_>>();
+    assert_eq!(observed, expected);
+}
+
+fn rust_files(root: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(root).expect("read corpus dir");
+    for entry in entries {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            out.extend(rust_files(&path));
+        } else if path.extension().is_some_and(|ext| ext == "rs") {
+            out.push(path);
+        }
+    }
+    out
+}

@@ -1,0 +1,37 @@
+---
+source: crates/selene-vector/tests/vector_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+==== CONFIG ====
+slug="quantized-asymmetric-search-dot"
+description="SQ8 asymmetric dot search on the same numeric scale as f32."
+dim=4 m=16 ef_construction=200 ef_search=50 metric=Dot quantization_enabled=true quantization_rescore=false
+==== GRAPH ====
+nodes=50 dim=4 entry_point=idx0 max_layer=0
+node_head=[n1:L0:[15], n2:L0:[15], n3:L0:[19], n4:L0:[16], n5:L0:[27], n6:L0:[24], n7:L0:[19], n8:L0:[22]]
+==== SECTIONS ====
+GRPH(len=7709, blake3_8=604e1487076f649e, dim=4, nodes=50, entry_point=idx0, max_layer=0, head=[n1:L0:[15], n2:L0:[15], n3:L0:[19], n4:L0:[16]])
+VECS(len=826, blake3_8=798aa95c78b7ae5a, dim=4, nodes=50, components=200, head=[-0.571, -0.544, -0.097, -0.588, -0.849, +0.404])
+QUNT(len=507, blake3_8=669fd860b69e74c4, method=0, dim=4, nodes=50, codes=200, ranges=4, norms=50)
+==== RESULT ====
+f32_baseline.rows
+  [0] n44	+1.397351
+  [1] n40	+1.341949
+  [2] n45	+1.157060
+  [3] n47	+1.149726
+  [4] n39	+1.037146
+  [5] n32	+1.017326
+sq8_asymmetric.rows
+  [0] n44	+1.395823
+  [1] n40	+1.340151
+  [2] n45	+1.157352
+  [3] n47	+1.149094
+  [4] n39	+1.036456
+  [5] n32	+1.017341
+sq8_rescored.rows
+  [0] n44	+1.397351
+  [1] n40	+1.341949
+  [2] n45	+1.157060
+  [3] n47	+1.149726
+  [4] n39	+1.037146
+  [5] n32	+1.017326

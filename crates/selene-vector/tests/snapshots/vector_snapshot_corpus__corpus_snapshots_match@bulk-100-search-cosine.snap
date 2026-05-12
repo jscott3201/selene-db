@@ -1,0 +1,25 @@
+---
+source: crates/selene-vector/tests/vector_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+==== CONFIG ====
+slug="bulk-100-search-cosine"
+description="One VECB bulk event and cosine search over 100 vectors."
+dim=8 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=false quantization_rescore=false
+==== GRAPH ====
+nodes=100 dim=8 entry_point=idx16 max_layer=2
+node_head=[n1:L0:[25], n2:L0:[27], n3:L0:[29], n4:L0:[14], n5:L1:[31/7], n6:L0:[24], n7:L0:[24], n8:L0:[28]]
+==== SECTIONS ====
+GRPH(len=17367, blake3_8=af7c46d81040ae60, dim=8, nodes=100, entry_point=idx16, max_layer=2, head=[n1:L0:[25], n2:L0:[27], n3:L0:[29], n4:L0:[14]])
+VECS(len=3226, blake3_8=d5035ab1eeaf1dc0, dim=8, nodes=100, components=800, head=[+0.595, +0.013, +0.648, -0.868, +0.149, -0.010])
+QUNT(empty)
+==== RESULT ====
+search.rows
+  [0] n40	-0.208712
+  [1] n73	-0.227286
+  [2] n88	-0.311750
+  [3] n62	-0.336485
+  [4] n12	-0.352556
+  [5] n4	-0.369538
+  [6] n5	-0.372146
+  [7] n54	-0.414490

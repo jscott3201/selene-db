@@ -1,0 +1,17 @@
+---
+source: crates/selene-vector/tests/vector_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+==== CONFIG ====
+slug="error-dimensions-locked"
+description="DimensionsLocked from wrong-dimensional search."
+dim=4 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=false quantization_rescore=false
+==== GRAPH ====
+nodes=1 dim=4 entry_point=idx0 max_layer=0
+node_head=[n1:L0:[0]]
+==== SECTIONS ====
+<none>
+==== RESULT ====
+error.kind=DimensionsLocked
+error.induction_kind=api
+error.rendered=DimensionsLocked{expected=4, observed=1}

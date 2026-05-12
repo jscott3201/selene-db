@@ -1,0 +1,218 @@
+//! Pure-mirror coverage tables for the selene-vector snapshot corpus.
+
+#![allow(missing_docs)]
+
+/// Public vector surfaces the BRIEF-64 corpus must exercise.
+pub const SURFACE_COVERAGE: &[VectorSurface] = VectorSurface::ALL;
+
+/// Distance metric variants the corpus mirrors from `selene-vector`.
+pub const METRIC_COVERAGE: &[VectorMetricMirror] = VectorMetricMirror::ALL;
+
+/// Vector operation variants the corpus mirrors from `selene-vector`.
+pub const OP_COVERAGE: &[VectorOpMirror] = VectorOpMirror::ALL;
+
+/// Vector error variants the corpus mirrors from `selene-vector`.
+pub const ERROR_KIND_COVERAGE: &[VectorErrorKindMirror] = VectorErrorKindMirror::ALL;
+
+/// Payload and snapshot-section magic constants the corpus mirrors.
+pub const MAGIC_COVERAGE: &[VectorMagicMirror] = VectorMagicMirror::ALL;
+
+/// Quantization methods the corpus mirrors from `selene-vector`.
+pub const QUANT_METHOD_COVERAGE: &[QuantMethodMirror] = QuantMethodMirror::ALL;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorSurface {
+    HnswBuild,
+    HnswSearchUnfiltered,
+    HnswSearchFiltered,
+    EventVecu,
+    EventVecb,
+    SnapshotGrph,
+    SnapshotVecs,
+    SnapshotQunt,
+    QuantizationStatsAccessor,
+    QuantizationAsymmetricSearch,
+    QuantizationRescore,
+    RecoveryReplay,
+    ErrorPath,
+}
+
+impl VectorSurface {
+    pub const ALL: &'static [Self] = &[
+        Self::HnswBuild,
+        Self::HnswSearchUnfiltered,
+        Self::HnswSearchFiltered,
+        Self::EventVecu,
+        Self::EventVecb,
+        Self::SnapshotGrph,
+        Self::SnapshotVecs,
+        Self::SnapshotQunt,
+        Self::QuantizationStatsAccessor,
+        Self::QuantizationAsymmetricSearch,
+        Self::QuantizationRescore,
+        Self::RecoveryReplay,
+        Self::ErrorPath,
+    ];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::HnswBuild => "HnswBuild",
+            Self::HnswSearchUnfiltered => "HnswSearchUnfiltered",
+            Self::HnswSearchFiltered => "HnswSearchFiltered",
+            Self::EventVecu => "EventVecu",
+            Self::EventVecb => "EventVecb",
+            Self::SnapshotGrph => "SnapshotGrph",
+            Self::SnapshotVecs => "SnapshotVecs",
+            Self::SnapshotQunt => "SnapshotQunt",
+            Self::QuantizationStatsAccessor => "QuantizationStatsAccessor",
+            Self::QuantizationAsymmetricSearch => "QuantizationAsymmetricSearch",
+            Self::QuantizationRescore => "QuantizationRescore",
+            Self::RecoveryReplay => "RecoveryReplay",
+            Self::ErrorPath => "ErrorPath",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorMetricMirror {
+    Cosine,
+    L2,
+    Dot,
+}
+
+impl VectorMetricMirror {
+    pub const ALL: &'static [Self] = &[Self::Cosine, Self::L2, Self::Dot];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Cosine => "Cosine",
+            Self::L2 => "L2",
+            Self::Dot => "Dot",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorOpMirror {
+    Insert,
+    Update,
+    Delete,
+}
+
+impl VectorOpMirror {
+    pub const ALL: &'static [Self] = &[Self::Insert, Self::Update, Self::Delete];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Insert => "Insert",
+            Self::Update => "Update",
+            Self::Delete => "Delete",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorErrorKindMirror {
+    InvalidConfig,
+    DimensionMismatch,
+    SectionDecodeFailed,
+    SectionEncodeFailed,
+    InvalidNodeId,
+    DimensionsLocked,
+    InvalidPayload,
+    EncodeFailed,
+    OperationNotSupportedYet,
+    DuplicateNodeId,
+    NonFiniteVectorComponent,
+    InternalIndexExhausted,
+    MaxLayerExceedsCap,
+    NonFiniteQueryComponent,
+}
+
+impl VectorErrorKindMirror {
+    pub const ALL: &'static [Self] = &[
+        Self::InvalidConfig,
+        Self::DimensionMismatch,
+        Self::SectionDecodeFailed,
+        Self::SectionEncodeFailed,
+        Self::InvalidNodeId,
+        Self::DimensionsLocked,
+        Self::InvalidPayload,
+        Self::EncodeFailed,
+        Self::OperationNotSupportedYet,
+        Self::DuplicateNodeId,
+        Self::NonFiniteVectorComponent,
+        Self::InternalIndexExhausted,
+        Self::MaxLayerExceedsCap,
+        Self::NonFiniteQueryComponent,
+    ];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::InvalidConfig => "InvalidConfig",
+            Self::DimensionMismatch => "DimensionMismatch",
+            Self::SectionDecodeFailed => "SectionDecodeFailed",
+            Self::SectionEncodeFailed => "SectionEncodeFailed",
+            Self::InvalidNodeId => "InvalidNodeId",
+            Self::DimensionsLocked => "DimensionsLocked",
+            Self::InvalidPayload => "InvalidPayload",
+            Self::EncodeFailed => "EncodeFailed",
+            Self::OperationNotSupportedYet => "OperationNotSupportedYet",
+            Self::DuplicateNodeId => "DuplicateNodeId",
+            Self::NonFiniteVectorComponent => "NonFiniteVectorComponent",
+            Self::InternalIndexExhausted => "InternalIndexExhausted",
+            Self::MaxLayerExceedsCap => "MaxLayerExceedsCap",
+            Self::NonFiniteQueryComponent => "NonFiniteQueryComponent",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum VectorMagicMirror {
+    Vecu,
+    Vecb,
+    Vgrp,
+    Vvec,
+    Vqnt,
+}
+
+impl VectorMagicMirror {
+    pub const ALL: &'static [Self] = &[Self::Vecu, Self::Vecb, Self::Vgrp, Self::Vvec, Self::Vqnt];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Vecu => "VECU",
+            Self::Vecb => "VECB",
+            Self::Vgrp => "VGRP",
+            Self::Vvec => "VVEC",
+            Self::Vqnt => "VQNT",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum QuantMethodMirror {
+    Sq8,
+}
+
+impl QuantMethodMirror {
+    pub const ALL: &'static [Self] = &[Self::Sq8];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Sq8 => "Sq8",
+        }
+    }
+}
