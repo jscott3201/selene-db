@@ -29,7 +29,7 @@ The engine is library-only: no transport, no auth, no server. Embedders take the
 | [`selene-algorithms`](crates/selene-algorithms) | `GraphProjection` + `ProjectionCatalog` foundation, four algorithm families (structural / pathfinding / centrality / community), D21 snapshot harness. Independent of the GQL crate. |
 | [`selene-testing`](crates/selene-testing) | Shared test fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / procedure-pack / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
-Opt-in extension crates depend on the workspace crates plus the procedure-pack and `IndexProvider` hooks. The first is **`selene-vector`** (HNSW + PolarQuant + vector procedures); spatial, time-series, RDF, GraphRAG, and full-text extensions slot in via the same shape.
+Opt-in extension crates plug in through the procedure-pack and `IndexProvider` hooks. Capabilities like vectors, spatial, time-series, RDF, GraphRAG, and full-text live in their own crates and are not part of the core workspace.
 
 ## Quickstart
 
@@ -80,9 +80,9 @@ Running GQL goes through the `selene-gql` parser, semantic analyzer, planner, an
 Twenty-one numbered decisions (`D1`–`D21`) define the workspace shape. They live in `CLAUDE.md` (decision log section) and in per-spec amendment ranges:
 
 - D1 — v1.0 is an embeddable library (no server, transport, or auth).
-- D5 — Vectors live in `selene-vector`, not in `selene-graph`. Generally: every non-graph capability lives in an extension crate.
+- D5 — Vectors and other non-graph capabilities live in their own extension crates, never in `selene-graph`.
 - D7 — Concurrency primitives: `ArcSwap` + `parking_lot::RwLock` + `imbl` copy-on-write.
-- D8 — Multi-crate workspace; no umbrella crate; linear dependency direction `core → graph → persist → gql → pack → algorithms`.
+- D8 — Multi-crate workspace, no umbrella crate. `selene-core` is the leaf; `selene-persist` depends only on `selene-core`; `selene-graph` builds on both; `selene-gql` and `selene-algorithms` depend on `selene-core` + `selene-graph`; `selene-pack` is the widest, depending on `selene-core` + `selene-persist` + `selene-graph` + `selene-gql`. `selene-testing` is a dev-only crate consumed via `[dev-dependencies]`.
 - D14 — Snapshots use rkyv archives over sorted-vec intermediates.
 - D17 — Procedure tiers: per-tier concrete `Context` structs + per-tier dyn-compatible `Procedure` traits.
 - D18 — Procedure-pack lifecycle audit routes through the same mutation funnel as graph writes; no parallel ledger.
