@@ -11,6 +11,7 @@ use crate::hnsw::{HnswGraph, HnswNode, InternalIndex};
 use crate::{HnswConfig, VectorError};
 
 pub(crate) mod grph;
+pub(crate) mod qunt;
 mod tags;
 pub(crate) mod vecs;
 

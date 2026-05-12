@@ -1,6 +1,6 @@
 //! Runtime HNSW build knobs derived from provider configuration.
 
-use crate::{DistanceMetric, HnswConfig};
+use crate::{DistanceMetric, HnswConfig, QuantizationConfig};
 
 /// Derived HNSW construction and search parameters.
 #[derive(Clone, Debug)]
@@ -17,6 +17,8 @@ pub struct HnswParams {
     pub level_factor: f64,
     /// Distance metric used by build-time candidate scoring.
     pub metric: DistanceMetric,
+    /// Quantized-search behavior copied from provider configuration.
+    pub(crate) quantization: QuantizationConfig,
 }
 
 impl HnswParams {
@@ -30,6 +32,7 @@ impl HnswParams {
             ef_search: config.ef_search,
             level_factor: 1.0 / (config.m as f64).ln(),
             metric: config.metric,
+            quantization: config.quantization,
         }
     }
 

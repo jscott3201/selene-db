@@ -6,9 +6,11 @@ use std::collections::HashSet;
 use roaring::RoaringBitmap;
 use selene_core::NodeId;
 
-use super::distance::distance;
+use super::distance::{distance, dot_product};
 use super::{HnswGraph, HnswParams, InternalIndex};
+use crate::DistanceMetric;
 use crate::VectorError;
+use crate::quantize::QuantizedStoreSq8;
 
 /// A scored HNSW candidate shared by build and search paths.
 #[derive(Clone, Copy, Debug)]
@@ -66,21 +68,21 @@ pub fn search(
     let Some(mut current_entry) = graph.entry_point() else {
         return Ok(Vec::new());
     };
+    let scorer = Scorer::for_search(graph, query, params);
     for layer in (1..=graph.max_layer()).rev() {
-        current_entry = greedy_search_layer(graph, query, current_entry, layer, params);
+        current_entry = greedy_search_layer(graph, current_entry, layer, &scorer);
     }
 
-    let mut beam = beam_search_layer(
-        graph,
-        query,
-        current_entry,
-        ef.max(k),
-        0,
-        filter,
-        None,
-        params,
-    );
+    let mut beam = beam_search_layer(graph, current_entry, ef.max(k), 0, filter, None, &scorer);
     beam.sort_by(Candidate::cmp);
+    if params.quantization.rescore && scorer.is_asymmetric() {
+        for candidate in &mut beam {
+            if let Some(node) = graph.node_by_idx(candidate.idx) {
+                candidate.score = score(query, &node.vector, params);
+            }
+        }
+        beam.sort_by(Candidate::cmp);
+    }
     beam.truncate(k);
 
     Ok(beam
@@ -97,13 +99,12 @@ pub fn search(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn beam_search_layer(
     graph: &HnswGraph,
-    query: &[f32],
     entry: InternalIndex,
     ef: usize,
     layer: u8,
     filter: Option<&RoaringBitmap>,
     exclude: Option<InternalIndex>,
-    params: &HnswParams,
+    scorer: &Scorer<'_>,
 ) -> Vec<Candidate> {
     if ef == 0 {
         return Vec::new();
@@ -112,15 +113,7 @@ pub(crate) fn beam_search_layer(
     let mut visited = HashSet::new();
     let mut frontier = Vec::new();
     let mut result = Vec::new();
-    push_candidate(
-        graph,
-        query,
-        entry,
-        exclude,
-        params,
-        &mut visited,
-        &mut frontier,
-    );
+    push_candidate(graph, entry, exclude, scorer, &mut visited, &mut frontier);
 
     while !frontier.is_empty() {
         frontier.sort_by(Candidate::cmp);
@@ -150,10 +143,9 @@ pub(crate) fn beam_search_layer(
             for neighbor_idx in neighbors {
                 push_candidate(
                     graph,
-                    query,
                     *neighbor_idx,
                     exclude,
-                    params,
+                    scorer,
                     &mut visited,
                     &mut frontier,
                 );
@@ -168,15 +160,12 @@ pub(crate) fn beam_search_layer(
 /// Greedily descend one layer from `entry`.
 pub(crate) fn greedy_search_layer(
     graph: &HnswGraph,
-    query: &[f32],
     entry: InternalIndex,
     layer: u8,
-    params: &HnswParams,
+    scorer: &Scorer<'_>,
 ) -> InternalIndex {
     let mut current = entry;
-    let mut current_score = graph
-        .node_by_idx(current)
-        .map_or(f32::NEG_INFINITY, |node| score(query, &node.vector, params));
+    let mut current_score = scorer.score(graph, current).unwrap_or(f32::NEG_INFINITY);
 
     loop {
         let mut improved = false;
@@ -184,10 +173,12 @@ pub(crate) fn greedy_search_layer(
             break;
         };
         for neighbor_idx in neighbors {
-            let Some(neighbor) = graph.node_by_idx(*neighbor_idx) else {
+            if graph.node_by_idx(*neighbor_idx).is_none() {
                 continue;
-            };
-            let neighbor_score = score(query, &neighbor.vector, params);
+            }
+            let neighbor_score = scorer
+                .score(graph, *neighbor_idx)
+                .unwrap_or(f32::NEG_INFINITY);
             let better = neighbor_score > current_score
                 || (neighbor_score == current_score && *neighbor_idx < current);
             if better {
@@ -205,7 +196,88 @@ pub(crate) fn greedy_search_layer(
 
 /// Compute the higher-is-better score used by HNSW candidate ordering.
 pub(crate) fn score(a: &[f32], b: &[f32], params: &HnswParams) -> f32 {
-    -distance(params.metric, a, b)
+    score_for_metric(params.metric, a, b)
+}
+
+/// Candidate scorer shared by every search walk step.
+pub(crate) enum Scorer<'a> {
+    /// Existing f32 kernel. Build paths always use this scorer.
+    F32 {
+        query: &'a [f32],
+        metric: DistanceMetric,
+    },
+    /// Asymmetric SQ8 scorer with f32 fallback for post-snapshot nodes.
+    Asymmetric {
+        query: &'a [f32],
+        metric: DistanceMetric,
+        query_norm: f32,
+        lut: Vec<f32>,
+        quantized: &'a QuantizedStoreSq8,
+    },
+}
+
+impl<'a> Scorer<'a> {
+    pub(crate) fn f32(query: &'a [f32], metric: DistanceMetric) -> Self {
+        Self::F32 { query, metric }
+    }
+
+    fn for_search(graph: &'a HnswGraph, query: &'a [f32], params: &HnswParams) -> Self {
+        if params.quantization.enabled
+            && let Some(quantized) = graph.quantized()
+        {
+            return Self::Asymmetric {
+                query,
+                metric: params.metric,
+                query_norm: dot_product(query, query).sqrt(),
+                lut: quantized.build_query_lut(query, params.metric),
+                quantized,
+            };
+        }
+        Self::f32(query, params.metric)
+    }
+
+    fn is_asymmetric(&self) -> bool {
+        matches!(self, Self::Asymmetric { .. })
+    }
+
+    pub(crate) fn score(&self, graph: &HnswGraph, idx: InternalIndex) -> Option<f32> {
+        let node = graph.node_by_idx(idx)?;
+        match self {
+            Self::F32 { query, metric } => Some(score_for_metric(*metric, query, &node.vector)),
+            Self::Asymmetric {
+                query,
+                metric,
+                query_norm,
+                lut,
+                quantized,
+            } => {
+                let node_idx = idx as usize;
+                if node_idx >= quantized.node_count() {
+                    return Some(score_for_metric(*metric, query, &node.vector));
+                }
+                let lut_sum = quantized.lut_sum(lut, node_idx)?;
+                // §O.New-2: keep quantized and f32 scores on the same scale.
+                Some(match metric {
+                    DistanceMetric::L2 => -lut_sum.sqrt(),
+                    DistanceMetric::Dot => lut_sum,
+                    DistanceMetric::Cosine => {
+                        let Some(approx_norm) = quantized.approx_norm(node_idx) else {
+                            return Some(score_for_metric(*metric, query, &node.vector));
+                        };
+                        if *query_norm == 0.0 || approx_norm == 0.0 {
+                            score_for_metric(*metric, query, &node.vector)
+                        } else {
+                            (lut_sum / (*query_norm * approx_norm)) - 1.0
+                        }
+                    }
+                })
+            }
+        }
+    }
+}
+
+fn score_for_metric(metric: DistanceMetric, a: &[f32], b: &[f32]) -> f32 {
+    -distance(metric, a, b)
 }
 
 fn validate_query(query: &[f32]) -> Result<(), VectorError> {
@@ -219,20 +291,19 @@ fn validate_query(query: &[f32]) -> Result<(), VectorError> {
 
 fn push_candidate(
     graph: &HnswGraph,
-    query: &[f32],
     idx: InternalIndex,
     exclude: Option<InternalIndex>,
-    params: &HnswParams,
+    scorer: &Scorer<'_>,
     visited: &mut HashSet<InternalIndex>,
     out: &mut Vec<Candidate>,
 ) {
     if Some(idx) == exclude || !visited.insert(idx) {
         return;
     }
-    if let Some(node) = graph.node_by_idx(idx) {
+    if graph.node_by_idx(idx).is_some() {
         out.push(Candidate {
             idx,
-            score: score(query, &node.vector, params),
+            score: scorer.score(graph, idx).unwrap_or(f32::NEG_INFINITY),
         });
     }
 }
@@ -255,4 +326,83 @@ fn passes_filter(node_id: NodeId, filter: Option<&RoaringBitmap>) -> bool {
         return false;
     };
     bitmap.contains(key)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use selene_core::NodeId;
+
+    use super::super::build::insert_node;
+    use super::*;
+    use crate::{HnswConfig, QuantizationConfig};
+
+    #[test]
+    fn lut_l2_score_matches_neg_sqrt_scale() {
+        let (graph, params) = graph_with_quantized(
+            DistanceMetric::L2,
+            &[&[3.0, 4.0]],
+            QuantizationConfig {
+                enabled: true,
+                rescore: false,
+            },
+        );
+        let scorer = Scorer::for_search(&graph, &[0.0, 0.0], &params);
+
+        let observed = scorer.score(&graph, 0).expect("node scores");
+
+        assert!((observed - -5.0).abs() <= 1e-6);
+    }
+
+    #[test]
+    fn cosine_uses_approx_norms_cache() {
+        let (graph, params) = graph_with_quantized(
+            DistanceMetric::Cosine,
+            &[&[3.0, 4.0]],
+            QuantizationConfig {
+                enabled: true,
+                rescore: false,
+            },
+        );
+        let scorer = Scorer::for_search(&graph, &[3.0, 4.0], &params);
+        let zero_scorer = Scorer::for_search(&graph, &[0.0, 0.0], &params);
+
+        let exact = scorer.score(&graph, 0).expect("node scores");
+        let zero = zero_scorer.score(&graph, 0).expect("zero query scores");
+
+        assert!((exact - 0.0).abs() <= 1e-6);
+        assert_eq!(
+            zero,
+            score_for_metric(DistanceMetric::Cosine, &[0.0, 0.0], &[3.0, 4.0])
+        );
+    }
+
+    fn graph_with_quantized(
+        metric: DistanceMetric,
+        rows: &[&[f32]],
+        quantization: QuantizationConfig,
+    ) -> (HnswGraph, HnswParams) {
+        let config = HnswConfig::with_params(rows[0].len(), 16, 200, 50, metric)
+            .unwrap()
+            .with_quantization(quantization)
+            .unwrap();
+        let params = HnswParams::from_config(&config);
+        let mut graph = HnswGraph::empty(rows[0].len() as u16);
+        for (offset, row) in rows.iter().enumerate() {
+            insert_node(
+                &mut graph,
+                NodeId::new((offset + 1) as u64),
+                Arc::from(*row),
+                0,
+                &params,
+            )
+            .unwrap();
+        }
+        let store = Arc::new(
+            QuantizedStoreSq8::build(graph.len(), graph.dimensions(), rows.iter().copied())
+                .unwrap(),
+        );
+        (graph.clone_with_quantized(Some(store)), params)
+    }
 }
