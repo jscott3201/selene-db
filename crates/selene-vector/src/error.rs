@@ -132,4 +132,14 @@ pub enum VectorError {
         /// Per-spec cap (also enforced by payload decoder).
         cap: u8,
     },
+
+    /// A query vector component was NaN or infinite.
+    #[error("non-finite query component at index {index}: {value}")]
+    #[diagnostic(code(SLENE_VEC_014))]
+    NonFiniteQueryComponent {
+        /// Component index.
+        index: usize,
+        /// Non-finite component value.
+        value: f32,
+    },
 }

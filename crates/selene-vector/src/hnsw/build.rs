@@ -1,12 +1,10 @@
 //! HNSW insertion with metric-aware heuristic neighbor selection.
 
-use std::cmp::Ordering;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use selene_core::NodeId;
 
-use super::distance::distance;
+use super::search::{Candidate, beam_search_layer, greedy_search_layer, score};
 use super::{HnswGraph, HnswNode, HnswParams, InternalIndex};
 use crate::VectorError;
 
@@ -96,6 +94,7 @@ pub fn insert_node(
             current_entry,
             params.ef_construction,
             layer,
+            None,
             Some(new_idx),
             params,
         );
@@ -177,141 +176,6 @@ pub(crate) fn select_neighbors_heuristic(
     selected
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Candidate {
-    pub(crate) idx: InternalIndex,
-    pub(crate) score: f32,
-}
-
-impl Candidate {
-    fn cmp(left: &Self, right: &Self) -> Ordering {
-        right
-            .score
-            .total_cmp(&left.score)
-            .then_with(|| left.idx.cmp(&right.idx))
-    }
-}
-
-fn greedy_search_layer(
-    graph: &HnswGraph,
-    query: &[f32],
-    entry: InternalIndex,
-    layer: u8,
-    params: &HnswParams,
-) -> InternalIndex {
-    let mut current = entry;
-    let mut current_score = graph
-        .node_by_idx(current)
-        .map_or(f32::NEG_INFINITY, |node| score(query, &node.vector, params));
-
-    loop {
-        let mut improved = false;
-        let Some(neighbors) = graph.iter_layer_neighbors(current, layer) else {
-            break;
-        };
-        for neighbor_idx in neighbors {
-            let Some(neighbor) = graph.node_by_idx(*neighbor_idx) else {
-                continue;
-            };
-            let neighbor_score = score(query, &neighbor.vector, params);
-            let better = neighbor_score > current_score
-                || (neighbor_score == current_score && *neighbor_idx < current);
-            if better {
-                current = *neighbor_idx;
-                current_score = neighbor_score;
-                improved = true;
-            }
-        }
-        if !improved {
-            return current;
-        }
-    }
-    current
-}
-
-fn beam_search_layer(
-    graph: &HnswGraph,
-    query: &[f32],
-    entry: InternalIndex,
-    ef: usize,
-    layer: u8,
-    exclude: Option<InternalIndex>,
-    params: &HnswParams,
-) -> Vec<Candidate> {
-    let mut visited = HashSet::new();
-    let mut frontier = Vec::new();
-    let mut result = Vec::new();
-    push_candidate(
-        graph,
-        query,
-        entry,
-        exclude,
-        params,
-        &mut visited,
-        &mut frontier,
-    );
-
-    while !frontier.is_empty() {
-        frontier.sort_by(Candidate::cmp);
-        let candidate = frontier.remove(0);
-
-        // Early termination: once result holds ef entries and the best
-        // remaining frontier candidate is no better than the worst result,
-        // further expansion cannot improve top-ef. Per Malkov & Yashunin
-        // 2018 §4.1 the bounded beam search must stop here instead of
-        // draining the full reachable component.
-        if result.len() >= ef
-            && let Some(worst) = result.last()
-            && Candidate::cmp(&candidate, worst).is_gt()
-        {
-            break;
-        }
-
-        result.push(candidate);
-        result.sort_by(Candidate::cmp);
-        if result.len() > ef {
-            result.truncate(ef);
-        }
-
-        if let Some(neighbors) = graph.iter_layer_neighbors(candidate.idx, layer) {
-            for neighbor_idx in neighbors {
-                push_candidate(
-                    graph,
-                    query,
-                    *neighbor_idx,
-                    exclude,
-                    params,
-                    &mut visited,
-                    &mut frontier,
-                );
-            }
-        }
-    }
-
-    result.sort_by(Candidate::cmp);
-    result
-}
-
-fn push_candidate(
-    graph: &HnswGraph,
-    query: &[f32],
-    idx: InternalIndex,
-    exclude: Option<InternalIndex>,
-    params: &HnswParams,
-    visited: &mut HashSet<InternalIndex>,
-    out: &mut Vec<Candidate>,
-) {
-    if Some(idx) == exclude || !visited.insert(idx) {
-        return;
-    }
-    if let Some(node) = graph.node_by_idx(idx) {
-        out.push(Candidate {
-            idx,
-            score: score(query, &node.vector, params),
-        });
-    }
-}
-
 fn add_bidirectional_link(
     graph: &mut HnswGraph,
     from: InternalIndex,
@@ -362,8 +226,4 @@ fn prune_neighbors(graph: &mut HnswGraph, idx: InternalIndex, layer: u8, params:
         }
     }
     graph.nodes[idx as usize].neighbors[layer as usize] = pruned;
-}
-
-fn score(a: &[f32], b: &[f32], params: &HnswParams) -> f32 {
-    -distance(params.metric, a, b)
 }
