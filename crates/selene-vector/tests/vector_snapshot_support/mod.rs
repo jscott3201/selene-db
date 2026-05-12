@@ -352,38 +352,24 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
         ApiInductionPayload::InvalidPayloadEmptyBulk => VectorBulkInsertPayloadV1 { rows: vec![] }
             .encode()
             .expect_err("empty bulk rejected"),
-        ApiInductionPayload::OperationUpdate => {
-            let payload = VectorUpsertPayloadV1 {
+        ApiInductionPayload::OperationUpdate => operation_not_supported_error(
+            provider,
+            VectorUpsertPayloadV1 {
                 op: VectorOp::Update,
                 node_id: NodeId::new(1),
                 vector: vec![1.0, 0.0, 0.0, 0.0],
                 max_layer: 0,
-            };
-            provider
-                .on_change(&encoded_upsert_change(payload))
-                .expect_err("Update is rejected");
-            VectorError::OperationNotSupportedYet {
-                op: VectorOp::Update,
-                node_id: NodeId::new(1),
-                brief: "BRIEF-65",
-            }
-        }
-        ApiInductionPayload::OperationDelete => {
-            let payload = VectorUpsertPayloadV1 {
+            },
+        ),
+        ApiInductionPayload::OperationDelete => operation_not_supported_error(
+            provider,
+            VectorUpsertPayloadV1 {
                 op: VectorOp::Delete,
                 node_id: NodeId::new(1),
                 vector: Vec::new(),
                 max_layer: 0,
-            };
-            provider
-                .on_change(&encoded_upsert_change(payload))
-                .expect_err("Delete is rejected");
-            VectorError::OperationNotSupportedYet {
-                op: VectorOp::Delete,
-                node_id: NodeId::new(1),
-                brief: "BRIEF-65",
-            }
-        }
+            },
+        ),
         ApiInductionPayload::DuplicateNodeId => {
             let config = HnswConfig::new(4).unwrap();
             let params = HnswParams::from_config(&config);
@@ -434,6 +420,21 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
             .expect_err("NaN query rejected"),
         _ => panic!("unknown API induction payload"),
     }
+}
+
+fn operation_not_supported_error(
+    provider: &HnswProvider,
+    payload: VectorUpsertPayloadV1,
+) -> VectorError {
+    // Codex review fix (P2): drive the error through the same code path
+    // provider.on_change uses (apply_upsert), so the rendered fixture pins
+    // the real VectorError shape (op / node_id / brief) instead of a
+    // synthesized stand-in. Uses the test-harness-only typed accessor on
+    // HnswProvider so we don't need to broaden builder's visibility.
+    provider
+        .apply_upsert_for_test(&payload)
+        .err()
+        .expect("reserved op rejected")
 }
 
 fn encoded_upsert_change(payload: VectorUpsertPayloadV1) -> Change {

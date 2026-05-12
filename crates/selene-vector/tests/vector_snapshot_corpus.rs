@@ -27,11 +27,19 @@ fn corpus_snapshots_match() {
     for entry in VectorCorpus::m8().entries() {
         let snapshot = execute_entry(entry);
         if cfg!(feature = "simd-simsimd") {
-            assert!(
-                !snapshot.to_string().is_empty(),
-                "SIMD smoke path produced an empty snapshot for {}",
-                entry.slug
-            );
+            // Codex review fix (P2-B): upgrade the SIMD path from a bare
+            // emptiness check to structural-validity assertions. Strict
+            // byte-or-score parity against the scalar golden is infeasible:
+            // simsimd's f32 reduction order differs from the scalar kernel
+            // at IEEE-rounding-tolerance levels, which the HNSW
+            // neighbor-selection heuristic amplifies into different
+            // neighbor lists, different section bytes, and different
+            // blake3 digests. The asserted invariants here are everything
+            // that MUST hold regardless of kernel choice: non-empty
+            // output, all four `====` headers present, the entry slug
+            // appears in CONFIG, and no renderer-side decode errors leak
+            // into the snapshot.
+            assert_simd_structural_validity(entry, &snapshot.to_string());
         } else {
             insta::with_settings!({ snapshot_suffix => entry.slug }, {
                 insta::assert_snapshot!(snapshot.to_string());
@@ -284,6 +292,49 @@ fn assert_anchor_names<'a>(
     let expected = expected.collect::<Vec<_>>();
     let observed = observed.collect::<Vec<_>>();
     assert_eq!(observed, expected);
+}
+
+/// Codex review fix (P2-B): the SIMD path asserts structural validity of
+/// the rendered snapshot — invariants that hold regardless of kernel
+/// choice. Strict byte parity against the scalar golden is infeasible
+/// because simsimd's reduction order differs from the scalar kernel at
+/// IEEE-rounding tolerance, and HNSW's score-driven neighbor selection
+/// amplifies that into different neighbor lists, section bytes, and
+/// blake3 digests. The smoke checked here:
+///   1. The rendered text is non-empty.
+///   2. All four `====` block headers are present in order.
+///   3. The entry slug appears in the CONFIG block.
+///   4. No `decode_error=` token leaks into the snapshot (renderer-side
+///      decode errors would surface here without one).
+fn assert_simd_structural_validity(entry: &VectorCorpusEntry, simd: &str) {
+    assert!(!simd.is_empty(), "SIMD output empty for {}", entry.slug);
+
+    let block_headers = [
+        "==== CONFIG ====",
+        "==== GRAPH ====",
+        "==== SECTIONS ====",
+        "==== RESULT ====",
+    ];
+    let mut cursor = 0;
+    for header in block_headers {
+        let position = simd[cursor..]
+            .find(header)
+            .unwrap_or_else(|| panic!("SIMD output missing {header} for {}", entry.slug));
+        cursor += position + header.len();
+    }
+
+    let expected_slug_line = format!("slug=\"{}\"", entry.slug);
+    assert!(
+        simd.contains(&expected_slug_line),
+        "SIMD output missing {expected_slug_line} for {}",
+        entry.slug
+    );
+
+    assert!(
+        !simd.contains("decode_error="),
+        "SIMD output leaked a renderer decode_error for {}",
+        entry.slug
+    );
 }
 
 fn rust_files(root: &Path) -> Vec<std::path::PathBuf> {
