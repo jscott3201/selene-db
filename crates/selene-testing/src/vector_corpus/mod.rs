@@ -4,6 +4,7 @@
 
 pub mod coverage;
 pub mod fixtures;
+mod neighbor_selection;
 
 pub use coverage::{
     ERROR_KIND_COVERAGE, MAGIC_COVERAGE, METRIC_COVERAGE, NEIGHBOR_SELECTION_COVERAGE,
@@ -321,34 +322,21 @@ fn entries() -> Vec<VectorCorpusEntry> {
             covered_magics: &[],
             covered_quant_methods: &[],
         },
-        VectorCorpusEntry {
-            slug: "diverse-cluster-extend-off",
-            description: "Diverse L2 cluster search with default neighbor selection.",
-            graph: G::DiverseClusterL2_64,
-            config: cfg_neighbor_hnsw(8, M::L2, Z::DISABLED, N::Default, 8, 64, 50),
-            invocation: search(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 8, Some(50), None),
-            category: C::Search,
-            covered_surfaces: &[S::HnswBuild, S::HnswSearchUnfiltered],
-            covered_metrics: &[M::L2],
-            covered_ops: &[O::Insert],
-            covered_errors: &[],
-            covered_magics: &[X::Vecb, X::Vgrp, X::Vvec],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "diverse-cluster-extend-on",
-            description: "Diverse L2 cluster search with one-hop candidate extension.",
-            graph: G::DiverseClusterL2_64,
-            config: cfg_neighbor_hnsw(8, M::L2, Z::DISABLED, N::ExtendCandidates, 8, 64, 50),
-            invocation: search(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 8, Some(50), None),
-            category: C::Search,
-            covered_surfaces: &[S::HnswBuild, S::HnswSearchUnfiltered],
-            covered_metrics: &[M::L2],
-            covered_ops: &[O::Insert],
-            covered_errors: &[],
-            covered_magics: &[X::Vecb, X::Vgrp, X::Vvec],
-            covered_quant_methods: &[],
-        },
+        neighbor_selection::search_entry(
+            "diverse-cluster-extend-off",
+            "Diverse L2 cluster search with default neighbor selection.",
+            N::Default,
+        ),
+        neighbor_selection::search_entry(
+            "diverse-cluster-extend-on",
+            "Diverse L2 cluster search with one-hop candidate extension.",
+            N::ExtendCandidates,
+        ),
+        neighbor_selection::search_entry(
+            "diverse-cluster-extend-no-fill-back",
+            "Diverse L2 cluster search with extension and no rejected-pile backfill.",
+            N::ExtendNoFillBack,
+        ),
         VectorCorpusEntry {
             slug: "pruned-fill-disabled",
             description: "Dense L2 cluster demonstrates no-fill-back sub-degree selection.",

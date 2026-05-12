@@ -226,10 +226,16 @@ pub enum NeighborSelectionFlavor {
     Default,
     ExtendCandidates,
     NoFillBack,
+    ExtendNoFillBack,
 }
 
 impl NeighborSelectionFlavor {
-    pub const ALL: &'static [Self] = &[Self::Default, Self::ExtendCandidates, Self::NoFillBack];
+    pub const ALL: &'static [Self] = &[
+        Self::Default,
+        Self::ExtendCandidates,
+        Self::NoFillBack,
+        Self::ExtendNoFillBack,
+    ];
 
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -237,6 +243,7 @@ impl NeighborSelectionFlavor {
             Self::Default => "default",
             Self::ExtendCandidates => "extend_candidates",
             Self::NoFillBack => "no_fill_back",
+            Self::ExtendNoFillBack => "extend_no_fill_back",
         }
     }
 }

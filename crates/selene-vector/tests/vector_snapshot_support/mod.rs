@@ -297,6 +297,10 @@ fn neighbor_selection_from_mirror(flavor: NeighborSelectionFlavor) -> NeighborSe
             extend_candidates: false,
             keep_pruned_connections: false,
         },
+        NeighborSelectionFlavor::ExtendNoFillBack => NeighborSelectionConfig {
+            extend_candidates: true,
+            keep_pruned_connections: false,
+        },
         _ => panic!("unknown neighbor selection flavor"),
     }
 }

@@ -376,6 +376,13 @@ pub fn neighbor_selection_anchor() -> &'static [(&'static str, NeighborSelection
                 keep_pruned_connections: false,
             },
         ),
+        (
+            "extend_no_fill_back",
+            NeighborSelectionConfig {
+                extend_candidates: true,
+                keep_pruned_connections: false,
+            },
+        ),
     ]
 }
 
@@ -428,7 +435,8 @@ pub const fn neighbor_selection_name(config: NeighborSelectionConfig) -> &'stati
     match (config.extend_candidates, config.keep_pruned_connections) {
         (false, true) => "default",
         (true, true) => "extend_candidates",
-        (false, false) | (true, false) => "no_fill_back",
+        (false, false) => "no_fill_back",
+        (true, false) => "extend_no_fill_back",
     }
 }
 
