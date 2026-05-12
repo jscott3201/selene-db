@@ -4,7 +4,7 @@ use parking_lot::RwLock;
 use selene_core::Change;
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
-use crate::{HnswConfig, snapshot};
+use crate::{HnswConfig, VectorError, snapshot};
 
 /// Stateful vector index provider registered under the `VECT` provider tag.
 ///
@@ -23,12 +23,16 @@ struct HnswState {
 
 impl HnswProvider {
     /// Construct a provider from a validated config.
-    #[must_use]
-    pub fn new(config: HnswConfig) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] when `config.validate()` fails.
+    pub fn new(config: HnswConfig) -> Result<Self, VectorError> {
+        config.validate()?;
+        Ok(Self {
             config,
             state: RwLock::new(HnswState { _placeholder: () }),
-        }
+        })
     }
 
     /// Return this provider's immutable configuration.

@@ -6,14 +6,13 @@ use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::{GraphError, IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 use selene_pack::{ContentHash, ProcedurePackManifest, parse_manifest};
 use selene_vector::{DistanceMetric, HnswConfig, HnswProvider, VectorError, pack_manifest};
-use serde_json::{Value, json};
 
 fn config() -> HnswConfig {
     HnswConfig::new(8).expect("test config is valid")
 }
 
 fn provider() -> HnswProvider {
-    HnswProvider::new(config())
+    HnswProvider::new(config()).expect("provider config is valid")
 }
 
 #[test]
@@ -118,29 +117,37 @@ fn config_defaults_and_validators_match_brief() {
     for result in cases {
         assert!(matches!(result, Err(VectorError::InvalidConfig { .. })));
     }
+
+    let invalid_literal = HnswConfig { dim: 0, ..config };
+    assert!(matches!(
+        HnswProvider::new(invalid_literal),
+        Err(VectorError::InvalidConfig { .. })
+    ));
 }
 
 #[test]
 fn stub_manifest_round_trips_through_canonical_hash() {
-    let manifest: ProcedurePackManifest =
-        serde_json::from_str(pack_manifest()).expect("stub manifest shape is typed");
-    assert_eq!(manifest.pack_name, "vector");
-    assert!(manifest.procedures.is_empty());
-
-    let hash = ContentHash::from_validated_manifest(&manifest);
-    let mut value: Value =
-        serde_json::from_str(pack_manifest()).expect("stub manifest is JSON object");
-    value["content_hash"] = json!(prefixed_hash(hash.as_bytes()));
-    let bytes = serde_json::to_vec(&value).expect("patched manifest serializes");
-
-    let parsed = parse_manifest(&bytes).expect("patched manifest validates");
+    let parsed =
+        parse_manifest(pack_manifest().as_bytes()).expect("stub manifest validates as canonical");
     assert_eq!(parsed.pack_name, "vector");
     assert!(parsed.procedures.is_empty());
 }
 
-fn prefixed_hash(hash: [u8; 32]) -> String {
+#[test]
+fn stub_manifest_content_hash_is_canonical() {
+    let manifest: ProcedurePackManifest =
+        serde_json::from_str(pack_manifest()).expect("stub manifest is JSON");
+    let recomputed = ContentHash::from_validated_manifest(&manifest);
+    let expected = prefixed_hash(recomputed.as_bytes());
+    assert_eq!(
+        manifest.content_hash, expected,
+        "embedded content_hash drifted from canonical; recompute and update procedure-pack.json"
+    );
+}
+
+fn prefixed_hash(bytes: [u8; 32]) -> String {
     let mut out = String::from("blake3:");
-    for byte in hash {
+    for byte in bytes {
         out.push(hex_digit(byte >> 4));
         out.push(hex_digit(byte & 0x0f));
     }
