@@ -1,5 +1,7 @@
 //! Wire format for selene-vector mutation events.
 
+use std::collections::HashSet;
+
 use rkyv::{Archive, Deserialize, Serialize};
 use selene_core::NodeId;
 
@@ -9,6 +11,9 @@ const MAX_LAYER: u8 = 32;
 
 /// Magic prefix for every selene-vector mutation event payload.
 pub const PAYLOAD_MAGIC: [u8; 4] = *b"VECU";
+
+/// Magic prefix for every selene-vector bulk-insert payload.
+pub const PAYLOAD_MAGIC_BULK: [u8; 4] = *b"VECB";
 
 /// Vector mutation operation reserved in the BRIEF-59 wire format.
 #[derive(Archive, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -96,6 +101,133 @@ impl VectorUpsertPayloadV1 {
     }
 }
 
+/// One row in a version-1 bulk-insert vector mutation payload.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct BulkInsertRow {
+    /// Source graph node ID.
+    pub node_id: NodeId,
+    /// Dense f32 vector payload.
+    pub vector: Vec<f32>,
+    /// Persisted insertion layer, sampled by the writer before WAL emission.
+    pub max_layer: u8,
+}
+
+/// Version-1 bulk-insert vector mutation payload.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct VectorBulkInsertPayloadV1 {
+    /// Rows to insert, in the order they must be applied to the HNSW graph.
+    pub rows: Vec<BulkInsertRow>,
+}
+
+impl VectorBulkInsertPayloadV1 {
+    /// Encode this payload to `PAYLOAD_MAGIC_BULK || rkyv_bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] when the payload fails wire
+    /// invariant checks. Returns [`VectorError::EncodeFailed`] when rkyv
+    /// serialization fails.
+    pub fn encode(&self) -> Result<Vec<u8>, VectorError> {
+        self.validate()?;
+        let archived = rkyv::to_bytes::<rkyv::rancor::Error>(self).map_err(|error| {
+            VectorError::EncodeFailed {
+                reason: error.to_string(),
+            }
+        })?;
+        let mut out = Vec::with_capacity(PAYLOAD_MAGIC_BULK.len() + archived.len());
+        out.extend_from_slice(&PAYLOAD_MAGIC_BULK);
+        out.extend_from_slice(&archived);
+        Ok(out)
+    }
+
+    /// Decode `PAYLOAD_MAGIC_BULK || rkyv_bytes` into a typed payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] when the magic, archive bytes,
+    /// or per-row payload shape is invalid.
+    pub fn decode(bytes: &[u8]) -> Result<Self, VectorError> {
+        let Some((magic, body)) = bytes.split_at_checked(PAYLOAD_MAGIC_BULK.len()) else {
+            return Err(invalid_payload("bulk payload shorter than magic prefix"));
+        };
+        if magic != PAYLOAD_MAGIC_BULK {
+            return Err(invalid_payload("payload magic is not VECB"));
+        }
+        let payload = rkyv::from_bytes::<Self, rkyv::rancor::Error>(body)
+            .map_err(|error| invalid_payload(format!("rkyv decode failed: {error}")))?;
+        payload.validate()?;
+        Ok(payload)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), VectorError> {
+        if self.rows.is_empty() {
+            return Err(invalid_payload(
+                "bulk-insert payload must contain at least one row",
+            ));
+        }
+        let mut seen = HashSet::with_capacity(self.rows.len());
+        for (row_index, row) in self.rows.iter().enumerate() {
+            if row.vector.is_empty() {
+                return Err(invalid_payload(format!(
+                    "row {row_index}: vector must be non-empty"
+                )));
+            }
+            if row.node_id == NodeId::TOMBSTONE {
+                return Err(VectorError::InvalidNodeId {
+                    node_id: row.node_id,
+                    reason: format!("row {row_index}: TOMBSTONE not allowed"),
+                });
+            }
+            if row.max_layer > MAX_LAYER {
+                return Err(VectorError::MaxLayerExceedsCap {
+                    observed: row.max_layer,
+                    cap: MAX_LAYER,
+                });
+            }
+            for (index, value) in row.vector.iter().copied().enumerate() {
+                if !value.is_finite() {
+                    return Err(VectorError::NonFiniteVectorComponent {
+                        node_id: row.node_id,
+                        index,
+                        value,
+                    });
+                }
+            }
+            if !seen.insert(row.node_id) {
+                return Err(VectorError::DuplicateNodeId {
+                    node_id: row.node_id,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum EventKind {
+    Upsert(VectorUpsertPayloadV1),
+    Bulk(VectorBulkInsertPayloadV1),
+}
+
+pub(crate) fn decode_event(bytes: &[u8]) -> Result<EventKind, VectorError> {
+    let Some((magic, _body)) = bytes.split_at_checked(4) else {
+        return Err(invalid_payload(
+            "vector event truncated: less than 4 magic bytes",
+        ));
+    };
+    let magic: [u8; 4] = magic
+        .try_into()
+        .expect("split_at_checked guarantees four magic bytes");
+    match magic {
+        PAYLOAD_MAGIC => VectorUpsertPayloadV1::decode(bytes).map(EventKind::Upsert),
+        PAYLOAD_MAGIC_BULK => VectorBulkInsertPayloadV1::decode(bytes).map(EventKind::Bulk),
+        other => Err(invalid_payload(format!(
+            "unknown vector event magic {}",
+            String::from_utf8_lossy(&other)
+        ))),
+    }
+}
+
 fn invalid_payload(reason: impl Into<String>) -> VectorError {
     VectorError::InvalidPayload {
         reason: reason.into(),
@@ -113,6 +245,14 @@ mod tests {
         let archived = rkyv::to_bytes::<rkyv::rancor::Error>(payload).expect("raw encode");
         let mut out = Vec::with_capacity(PAYLOAD_MAGIC.len() + archived.len());
         out.extend_from_slice(&PAYLOAD_MAGIC);
+        out.extend_from_slice(&archived);
+        out
+    }
+
+    fn raw_bulk_encode(payload: &VectorBulkInsertPayloadV1) -> Vec<u8> {
+        let archived = rkyv::to_bytes::<rkyv::rancor::Error>(payload).expect("raw encode");
+        let mut out = Vec::with_capacity(PAYLOAD_MAGIC_BULK.len() + archived.len());
+        out.extend_from_slice(&PAYLOAD_MAGIC_BULK);
         out.extend_from_slice(&archived);
         out
     }
@@ -165,6 +305,180 @@ mod tests {
         assert!(matches!(
             err,
             VectorError::InvalidPayload { reason } if reason.contains("Delete")
+        ));
+    }
+
+    #[test]
+    fn bulk_roundtrip_preserves_rows() {
+        let payload = VectorBulkInsertPayloadV1 {
+            rows: vec![
+                BulkInsertRow {
+                    node_id: NodeId::new(1),
+                    vector: vec![1.0, 0.0],
+                    max_layer: 0,
+                },
+                BulkInsertRow {
+                    node_id: NodeId::new(2),
+                    vector: vec![0.0, 1.0],
+                    max_layer: 1,
+                },
+            ],
+        };
+
+        let decoded = VectorBulkInsertPayloadV1::decode(&payload.encode().unwrap()).unwrap();
+
+        assert_eq!(decoded, payload);
+    }
+
+    #[test]
+    fn bulk_decode_rejects_empty_archived_batch() {
+        let bytes = raw_bulk_encode(&VectorBulkInsertPayloadV1 { rows: Vec::new() });
+        let err = VectorBulkInsertPayloadV1::decode(&bytes).expect_err("empty batch rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::InvalidPayload { reason } if reason.contains("at least one row")
+        ));
+    }
+
+    #[test]
+    fn bulk_encode_rejects_empty_vector() {
+        let err = VectorBulkInsertPayloadV1 {
+            rows: vec![BulkInsertRow {
+                node_id: NodeId::new(1),
+                vector: Vec::new(),
+                max_layer: 0,
+            }],
+        }
+        .encode()
+        .expect_err("empty vector rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::InvalidPayload { reason } if reason.contains("non-empty")
+        ));
+    }
+
+    #[test]
+    fn bulk_encode_rejects_tombstone_row() {
+        let err = VectorBulkInsertPayloadV1 {
+            rows: vec![BulkInsertRow {
+                node_id: NodeId::TOMBSTONE,
+                vector: vec![1.0],
+                max_layer: 0,
+            }],
+        }
+        .encode()
+        .expect_err("tombstone rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::InvalidNodeId { node_id, .. } if node_id == NodeId::TOMBSTONE
+        ));
+    }
+
+    #[test]
+    fn bulk_encode_rejects_duplicate_node_id() {
+        let err = VectorBulkInsertPayloadV1 {
+            rows: vec![
+                BulkInsertRow {
+                    node_id: NodeId::new(1),
+                    vector: vec![1.0],
+                    max_layer: 0,
+                },
+                BulkInsertRow {
+                    node_id: NodeId::new(1),
+                    vector: vec![2.0],
+                    max_layer: 0,
+                },
+            ],
+        }
+        .encode()
+        .expect_err("duplicate rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::DuplicateNodeId { node_id } if node_id == NodeId::new(1)
+        ));
+    }
+
+    #[test]
+    fn bulk_encode_rejects_max_layer_above_cap() {
+        let err = VectorBulkInsertPayloadV1 {
+            rows: vec![BulkInsertRow {
+                node_id: NodeId::new(1),
+                vector: vec![1.0],
+                max_layer: 33,
+            }],
+        }
+        .encode()
+        .expect_err("max layer rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::MaxLayerExceedsCap {
+                observed: 33,
+                cap: 32
+            }
+        ));
+    }
+
+    #[test]
+    fn bulk_encode_rejects_non_finite_component() {
+        let err = VectorBulkInsertPayloadV1 {
+            rows: vec![BulkInsertRow {
+                node_id: NodeId::new(1),
+                vector: vec![1.0, f32::NAN],
+                max_layer: 0,
+            }],
+        }
+        .encode()
+        .expect_err("non-finite rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::NonFiniteVectorComponent { index: 1, value, .. } if value.is_nan()
+        ));
+    }
+
+    #[test]
+    fn decode_event_dispatches_upsert_and_bulk() {
+        let upsert = VectorUpsertPayloadV1 {
+            op: VectorOp::Insert,
+            node_id: NodeId::new(1),
+            vector: vec![1.0],
+            max_layer: 0,
+        };
+        let bulk = VectorBulkInsertPayloadV1 {
+            rows: vec![BulkInsertRow {
+                node_id: NodeId::new(2),
+                vector: vec![2.0],
+                max_layer: 0,
+            }],
+        };
+
+        assert!(matches!(
+            decode_event(&upsert.encode().unwrap()).unwrap(),
+            EventKind::Upsert(decoded) if decoded == upsert
+        ));
+        assert!(matches!(
+            decode_event(&bulk.encode().unwrap()).unwrap(),
+            EventKind::Bulk(decoded) if decoded == bulk
+        ));
+    }
+
+    #[test]
+    fn decode_event_rejects_truncated_and_unknown_magic() {
+        let truncated = decode_event(b"VEC").expect_err("truncated rejected");
+        assert!(matches!(
+            truncated,
+            VectorError::InvalidPayload { reason } if reason.contains("truncated")
+        ));
+
+        let unknown = decode_event(b"VECXpayload").expect_err("unknown rejected");
+        assert!(matches!(
+            unknown,
+            VectorError::InvalidPayload { reason } if reason.contains("unknown vector event magic")
         ));
     }
 }

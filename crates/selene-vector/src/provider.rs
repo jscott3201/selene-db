@@ -8,8 +8,8 @@ use roaring::RoaringBitmap;
 use selene_core::{Change, NodeId};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
-use crate::builder::apply_upsert;
-use crate::payload::VectorUpsertPayloadV1;
+use crate::builder::{apply_bulk_upsert, apply_upsert};
+use crate::payload::{EventKind, decode_event};
 use crate::snapshot::grph::{GrphHeaderV1, GrphNodeV1, decode_grph, encode_grph};
 use crate::snapshot::vecs::{VecsBodyV1, decode_vecs, encode_vecs};
 use crate::{HnswConfig, HnswGraph, HnswParams, VectorError, hnsw, snapshot};
@@ -21,8 +21,10 @@ pub(crate) const PROVIDER_NAME: &str = "selene-vector";
 /// This type validates configuration, declares the provider's snapshot
 /// footprint, publishes immutable graph snapshots through ArcSwap, and replays
 /// BRIEF-59 vector upsert events. BRIEF-60 adds HNSW search over published
-/// snapshots. BRIEF-61 adds deterministic GRPH/VECS section codecs; later M8
-/// briefs fill in procedures and quantization.
+/// snapshots. BRIEF-61 adds deterministic GRPH/VECS section codecs, and
+/// BRIEF-62 adds the VECB bulk-insert event path. Later M8 briefs fill in
+/// quantization; procedure registration moves to future selene-vector-pack
+/// work.
 pub struct HnswProvider {
     config: HnswConfig,
     state: ArcSwap<HnswGraph>,
@@ -179,17 +181,25 @@ impl IndexProvider for HnswProvider {
         if provider.as_str() != PROVIDER_NAME {
             return Ok(());
         }
-        let parsed = VectorUpsertPayloadV1::decode(payload.as_ref()).map_err(|err| {
-            ProviderError::InvalidPayload {
+        let event =
+            decode_event(payload.as_ref()).map_err(|err| ProviderError::InvalidPayload {
                 reason: format!("selene-vector payload decode: {err:?}: {err}"),
-            }
-        })?;
+            })?;
         let prev = self.state.load_full();
-        let next = apply_upsert(&prev, &parsed, &self.config).map_err(|err| {
-            ProviderError::InvalidPayload {
-                reason: format!("selene-vector apply_upsert: {err:?}: {err}"),
-            }
-        })?;
+        let next =
+            match event {
+                EventKind::Upsert(payload) => {
+                    apply_upsert(&prev, &payload, &self.config).map_err(|err| {
+                        ProviderError::InvalidPayload {
+                            reason: format!("selene-vector apply_upsert: {err:?}: {err}"),
+                        }
+                    })?
+                }
+                EventKind::Bulk(payload) => apply_bulk_upsert(&prev, &payload, &self.config)
+                    .map_err(|err| ProviderError::InvalidPayload {
+                        reason: format!("selene-vector apply_bulk_upsert: {err:?}: {err}"),
+                    })?,
+            };
         self.state.store(Arc::new(next));
         Ok(())
     }
