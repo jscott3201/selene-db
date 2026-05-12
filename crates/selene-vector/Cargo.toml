@@ -1,0 +1,28 @@
+[package]
+name = "selene-vector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "HNSW vector index extension for selene-db."
+
+[features]
+default = []
+test-harness = []
+
+[dependencies]
+selene-core = { path = "../selene-core", version = "0.0.0" }
+selene-graph = { path = "../selene-graph", version = "0.0.0" }
+parking_lot.workspace = true
+thiserror.workspace = true
+miette.workspace = true
+
+[dev-dependencies]
+selene-pack = { path = "../selene-pack", version = "0.0.0" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

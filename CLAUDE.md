@@ -8,7 +8,7 @@ This is a **marathon, not a sprint**. No shortcuts. Every decision should optimi
 
 ## Status
 
-Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **all 7 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack`, `selene-algorithms`. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) closed 2026-05-11** (7/7 briefs, BRIEF-50 through BRIEF-56). **v1.0 mandatory-crate set is feature-complete.** v1.x backlog: `selene-algorithms-pack` (procedure-pack adapter), parallel execution (rayon), streaming/incremental algorithms, out-of-core for graphs exceeding in-memory CSR bounds; opt-in extension crates (selene-vector, selene-timeseries, selene-rdf, selene-graphrag, selene-fulltext). See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
+Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **all 7 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack`, `selene-algorithms`. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) closed 2026-05-11** (7/7 briefs, BRIEF-50 through BRIEF-56). **v1.0 mandatory-crate set is feature-complete.** **M8 (selene-vector opt-in extension) opened with BRIEF-57 on 2026-05-12.** v1.x backlog: `selene-algorithms-pack` (procedure-pack adapter), parallel execution (rayon), streaming/incremental algorithms, out-of-core for graphs exceeding in-memory CSR bounds; opt-in extension crates (selene-timeseries, selene-rdf, selene-graphrag, selene-fulltext). See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
 
 ## North star: ISO/IEC 39075:2024
 
@@ -66,7 +66,13 @@ v1.0 mandatory (every consumer pulls these), with dependency direction:
 | `selene-algorithms` | core, graph | Graph algorithms: `GraphProjection` + `ProjectionCatalog` foundation + 15 public algorithm surfaces (structural: WCC/SCC/topo/articulation/bridges; pathfinding: Dijkstra/SSSP/APSP; centrality: PageRank/betweenness; community: label_propagation/Louvain/triangle_count) + D21 snapshot harness. Independent of GQL. Spec 16 records M5f implementation invariants (E01–E36). |
 | `selene-testing` | core, graph | Test fixtures, synthetic graph generators, and pure-mirror snapshot-harness DSLs (e.g., `pack_corpus` per D21). Consumed via `[dev-dependencies]` only. |
 
-Opt-in extension crates depend on the mandatory crates plus the procedure-pack/index hooks: `selene-vector` (HNSW + vector procedures, D5); future `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-fulltext`. **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
+Opt-in extension crates:
+
+| Crate | Depends on | Owns |
+|---|---|---|
+| `selene-vector` | core, graph | HNSW vector index provider shell (`VECT` with sub-tags `GRPH` / `VECS` / `QUNT`) and vector procedure-pack manifest stub (`pack_name="vector"`). Algorithm bodies, section codecs, procedure registrations, quantization, and D21 harness land across M8 follow-up briefs. |
+
+Future opt-in extension crates: `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-fulltext`. **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
 
 ## Decision log
 

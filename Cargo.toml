@@ -16,6 +16,7 @@ members = [
     "crates/selene-pack",
     "crates/selene-algorithms",
     "crates/selene-testing",
+    "crates/selene-vector",
 ]
 exclude = ["_spec", "crates/selene-gql/fuzz"]
 

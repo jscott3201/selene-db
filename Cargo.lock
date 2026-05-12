@@ -2235,6 +2235,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "selene-vector"
+version = "0.0.0"
+dependencies = [
+ "miette",
+ "parking_lot",
+ "selene-core",
+ "selene-graph",
+ "selene-pack",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
