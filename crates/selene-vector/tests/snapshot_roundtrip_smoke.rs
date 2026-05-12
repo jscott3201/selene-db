@@ -167,6 +167,46 @@ fn staging_clears_after_failed_vecs_read() {
     target.read_section(SubTag(*b"VECS"), &good_vecs).unwrap();
 }
 
+#[test]
+fn write_staging_clears_after_successful_vecs_emission() {
+    // Codex Cluster A: VECS write must transition staging back to Idle so
+    // the captured Arc is released and a stale repeat VECS without a fresh
+    // GRPH is rejected.
+    let source = provider(config(4));
+    apply_events(&source, &[insert_payload(1, vec![1.0, 0.0, 0.0, 0.0], 0)]);
+    let (_grph, _vecs) = snapshot_bytes(&source);
+
+    let err = source
+        .write_section(SubTag(*b"VECS"))
+        .expect_err("repeat VECS without fresh GRPH must fail after Cluster A fix");
+    assert!(matches!(
+        err,
+        ProviderError::InvalidPayload { reason } if reason.contains("VECS section write before GRPH")
+    ));
+}
+
+#[test]
+fn on_change_rejects_during_incomplete_grph_recovery() {
+    // Codex Cluster C: once GRPH is staged but VECS has not arrived, any
+    // on_change mutation must fail rather than silently routing WAL replay
+    // into the pre-recovery in-memory graph.
+    let source = provider(config(4));
+    apply_events(&source, &[insert_payload(1, vec![1.0, 0.0, 0.0, 0.0], 0)]);
+    let (grph, _vecs) = snapshot_bytes(&source);
+    let target = provider(config(4));
+
+    target.read_section(SubTag(*b"GRPH"), &grph).unwrap();
+
+    let event = vector_change(insert_payload(2, vec![0.0, 1.0, 0.0, 0.0], 0));
+    let err = target
+        .on_change(&event)
+        .expect_err("on_change must reject while GRPH is staged without VECS");
+    assert!(matches!(
+        err,
+        ProviderError::InvalidPayload { reason } if reason.contains("incomplete provider snapshot")
+    ));
+}
+
 fn assert_roundtrip(source: &HnswProvider, target: &HnswProvider) {
     let (grph, vecs) = snapshot_bytes(source);
     assert!(grph.starts_with(b"VGRP"));

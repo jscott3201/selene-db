@@ -125,11 +125,13 @@ impl IndexProvider for HnswProvider {
         }
         match sub_tag {
             snapshot::GRPH => {
+                // Codex review fix (Cluster B): capture into staging AFTER
+                // encode succeeds. Encoding before staging means a failed
+                // encode never leaves a stale `Writing { captured }` behind
+                // that a subsequent VECS retry could reuse.
                 let captured = self.state.load_full();
-                *self.staging.lock() = SectionStaging::Writing {
-                    captured: Arc::clone(&captured),
-                };
                 let bytes = encode_grph(&captured, &self.config).map_err(section_encode_err)?;
+                *self.staging.lock() = SectionStaging::Writing { captured };
                 Ok(bytes)
             }
             snapshot::VECS => {
@@ -141,7 +143,15 @@ impl IndexProvider for HnswProvider {
                         });
                     }
                 };
-                encode_vecs(&captured).map_err(section_encode_err)
+                let bytes = encode_vecs(&captured).map_err(section_encode_err)?;
+                // Codex review fix (Cluster A): clear staging after the
+                // captured Arc is consumed so the snapshot generation does
+                // not pin in memory across later upserts, and so a stray
+                // VECS retry without a fresh GRPH cannot reuse stale state.
+                // BRIEF-63 will revisit this lifetime when QUNT joins the
+                // captured-Arc chain.
+                *self.staging.lock() = SectionStaging::Idle;
+                Ok(bytes)
             }
             snapshot::QUNT => Ok(Vec::new()),
             _ => Err(unknown_sub_tag(sub_tag)),
@@ -149,6 +159,20 @@ impl IndexProvider for HnswProvider {
     }
 
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
+        // Codex review fix (Cluster C): refuse mutation events while a GRPH
+        // section has been staged without a matching VECS commit. Otherwise
+        // an incomplete or truncated snapshot would silently route WAL
+        // replay into the pre-recovery in-memory graph, discarding the
+        // staged topology and producing data loss.
+        if let SectionStaging::Reading {
+            grph: Some(_),
+            vecs: None,
+        } = &*self.staging.lock()
+        {
+            return Err(ProviderError::InvalidPayload {
+                reason: "incomplete provider snapshot: GRPH section staged without VECS".into(),
+            });
+        }
         let Change::IndexExtensionEvent { provider, payload } = change else {
             return Ok(());
         };
