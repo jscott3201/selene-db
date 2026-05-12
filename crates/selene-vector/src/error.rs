@@ -114,4 +114,22 @@ pub enum VectorError {
         /// Non-finite component value.
         value: f32,
     },
+
+    /// HNSW row index space is exhausted (`InternalIndex = u32`).
+    #[error("HNSW row index exhausted: node count {current} reached the u32 cap")]
+    #[diagnostic(code(SLENE_VEC_012))]
+    InternalIndexExhausted {
+        /// Node count when exhaustion was detected.
+        current: usize,
+    },
+
+    /// A direct HNSW insertion requested a layer above the per-spec cap.
+    #[error("HNSW max_layer {observed} exceeds cap {cap}")]
+    #[diagnostic(code(SLENE_VEC_013))]
+    MaxLayerExceedsCap {
+        /// Rejected `max_layer` value.
+        observed: u8,
+        /// Per-spec cap (also enforced by payload decoder).
+        cap: u8,
+    },
 }

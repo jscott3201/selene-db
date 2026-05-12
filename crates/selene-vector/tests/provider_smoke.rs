@@ -110,6 +110,13 @@ fn config_defaults_and_validators_match_brief() {
 
     let cases = [
         HnswConfig::with_params(8, 1, 200, 50, DistanceMetric::Cosine),
+        HnswConfig::with_params(
+            8,
+            u16::MAX as usize + 1,
+            u16::MAX as usize + 1,
+            50,
+            DistanceMetric::Cosine,
+        ),
         HnswConfig::new(0),
         HnswConfig::new(u16::MAX as usize + 1),
         HnswConfig::with_params(8, 16, 0, 50, DistanceMetric::Cosine),

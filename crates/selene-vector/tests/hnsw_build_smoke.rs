@@ -116,6 +116,27 @@ fn insert_tombstone_rejected() {
 }
 
 #[test]
+fn insert_rejects_max_layer_above_cap() {
+    let mut graph = HnswGraph::empty(4);
+    let err = insert_node(
+        &mut graph,
+        NodeId::new(1),
+        vector(&[1.0, 0.0, 0.0, 0.0]),
+        33,
+        &params(DistanceMetric::Cosine),
+    )
+    .expect_err("max_layer above 32 cap is rejected");
+
+    assert!(matches!(
+        err,
+        VectorError::MaxLayerExceedsCap {
+            observed: 33,
+            cap: 32,
+        }
+    ));
+}
+
+#[test]
 fn insert_duplicate_node_id_rejected() {
     let mut graph = HnswGraph::empty(4);
     let params = params(DistanceMetric::Cosine);

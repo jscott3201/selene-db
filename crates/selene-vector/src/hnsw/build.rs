@@ -39,6 +39,17 @@ pub fn insert_node(
     max_layer: u8,
     params: &HnswParams,
 ) -> Result<InternalIndex, VectorError> {
+    if max_layer > MAX_LAYER {
+        return Err(VectorError::MaxLayerExceedsCap {
+            observed: max_layer,
+            cap: MAX_LAYER,
+        });
+    }
+    if graph.nodes.len() >= InternalIndex::MAX as usize {
+        return Err(VectorError::InternalIndexExhausted {
+            current: graph.nodes.len(),
+        });
+    }
     if vector.len() != graph.dimensions() {
         return Err(VectorError::DimensionsLocked {
             expected: graph.dimensions(),
@@ -243,6 +254,19 @@ fn beam_search_layer(
     while !frontier.is_empty() {
         frontier.sort_by(Candidate::cmp);
         let candidate = frontier.remove(0);
+
+        // Early termination: once result holds ef entries and the best
+        // remaining frontier candidate is no better than the worst result,
+        // further expansion cannot improve top-ef. Per Malkov & Yashunin
+        // 2018 §4.1 the bounded beam search must stop here instead of
+        // draining the full reachable component.
+        if result.len() >= ef
+            && let Some(worst) = result.last()
+            && Candidate::cmp(&candidate, worst).is_gt()
+        {
+            break;
+        }
+
         result.push(candidate);
         result.sort_by(Candidate::cmp);
         if result.len() > ef {

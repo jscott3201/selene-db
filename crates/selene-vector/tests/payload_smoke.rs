@@ -47,29 +47,31 @@ fn decode_rejects_truncated_bytes() {
 }
 
 #[test]
-fn decode_rejects_insert_with_empty_vector() {
-    let payload = payload(VectorOp::Insert, Vec::new());
-
-    let err = VectorUpsertPayloadV1::decode(&payload.encode().unwrap())
-        .expect_err("empty insert vector is rejected");
-
-    assert!(matches!(
-        err,
-        VectorError::InvalidPayload { reason } if reason.contains("Insert")
-    ));
-}
-
-#[test]
-fn decode_rejects_max_layer_above_32() {
+fn encode_validates_before_serializing() {
     let mut payload = payload(VectorOp::Insert, vec![1.0]);
-    payload.max_layer = 33;
+    payload.max_layer = 99;
 
-    let err = VectorUpsertPayloadV1::decode(&payload.encode().unwrap())
-        .expect_err("oversized layer is rejected");
+    let err = payload
+        .encode()
+        .expect_err("encode rejects pre-existing semantic violation");
 
     assert!(matches!(
         err,
         VectorError::InvalidPayload { reason } if reason.contains("max_layer")
+    ));
+}
+
+#[test]
+fn encode_rejects_insert_with_empty_vector() {
+    let payload = payload(VectorOp::Insert, Vec::new());
+
+    let err = payload
+        .encode()
+        .expect_err("encode rejects empty Insert vector");
+
+    assert!(matches!(
+        err,
+        VectorError::InvalidPayload { reason } if reason.contains("Insert")
     ));
 }
 
