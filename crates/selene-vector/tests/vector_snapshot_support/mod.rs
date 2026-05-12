@@ -4,9 +4,9 @@ use roaring::RoaringBitmap;
 use selene_core::{Change, NodeId, intern};
 use selene_graph::{IndexProvider, SubTag};
 use selene_testing::{
-    ApiInductionPayload, ErrorInductionKind, SyntheticErrorFields, VectorConfigSpec,
-    VectorCorpusEntry, VectorCorpusEvent, VectorCorpusGraph, VectorCorpusInvocation,
-    VectorErrorKindMirror, VectorMetricMirror,
+    ApiInductionPayload, ErrorInductionKind, NeighborSelectionFlavor, SyntheticErrorFields,
+    VectorConfigSpec, VectorCorpusEntry, VectorCorpusEvent, VectorCorpusGraph,
+    VectorCorpusInvocation, VectorErrorKindMirror, VectorMetricMirror,
 };
 use selene_vector::hnsw::{HnswGraph, HnswParams, insert_node};
 use selene_vector::snapshot_summary::{
@@ -15,8 +15,8 @@ use selene_vector::snapshot_summary::{
     VectorSnapshotInput, render_vector_error, vector_error_kind_for, vector_summary,
 };
 use selene_vector::{
-    BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, QuantizationConfig,
-    VectorBulkInsertPayloadV1, VectorError, VectorOp, VectorUpsertPayloadV1,
+    BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, NeighborSelectionConfig,
+    QuantizationConfig, VectorBulkInsertPayloadV1, VectorError, VectorOp, VectorUpsertPayloadV1,
 };
 
 pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
@@ -176,6 +176,16 @@ fn events_for_graph(graph: VectorCorpusGraph, dim: usize) -> Vec<VectorCorpusEve
             .into_iter()
             .map(|(raw, vector, layer)| event_insert(raw, vector, layer))
             .collect(),
+        VectorCorpusGraph::DiverseClusterL2_64 => {
+            vec![VectorCorpusEvent::Bulk {
+                rows: diverse_cluster_rows(dim),
+            }]
+        }
+        VectorCorpusGraph::DenseClusterL2_8 => {
+            vec![VectorCorpusEvent::Bulk {
+                rows: dense_cluster_rows(dim),
+            }]
+        }
         _ => panic!("unknown vector corpus graph"),
     }
 }
@@ -209,15 +219,57 @@ fn deterministic_rows(
         .collect()
 }
 
+fn diverse_cluster_rows(dim: usize) -> Vec<(u64, Vec<f32>, u8)> {
+    let centers = [[0.0, 0.0], [8.0, 0.0], [0.0, 8.0], [8.0, 8.0]];
+    let mut rows = Vec::new();
+    for (cluster, center) in centers.iter().enumerate() {
+        for member in 0..16 {
+            let raw = (cluster * 16 + member + 1) as u64;
+            let mut vector = vec![0.0; dim];
+            vector[0] = center[0] + (member as f32 * 0.021);
+            vector[1] = center[1] - (member as f32 * 0.017);
+            for (coord, value) in vector.iter_mut().enumerate().skip(2) {
+                *value = ((cluster + 1) as f32 * 0.13) + (coord as f32 * 0.011);
+            }
+            let layer = if raw % 13 == 0 {
+                2
+            } else if raw % 5 == 0 {
+                1
+            } else {
+                0
+            };
+            rows.push((raw, vector, layer));
+        }
+    }
+    rows
+}
+
+fn dense_cluster_rows(dim: usize) -> Vec<(u64, Vec<f32>, u8)> {
+    (0..8)
+        .map(|offset| {
+            let raw = (offset + 1) as u64;
+            let mut vector = vec![0.0; dim];
+            for (coord, value) in vector.iter_mut().enumerate() {
+                *value = (offset as f32 * 0.01) + (coord as f32 * 0.001);
+            }
+            (raw, vector, 0)
+        })
+        .collect()
+}
+
 pub(crate) fn config_from_spec(spec: VectorConfigSpec) -> HnswConfig {
     HnswConfig::with_params(
         spec.dim,
-        16,
-        200,
-        spec.dim.max(50),
+        spec.m,
+        spec.ef_construction,
+        spec.ef_search,
         metric_from_mirror(spec.metric),
     )
     .expect("base config is valid")
+    .with_neighbor_selection(neighbor_selection_from_mirror(
+        spec.neighbor_selection_flavor,
+    ))
+    .expect("neighbor selection config is valid")
     .with_quantization(QuantizationConfig {
         enabled: spec.quantization.enabled,
         rescore: spec.quantization.rescore,
@@ -231,6 +283,25 @@ fn metric_from_mirror(metric: VectorMetricMirror) -> DistanceMetric {
         VectorMetricMirror::L2 => DistanceMetric::L2,
         VectorMetricMirror::Dot => DistanceMetric::Dot,
         _ => panic!("unknown vector metric mirror"),
+    }
+}
+
+fn neighbor_selection_from_mirror(flavor: NeighborSelectionFlavor) -> NeighborSelectionConfig {
+    match flavor {
+        NeighborSelectionFlavor::Default => NeighborSelectionConfig::default(),
+        NeighborSelectionFlavor::ExtendCandidates => NeighborSelectionConfig {
+            extend_candidates: true,
+            keep_pruned_connections: true,
+        },
+        NeighborSelectionFlavor::NoFillBack => NeighborSelectionConfig {
+            extend_candidates: false,
+            keep_pruned_connections: false,
+        },
+        NeighborSelectionFlavor::ExtendNoFillBack => NeighborSelectionConfig {
+            extend_candidates: true,
+            keep_pruned_connections: false,
+        },
+        _ => panic!("unknown neighbor selection flavor"),
     }
 }
 
@@ -490,7 +561,7 @@ pub(crate) fn canonical_error_for_kind(kind: VectorErrorKindMirror) -> VectorErr
         VectorErrorKindMirror::OperationNotSupportedYet => VectorError::OperationNotSupportedYet {
             op: VectorOp::Update,
             node_id: NodeId::new(1),
-            brief: "BRIEF-65",
+            brief: "future",
         },
         VectorErrorKindMirror::DuplicateNodeId => VectorError::DuplicateNodeId {
             node_id: NodeId::new(1),

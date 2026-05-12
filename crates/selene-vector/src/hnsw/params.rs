@@ -1,6 +1,7 @@
 //! Runtime HNSW build knobs derived from provider configuration.
 
-use crate::{DistanceMetric, HnswConfig, QuantizationConfig};
+use super::build::NeighborSelectionOpts;
+use crate::{DistanceMetric, HnswConfig, NeighborSelectionConfig, QuantizationConfig};
 
 /// Derived HNSW construction and search parameters.
 #[derive(Clone, Debug)]
@@ -19,6 +20,8 @@ pub struct HnswParams {
     pub metric: DistanceMetric,
     /// Quantized-search behavior copied from provider configuration.
     pub(crate) quantization: QuantizationConfig,
+    /// Neighbor-selection behavior copied from provider configuration.
+    pub(crate) neighbor_selection: NeighborSelectionConfig,
 }
 
 impl HnswParams {
@@ -33,6 +36,7 @@ impl HnswParams {
             level_factor: 1.0 / (config.m as f64).ln(),
             metric: config.metric,
             quantization: config.quantization,
+            neighbor_selection: config.neighbor_selection,
         }
     }
 
@@ -40,5 +44,14 @@ impl HnswParams {
     #[must_use]
     pub fn max_neighbors(&self, layer: u8) -> usize {
         if layer == 0 { self.m0 } else { self.m }
+    }
+
+    /// Return insertion-time neighbor-selection options.
+    #[must_use]
+    pub(crate) const fn neighbor_selection_opts(&self) -> NeighborSelectionOpts {
+        NeighborSelectionOpts {
+            extend_candidates: self.neighbor_selection.extend_candidates,
+            keep_pruned_connections: self.neighbor_selection.keep_pruned_connections,
+        }
     }
 }

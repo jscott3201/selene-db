@@ -43,8 +43,9 @@ pub use plan_corpus::{PlanCorpus, PlanCorpusCategory, PlanCorpusEntry, PlanCorpu
 #[cfg(feature = "vector")]
 pub use vector_corpus::{
     ApiInductionPayload, ERROR_KIND_COVERAGE, ErrorInductionKind, MAGIC_COVERAGE, METRIC_COVERAGE,
-    OP_COVERAGE, QUANT_METHOD_COVERAGE, QuantMethodMirror, SURFACE_COVERAGE, SyntheticErrorFields,
-    VectorConfigSpec, VectorCorpus, VectorCorpusCategory, VectorCorpusEntry, VectorCorpusEvent,
-    VectorCorpusGraph, VectorCorpusInvocation, VectorErrorKindMirror, VectorMagicMirror,
-    VectorMetricMirror, VectorOpMirror, VectorQuantizationSpec, VectorSurface,
+    NEIGHBOR_SELECTION_COVERAGE, NeighborSelectionFlavor, OP_COVERAGE, QUANT_METHOD_COVERAGE,
+    QuantMethodMirror, SURFACE_COVERAGE, SyntheticErrorFields, VectorConfigSpec, VectorCorpus,
+    VectorCorpusCategory, VectorCorpusEntry, VectorCorpusEvent, VectorCorpusGraph,
+    VectorCorpusInvocation, VectorErrorKindMirror, VectorMagicMirror, VectorMetricMirror,
+    VectorOpMirror, VectorQuantizationSpec, VectorSurface,
 };

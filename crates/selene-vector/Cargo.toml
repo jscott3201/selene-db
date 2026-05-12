@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "HNSW vector index extension for selene-db."
+autobenches = false
 
 [features]
 default = []
@@ -32,12 +33,18 @@ simsimd = { version = "5", optional = true }
 selene-pack = { path = "../selene-pack", version = "0.0.0" }
 selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
 blake3.workspace = true
+criterion.workspace = true
 insta.workspace = true
+proptest.workspace = true
 serde_json.workspace = true
 
 [[test]]
 name = "vector_snapshot_corpus"
 required-features = ["test-harness"]
+
+[[bench]]
+name = "recall"
+harness = false
 
 [lints]
 workspace = true

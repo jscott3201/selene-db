@@ -5,7 +5,9 @@ use std::sync::Arc;
 use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap};
 use selene_graph::{GraphError, IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 use selene_pack::{ContentHash, ProcedurePackManifest, parse_manifest};
-use selene_vector::{DistanceMetric, HnswConfig, HnswProvider, VectorError, pack_manifest};
+use selene_vector::{
+    DistanceMetric, HnswConfig, HnswProvider, NeighborSelectionConfig, VectorError, pack_manifest,
+};
 
 fn config() -> HnswConfig {
     HnswConfig::new(8).expect("test config is valid")
@@ -112,6 +114,10 @@ fn config_defaults_and_validators_match_brief() {
     assert_eq!(config.ef_search, HnswConfig::default_ef_search());
     assert_eq!(HnswConfig::default_ef_search(), 50);
     assert_eq!(config.metric, DistanceMetric::Cosine);
+    assert_eq!(
+        config.neighbor_selection,
+        NeighborSelectionConfig::default()
+    );
 
     let cases = [
         HnswConfig::with_params(8, 1, 200, 50, DistanceMetric::Cosine),

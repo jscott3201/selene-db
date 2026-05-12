@@ -85,6 +85,7 @@ selene-gql:parse:criterion
 selene-gql:analyze:criterion
 selene-gql:plan_optimize:criterion
 selene-gql:iai_gates:iai
+selene-vector:recall:criterion
 "
 
 echo "==> Compiling bench binaries (parallel compilation is allowed)"

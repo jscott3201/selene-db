@@ -6,6 +6,7 @@ expression: snapshot.to_string()
 slug="error-section-encode-failed"
 description="Synthetic SectionEncodeFailed shape."
 dim=4 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=false quantization_rescore=false
+neighbor_select="default"
 ==== GRAPH ====
 nodes=0 dim=4 entry_point=none max_layer=0
 node_head=[]

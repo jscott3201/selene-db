@@ -1,0 +1,26 @@
+---
+source: crates/selene-vector/tests/vector_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+==== CONFIG ====
+slug="diverse-cluster-extend-off"
+description="Diverse L2 cluster search with default neighbor selection."
+dim=8 m=8 ef_construction=64 ef_search=50 metric=L2 quantization_enabled=false quantization_rescore=false
+neighbor_select="default"
+==== GRAPH ====
+nodes=64 dim=8 entry_point=idx12 max_layer=2
+node_head=[n1:L0:[16], n2:L0:[15], n3:L0:[15], n4:L0:[15], n5:L1:[15/7], n6:L0:[15], n7:L0:[15], n8:L0:[15]]
+==== SECTIONS ====
+GRPH(len=7355, blake3_8=1196c87c0e2c8104, dim=8, nodes=64, entry_point=idx12, max_layer=2, head=[n1:L0:[16], n2:L0:[15], n3:L0:[15], n4:L0:[15]])
+VECS(len=2074, blake3_8=e3b41ded695f333e, dim=8, nodes=64, components=512, head=[+0.000, +0.000, +0.152, +0.163, +0.174, +0.185])
+QUNT(empty)
+==== RESULT ====
+search.rows
+  [0] n1	-0.442085
+  [1] n2	-0.442910
+  [2] n3	-0.445375
+  [3] n4	-0.449454
+  [4] n5	-0.455103
+  [5] n6	-0.462265
+  [6] n7	-0.470870
+  [7] n8	-0.480842

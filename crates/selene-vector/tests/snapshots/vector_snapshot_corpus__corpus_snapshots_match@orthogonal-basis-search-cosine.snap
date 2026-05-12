@@ -6,6 +6,7 @@ expression: snapshot.to_string()
 slug="orthogonal-basis-search-cosine"
 description="Cosine top-k over four orthogonal basis vectors."
 dim=4 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=false quantization_rescore=false
+neighbor_select="default"
 ==== GRAPH ====
 nodes=4 dim=4 entry_point=idx0 max_layer=0
 node_head=[n1:L0:[3], n2:L0:[3], n3:L0:[3], n4:L0:[3]]
