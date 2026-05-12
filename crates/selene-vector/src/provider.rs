@@ -295,7 +295,35 @@ impl HnswProvider {
     }
 
     fn read_qunt(&self, bytes: &[u8]) -> Result<(), ProviderError> {
-        *self.staging.lock() = SectionStaging::Idle;
+        // Codex review fix (P1): preserve the BRIEF-61 incomplete-recovery
+        // marker. Resetting staging on entry would let an empty QUNT clear a
+        // staged-without-VECS Reading state, bypassing the on_change guard.
+        // It would also let a non-empty QUNT validate against the previously
+        // published graph (self.state.load_full()) rather than the staged
+        // recovery target, potentially attaching the overlay to the wrong
+        // graph when dimensions and counts coincide.
+        match &*self.staging.lock() {
+            SectionStaging::Reading {
+                grph: Some(_),
+                vecs: None,
+            } => {
+                return Err(ProviderError::InvalidPayload {
+                    reason: "QUNT section read before VECS commit".into(),
+                });
+            }
+            SectionStaging::Writing { .. } => {
+                return Err(ProviderError::InvalidPayload {
+                    reason: "QUNT section read during snapshot write".into(),
+                });
+            }
+            SectionStaging::Idle
+            | SectionStaging::Reading { grph: None, .. }
+            | SectionStaging::Reading {
+                grph: Some(_),
+                vecs: Some(_),
+            } => {}
+        }
+
         if bytes.is_empty() {
             self.clear_quantized();
             return Ok(());

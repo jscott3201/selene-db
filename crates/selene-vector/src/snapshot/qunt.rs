@@ -127,10 +127,19 @@ fn validate_qunt_body(body: &QuntBodyV1) -> Result<(), VectorError> {
     }
     validate_ranges(&body.store.range.min, &body.store.range.max)?;
     for (index, norm) in body.store.approx_norms.iter().copied().enumerate() {
+        // Codex review fix (P2): approximate vector magnitudes must be
+        // non-negative; a negative norm survives finiteness checks but
+        // silently inverts cosine asymmetric scores.
         if !norm.is_finite() {
             return Err(decode_failed(
                 QUNT,
                 format!("non-finite QUNT approx_norm at index {index}: {norm}"),
+            ));
+        }
+        if norm < 0.0 {
+            return Err(decode_failed(
+                QUNT,
+                format!("negative QUNT approx_norm at index {index}: {norm}"),
             ));
         }
     }
@@ -253,6 +262,18 @@ mod tests {
         let norm_err = decode_qunt(&raw_encode(&norm_body)).expect_err("non-finite norm rejected");
         assert!(
             matches!(norm_err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("approx_norm"))
+        );
+    }
+
+    #[test]
+    fn qunt_decode_rejects_negative_approx_norm() {
+        let mut body = body(2, 2);
+        body.store.approx_norms[0] = -1.0;
+
+        let err = decode_qunt(&raw_encode(&body)).expect_err("negative norm rejected");
+
+        assert!(
+            matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("negative") && reason.contains("approx_norm"))
         );
     }
 

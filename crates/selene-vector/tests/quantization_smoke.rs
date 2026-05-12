@@ -190,6 +190,39 @@ fn qunt_before_complete_graph_rejects_non_empty_body() {
 }
 
 #[test]
+fn qunt_after_grph_without_vecs_preserves_incomplete_recovery_guard() {
+    let source = provider(config(4, DistanceMetric::Cosine, true, false));
+    apply_events(&source, deterministic_events(5, 4, 23));
+    let (grph, _vecs, qunt) = snapshot_bytes(&source);
+    let target = provider(config(4, DistanceMetric::Cosine, true, false));
+    target.read_section(SubTag(*b"GRPH"), &grph).unwrap();
+
+    let empty_err = target
+        .read_section(SubTag(*b"QUNT"), &Vec::<u8>::new())
+        .expect_err("empty QUNT after GRPH-without-VECS rejected");
+    assert!(matches!(
+        empty_err,
+        ProviderError::InvalidPayload { reason } if reason.contains("before VECS")
+    ));
+
+    let non_empty_err = target
+        .read_section(SubTag(*b"QUNT"), &qunt)
+        .expect_err("non-empty QUNT after GRPH-without-VECS rejected");
+    assert!(matches!(
+        non_empty_err,
+        ProviderError::InvalidPayload { reason } if reason.contains("before VECS")
+    ));
+
+    let replay_err = target
+        .on_change(&upsert_change(insert_payload(99, vec![1.0, 0.0, 0.0, 0.0])))
+        .expect_err("BRIEF-61 incomplete-recovery guard still fires after rejected QUNT");
+    assert!(matches!(
+        replay_err,
+        ProviderError::InvalidPayload { reason } if reason.contains("incomplete provider snapshot")
+    ));
+}
+
+#[test]
 fn terminal_state_after_qunt_clears_staging_to_idle() {
     let source = provider(config(4, DistanceMetric::Cosine, true, false));
     apply_events(&source, vec![insert_payload(1, vec![1.0, 0.0, 0.0, 0.0])]);
