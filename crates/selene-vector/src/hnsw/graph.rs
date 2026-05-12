@@ -7,7 +7,7 @@ use selene_core::NodeId;
 use smallvec::SmallVec;
 
 use crate::VectorError;
-use crate::quantize::QuantizedStoreSq8;
+use crate::quantize::QuantizedStore;
 
 use super::InternalIndex;
 
@@ -67,7 +67,7 @@ pub struct HnswGraph {
     pub(crate) max_layer: u8,
     pub(crate) node_id_to_idx: HashMap<NodeId, InternalIndex>,
     pub(crate) dimensions: u16,
-    pub(crate) quantized: Option<Arc<QuantizedStoreSq8>>,
+    pub(crate) quantized: Option<Arc<QuantizedStore>>,
 }
 
 impl HnswGraph {
@@ -114,13 +114,13 @@ impl HnswGraph {
         }
     }
 
-    pub(crate) fn clone_with_quantized(&self, quantized: Option<Arc<QuantizedStoreSq8>>) -> Self {
+    pub(crate) fn clone_with_quantized(&self, quantized: Option<Arc<QuantizedStore>>) -> Self {
         let mut next = self.clone_for_mutation();
         next.quantized = quantized;
         next
     }
 
-    pub(crate) fn quantized(&self) -> Option<&QuantizedStoreSq8> {
+    pub(crate) fn quantized(&self) -> Option<&QuantizedStore> {
         self.quantized.as_deref()
     }
 

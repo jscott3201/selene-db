@@ -4,9 +4,9 @@ use roaring::RoaringBitmap;
 use selene_core::{Change, NodeId, intern};
 use selene_graph::{IndexProvider, SubTag};
 use selene_testing::{
-    ApiInductionPayload, ErrorInductionKind, NeighborSelectionFlavor, SyntheticErrorFields,
-    VectorConfigSpec, VectorCorpusEntry, VectorCorpusEvent, VectorCorpusGraph,
-    VectorCorpusInvocation, VectorErrorKindMirror, VectorMetricMirror,
+    ApiInductionPayload, ErrorInductionKind, NeighborSelectionFlavor, QuantMethodMirror,
+    SyntheticErrorFields, VectorConfigSpec, VectorCorpusEntry, VectorCorpusEvent,
+    VectorCorpusGraph, VectorCorpusInvocation, VectorErrorKindMirror, VectorMetricMirror,
 };
 use selene_vector::hnsw::{HnswGraph, HnswParams, insert_node};
 use selene_vector::snapshot_summary::{
@@ -15,8 +15,9 @@ use selene_vector::snapshot_summary::{
     VectorSnapshotInput, render_vector_error, vector_error_kind_for, vector_summary,
 };
 use selene_vector::{
-    BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, NeighborSelectionConfig,
-    QuantizationConfig, VectorBulkInsertPayloadV1, VectorError, VectorOp, VectorUpsertPayloadV1,
+    BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, NeighborSelectionConfig, PqParams,
+    QuantMethod, QuantizationConfig, VectorBulkInsertPayloadV1, VectorError, VectorOp,
+    VectorUpsertPayloadV1,
 };
 
 pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
@@ -41,7 +42,12 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
             ef_search,
             filter,
         } if entry.config.quantization.enabled => {
-            let baseline = source
+            let baseline_config = config
+                .clone()
+                .with_quantization(QuantizationConfig::default())
+                .expect("baseline config is valid");
+            let baseline_source = provider_with_graph(entry.graph, baseline_config);
+            let baseline = baseline_source
                 .search(query, *k, *ef_search, bitmap(filter).as_ref())
                 .expect("baseline search succeeds");
             let asymmetric_config = config
@@ -49,6 +55,8 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
                 .with_quantization(QuantizationConfig {
                     enabled: true,
                     rescore: false,
+                    method: config.quantization.method,
+                    pq: config.quantization.pq,
                 })
                 .expect("asymmetric config is valid");
             let rescored_config = config
@@ -56,6 +64,8 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
                 .with_quantization(QuantizationConfig {
                     enabled: true,
                     rescore: true,
+                    method: config.quantization.method,
+                    pq: config.quantization.pq,
                 })
                 .expect("rescored config is valid");
             let asymmetric = recover_provider(&asymmetric_config, &sections);
@@ -109,6 +119,7 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
             let recovered = recover_provider(&config, &sections);
             let stats = recovered
                 .quantization_stats()
+                .expect("QUNT stats API succeeds")
                 .expect("QUNT stats are present");
             VectorInvocationResult::Stats {
                 stats: QuantizationStatsSummary::from_stats(stats),
@@ -176,6 +187,11 @@ fn events_for_graph(graph: VectorCorpusGraph, dim: usize) -> Vec<VectorCorpusEve
             .into_iter()
             .map(|(raw, vector, layer)| event_insert(raw, vector, layer))
             .collect(),
+        VectorCorpusGraph::PqTrainingL2_256 => {
+            vec![VectorCorpusEvent::Bulk {
+                rows: deterministic_rows(1, 256, dim, 166, true),
+            }]
+        }
         VectorCorpusGraph::DiverseClusterL2_64 => {
             vec![VectorCorpusEvent::Bulk {
                 rows: diverse_cluster_rows(dim),
@@ -273,6 +289,8 @@ pub(crate) fn config_from_spec(spec: VectorConfigSpec) -> HnswConfig {
     .with_quantization(QuantizationConfig {
         enabled: spec.quantization.enabled,
         rescore: spec.quantization.rescore,
+        method: quant_method_from_spec(spec.quantization.method),
+        pq: pq_params_from_spec(spec.quantization.pq),
     })
     .expect("quantization config is valid")
 }
@@ -303,6 +321,22 @@ fn neighbor_selection_from_mirror(flavor: NeighborSelectionFlavor) -> NeighborSe
         },
         _ => panic!("unknown neighbor selection flavor"),
     }
+}
+
+fn quant_method_from_spec(method: QuantMethodMirror) -> QuantMethod {
+    match method {
+        QuantMethodMirror::Sq8 => QuantMethod::Sq8,
+        QuantMethodMirror::Pq => QuantMethod::Pq,
+        _ => panic!("unknown quant method mirror"),
+    }
+}
+
+fn pq_params_from_spec(spec: Option<selene_testing::VectorPqSpec>) -> Option<PqParams> {
+    spec.map(|pq| PqParams {
+        m_subspaces: pq.m_subspaces,
+        k_centroids: pq.k_centroids,
+        train_min_vectors: pq.train_min_vectors,
+    })
 }
 
 fn apply_events(provider: &HnswProvider, events: &[VectorCorpusEvent]) {
@@ -489,6 +523,16 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
         ApiInductionPayload::NonFiniteQuery => provider
             .search(&[1.0, f32::NAN, 0.0, 0.0], 1, Some(4), None)
             .expect_err("NaN query rejected"),
+        ApiInductionPayload::PqDimensionNotDivisible => {
+            HnswConfig::with_params(10, 16, 200, 50, DistanceMetric::L2)
+                .unwrap()
+                .with_pq_quantization(PqParams {
+                    m_subspaces: 3,
+                    k_centroids: 256,
+                    train_min_vectors: 256,
+                })
+                .expect_err("PQ dimension divisibility rejected")
+        }
         _ => panic!("unknown API induction payload"),
     }
 }
@@ -527,6 +571,10 @@ fn synthetic_error(fields: &SyntheticErrorFields) -> VectorError {
         },
         SyntheticErrorFields::InternalIndexExhausted => VectorError::InternalIndexExhausted {
             current: u32::MAX as usize + 1,
+        },
+        SyntheticErrorFields::PqTrainingDeferred => VectorError::PqTrainingDeferred {
+            observed_vectors: 100,
+            required: 256,
         },
         _ => panic!("unknown synthetic error fields"),
     }
@@ -581,6 +629,13 @@ pub(crate) fn canonical_error_for_kind(kind: VectorErrorKindMirror) -> VectorErr
         VectorErrorKindMirror::NonFiniteQueryComponent => VectorError::NonFiniteQueryComponent {
             index: 1,
             value: f32::NAN,
+        },
+        VectorErrorKindMirror::PqTrainingDeferred => {
+            synthetic_error(&SyntheticErrorFields::PqTrainingDeferred)
+        }
+        VectorErrorKindMirror::PqDimensionNotDivisible => VectorError::PqDimensionNotDivisible {
+            dim: 10,
+            m_subspaces: 3,
         },
         _ => panic!("unknown vector error kind mirror"),
     }

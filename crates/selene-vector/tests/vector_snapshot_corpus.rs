@@ -142,6 +142,23 @@ fn corpus_covers_every_quant_method() {
 }
 
 #[test]
+fn corpus_pq_entries_cover_all_states() {
+    let actual = VectorCorpus::m8()
+        .entries()
+        .filter(|entry| entry.covered_quant_methods.contains(&QuantMethodMirror::Pq))
+        .map(|entry| entry.slug)
+        .collect::<BTreeSet<_>>();
+    for slug in [
+        "pq-default-l2",
+        "pq-rescore-l2",
+        "pq-recovery-replay",
+        "pq-training-deferred",
+    ] {
+        assert!(actual.contains(slug), "PQ corpus missing {slug}");
+    }
+}
+
+#[test]
 fn distance_metric_mirror_matches_anchor() {
     assert_anchor_names(
         VectorMetricMirror::ALL.iter().map(|metric| metric.name()),
@@ -248,6 +265,7 @@ fn corpus_fixture_graphs_build_successfully() {
     for graph in VectorCorpusGraph::ALL {
         let config = match graph {
             VectorCorpusGraph::DeterministicL2_100
+            | VectorCorpusGraph::PqTrainingL2_256
             | VectorCorpusGraph::DiverseClusterL2_64
             | VectorCorpusGraph::DenseClusterL2_8 => config_from_spec(VectorConfigSpec::new(
                 8,
@@ -272,6 +290,7 @@ fn error_fixtures_split_api_vs_synthetic() {
         VectorErrorKindMirror::SectionEncodeFailed,
         VectorErrorKindMirror::EncodeFailed,
         VectorErrorKindMirror::InternalIndexExhausted,
+        VectorErrorKindMirror::PqTrainingDeferred,
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();
@@ -347,6 +366,7 @@ fn bench_invocation_hygiene_is_declared() {
 
     assert!(cargo.contains("autobenches = false"));
     assert!(cargo.contains("name = \"recall\""));
+    assert!(cargo.contains("name = \"quant_recall\""));
     assert!(cargo.contains("harness = false"));
 }
 
@@ -358,6 +378,7 @@ fn scripts_run_benches_includes_recall_entry() {
     .expect("read run-benches.sh");
 
     assert!(script.contains("selene-vector:recall:criterion"));
+    assert!(script.contains("selene-vector:quant_recall:criterion"));
 }
 
 #[test]
@@ -373,9 +394,16 @@ fn recall_bench_uses_public_provider_search() {
     let bench =
         std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/recall.rs"))
             .expect("read recall bench");
+    let quant_bench = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/quant_recall.rs"),
+    )
+    .expect("read quant recall bench");
 
     assert!(bench.contains(".search(query, k, Some(ef_search), None)"));
     assert!(!bench.contains("hnsw::search::search"));
+    assert!(quant_bench.contains(".search(query, k, Some(ef_search), None)"));
+    assert!(!quant_bench.contains("hnsw::search::search"));
+    assert!(quant_bench.contains("benchmark_group(\"quant_recall_at_10\")"));
 }
 
 #[test]
@@ -384,6 +412,7 @@ fn use_import_gate_mentions_public_vector_surface() {
         DistanceMetric::Cosine,
         VectorOp::Insert,
         QuantMethod::Sq8,
+        QuantMethod::Pq,
         PAYLOAD_MAGIC,
         PAYLOAD_MAGIC_BULK,
     );

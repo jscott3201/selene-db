@@ -52,6 +52,8 @@ pub use payload::{
 };
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;
-pub use quantize::{QuantMethod, QuantizationConfig, QuantizationStats};
+pub use quantize::{
+    PqParams, QuantMethod, QuantizationConfig, QuantizationStats, QuantizationStatsKind,
+};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{VectorInvocationResult, VectorSnapshot, VectorSnapshotInput};

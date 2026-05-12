@@ -1,0 +1,45 @@
+---
+source: crates/selene-vector/tests/vector_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+==== CONFIG ====
+slug="pq-training-deferred"
+description="PQ below train_min writes empty QUNT and searches with f32 fallback."
+dim=8 m=16 ef_construction=200 ef_search=50 metric=L2 quantization_enabled=true quantization_rescore=false
+neighbor_select="default"
+quantization_method="pq" pq_m=1 pq_k=256 pq_train_min=512
+==== GRAPH ====
+nodes=100 dim=8 entry_point=idx16 max_layer=2
+node_head=[n1:L0:[27], n2:L0:[29], n3:L0:[31], n4:L0:[12], n5:L1:[31/10], n6:L0:[30], n7:L0:[26], n8:L0:[30]]
+==== SECTIONS ====
+GRPH(len=17735, blake3_8=441d9ed6a0f6b285, dim=8, nodes=100, entry_point=idx16, max_layer=2, head=[n1:L0:[27], n2:L0:[29], n3:L0:[31], n4:L0:[12]])
+VECS(len=3226, blake3_8=d5035ab1eeaf1dc0, dim=8, nodes=100, components=800, head=[+0.595, +0.013, +0.648, -0.868, +0.149, -0.010])
+QUNT(empty)
+==== RESULT ====
+f32_baseline.rows
+  [0] n12	-1.428463
+  [1] n33	-1.503249
+  [2] n4	-1.586382
+  [3] n14	-1.721803
+  [4] n40	-1.750928
+  [5] n3	-1.785338
+  [6] n26	-1.793632
+  [7] n20	-1.799278
+sq8_asymmetric.rows
+  [0] n12	-1.428463
+  [1] n33	-1.503249
+  [2] n4	-1.586382
+  [3] n14	-1.721803
+  [4] n40	-1.750928
+  [5] n3	-1.785338
+  [6] n26	-1.793632
+  [7] n20	-1.799278
+sq8_rescored.rows
+  [0] n12	-1.428463
+  [1] n33	-1.503249
+  [2] n4	-1.586382
+  [3] n14	-1.721803
+  [4] n40	-1.750928
+  [5] n3	-1.785338
+  [6] n26	-1.793632
+  [7] n20	-1.799278

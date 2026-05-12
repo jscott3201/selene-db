@@ -2,7 +2,9 @@
 
 #![allow(missing_docs)]
 
-use super::coverage::{NeighborSelectionFlavor, VectorErrorKindMirror, VectorMetricMirror};
+use super::coverage::{
+    NeighborSelectionFlavor, QuantMethodMirror, VectorErrorKindMirror, VectorMetricMirror,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
@@ -13,6 +15,7 @@ pub enum VectorCorpusGraph {
     DeterministicL2_100,
     MixedLayerCosine30,
     QuantizedPrefixCosine,
+    PqTrainingL2_256,
     DiverseClusterL2_64,
     DenseClusterL2_8,
 }
@@ -25,6 +28,7 @@ impl VectorCorpusGraph {
         Self::DeterministicL2_100,
         Self::MixedLayerCosine30,
         Self::QuantizedPrefixCosine,
+        Self::PqTrainingL2_256,
         Self::DiverseClusterL2_64,
         Self::DenseClusterL2_8,
     ];
@@ -38,6 +42,7 @@ impl VectorCorpusGraph {
             Self::DeterministicL2_100 => "deterministic-l2-100",
             Self::MixedLayerCosine30 => "mixed-layer-cosine-30",
             Self::QuantizedPrefixCosine => "quantized-prefix-cosine",
+            Self::PqTrainingL2_256 => "pq-training-l2-256",
             Self::DiverseClusterL2_64 => "diverse-cluster-l2-64",
             Self::DenseClusterL2_8 => "dense-cluster-l2-8",
         }
@@ -48,23 +53,72 @@ impl VectorCorpusGraph {
 #[non_exhaustive]
 pub struct VectorQuantizationSpec {
     pub enabled: bool,
+    pub method: QuantMethodMirror,
     pub rescore: bool,
+    pub pq: Option<VectorPqSpec>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct VectorPqSpec {
+    pub m_subspaces: usize,
+    pub k_centroids: u32,
+    pub train_min_vectors: usize,
 }
 
 impl VectorQuantizationSpec {
     pub const DISABLED: Self = Self {
         enabled: false,
+        method: QuantMethodMirror::Sq8,
         rescore: false,
+        pq: None,
     };
 
     pub const ENABLED: Self = Self {
         enabled: true,
+        method: QuantMethodMirror::Sq8,
         rescore: false,
+        pq: None,
     };
 
     pub const RESCORE: Self = Self {
         enabled: true,
+        method: QuantMethodMirror::Sq8,
         rescore: true,
+        pq: None,
+    };
+
+    pub const PQ_DEFAULT: Self = Self {
+        enabled: true,
+        method: QuantMethodMirror::Pq,
+        rescore: false,
+        pq: Some(VectorPqSpec {
+            m_subspaces: 1,
+            k_centroids: 256,
+            train_min_vectors: 256,
+        }),
+    };
+
+    pub const PQ_RESCORE: Self = Self {
+        enabled: true,
+        method: QuantMethodMirror::Pq,
+        rescore: true,
+        pq: Some(VectorPqSpec {
+            m_subspaces: 1,
+            k_centroids: 256,
+            train_min_vectors: 256,
+        }),
+    };
+
+    pub const PQ_DEFERRED: Self = Self {
+        enabled: true,
+        method: QuantMethodMirror::Pq,
+        rescore: false,
+        pq: Some(VectorPqSpec {
+            m_subspaces: 1,
+            k_centroids: 256,
+            train_min_vectors: 512,
+        }),
     };
 }
 
@@ -183,6 +237,7 @@ pub enum ApiInductionPayload {
     NonFiniteVector,
     MaxLayerExceedsCap,
     NonFiniteQuery,
+    PqDimensionNotDivisible,
 }
 
 #[derive(Clone, Debug)]
@@ -193,6 +248,7 @@ pub enum SyntheticErrorFields {
     SectionEncodeFailed,
     EncodeFailed,
     InternalIndexExhausted,
+    PqTrainingDeferred,
 }
 
 impl VectorCorpusInvocation {

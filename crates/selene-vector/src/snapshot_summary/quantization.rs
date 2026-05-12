@@ -1,6 +1,6 @@
 //! Quantization parity and stats rendering for vector snapshot fixtures.
 
-use crate::{QuantMethod, QuantizationStats};
+use crate::{QuantMethod, QuantizationStats, QuantizationStatsKind};
 
 use super::search::{SearchRowsSummary, render_search_rows};
 use super::{format_score, quant_method_name};
@@ -16,8 +16,8 @@ pub struct QuantizationStatsSummary {
     pub code_count: usize,
     /// SQ8 code bytes.
     pub bytes_codes: usize,
-    /// Range bytes.
-    pub bytes_ranges: usize,
+    /// Method-specific byte accounting.
+    pub kind: QuantizationStatsKind,
     /// Norm cache bytes.
     pub bytes_norms: usize,
     /// Compression ratio.
@@ -33,7 +33,7 @@ impl QuantizationStatsSummary {
             dim: stats.dim,
             code_count: stats.code_count,
             bytes_codes: stats.bytes_codes,
-            bytes_ranges: stats.bytes_ranges,
+            kind: stats.kind,
             bytes_norms: stats.bytes_norms,
             compression_ratio: stats.compression_ratio,
         }
@@ -52,16 +52,28 @@ pub struct QuantizationParitySummary {
 }
 
 pub(crate) fn render_stats(stats: &QuantizationStatsSummary, out: &mut Vec<String>) {
-    out.push(format!(
-        "stats method={} dim={} code_count={} bytes_codes={} bytes_ranges={} bytes_norms={} compression_ratio={}",
-        quant_method_name(stats.method),
-        stats.dim,
-        stats.code_count,
-        stats.bytes_codes,
-        stats.bytes_ranges,
-        stats.bytes_norms,
-        format_score(stats.compression_ratio)
-    ));
+    match stats.kind {
+        QuantizationStatsKind::Sq8 { bytes_ranges } => out.push(format!(
+            "stats method={} dim={} code_count={} bytes_codes={} bytes_ranges={} bytes_norms={} compression_ratio={}",
+            quant_method_name(stats.method),
+            stats.dim,
+            stats.code_count,
+            stats.bytes_codes,
+            bytes_ranges,
+            stats.bytes_norms,
+            format_score(stats.compression_ratio)
+        )),
+        QuantizationStatsKind::Pq { bytes_codebook } => out.push(format!(
+            "stats method={} dim={} code_count={} bytes_codes={} bytes_codebook={} bytes_norms={} compression_ratio={}",
+            quant_method_name(stats.method),
+            stats.dim,
+            stats.code_count,
+            stats.bytes_codes,
+            bytes_codebook,
+            stats.bytes_norms,
+            format_score(stats.compression_ratio)
+        )),
+    }
 }
 
 pub(crate) fn render_parity(parity: &QuantizationParitySummary, out: &mut Vec<String>) {

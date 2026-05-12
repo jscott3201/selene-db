@@ -47,5 +47,5 @@ pub use vector_corpus::{
     QuantMethodMirror, SURFACE_COVERAGE, SyntheticErrorFields, VectorConfigSpec, VectorCorpus,
     VectorCorpusCategory, VectorCorpusEntry, VectorCorpusEvent, VectorCorpusGraph,
     VectorCorpusInvocation, VectorErrorKindMirror, VectorMagicMirror, VectorMetricMirror,
-    VectorOpMirror, VectorQuantizationSpec, VectorSurface,
+    VectorOpMirror, VectorPqSpec, VectorQuantizationSpec, VectorSurface,
 };

@@ -10,7 +10,7 @@ use super::distance::{distance, dot_product};
 use super::{HnswGraph, HnswParams, InternalIndex};
 use crate::DistanceMetric;
 use crate::VectorError;
-use crate::quantize::QuantizedStoreSq8;
+use crate::quantize::QuantizedStore;
 
 /// A scored HNSW candidate shared by build and search paths.
 #[derive(Clone, Copy, Debug)]
@@ -206,13 +206,13 @@ pub(crate) enum Scorer<'a> {
         query: &'a [f32],
         metric: DistanceMetric,
     },
-    /// Asymmetric SQ8 scorer with f32 fallback for post-snapshot nodes.
+    /// Asymmetric quantized scorer with f32 fallback for post-snapshot nodes.
     Asymmetric {
         query: &'a [f32],
         metric: DistanceMetric,
         query_norm: f32,
         lut: Vec<f32>,
-        quantized: &'a QuantizedStoreSq8,
+        quantized: &'a QuantizedStore,
     },
 }
 
@@ -336,6 +336,7 @@ mod tests {
 
     use super::super::build::insert_node;
     use super::*;
+    use crate::quantize::QuantizedStoreSq8;
     use crate::{HnswConfig, QuantizationConfig};
 
     #[test]
@@ -346,6 +347,7 @@ mod tests {
             QuantizationConfig {
                 enabled: true,
                 rescore: false,
+                ..Default::default()
             },
         );
         let scorer = Scorer::for_search(&graph, &[0.0, 0.0], &params);
@@ -363,6 +365,7 @@ mod tests {
             QuantizationConfig {
                 enabled: true,
                 rescore: false,
+                ..Default::default()
             },
         );
         let scorer = Scorer::for_search(&graph, &[3.0, 4.0], &params);
@@ -399,10 +402,10 @@ mod tests {
             )
             .unwrap();
         }
-        let store = Arc::new(
+        let store = Arc::new(QuantizedStore::Sq8(
             QuantizedStoreSq8::build(graph.len(), graph.dimensions(), rows.iter().copied())
                 .unwrap(),
-        );
+        ));
         (graph.clone_with_quantized(Some(store)), params)
     }
 }

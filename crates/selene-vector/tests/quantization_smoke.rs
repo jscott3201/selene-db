@@ -9,8 +9,9 @@ use common::full_graph_summary;
 use selene_core::{Change, NodeId, intern};
 use selene_graph::{IndexProvider, ProviderError, SubTag};
 use selene_vector::{
-    BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, QuantizationConfig,
-    VectorBulkInsertPayloadV1, VectorOp, VectorUpsertPayloadV1,
+    BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, PqParams, QuantMethod,
+    QuantizationConfig, QuantizationStatsKind, VectorBulkInsertPayloadV1, VectorError, VectorOp,
+    VectorUpsertPayloadV1,
 };
 
 #[test]
@@ -23,7 +24,7 @@ fn grph_vecs_alone_recovers_usable_f32_graph() {
     target.read_section(SubTag(*b"GRPH"), &grph).unwrap();
     target.read_section(SubTag(*b"VECS"), &vecs).unwrap();
 
-    assert!(target.quantization_stats().is_none());
+    assert!(target.quantization_stats().unwrap().is_none());
     assert_eq!(
         full_graph_summary(&source.snapshot()),
         full_graph_summary(&target.snapshot())
@@ -48,7 +49,7 @@ fn qunt_disabled_writes_empty_and_reads_back() {
     target.read_section(SubTag(*b"VECS"), &vecs).unwrap();
     target.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
 
-    assert!(target.quantization_stats().is_none());
+    assert!(target.quantization_stats().unwrap().is_none());
     assert_eq!(
         full_graph_summary(&source.snapshot()),
         full_graph_summary(&target.snapshot())
@@ -67,7 +68,10 @@ fn qunt_enabled_full_roundtrip() {
     target.read_section(SubTag(*b"VECS"), &vecs).unwrap();
     target.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
 
-    let stats = target.quantization_stats().expect("QUNT store loaded");
+    let stats = target
+        .quantization_stats()
+        .unwrap()
+        .expect("QUNT store loaded");
     assert_eq!(stats.code_count, 30);
     assert!(
         !target
@@ -140,7 +144,7 @@ fn disabled_read_enabled_snapshot_uses_f32() {
     target.read_section(SubTag(*b"VECS"), &vecs).unwrap();
     target.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
 
-    assert!(target.quantization_stats().is_some());
+    assert!(target.quantization_stats().unwrap().is_some());
     assert_eq!(
         source
             .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
@@ -161,7 +165,7 @@ fn enabled_read_disabled_snapshot_uses_f32() {
     target.read_section(SubTag(*b"VECS"), &vecs).unwrap();
     target.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
 
-    assert!(target.quantization_stats().is_none());
+    assert!(target.quantization_stats().unwrap().is_none());
     assert_eq!(
         source
             .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
@@ -252,7 +256,7 @@ fn vecu_after_qunt_preserves_quantized_prefix() {
         .on_change(&upsert_change(insert_payload(11, vec![0.0, 0.0, 0.0, 1.0])))
         .unwrap();
 
-    let stats = recovered.quantization_stats().unwrap();
+    let stats = recovered.quantization_stats().unwrap().unwrap();
     assert_eq!(stats.code_count, 10);
     assert_eq!(recovered.snapshot().len(), 11);
 }
@@ -267,7 +271,7 @@ fn vecb_after_qunt_preserves_quantized_prefix() {
         ]))
         .unwrap();
 
-    let stats = recovered.quantization_stats().unwrap();
+    let stats = recovered.quantization_stats().unwrap().unwrap();
     assert_eq!(stats.code_count, 10);
     assert_eq!(recovered.snapshot().len(), 12);
 }
@@ -300,16 +304,19 @@ fn quantization_stats_returns_none_before_load() {
     let (grph, vecs, qunt) = snapshot_bytes(&source);
     let target = provider(config(4, DistanceMetric::Cosine, true, false));
 
-    assert!(target.quantization_stats().is_none());
+    assert!(target.quantization_stats().unwrap().is_none());
     target.read_section(SubTag(*b"GRPH"), &grph).unwrap();
     target.read_section(SubTag(*b"VECS"), &vecs).unwrap();
     target.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
-    let stats = target.quantization_stats().expect("stats after QUNT");
+    let stats = target
+        .quantization_stats()
+        .unwrap()
+        .expect("stats after QUNT");
 
     assert_eq!(stats.dim, 4);
     assert_eq!(stats.code_count, 8);
     assert_eq!(stats.bytes_codes, 32);
-    assert_eq!(stats.bytes_ranges, 32);
+    assert_eq!(stats.kind, QuantizationStatsKind::Sq8 { bytes_ranges: 32 });
     assert_eq!(stats.bytes_norms, 32);
     assert!(stats.compression_ratio > 0.0);
 }
@@ -326,7 +333,94 @@ fn bulk_insert_after_snapshot_falls_back_to_f32() {
         .unwrap();
 
     assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(11)));
-    assert_eq!(recovered.quantization_stats().unwrap().code_count, 10);
+    assert_eq!(
+        recovered.quantization_stats().unwrap().unwrap().code_count,
+        10
+    );
+}
+
+#[test]
+fn pq_write_qunt_trains_and_publishes_store() {
+    let source = provider(config_pq(8, DistanceMetric::L2, false, 256));
+    apply_events(&source, deterministic_events(256, 8, 66));
+
+    let (_grph, _vecs, qunt) = snapshot_bytes(&source);
+
+    assert!(qunt.starts_with(b"VQNT"));
+    let stats = source
+        .quantization_stats()
+        .unwrap()
+        .expect("PQ store published after QUNT write");
+    assert_eq!(stats.method, QuantMethod::Pq);
+    assert_eq!(stats.code_count, 256);
+    assert!(matches!(
+        stats.kind,
+        QuantizationStatsKind::Pq { bytes_codebook } if bytes_codebook > 0
+    ));
+}
+
+#[test]
+fn pq_write_qunt_below_threshold_emits_empty_and_stats_deferred() {
+    let source = provider(config_pq(8, DistanceMetric::L2, false, 256));
+    apply_events(&source, deterministic_events(100, 8, 67));
+
+    let (_grph, _vecs, qunt) = snapshot_bytes(&source);
+    let err = source
+        .quantization_stats()
+        .expect_err("PQ stats deferred until enough vectors exist");
+
+    assert!(qunt.is_empty());
+    assert!(matches!(
+        err,
+        VectorError::PqTrainingDeferred {
+            observed_vectors: 100,
+            required: 256
+        }
+    ));
+}
+
+#[test]
+fn pq_search_falls_back_to_f32_when_training_deferred() {
+    let pq = provider(config_pq(8, DistanceMetric::L2, false, 256));
+    let f32 = provider(config(8, DistanceMetric::L2, false, false));
+    let events = deterministic_events(100, 8, 68);
+    apply_events(&pq, events.clone());
+    apply_events(&f32, events);
+    let query = [0.2, -0.4, 0.1, 0.8, -0.2, 0.3, -0.7, 0.5];
+
+    assert!(matches!(
+        pq.quantization_stats(),
+        Err(VectorError::PqTrainingDeferred { .. })
+    ));
+    assert_eq!(
+        pq.search(&query, 8, Some(80), None).unwrap(),
+        f32.search(&query, 8, Some(80), None).unwrap()
+    );
+}
+
+#[test]
+fn pq_dim_not_divisible_by_m_rejected_at_validate() {
+    let err = HnswConfig::with_params(10, 16, 200, 50, DistanceMetric::L2)
+        .unwrap()
+        .with_quantization(QuantizationConfig {
+            enabled: true,
+            method: QuantMethod::Pq,
+            pq: Some(PqParams {
+                m_subspaces: 3,
+                k_centroids: 256,
+                train_min_vectors: 256,
+            }),
+            ..Default::default()
+        })
+        .expect_err("PQ dim divisibility rejected");
+
+    assert!(matches!(
+        err,
+        VectorError::PqDimensionNotDivisible {
+            dim: 10,
+            m_subspaces: 3
+        }
+    ));
 }
 
 fn recovered_quantized(count: u64, dim: usize, metric: DistanceMetric, seed: u64) -> HnswProvider {
@@ -343,7 +437,32 @@ fn recovered_quantized(count: u64, dim: usize, metric: DistanceMetric, seed: u64
 fn config(dim: usize, metric: DistanceMetric, enabled: bool, rescore: bool) -> HnswConfig {
     HnswConfig::with_params(dim, 16, 200, dim.max(50), metric)
         .unwrap()
-        .with_quantization(QuantizationConfig { enabled, rescore })
+        .with_quantization(QuantizationConfig {
+            enabled,
+            rescore,
+            ..Default::default()
+        })
+        .unwrap()
+}
+
+fn config_pq(
+    dim: usize,
+    metric: DistanceMetric,
+    rescore: bool,
+    train_min_vectors: usize,
+) -> HnswConfig {
+    HnswConfig::with_params(dim, 16, 200, dim.max(50), metric)
+        .unwrap()
+        .with_quantization(QuantizationConfig {
+            enabled: true,
+            method: QuantMethod::Pq,
+            rescore,
+            pq: Some(PqParams {
+                m_subspaces: 1,
+                k_centroids: 256,
+                train_min_vectors,
+            }),
+        })
         .unwrap()
 }
 

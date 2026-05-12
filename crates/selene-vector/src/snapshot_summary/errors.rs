@@ -63,5 +63,12 @@ pub fn render_vector_error(error: &VectorError) -> String {
         VectorError::NonFiniteQueryComponent { index, value } => {
             format!("{kind}{{index={index}, value={}}}", format_score(*value))
         }
+        VectorError::PqTrainingDeferred {
+            observed_vectors,
+            required,
+        } => format!("{kind}{{observed_vectors={observed_vectors}, required={required}}}"),
+        VectorError::PqDimensionNotDivisible { dim, m_subspaces } => {
+            format!("{kind}{{dim={dim}, m_subspaces={m_subspaces}}}")
+        }
     }
 }

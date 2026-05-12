@@ -1,6 +1,6 @@
 //! HNSW provider configuration.
 
-use crate::{QuantizationConfig, VectorError};
+use crate::{PqParams, QuantMethod, QuantizationConfig, VectorError};
 
 /// Distance function used by the vector index.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -139,6 +139,24 @@ impl HnswConfig {
         Ok(self)
     }
 
+    /// Return this config with product quantization enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] or
+    /// [`VectorError::PqDimensionNotDivisible`] when the resulting PQ config
+    /// is invalid for this dimensionality.
+    pub fn with_pq_quantization(mut self, pq: PqParams) -> Result<Self, VectorError> {
+        self.quantization = QuantizationConfig {
+            enabled: true,
+            method: QuantMethod::Pq,
+            rescore: false,
+            pq: Some(pq),
+        };
+        self.validate()?;
+        Ok(self)
+    }
+
     /// Return this config with explicit HNSW neighbor-selection behavior.
     ///
     /// # Errors
@@ -185,6 +203,9 @@ impl HnswConfig {
             return Err(invalid_config(
                 "quantization rescore requires quantization enabled",
             ));
+        }
+        if self.quantization.enabled && self.quantization.method == QuantMethod::Pq {
+            PqParams::resolve(self.dim, self.quantization.pq).validate_for_dim(self.dim)?;
         }
         Ok(())
     }
