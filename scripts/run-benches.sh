@@ -56,9 +56,18 @@ if [ "${SELENE_BENCH_FORCE_CONFLICT:-0}" = "1" ] || pgrep -f "cargo bench" 2>/de
   exit 1
 fi
 
-if [ "$LAYER" != "criterion" ] && ! command -v valgrind >/dev/null 2>&1; then
-  echo "ERROR: iai-callgrind requires valgrind. Use --layer criterion on platforms without valgrind." >&2
-  exit 1
+if ! command -v valgrind >/dev/null 2>&1; then
+  case "$LAYER" in
+    iai)
+      echo "ERROR: --layer iai requires valgrind, which is not installed (macOS does not ship valgrind)." >&2
+      echo "       Use --layer criterion on this platform, or run on a Linux host." >&2
+      exit 1
+      ;;
+    both)
+      echo "WARN: valgrind not found; running --layer criterion only (iai layer is Linux-only)." >&2
+      LAYER="criterion"
+      ;;
+  esac
 fi
 
 export SELENE_BENCH_PROFILE="$PROFILE"
