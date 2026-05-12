@@ -18,9 +18,10 @@
 //! assert_eq!(cosine_similarity(&a, &b), 0.0);
 //! ```
 //!
-//! BRIEF-61 adds deterministic GRPH/VECS snapshot bodies. Procedure
-//! registration, quantization, and the D21 snapshot harness land in later M8
-//! briefs.
+//! BRIEF-61 adds deterministic GRPH/VECS snapshot bodies. BRIEF-62 adds the
+//! VECB bulk-insert wire format. Procedure registration moves to future
+//! `selene-vector-pack` work; quantization and the D21 snapshot harness land in
+//! later M8 briefs.
 //!
 //! The Rust crate name is `selene-vector`, while the procedure-pack name is
 //! `vector`. Future procedures therefore register as `vector.knn`,
@@ -42,6 +43,9 @@ pub use config::{DistanceMetric, HnswConfig};
 pub use error::VectorError;
 pub use hnsw::distance;
 pub use hnsw::{HnswGraph, HnswNode, HnswParams, insert_node, random_layer, random_layer_default};
-pub use payload::{PAYLOAD_MAGIC, VectorOp, VectorUpsertPayloadV1};
+pub use payload::{
+    BulkInsertRow, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, VectorBulkInsertPayloadV1, VectorOp,
+    VectorUpsertPayloadV1,
+};
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;
