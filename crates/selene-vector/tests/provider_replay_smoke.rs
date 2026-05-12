@@ -170,6 +170,48 @@ fn commit_through_mutator_extension_event_publishes_new_snapshot() {
     assert_eq!(post.len(), 1);
 }
 
+#[test]
+fn provider_search_after_inserts_returns_recent_node_first() {
+    let provider = provider();
+    let events = [
+        (NodeId::new(1), vec![1.0, 0.0, 0.0, 0.0]),
+        (NodeId::new(2), vec![0.0, 1.0, 0.0, 0.0]),
+        (NodeId::new(3), vec![0.0, 0.0, 1.0, 0.0]),
+        (NodeId::new(4), vec![1.0, 1.0, 0.0, 0.0]),
+        (NodeId::new(5), vec![0.0, 0.0, 0.0, 1.0]),
+    ];
+    for (node_id, vector) in events {
+        provider
+            .on_change(&vector_change(insert_payload(node_id, vector, 0)))
+            .unwrap();
+    }
+
+    let results = provider
+        .search(&[0.0, 0.0, 0.0, 1.0], 1, Some(8), None)
+        .unwrap();
+
+    assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(5)));
+}
+
+#[test]
+fn provider_search_uses_config_ef_when_override_none() {
+    let provider = provider();
+    provider
+        .on_change(&vector_change(insert_payload(
+            NodeId::new(1),
+            vec![1.0, 0.0, 0.0, 0.0],
+            0,
+        )))
+        .unwrap();
+
+    let results = provider
+        .search(&[1.0, 0.0, 0.0, 0.0], 3, None, None)
+        .unwrap();
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].0, NodeId::new(1));
+}
+
 fn provider() -> HnswProvider {
     HnswProvider::new(HnswConfig::new(4).unwrap()).expect("provider config is valid")
 }

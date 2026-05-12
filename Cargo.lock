@@ -2243,6 +2243,7 @@ dependencies = [
  "miette",
  "parking_lot",
  "rkyv 0.8.16",
+ "roaring",
  "selene-core",
  "selene-graph",
  "selene-pack",

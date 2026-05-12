@@ -3,12 +3,13 @@
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
-use selene_core::Change;
+use roaring::RoaringBitmap;
+use selene_core::{Change, NodeId};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use crate::builder::apply_upsert;
 use crate::payload::VectorUpsertPayloadV1;
-use crate::{HnswConfig, HnswGraph, VectorError, snapshot};
+use crate::{HnswConfig, HnswGraph, HnswParams, VectorError, hnsw, snapshot};
 
 pub(crate) const PROVIDER_NAME: &str = "selene-vector";
 
@@ -16,8 +17,9 @@ pub(crate) const PROVIDER_NAME: &str = "selene-vector";
 ///
 /// This type validates configuration, declares the provider's snapshot
 /// footprint, publishes immutable graph snapshots through ArcSwap, and replays
-/// BRIEF-59 vector upsert events. Later M8 briefs fill in snapshot codecs,
-/// query behavior, procedures, and quantization.
+/// BRIEF-59 vector upsert events. BRIEF-60 adds HNSW search over published
+/// snapshots. Later M8 briefs fill in snapshot codecs, procedures, and
+/// quantization.
 pub struct HnswProvider {
     config: HnswConfig,
     state: ArcSwap<HnswGraph>,
@@ -48,6 +50,31 @@ impl HnswProvider {
     #[must_use]
     pub fn snapshot(&self) -> Arc<HnswGraph> {
         self.state.load_full()
+    }
+
+    /// Search the currently published HNSW snapshot for the top-`k` neighbors
+    /// of `query`, optionally filtered by raw-NodeId bitmap membership.
+    ///
+    /// `ef_search` overrides the configured search width. Pass `None` to use
+    /// the value from [`HnswConfig`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::DimensionsLocked`] when `query.len()` disagrees
+    /// with the provider's configured dimension, or
+    /// [`VectorError::NonFiniteQueryComponent`] when the query contains NaN or
+    /// infinity.
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        ef_search: Option<usize>,
+        filter: Option<&RoaringBitmap>,
+    ) -> Result<Vec<(NodeId, f32)>, VectorError> {
+        let snapshot = self.state.load_full();
+        let params = HnswParams::from_config(&self.config);
+        let ef = ef_search.unwrap_or(self.config.ef_search);
+        hnsw::search::search(&snapshot, query, k, ef, &params, filter)
     }
 }
 
