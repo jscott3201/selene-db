@@ -6,6 +6,7 @@ expression: snapshot.to_string()
 slug="error-duplicate-node-id"
 description="DuplicateNodeId from re-inserting an existing node."
 dim=4 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=false quantization_rescore=false
+neighbor_select="default"
 ==== GRAPH ====
 nodes=1 dim=4 entry_point=idx0 max_layer=0
 node_head=[n1:L0:[0]]

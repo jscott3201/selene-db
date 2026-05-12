@@ -2240,10 +2240,12 @@ version = "0.0.0"
 dependencies = [
  "arc-swap",
  "blake3",
+ "criterion",
  "fastrand",
  "insta",
  "miette",
  "parking_lot",
+ "proptest",
  "rkyv 0.8.16",
  "roaring",
  "selene-core",

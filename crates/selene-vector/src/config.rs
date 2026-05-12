@@ -15,6 +15,28 @@ pub enum DistanceMetric {
     Dot,
 }
 
+/// Build-time toggles for the HNSW diversity neighbor-selection heuristic.
+///
+/// `extend_candidates` widens the candidate pool by one layer-local hop
+/// before applying the diversity filter. `keep_pruned_connections` fills
+/// remaining neighbor slots from the rejected pile after diversity pruning.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NeighborSelectionConfig {
+    /// Widen the candidate pool by one hop before diversity filtering.
+    pub extend_candidates: bool,
+    /// Backfill from rejected candidates when diversity selects fewer than M.
+    pub keep_pruned_connections: bool,
+}
+
+impl Default for NeighborSelectionConfig {
+    fn default() -> Self {
+        Self {
+            extend_candidates: false,
+            keep_pruned_connections: true,
+        }
+    }
+}
+
 /// Configuration for [`crate::HnswProvider`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HnswConfig {
@@ -30,6 +52,8 @@ pub struct HnswConfig {
     pub metric: DistanceMetric,
     /// Optional quantized-search behavior.
     pub quantization: QuantizationConfig,
+    /// Optional HNSW diversity neighbor-selection behavior.
+    pub neighbor_selection: NeighborSelectionConfig,
 }
 
 impl HnswConfig {
@@ -94,6 +118,7 @@ impl HnswConfig {
             ef_search,
             metric,
             quantization: QuantizationConfig::default(),
+            neighbor_selection: NeighborSelectionConfig::default(),
         };
         config.validate()?;
         Ok(config)
@@ -110,6 +135,21 @@ impl HnswConfig {
         quantization: QuantizationConfig,
     ) -> Result<Self, VectorError> {
         self.quantization = quantization;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Return this config with explicit HNSW neighbor-selection behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] when the resulting config is
+    /// invalid.
+    pub fn with_neighbor_selection(
+        mut self,
+        neighbor_selection: NeighborSelectionConfig,
+    ) -> Result<Self, VectorError> {
+        self.neighbor_selection = neighbor_selection;
         self.validate()?;
         Ok(self)
     }

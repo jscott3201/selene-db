@@ -8,8 +8,8 @@ use crate::snapshot::grph::PAYLOAD_MAGIC_GRPH;
 use crate::snapshot::qunt::PAYLOAD_MAGIC_QUNT;
 use crate::snapshot::vecs::PAYLOAD_MAGIC_VECS;
 use crate::{
-    DistanceMetric, HnswConfig, HnswGraph, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, QuantMethod,
-    VectorError, VectorOp,
+    DistanceMetric, HnswConfig, HnswGraph, NeighborSelectionConfig, PAYLOAD_MAGIC,
+    PAYLOAD_MAGIC_BULK, QuantMethod, VectorError, VectorOp,
 };
 
 pub mod errors;
@@ -56,6 +56,8 @@ pub struct VectorConfigSummary {
     pub quantization_enabled: bool,
     /// Whether f32 rescore is enabled.
     pub quantization_rescore: bool,
+    /// HNSW neighbor-selection flavor.
+    pub neighbor_select: &'static str,
 }
 
 impl VectorConfigSummary {
@@ -70,6 +72,7 @@ impl VectorConfigSummary {
             metric: metric_name(config.metric),
             quantization_enabled: config.quantization.enabled,
             quantization_rescore: config.quantization.rescore,
+            neighbor_select: neighbor_selection_name(config.neighbor_selection),
         }
     }
 }
@@ -194,6 +197,10 @@ pub fn vector_summary(input: &VectorSnapshotInput) -> VectorSnapshot {
         input.config.metric,
         input.config.quantization_enabled,
         input.config.quantization_rescore
+    ));
+    lines.push(format!(
+        "neighbor_select={}",
+        quoted(input.config.neighbor_select)
     ));
 
     lines.push("==== GRAPH ====".to_string());
@@ -344,6 +351,34 @@ pub fn quant_method_anchor() -> &'static [(&'static str, QuantMethod)] {
     &[("Sq8", QuantMethod::Sq8)]
 }
 
+/// Anchor every neighbor-selection flavor by rendered token.
+#[must_use]
+pub fn neighbor_selection_anchor() -> &'static [(&'static str, NeighborSelectionConfig)] {
+    &[
+        (
+            "default",
+            NeighborSelectionConfig {
+                extend_candidates: false,
+                keep_pruned_connections: true,
+            },
+        ),
+        (
+            "extend_candidates",
+            NeighborSelectionConfig {
+                extend_candidates: true,
+                keep_pruned_connections: true,
+            },
+        ),
+        (
+            "no_fill_back",
+            NeighborSelectionConfig {
+                extend_candidates: false,
+                keep_pruned_connections: false,
+            },
+        ),
+    ]
+}
+
 /// Expose all vector payload and section magic constants for drift tests.
 #[must_use]
 pub fn magic_constants() -> &'static [(&'static str, [u8; 4])] {
@@ -384,6 +419,16 @@ pub const fn metric_name(metric: DistanceMetric) -> &'static str {
         DistanceMetric::Cosine => "Cosine",
         DistanceMetric::L2 => "L2",
         DistanceMetric::Dot => "Dot",
+    }
+}
+
+/// Stable neighbor-selection flavor name.
+#[must_use]
+pub const fn neighbor_selection_name(config: NeighborSelectionConfig) -> &'static str {
+    match (config.extend_candidates, config.keep_pruned_connections) {
+        (false, true) => "default",
+        (true, true) => "extend_candidates",
+        (false, false) | (true, false) => "no_fill_back",
     }
 }
 

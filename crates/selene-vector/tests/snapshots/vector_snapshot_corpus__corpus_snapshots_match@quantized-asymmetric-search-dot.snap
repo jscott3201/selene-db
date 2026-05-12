@@ -6,6 +6,7 @@ expression: snapshot.to_string()
 slug="quantized-asymmetric-search-dot"
 description="SQ8 asymmetric dot search on the same numeric scale as f32."
 dim=4 m=16 ef_construction=200 ef_search=50 metric=Dot quantization_enabled=true quantization_rescore=false
+neighbor_select="default"
 ==== GRAPH ====
 nodes=50 dim=4 entry_point=idx0 max_layer=0
 node_head=[n1:L0:[15], n2:L0:[15], n3:L0:[19], n4:L0:[16], n5:L0:[27], n6:L0:[24], n7:L0:[19], n8:L0:[22]]

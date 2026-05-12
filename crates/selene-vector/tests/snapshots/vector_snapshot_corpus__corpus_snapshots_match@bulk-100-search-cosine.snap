@@ -6,6 +6,7 @@ expression: snapshot.to_string()
 slug="bulk-100-search-cosine"
 description="One VECB bulk event and cosine search over 100 vectors."
 dim=8 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=false quantization_rescore=false
+neighbor_select="default"
 ==== GRAPH ====
 nodes=100 dim=8 entry_point=idx16 max_layer=2
 node_head=[n1:L0:[25], n2:L0:[27], n3:L0:[29], n4:L0:[14], n5:L1:[31/7], n6:L0:[24], n7:L0:[24], n8:L0:[28]]

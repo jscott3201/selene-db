@@ -42,7 +42,7 @@ pub(crate) mod snapshot;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod snapshot_summary;
 
-pub use config::{DistanceMetric, HnswConfig};
+pub use config::{DistanceMetric, HnswConfig, NeighborSelectionConfig};
 pub use error::VectorError;
 pub use hnsw::distance;
 pub use hnsw::{HnswGraph, HnswNode, HnswParams, insert_node, random_layer, random_layer_default};

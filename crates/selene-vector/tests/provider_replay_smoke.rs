@@ -105,7 +105,7 @@ fn on_change_propagates_update_not_supported() {
     assert!(matches!(
         err,
         ProviderError::InvalidPayload { reason }
-            if reason.contains("OperationNotSupportedYet") && reason.contains("BRIEF-65")
+            if reason.contains("OperationNotSupportedYet") && reason.contains("future")
     ));
 }
 
@@ -124,7 +124,7 @@ fn on_change_propagates_delete_not_supported() {
     assert!(matches!(
         err,
         ProviderError::InvalidPayload { reason }
-            if reason.contains("OperationNotSupportedYet") && reason.contains("BRIEF-65")
+            if reason.contains("OperationNotSupportedYet") && reason.contains("future")
     ));
 }
 

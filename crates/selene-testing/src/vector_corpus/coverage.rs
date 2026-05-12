@@ -20,6 +20,9 @@ pub const MAGIC_COVERAGE: &[VectorMagicMirror] = VectorMagicMirror::ALL;
 /// Quantization methods the corpus mirrors from `selene-vector`.
 pub const QUANT_METHOD_COVERAGE: &[QuantMethodMirror] = QuantMethodMirror::ALL;
 
+/// HNSW neighbor-selection flavors the corpus mirrors from `selene-vector`.
+pub const NEIGHBOR_SELECTION_COVERAGE: &[NeighborSelectionFlavor] = NeighborSelectionFlavor::ALL;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum VectorSurface {
@@ -213,6 +216,27 @@ impl QuantMethodMirror {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Sq8 => "Sq8",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum NeighborSelectionFlavor {
+    Default,
+    ExtendCandidates,
+    NoFillBack,
+}
+
+impl NeighborSelectionFlavor {
+    pub const ALL: &'static [Self] = &[Self::Default, Self::ExtendCandidates, Self::NoFillBack];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::ExtendCandidates => "extend_candidates",
+            Self::NoFillBack => "no_fill_back",
         }
     }
 }

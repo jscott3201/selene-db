@@ -4,17 +4,20 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use selene_testing::{
-    ERROR_KIND_COVERAGE, ErrorInductionKind, MAGIC_COVERAGE, METRIC_COVERAGE, OP_COVERAGE,
-    QUANT_METHOD_COVERAGE, QuantMethodMirror, SURFACE_COVERAGE, VectorConfigSpec, VectorCorpus,
-    VectorCorpusCategory, VectorCorpusEntry, VectorCorpusGraph, VectorCorpusInvocation,
-    VectorErrorKindMirror, VectorMagicMirror, VectorMetricMirror, VectorOpMirror,
-    VectorQuantizationSpec,
+    ERROR_KIND_COVERAGE, ErrorInductionKind, MAGIC_COVERAGE, METRIC_COVERAGE,
+    NEIGHBOR_SELECTION_COVERAGE, NeighborSelectionFlavor, OP_COVERAGE, QUANT_METHOD_COVERAGE,
+    QuantMethodMirror, SURFACE_COVERAGE, VectorConfigSpec, VectorCorpus, VectorCorpusCategory,
+    VectorCorpusEntry, VectorCorpusGraph, VectorCorpusInvocation, VectorErrorKindMirror,
+    VectorMagicMirror, VectorMetricMirror, VectorOpMirror, VectorQuantizationSpec,
 };
 use selene_vector::snapshot_summary::{
-    distance_metric_anchor, magic_constants, quant_method_anchor, vector_error_kind_for,
-    vector_op_anchor,
+    distance_metric_anchor, magic_constants, neighbor_selection_anchor, quant_method_anchor,
+    vector_error_kind_for, vector_op_anchor,
 };
-use selene_vector::{DistanceMetric, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, QuantMethod, VectorOp};
+use selene_vector::{
+    DistanceMetric, HnswConfig, NeighborSelectionConfig, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK,
+    QuantMethod, VectorOp,
+};
 
 mod vector_snapshot_support;
 
@@ -192,10 +195,61 @@ fn quant_method_mirror_matches_anchor() {
 }
 
 #[test]
+fn neighbor_select_flavor_mirror_drift() {
+    assert_anchor_names(
+        NeighborSelectionFlavor::ALL
+            .iter()
+            .map(|flavor| flavor.name()),
+        neighbor_selection_anchor().iter().map(|(name, _)| *name),
+    );
+    assert_eq!(
+        NEIGHBOR_SELECTION_COVERAGE.len(),
+        neighbor_selection_anchor().len()
+    );
+}
+
+#[test]
+fn corpus_diversity_entries_cover_all_flavors() {
+    let actual = VectorCorpus::m8()
+        .entries()
+        .map(|entry| entry.config.neighbor_selection_flavor)
+        .collect::<BTreeSet<_>>();
+    for flavor in NeighborSelectionFlavor::ALL {
+        assert!(
+            actual.contains(flavor),
+            "neighbor selection flavor {} has no corpus entry",
+            flavor.name()
+        );
+    }
+}
+
+#[test]
+fn hnsw_config_neighbor_selection_field_is_public() {
+    let config = HnswConfig {
+        dim: 4,
+        m: 16,
+        ef_construction: 200,
+        ef_search: 50,
+        metric: DistanceMetric::Cosine,
+        quantization: Default::default(),
+        neighbor_selection: NeighborSelectionConfig::default(),
+    };
+    assert_eq!(
+        config.neighbor_selection,
+        NeighborSelectionConfig {
+            extend_candidates: false,
+            keep_pruned_connections: true
+        }
+    );
+}
+
+#[test]
 fn corpus_fixture_graphs_build_successfully() {
     for graph in VectorCorpusGraph::ALL {
         let config = match graph {
-            VectorCorpusGraph::DeterministicL2_100 => config_from_spec(VectorConfigSpec::new(
+            VectorCorpusGraph::DeterministicL2_100
+            | VectorCorpusGraph::DiverseClusterL2_64
+            | VectorCorpusGraph::DenseClusterL2_8 => config_from_spec(VectorConfigSpec::new(
                 8,
                 VectorMetricMirror::Cosine,
                 VectorQuantizationSpec::DISABLED,
@@ -261,6 +315,67 @@ fn vector_corpus_has_no_selene_vector_imports() {
             );
         }
     }
+}
+
+#[test]
+fn target_vec_param_removed() {
+    let source =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/hnsw/build.rs"))
+            .expect("read build.rs");
+
+    assert!(!source.contains("_target_vec"));
+    assert!(!source.contains("target_vec:"));
+}
+
+#[test]
+fn prune_never_extends() {
+    let source =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/hnsw/build.rs"))
+            .expect("read build.rs");
+    let prune_body = source
+        .split("fn prune_neighbors")
+        .nth(1)
+        .expect("prune_neighbors exists");
+
+    assert!(prune_body.contains("extend_candidates: false"));
+}
+
+#[test]
+fn bench_invocation_hygiene_is_declared() {
+    let cargo = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .expect("read selene-vector Cargo.toml");
+
+    assert!(cargo.contains("autobenches = false"));
+    assert!(cargo.contains("name = \"recall\""));
+    assert!(cargo.contains("harness = false"));
+}
+
+#[test]
+fn scripts_run_benches_includes_recall_entry() {
+    let script = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/run-benches.sh"),
+    )
+    .expect("read run-benches.sh");
+
+    assert!(script.contains("selene-vector:recall:criterion"));
+}
+
+#[test]
+fn proptest_workspace_dev_dep_present() {
+    let cargo = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+        .expect("read selene-vector Cargo.toml");
+
+    assert!(cargo.contains("proptest.workspace = true"));
+}
+
+#[test]
+fn recall_bench_uses_public_provider_search() {
+    let bench =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/recall.rs"))
+            .expect("read recall bench");
+
+    assert!(bench.contains(".search(query, k, Some(ef_search), None)"));
+    assert!(!bench.contains("hnsw::search::search"));
 }
 
 #[test]

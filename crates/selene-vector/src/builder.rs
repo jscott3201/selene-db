@@ -23,7 +23,7 @@ pub(crate) fn apply_upsert(
         VectorOp::Update | VectorOp::Delete => Err(VectorError::OperationNotSupportedYet {
             op: payload.op,
             node_id: payload.node_id,
-            brief: "BRIEF-65",
+            brief: "future",
         }),
     }
 }

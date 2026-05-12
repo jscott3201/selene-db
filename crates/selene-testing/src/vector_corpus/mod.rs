@@ -6,9 +6,10 @@ pub mod coverage;
 pub mod fixtures;
 
 pub use coverage::{
-    ERROR_KIND_COVERAGE, MAGIC_COVERAGE, METRIC_COVERAGE, OP_COVERAGE, QUANT_METHOD_COVERAGE,
-    QuantMethodMirror, SURFACE_COVERAGE, VectorErrorKindMirror, VectorMagicMirror,
-    VectorMetricMirror, VectorOpMirror, VectorSurface,
+    ERROR_KIND_COVERAGE, MAGIC_COVERAGE, METRIC_COVERAGE, NEIGHBOR_SELECTION_COVERAGE,
+    NeighborSelectionFlavor, OP_COVERAGE, QUANT_METHOD_COVERAGE, QuantMethodMirror,
+    SURFACE_COVERAGE, VectorErrorKindMirror, VectorMagicMirror, VectorMetricMirror, VectorOpMirror,
+    VectorSurface,
 };
 pub use fixtures::{
     ApiInductionPayload, ErrorInductionKind, SyntheticErrorFields, VectorConfigSpec,
@@ -111,6 +112,32 @@ fn cfg(
     VectorConfigSpec::new(dim, metric, quantization)
 }
 
+fn cfg_neighbor(
+    dim: usize,
+    metric: VectorMetricMirror,
+    quantization: VectorQuantizationSpec,
+    neighbor_selection_flavor: NeighborSelectionFlavor,
+) -> VectorConfigSpec {
+    VectorConfigSpec::new(dim, metric, quantization)
+        .with_neighbor_selection(neighbor_selection_flavor)
+}
+
+fn cfg_neighbor_hnsw(
+    dim: usize,
+    metric: VectorMetricMirror,
+    quantization: VectorQuantizationSpec,
+    neighbor_selection_flavor: NeighborSelectionFlavor,
+    m: usize,
+    ef_construction: usize,
+    ef_search: usize,
+) -> VectorConfigSpec {
+    cfg_neighbor(dim, metric, quantization, neighbor_selection_flavor).with_hnsw(
+        m,
+        ef_construction,
+        ef_search,
+    )
+}
+
 fn search(
     query: &[f32],
     k: usize,
@@ -155,6 +182,7 @@ fn synthetic_error(
 
 #[allow(clippy::too_many_lines)]
 fn entries() -> Vec<VectorCorpusEntry> {
+    use NeighborSelectionFlavor as N;
     use QuantMethodMirror as Q;
     use VectorCorpusCategory as C;
     use VectorCorpusGraph as G;
@@ -291,6 +319,48 @@ fn entries() -> Vec<VectorCorpusEntry> {
             covered_ops: &[],
             covered_errors: &[],
             covered_magics: &[],
+            covered_quant_methods: &[],
+        },
+        VectorCorpusEntry {
+            slug: "diverse-cluster-extend-off",
+            description: "Diverse L2 cluster search with default neighbor selection.",
+            graph: G::DiverseClusterL2_64,
+            config: cfg_neighbor_hnsw(8, M::L2, Z::DISABLED, N::Default, 8, 64, 50),
+            invocation: search(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 8, Some(50), None),
+            category: C::Search,
+            covered_surfaces: &[S::HnswBuild, S::HnswSearchUnfiltered],
+            covered_metrics: &[M::L2],
+            covered_ops: &[O::Insert],
+            covered_errors: &[],
+            covered_magics: &[X::Vecb, X::Vgrp, X::Vvec],
+            covered_quant_methods: &[],
+        },
+        VectorCorpusEntry {
+            slug: "diverse-cluster-extend-on",
+            description: "Diverse L2 cluster search with one-hop candidate extension.",
+            graph: G::DiverseClusterL2_64,
+            config: cfg_neighbor_hnsw(8, M::L2, Z::DISABLED, N::ExtendCandidates, 8, 64, 50),
+            invocation: search(&[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], 8, Some(50), None),
+            category: C::Search,
+            covered_surfaces: &[S::HnswBuild, S::HnswSearchUnfiltered],
+            covered_metrics: &[M::L2],
+            covered_ops: &[O::Insert],
+            covered_errors: &[],
+            covered_magics: &[X::Vecb, X::Vgrp, X::Vvec],
+            covered_quant_methods: &[],
+        },
+        VectorCorpusEntry {
+            slug: "pruned-fill-disabled",
+            description: "Dense L2 cluster demonstrates no-fill-back sub-degree selection.",
+            graph: G::DenseClusterL2_8,
+            config: cfg_neighbor_hnsw(8, M::L2, Z::DISABLED, N::NoFillBack, 4, 8, 16),
+            invocation: VectorCorpusInvocation::SnapshotRoundtrip,
+            category: C::Snapshot,
+            covered_surfaces: &[S::HnswBuild, S::SnapshotGrph, S::SnapshotVecs],
+            covered_metrics: &[M::L2],
+            covered_ops: &[O::Insert],
+            covered_errors: &[],
+            covered_magics: &[X::Vecb, X::Vgrp, X::Vvec],
             covered_quant_methods: &[],
         },
         VectorCorpusEntry {

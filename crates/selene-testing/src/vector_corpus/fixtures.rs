@@ -2,7 +2,7 @@
 
 #![allow(missing_docs)]
 
-use super::coverage::{VectorErrorKindMirror, VectorMetricMirror};
+use super::coverage::{NeighborSelectionFlavor, VectorErrorKindMirror, VectorMetricMirror};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
@@ -13,6 +13,8 @@ pub enum VectorCorpusGraph {
     DeterministicL2_100,
     MixedLayerCosine30,
     QuantizedPrefixCosine,
+    DiverseClusterL2_64,
+    DenseClusterL2_8,
 }
 
 impl VectorCorpusGraph {
@@ -23,6 +25,8 @@ impl VectorCorpusGraph {
         Self::DeterministicL2_100,
         Self::MixedLayerCosine30,
         Self::QuantizedPrefixCosine,
+        Self::DiverseClusterL2_64,
+        Self::DenseClusterL2_8,
     ];
 
     #[must_use]
@@ -34,6 +38,8 @@ impl VectorCorpusGraph {
             Self::DeterministicL2_100 => "deterministic-l2-100",
             Self::MixedLayerCosine30 => "mixed-layer-cosine-30",
             Self::QuantizedPrefixCosine => "quantized-prefix-cosine",
+            Self::DiverseClusterL2_64 => "diverse-cluster-l2-64",
+            Self::DenseClusterL2_8 => "dense-cluster-l2-8",
         }
     }
 }
@@ -66,8 +72,12 @@ impl VectorQuantizationSpec {
 #[non_exhaustive]
 pub struct VectorConfigSpec {
     pub dim: usize,
+    pub m: usize,
+    pub ef_construction: usize,
+    pub ef_search: usize,
     pub metric: VectorMetricMirror,
     pub quantization: VectorQuantizationSpec,
+    pub neighbor_selection_flavor: NeighborSelectionFlavor,
 }
 
 impl VectorConfigSpec {
@@ -79,9 +89,30 @@ impl VectorConfigSpec {
     ) -> Self {
         Self {
             dim,
+            m: 16,
+            ef_construction: 200,
+            ef_search: if dim > 50 { dim } else { 50 },
             metric,
             quantization,
+            neighbor_selection_flavor: NeighborSelectionFlavor::Default,
         }
+    }
+
+    #[must_use]
+    pub const fn with_hnsw(mut self, m: usize, ef_construction: usize, ef_search: usize) -> Self {
+        self.m = m;
+        self.ef_construction = ef_construction;
+        self.ef_search = ef_search;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_neighbor_selection(
+        mut self,
+        neighbor_selection_flavor: NeighborSelectionFlavor,
+    ) -> Self {
+        self.neighbor_selection_flavor = neighbor_selection_flavor;
+        self
     }
 }
 
