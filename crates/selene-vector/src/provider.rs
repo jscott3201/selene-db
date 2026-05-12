@@ -1,4 +1,4 @@
-//! HNSW index-provider skeleton for selene-vector.
+//! HNSW index provider for selene-vector.
 
 use std::sync::Arc;
 
@@ -6,14 +6,18 @@ use arc_swap::ArcSwap;
 use selene_core::Change;
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
+use crate::builder::apply_upsert;
+use crate::payload::VectorUpsertPayloadV1;
 use crate::{HnswConfig, HnswGraph, VectorError, snapshot};
+
+pub(crate) const PROVIDER_NAME: &str = "selene-vector";
 
 /// Stateful vector index provider registered under the `VECT` provider tag.
 ///
-/// BRIEF-57 keeps this type deliberately small. It validates configuration,
-/// declares the provider's snapshot footprint, and round-trips empty section
-/// bodies. BRIEF-58 adds the immutable graph publication slot; later M8 briefs
-/// fill it through WAL replay, snapshot codecs, and query behavior.
+/// This type validates configuration, declares the provider's snapshot
+/// footprint, publishes immutable graph snapshots through ArcSwap, and replays
+/// BRIEF-59 vector upsert events. Later M8 briefs fill in snapshot codecs,
+/// query behavior, procedures, and quantization.
 pub struct HnswProvider {
     config: HnswConfig,
     state: ArcSwap<HnswGraph>,
@@ -81,11 +85,25 @@ impl IndexProvider for HnswProvider {
         }
     }
 
-    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-        // Why: BRIEF-59 wires Change::IndexExtensionEvent replay. Reading the
-        // snapshot here keeps the state field intentionally live while proving
-        // this callback is non-mutating in BRIEF-58.
-        let _snapshot = self.state.load();
+    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
+        let Change::IndexExtensionEvent { provider, payload } = change else {
+            return Ok(());
+        };
+        if provider.as_str() != PROVIDER_NAME {
+            return Ok(());
+        }
+        let parsed = VectorUpsertPayloadV1::decode(payload.as_ref()).map_err(|err| {
+            ProviderError::InvalidPayload {
+                reason: format!("selene-vector payload decode: {err:?}: {err}"),
+            }
+        })?;
+        let prev = self.state.load_full();
+        let next = apply_upsert(&prev, &parsed, &self.config).map_err(|err| {
+            ProviderError::InvalidPayload {
+                reason: format!("selene-vector apply_upsert: {err:?}: {err}"),
+            }
+        })?;
+        self.state.store(Arc::new(next));
         Ok(())
     }
 

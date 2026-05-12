@@ -93,6 +93,21 @@ impl HnswGraph {
         }
     }
 
+    /// Clone graph topology for one copy-on-write mutation.
+    ///
+    /// This is `O(N + E)` in node count plus neighbor-list entries. Dense
+    /// vector payloads stay shared through their `Arc<[f32]>` handles.
+    #[must_use]
+    pub(crate) fn clone_for_mutation(&self) -> Self {
+        Self {
+            nodes: self.nodes.clone(),
+            entry_point: self.entry_point,
+            max_layer: self.max_layer,
+            node_id_to_idx: self.node_id_to_idx.clone(),
+            dimensions: self.dimensions,
+        }
+    }
+
     /// Return the vector dimensionality as a slice-friendly `usize`.
     #[must_use]
     pub fn dimensions(&self) -> usize {
