@@ -8,7 +8,7 @@ This is a **marathon, not a sprint**. No shortcuts. Every decision should optimi
 
 ## Status
 
-Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **6 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack` (opened 2026-05-10 with BRIEF-41). `selene-algorithms` remains to be built. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs merged, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) opens next**. See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
+Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **all 7 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack`, `selene-algorithms`. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) closed 2026-05-11** (7/7 briefs, BRIEF-50 through BRIEF-56). **v1.0 mandatory-crate set is feature-complete.** v1.x backlog: `selene-algorithms-pack` (procedure-pack adapter), parallel execution (rayon), streaming/incremental algorithms, out-of-core for graphs exceeding in-memory CSR bounds; opt-in extension crates (selene-vector, selene-timeseries, selene-rdf, selene-graphrag, selene-fulltext). See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
 
 ## North star: ISO/IEC 39075:2024
 
@@ -63,7 +63,7 @@ v1.0 mandatory (every consumer pulls these), with dependency direction:
 | `selene-persist` | core | WAL (`SLDB` magic) + snapshot (`SLSN` TLV-tagged sections) + recovery. **Never sees `Graph`** — takes `&[Change]`, returns `RecoveryResult`. |
 | `selene-gql` | core, graph | ISO GQL parser (pest), AST, semantic analyzer, planner, optimizer, executor, `ProcedureRegistry` trait. |
 | `selene-pack` | core, graph, gql, persist | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate-sealed activation state machine, atomic mutation-funnel audit (`GraphCommitSink`), canonical blake3 content_hash, 4 platform built-ins (`selene.health`, `selene.create_index`, `selene.drop_index`, `selene.pack.history`). Spec 15 records M5e implementation invariants (E24–E84). |
-| `selene-algorithms` (TBD) | core, graph | Graph algorithms (PageRank, WCC, SCC, Dijkstra, etc.); independent of GQL. M5f. |
+| `selene-algorithms` | core, graph | Graph algorithms: `GraphProjection` + `ProjectionCatalog` foundation + 15 public algorithm surfaces (structural: WCC/SCC/topo/articulation/bridges; pathfinding: Dijkstra/SSSP/APSP; centrality: PageRank/betweenness; community: label_propagation/Louvain/triangle_count) + D21 snapshot harness. Independent of GQL. Spec 16 records M5f implementation invariants (E01–E36). |
 | `selene-testing` | core, graph | Test fixtures, synthetic graph generators, and pure-mirror snapshot-harness DSLs (e.g., `pack_corpus` per D21). Consumed via `[dev-dependencies]` only. |
 
 Opt-in extension crates depend on the mandatory crates plus the procedure-pack/index hooks: `selene-vector` (HNSW + vector procedures, D5); future `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-fulltext`. **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
