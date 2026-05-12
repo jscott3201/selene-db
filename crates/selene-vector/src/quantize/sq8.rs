@@ -1,65 +1,13 @@
-//! Per-coordinate scalar quantization (SQ8) for selene-vector.
+//! Per-coordinate scalar quantization (SQ8).
 
 use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::hnsw::distance::dot_product;
 use crate::{DistanceMetric, VectorError, snapshot};
 
+use super::{QuantMethod, QuantizationStats, QuantizationStatsKind};
+
 const SQ8_LEVELS: f32 = 255.0;
-
-/// Quantization method tag for persisted quantized vector stores.
-#[derive(Archive, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[repr(u8)]
-pub enum QuantMethod {
-    /// Per-coordinate 8-bit scalar quantization.
-    Sq8 = 0,
-}
-
-impl QuantMethod {
-    pub(crate) const fn to_wire(self) -> u8 {
-        match self {
-            Self::Sq8 => 0,
-        }
-    }
-
-    pub(crate) fn from_wire(value: u8) -> Result<Self, VectorError> {
-        match value {
-            0 => Ok(Self::Sq8),
-            other => Err(snapshot::decode_failed(
-                snapshot::QUNT,
-                format!("unknown QUNT method {other}"),
-            )),
-        }
-    }
-}
-
-/// User-facing quantization configuration for [`crate::HnswConfig`].
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct QuantizationConfig {
-    /// Enable asymmetric quantized search when a QUNT store is loaded.
-    pub enabled: bool,
-    /// Re-rank the asymmetric candidate set with exact f32 scoring.
-    pub rescore: bool,
-}
-
-/// Lightweight statistics for a loaded quantized store.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct QuantizationStats {
-    /// Quantization method used by the loaded store.
-    pub method: QuantMethod,
-    /// Vector dimensionality.
-    pub dim: usize,
-    /// Number of quantized vectors.
-    pub code_count: usize,
-    /// Bytes used by packed SQ8 codes.
-    pub bytes_codes: usize,
-    /// Bytes used by per-coordinate min/max ranges.
-    pub bytes_ranges: usize,
-    /// Bytes used by approximate norm cache.
-    pub bytes_norms: usize,
-    /// `f32_bytes / quantized_bytes`, including ranges and norm cache.
-    pub compression_ratio: f32,
-}
 
 /// Derived per-coordinate range for SQ8.
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -104,26 +52,8 @@ impl QuantizedStoreSq8 {
         let mut min = vec![f32::INFINITY; dim];
         let mut max = vec![f32::NEG_INFINITY; dim];
         for row in &rows {
-            if row.len() != dim {
-                return Err(snapshot::encode_failed(
-                    snapshot::QUNT,
-                    format!(
-                        "vector dimension {} disagrees with expected {dim}",
-                        row.len()
-                    ),
-                ));
-            }
+            validate_row(row, dim)?;
             for (coord, value) in row.iter().copied().enumerate() {
-                debug_assert!(
-                    value.is_finite(),
-                    "wire validators are authoritative for finite vector components"
-                );
-                if !value.is_finite() {
-                    return Err(snapshot::encode_failed(
-                        snapshot::QUNT,
-                        format!("non-finite vector component at coordinate {coord}: {value}"),
-                    ));
-                }
                 min[coord] = min[coord].min(value);
                 max[coord] = max[coord].max(value);
             }
@@ -172,7 +102,7 @@ impl QuantizedStoreSq8 {
         self.approx_norms.len() * std::mem::size_of::<f32>()
     }
 
-    pub(crate) fn stats(&self, method: QuantMethod) -> QuantizationStats {
+    pub(crate) fn stats(&self) -> QuantizationStats {
         let f32_bytes = self
             .node_count()
             .saturating_mul(self.dim())
@@ -188,11 +118,13 @@ impl QuantizedStoreSq8 {
         };
 
         QuantizationStats {
-            method,
+            method: QuantMethod::Sq8,
             dim: self.dim(),
             code_count: self.node_count(),
             bytes_codes: self.bytes_codes(),
-            bytes_ranges: self.bytes_ranges(),
+            kind: QuantizationStatsKind::Sq8 {
+                bytes_ranges: self.bytes_ranges(),
+            },
             bytes_norms: self.bytes_norms(),
             compression_ratio,
         }
@@ -247,6 +179,31 @@ impl QuantizedStoreSq8 {
     pub(crate) fn approx_norm(&self, node_idx: usize) -> Option<f32> {
         self.approx_norms.get(node_idx).copied()
     }
+}
+
+fn validate_row(row: &[f32], dim: usize) -> Result<(), VectorError> {
+    if row.len() != dim {
+        return Err(snapshot::encode_failed(
+            snapshot::QUNT,
+            format!(
+                "vector dimension {} disagrees with expected {dim}",
+                row.len()
+            ),
+        ));
+    }
+    for (coord, value) in row.iter().copied().enumerate() {
+        debug_assert!(
+            value.is_finite(),
+            "wire validators are authoritative for finite vector components"
+        );
+        if !value.is_finite() {
+            return Err(snapshot::encode_failed(
+                snapshot::QUNT,
+                format!("non-finite vector component at coordinate {coord}: {value}"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn encode_component(value: f32, min: f32, max: f32) -> u8 {

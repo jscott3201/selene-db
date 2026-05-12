@@ -137,6 +137,8 @@ pub enum VectorErrorKindMirror {
     InternalIndexExhausted,
     MaxLayerExceedsCap,
     NonFiniteQueryComponent,
+    PqTrainingDeferred,
+    PqDimensionNotDivisible,
 }
 
 impl VectorErrorKindMirror {
@@ -155,6 +157,8 @@ impl VectorErrorKindMirror {
         Self::InternalIndexExhausted,
         Self::MaxLayerExceedsCap,
         Self::NonFiniteQueryComponent,
+        Self::PqTrainingDeferred,
+        Self::PqDimensionNotDivisible,
     ];
 
     #[must_use]
@@ -174,6 +178,8 @@ impl VectorErrorKindMirror {
             Self::InternalIndexExhausted => "InternalIndexExhausted",
             Self::MaxLayerExceedsCap => "MaxLayerExceedsCap",
             Self::NonFiniteQueryComponent => "NonFiniteQueryComponent",
+            Self::PqTrainingDeferred => "PqTrainingDeferred",
+            Self::PqDimensionNotDivisible => "PqDimensionNotDivisible",
         }
     }
 }
@@ -207,15 +213,17 @@ impl VectorMagicMirror {
 #[non_exhaustive]
 pub enum QuantMethodMirror {
     Sq8,
+    Pq,
 }
 
 impl QuantMethodMirror {
-    pub const ALL: &'static [Self] = &[Self::Sq8];
+    pub const ALL: &'static [Self] = &[Self::Sq8, Self::Pq];
 
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
             Self::Sq8 => "Sq8",
+            Self::Pq => "Pq",
         }
     }
 }

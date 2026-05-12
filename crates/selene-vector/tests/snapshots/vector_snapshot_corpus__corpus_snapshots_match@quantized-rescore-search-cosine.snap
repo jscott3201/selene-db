@@ -7,13 +7,14 @@ slug="quantized-rescore-search-cosine"
 description="SQ8 asymmetric cosine search with f32 rescore enabled."
 dim=4 m=16 ef_construction=200 ef_search=50 metric=Cosine quantization_enabled=true quantization_rescore=true
 neighbor_select="default"
+quantization_method="sq8"
 ==== GRAPH ====
 nodes=50 dim=4 entry_point=idx0 max_layer=0
 node_head=[n1:L0:[12], n2:L0:[15], n3:L0:[15], n4:L0:[16], n5:L0:[29], n6:L0:[18], n7:L0:[18], n8:L0:[23]]
 ==== SECTIONS ====
 GRPH(len=7645, blake3_8=a7a9620b3ef34cac, dim=4, nodes=50, entry_point=idx0, max_layer=0, head=[n1:L0:[12], n2:L0:[15], n3:L0:[15], n4:L0:[16]])
 VECS(len=826, blake3_8=798aa95c78b7ae5a, dim=4, nodes=50, components=200, head=[-0.571, -0.544, -0.097, -0.588, -0.849, +0.404])
-QUNT(len=507, blake3_8=669fd860b69e74c4, method=0, dim=4, nodes=50, codes=200, ranges=4, norms=50)
+QUNT(len=508, blake3_8=789c0510eb154ab1, method="sq8", dim=4, nodes=50, codes=200, ranges=4, norms=50)
 ==== RESULT ====
 f32_baseline.rows
   [0] n17	-0.050868

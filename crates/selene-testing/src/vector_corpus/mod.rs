@@ -3,8 +3,10 @@
 #![allow(missing_docs)]
 
 pub mod coverage;
+mod errors;
 pub mod fixtures;
 mod neighbor_selection;
+mod quantization_pq;
 
 pub use coverage::{
     ERROR_KIND_COVERAGE, MAGIC_COVERAGE, METRIC_COVERAGE, NEIGHBOR_SELECTION_COVERAGE,
@@ -14,7 +16,8 @@ pub use coverage::{
 };
 pub use fixtures::{
     ApiInductionPayload, ErrorInductionKind, SyntheticErrorFields, VectorConfigSpec,
-    VectorCorpusEvent, VectorCorpusGraph, VectorCorpusInvocation, VectorQuantizationSpec,
+    VectorCorpusEvent, VectorCorpusGraph, VectorCorpusInvocation, VectorPqSpec,
+    VectorQuantizationSpec,
 };
 
 /// Curated corpus of vector snapshot entries.
@@ -187,14 +190,13 @@ fn entries() -> Vec<VectorCorpusEntry> {
     use QuantMethodMirror as Q;
     use VectorCorpusCategory as C;
     use VectorCorpusGraph as G;
-    use VectorErrorKindMirror as E;
     use VectorMagicMirror as X;
     use VectorMetricMirror as M;
     use VectorOpMirror as O;
     use VectorQuantizationSpec as Z;
     use VectorSurface as S;
 
-    vec![
+    let mut entries = vec![
         VectorCorpusEntry {
             slug: "empty-snapshot-roundtrip",
             description: "Empty graph GRPH/VECS roundtrip.",
@@ -479,251 +481,11 @@ fn entries() -> Vec<VectorCorpusEntry> {
             covered_magics: &[X::Vqnt],
             covered_quant_methods: &[Q::Sq8],
         },
-        VectorCorpusEntry {
-            slug: "error-invalid-config",
-            description: "InvalidConfig from zero-dimensional HNSW config.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(E::InvalidConfig, ApiInductionPayload::InvalidConfigZeroDim),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::InvalidConfig],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-dimension-mismatch",
-            description: "Synthetic DimensionMismatch shape.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: synthetic_error(
-                E::DimensionMismatch,
-                SyntheticErrorFields::DimensionMismatch,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::DimensionMismatch],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-section-decode-failed",
-            description: "Synthetic SectionDecodeFailed shape.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: synthetic_error(
-                E::SectionDecodeFailed,
-                SyntheticErrorFields::SectionDecodeFailed,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::SectionDecodeFailed],
-            covered_magics: &[X::Vgrp],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-section-encode-failed",
-            description: "Synthetic SectionEncodeFailed shape.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: synthetic_error(
-                E::SectionEncodeFailed,
-                SyntheticErrorFields::SectionEncodeFailed,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::SectionEncodeFailed],
-            covered_magics: &[X::Vvec],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-invalid-node-id",
-            description: "InvalidNodeId from NodeId::TOMBSTONE.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::InvalidNodeId,
-                ApiInductionPayload::InvalidNodeIdTombstone,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[O::Insert],
-            covered_errors: &[E::InvalidNodeId],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-dimensions-locked",
-            description: "DimensionsLocked from wrong-dimensional search.",
-            graph: G::SingleOriginCosine,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::DimensionsLocked,
-                ApiInductionPayload::DimensionsLockedSearch,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[M::Cosine],
-            covered_ops: &[],
-            covered_errors: &[E::DimensionsLocked],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-invalid-payload",
-            description: "InvalidPayload from empty bulk payload.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::InvalidPayload,
-                ApiInductionPayload::InvalidPayloadEmptyBulk,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::InvalidPayload],
-            covered_magics: &[X::Vecb],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-encode-failed",
-            description: "Synthetic EncodeFailed shape.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: synthetic_error(E::EncodeFailed, SyntheticErrorFields::EncodeFailed),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::EncodeFailed],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-operation-update-not-supported",
-            description: "OperationNotSupportedYet from reserved Update op.",
-            graph: G::SingleOriginCosine,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::OperationNotSupportedYet,
-                ApiInductionPayload::OperationUpdate,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[O::Update],
-            covered_errors: &[E::OperationNotSupportedYet],
-            covered_magics: &[X::Vecu],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-operation-delete-not-supported",
-            description: "OperationNotSupportedYet from reserved Delete op.",
-            graph: G::SingleOriginCosine,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::OperationNotSupportedYet,
-                ApiInductionPayload::OperationDelete,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[O::Delete],
-            covered_errors: &[E::OperationNotSupportedYet],
-            covered_magics: &[X::Vecu],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-duplicate-node-id",
-            description: "DuplicateNodeId from re-inserting an existing node.",
-            graph: G::SingleOriginCosine,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(E::DuplicateNodeId, ApiInductionPayload::DuplicateNodeId),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[O::Insert],
-            covered_errors: &[E::DuplicateNodeId],
-            covered_magics: &[X::Vecu],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-non-finite-vector",
-            description: "NonFiniteVectorComponent from a NaN vector component.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::NonFiniteVectorComponent,
-                ApiInductionPayload::NonFiniteVector,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[O::Insert],
-            covered_errors: &[E::NonFiniteVectorComponent],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-internal-index-exhausted",
-            description: "Synthetic InternalIndexExhausted shape.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: synthetic_error(
-                E::InternalIndexExhausted,
-                SyntheticErrorFields::InternalIndexExhausted,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[],
-            covered_errors: &[E::InternalIndexExhausted],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-max-layer-exceeds-cap",
-            description: "MaxLayerExceedsCap from a direct HNSW insertion.",
-            graph: G::Empty,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::MaxLayerExceedsCap,
-                ApiInductionPayload::MaxLayerExceedsCap,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[],
-            covered_ops: &[O::Insert],
-            covered_errors: &[E::MaxLayerExceedsCap],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-        VectorCorpusEntry {
-            slug: "error-non-finite-query",
-            description: "NonFiniteQueryComponent from a NaN query component.",
-            graph: G::SingleOriginCosine,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::NonFiniteQueryComponent,
-                ApiInductionPayload::NonFiniteQuery,
-            ),
-            category: C::Error,
-            covered_surfaces: &[S::ErrorPath],
-            covered_metrics: &[M::Cosine],
-            covered_ops: &[],
-            covered_errors: &[E::NonFiniteQueryComponent],
-            covered_magics: &[],
-            covered_quant_methods: &[],
-        },
-    ]
+        quantization_pq::default_l2_entry(),
+        quantization_pq::rescore_l2_entry(),
+        quantization_pq::recovery_replay_entry(),
+        quantization_pq::training_deferred_entry(),
+    ];
+    entries.extend(errors::entries());
+    entries
 }

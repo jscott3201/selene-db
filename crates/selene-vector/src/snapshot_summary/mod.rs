@@ -9,7 +9,7 @@ use crate::snapshot::qunt::PAYLOAD_MAGIC_QUNT;
 use crate::snapshot::vecs::PAYLOAD_MAGIC_VECS;
 use crate::{
     DistanceMetric, HnswConfig, HnswGraph, NeighborSelectionConfig, PAYLOAD_MAGIC,
-    PAYLOAD_MAGIC_BULK, QuantMethod, VectorError, VectorOp,
+    PAYLOAD_MAGIC_BULK, PqParams, QuantMethod, VectorError, VectorOp,
 };
 
 pub mod errors;
@@ -56,6 +56,14 @@ pub struct VectorConfigSummary {
     pub quantization_enabled: bool,
     /// Whether f32 rescore is enabled.
     pub quantization_rescore: bool,
+    /// Quantization method rendered only when quantization is enabled.
+    pub quantization_method: Option<&'static str>,
+    /// PQ subspace count rendered only for PQ-enabled configs.
+    pub pq_m: Option<usize>,
+    /// PQ centroid count rendered only for PQ-enabled configs.
+    pub pq_k: Option<u32>,
+    /// PQ train-min threshold rendered only for PQ-enabled configs.
+    pub pq_train_min: Option<usize>,
     /// HNSW neighbor-selection flavor.
     pub neighbor_select: &'static str,
 }
@@ -64,6 +72,9 @@ impl VectorConfigSummary {
     /// Build a stable config summary from a provider config.
     #[must_use]
     pub fn from_config(config: &HnswConfig) -> Self {
+        let pq_params = (config.quantization.enabled
+            && config.quantization.method == QuantMethod::Pq)
+            .then(|| PqParams::resolve(config.dim, config.quantization.pq));
         Self {
             dim: config.dim,
             m: config.m,
@@ -72,6 +83,13 @@ impl VectorConfigSummary {
             metric: metric_name(config.metric),
             quantization_enabled: config.quantization.enabled,
             quantization_rescore: config.quantization.rescore,
+            quantization_method: config
+                .quantization
+                .enabled
+                .then(|| quant_method_token(config.quantization.method)),
+            pq_m: pq_params.map(|params| params.m_subspaces),
+            pq_k: pq_params.map(|params| params.k_centroids),
+            pq_train_min: pq_params.map(|params| params.train_min_vectors),
             neighbor_select: neighbor_selection_name(config.neighbor_selection),
         }
     }
@@ -202,6 +220,19 @@ pub fn vector_summary(input: &VectorSnapshotInput) -> VectorSnapshot {
         "neighbor_select={}",
         quoted(input.config.neighbor_select)
     ));
+    if let Some(method) = input.config.quantization_method {
+        match (
+            input.config.pq_m,
+            input.config.pq_k,
+            input.config.pq_train_min,
+        ) {
+            (Some(m), Some(k), Some(train_min)) => lines.push(format!(
+                "quantization_method={} pq_m={m} pq_k={k} pq_train_min={train_min}",
+                quoted(method)
+            )),
+            _ => lines.push(format!("quantization_method={}", quoted(method))),
+        }
+    }
 
     lines.push("==== GRAPH ====".to_string());
     lines.push(format!(
@@ -300,6 +331,10 @@ pub enum VectorErrorKind {
     MaxLayerExceedsCap,
     /// Non-finite query component.
     NonFiniteQueryComponent,
+    /// Product quantization training is deferred.
+    PqTrainingDeferred,
+    /// Product quantization subspaces do not divide dimensions.
+    PqDimensionNotDivisible,
 }
 
 impl VectorErrorKind {
@@ -321,6 +356,8 @@ impl VectorErrorKind {
             Self::InternalIndexExhausted => "InternalIndexExhausted",
             Self::MaxLayerExceedsCap => "MaxLayerExceedsCap",
             Self::NonFiniteQueryComponent => "NonFiniteQueryComponent",
+            Self::PqTrainingDeferred => "PqTrainingDeferred",
+            Self::PqDimensionNotDivisible => "PqDimensionNotDivisible",
         }
     }
 }
@@ -348,7 +385,7 @@ pub fn vector_op_anchor() -> &'static [(&'static str, VectorOp)] {
 /// Anchor every `QuantMethod` variant by name.
 #[must_use]
 pub fn quant_method_anchor() -> &'static [(&'static str, QuantMethod)] {
-    &[("Sq8", QuantMethod::Sq8)]
+    &[("Sq8", QuantMethod::Sq8), ("Pq", QuantMethod::Pq)]
 }
 
 /// Anchor every neighbor-selection flavor by rendered token.
@@ -416,6 +453,8 @@ pub fn vector_error_kind_for(error: &VectorError) -> VectorErrorKind {
         VectorError::InternalIndexExhausted { .. } => VectorErrorKind::InternalIndexExhausted,
         VectorError::MaxLayerExceedsCap { .. } => VectorErrorKind::MaxLayerExceedsCap,
         VectorError::NonFiniteQueryComponent { .. } => VectorErrorKind::NonFiniteQueryComponent,
+        VectorError::PqTrainingDeferred { .. } => VectorErrorKind::PqTrainingDeferred,
+        VectorError::PqDimensionNotDivisible { .. } => VectorErrorKind::PqDimensionNotDivisible,
     }
 }
 
@@ -455,6 +494,16 @@ pub const fn op_name(op: VectorOp) -> &'static str {
 pub const fn quant_method_name(method: QuantMethod) -> &'static str {
     match method {
         QuantMethod::Sq8 => "Sq8",
+        QuantMethod::Pq => "Pq",
+    }
+}
+
+/// Stable quantization method token for config rendering.
+#[must_use]
+pub const fn quant_method_token(method: QuantMethod) -> &'static str {
+    match method {
+        QuantMethod::Sq8 => "sq8",
+        QuantMethod::Pq => "pq",
     }
 }
 

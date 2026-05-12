@@ -3,6 +3,7 @@
 use crate::snapshot::grph::decode_grph;
 use crate::snapshot::qunt::decode_qunt;
 use crate::snapshot::vecs::decode_vecs;
+use crate::{QuantMethod, quantize::QuantizedStore};
 
 /// Snapshot section bytes rendered into deterministic summaries.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,23 +107,44 @@ fn render_qunt(bytes: &[u8]) -> String {
         return "QUNT(empty)".to_string();
     }
     match decode_qunt(bytes) {
-        Ok(body) => format!(
-            "QUNT(len={}, blake3_8={}, method={}, dim={}, nodes={}, codes={}, ranges={}, norms={})",
-            bytes.len(),
-            blake3_8(bytes),
-            body.method,
-            body.dimensions,
-            body.node_count,
-            body.store.codes.len(),
-            body.store.range.min.len(),
-            body.store.approx_norms.len()
-        ),
+        Ok(body) => match body.store {
+            QuantizedStore::Sq8(store) => format!(
+                "QUNT(len={}, blake3_8={}, method={:?}, dim={}, nodes={}, codes={}, ranges={}, norms={})",
+                bytes.len(),
+                blake3_8(bytes),
+                method_token(body.method),
+                body.dimensions,
+                body.node_count,
+                store.codes.len(),
+                store.range.min.len(),
+                store.approx_norms.len()
+            ),
+            QuantizedStore::Pq(store) => format!(
+                "QUNT(len={}, blake3_8={}, method={:?}, dim={}, nodes={}, codebook_bytes={}, codes_bytes={}, norms={})",
+                bytes.len(),
+                blake3_8(bytes),
+                method_token(body.method),
+                body.dimensions,
+                body.node_count,
+                store.codebook.len() * std::mem::size_of::<f32>(),
+                store.codes.len(),
+                store.approx_norms.as_ref().map_or(0, Vec::len)
+            ),
+        },
         Err(err) => format!(
             "QUNT(len={}, blake3_8={}, decode_error={})",
             bytes.len(),
             blake3_8(bytes),
             super::errors::render_vector_error(&err)
         ),
+    }
+}
+
+fn method_token(method: u8) -> &'static str {
+    match QuantMethod::from_wire(method) {
+        Ok(QuantMethod::Sq8) => "sq8",
+        Ok(QuantMethod::Pq) => "pq",
+        Err(_) => "unknown",
     }
 }
 

@@ -142,4 +142,24 @@ pub enum VectorError {
         /// Non-finite component value.
         value: f32,
     },
+
+    /// Product quantization cannot train until enough vectors are present.
+    #[error("PQ training deferred: observed {observed_vectors} vectors, required {required}")]
+    #[diagnostic(code(SLENE_VEC_015))]
+    PqTrainingDeferred {
+        /// Current vector count.
+        observed_vectors: usize,
+        /// Minimum vector count required by the active PQ config.
+        required: usize,
+    },
+
+    /// Product quantization requires dimensions divisible by subspace count.
+    #[error("PQ dimension {dim} is not divisible by m_subspaces {m_subspaces}")]
+    #[diagnostic(code(SLENE_VEC_016))]
+    PqDimensionNotDivisible {
+        /// Configured vector dimensionality.
+        dim: usize,
+        /// Configured PQ subspace count.
+        m_subspaces: usize,
+    },
 }

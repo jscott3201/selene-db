@@ -14,7 +14,8 @@ use crate::snapshot::grph::{GrphHeaderV1, GrphNodeV1, decode_grph, encode_grph};
 use crate::snapshot::qunt::{decode_qunt, encode_qunt, validate_qunt_for_graph};
 use crate::snapshot::vecs::{VecsBodyV1, decode_vecs, encode_vecs};
 use crate::{
-    HnswConfig, HnswGraph, HnswParams, QuantMethod, QuantizationStats, VectorError, hnsw, snapshot,
+    HnswConfig, HnswGraph, HnswParams, PqParams, QuantMethod, QuantizationStats, VectorError, hnsw,
+    snapshot,
 };
 
 pub(crate) const PROVIDER_NAME: &str = "selene-vector";
@@ -101,12 +102,22 @@ impl HnswProvider {
     }
 
     /// Return statistics for the currently loaded quantized store, if any.
-    #[must_use]
-    pub fn quantization_stats(&self) -> Option<QuantizationStats> {
-        self.state
-            .load_full()
-            .quantized()
-            .map(|store| store.stats(QuantMethod::Sq8))
+    pub fn quantization_stats(&self) -> Result<Option<QuantizationStats>, VectorError> {
+        let snapshot = self.state.load_full();
+        if let Some(store) = snapshot.quantized() {
+            return Ok(Some(store.stats()));
+        }
+        if self.config.quantization.enabled && self.config.quantization.method == QuantMethod::Pq {
+            let params = PqParams::resolve(self.config.dim, self.config.quantization.pq);
+            let observed = snapshot.len();
+            if observed < params.train_min_vectors {
+                return Err(VectorError::PqTrainingDeferred {
+                    observed_vectors: observed,
+                    required: params.train_min_vectors,
+                });
+            }
+        }
+        Ok(None)
     }
 
     /// Apply a single upsert payload through the same code path as
@@ -347,7 +358,7 @@ impl HnswProvider {
 
         let body = decode_qunt(bytes).map_err(section_decode_err)?;
         let snapshot = self.state.load_full();
-        validate_qunt_for_graph(&body, &snapshot).map_err(section_decode_err)?;
+        validate_qunt_for_graph(&body, &snapshot, &self.config).map_err(section_decode_err)?;
         let store = Arc::new(body.store);
         // §M Q1: QUNT is a post-commit overlay, attached with RCU.
         self.state
@@ -383,13 +394,20 @@ impl HnswProvider {
                 }
             }
         };
-        let bytes = match encode_qunt(&captured, QuantMethod::Sq8) {
-            Ok(bytes) => bytes,
+        let (bytes, store) = match encode_qunt(&captured, &self.config) {
+            Ok(encoded) => encoded,
             Err(err) => {
                 *self.staging.lock() = SectionStaging::Idle;
                 return Err(section_encode_err(err));
             }
         };
+        if self.config.quantization.method == QuantMethod::Pq
+            && let Some(store) = store
+        {
+            let store = Arc::new(store);
+            self.state
+                .rcu(|prev| prev.clone_with_quantized(Some(Arc::clone(&store))));
+        }
         *self.staging.lock() = SectionStaging::Idle;
         Ok(bytes)
     }

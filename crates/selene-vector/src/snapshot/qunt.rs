@@ -1,10 +1,10 @@
-//! Codec for the `QUNT` SQ8 snapshot overlay section.
+//! Codec for the `QUNT` quantized snapshot overlay section.
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::VectorError;
 use crate::hnsw::HnswGraph;
-use crate::quantize::{QuantMethod, QuantizedStoreSq8};
+use crate::quantize::{QuantMethod, QuantizedStore};
+use crate::{DistanceMetric, HnswConfig, PqParams, VectorError};
 
 use super::{QUNT, decode_failed, encode_failed, expected_component_len, node_count_usize};
 
@@ -20,22 +20,38 @@ pub(crate) struct QuntBodyV1 {
     pub(crate) dimensions: u16,
     /// Number of dense graph rows covered by this quantized prefix.
     pub(crate) node_count: u32,
-    /// SQ8 quantized store.
-    pub(crate) store: QuantizedStoreSq8,
+    /// Quantized store matching `method`.
+    pub(crate) store: QuantizedStore,
 }
 
-pub(crate) fn encode_qunt(graph: &HnswGraph, method: QuantMethod) -> Result<Vec<u8>, VectorError> {
+pub(crate) fn encode_qunt(
+    graph: &HnswGraph,
+    config: &HnswConfig,
+) -> Result<(Vec<u8>, Option<QuantizedStore>), VectorError> {
+    let Some(store) = QuantizedStore::build(
+        graph.len(),
+        graph.dimensions(),
+        config.metric,
+        config.quantization,
+        graph.iter_nodes().map(|node| node.vector.as_ref()),
+    )?
+    else {
+        return Ok((Vec::new(), None));
+    };
+    let bytes = encode_qunt_store(graph, store.clone())?;
+    Ok((bytes, Some(store)))
+}
+
+pub(crate) fn encode_qunt_store(
+    graph: &HnswGraph,
+    store: QuantizedStore,
+) -> Result<Vec<u8>, VectorError> {
     let node_count = u32::try_from(graph.len())
         .map_err(|_| encode_failed(QUNT, "graph node count exceeds QUNT header range"))?;
     let dimensions = u16::try_from(graph.dimensions())
         .map_err(|_| encode_failed(QUNT, "graph dimensions exceed QUNT header range"))?;
-    let store = QuantizedStoreSq8::build(
-        graph.len(),
-        graph.dimensions(),
-        graph.iter_nodes().map(|node| node.vector.as_ref()),
-    )?;
     let body = QuntBodyV1 {
-        method: method.to_wire(),
+        method: store.method().to_wire(),
         dimensions,
         node_count,
         store,
@@ -64,8 +80,19 @@ pub(crate) fn decode_qunt(bytes: &[u8]) -> Result<QuntBodyV1, VectorError> {
 pub(crate) fn validate_qunt_for_graph(
     body: &QuntBodyV1,
     graph: &HnswGraph,
+    config: &HnswConfig,
 ) -> Result<QuantMethod, VectorError> {
     let method = QuantMethod::from_wire(body.method)?;
+    if method != body.store.method() {
+        return Err(decode_failed(
+            QUNT,
+            format!(
+                "QUNT method byte {} disagrees with store method {}",
+                method.to_wire(),
+                body.store.method().to_wire()
+            ),
+        ));
+    }
     if usize::from(body.dimensions) != graph.dimensions() {
         return Err(decode_failed(
             QUNT,
@@ -87,6 +114,7 @@ pub(crate) fn validate_qunt_for_graph(
             ),
         ));
     }
+    validate_store_for_config(&body.store, config)?;
     Ok(method)
 }
 
@@ -99,49 +127,132 @@ fn validate_qunt_body(body: &QuntBodyV1) -> Result<(), VectorError> {
         ));
     }
     let dim = usize::from(body.dimensions);
-    let expected_len = expected_component_len(body.node_count, body.dimensions, QUNT)?;
-    if body.store.range.min.len() != dim || body.store.range.max.len() != dim {
+    let node_count = node_count_usize(body.node_count, QUNT)?;
+    match &body.store {
+        QuantizedStore::Sq8(store) => validate_sq8_store(store, dim, node_count, body.dimensions)?,
+        QuantizedStore::Pq(store) => validate_pq_store(store, dim, node_count)?,
+    }
+    Ok(())
+}
+
+fn validate_sq8_store(
+    store: &crate::quantize::QuantizedStoreSq8,
+    dim: usize,
+    node_count: usize,
+    dimensions: u16,
+) -> Result<(), VectorError> {
+    let expected_len = expected_component_len(
+        u32::try_from(node_count).map_err(|_| decode_failed(QUNT, "QUNT node_count overflow"))?,
+        dimensions,
+        QUNT,
+    )?;
+    if store.range.min.len() != dim || store.range.max.len() != dim {
         return Err(decode_failed(
             QUNT,
             format!("QUNT range length disagrees with dimensions {dim}"),
         ));
     }
-    if body.store.codes.len() != expected_len {
+    if store.codes.len() != expected_len {
         return Err(decode_failed(
             QUNT,
             format!(
                 "QUNT codes length {} disagrees with expected {expected_len}",
-                body.store.codes.len()
+                store.codes.len()
             ),
         ));
     }
-    let node_count = node_count_usize(body.node_count, QUNT)?;
-    if body.store.approx_norms.len() != node_count {
+    if store.approx_norms.len() != node_count {
         return Err(decode_failed(
             QUNT,
             format!(
                 "QUNT approx_norms length {} disagrees with node_count {node_count}",
-                body.store.approx_norms.len()
+                store.approx_norms.len()
             ),
         ));
     }
-    validate_ranges(&body.store.range.min, &body.store.range.max)?;
-    for (index, norm) in body.store.approx_norms.iter().copied().enumerate() {
-        // Codex review fix (P2): approximate vector magnitudes must be
-        // non-negative; a negative norm survives finiteness checks but
-        // silently inverts cosine asymmetric scores.
-        if !norm.is_finite() {
+    validate_ranges(&store.range.min, &store.range.max)?;
+    validate_norms(Some(&store.approx_norms), node_count, true)?;
+    Ok(())
+}
+
+fn validate_pq_store(
+    store: &crate::quantize::QuantizedStorePq,
+    dim: usize,
+    node_count: usize,
+) -> Result<(), VectorError> {
+    let m = usize::try_from(store.m_subspaces)
+        .map_err(|_| decode_failed(QUNT, "QUNT PQ m_subspaces overflow"))?;
+    let k = usize::try_from(store.k_centroids)
+        .map_err(|_| decode_failed(QUNT, "QUNT PQ k_centroids overflow"))?;
+    let subdim = usize::try_from(store.subspace_dim)
+        .map_err(|_| decode_failed(QUNT, "QUNT PQ subspace_dim overflow"))?;
+    if m == 0 || k == 0 || subdim == 0 {
+        return Err(decode_failed(
+            QUNT,
+            "QUNT PQ m_subspaces, k_centroids, and subspace_dim must be greater than zero",
+        ));
+    }
+    if m.checked_mul(subdim) != Some(dim) {
+        return Err(decode_failed(
+            QUNT,
+            format!("QUNT PQ m_subspaces * subspace_dim disagrees with dimensions {dim}"),
+        ));
+    }
+    if store.k_centroids != PqParams::K_CENTROIDS_V1 {
+        return Err(decode_failed(
+            QUNT,
+            format!("QUNT PQ k_centroids {} is not supported", store.k_centroids),
+        ));
+    }
+    let expected_codebook = m
+        .checked_mul(k)
+        .and_then(|value| value.checked_mul(subdim))
+        .ok_or_else(|| decode_failed(QUNT, "QUNT PQ codebook length overflow"))?;
+    if store.codebook.len() != expected_codebook {
+        return Err(decode_failed(
+            QUNT,
+            format!(
+                "QUNT PQ codebook length {} disagrees with expected {expected_codebook}",
+                store.codebook.len()
+            ),
+        ));
+    }
+    let expected_codes = node_count
+        .checked_mul(m)
+        .ok_or_else(|| decode_failed(QUNT, "QUNT PQ codes length overflow"))?;
+    if store.codes.len() != expected_codes {
+        return Err(decode_failed(
+            QUNT,
+            format!(
+                "QUNT PQ codes length {} disagrees with expected {expected_codes}",
+                store.codes.len()
+            ),
+        ));
+    }
+    for (index, value) in store.codebook.iter().copied().enumerate() {
+        if !value.is_finite() {
             return Err(decode_failed(
                 QUNT,
-                format!("non-finite QUNT approx_norm at index {index}: {norm}"),
+                format!("non-finite QUNT PQ codebook component at index {index}: {value}"),
             ));
         }
-        if norm < 0.0 {
-            return Err(decode_failed(
-                QUNT,
-                format!("negative QUNT approx_norm at index {index}: {norm}"),
-            ));
-        }
+    }
+    validate_norms(store.approx_norms.as_deref(), node_count, false)?;
+    Ok(())
+}
+
+fn validate_store_for_config(
+    store: &QuantizedStore,
+    config: &HnswConfig,
+) -> Result<(), VectorError> {
+    if let QuantizedStore::Pq(store) = store
+        && config.metric == DistanceMetric::Cosine
+        && store.approx_norms.is_none()
+    {
+        return Err(decode_failed(
+            QUNT,
+            "QUNT PQ cosine store requires approx_norms",
+        ));
     }
     Ok(())
 }
@@ -164,6 +275,43 @@ fn validate_ranges(min: &[f32], max: &[f32]) -> Result<(), VectorError> {
     Ok(())
 }
 
+fn validate_norms(
+    norms: Option<&[f32]>,
+    node_count: usize,
+    required: bool,
+) -> Result<(), VectorError> {
+    let Some(norms) = norms else {
+        if required {
+            return Err(decode_failed(QUNT, "QUNT approx_norms are required"));
+        }
+        return Ok(());
+    };
+    if norms.len() != node_count {
+        return Err(decode_failed(
+            QUNT,
+            format!(
+                "QUNT approx_norms length {} disagrees with node_count {node_count}",
+                norms.len()
+            ),
+        ));
+    }
+    for (index, norm) in norms.iter().copied().enumerate() {
+        if !norm.is_finite() {
+            return Err(decode_failed(
+                QUNT,
+                format!("non-finite QUNT approx_norm at index {index}: {norm}"),
+            ));
+        }
+        if norm < 0.0 {
+            return Err(decode_failed(
+                QUNT,
+                format!("negative QUNT approx_norm at index {index}: {norm}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -171,7 +319,7 @@ mod tests {
     use selene_core::NodeId;
 
     use crate::hnsw::{HnswGraph, HnswNode};
-    use crate::quantize::PerCoordRange;
+    use crate::quantize::{PerCoordRange, QuantizedStore, QuantizedStoreSq8};
 
     use super::*;
 
@@ -186,9 +334,49 @@ mod tests {
         graph
     }
 
+    fn pq_graph(dim: usize) -> HnswGraph {
+        let mut graph = HnswGraph::empty(dim as u16);
+        for raw in 1..=256 {
+            let vector = (0..dim)
+                .map(|coord| ((raw as f32 * 0.031) + (coord as f32 * 0.17)).sin())
+                .collect::<Vec<_>>();
+            graph
+                .nodes
+                .push(HnswNode::new(NodeId::new(raw), Arc::from(vector), 0).unwrap());
+        }
+        graph
+    }
+
+    fn config() -> HnswConfig {
+        HnswConfig::new(2)
+            .unwrap()
+            .with_quantization(crate::QuantizationConfig {
+                enabled: true,
+                ..Default::default()
+            })
+            .unwrap()
+    }
+
+    fn pq_config(metric: DistanceMetric) -> HnswConfig {
+        HnswConfig::with_params(2, 16, 200, 50, metric)
+            .unwrap()
+            .with_quantization(crate::QuantizationConfig {
+                enabled: true,
+                method: QuantMethod::Pq,
+                pq: Some(crate::PqParams {
+                    m_subspaces: 1,
+                    k_centroids: 256,
+                    train_min_vectors: 256,
+                }),
+                ..Default::default()
+            })
+            .unwrap()
+    }
+
     fn body(node_count: u32, dimensions: u16) -> QuntBodyV1 {
         let graph = graph();
-        let mut encoded = decode_qunt(&encode_qunt(&graph, QuantMethod::Sq8).unwrap()).unwrap();
+        let (bytes, _) = encode_qunt(&graph, &config()).unwrap();
+        let mut encoded = decode_qunt(&bytes).unwrap();
         encoded.node_count = node_count;
         encoded.dimensions = dimensions;
         encoded
@@ -202,13 +390,42 @@ mod tests {
         out
     }
 
+    fn sq8_mut(body: &mut QuntBodyV1) -> &mut QuantizedStoreSq8 {
+        match &mut body.store {
+            QuantizedStore::Sq8(store) => store,
+            QuantizedStore::Pq(_) => panic!("test body should be SQ8"),
+        }
+    }
+
     #[test]
     fn qunt_roundtrip_preserves_bytes() {
         let graph = graph();
-        let bytes = encode_qunt(&graph, QuantMethod::Sq8).unwrap();
+        let (bytes, _) = encode_qunt(&graph, &config()).unwrap();
         let decoded = decode_qunt(&bytes).unwrap();
 
         assert_eq!(bytes, raw_encode(&decoded));
+    }
+
+    #[test]
+    fn qunt_codec_preserves_vqnt_magic_and_archived_method_field() {
+        let graph = graph();
+        let (bytes, _) = encode_qunt(&graph, &config()).unwrap();
+
+        assert!(bytes.starts_with(&PAYLOAD_MAGIC_QUNT));
+        let archived = &bytes[PAYLOAD_MAGIC_QUNT.len()..];
+        let decoded = rkyv::from_bytes::<QuntBodyV1, rkyv::rancor::Error>(archived)
+            .expect("method lives inside archived body");
+        assert_eq!(decoded.method, QuantMethod::Sq8.to_wire());
+    }
+
+    #[test]
+    fn qunt_codec_method_byte_one_decodes_as_pq() {
+        let graph = pq_graph(2);
+        let (bytes, _) = encode_qunt(&graph, &pq_config(DistanceMetric::L2)).unwrap();
+        let decoded = decode_qunt(&bytes).unwrap();
+
+        assert_eq!(decoded.method, QuantMethod::Pq.to_wire());
+        assert!(matches!(decoded.store, QuantizedStore::Pq(_)));
     }
 
     #[test]
@@ -224,9 +441,23 @@ mod tests {
     }
 
     #[test]
+    fn pq_cosine_decode_rejects_missing_approx_norms() {
+        let graph = pq_graph(2);
+        let (bytes, _) = encode_qunt(&graph, &pq_config(DistanceMetric::L2)).unwrap();
+        let decoded = decode_qunt(&bytes).unwrap();
+
+        let err = validate_qunt_for_graph(&decoded, &graph, &pq_config(DistanceMetric::Cosine))
+            .expect_err("PQ cosine requires approximate norms");
+
+        assert!(
+            matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("approx_norms"))
+        );
+    }
+
+    #[test]
     fn qunt_decode_rejects_codes_length_mismatch() {
         let mut body = body(2, 2);
-        body.store.codes.pop();
+        sq8_mut(&mut body).codes.pop();
 
         let err = decode_qunt(&raw_encode(&body)).expect_err("bad length rejected");
 
@@ -238,7 +469,7 @@ mod tests {
     #[test]
     fn qunt_decode_rejects_norms_length_mismatch() {
         let mut body = body(2, 2);
-        body.store.approx_norms.pop();
+        sq8_mut(&mut body).approx_norms.pop();
 
         let err = decode_qunt(&raw_encode(&body)).expect_err("bad norm length rejected");
 
@@ -250,7 +481,7 @@ mod tests {
     #[test]
     fn qunt_decode_rejects_non_finite_range_or_norm() {
         let mut range_body = body(2, 2);
-        range_body.store.range.min[0] = f32::NAN;
+        sq8_mut(&mut range_body).range.min[0] = f32::NAN;
         let range_err =
             decode_qunt(&raw_encode(&range_body)).expect_err("non-finite range rejected");
         assert!(
@@ -258,7 +489,7 @@ mod tests {
         );
 
         let mut norm_body = body(2, 2);
-        norm_body.store.approx_norms[0] = f32::INFINITY;
+        sq8_mut(&mut norm_body).approx_norms[0] = f32::INFINITY;
         let norm_err = decode_qunt(&raw_encode(&norm_body)).expect_err("non-finite norm rejected");
         assert!(
             matches!(norm_err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("approx_norm"))
@@ -268,7 +499,7 @@ mod tests {
     #[test]
     fn qunt_decode_rejects_negative_approx_norm() {
         let mut body = body(2, 2);
-        body.store.approx_norms[0] = -1.0;
+        sq8_mut(&mut body).approx_norms[0] = -1.0;
 
         let err = decode_qunt(&raw_encode(&body)).expect_err("negative norm rejected");
 
@@ -280,7 +511,7 @@ mod tests {
     #[test]
     fn qunt_decode_rejects_inverted_range() {
         let mut body = body(2, 2);
-        body.store.range = PerCoordRange {
+        sq8_mut(&mut body).range = PerCoordRange {
             min: vec![1.0, 0.0],
             max: vec![0.0, 2.0],
         };
@@ -296,7 +527,8 @@ mod tests {
     fn qunt_decode_rejects_dimension_mismatch_against_graph() {
         let body = body(2, 3);
 
-        let err = validate_qunt_for_graph(&body, &graph()).expect_err("dimension mismatch");
+        let err =
+            validate_qunt_for_graph(&body, &graph(), &config()).expect_err("dimension mismatch");
 
         assert!(
             matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("dimension mismatch"))
@@ -307,7 +539,8 @@ mod tests {
     fn qunt_decode_rejects_node_count_above_graph_len() {
         let body = body(3, 2);
 
-        let err = validate_qunt_for_graph(&body, &graph()).expect_err("node count mismatch");
+        let err =
+            validate_qunt_for_graph(&body, &graph(), &config()).expect_err("node count mismatch");
 
         assert!(
             matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("exceeds graph"))
@@ -318,10 +551,10 @@ mod tests {
     fn qunt_decode_allows_node_count_below_graph_len() {
         let mut body = body(2, 2);
         body.node_count = 1;
-        body.store.codes.truncate(2);
-        body.store.approx_norms.truncate(1);
+        sq8_mut(&mut body).codes.truncate(2);
+        sq8_mut(&mut body).approx_norms.truncate(1);
         let decoded = decode_qunt(&raw_encode(&body)).unwrap();
 
-        validate_qunt_for_graph(&decoded, &graph()).unwrap();
+        validate_qunt_for_graph(&decoded, &graph(), &config()).unwrap();
     }
 }
