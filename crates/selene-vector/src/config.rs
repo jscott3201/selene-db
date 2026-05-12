@@ -1,6 +1,6 @@
 //! HNSW provider configuration.
 
-use crate::VectorError;
+use crate::{QuantizationConfig, VectorError};
 
 /// Distance function used by the vector index.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -28,6 +28,8 @@ pub struct HnswConfig {
     pub ef_search: usize,
     /// Distance metric used by this provider.
     pub metric: DistanceMetric,
+    /// Optional quantized-search behavior.
+    pub quantization: QuantizationConfig,
 }
 
 impl HnswConfig {
@@ -91,9 +93,25 @@ impl HnswConfig {
             ef_construction,
             ef_search,
             metric,
+            quantization: QuantizationConfig::default(),
         };
         config.validate()?;
         Ok(config)
+    }
+
+    /// Return this config with explicit quantization behavior.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] when the resulting config is
+    /// invalid, including `rescore = true` while quantization is disabled.
+    pub fn with_quantization(
+        mut self,
+        quantization: QuantizationConfig,
+    ) -> Result<Self, VectorError> {
+        self.quantization = quantization;
+        self.validate()?;
+        Ok(self)
     }
 
     /// Validate this config.
@@ -122,6 +140,11 @@ impl HnswConfig {
         }
         if self.ef_search == 0 {
             return Err(invalid_config("ef_search must be greater than zero"));
+        }
+        if self.quantization.rescore && !self.quantization.enabled {
+            return Err(invalid_config(
+                "quantization rescore requires quantization enabled",
+            ));
         }
         Ok(())
     }

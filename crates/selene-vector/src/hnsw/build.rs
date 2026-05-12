@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use selene_core::NodeId;
 
-use super::search::{Candidate, beam_search_layer, greedy_search_layer, score};
+use super::search::{Candidate, Scorer, beam_search_layer, greedy_search_layer, score};
 use super::{HnswGraph, HnswNode, HnswParams, InternalIndex};
 use crate::VectorError;
 
@@ -78,25 +78,25 @@ pub fn insert_node(
     };
 
     let query_vec = Arc::clone(&graph.nodes[new_idx as usize].vector);
+    let scorer = Scorer::f32(&query_vec, params.metric);
     let mut current_entry = entry;
     let top_layer = graph.max_layer;
 
     if top_layer > node_max_layer {
         for layer in ((node_max_layer + 1)..=top_layer).rev() {
-            current_entry = greedy_search_layer(graph, &query_vec, current_entry, layer, params);
+            current_entry = greedy_search_layer(graph, current_entry, layer, &scorer);
         }
     }
 
     for layer in (0..=node_max_layer.min(top_layer)).rev() {
         let candidates = beam_search_layer(
             graph,
-            &query_vec,
             current_entry,
             params.ef_construction,
             layer,
             None,
             Some(new_idx),
-            params,
+            &scorer,
         );
         if let Some(best) = candidates.first() {
             current_entry = best.idx;

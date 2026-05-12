@@ -19,9 +19,9 @@
 //! ```
 //!
 //! BRIEF-61 adds deterministic GRPH/VECS snapshot bodies. BRIEF-62 adds the
-//! VECB bulk-insert wire format. Procedure registration moves to future
-//! `selene-vector-pack` work; quantization and the D21 snapshot harness land in
-//! later M8 briefs.
+//! VECB bulk-insert wire format. BRIEF-63 adds the QUNT SQ8 quantization
+//! overlay and asymmetric search. Procedure registration moves to future
+//! `selene-vector-pack` work; the D21 snapshot harness lands in BRIEF-64.
 //!
 //! The Rust crate name is `selene-vector`, while the procedure-pack name is
 //! `vector`. Future procedures therefore register as `vector.knn`,
@@ -37,6 +37,7 @@ pub mod hnsw;
 pub mod payload;
 pub mod procedures;
 pub mod provider;
+pub(crate) mod quantize;
 pub(crate) mod snapshot;
 
 pub use config::{DistanceMetric, HnswConfig};
@@ -49,3 +50,4 @@ pub use payload::{
 };
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;
+pub use quantize::{QuantMethod, QuantizationConfig, QuantizationStats};
