@@ -8,7 +8,7 @@ This is a **marathon, not a sprint**. No shortcuts. Every decision should optimi
 
 ## Status
 
-Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **all 7 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack`, `selene-algorithms`. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) closed 2026-05-11** (7/7 briefs, BRIEF-50 through BRIEF-56). **v1.0 mandatory-crate set is feature-complete.** **M8 (selene-vector opt-in extension) opened with BRIEF-57 on 2026-05-12.** v1.x backlog: `selene-algorithms-pack` (procedure-pack adapter), parallel execution (rayon), streaming/incremental algorithms, out-of-core for graphs exceeding in-memory CSR bounds; opt-in extension crates (selene-timeseries, selene-rdf, selene-graphrag, selene-fulltext). See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
+Active implementation. Architecture is settled (D1–D21, see Decision log). Workspace contains **all 7 of 7 v1.0 mandatory crates**: `selene-core`, `selene-graph`, `selene-persist`, `selene-gql`, `selene-testing`, `selene-pack`, `selene-algorithms`. **M5d (executor) closed 2026-05-10**; **M5e (procedure-pack registry) closed 2026-05-11** (9/9 briefs, BRIEF-41 through BRIEF-49); **M5f (selene-algorithms) closed 2026-05-11** (7/7 briefs, BRIEF-50 through BRIEF-56). **v1.0 mandatory-crate set is feature-complete.** **M8 (selene-vector opt-in extension) opened with BRIEF-57 on 2026-05-12; BRIEF-58 brings M8 progress to 2/8 after merge.** v1.x backlog: `selene-algorithms-pack` (procedure-pack adapter), parallel execution (rayon), streaming/incremental algorithms, out-of-core for graphs exceeding in-memory CSR bounds; opt-in extension crates (selene-timeseries, selene-rdf, selene-graphrag, selene-fulltext). See `_design/milestone-log.md` for detailed entries (canonical state in MCP project 364).
 
 ## North star: ISO/IEC 39075:2024
 
@@ -70,7 +70,7 @@ Opt-in extension crates:
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-vector` | core, graph | HNSW vector index provider shell (`VECT` with sub-tags `GRPH` / `VECS` / `QUNT`) and vector procedure-pack manifest stub (`pack_name="vector"`). Algorithm bodies, section codecs, procedure registrations, quantization, and D21 harness land across M8 follow-up briefs. |
+| `selene-vector` | core, graph | HNSW vector index provider shell (`VECT` with sub-tags `GRPH` / `VECS` / `QUNT`), vector procedure-pack manifest stub (`pack_name="vector"`), ArcSwap-published `HnswGraph` snapshot, and scalar distance kernels (cosine / L2 / dot). Algorithm bodies, section codecs, procedure registrations, quantization, and D21 harness land across M8 follow-up briefs. |
 
 Future opt-in extension crates: `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-fulltext`. **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
 

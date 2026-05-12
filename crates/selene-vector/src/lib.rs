@@ -4,9 +4,20 @@
 //! crate set. It owns the `VECT` [`selene_graph::IndexProvider`] registration
 //! and the future `vector.*` procedure-pack namespace.
 //!
-//! BRIEF-57 intentionally ships only the provider skeleton. HNSW graph
-//! construction, search, snapshot bodies, procedure registration, quantization,
-//! and the D21 snapshot harness land in later M8 briefs.
+//! BRIEF-58 adds the read-only HNSW graph shape and scalar distance kernels:
+//!
+//! ```
+//! use selene_vector::distance::{cosine_similarity, dot_product, l2_squared};
+//!
+//! let a = [1.0f32, 0.0, 0.0, 0.0];
+//! let b = [0.0f32, 1.0, 0.0, 0.0];
+//! assert_eq!(dot_product(&a, &b), 0.0);
+//! assert_eq!(l2_squared(&a, &b), 2.0);
+//! assert_eq!(cosine_similarity(&a, &b), 0.0);
+//! ```
+//!
+//! HNSW graph construction, search, snapshot bodies, procedure registration,
+//! quantization, and the D21 snapshot harness land in later M8 briefs.
 //!
 //! The Rust crate name is `selene-vector`, while the procedure-pack name is
 //! `vector`. Future procedures therefore register as `vector.knn`,
@@ -17,11 +28,14 @@
 
 pub mod config;
 pub mod error;
+pub mod hnsw;
 pub mod procedures;
 pub mod provider;
 pub(crate) mod snapshot;
 
 pub use config::{DistanceMetric, HnswConfig};
 pub use error::VectorError;
+pub use hnsw::distance;
+pub use hnsw::{HnswGraph, HnswNode};
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;

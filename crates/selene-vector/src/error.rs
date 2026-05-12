@@ -1,5 +1,6 @@
 //! Error types for the selene-vector extension.
 
+use selene_core::NodeId;
 use selene_graph::SubTag;
 
 /// Errors returned by selene-vector public APIs.
@@ -41,6 +42,16 @@ pub enum VectorError {
         /// Provider-local subsection tag.
         sub_tag: SubTag,
         /// Human-readable encode failure.
+        reason: String,
+    },
+
+    /// A source graph node ID is not valid for HNSW indexing.
+    #[error("invalid node id {node_id}: {reason}")]
+    #[diagnostic(code(SLENE_VEC_005))]
+    InvalidNodeId {
+        /// Rejected source graph node ID.
+        node_id: NodeId,
+        /// Human-readable validation failure.
         reason: String,
     },
 }
