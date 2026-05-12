@@ -11,14 +11,18 @@ description = "HNSW vector index extension for selene-db."
 
 [features]
 default = []
+simd-simsimd = ["dep:simsimd"]
 test-harness = []
 
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
+arc-swap.workspace = true
 parking_lot.workspace = true
+smallvec.workspace = true
 thiserror.workspace = true
 miette.workspace = true
+simsimd = { version = "5", optional = true }
 
 [dev-dependencies]
 selene-pack = { path = "../selene-pack", version = "0.0.0" }

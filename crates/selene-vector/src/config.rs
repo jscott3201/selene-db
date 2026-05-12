@@ -9,7 +9,7 @@ pub enum DistanceMetric {
     /// Cosine similarity over dense f32 vectors.
     #[default]
     Cosine,
-    /// Squared Euclidean distance over dense f32 vectors.
+    /// Euclidean distance over dense f32 vectors.
     L2,
     /// Dot product over dense f32 vectors.
     Dot,

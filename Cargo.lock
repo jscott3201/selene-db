@@ -2238,12 +2238,15 @@ dependencies = [
 name = "selene-vector"
 version = "0.0.0"
 dependencies = [
+ "arc-swap",
  "miette",
  "parking_lot",
  "selene-core",
  "selene-graph",
  "selene-pack",
  "serde_json",
+ "simsimd",
+ "smallvec",
  "thiserror",
 ]
 
@@ -2335,6 +2338,15 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
+name = "simsimd"
+version = "5.9.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9638f2829f4887c62a01958903b58fa1b740a64d5dc2bbc4a75a33827ee1bd53"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "slab"

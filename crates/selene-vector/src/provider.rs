@@ -1,24 +1,22 @@
 //! HNSW index-provider skeleton for selene-vector.
 
-use parking_lot::RwLock;
+use std::sync::Arc;
+
+use arc_swap::ArcSwap;
 use selene_core::Change;
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
-use crate::{HnswConfig, VectorError, snapshot};
+use crate::{HnswConfig, HnswGraph, VectorError, snapshot};
 
 /// Stateful vector index provider registered under the `VECT` provider tag.
 ///
 /// BRIEF-57 keeps this type deliberately small. It validates configuration,
 /// declares the provider's snapshot footprint, and round-trips empty section
-/// bodies. Later M8 briefs replace the private state body with real HNSW graph
-/// storage, WAL replay, snapshot codecs, and query behavior.
+/// bodies. BRIEF-58 adds the immutable graph publication slot; later M8 briefs
+/// fill it through WAL replay, snapshot codecs, and query behavior.
 pub struct HnswProvider {
     config: HnswConfig,
-    state: RwLock<HnswState>,
-}
-
-struct HnswState {
-    _placeholder: (),
+    state: ArcSwap<HnswGraph>,
 }
 
 impl HnswProvider {
@@ -29,9 +27,10 @@ impl HnswProvider {
     /// Returns [`VectorError::InvalidConfig`] when `config.validate()` fails.
     pub fn new(config: HnswConfig) -> Result<Self, VectorError> {
         config.validate()?;
+        let initial = HnswGraph::empty(config.dim as u16);
         Ok(Self {
             config,
-            state: RwLock::new(HnswState { _placeholder: () }),
+            state: ArcSwap::from_pointee(initial),
         })
     }
 
@@ -39,6 +38,12 @@ impl HnswProvider {
     #[must_use]
     pub const fn config(&self) -> &HnswConfig {
         &self.config
+    }
+
+    /// Load the currently published immutable HNSW graph snapshot.
+    #[must_use]
+    pub fn snapshot(&self) -> Arc<HnswGraph> {
+        self.state.load_full()
     }
 }
 
@@ -78,9 +83,9 @@ impl IndexProvider for HnswProvider {
 
     fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
         // Why: BRIEF-59 wires Change::IndexExtensionEvent replay. Reading the
-        // lock here keeps the placeholder state field intentionally live while
-        // proving this callback is non-mutating in BRIEF-57.
-        drop(self.state.read());
+        // snapshot here keeps the state field intentionally live while proving
+        // this callback is non-mutating in BRIEF-58.
+        let _snapshot = self.state.load();
         Ok(())
     }
 
