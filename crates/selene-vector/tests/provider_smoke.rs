@@ -49,28 +49,33 @@ fn tag_collision_fails_build() {
 }
 
 #[test]
-fn empty_section_roundtrips_declared_sub_tags() {
-    for sub_tag in [SubTag(*b"GRPH"), SubTag(*b"VECS"), SubTag(*b"QUNT")] {
-        assert_empty_section_roundtrip(sub_tag);
-    }
-}
-
-fn assert_empty_section_roundtrip(sub_tag: SubTag) {
+fn empty_graph_sections_roundtrip_declared_sub_tags() {
     let provider = provider();
-    let bytes = provider
-        .write_section(sub_tag)
-        .expect("declared section writes empty bytes");
-    assert!(bytes.is_empty());
+    let grph = provider
+        .write_section(SubTag(*b"GRPH"))
+        .expect("GRPH writes");
+    let vecs = provider
+        .write_section(SubTag(*b"VECS"))
+        .expect("VECS writes from captured graph");
+    let qunt = provider
+        .write_section(SubTag(*b"QUNT"))
+        .expect("QUNT writes empty bytes");
+    assert!(grph.starts_with(b"VGRP"));
+    assert!(vecs.starts_with(b"VVEC"));
+    assert!(qunt.is_empty());
+
     provider
-        .read_section(sub_tag, &bytes)
-        .expect("declared empty section reads");
+        .read_section(SubTag(*b"GRPH"), &grph)
+        .expect("GRPH reads");
+    provider
+        .read_section(SubTag(*b"VECS"), &vecs)
+        .expect("VECS commits");
     let err = provider
-        .read_section(sub_tag, &[0x01])
-        .expect_err("non-empty placeholder payload is rejected");
+        .read_section(SubTag(*b"QUNT"), &[0x01])
+        .expect_err("QUNT non-empty placeholder payload is rejected");
     assert!(matches!(
         err,
-        ProviderError::InvalidPayload { reason }
-            if reason.contains("body decoder not yet implemented")
+        ProviderError::InvalidPayload { reason } if reason.contains("QUNT")
     ));
 }
 

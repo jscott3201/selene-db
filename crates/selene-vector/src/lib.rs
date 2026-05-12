@@ -18,8 +18,9 @@
 //! assert_eq!(cosine_similarity(&a, &b), 0.0);
 //! ```
 //!
-//! Snapshot bodies, procedure registration, quantization, and the D21 snapshot
-//! harness land in later M8 briefs.
+//! BRIEF-61 adds deterministic GRPH/VECS snapshot bodies. Procedure
+//! registration, quantization, and the D21 snapshot harness land in later M8
+//! briefs.
 //!
 //! The Rust crate name is `selene-vector`, while the procedure-pack name is
 //! `vector`. Future procedures therefore register as `vector.knn`,
