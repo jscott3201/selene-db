@@ -9,6 +9,10 @@ repository.workspace = true
 homepage.workspace = true
 publish = false
 
+[features]
+default = []
+vector = []
+
 [lints]
 workspace = true
 

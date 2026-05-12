@@ -12,12 +12,13 @@ description = "HNSW vector index extension for selene-db."
 [features]
 default = []
 simd-simsimd = ["dep:simsimd"]
-test-harness = []
+test-harness = ["dep:blake3"]
 
 [dependencies]
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
 arc-swap.workspace = true
+blake3 = { workspace = true, optional = true }
 fastrand.workspace = true
 parking_lot.workspace = true
 rkyv.workspace = true
@@ -29,7 +30,14 @@ simsimd = { version = "5", optional = true }
 
 [dev-dependencies]
 selene-pack = { path = "../selene-pack", version = "0.0.0" }
+selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
+blake3.workspace = true
+insta.workspace = true
 serde_json.workspace = true
+
+[[test]]
+name = "vector_snapshot_corpus"
+required-features = ["test-harness"]
 
 [lints]
 workspace = true

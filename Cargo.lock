@@ -2239,7 +2239,9 @@ name = "selene-vector"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
+ "blake3",
  "fastrand",
+ "insta",
  "miette",
  "parking_lot",
  "rkyv 0.8.16",
@@ -2247,6 +2249,7 @@ dependencies = [
  "selene-core",
  "selene-graph",
  "selene-pack",
+ "selene-testing",
  "serde_json",
  "simsimd",
  "smallvec",

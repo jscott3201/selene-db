@@ -108,6 +108,22 @@ impl HnswProvider {
             .quantized()
             .map(|store| store.stats(QuantMethod::Sq8))
     }
+
+    /// Apply a single upsert payload through the same code path as
+    /// [`Self::on_change`], but return the underlying [`VectorError`] instead
+    /// of wrapping it into [`ProviderError`]. Test-harness only — exposes a
+    /// typed view of `apply_upsert` so snapshot fixtures can render the real
+    /// variant fields (Codex review fix, PR #72 P2-A).
+    #[cfg(any(test, feature = "test-harness"))]
+    pub fn apply_upsert_for_test(
+        &self,
+        payload: &crate::payload::VectorUpsertPayloadV1,
+    ) -> Result<(), VectorError> {
+        let prev = self.state.load_full();
+        let next = apply_upsert(&prev, payload, &self.config)?;
+        self.state.store(Arc::new(next));
+        Ok(())
+    }
 }
 
 impl IndexProvider for HnswProvider {
