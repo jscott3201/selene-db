@@ -437,13 +437,6 @@ fn operation_not_supported_error(
         .expect("reserved op rejected")
 }
 
-fn encoded_upsert_change(payload: VectorUpsertPayloadV1) -> Change {
-    Change::IndexExtensionEvent {
-        provider: intern("selene-vector").unwrap(),
-        payload: Arc::from(payload.encode().unwrap().into_boxed_slice()),
-    }
-}
-
 fn synthetic_error(fields: &SyntheticErrorFields) -> VectorError {
     match fields {
         SyntheticErrorFields::DimensionMismatch => VectorError::DimensionMismatch {
