@@ -293,11 +293,7 @@ fn mean_pairwise_distance(dists: &[f32], k: usize) -> f32 {
             count += 1;
         }
     }
-    if count == 0 {
-        0.0
-    } else {
-        sum / count as f32
-    }
+    if count == 0 { 0.0 } else { sum / count as f32 }
 }
 
 fn total_loss(dists: &[f32], weights: &[f32], sigma: &[u8], alpha: f32, k: usize) -> f32 {
@@ -399,8 +395,15 @@ mod tests {
         let identity: Vec<u8> = vec![0, 1, 2, 3];
         let identity_loss = total_loss_for_tests(&centroids, &identity, 4, 1);
 
-        let sigmas =
-            train(&centroids, 1, 4, 1, POLYSEMOUS_TRAIN_SEED, "test_known_answer").unwrap();
+        let sigmas = train(
+            &centroids,
+            1,
+            4,
+            1,
+            POLYSEMOUS_TRAIN_SEED,
+            "test_known_answer",
+        )
+        .unwrap();
         let solver_loss = total_loss_for_tests(&centroids, &sigmas[0], 4, 1);
 
         assert!(
@@ -519,8 +522,8 @@ mod tests {
 
     #[test]
     fn polysemous_train_rejects_zero_subspaces() {
-        let err = train(&[], 0, 4, 1, POLYSEMOUS_TRAIN_SEED, "test_zero_m")
-            .expect_err("m == 0 rejected");
+        let err =
+            train(&[], 0, 4, 1, POLYSEMOUS_TRAIN_SEED, "test_zero_m").expect_err("m == 0 rejected");
         assert!(matches!(err, VectorError::PolysemousTrainingFailed { .. }));
     }
 
@@ -542,8 +545,15 @@ mod tests {
         let identity: Vec<u8> = (0..8).collect();
         let identity_loss = total_loss_for_tests(&centroids, &identity, 8, 2);
 
-        let sigmas =
-            train(&centroids, 1, 8, 2, POLYSEMOUS_TRAIN_SEED, "test_correlation").unwrap();
+        let sigmas = train(
+            &centroids,
+            1,
+            8,
+            2,
+            POLYSEMOUS_TRAIN_SEED,
+            "test_correlation",
+        )
+        .unwrap();
         let solver_loss = total_loss_for_tests(&centroids, &sigmas[0], 8, 2);
 
         assert!(

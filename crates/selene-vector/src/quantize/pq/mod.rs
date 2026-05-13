@@ -293,10 +293,7 @@ pub(crate) fn validate_rotation(
 /// Apply polysemous σ to a trained codebook in place, setting the
 /// `polysemous_trained` flag. Caller is responsible for verifying
 /// `params.use_polysemous && m_subspaces >= 2` before invoking.
-fn apply_polysemous(
-    codebook: &mut PqCodebook,
-    context: &'static str,
-) -> Result<(), VectorError> {
+fn apply_polysemous(codebook: &mut PqCodebook, context: &'static str) -> Result<(), VectorError> {
     let m = codebook.m_subspaces as usize;
     let k = codebook.k_centroids as usize;
     let subspace_dim = codebook.subspace_dim as usize;

@@ -41,8 +41,10 @@ pub fn search(
     let query_norm = dot_product(query, query).sqrt();
     // BRIEF-69 §C.4 polysemous setup. The filter activates only when the
     // embedder requested it AND the residual codebook self-identifies as
-    // polysemous-trained (V107). Drift between the two is rejected by
-    // recovery validation, not silently masked here.
+    // polysemous-trained (V107). Drift between the two is rejected at
+    // recovery time by `validate_trained_codebook`, so reaching the
+    // search path means the two flags MUST already agree; the `&&` here
+    // is defense in depth rather than a drift-masking gate.
     let polysemous_active = config.pq.use_polysemous && codebook.polysemous_trained;
     let polysemous_threshold = if polysemous_active {
         config.pq.resolve_hamming_threshold()

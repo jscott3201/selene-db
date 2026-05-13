@@ -147,7 +147,18 @@ pub(crate) fn beam_search_layer(
         // expansion cannot improve top-ef. This preserves the BRIEF-59
         // bounded-beam fix while allowing filtered nodes to route until the
         // admission set is full.
+        //
+        // BRIEF-69 cloud-Codex P1: non-admissible candidates carry a
+        // `NEG_INFINITY` placeholder score (the scorer returned `None`),
+        // which makes `Candidate::cmp` always say they're worse than every
+        // admissible result entry. Without the admissibility gate below,
+        // the loop would short-circuit before expanding a non-admissible
+        // candidate's neighbors — and those neighbors are exactly where
+        // the next admissible result entry might live. We only treat the
+        // current candidate as a termination signal when it is itself
+        // admissible (i.e. carries a real score the cmp can reason about).
         if result.len() >= ef
+            && candidate.admissible
             && let Some(worst) = result.last()
             && Candidate::cmp(&candidate, worst).is_gt()
         {

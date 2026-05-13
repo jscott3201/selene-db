@@ -40,7 +40,15 @@ pub(super) fn encode_if_legacy_compatible(
     let store = match &body.store {
         QuantizedStore::Sq8(store) => QuantizedStoreV1Legacy::Sq8(store.clone()),
         QuantizedStore::Pq(store) => {
-            if store.codebook.rotation.is_some() {
+            // The v1 legacy archive has no `rotation` AND no
+            // `polysemous_trained` fields. Emitting v1 bytes for a codebook
+            // that carries either would silently drop the flag — recovery
+            // would decode as `polysemous_trained=false`, and the
+            // post-restore scorer would disable the Hamming filter even
+            // though the codebook was trained with it (cloud Codex P1 on
+            // PR #78). Reject both shapes and let the caller fall through
+            // to v2 / v3 emit paths.
+            if store.codebook.rotation.is_some() || store.codebook.polysemous_trained {
                 return Ok(None);
             }
             QuantizedStoreV1Legacy::Pq(QuantizedStorePqV1Legacy {

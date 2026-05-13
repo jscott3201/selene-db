@@ -78,9 +78,7 @@ pub(crate) fn encode_ipqb(body: &IpqbBodyV1) -> Result<Vec<u8>, VectorError> {
     Ok(out)
 }
 
-fn encode_ipqb_v1_legacy_if_compatible(
-    body: &IpqbBodyV1,
-) -> Result<Option<Vec<u8>>, VectorError> {
+fn encode_ipqb_v1_legacy_if_compatible(body: &IpqbBodyV1) -> Result<Option<Vec<u8>>, VectorError> {
     let legacy = match body {
         IpqbBodyV1::Empty => IpqbBodyV1Legacy::Empty,
         IpqbBodyV1::Trained { codebook } => {
@@ -105,9 +103,7 @@ fn encode_ipqb_v1_legacy_if_compatible(
     Ok(Some(out))
 }
 
-fn encode_ipqb_v2_legacy_if_compatible(
-    body: &IpqbBodyV1,
-) -> Result<Option<Vec<u8>>, VectorError> {
+fn encode_ipqb_v2_legacy_if_compatible(body: &IpqbBodyV1) -> Result<Option<Vec<u8>>, VectorError> {
     let legacy = match body {
         IpqbBodyV1::Empty => IpqbBodyV2Legacy::Empty,
         IpqbBodyV1::Trained { codebook } => {

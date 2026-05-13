@@ -114,9 +114,9 @@ mod tests {
 
     use selene_core::NodeId;
 
+    use crate::DistanceMetric;
     use crate::hnsw::{HnswGraph, HnswNode};
     use crate::quantize::{PerCoordRange, QuantizedStore, QuantizedStoreSq8};
-    use crate::DistanceMetric;
 
     use super::*;
 

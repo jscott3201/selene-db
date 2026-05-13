@@ -238,6 +238,24 @@ fn validate_store_for_config(
                 "QUNT PQ OPQ rotation present while provider config disables OPQ",
             ));
         }
+        // BRIEF-69 V106 / cloud-Codex P2: polysemous parity must match
+        // between the decoded codebook and the embedder's config. The
+        // brief promised this rejection at recovery time, but without it
+        // the scorer's `config && codebook_flag` gate silently disables
+        // the filter (false-positive polysemous_trained: filter never
+        // active; false-negative: filter never applied to permuted
+        // bytes). Both modes diverge post-restore from configured
+        // behavior; surface the mismatch as a SectionDecodeFailed
+        // instead.
+        if params.use_polysemous != store.codebook.polysemous_trained {
+            return Err(decode_failed(
+                QUNT,
+                format!(
+                    "QUNT PQ polysemous flag drift: config use_polysemous={}, codebook polysemous_trained={}",
+                    params.use_polysemous, store.codebook.polysemous_trained
+                ),
+            ));
+        }
         if config.metric == DistanceMetric::Cosine && store.approx_norms.is_none() {
             return Err(decode_failed(
                 QUNT,
