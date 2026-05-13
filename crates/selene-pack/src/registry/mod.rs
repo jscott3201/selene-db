@@ -2,7 +2,7 @@
 
 mod storage;
 
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use selene_gql::{
     ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureRegistry,
@@ -15,6 +15,7 @@ use crate::{
         drop_index::SeleneDropIndex, health::SeleneHealth, pack_history::SelenePackHistory,
     },
     error::RegistryError,
+    external::ExternalProcedurePack,
     history::PackHistorySource,
 };
 
@@ -38,6 +39,12 @@ impl ProcedurePackRegistry {
         }
     }
 
+    /// Start a construct-time registry builder.
+    #[must_use]
+    pub const fn builder() -> ProcedurePackRegistryBuilder {
+        ProcedurePackRegistryBuilder::new()
+    }
+
     /// Construct the standard platform built-in registry.
     ///
     /// # Errors
@@ -49,11 +56,7 @@ impl ProcedurePackRegistry {
     /// this surface intentionally does not panic so an operational resource
     /// limit is recoverable.
     pub fn with_builtins() -> Result<Self, RegistryError> {
-        ProcedurePackRegistryBuilder::new()
-            .with_graph_builtin(SeleneHealth)
-            .with_mutation_builtin(SeleneCreateIndex)
-            .with_mutation_builtin(SeleneDropIndex)
-            .build()
+        ProcedurePackRegistryBuilder::new().with_builtins().build()
     }
 
     /// Construct the standard platform built-in registry plus
@@ -71,10 +74,7 @@ impl ProcedurePackRegistry {
         history_source: Arc<dyn PackHistorySource>,
     ) -> Result<Self, RegistryError> {
         ProcedurePackRegistryBuilder::new()
-            .with_graph_builtin(SeleneHealth)
-            .with_graph_builtin(SelenePackHistory::new(history_source))
-            .with_mutation_builtin(SeleneCreateIndex)
-            .with_mutation_builtin(SeleneDropIndex)
+            .with_builtins_and_history(history_source)
             .build()
     }
 }
@@ -99,6 +99,9 @@ impl ProcedureRegistry for ProcedurePackRegistry {
             (TierEntry::Graph(procedure), ProcedureContext::Graph(graph_ctx)) => {
                 procedure.execute(graph_ctx, args)
             }
+            (TierEntry::ExternalGraph(procedure), ProcedureContext::Graph(graph_ctx)) => {
+                procedure.execute(graph_ctx, args)
+            }
             (TierEntry::Mutation(procedure), ProcedureContext::Mutation(mutation_ctx)) => {
                 procedure.execute(mutation_ctx, args)
             }
@@ -112,24 +115,58 @@ impl ProcedureRegistry for ProcedurePackRegistry {
 
 /// Construct-once procedure-pack registry builder.
 ///
-/// Built-ins are accepted only before [`build`](Self::build). The frozen
+/// Procedures are accepted only before [`build`](Self::build). The frozen
 /// [`ProcedurePackRegistry`] retains no handle allocator or registration API.
-///
-/// `pub(crate)` for BRIEF-41 (Q8): v1.0 platform built-ins are the only
-/// supported registration path. Manifest-driven extension registration
-/// lands in BRIEF-43; the public registration API will be revisited then.
 #[derive(Default)]
-pub(crate) struct ProcedurePackRegistryBuilder {
+pub struct ProcedurePackRegistryBuilder {
     pending: Vec<PendingEntry>,
+    external_pack_names: Vec<&'static str>,
     next_handle: u64,
 }
 
 impl ProcedurePackRegistryBuilder {
-    pub(crate) const fn new() -> Self {
+    /// Construct an empty registry builder.
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             pending: Vec::new(),
+            external_pack_names: Vec::new(),
             next_handle: 1,
         }
+    }
+
+    /// Add the standard platform built-ins.
+    #[must_use]
+    pub fn with_builtins(self) -> Self {
+        self.with_graph_builtin(SeleneHealth)
+            .with_mutation_builtin(SeleneCreateIndex)
+            .with_mutation_builtin(SeleneDropIndex)
+    }
+
+    /// Add the standard platform built-ins plus `selene.pack.history`.
+    #[must_use]
+    pub fn with_builtins_and_history(self, history_source: Arc<dyn PackHistorySource>) -> Self {
+        self.with_graph_builtin(SeleneHealth)
+            .with_graph_builtin(SelenePackHistory::new(history_source))
+            .with_mutation_builtin(SeleneCreateIndex)
+            .with_mutation_builtin(SeleneDropIndex)
+    }
+
+    /// Add a static external procedure pack.
+    ///
+    /// Registration remains construct-time-only: external packs are accepted on
+    /// the builder, never by mutating a frozen [`ProcedurePackRegistry`].
+    #[must_use]
+    pub fn with_external_pack(mut self, pack: ExternalProcedurePack) -> Self {
+        self.external_pack_names.push(pack.name());
+        for procedure in pack.into_graph_procedures() {
+            self.pending.push(PendingEntry::external_graph(
+                ProcedureHandle::new(self.next_handle),
+                procedure,
+            ));
+            self.next_handle += 1;
+        }
+        self
     }
 
     pub(crate) fn with_graph_builtin<T>(mut self, builtin: T) -> Self
@@ -156,11 +193,37 @@ impl ProcedurePackRegistryBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> Result<ProcedurePackRegistry, RegistryError> {
+    /// Freeze the builder into a read-only procedure registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RegistryError`] if a procedure name is malformed, duplicate
+    /// pack names are supplied, or procedure metadata violates tier/mutability
+    /// invariants.
+    pub fn build(self) -> Result<ProcedurePackRegistry, RegistryError> {
+        validate_external_pack_names(&self.external_pack_names)?;
         Ok(ProcedurePackRegistry {
             storage: Arc::new(RegistryStorage::from_pending(self.pending)?),
         })
     }
+}
+
+fn validate_external_pack_names(names: &[&'static str]) -> Result<(), RegistryError> {
+    let mut seen = HashSet::new();
+    for name in names {
+        if name.is_empty() {
+            return Err(RegistryError::InvalidPackName {
+                name: (*name).to_owned(),
+                reason: "external pack name must be non-empty",
+            });
+        }
+        if !seen.insert(*name) {
+            return Err(RegistryError::PackConflict {
+                name: (*name).to_owned(),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

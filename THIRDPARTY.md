@@ -3978,6 +3978,7 @@ SOFTWARE.
 
 Used by:
 - selene-algorithms v0.0.0 — https://github.com/jscott3201/selene-db
+- selene-algorithms-pack v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-core v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-gql v0.0.0 — https://github.com/jscott3201/selene-db
 - selene-graph v0.0.0 — https://github.com/jscott3201/selene-db

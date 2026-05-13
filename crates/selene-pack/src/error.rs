@@ -17,6 +17,20 @@ pub enum RegistryError {
         /// Hash associated with the attempted registration.
         new_hash: [u8; 32],
     },
+    /// Two external packs used the same pack name during registry build.
+    #[error("external procedure-pack registration conflict for {name:?}")]
+    PackConflict {
+        /// Static external pack name.
+        name: String,
+    },
+    /// An external pack name was malformed.
+    #[error("invalid external procedure-pack name {name:?}: {reason}")]
+    InvalidPackName {
+        /// Static external pack name.
+        name: String,
+        /// Stable reason tag.
+        reason: &'static str,
+    },
     /// A tier-typed builder method received metadata declaring another tier.
     #[error("procedure tier mismatch for {name:?}: declared {declared:?}, attempted {attempted:?}")]
     TierMismatch {
