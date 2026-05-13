@@ -22,7 +22,7 @@ use selene_vector::{
 mod vector_snapshot_support;
 
 use vector_snapshot_support::{
-    canonical_error_for_kind, config_from_spec, execute_entry, provider_with_graph,
+    canonical_error_for_kind, config_from_spec, execute_entry, provider_with_graph, sections_for,
 };
 
 #[test]
@@ -150,11 +150,64 @@ fn corpus_pq_entries_cover_all_states() {
         .collect::<BTreeSet<_>>();
     for slug in [
         "pq-default-l2",
+        "pq-opq-l2",
+        "pq-polysemous-l2",
         "pq-rescore-l2",
         "pq-recovery-replay",
         "pq-training-deferred",
     ] {
         assert!(actual.contains(slug), "PQ corpus missing {slug}");
+    }
+}
+
+#[test]
+fn vector_corpus_polysemous_descriptor_drift_detection() {
+    let corpus = VectorCorpus::m8();
+    let polysemous = corpus
+        .entries()
+        .find(|entry| entry.slug == "pq-polysemous-l2")
+        .expect("polysemous PQ corpus entry exists");
+    let disabled = corpus
+        .entries()
+        .find(|entry| entry.slug == "pq-default-l2")
+        .expect("disabled PQ corpus entry exists");
+
+    let polysemous_sections = sections_for(&provider_with_graph(
+        polysemous.graph,
+        config_from_spec(polysemous.config),
+    ));
+    let disabled_sections = sections_for(&provider_with_graph(
+        disabled.graph,
+        config_from_spec(disabled.config),
+    ));
+
+    assert_ne!(
+        polysemous_sections.qunt, disabled_sections.qunt,
+        "polysemous-on and polysemous-off corpus descriptors must produce different QUNT bytes"
+    );
+}
+
+#[test]
+fn vector_corpus_existing_fixtures_explicitly_set_polysemous_false() {
+    for entry in VectorCorpus::m8().entries() {
+        let Some(pq) = entry.config.quantization.pq else {
+            continue;
+        };
+        if entry.slug == "pq-polysemous-l2" {
+            assert!(pq.use_polysemous, "{} should exercise V115", entry.slug);
+            assert_eq!(pq.hamming_threshold_ratio, 0.5);
+            continue;
+        }
+        assert!(
+            !pq.use_polysemous,
+            "{} must pin use_polysemous=false for byte identity",
+            entry.slug
+        );
+        assert_eq!(
+            pq.hamming_threshold_ratio, 0.5,
+            "{} must pin hamming_threshold_ratio=0.5",
+            entry.slug
+        );
     }
 }
 
@@ -379,6 +432,7 @@ fn bench_invocation_hygiene_is_declared() {
     assert!(cargo.contains("name = \"recall\""));
     assert!(cargo.contains("name = \"quant_recall\""));
     assert!(cargo.contains("harness = false"));
+    assert!(cargo.contains("name = \"composition_replay\""));
 }
 
 #[test]
@@ -390,6 +444,7 @@ fn scripts_run_benches_includes_recall_entry() {
 
     assert!(script.contains("selene-vector:recall:criterion"));
     assert!(script.contains("selene-vector:quant_recall:criterion"));
+    assert!(script.contains("selene-vector:composition_replay:criterion"));
 }
 
 #[test]
@@ -409,6 +464,10 @@ fn recall_bench_uses_public_provider_search() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/quant_recall.rs"),
     )
     .expect("read quant recall bench");
+    let composition_bench = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("benches/composition_replay.rs"),
+    )
+    .expect("read composition replay bench");
 
     assert!(bench.contains(".search(query, k, Some(ef_search), None)"));
     assert!(!bench.contains("hnsw::search::search"));
@@ -416,6 +475,9 @@ fn recall_bench_uses_public_provider_search() {
     assert!(!quant_bench.contains("hnsw::search::search"));
     assert!(quant_bench.contains("benchmark_group(\"quant_recall_at_10\")"));
     assert!(quant_bench.contains("benchmark_group(\"opq_recall_at_10\")"));
+    assert!(composition_bench.contains(".search(&corpus[0], 10, Some(100), None)"));
+    assert!(!composition_bench.contains("hnsw::search::search"));
+    assert!(composition_bench.contains("benchmark_group(\"composition_replay\")"));
 }
 
 #[test]

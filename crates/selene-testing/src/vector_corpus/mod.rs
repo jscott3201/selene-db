@@ -483,6 +483,7 @@ fn entries() -> Vec<VectorCorpusEntry> {
         },
         quantization_pq::default_l2_entry(),
         quantization_pq::opq_l2_entry(),
+        quantization_pq::polysemous_l2_entry(),
         quantization_pq::rescore_l2_entry(),
         quantization_pq::recovery_replay_entry(),
         quantization_pq::training_deferred_entry(),
