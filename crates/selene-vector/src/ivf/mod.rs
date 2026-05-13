@@ -11,6 +11,7 @@ pub mod posting;
 mod provider;
 pub mod search;
 pub mod train;
+mod validate;
 
 use coarse::CoarseQuantizer;
 use posting::PostingList;

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use selene_core::{Change, NodeId, intern};
-use selene_graph::{IndexProvider, SubTag};
+use selene_graph::{IndexProvider, ProviderError, SubTag};
 use selene_vector::{
     DistanceMetric, HnswConfig, HnswProvider, IvfConfig, IvfProvider, IvfStats, PAYLOAD_MAGIC_IVF,
     PqParams, VectorIvfUpsertV1, VectorOp, VectorUpsertPayloadV1,
@@ -122,6 +122,56 @@ fn concurrent_vivf_between_section_writes_preserved_at_terminal_publish() {
         } => assert_eq!(posting_list_lengths.iter().sum::<u32>(), 261),
         other => panic!("expected trained stats, observed {other:?}"),
     }
+}
+
+#[test]
+fn on_change_rejects_events_until_all_recovery_sections_load() {
+    let source = provider(256);
+    populate(&source, 10);
+    let cqnt = source.write_section(SubTag(*b"CQNT")).unwrap();
+    let ipqb = source.write_section(SubTag(*b"IPQB")).unwrap();
+
+    let recovered = provider(256);
+    recovered.read_section(SubTag(*b"CQNT"), &cqnt).unwrap();
+    recovered.read_section(SubTag(*b"IPQB"), &ipqb).unwrap();
+
+    let err = recovered
+        .on_change(&ivf_change(50, [1.0, 1.0]))
+        .unwrap_err();
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
+}
+
+#[test]
+fn trained_cqnt_metric_must_match_provider_config() {
+    let source = provider(256);
+    populate(&source, 256);
+    let cqnt = source.write_section(SubTag(*b"CQNT")).unwrap();
+    let ipqb = source.write_section(SubTag(*b"IPQB")).unwrap();
+    let post = source.write_section(SubTag(*b"POST")).unwrap();
+
+    let recovered = IvfProvider::new(
+        IvfConfig::with_params(
+            2,
+            4,
+            2,
+            DistanceMetric::Dot,
+            PqParams {
+                m_subspaces: 1,
+                k_centroids: 256,
+                train_min_vectors: 256,
+            },
+            256,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    recovered.read_section(SubTag(*b"CQNT"), &cqnt).unwrap();
+    recovered.read_section(SubTag(*b"IPQB"), &ipqb).unwrap();
+
+    let err = recovered.read_section(SubTag(*b"POST"), &post).unwrap_err();
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
 }
 
 #[test]

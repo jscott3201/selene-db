@@ -8,15 +8,18 @@ use selene_core::{Change, NodeId};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use super::coarse::CoarseQuantizer;
-use super::posting::PostingList;
 use super::train::{append_encoded, train};
+use super::validate::{
+    deferred_rows_to_raw, inconsistent, validate_posting_lists, validate_trained_codebook,
+    validate_vector,
+};
 use super::{IVF_PROVIDER_NAME, IvfIndex, IvfStats, RawVector, TrainedIvf, search};
 use crate::payload::VectorIvfUpsertV1;
 use crate::quantize::PqCodebook;
 use crate::snapshot::cqnt::{CqntBodyV1, decode_cqnt, encode_cqnt};
 use crate::snapshot::ipqb::{IpqbBodyV1, decode_ipqb, encode_ipqb};
 use crate::snapshot::post::{PostBodyV1, decode_post, encode_post};
-use crate::{DistanceMetric, IvfConfig, VectorError, VectorOp, snapshot};
+use crate::{IvfConfig, VectorError, VectorOp, snapshot};
 
 /// Stateful vector index provider registered under the `IVFP` provider tag.
 pub struct IvfProvider {
@@ -137,13 +140,9 @@ impl IndexProvider for IvfProvider {
     }
 
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        if let SectionStaging::Reading {
-            cqnt: Some(_),
-            ipqb: None,
-        } = &*self.staging.lock()
-        {
+        if matches!(&*self.staging.lock(), SectionStaging::Reading { .. }) {
             return Err(ProviderError::InvalidPayload {
-                reason: "incomplete IVF snapshot: CQNT section staged without IPQB".into(),
+                reason: "incomplete IVF snapshot recovery in progress".into(),
             });
         }
         let Change::IndexExtensionEvent { provider, payload } = change else {
@@ -188,12 +187,14 @@ impl IvfProvider {
             CqntBodyV1::Trained {
                 k_coarse: trained.coarse.k_coarse,
                 dim: trained.coarse.dim,
+                metric: snapshot::metric_to_wire(self.config.metric),
                 centroids: trained.coarse.centroids.clone(),
             }
         } else if let Some(coarse) = captured.coarse_quantizer.as_deref() {
             CqntBodyV1::Trained {
                 k_coarse: coarse.k_coarse,
                 dim: coarse.dim,
+                metric: snapshot::metric_to_wire(self.config.metric),
                 centroids: coarse.centroids.clone(),
             }
         } else {
@@ -427,22 +428,14 @@ fn assemble_index(
     match (cqnt, ipqb, post) {
         (CqntBodyV1::Empty, IpqbBodyV1::Empty, PostBodyV1::Empty) => Ok(IvfIndex::empty(dim)),
         (CqntBodyV1::Empty, IpqbBodyV1::Empty, PostBodyV1::Deferred { unassigned_rows }) => {
-            let rows = unassigned_rows
-                .into_iter()
-                .map(|(node_id, vector)| {
-                    validate_vector(node_id, &vector, config)?;
-                    Ok(RawVector {
-                        node_id,
-                        vector: Arc::from(vector),
-                    })
-                })
-                .collect::<Result<Vec<_>, VectorError>>()?;
+            let rows = deferred_rows_to_raw(unassigned_rows, config)?;
             Ok(IvfIndex::deferred(dim, rows))
         }
         (
             CqntBodyV1::Trained {
                 k_coarse,
                 dim: body_dim,
+                metric,
                 centroids,
             },
             IpqbBodyV1::Trained { codebook },
@@ -451,10 +444,14 @@ fn assemble_index(
                 posting_lists,
             },
         ) => {
-            if k_coarse != config.k_coarse || body_dim != dim {
+            if k_coarse != config.k_coarse
+                || body_dim != dim
+                || metric != snapshot::metric_to_wire(config.metric)
+            {
                 return Err(inconsistent("CQNT disagrees with provider config"));
             }
-            validate_posting_lists(&posting_lists, node_count, config)?;
+            validate_trained_codebook(&codebook, config)?;
+            validate_posting_lists(&posting_lists, node_count, config, &codebook)?;
             let coarse = Arc::new(CoarseQuantizer {
                 centroids,
                 k_coarse,
@@ -525,84 +522,6 @@ fn apply_payload(
     Ok(())
 }
 
-fn validate_vector(node_id: NodeId, vector: &[f32], config: &IvfConfig) -> Result<(), VectorError> {
-    if node_id == NodeId::TOMBSTONE {
-        return Err(VectorError::InvalidNodeId {
-            node_id,
-            reason: "NodeId::TOMBSTONE cannot be added to an IVF index".into(),
-        });
-    }
-    if vector.len() != config.dim {
-        return Err(VectorError::DimensionsLocked {
-            expected: config.dim,
-            observed: vector.len(),
-        });
-    }
-    for (index, value) in vector.iter().copied().enumerate() {
-        if !value.is_finite() {
-            return Err(VectorError::NonFiniteVectorComponent {
-                node_id,
-                index,
-                value,
-            });
-        }
-    }
-    Ok(())
-}
-
-fn validate_posting_lists(
-    posting_lists: &[PostingList],
-    node_count: u32,
-    config: &IvfConfig,
-) -> Result<(), VectorError> {
-    if posting_lists.len() != config.k_coarse as usize {
-        return Err(inconsistent(
-            "POST posting list count disagrees with k_coarse",
-        ));
-    }
-    let mut observed = 0_u32;
-    let mut seen = HashSet::new();
-    for (expected_id, list) in posting_lists.iter().enumerate() {
-        if list.centroid_id as usize != expected_id {
-            return Err(inconsistent("POST centroid ids must be dense and ordered"));
-        }
-        for entry in &list.entries {
-            observed = observed
-                .checked_add(1)
-                .ok_or_else(|| inconsistent("POST node_count overflow"))?;
-            if !seen.insert(entry.node_id) {
-                return Err(VectorError::DuplicateNodeId {
-                    node_id: entry.node_id,
-                });
-            }
-            if entry.codes.len() != config.pq.m_subspaces {
-                return Err(inconsistent(
-                    "POST code length disagrees with PQ m_subspaces",
-                ));
-            }
-            let needs_norm = config.metric == DistanceMetric::Cosine;
-            if entry.reconstructed_norm.is_some() != needs_norm {
-                return Err(inconsistent(
-                    "POST reconstructed_norm presence disagrees with metric",
-                ));
-            }
-            if let Some(norm) = entry.reconstructed_norm
-                && (!norm.is_finite() || norm < 0.0)
-            {
-                return Err(inconsistent(
-                    "POST reconstructed_norm must be finite and nonnegative",
-                ));
-            }
-        }
-    }
-    if observed != node_count {
-        return Err(inconsistent(
-            "POST node_count disagrees with posting entries",
-        ));
-    }
-    Ok(())
-}
-
 fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
     let posting_list_lengths = index
         .posting_lists
@@ -653,12 +572,6 @@ fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
         } else {
             f32_bytes as f32 / compressed as f32
         },
-    }
-}
-
-fn inconsistent(reason: impl Into<String>) -> VectorError {
-    VectorError::IvfSectionInconsistent {
-        reason: reason.into(),
     }
 }
 

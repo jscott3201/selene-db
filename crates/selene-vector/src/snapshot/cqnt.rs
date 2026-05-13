@@ -20,6 +20,8 @@ pub(crate) enum CqntBodyV1 {
         k_coarse: u32,
         /// Vector dimensionality.
         dim: u16,
+        /// `DistanceMetric` wire representation.
+        metric: u8,
         /// Centroids laid out centroid-major.
         centroids: Vec<f32>,
     },
@@ -52,6 +54,7 @@ fn validate_cqnt(body: &CqntBodyV1) -> Result<(), VectorError> {
     let CqntBodyV1::Trained {
         k_coarse,
         dim,
+        metric,
         centroids,
     } = body
     else {
@@ -62,6 +65,9 @@ fn validate_cqnt(body: &CqntBodyV1) -> Result<(), VectorError> {
             CQNT,
             "CQNT k_coarse and dim must be greater than zero",
         ));
+    }
+    if !matches!(*metric, 0..=2) {
+        return Err(decode_failed(CQNT, format!("unknown CQNT metric {metric}")));
     }
     let expected = (*k_coarse as usize)
         .checked_mul(usize::from(*dim))
