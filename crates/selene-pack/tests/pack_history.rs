@@ -4,6 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jiff::{Timestamp, tz::TimeZone};
@@ -62,12 +63,14 @@ fn ts(seconds: i64) -> Timestamp {
 }
 
 fn temp_path(name: &str) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "selene-pack-history-{name}-{}-{nanos}.wal",
+        "selene-pack-history-{name}-{}-{nanos}-{unique}.wal",
         std::process::id()
     ))
 }
