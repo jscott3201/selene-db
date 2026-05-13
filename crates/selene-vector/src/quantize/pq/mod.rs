@@ -8,12 +8,18 @@ mod store;
 pub(crate) use store::QuantizedStorePq;
 
 use crate::clustering::kmeans_train_subspace;
-use crate::quantize::{linalg, opq};
+use crate::quantize::{linalg, opq, polysemous};
 use crate::{DistanceMetric, PqParams, VectorError, snapshot};
 
 pub(crate) const PQ_TRAIN_SEED: u64 = 0xB66E_0001_u64;
 
 /// Product-quantization codebook without dense row codes.
+///
+/// `polysemous_trained` records whether σ has been applied by
+/// [`crate::quantize::polysemous`]. The flag is informational at runtime —
+/// search-time Hamming filtering is gated by config, not by this flag — but
+/// snapshot recovery rejects config drift when the decoded value disagrees
+/// with `PqParams.use_polysemous` (V106 + V107).
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PqCodebook {
     pub(crate) m_subspaces: u32,
@@ -21,15 +27,29 @@ pub(crate) struct PqCodebook {
     pub(crate) subspace_dim: u32,
     pub(crate) centroids: Vec<f32>,
     pub(crate) rotation: Option<Vec<f32>>,
+    pub(crate) polysemous_trained: bool,
 }
 
-/// Decode-only pre-OPQ PQ codebook archive shape.
+/// Decode-only pre-OPQ PQ codebook archive shape (BRIEF-66 era).
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PqCodebookV1Legacy {
     pub(crate) m_subspaces: u32,
     pub(crate) k_centroids: u32,
     pub(crate) subspace_dim: u32,
     pub(crate) centroids: Vec<f32>,
+}
+
+/// Decode-only post-OPQ pre-polysemous PQ codebook archive shape
+/// (BRIEF-68 era). Used as the encode shape whenever `polysemous_trained`
+/// is `false`, so BRIEF-68 snapshot goldens stay byte-identical after this
+/// brief lands. V2 is the v1 shape extended with the OPQ rotation field.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PqCodebookV2Legacy {
+    pub(crate) m_subspaces: u32,
+    pub(crate) k_centroids: u32,
+    pub(crate) subspace_dim: u32,
+    pub(crate) centroids: Vec<f32>,
+    pub(crate) rotation: Option<Vec<f32>>,
 }
 
 impl From<PqCodebookV1Legacy> for PqCodebook {
@@ -40,6 +60,20 @@ impl From<PqCodebookV1Legacy> for PqCodebook {
             subspace_dim: value.subspace_dim,
             centroids: value.centroids,
             rotation: None,
+            polysemous_trained: false,
+        }
+    }
+}
+
+impl From<PqCodebookV2Legacy> for PqCodebook {
+    fn from(value: PqCodebookV2Legacy) -> Self {
+        Self {
+            m_subspaces: value.m_subspaces,
+            k_centroids: value.k_centroids,
+            subspace_dim: value.subspace_dim,
+            centroids: value.centroids,
+            rotation: value.rotation,
+            polysemous_trained: false,
         }
     }
 }
@@ -62,11 +96,18 @@ impl PqCodebook {
                 required: params.train_min_vectors,
             });
         }
-        if params.use_opq && params.m_subspaces > 1 {
-            return opq::train(dim, params, rows, seed, context);
+        // OPQ or plain k-means produces the codebook first. Polysemous runs
+        // strictly LAST (V109) and only when `m_subspaces >= 2` (V108) — the
+        // single-subspace case has no inter-subspace structure to optimize.
+        let mut codebook = if params.use_opq && params.m_subspaces > 1 {
+            opq::train(dim, params, rows, seed, context)?
+        } else {
+            Self::train_plain(dim, params, rows, seed, context, None)?
+        };
+        if params.use_polysemous && params.m_subspaces >= 2 {
+            apply_polysemous(&mut codebook, context)?;
         }
-
-        Self::train_plain(dim, params, rows, seed, context, None)
+        Ok(codebook)
     }
 
     pub(crate) fn train_plain(
@@ -120,6 +161,7 @@ impl PqCodebook {
             })?,
             centroids,
             rotation,
+            polysemous_trained: false,
         })
     }
 
@@ -136,7 +178,24 @@ impl PqCodebook {
             subspace_dim,
             centroids,
             rotation: None,
+            polysemous_trained: false,
         }
+    }
+
+    /// Render the codebook in the BRIEF-68 (post-OPQ, pre-polysemous) wire
+    /// shape. Returns `None` when `polysemous_trained=true`; callers must
+    /// emit the new flag-bearing archive in that case.
+    pub(crate) fn as_v2_legacy(&self) -> Option<PqCodebookV2Legacy> {
+        if self.polysemous_trained {
+            return None;
+        }
+        Some(PqCodebookV2Legacy {
+            m_subspaces: self.m_subspaces,
+            k_centroids: self.k_centroids,
+            subspace_dim: self.subspace_dim,
+            centroids: self.centroids.clone(),
+            rotation: self.rotation.clone(),
+        })
     }
 
     pub(crate) fn dim(&self) -> usize {
@@ -228,6 +287,36 @@ pub(crate) fn validate_rotation(
             reason: "OPQ rotation is not orthonormal".into(),
         });
     }
+    Ok(())
+}
+
+/// Apply polysemous σ to a trained codebook in place, setting the
+/// `polysemous_trained` flag. Caller is responsible for verifying
+/// `params.use_polysemous && m_subspaces >= 2` before invoking.
+fn apply_polysemous(
+    codebook: &mut PqCodebook,
+    context: &'static str,
+) -> Result<(), VectorError> {
+    let m = codebook.m_subspaces as usize;
+    let k = codebook.k_centroids as usize;
+    let subspace_dim = codebook.subspace_dim as usize;
+    let sigmas = polysemous::train(
+        &codebook.centroids,
+        m,
+        k,
+        subspace_dim,
+        polysemous::POLYSEMOUS_TRAIN_SEED,
+        context,
+    )?;
+    polysemous::apply_permutation(
+        &mut codebook.centroids,
+        &sigmas,
+        m,
+        k,
+        subspace_dim,
+        context,
+    )?;
+    codebook.polysemous_trained = true;
     Ok(())
 }
 

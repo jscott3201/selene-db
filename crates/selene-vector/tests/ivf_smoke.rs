@@ -20,6 +20,8 @@ fn config(training_min_vectors: usize) -> IvfConfig {
             k_centroids: 256,
             train_min_vectors: 256,
             use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         },
         training_min_vectors,
     )
@@ -162,6 +164,8 @@ fn trained_cqnt_metric_must_match_provider_config() {
                 k_centroids: 256,
                 train_min_vectors: 256,
                 use_opq: false,
+                use_polysemous: false,
+                hamming_threshold_ratio: 0.5,
             },
             256,
         )

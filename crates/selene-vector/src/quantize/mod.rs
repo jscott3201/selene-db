@@ -10,7 +10,7 @@ mod polysemous;
 mod pq;
 mod sq8;
 
-pub(crate) use pq::{PqCodebook, PqCodebookV1Legacy, QuantizedStorePq};
+pub(crate) use pq::{PqCodebook, PqCodebookV1Legacy, PqCodebookV2Legacy, QuantizedStorePq};
 #[cfg(test)]
 pub(crate) use sq8::PerCoordRange;
 pub(crate) use sq8::QuantizedStoreSq8;

@@ -3,6 +3,7 @@
 use rkyv::{Archive, Deserialize, Serialize};
 
 mod v1_legacy;
+mod v2_legacy;
 mod validate;
 
 use crate::hnsw::HnswGraph;
@@ -59,7 +60,14 @@ pub(crate) fn encode_qunt_store(
         node_count,
         store,
     };
+    // Encode-tier cascade: try v1 first (BRIEF-66 byte parity when
+    // rotation=None AND polysemous_trained=false), then v2 (BRIEF-68 byte
+    // parity when polysemous_trained=false), then the v3 flag-bearing
+    // archive when polysemous_trained=true.
     if let Some(bytes) = v1_legacy::encode_if_legacy_compatible(&body)? {
+        return Ok(bytes);
+    }
+    if let Some(bytes) = v2_legacy::encode_if_legacy_compatible(&body)? {
         return Ok(bytes);
     }
     let archived = rkyv::to_bytes::<rkyv::rancor::Error>(&body)
@@ -77,9 +85,16 @@ pub(crate) fn decode_qunt(bytes: &[u8]) -> Result<QuntBodyV1, VectorError> {
     if magic != PAYLOAD_MAGIC_QUNT {
         return Err(decode_failed(QUNT, "QUNT magic mismatch"));
     }
+    // Decode-tier cascade: try the v3 flag-bearing archive (current shape),
+    // then v2_legacy (rotation but no polysemous flag), then v1_legacy
+    // (no rotation, no flag). Each successive try consumes the prior
+    // rkyv error to keep diagnostics surfaceable when all three fail.
     let decoded = match rkyv::from_bytes::<QuntBodyV1, rkyv::rancor::Error>(body) {
         Ok(decoded) => decoded,
-        Err(v2_error) => v1_legacy::decode(body, v2_error)?,
+        Err(v3_error) => match v2_legacy::decode(body, &v3_error) {
+            Ok(decoded) => decoded,
+            Err(v2_error) => v1_legacy::decode(body, v2_error)?,
+        },
     };
     validate::validate_qunt_body(&decoded)?;
     Ok(decoded)

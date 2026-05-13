@@ -175,6 +175,7 @@ mod tests {
                 subspace_dim: 2,
                 centroids: vec![0.0; 2 * 256 * 2],
                 rotation: Some(crate::quantize::linalg::identity(4)),
+                polysemous_trained: false,
             },
             codes: vec![0, 1, 2, 3],
             approx_norms: None,
