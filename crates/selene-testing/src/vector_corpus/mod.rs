@@ -15,7 +15,7 @@ pub use coverage::{
     VectorSurface,
 };
 pub use fixtures::{
-    ApiInductionPayload, ErrorInductionKind, SyntheticErrorFields, VectorConfigSpec,
+    ApiInductionPayload, ErrorInductionKind, IvfConfigSpec, SyntheticErrorFields, VectorConfigSpec,
     VectorCorpusEvent, VectorCorpusGraph, VectorCorpusInvocation, VectorPqSpec,
     VectorQuantizationSpec,
 };

@@ -38,6 +38,10 @@ pub enum VectorSurface {
     QuantizationAsymmetricSearch,
     QuantizationRescore,
     RecoveryReplay,
+    IvfBuild,
+    IvfSearchUnfiltered,
+    IvfSearchFiltered,
+    IvfRecovery,
     ErrorPath,
 }
 
@@ -55,6 +59,10 @@ impl VectorSurface {
         Self::QuantizationAsymmetricSearch,
         Self::QuantizationRescore,
         Self::RecoveryReplay,
+        Self::IvfBuild,
+        Self::IvfSearchUnfiltered,
+        Self::IvfSearchFiltered,
+        Self::IvfRecovery,
         Self::ErrorPath,
     ];
 
@@ -73,6 +81,10 @@ impl VectorSurface {
             Self::QuantizationAsymmetricSearch => "QuantizationAsymmetricSearch",
             Self::QuantizationRescore => "QuantizationRescore",
             Self::RecoveryReplay => "RecoveryReplay",
+            Self::IvfBuild => "IvfBuild",
+            Self::IvfSearchUnfiltered => "IvfSearchUnfiltered",
+            Self::IvfSearchFiltered => "IvfSearchFiltered",
+            Self::IvfRecovery => "IvfRecovery",
             Self::ErrorPath => "ErrorPath",
         }
     }
@@ -139,6 +151,12 @@ pub enum VectorErrorKindMirror {
     NonFiniteQueryComponent,
     PqTrainingDeferred,
     PqDimensionNotDivisible,
+    IvfTrainingDeferred,
+    IvfDimensionMismatch,
+    IvfInvalidNProbe,
+    IvfSectionInconsistent,
+    IvfTrainingFailed,
+    PqCodebookTrainFailed,
 }
 
 impl VectorErrorKindMirror {
@@ -159,6 +177,12 @@ impl VectorErrorKindMirror {
         Self::NonFiniteQueryComponent,
         Self::PqTrainingDeferred,
         Self::PqDimensionNotDivisible,
+        Self::IvfTrainingDeferred,
+        Self::IvfDimensionMismatch,
+        Self::IvfInvalidNProbe,
+        Self::IvfSectionInconsistent,
+        Self::IvfTrainingFailed,
+        Self::PqCodebookTrainFailed,
     ];
 
     #[must_use]
@@ -180,6 +204,12 @@ impl VectorErrorKindMirror {
             Self::NonFiniteQueryComponent => "NonFiniteQueryComponent",
             Self::PqTrainingDeferred => "PqTrainingDeferred",
             Self::PqDimensionNotDivisible => "PqDimensionNotDivisible",
+            Self::IvfTrainingDeferred => "IvfTrainingDeferred",
+            Self::IvfDimensionMismatch => "IvfDimensionMismatch",
+            Self::IvfInvalidNProbe => "IvfInvalidNProbe",
+            Self::IvfSectionInconsistent => "IvfSectionInconsistent",
+            Self::IvfTrainingFailed => "IvfTrainingFailed",
+            Self::PqCodebookTrainFailed => "PqCodebookTrainFailed",
         }
     }
 }
@@ -192,10 +222,24 @@ pub enum VectorMagicMirror {
     Vgrp,
     Vvec,
     Vqnt,
+    Vivf,
+    Vcqb,
+    Vipb,
+    Vpos,
 }
 
 impl VectorMagicMirror {
-    pub const ALL: &'static [Self] = &[Self::Vecu, Self::Vecb, Self::Vgrp, Self::Vvec, Self::Vqnt];
+    pub const ALL: &'static [Self] = &[
+        Self::Vecu,
+        Self::Vecb,
+        Self::Vgrp,
+        Self::Vvec,
+        Self::Vqnt,
+        Self::Vivf,
+        Self::Vcqb,
+        Self::Vipb,
+        Self::Vpos,
+    ];
 
     #[must_use]
     pub const fn name(self) -> &'static str {
@@ -205,6 +249,10 @@ impl VectorMagicMirror {
             Self::Vgrp => "VGRP",
             Self::Vvec => "VVEC",
             Self::Vqnt => "VQNT",
+            Self::Vivf => "VIVF",
+            Self::Vcqb => "VCQB",
+            Self::Vipb => "VIPB",
+            Self::Vpos => "VPOS",
         }
     }
 }

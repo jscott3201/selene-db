@@ -15,6 +15,9 @@ pub const PAYLOAD_MAGIC: [u8; 4] = *b"VECU";
 /// Magic prefix for every selene-vector bulk-insert payload.
 pub const PAYLOAD_MAGIC_BULK: [u8; 4] = *b"VECB";
 
+/// Magic prefix for every selene-vector IVF-PQ insert payload.
+pub const PAYLOAD_MAGIC_IVF: [u8; 4] = *b"VIVF";
+
 /// Vector mutation operation reserved in the BRIEF-59 wire format.
 #[derive(Archive, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(u8)]
@@ -117,6 +120,70 @@ pub struct BulkInsertRow {
 pub struct VectorBulkInsertPayloadV1 {
     /// Rows to insert, in the order they must be applied to the HNSW graph.
     pub rows: Vec<BulkInsertRow>,
+}
+
+/// Version-1 IVF-PQ vector mutation payload.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct VectorIvfUpsertV1 {
+    /// Requested vector mutation operation.
+    pub op: VectorOp,
+    /// Source graph node ID.
+    pub node_id: NodeId,
+    /// Dense f32 vector payload.
+    pub vector: Vec<f32>,
+}
+
+impl VectorIvfUpsertV1 {
+    /// Encode this payload to `PAYLOAD_MAGIC_IVF || rkyv_bytes`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] when the payload fails wire
+    /// invariant checks. Returns [`VectorError::EncodeFailed`] when rkyv
+    /// serialization fails.
+    pub fn encode(&self) -> Result<Vec<u8>, VectorError> {
+        self.validate()?;
+        let archived = rkyv::to_bytes::<rkyv::rancor::Error>(self).map_err(|error| {
+            VectorError::EncodeFailed {
+                reason: error.to_string(),
+            }
+        })?;
+        let mut out = Vec::with_capacity(PAYLOAD_MAGIC_IVF.len() + archived.len());
+        out.extend_from_slice(&PAYLOAD_MAGIC_IVF);
+        out.extend_from_slice(&archived);
+        Ok(out)
+    }
+
+    /// Decode `PAYLOAD_MAGIC_IVF || rkyv_bytes` into a typed payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] when the magic, archive bytes,
+    /// or operation-specific payload shape is invalid.
+    pub fn decode(bytes: &[u8]) -> Result<Self, VectorError> {
+        let Some((magic, body)) = bytes.split_at_checked(PAYLOAD_MAGIC_IVF.len()) else {
+            return Err(invalid_payload("IVF payload shorter than magic prefix"));
+        };
+        if magic != PAYLOAD_MAGIC_IVF {
+            return Err(invalid_payload("payload magic is not VIVF"));
+        }
+        let payload = rkyv::from_bytes::<Self, rkyv::rancor::Error>(body)
+            .map_err(|error| invalid_payload(format!("rkyv decode failed: {error}")))?;
+        payload.validate()?;
+        Ok(payload)
+    }
+
+    pub(crate) fn validate(&self) -> Result<(), VectorError> {
+        match self.op {
+            VectorOp::Insert | VectorOp::Update if self.vector.is_empty() => Err(invalid_payload(
+                format!("{:?} requires a non-empty vector", self.op),
+            )),
+            VectorOp::Delete if !self.vector.is_empty() => {
+                Err(invalid_payload("Delete payload must not include a vector"))
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 impl VectorBulkInsertPayloadV1 {

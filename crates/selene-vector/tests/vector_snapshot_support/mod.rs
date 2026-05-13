@@ -576,6 +576,29 @@ fn synthetic_error(fields: &SyntheticErrorFields) -> VectorError {
             observed_vectors: 100,
             required: 256,
         },
+        SyntheticErrorFields::IvfTrainingDeferred => VectorError::IvfTrainingDeferred {
+            observed_vectors: 100,
+            required: 256,
+        },
+        SyntheticErrorFields::IvfDimensionMismatch => VectorError::IvfDimensionMismatch {
+            expected: 8,
+            observed: 7,
+        },
+        SyntheticErrorFields::IvfInvalidNProbe => VectorError::IvfInvalidNProbe {
+            n_probe: 17,
+            k_coarse: 16,
+        },
+        SyntheticErrorFields::IvfSectionInconsistent => VectorError::IvfSectionInconsistent {
+            reason: "CQNT/IPQB/POST mismatch".into(),
+        },
+        SyntheticErrorFields::IvfTrainingFailed => VectorError::IvfTrainingFailed {
+            context: "coarse_quantizer",
+            reason: "forced training fixture".into(),
+        },
+        SyntheticErrorFields::PqCodebookTrainFailed => VectorError::PqCodebookTrainFailed {
+            context: "ivf_residual_pq",
+            reason: "forced codebook fixture".into(),
+        },
         _ => panic!("unknown synthetic error fields"),
     }
 }
@@ -637,6 +660,24 @@ pub(crate) fn canonical_error_for_kind(kind: VectorErrorKindMirror) -> VectorErr
             dim: 10,
             m_subspaces: 3,
         },
+        VectorErrorKindMirror::IvfTrainingDeferred => {
+            synthetic_error(&SyntheticErrorFields::IvfTrainingDeferred)
+        }
+        VectorErrorKindMirror::IvfDimensionMismatch => {
+            synthetic_error(&SyntheticErrorFields::IvfDimensionMismatch)
+        }
+        VectorErrorKindMirror::IvfInvalidNProbe => {
+            synthetic_error(&SyntheticErrorFields::IvfInvalidNProbe)
+        }
+        VectorErrorKindMirror::IvfSectionInconsistent => {
+            synthetic_error(&SyntheticErrorFields::IvfSectionInconsistent)
+        }
+        VectorErrorKindMirror::IvfTrainingFailed => {
+            synthetic_error(&SyntheticErrorFields::IvfTrainingFailed)
+        }
+        VectorErrorKindMirror::PqCodebookTrainFailed => {
+            synthetic_error(&SyntheticErrorFields::PqCodebookTrainFailed)
+        }
         _ => panic!("unknown vector error kind mirror"),
     }
 }

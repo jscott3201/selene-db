@@ -134,6 +134,35 @@ pub struct VectorConfigSpec {
     pub neighbor_selection_flavor: NeighborSelectionFlavor,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct IvfConfigSpec {
+    pub dim: usize,
+    pub k_coarse: u32,
+    pub n_probe: u32,
+    pub metric: VectorMetricMirror,
+    pub pq: VectorPqSpec,
+    pub training_min_vectors: usize,
+}
+
+impl IvfConfigSpec {
+    #[must_use]
+    pub const fn new(dim: usize, metric: VectorMetricMirror) -> Self {
+        Self {
+            dim,
+            k_coarse: 16,
+            n_probe: 4,
+            metric,
+            pq: VectorPqSpec {
+                m_subspaces: 1,
+                k_centroids: 256,
+                train_min_vectors: 256,
+            },
+            training_min_vectors: 256,
+        }
+    }
+}
+
 impl VectorConfigSpec {
     #[must_use]
     pub const fn new(
@@ -197,6 +226,17 @@ pub enum VectorCorpusInvocation {
         post_snapshot_events: Vec<VectorCorpusEvent>,
     },
     StatsOnly,
+    IvfSearch {
+        query: Vec<f32>,
+        k: usize,
+        n_probe: Option<u32>,
+        filter: Option<Vec<u64>>,
+    },
+    IvfSnapshotRoundtrip,
+    IvfRecoveryReplay {
+        post_snapshot_events: Vec<VectorCorpusEvent>,
+    },
+    IvfStatsOnly,
     DeliberateApiError {
         kind: VectorErrorKindMirror,
         payload: ApiInductionPayload,
@@ -249,6 +289,12 @@ pub enum SyntheticErrorFields {
     EncodeFailed,
     InternalIndexExhausted,
     PqTrainingDeferred,
+    IvfTrainingDeferred,
+    IvfDimensionMismatch,
+    IvfInvalidNProbe,
+    IvfSectionInconsistent,
+    IvfTrainingFailed,
+    PqCodebookTrainFailed,
 }
 
 impl VectorCorpusInvocation {
@@ -260,7 +306,11 @@ impl VectorCorpusInvocation {
             Self::SnapshotRoundtrip
             | Self::Search { .. }
             | Self::RecoveryReplay { .. }
-            | Self::StatsOnly => None,
+            | Self::StatsOnly
+            | Self::IvfSearch { .. }
+            | Self::IvfSnapshotRoundtrip
+            | Self::IvfRecoveryReplay { .. }
+            | Self::IvfStatsOnly => None,
         }
     }
 }

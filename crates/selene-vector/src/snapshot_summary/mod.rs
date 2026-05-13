@@ -4,12 +4,15 @@ use std::fmt;
 
 use selene_core::NodeId;
 
+use crate::snapshot::cqnt::PAYLOAD_MAGIC_CQNT;
 use crate::snapshot::grph::PAYLOAD_MAGIC_GRPH;
+use crate::snapshot::ipqb::PAYLOAD_MAGIC_IPQB;
+use crate::snapshot::post::PAYLOAD_MAGIC_POST;
 use crate::snapshot::qunt::PAYLOAD_MAGIC_QUNT;
 use crate::snapshot::vecs::PAYLOAD_MAGIC_VECS;
 use crate::{
     DistanceMetric, HnswConfig, HnswGraph, NeighborSelectionConfig, PAYLOAD_MAGIC,
-    PAYLOAD_MAGIC_BULK, PqParams, QuantMethod, VectorError, VectorOp,
+    PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_IVF, PqParams, QuantMethod, VectorError, VectorOp,
 };
 
 pub mod errors;
@@ -335,6 +338,18 @@ pub enum VectorErrorKind {
     PqTrainingDeferred,
     /// Product quantization subspaces do not divide dimensions.
     PqDimensionNotDivisible,
+    /// IVF-PQ training is deferred.
+    IvfTrainingDeferred,
+    /// IVF dimension mismatch.
+    IvfDimensionMismatch,
+    /// Invalid IVF probe count.
+    IvfInvalidNProbe,
+    /// IVF snapshot sections are inconsistent.
+    IvfSectionInconsistent,
+    /// IVF training failed.
+    IvfTrainingFailed,
+    /// PQ codebook training failed.
+    PqCodebookTrainFailed,
 }
 
 impl VectorErrorKind {
@@ -358,6 +373,12 @@ impl VectorErrorKind {
             Self::NonFiniteQueryComponent => "NonFiniteQueryComponent",
             Self::PqTrainingDeferred => "PqTrainingDeferred",
             Self::PqDimensionNotDivisible => "PqDimensionNotDivisible",
+            Self::IvfTrainingDeferred => "IvfTrainingDeferred",
+            Self::IvfDimensionMismatch => "IvfDimensionMismatch",
+            Self::IvfInvalidNProbe => "IvfInvalidNProbe",
+            Self::IvfSectionInconsistent => "IvfSectionInconsistent",
+            Self::IvfTrainingFailed => "IvfTrainingFailed",
+            Self::PqCodebookTrainFailed => "PqCodebookTrainFailed",
         }
     }
 }
@@ -432,6 +453,10 @@ pub fn magic_constants() -> &'static [(&'static str, [u8; 4])] {
         ("VGRP", PAYLOAD_MAGIC_GRPH),
         ("VVEC", PAYLOAD_MAGIC_VECS),
         ("VQNT", PAYLOAD_MAGIC_QUNT),
+        ("VIVF", PAYLOAD_MAGIC_IVF),
+        ("VCQB", PAYLOAD_MAGIC_CQNT),
+        ("VIPB", PAYLOAD_MAGIC_IPQB),
+        ("VPOS", PAYLOAD_MAGIC_POST),
     ]
 }
 
@@ -455,6 +480,12 @@ pub fn vector_error_kind_for(error: &VectorError) -> VectorErrorKind {
         VectorError::NonFiniteQueryComponent { .. } => VectorErrorKind::NonFiniteQueryComponent,
         VectorError::PqTrainingDeferred { .. } => VectorErrorKind::PqTrainingDeferred,
         VectorError::PqDimensionNotDivisible { .. } => VectorErrorKind::PqDimensionNotDivisible,
+        VectorError::IvfTrainingDeferred { .. } => VectorErrorKind::IvfTrainingDeferred,
+        VectorError::IvfDimensionMismatch { .. } => VectorErrorKind::IvfDimensionMismatch,
+        VectorError::IvfInvalidNProbe { .. } => VectorErrorKind::IvfInvalidNProbe,
+        VectorError::IvfSectionInconsistent { .. } => VectorErrorKind::IvfSectionInconsistent,
+        VectorError::IvfTrainingFailed { .. } => VectorErrorKind::IvfTrainingFailed,
+        VectorError::PqCodebookTrainFailed { .. } => VectorErrorKind::PqCodebookTrainFailed,
     }
 }
 

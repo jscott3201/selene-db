@@ -2,14 +2,161 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
+use crate::clustering::{kmeans_train_subspace, nearest_centroid, squared_l2};
 use crate::hnsw::distance::dot_product;
 use crate::{DistanceMetric, PqParams, QuantMethod, VectorError, snapshot};
 
 use super::{QuantizationStats, QuantizationStatsKind};
 
 pub(crate) const PQ_TRAIN_SEED: u64 = 0xB66E_0001_u64;
-const MAX_LLOYD_ITERS: usize = 25;
-const LLOYD_DRIFT_TOL: f32 = 1.0e-4;
+
+/// Product-quantization codebook without dense row codes.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PqCodebook {
+    pub(crate) m_subspaces: u32,
+    pub(crate) k_centroids: u32,
+    pub(crate) subspace_dim: u32,
+    pub(crate) centroids: Vec<f32>,
+}
+
+impl PqCodebook {
+    pub(crate) fn train(
+        dim: usize,
+        params: PqParams,
+        rows: &[&[f32]],
+        seed: u64,
+        context: &'static str,
+    ) -> Result<Self, VectorError> {
+        params.validate_for_dim(dim)?;
+        for row in rows {
+            validate_row(row, dim)?;
+        }
+        if rows.len() < params.train_min_vectors {
+            return Err(VectorError::PqTrainingDeferred {
+                observed_vectors: rows.len(),
+                required: params.train_min_vectors,
+            });
+        }
+
+        let m = params.m_subspaces;
+        let k = params.k_centroids as usize;
+        let subspace_dim = dim / m;
+        let mut rng = fastrand::Rng::with_seed(seed);
+        let mut centroids = Vec::with_capacity(m * k * subspace_dim);
+        for subspace in 0..m {
+            let start = subspace * subspace_dim;
+            centroids.extend(kmeans_train_subspace(
+                rows,
+                start,
+                subspace_dim,
+                k,
+                &mut rng,
+            ));
+        }
+
+        Ok(Self {
+            m_subspaces: u32::try_from(m).map_err(|_| VectorError::PqCodebookTrainFailed {
+                context,
+                reason: "PQ m_subspaces overflow".into(),
+            })?,
+            k_centroids: params.k_centroids,
+            subspace_dim: u32::try_from(subspace_dim).map_err(|_| {
+                VectorError::PqCodebookTrainFailed {
+                    context,
+                    reason: "PQ subspace_dim overflow".into(),
+                }
+            })?,
+            centroids,
+        })
+    }
+
+    pub(crate) fn from_parts(
+        m_subspaces: u32,
+        k_centroids: u32,
+        subspace_dim: u32,
+        centroids: Vec<f32>,
+    ) -> Self {
+        Self {
+            m_subspaces,
+            k_centroids,
+            subspace_dim,
+            centroids,
+        }
+    }
+
+    pub(crate) fn dim(&self) -> usize {
+        (self.m_subspaces as usize).saturating_mul(self.subspace_dim as usize)
+    }
+
+    pub(crate) fn bytes_codebook(&self) -> usize {
+        self.centroids.len() * std::mem::size_of::<f32>()
+    }
+
+    pub(crate) fn encode_row(&self, row: &[f32], out: &mut Vec<u8>) {
+        let m = self.m_subspaces as usize;
+        let k = self.k_centroids as usize;
+        let subdim = self.subspace_dim as usize;
+        encode_row(row, &self.centroids, m, k, subdim, out);
+    }
+
+    pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
+        debug_assert_eq!(query.len(), self.dim(), "PQ query LUT dimension mismatch");
+        let m = self.m_subspaces as usize;
+        let k = self.k_centroids as usize;
+        let subdim = self.subspace_dim as usize;
+        let mut lut = vec![0.0; m * k];
+        for subspace in 0..m {
+            let query_start = subspace * subdim;
+            let query_slice = &query[query_start..query_start + subdim];
+            for centroid in 0..k {
+                let center = self.centroid(subspace, centroid);
+                lut[(subspace * k) + centroid] = match metric {
+                    DistanceMetric::Cosine | DistanceMetric::Dot => {
+                        dot_product(query_slice, center)
+                    }
+                    DistanceMetric::L2 => squared_l2(query_slice, center),
+                };
+            }
+        }
+        lut
+    }
+
+    pub(crate) fn lut_sum_for_codes(&self, lut: &[f32], codes: &[u8]) -> Option<f32> {
+        let m = self.m_subspaces as usize;
+        let k = self.k_centroids as usize;
+        if codes.len() != m || lut.len() != m.checked_mul(k)? {
+            return None;
+        }
+        Some(
+            codes
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(subspace, code)| lut[(subspace * k) + usize::from(code)])
+                .sum(),
+        )
+    }
+
+    pub(crate) fn decode_codes(&self, codes: &[u8], out: &mut [f32]) -> Option<()> {
+        let m = self.m_subspaces as usize;
+        let subdim = self.subspace_dim as usize;
+        if codes.len() != m || out.len() != self.dim() {
+            return None;
+        }
+        for (subspace, code) in codes.iter().copied().enumerate() {
+            let start = subspace * subdim;
+            out[start..start + subdim].copy_from_slice(self.centroid(subspace, usize::from(code)));
+        }
+        Some(())
+    }
+
+    fn centroid(&self, subspace: usize, centroid: usize) -> &[f32] {
+        let k = self.k_centroids as usize;
+        let subdim = self.subspace_dim as usize;
+        let start = ((subspace * k) + centroid) * subdim;
+        &self.centroids[start..start + subdim]
+    }
+}
 
 /// PQ quantized store in dense InternalIndex order.
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -51,13 +198,19 @@ impl QuantizedStorePq {
         let m = params.m_subspaces;
         let k = params.k_centroids as usize;
         let subspace_dim = dim / m;
-        let codebook = train_codebook(&rows, m, k, subspace_dim);
+        let codebook = PqCodebook::train(dim, params, &rows, PQ_TRAIN_SEED, "qunt_pq_codebook")?;
         let mut codes = Vec::with_capacity(node_count * m);
         for row in &rows {
-            encode_row(row, &codebook, m, k, subspace_dim, &mut codes);
+            codebook.encode_row(row, &mut codes);
         }
         let approx_norms = if metric == DistanceMetric::Cosine {
-            Some(decoded_norms(&codebook, &codes, m, k, subspace_dim))
+            Some(decoded_norms(
+                &codebook.centroids,
+                &codes,
+                m,
+                k,
+                subspace_dim,
+            ))
         } else {
             None
         };
@@ -68,7 +221,7 @@ impl QuantizedStorePq {
             k_centroids: params.k_centroids,
             subspace_dim: u32::try_from(subspace_dim)
                 .map_err(|_| snapshot::encode_failed(snapshot::QUNT, "PQ subspace_dim overflow"))?,
-            codebook,
+            codebook: codebook.centroids,
             codes,
             approx_norms,
         })
@@ -127,24 +280,13 @@ impl QuantizedStorePq {
 
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
         debug_assert_eq!(query.len(), self.dim(), "PQ query LUT dimension mismatch");
-        let m = self.m_subspaces as usize;
-        let k = self.k_centroids as usize;
-        let subdim = self.subspace_dim as usize;
-        let mut lut = vec![0.0; m * k];
-        for subspace in 0..m {
-            let query_start = subspace * subdim;
-            let query_slice = &query[query_start..query_start + subdim];
-            for centroid in 0..k {
-                let center = self.centroid(subspace, centroid);
-                lut[(subspace * k) + centroid] = match metric {
-                    DistanceMetric::Cosine | DistanceMetric::Dot => {
-                        dot_product(query_slice, center)
-                    }
-                    DistanceMetric::L2 => squared_l2(query_slice, center),
-                };
-            }
-        }
-        lut
+        PqCodebook::from_parts(
+            self.m_subspaces,
+            self.k_centroids,
+            self.subspace_dim,
+            self.codebook.clone(),
+        )
+        .build_query_lut(query, metric)
     }
 
     pub(crate) fn lut_sum(&self, lut: &[f32], node_idx: usize) -> Option<f32> {
@@ -170,6 +312,7 @@ impl QuantizedStorePq {
             .and_then(|norms| norms.get(node_idx).copied())
     }
 
+    #[cfg(test)]
     fn centroid(&self, subspace: usize, centroid: usize) -> &[f32] {
         let k = self.k_centroids as usize;
         let subdim = self.subspace_dim as usize;
@@ -211,118 +354,6 @@ fn validate_row(row: &[f32], dim: usize) -> Result<(), VectorError> {
     Ok(())
 }
 
-fn train_codebook(rows: &[&[f32]], m: usize, k: usize, subdim: usize) -> Vec<f32> {
-    let mut rng = fastrand::Rng::with_seed(PQ_TRAIN_SEED);
-    let mut out = Vec::with_capacity(m * k * subdim);
-    for subspace in 0..m {
-        let start = subspace * subdim;
-        out.extend(train_subspace(rows, start, subdim, k, &mut rng));
-    }
-    out
-}
-
-fn train_subspace(
-    rows: &[&[f32]],
-    start: usize,
-    subdim: usize,
-    k: usize,
-    rng: &mut fastrand::Rng,
-) -> Vec<f32> {
-    let mut centroids = kmeans_pp_init(rows, start, subdim, k, rng);
-    let mut assignments = vec![0_usize; rows.len()];
-    for _ in 0..MAX_LLOYD_ITERS {
-        let mut sums = vec![0.0; k * subdim];
-        let mut counts = vec![0_usize; k];
-        for (row_idx, row) in rows.iter().enumerate() {
-            let slice = &row[start..start + subdim];
-            let assigned = nearest_centroid(slice, &centroids, k, subdim);
-            assignments[row_idx] = assigned;
-            counts[assigned] += 1;
-            let sum = &mut sums[assigned * subdim..(assigned + 1) * subdim];
-            for (accum, value) in sum.iter_mut().zip(slice) {
-                *accum += *value;
-            }
-        }
-
-        let mut next = centroids.clone();
-        for centroid in 0..k {
-            if counts[centroid] == 0 {
-                continue;
-            }
-            let sum = &sums[centroid * subdim..(centroid + 1) * subdim];
-            let target = &mut next[centroid * subdim..(centroid + 1) * subdim];
-            for (slot, value) in target.iter_mut().zip(sum) {
-                *slot = *value / counts[centroid] as f32;
-            }
-        }
-
-        let max_drift = centroids
-            .chunks_exact(subdim)
-            .zip(next.chunks_exact(subdim))
-            .map(|(left, right)| squared_l2(left, right).sqrt())
-            .fold(0.0_f32, f32::max);
-        centroids = next;
-        if max_drift < LLOYD_DRIFT_TOL {
-            break;
-        }
-    }
-    centroids
-}
-
-fn kmeans_pp_init(
-    rows: &[&[f32]],
-    start: usize,
-    subdim: usize,
-    k: usize,
-    rng: &mut fastrand::Rng,
-) -> Vec<f32> {
-    let mut centroids = Vec::with_capacity(k * subdim);
-    let first = rng.usize(..rows.len());
-    centroids.extend_from_slice(&rows[first][start..start + subdim]);
-
-    while centroids.len() < k * subdim {
-        let chosen = choose_next_centroid(rows, start, subdim, &centroids, rng);
-        centroids.extend_from_slice(&rows[chosen][start..start + subdim]);
-    }
-    centroids
-}
-
-fn choose_next_centroid(
-    rows: &[&[f32]],
-    start: usize,
-    subdim: usize,
-    centroids: &[f32],
-    rng: &mut fastrand::Rng,
-) -> usize {
-    let k_existing = centroids.len() / subdim;
-    let distances = rows
-        .iter()
-        .map(|row| {
-            let slice = &row[start..start + subdim];
-            (0..k_existing)
-                .map(|centroid| {
-                    squared_l2(
-                        slice,
-                        &centroids[centroid * subdim..(centroid + 1) * subdim],
-                    )
-                })
-                .fold(f32::INFINITY, f32::min)
-        })
-        .collect::<Vec<_>>();
-    let total: f32 = distances.iter().sum();
-    if total <= 0.0 {
-        return 0;
-    }
-    let mut target = rng.f32() * total;
-    for (index, distance) in distances.iter().copied().enumerate() {
-        target -= distance;
-        if target <= 0.0 {
-            return index;
-        }
-    }
-    rows.len() - 1
-}
-
 fn encode_row(row: &[f32], codebook: &[f32], m: usize, k: usize, subdim: usize, out: &mut Vec<u8>) {
     for subspace in 0..m {
         let start = subspace * subdim;
@@ -350,30 +381,6 @@ fn decoded_norms(codebook: &[f32], codes: &[u8], m: usize, k: usize, subdim: usi
             sum.sqrt()
         })
         .collect()
-}
-
-fn nearest_centroid(row: &[f32], centroids: &[f32], k: usize, subdim: usize) -> usize {
-    let mut best = 0;
-    let mut best_dist = f32::INFINITY;
-    for centroid in 0..k {
-        let center = &centroids[centroid * subdim..(centroid + 1) * subdim];
-        let dist = squared_l2(row, center);
-        if dist < best_dist {
-            best = centroid;
-            best_dist = dist;
-        }
-    }
-    best
-}
-
-fn squared_l2(left: &[f32], right: &[f32]) -> f32 {
-    left.iter()
-        .zip(right)
-        .map(|(a, b)| {
-            let delta = a - b;
-            delta * delta
-        })
-        .sum()
 }
 
 #[cfg(test)]
@@ -516,8 +523,8 @@ mod tests {
         let mut left_rng = fastrand::Rng::with_seed(PQ_TRAIN_SEED);
         let mut right_rng = fastrand::Rng::with_seed(PQ_TRAIN_SEED);
 
-        let left = train_subspace(&refs, 0, 2, 4, &mut left_rng);
-        let right = train_subspace(&refs, 0, 2, 4, &mut right_rng);
+        let left = kmeans_train_subspace(&refs, 0, 2, 4, &mut left_rng);
+        let right = kmeans_train_subspace(&refs, 0, 2, 4, &mut right_rng);
 
         assert_eq!(left, right);
     }

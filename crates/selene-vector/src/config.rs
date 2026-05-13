@@ -211,6 +211,120 @@ impl HnswConfig {
     }
 }
 
+/// Configuration for [`crate::IvfProvider`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct IvfConfig {
+    /// Vector dimensionality. Required; no default exists.
+    pub dim: usize,
+    /// Number of coarse centroids / posting lists.
+    pub k_coarse: u32,
+    /// Default number of posting lists scanned per query.
+    pub n_probe: u32,
+    /// Distance metric used by this provider.
+    pub metric: DistanceMetric,
+    /// Residual product-quantization parameters.
+    pub pq: PqParams,
+    /// Minimum vector count required before IVF-PQ training may run.
+    pub training_min_vectors: usize,
+}
+
+impl IvfConfig {
+    /// Fixed v1 coarse centroid default.
+    pub const DEFAULT_K_COARSE: u32 = 256;
+
+    /// Construct an IVF config with deterministic v1 defaults for `dim`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] when `dim` is zero or the derived
+    /// defaults fail validation.
+    pub fn new(dim: usize) -> Result<Self, VectorError> {
+        Self::with_params(
+            dim,
+            Self::DEFAULT_K_COARSE,
+            default_n_probe(Self::DEFAULT_K_COARSE),
+            DistanceMetric::L2,
+            PqParams::default_for_dim(dim),
+            usize::max(
+                (Self::DEFAULT_K_COARSE as usize).saturating_mul(39),
+                PqParams::default_for_dim(dim).train_min_vectors,
+            ),
+        )
+    }
+
+    /// Construct an IVF config with explicit parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] when any field violates the
+    /// BRIEF-67 bounds.
+    pub fn with_params(
+        dim: usize,
+        k_coarse: u32,
+        n_probe: u32,
+        metric: DistanceMetric,
+        pq: PqParams,
+        training_min_vectors: usize,
+    ) -> Result<Self, VectorError> {
+        let config = Self {
+            dim,
+            k_coarse,
+            n_probe,
+            metric,
+            pq,
+            training_min_vectors,
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Validate this config.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidConfig`] or
+    /// [`VectorError::PqDimensionNotDivisible`] when a field is invalid.
+    pub fn validate(&self) -> Result<(), VectorError> {
+        if self.dim == 0 {
+            return Err(invalid_config("IVF dim must be greater than zero"));
+        }
+        if self.dim > u16::MAX as usize {
+            return Err(invalid_config(
+                "IVF dim must be less than or equal to u16::MAX",
+            ));
+        }
+        if self.k_coarse == 0 {
+            return Err(invalid_config("IVF k_coarse must be greater than zero"));
+        }
+        if self.k_coarse > 65_536 {
+            return Err(invalid_config("IVF k_coarse must be at most 65_536"));
+        }
+        if self.n_probe == 0 || self.n_probe > self.k_coarse {
+            return Err(VectorError::IvfInvalidNProbe {
+                n_probe: self.n_probe,
+                k_coarse: self.k_coarse,
+            });
+        }
+        self.pq.validate_for_dim(self.dim)?;
+        let required = usize::max(self.k_coarse as usize, self.pq.train_min_vectors);
+        if self.training_min_vectors < required {
+            return Err(invalid_config(format!(
+                "IVF training_min_vectors must be at least {required}, observed {}",
+                self.training_min_vectors
+            )));
+        }
+        Ok(())
+    }
+}
+
+const fn default_n_probe(k_coarse: u32) -> u32 {
+    let mut probe: u32 = 1;
+    while probe.saturating_mul(probe) < k_coarse {
+        probe += 1;
+    }
+    probe
+}
+
 fn invalid_config(reason: impl Into<String>) -> VectorError {
     VectorError::InvalidConfig {
         reason: reason.into(),
