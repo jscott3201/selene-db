@@ -40,6 +40,8 @@ fn provider_for(corpus: &[Vec<f32>], n_probe: u32) -> IvfProvider {
             k_centroids: 256,
             train_min_vectors: 256,
             use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         },
         256,
     )

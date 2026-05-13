@@ -8,7 +8,7 @@ use crate::VectorError;
 use crate::quantize::{
     PqCodebook, PqCodebookV2Legacy, QuantizedStore, QuantizedStorePq, QuantizedStoreSq8,
 };
-use crate::snapshot::{QUNT, decode_failed, encode_failed};
+use crate::snapshot::{QUNT, encode_failed};
 
 use super::{PAYLOAD_MAGIC_QUNT, QuntBodyV1};
 

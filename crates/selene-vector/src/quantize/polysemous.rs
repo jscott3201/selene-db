@@ -171,8 +171,8 @@ pub(crate) fn apply_permutation(
         // tmp[σ(i)] = centroids[start + i] — the centroid at codebook slot
         // `i` is reassigned to byte index `σ(i)` so encoding now produces
         // polysemous codes against the same encoding path.
-        for i in 0..k {
-            let dst = sigma[i] as usize;
+        for (i, &sigma_i) in sigma.iter().enumerate() {
+            let dst = sigma_i as usize;
             let src_offset = start + i * subspace_dim;
             let dst_offset = dst * subspace_dim;
             tmp[dst_offset..dst_offset + subspace_dim]
