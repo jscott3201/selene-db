@@ -401,9 +401,7 @@ impl HnswProvider {
                 return Err(section_encode_err(err));
             }
         };
-        if self.config.quantization.method == QuantMethod::Pq
-            && let Some(store) = store
-        {
+        if let Some(store) = store {
             let store = Arc::new(store);
             self.state
                 .rcu(|prev| prev.clone_with_quantized(Some(Arc::clone(&store))));

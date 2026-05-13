@@ -43,7 +43,7 @@ pub struct VectorSnapshotInput {
 }
 
 /// Stable provider configuration summary.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VectorConfigSummary {
     /// Vector dimensionality.
     pub dim: usize,
@@ -69,6 +69,10 @@ pub struct VectorConfigSummary {
     pub pq_train_min: Option<usize>,
     /// Whether PQ configs train OPQ rotations.
     pub pq_opq: Option<bool>,
+    /// Whether PQ configs train polysemous-code permutations.
+    pub pq_polysemous: Option<bool>,
+    /// Polysemous Hamming threshold ratio for PQ configs.
+    pub pq_hamming_threshold_ratio: Option<f32>,
     /// HNSW neighbor-selection flavor.
     pub neighbor_select: &'static str,
 }
@@ -96,6 +100,8 @@ impl VectorConfigSummary {
             pq_k: pq_params.map(|params| params.k_centroids),
             pq_train_min: pq_params.map(|params| params.train_min_vectors),
             pq_opq: pq_params.map(|params| params.use_opq),
+            pq_polysemous: pq_params.map(|params| params.use_polysemous),
+            pq_hamming_threshold_ratio: pq_params.map(|params| params.hamming_threshold_ratio),
             neighbor_select: neighbor_selection_name(config.neighbor_selection),
         }
     }
@@ -232,10 +238,19 @@ pub fn vector_summary(input: &VectorSnapshotInput) -> VectorSnapshot {
             input.config.pq_k,
             input.config.pq_train_min,
             input.config.pq_opq,
+            input.config.pq_polysemous,
+            input.config.pq_hamming_threshold_ratio,
         ) {
-            (Some(m), Some(k), Some(train_min), Some(opq)) => lines.push(format!(
-                "quantization_method={} pq_m={m} pq_k={k} pq_train_min={train_min} pq_opq={opq}",
-                quoted(method)
+            (
+                Some(m),
+                Some(k),
+                Some(train_min),
+                Some(opq),
+                Some(polysemous),
+                Some(hamming_threshold_ratio),
+            ) => lines.push(format!(
+                "quantization_method={} pq_m={m} pq_k={k} pq_train_min={train_min} pq_opq={opq} pq_polysemous={polysemous} pq_hamming_threshold_ratio={hamming_threshold_ratio:.3}",
+                quoted(method),
             )),
             _ => lines.push(format!("quantization_method={}", quoted(method))),
         }

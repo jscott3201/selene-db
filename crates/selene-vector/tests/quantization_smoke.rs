@@ -117,14 +117,16 @@ fn asymmetric_recall_at_10_at_least_095_dim16() {
 fn asymmetric_with_rescore_exact_top_k_constructed_fixture() {
     let events = deterministic_events(80, 8, 15);
     let source = provider(config(8, DistanceMetric::Cosine, true, false));
+    let exact_source = provider(config(8, DistanceMetric::Cosine, false, false));
     let rescored = provider(config(8, DistanceMetric::Cosine, true, true));
     apply_events(&source, events.clone());
+    apply_events(&exact_source, events.clone());
     let (grph, vecs, qunt) = snapshot_bytes(&source);
     rescored.read_section(SubTag(*b"GRPH"), &grph).unwrap();
     rescored.read_section(SubTag(*b"VECS"), &vecs).unwrap();
     rescored.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
 
-    let exact = source
+    let exact = exact_source
         .search(&events[10].vector, 10, Some(80), None)
         .unwrap();
     let reranked = rescored
@@ -136,8 +138,11 @@ fn asymmetric_with_rescore_exact_top_k_constructed_fixture() {
 
 #[test]
 fn disabled_read_enabled_snapshot_uses_f32() {
+    let events = deterministic_events(30, 4, 16);
     let source = provider(config(4, DistanceMetric::Cosine, true, false));
-    apply_events(&source, deterministic_events(30, 4, 16));
+    let exact_source = provider(config(4, DistanceMetric::Cosine, false, false));
+    apply_events(&source, events.clone());
+    apply_events(&exact_source, events);
     let (grph, vecs, qunt) = snapshot_bytes(&source);
     let target = provider(config(4, DistanceMetric::Cosine, false, false));
     target.read_section(SubTag(*b"GRPH"), &grph).unwrap();
@@ -146,7 +151,7 @@ fn disabled_read_enabled_snapshot_uses_f32() {
 
     assert!(target.quantization_stats().unwrap().is_some());
     assert_eq!(
-        source
+        exact_source
             .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
             .unwrap(),
         target

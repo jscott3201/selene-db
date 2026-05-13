@@ -54,5 +54,9 @@ harness = false
 name = "ivfpq_recall"
 harness = false
 
+[[bench]]
+name = "composition_replay"
+harness = false
+
 [lints]
 workspace = true

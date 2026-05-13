@@ -7,7 +7,7 @@ slug="pq-training-deferred"
 description="PQ below train_min writes empty QUNT and searches with f32 fallback."
 dim=8 m=16 ef_construction=200 ef_search=50 metric=L2 quantization_enabled=true quantization_rescore=false
 neighbor_select="default"
-quantization_method="pq" pq_m=1 pq_k=256 pq_train_min=512 pq_opq=false
+quantization_method="pq" pq_m=1 pq_k=256 pq_train_min=512 pq_opq=false pq_polysemous=false pq_hamming_threshold_ratio=0.500
 ==== GRAPH ====
 nodes=100 dim=8 entry_point=idx16 max_layer=2
 node_head=[n1:L0:[27], n2:L0:[29], n3:L0:[31], n4:L0:[12], n5:L1:[31/10], n6:L0:[30], n7:L0:[26], n8:L0:[30]]

@@ -337,10 +337,8 @@ fn pq_params_from_spec(spec: Option<selene_testing::VectorPqSpec>) -> Option<PqP
         k_centroids: pq.k_centroids,
         train_min_vectors: pq.train_min_vectors,
         use_opq: pq.opq,
-        // BRIEF-69 fixtures default polysemous OFF; corpus mirror plumbing
-        // for the polysemous flag lands with the §I-13 mirror update.
-        use_polysemous: false,
-        hamming_threshold_ratio: 0.5,
+        use_polysemous: pq.use_polysemous,
+        hamming_threshold_ratio: pq.hamming_threshold_ratio,
     })
 }
 
@@ -394,7 +392,7 @@ fn event_insert(node_id_raw: u64, vector: Vec<f32>, max_layer: u8) -> VectorCorp
     }
 }
 
-fn sections_for(provider: &HnswProvider) -> VectorSectionsSummary {
+pub(crate) fn sections_for(provider: &HnswProvider) -> VectorSectionsSummary {
     let grph = provider.write_section(SubTag(*b"GRPH")).unwrap();
     let vecs = provider.write_section(SubTag(*b"VECS")).unwrap();
     let qunt = provider.write_section(SubTag(*b"QUNT")).unwrap();

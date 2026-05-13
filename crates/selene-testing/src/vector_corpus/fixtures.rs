@@ -49,7 +49,7 @@ impl VectorCorpusGraph {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct VectorQuantizationSpec {
     pub enabled: bool,
@@ -58,13 +58,15 @@ pub struct VectorQuantizationSpec {
     pub pq: Option<VectorPqSpec>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct VectorPqSpec {
     pub m_subspaces: usize,
     pub k_centroids: u32,
     pub train_min_vectors: usize,
     pub opq: bool,
+    pub use_polysemous: bool,
+    pub hamming_threshold_ratio: f32,
 }
 
 impl VectorQuantizationSpec {
@@ -98,6 +100,8 @@ impl VectorQuantizationSpec {
             k_centroids: 256,
             train_min_vectors: 256,
             opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         }),
     };
 
@@ -110,6 +114,8 @@ impl VectorQuantizationSpec {
             k_centroids: 256,
             train_min_vectors: 256,
             opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         }),
     };
 
@@ -122,6 +128,8 @@ impl VectorQuantizationSpec {
             k_centroids: 256,
             train_min_vectors: 512,
             opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         }),
     };
 
@@ -134,11 +142,27 @@ impl VectorQuantizationSpec {
             k_centroids: 256,
             train_min_vectors: 256,
             opq: true,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
+        }),
+    };
+
+    pub const PQ_POLYSEMOUS: Self = Self {
+        enabled: true,
+        method: QuantMethodMirror::Pq,
+        rescore: false,
+        pq: Some(VectorPqSpec {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            opq: false,
+            use_polysemous: true,
+            hamming_threshold_ratio: 0.5,
         }),
     };
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct VectorConfigSpec {
     pub dim: usize,
@@ -150,7 +174,7 @@ pub struct VectorConfigSpec {
     pub neighbor_selection_flavor: NeighborSelectionFlavor,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct IvfConfigSpec {
     pub dim: usize,
@@ -174,6 +198,8 @@ impl IvfConfigSpec {
                 k_centroids: 256,
                 train_min_vectors: 256,
                 opq: false,
+                use_polysemous: false,
+                hamming_threshold_ratio: 0.5,
             },
             training_min_vectors: 256,
         }
