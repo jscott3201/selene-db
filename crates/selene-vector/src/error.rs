@@ -230,4 +230,14 @@ pub enum VectorError {
         /// Human-readable failure.
         reason: String,
     },
+
+    /// Polysemous-codes permutation training failed.
+    #[error("polysemous training failed in {context}: {reason}")]
+    #[diagnostic(code(SLENE_VEC_024))]
+    PolysemousTrainingFailed {
+        /// Training context.
+        context: &'static str,
+        /// Human-readable failure.
+        reason: String,
+    },
 }

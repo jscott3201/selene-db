@@ -6,6 +6,7 @@ use crate::{DistanceMetric, VectorError, snapshot};
 
 pub(crate) mod linalg;
 mod opq;
+mod polysemous;
 mod pq;
 mod sq8;
 

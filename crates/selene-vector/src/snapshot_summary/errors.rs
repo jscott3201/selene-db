@@ -92,5 +92,8 @@ pub fn render_vector_error(error: &VectorError) -> String {
         VectorError::OpqTrainingFailed { context, reason } => {
             format!("{kind}{{context={context:?}, reason={reason:?}}}")
         }
+        VectorError::PolysemousTrainingFailed { context, reason } => {
+            format!("{kind}{{context={context:?}, reason={reason:?}}}")
+        }
     }
 }

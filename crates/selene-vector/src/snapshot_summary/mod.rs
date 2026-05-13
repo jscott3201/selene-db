@@ -356,6 +356,8 @@ pub enum VectorErrorKind {
     PqCodebookTrainFailed,
     /// OPQ rotation training failed.
     OpqTrainingFailed,
+    /// Polysemous-codes permutation training failed.
+    PolysemousTrainingFailed,
 }
 
 impl VectorErrorKind {
@@ -386,6 +388,7 @@ impl VectorErrorKind {
             Self::IvfTrainingFailed => "IvfTrainingFailed",
             Self::PqCodebookTrainFailed => "PqCodebookTrainFailed",
             Self::OpqTrainingFailed => "OpqTrainingFailed",
+            Self::PolysemousTrainingFailed => "PolysemousTrainingFailed",
         }
     }
 }
@@ -494,6 +497,7 @@ pub fn vector_error_kind_for(error: &VectorError) -> VectorErrorKind {
         VectorError::IvfTrainingFailed { .. } => VectorErrorKind::IvfTrainingFailed,
         VectorError::PqCodebookTrainFailed { .. } => VectorErrorKind::PqCodebookTrainFailed,
         VectorError::OpqTrainingFailed { .. } => VectorErrorKind::OpqTrainingFailed,
+        VectorError::PolysemousTrainingFailed { .. } => VectorErrorKind::PolysemousTrainingFailed,
     }
 }
 
