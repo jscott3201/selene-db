@@ -240,6 +240,17 @@ pub(crate) enum Scorer<'a> {
         query_norm: f32,
         lut: Vec<f32>,
         quantized: &'a QuantizedStore,
+        /// Pre-computed polysemous query codes (BRIEF-69 §C.3). Populated
+        /// when `params.quantization.pq.use_polysemous && quantized.polysemous_trained()`;
+        /// `None` disables the Hamming pre-filter so non-polysemous stores
+        /// behave exactly as they did before BRIEF-69.
+        polysemous_query_codes: Option<Box<[u8]>>,
+        /// Hamming distance cutoff (V112). When `polysemous_query_codes` is
+        /// `Some`, candidates whose stored-vs-query Hamming exceeds this
+        /// threshold are marked non-admissible. The admission bit added in
+        /// Stage 1 delta 2 keeps them out of the result set even though
+        /// they may still expand the frontier.
+        polysemous_threshold: u32,
     },
 }
 
@@ -252,12 +263,31 @@ impl<'a> Scorer<'a> {
         if params.quantization.enabled
             && let Some(quantized) = graph.quantized()
         {
+            // The polysemous filter activates only when the embedder
+            // requested it AND the loaded codebook self-identifies as
+            // polysemous-trained (V107). The two are checked independently
+            // so that recovery drift is caught by the QUNT/IPQB validator,
+            // not silently masked by the scorer.
+            let (polysemous_query_codes, polysemous_threshold) = if let Some(pq_params) =
+                params.quantization.pq
+                && pq_params.use_polysemous
+                && quantized.polysemous_trained()
+            {
+                (
+                    quantized.pq_encode_query_codes(query),
+                    pq_params.resolve_hamming_threshold(),
+                )
+            } else {
+                (None, 0)
+            };
             return Self::Asymmetric {
                 query,
                 metric: params.metric,
                 query_norm: dot_product(query, query).sqrt(),
                 lut: quantized.build_query_lut(query, params.metric),
                 quantized,
+                polysemous_query_codes,
+                polysemous_threshold,
             };
         }
         Self::f32(query, params.metric)
@@ -277,10 +307,32 @@ impl<'a> Scorer<'a> {
                 query_norm,
                 lut,
                 quantized,
+                polysemous_query_codes,
+                polysemous_threshold,
             } => {
                 let node_idx = idx as usize;
                 if node_idx >= quantized.node_count() {
                     return Some(score_for_metric(*metric, query, &node.vector));
+                }
+                // BRIEF-69 §C.3 Hamming pre-filter: when polysemous codes
+                // are available AND the stored bytes are also polysemous,
+                // skip ADC LUT lookup for candidates whose Hamming distance
+                // from the query exceeds the threshold. Returning `None`
+                // routes through `push_candidate` to a non-admissible
+                // Candidate (BRIEF-69 Stage 1 delta 2 / V110) — the
+                // candidate may still expand the frontier but cannot enter
+                // the result set or be resurrected by rescore.
+                if let Some(query_codes) = polysemous_query_codes
+                    && let Some(stored_codes) = quantized.pq_codes_for(node_idx)
+                {
+                    let hamming = query_codes
+                        .iter()
+                        .zip(stored_codes)
+                        .map(|(left, right)| (left ^ right).count_ones())
+                        .sum::<u32>();
+                    if hamming > *polysemous_threshold {
+                        return None;
+                    }
                 }
                 let lut_sum = quantized.lut_sum(lut, node_idx)?;
                 // §O.New-2: keep quantized and f32 scores on the same scale.

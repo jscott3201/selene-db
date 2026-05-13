@@ -138,6 +138,35 @@ impl QuantizedStorePq {
             .and_then(|norms| norms.get(node_idx).copied())
     }
 
+    /// Return the PQ code bytes for `node_idx`, or `None` when the index is
+    /// out of range. Used by the polysemous Hamming pre-filter to avoid
+    /// rebuilding the LUT-sum slicing logic for what is fundamentally a
+    /// byte-level read.
+    pub(crate) fn codes_for(&self, node_idx: usize) -> Option<&[u8]> {
+        let m = self.codebook.m_subspaces as usize;
+        if node_idx >= self.node_count() {
+            return None;
+        }
+        let row_start = node_idx.checked_mul(m)?;
+        self.codes.get(row_start..row_start.checked_add(m)?)
+    }
+
+    /// Encode `query` against the (possibly polysemous-permuted) codebook,
+    /// returning the byte representation used for Hamming pre-filtering.
+    pub(crate) fn encode_query_codes(&self, query: &[f32]) -> Box<[u8]> {
+        let m = self.codebook.m_subspaces as usize;
+        let mut codes = Vec::with_capacity(m);
+        self.codebook.encode_row(query, &mut codes);
+        codes.into_boxed_slice()
+    }
+
+    /// Whether this store's codebook has been polysemous-permuted. The
+    /// Hamming pre-filter remains a no-op when this returns `false`, so
+    /// non-polysemous goldens cannot accidentally exercise the filter.
+    pub(crate) fn polysemous_trained(&self) -> bool {
+        self.codebook.polysemous_trained
+    }
+
     #[cfg(test)]
     pub(crate) fn decode_row(&self, node_idx: usize, out: &mut [f32]) {
         let m = self.codebook.m_subspaces as usize;

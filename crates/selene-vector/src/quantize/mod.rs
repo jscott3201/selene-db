@@ -329,6 +329,33 @@ impl QuantizedStore {
             Self::Pq(store) => store.approx_norm(node_idx),
         }
     }
+
+    /// Return the PQ code bytes for `node_idx` when this store is PQ;
+    /// `None` for SQ8 stores (SQ8 has no centroid-byte representation).
+    pub(crate) fn pq_codes_for(&self, node_idx: usize) -> Option<&[u8]> {
+        match self {
+            Self::Sq8(_) => None,
+            Self::Pq(store) => store.codes_for(node_idx),
+        }
+    }
+
+    /// Encode `query` into byte codes for the polysemous Hamming pre-filter.
+    /// `None` for SQ8 stores.
+    pub(crate) fn pq_encode_query_codes(&self, query: &[f32]) -> Option<Box<[u8]>> {
+        match self {
+            Self::Sq8(_) => None,
+            Self::Pq(store) => Some(store.encode_query_codes(query)),
+        }
+    }
+
+    /// Whether the loaded PQ codebook was polysemous-permuted. `false` for
+    /// SQ8 stores or PQ stores trained without polysemous.
+    pub(crate) fn polysemous_trained(&self) -> bool {
+        match self {
+            Self::Sq8(_) => false,
+            Self::Pq(store) => store.polysemous_trained(),
+        }
+    }
 }
 
 #[cfg(test)]
