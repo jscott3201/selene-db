@@ -1,0 +1,25 @@
+[package]
+name = "selene-algorithms-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Procedure-pack adapters for selene graph algorithms"
+
+[dependencies]
+parking_lot.workspace = true
+selene-algorithms = { path = "../selene-algorithms", version = "0.0.0" }
+selene-core = { path = "../selene-core", version = "0.0.0" }
+selene-gql = { path = "../selene-gql", version = "0.0.0" }
+selene-pack = { path = "../selene-pack", version = "0.0.0" }
+
+[dev-dependencies]
+insta.workspace = true
+selene-graph = { path = "../selene-graph", version = "0.0.0" }
+selene-testing = { path = "../selene-testing", version = "0.0.0" }
+
+[lints]
+workspace = true

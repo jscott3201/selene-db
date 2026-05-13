@@ -15,6 +15,7 @@ members = [
     "crates/selene-gql",
     "crates/selene-pack",
     "crates/selene-algorithms",
+    "crates/selene-algorithms-pack",
     "crates/selene-testing",
     "crates/selene-vector",
 ]

@@ -2113,6 +2113,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "selene-algorithms-pack"
+version = "0.0.0"
+dependencies = [
+ "insta",
+ "parking_lot",
+ "selene-algorithms",
+ "selene-core",
+ "selene-gql",
+ "selene-graph",
+ "selene-pack",
+ "selene-testing",
+]
+
+[[package]]
 name = "selene-core"
 version = "0.0.0"
 dependencies = [

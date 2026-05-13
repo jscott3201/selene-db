@@ -11,10 +11,11 @@ use selene_gql::{
 
 use crate::{
     builtin::{
-        BuiltInMetadata, GraphProcedureBuiltIn, MutationProcedureBuiltIn, StaticOutputColumn,
-        StaticParameter, UNSTABLE_BUILTIN_CONTENT_HASH,
+        GraphProcedureBuiltIn, MutationProcedureBuiltIn, StaticOutputColumn, StaticParameter,
+        UNSTABLE_BUILTIN_CONTENT_HASH,
     },
     error::RegistryError,
+    external::{ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter},
 };
 
 use selene_gql::ProcedureMutability;
@@ -25,6 +26,7 @@ pub(crate) type NameKey = Box<[IStr]>;
 pub(crate) enum TierEntry {
     Graph(Arc<dyn GraphProcedureBuiltIn>),
     Mutation(Arc<dyn MutationProcedureBuiltIn>),
+    ExternalGraph(Arc<dyn ExternalGraphProcedure>),
 }
 
 impl std::fmt::Debug for TierEntry {
@@ -38,15 +40,40 @@ impl std::fmt::Debug for TierEntry {
 impl TierEntry {
     pub(crate) fn tier(&self) -> ProcedureTier {
         match self {
-            Self::Graph(_) => ProcedureTier::Graph,
+            Self::Graph(_) | Self::ExternalGraph(_) => ProcedureTier::Graph,
             Self::Mutation(_) => ProcedureTier::Mutation,
         }
     }
 
-    fn metadata(&self) -> &dyn BuiltInMetadata {
+    fn declared_tier(&self) -> ProcedureTier {
         match self {
-            Self::Graph(procedure) => procedure.as_ref(),
-            Self::Mutation(procedure) => procedure.as_ref(),
+            Self::Graph(procedure) => procedure.tier(),
+            Self::Mutation(procedure) => procedure.tier(),
+            Self::ExternalGraph(_) => ProcedureTier::Graph,
+        }
+    }
+
+    fn mutability(&self) -> ProcedureMutability {
+        match self {
+            Self::Graph(procedure) => procedure.mutability(),
+            Self::Mutation(procedure) => procedure.mutability(),
+            Self::ExternalGraph(_) => ProcedureMutability::Read,
+        }
+    }
+
+    fn name(&self) -> &'static [&'static str] {
+        match self {
+            Self::Graph(procedure) => procedure.name(),
+            Self::Mutation(procedure) => procedure.name(),
+            Self::ExternalGraph(procedure) => procedure.name(),
+        }
+    }
+
+    fn content_hash(&self) -> [u8; 32] {
+        match self {
+            Self::Graph(procedure) => procedure.content_hash(),
+            Self::Mutation(procedure) => procedure.content_hash(),
+            Self::ExternalGraph(_) => UNSTABLE_BUILTIN_CONTENT_HASH,
         }
     }
 }
@@ -76,6 +103,17 @@ impl PendingEntry {
             entry: TierEntry::Mutation(Arc::new(builtin)),
         }
     }
+
+    pub(crate) fn external_graph(
+        handle: ProcedureHandle,
+        procedure: Arc<dyn ExternalGraphProcedure>,
+    ) -> Self {
+        Self {
+            handle,
+            attempted_tier: ProcedureTier::Graph,
+            entry: TierEntry::ExternalGraph(procedure),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -97,15 +135,14 @@ impl RegistryStorage {
         let mut ordered = Vec::new();
 
         for pending_entry in pending {
-            let metadata = pending_entry.entry.metadata();
-            let name = intern_name(metadata.name())?;
+            let name = intern_name(pending_entry.entry.name())?;
             validate_tier(
                 &name,
-                metadata.mutability(),
-                metadata.tier(),
+                pending_entry.entry.mutability(),
+                pending_entry.entry.declared_tier(),
                 pending_entry.attempted_tier,
             )?;
-            let hash = metadata.content_hash();
+            let hash = pending_entry.entry.content_hash();
 
             if let Some(existing) = staged.get(&name) {
                 if existing.tier != pending_entry.attempted_tier {
@@ -205,25 +242,50 @@ fn validate_tier(
 }
 
 fn procedure_metadata(pending: &PendingEntry) -> Result<ProcedureMetadata, RegistryError> {
-    let metadata = pending.entry.metadata();
-    Ok(ProcedureMetadata {
-        handle: pending.handle,
-        signature: ProcedureSignature {
-            parameters: metadata
+    let (parameters, columns) = match &pending.entry {
+        TierEntry::Graph(procedure) => (
+            procedure
                 .signature_static()
                 .iter()
                 .map(parameter)
                 .collect::<Result<Vec<_>, _>>()?,
-        },
-        output_schema: ProcedureOutputSchema {
-            columns: metadata
+            procedure
                 .output_columns_static()
                 .iter()
                 .map(output_column)
                 .collect::<Result<Vec<_>, _>>()?,
-        },
+        ),
+        TierEntry::Mutation(procedure) => (
+            procedure
+                .signature_static()
+                .iter()
+                .map(parameter)
+                .collect::<Result<Vec<_>, _>>()?,
+            procedure
+                .output_columns_static()
+                .iter()
+                .map(output_column)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        TierEntry::ExternalGraph(procedure) => (
+            procedure
+                .signature()
+                .iter()
+                .map(external_parameter)
+                .collect::<Result<Vec<_>, _>>()?,
+            procedure
+                .output_columns()
+                .iter()
+                .map(external_output_column)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+    };
+    Ok(ProcedureMetadata {
+        handle: pending.handle,
+        signature: ProcedureSignature { parameters },
+        output_schema: ProcedureOutputSchema { columns },
         tier: pending.attempted_tier,
-        mutability: metadata.mutability(),
+        mutability: pending.entry.mutability(),
         capability_required: None,
     })
 }
@@ -237,6 +299,23 @@ fn parameter(parameter: &StaticParameter) -> Result<ProcedureParameter, Registry
 }
 
 fn output_column(column: &StaticOutputColumn) -> Result<ProcedureOutputColumn, RegistryError> {
+    Ok(ProcedureOutputColumn {
+        name: intern_static(column.name, "output column")?,
+        ty: column.ty.clone(),
+    })
+}
+
+fn external_parameter(parameter: &ExternalParameter) -> Result<ProcedureParameter, RegistryError> {
+    Ok(ProcedureParameter {
+        name: intern_static(parameter.name, "parameter")?,
+        ty: parameter.ty.clone(),
+        nullable: parameter.nullable,
+    })
+}
+
+fn external_output_column(
+    column: &ExternalOutputColumn,
+) -> Result<ProcedureOutputColumn, RegistryError> {
     Ok(ProcedureOutputColumn {
         name: intern_static(column.name, "output column")?,
         ty: column.ty.clone(),

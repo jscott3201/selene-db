@@ -11,6 +11,7 @@
 mod activation;
 mod builtin;
 mod error;
+mod external;
 mod history;
 mod manifest;
 mod registry;
@@ -24,6 +25,10 @@ pub use activation::{
     Staged, Uploaded, Validating,
 };
 pub use error::RegistryError;
+pub use external::{
+    ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
+    ExternalProcedurePack,
+};
 pub use history::PackHistorySource;
 pub use manifest::{
     ACTIVATION_SEAL_COVERAGE, DEFERRED_GATES, FINAL_VALIDATION_COVERAGE, Gate,
@@ -33,7 +38,7 @@ pub use manifest::{
     PROCEDURE_LEVEL_GATES, ProcedurePackManifest, SCHEMA_VERSION_SUPPORTED, WAL_AUDIT_COVERAGE,
     manifest_json_schema, parse_manifest,
 };
-pub use registry::ProcedurePackRegistry;
+pub use registry::{ProcedurePackRegistry, ProcedurePackRegistryBuilder};
 pub use reserved::{RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE};
 pub use selene_core::IStr;
 pub use selene_gql::{

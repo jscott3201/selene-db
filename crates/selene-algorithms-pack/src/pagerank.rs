@@ -1,0 +1,208 @@
+//! PageRank procedure adapter.
+
+use std::sync::Arc;
+
+use selene_algorithms::{AlgorithmsError, PageRankConfig, pagerank};
+use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
+use selene_pack::{
+    ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
+};
+
+use crate::{
+    args::{expect_arity, nullable_f64, nullable_usize, required_string},
+    error::{algorithm_error, invalid_argument},
+    state::AlgorithmsPackState,
+};
+
+/// Default damping factor used when the GQL argument is NULL.
+pub const DEFAULT_DAMPING: f64 = 0.85;
+/// Default maximum iteration count used when the GQL argument is NULL.
+pub const DEFAULT_MAX_ITERATIONS: usize = 100;
+/// Default convergence tolerance used when the GQL argument is NULL.
+pub const DEFAULT_TOLERANCE: f64 = 1e-6;
+
+static PAGERANK_NAME: [&str; 2] = ["algo", "pagerank"];
+const PAGERANK_PROC: &str = "algo.pagerank";
+
+pub(crate) fn procedure(state: Arc<AlgorithmsPackState>) -> Arc<dyn ExternalGraphProcedure> {
+    Arc::new(PageRankProcedure { state })
+}
+
+struct PageRankProcedure {
+    state: Arc<AlgorithmsPackState>,
+}
+
+impl ExternalProcedureMetadata for PageRankProcedure {
+    fn name(&self) -> &'static [&'static str] {
+        &PAGERANK_NAME
+    }
+
+    fn signature(&self) -> Vec<ExternalParameter> {
+        vec![
+            parameter("projection_name", GqlType::String, false),
+            parameter("damping", GqlType::Float, true),
+            parameter("max_iterations", GqlType::Integer, true),
+            parameter("tolerance", GqlType::Float, true),
+        ]
+    }
+
+    fn output_columns(&self) -> Vec<ExternalOutputColumn> {
+        vec![
+            output("node_id", GqlType::NodeRef),
+            output("score", GqlType::Float),
+        ]
+    }
+}
+
+impl ExternalGraphProcedure for PageRankProcedure {
+    fn execute(
+        &self,
+        ctx: &GraphContext<'_>,
+        args: &[Value],
+    ) -> Result<ProcedureResult, ProcedureError> {
+        let (projection_name, config) = parse_pagerank_args(args)?;
+        let graph_id = ctx.snapshot().graph_id();
+        self.state.with_catalog(graph_id, |catalog| {
+            catalog
+                .ensure_fresh(ctx.snapshot(), &projection_name)
+                .map_err(algorithm_error)?;
+            let projection = catalog.get(&projection_name).ok_or_else(|| {
+                algorithm_error(AlgorithmsError::NoSuchProjection {
+                    name: projection_name.clone(),
+                })
+            })?;
+            let rows = pagerank(projection.projection(), config)
+                .into_iter()
+                .map(|(node_id, score)| vec![Value::NodeRef(node_id), Value::Float(score)])
+                .collect();
+            Ok(ProcedureResult { rows })
+        })
+    }
+}
+
+pub(crate) fn parse_pagerank_args(
+    args: &[Value],
+) -> Result<(String, PageRankConfig), ProcedureError> {
+    expect_arity(PAGERANK_PROC, args, 4)?;
+    let projection_name = required_string(PAGERANK_PROC, args, 0, "projection_name")?;
+    let damping = nullable_f64(PAGERANK_PROC, args, 1, "damping", DEFAULT_DAMPING)?;
+    let max_iter = nullable_usize(
+        PAGERANK_PROC,
+        args,
+        2,
+        "max_iterations",
+        DEFAULT_MAX_ITERATIONS,
+    )?;
+    let tolerance = nullable_f64(PAGERANK_PROC, args, 3, "tolerance", DEFAULT_TOLERANCE)?;
+    validate_config(damping, tolerance)?;
+    Ok((
+        projection_name,
+        PageRankConfig {
+            damping,
+            max_iter,
+            tolerance,
+        },
+    ))
+}
+
+fn validate_config(damping: f64, tolerance: f64) -> Result<(), ProcedureError> {
+    if !damping.is_finite() {
+        return Err(invalid_argument("algo.pagerank damping must be finite"));
+    }
+    if !(0.0..=1.0).contains(&damping) {
+        return Err(invalid_argument(
+            "algo.pagerank damping must be in [0.0, 1.0]",
+        ));
+    }
+    if !tolerance.is_finite() {
+        return Err(invalid_argument("algo.pagerank tolerance must be finite"));
+    }
+    if tolerance < 0.0 {
+        return Err(invalid_argument(
+            "algo.pagerank tolerance must be non-negative",
+        ));
+    }
+    Ok(())
+}
+
+fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
+    ExternalParameter { name, ty, nullable }
+}
+
+fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
+    ExternalOutputColumn { name, ty }
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::{Value, intern};
+
+    use super::*;
+
+    fn projection_name() -> Value {
+        Value::String(intern("p").expect("test string interns"))
+    }
+
+    #[test]
+    fn null_args_resolve_to_defaults() {
+        let (_, config) =
+            parse_pagerank_args(&[projection_name(), Value::Null, Value::Null, Value::Null])
+                .expect("NULL args resolve");
+
+        assert_eq!(config.damping, DEFAULT_DAMPING);
+        assert_eq!(config.max_iter, DEFAULT_MAX_ITERATIONS);
+        assert_eq!(config.tolerance, DEFAULT_TOLERANCE);
+    }
+
+    #[test]
+    fn zero_max_iterations_is_valid() {
+        let (_, config) = parse_pagerank_args(&[
+            projection_name(),
+            Value::Float(DEFAULT_DAMPING),
+            Value::Int(0),
+            Value::Float(DEFAULT_TOLERANCE),
+        ])
+        .expect("zero max_iter is accepted");
+
+        assert_eq!(config.max_iter, 0);
+    }
+
+    #[test]
+    fn non_finite_damping_rejected() {
+        let err = parse_pagerank_args(&[
+            projection_name(),
+            Value::Float(f64::INFINITY),
+            Value::Null,
+            Value::Null,
+        ])
+        .expect_err("non-finite damping rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn out_of_range_damping_rejected() {
+        let err = parse_pagerank_args(&[
+            projection_name(),
+            Value::Float(1.1),
+            Value::Null,
+            Value::Null,
+        ])
+        .expect_err("out-of-range damping rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn negative_tolerance_rejected() {
+        let err = parse_pagerank_args(&[
+            projection_name(),
+            Value::Null,
+            Value::Null,
+            Value::Float(-0.1),
+        ])
+        .expect_err("negative tolerance rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+}
