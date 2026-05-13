@@ -220,4 +220,14 @@ pub enum VectorError {
         /// Human-readable failure.
         reason: String,
     },
+
+    /// OPQ rotation training failed.
+    #[error("OPQ training failed in {context}: {reason}")]
+    #[diagnostic(code(SLENE_VEC_023))]
+    OpqTrainingFailed {
+        /// Training context.
+        context: &'static str,
+        /// Human-readable failure.
+        reason: String,
+    },
 }

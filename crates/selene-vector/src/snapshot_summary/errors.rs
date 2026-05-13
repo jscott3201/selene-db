@@ -89,5 +89,8 @@ pub fn render_vector_error(error: &VectorError) -> String {
         VectorError::PqCodebookTrainFailed { context, reason } => {
             format!("{kind}{{context={context:?}, reason={reason:?}}}")
         }
+        VectorError::OpqTrainingFailed { context, reason } => {
+            format!("{kind}{{context={context:?}, reason={reason:?}}}")
+        }
     }
 }

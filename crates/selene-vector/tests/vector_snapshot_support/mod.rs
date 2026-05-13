@@ -336,6 +336,7 @@ fn pq_params_from_spec(spec: Option<selene_testing::VectorPqSpec>) -> Option<PqP
         m_subspaces: pq.m_subspaces,
         k_centroids: pq.k_centroids,
         train_min_vectors: pq.train_min_vectors,
+        use_opq: pq.opq,
     })
 }
 
@@ -530,6 +531,7 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
                     m_subspaces: 3,
                     k_centroids: 256,
                     train_min_vectors: 256,
+                    use_opq: false,
                 })
                 .expect_err("PQ dimension divisibility rejected")
         }
@@ -598,6 +600,10 @@ fn synthetic_error(fields: &SyntheticErrorFields) -> VectorError {
         SyntheticErrorFields::PqCodebookTrainFailed => VectorError::PqCodebookTrainFailed {
             context: "ivf_residual_pq",
             reason: "forced codebook fixture".into(),
+        },
+        SyntheticErrorFields::OpqTrainingFailed => VectorError::OpqTrainingFailed {
+            context: "opq_rotation",
+            reason: "forced OPQ fixture".into(),
         },
         _ => panic!("unknown synthetic error fields"),
     }
@@ -677,6 +683,9 @@ pub(crate) fn canonical_error_for_kind(kind: VectorErrorKindMirror) -> VectorErr
         }
         VectorErrorKindMirror::PqCodebookTrainFailed => {
             synthetic_error(&SyntheticErrorFields::PqCodebookTrainFailed)
+        }
+        VectorErrorKindMirror::OpqTrainingFailed => {
+            synthetic_error(&SyntheticErrorFields::OpqTrainingFailed)
         }
         _ => panic!("unknown vector error kind mirror"),
     }

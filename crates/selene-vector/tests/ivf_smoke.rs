@@ -19,6 +19,7 @@ fn config(training_min_vectors: usize) -> IvfConfig {
             m_subspaces: 1,
             k_centroids: 256,
             train_min_vectors: 256,
+            use_opq: false,
         },
         training_min_vectors,
     )
@@ -160,6 +161,7 @@ fn trained_cqnt_metric_must_match_provider_config() {
                 m_subspaces: 1,
                 k_centroids: 256,
                 train_min_vectors: 256,
+                use_opq: false,
             },
             256,
         )

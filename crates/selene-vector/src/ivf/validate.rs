@@ -8,6 +8,7 @@ use selene_core::NodeId;
 use super::RawVector;
 use super::posting::PostingList;
 use crate::quantize::PqCodebook;
+use crate::quantize::linalg;
 use crate::{DistanceMetric, IvfConfig, VectorError};
 
 pub(crate) fn deferred_rows_to_raw(
@@ -47,6 +48,44 @@ pub(crate) fn validate_trained_codebook(
         return Err(inconsistent(
             "IPQB k_centroids disagrees with provider config",
         ));
+    }
+    if !config.pq.use_opq && codebook.rotation.is_some() {
+        return Err(inconsistent(
+            "IPQB OPQ rotation present while provider config disables OPQ",
+        ));
+    }
+    validate_rotation(&codebook.rotation, config.dim, "IPQB")?;
+    Ok(())
+}
+
+pub(crate) fn validate_rotation(
+    rotation: &Option<Vec<f32>>,
+    dim: usize,
+    section: &'static str,
+) -> Result<(), VectorError> {
+    let Some(rotation) = rotation else {
+        return Ok(());
+    };
+    let expected = dim
+        .checked_mul(dim)
+        .ok_or_else(|| inconsistent(format!("{section} OPQ rotation length overflow")))?;
+    if rotation.len() != expected {
+        return Err(inconsistent(format!(
+            "{section} OPQ rotation length {} disagrees with dim^2 {expected}",
+            rotation.len()
+        )));
+    }
+    for (index, value) in rotation.iter().copied().enumerate() {
+        if !value.is_finite() {
+            return Err(inconsistent(format!(
+                "{section} OPQ rotation component {index} is non-finite: {value}"
+            )));
+        }
+    }
+    if !linalg::is_orthonormal(rotation, dim, 1.0e-5) {
+        return Err(inconsistent(format!(
+            "{section} OPQ rotation is not orthonormal"
+        )));
     }
     Ok(())
 }
@@ -168,6 +207,7 @@ mod tests {
                 m_subspaces: 1,
                 k_centroids: 256,
                 train_min_vectors: 256,
+                use_opq: false,
             },
             256,
         )

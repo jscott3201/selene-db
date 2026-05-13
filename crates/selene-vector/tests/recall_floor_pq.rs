@@ -17,6 +17,7 @@ const LAYER_SEED: u64 = 0xB65E_0003_u64;
 const PQ_TRAIN_SEED: u64 = 0xB66E_0001_u64;
 const PQ_RECALL_FLOOR: f32 = 0.70;
 const PQ_RESCORE_RECALL_FLOOR: f32 = 0.85;
+const OPQ_RESCORE_RECALL_FLOOR: f32 = 0.85;
 
 #[test]
 fn pq_recall_at_10_meets_floor_no_rescore() {
@@ -24,7 +25,7 @@ fn pq_recall_at_10_meets_floor_no_rescore() {
         return;
     }
 
-    let recall = mean_recall(false, 50);
+    let recall = mean_recall(false, false, 1, 50);
 
     assert!(
         recall >= PQ_RECALL_FLOOR,
@@ -38,7 +39,7 @@ fn pq_recall_at_10_meets_floor_with_rescore() {
         return;
     }
 
-    let recall = mean_recall(true, 50);
+    let recall = mean_recall(true, false, 1, 50);
 
     assert!(
         recall >= PQ_RESCORE_RECALL_FLOOR,
@@ -52,8 +53,8 @@ fn pq_recall_with_rescore_beats_pq_without() {
         return;
     }
 
-    let pq = mean_recall(false, 50);
-    let rescored = mean_recall(true, 50);
+    let pq = mean_recall(false, false, 1, 50);
+    let rescored = mean_recall(true, false, 1, 50);
 
     assert!(
         rescored + f32::EPSILON >= pq,
@@ -62,13 +63,27 @@ fn pq_recall_with_rescore_beats_pq_without() {
 }
 
 #[test]
+fn opq_rescore_recall_at_10_meets_floor() {
+    if cfg!(feature = "simd-simsimd") {
+        return;
+    }
+
+    let recall = mean_recall(true, true, 2, 50);
+
+    assert!(
+        recall >= OPQ_RESCORE_RECALL_FLOOR,
+        "OPQ rescore recall@10 {recall:.3} below floor {OPQ_RESCORE_RECALL_FLOOR:.3}"
+    );
+}
+
+#[test]
 fn pq_train_seed_pinned_in_recall_harness() {
     assert_eq!(PQ_TRAIN_SEED, 0xB66E_0001_u64);
 }
 
-fn mean_recall(rescore: bool, ef_search: usize) -> f32 {
+fn mean_recall(rescore: bool, use_opq: bool, m_subspaces: usize, ef_search: usize) -> f32 {
     let corpus = synthetic_corpus(256, 8);
-    let provider = provider_for(&corpus, rescore, ef_search);
+    let provider = provider_for(&corpus, rescore, use_opq, m_subspaces, ef_search);
     mean_recall_for_provider(&provider, &corpus, 10, ef_search)
 }
 
@@ -113,7 +128,13 @@ fn brute_force(vectors: &[Vec<f32>], query: &[f32], k: usize) -> Vec<NodeId> {
     scored.into_iter().take(k).map(|(id, _)| id).collect()
 }
 
-fn provider_for(corpus: &SyntheticCorpus, rescore: bool, ef_search: usize) -> HnswProvider {
+fn provider_for(
+    corpus: &SyntheticCorpus,
+    rescore: bool,
+    use_opq: bool,
+    m_subspaces: usize,
+    ef_search: usize,
+) -> HnswProvider {
     let config = HnswConfig::with_params(8, 8, 64, ef_search, DistanceMetric::L2)
         .expect("recall config is valid")
         .with_quantization(QuantizationConfig {
@@ -121,9 +142,10 @@ fn provider_for(corpus: &SyntheticCorpus, rescore: bool, ef_search: usize) -> Hn
             method: QuantMethod::Pq,
             rescore,
             pq: Some(PqParams {
-                m_subspaces: 1,
+                m_subspaces,
                 k_centroids: 256,
                 train_min_vectors: 256,
+                use_opq,
             }),
         })
         .expect("PQ config is valid");

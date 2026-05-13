@@ -67,6 +67,8 @@ pub struct VectorConfigSummary {
     pub pq_k: Option<u32>,
     /// PQ train-min threshold rendered only for PQ-enabled configs.
     pub pq_train_min: Option<usize>,
+    /// Whether PQ configs train OPQ rotations.
+    pub pq_opq: Option<bool>,
     /// HNSW neighbor-selection flavor.
     pub neighbor_select: &'static str,
 }
@@ -93,6 +95,7 @@ impl VectorConfigSummary {
             pq_m: pq_params.map(|params| params.m_subspaces),
             pq_k: pq_params.map(|params| params.k_centroids),
             pq_train_min: pq_params.map(|params| params.train_min_vectors),
+            pq_opq: pq_params.map(|params| params.use_opq),
             neighbor_select: neighbor_selection_name(config.neighbor_selection),
         }
     }
@@ -228,9 +231,10 @@ pub fn vector_summary(input: &VectorSnapshotInput) -> VectorSnapshot {
             input.config.pq_m,
             input.config.pq_k,
             input.config.pq_train_min,
+            input.config.pq_opq,
         ) {
-            (Some(m), Some(k), Some(train_min)) => lines.push(format!(
-                "quantization_method={} pq_m={m} pq_k={k} pq_train_min={train_min}",
+            (Some(m), Some(k), Some(train_min), Some(opq)) => lines.push(format!(
+                "quantization_method={} pq_m={m} pq_k={k} pq_train_min={train_min} pq_opq={opq}",
                 quoted(method)
             )),
             _ => lines.push(format!("quantization_method={}", quoted(method))),
@@ -350,6 +354,8 @@ pub enum VectorErrorKind {
     IvfTrainingFailed,
     /// PQ codebook training failed.
     PqCodebookTrainFailed,
+    /// OPQ rotation training failed.
+    OpqTrainingFailed,
 }
 
 impl VectorErrorKind {
@@ -379,6 +385,7 @@ impl VectorErrorKind {
             Self::IvfSectionInconsistent => "IvfSectionInconsistent",
             Self::IvfTrainingFailed => "IvfTrainingFailed",
             Self::PqCodebookTrainFailed => "PqCodebookTrainFailed",
+            Self::OpqTrainingFailed => "OpqTrainingFailed",
         }
     }
 }
@@ -486,6 +493,7 @@ pub fn vector_error_kind_for(error: &VectorError) -> VectorErrorKind {
         VectorError::IvfSectionInconsistent { .. } => VectorErrorKind::IvfSectionInconsistent,
         VectorError::IvfTrainingFailed { .. } => VectorErrorKind::IvfTrainingFailed,
         VectorError::PqCodebookTrainFailed { .. } => VectorErrorKind::PqCodebookTrainFailed,
+        VectorError::OpqTrainingFailed { .. } => VectorErrorKind::OpqTrainingFailed,
     }
 }
 

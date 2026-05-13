@@ -3,18 +3,18 @@ source: crates/selene-vector/tests/vector_snapshot_corpus.rs
 expression: snapshot.to_string()
 ---
 ==== CONFIG ====
-slug="pq-default-l2"
-description="PQ asymmetric L2 search with trained QUNT codebook."
+slug="pq-opq-l2"
+description="PQ asymmetric L2 search with OPQ rotation."
 dim=8 m=16 ef_construction=200 ef_search=50 metric=L2 quantization_enabled=true quantization_rescore=false
 neighbor_select="default"
-quantization_method="pq" pq_m=1 pq_k=256 pq_train_min=256 pq_opq=false
+quantization_method="pq" pq_m=2 pq_k=256 pq_train_min=256 pq_opq=true
 ==== GRAPH ====
 nodes=256 dim=8 entry_point=idx16 max_layer=2
 node_head=[n1:L0:[26], n2:L0:[29], n3:L0:[25], n4:L0:[14], n5:L1:[28/11], n6:L0:[31], n7:L0:[15], n8:L0:[26]]
 ==== SECTIONS ====
 GRPH(len=46507, blake3_8=cb7b9c760a94b08c, dim=8, nodes=256, entry_point=idx16, max_layer=2, head=[n1:L0:[26], n2:L0:[29], n3:L0:[25], n4:L0:[14]])
 VECS(len=8218, blake3_8=9f8067e5f98f4455, dim=8, nodes=256, components=2048, head=[+0.030, +0.006, -0.549, -0.177, -0.884, +0.996])
-QUNT(len=8524, blake3_8=b724758e662e5621, method="pq", dim=8, nodes=256, codebook_bytes=8192, rotation_bytes=0, codes_bytes=256, norms=0)
+QUNT(len=8780, blake3_8=048a1719f0beb34c, method="pq", dim=8, nodes=256, codebook_bytes=8192, rotation_bytes=0, codes_bytes=512, norms=0)
 ==== RESULT ====
 f32_baseline.rows
   [0] n8	-1.375916
@@ -28,7 +28,7 @@ f32_baseline.rows
 sq8_asymmetric.rows
   [0] n8	-1.375916
   [1] n12	-1.439769
-  [2] n16	-1.479161
+  [2] n16	-1.479162
   [3] n47	-1.544305
   [4] n5	-1.599784
   [5] n40	-1.616624

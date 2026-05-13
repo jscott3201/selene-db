@@ -537,6 +537,10 @@ fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
         .residual_codebook
         .as_deref()
         .map_or(0, PqCodebook::bytes_codebook);
+    let bytes_rotation = index
+        .residual_codebook
+        .as_deref()
+        .map_or(0, PqCodebook::bytes_rotation);
     let bytes_posting_lists = index
         .posting_lists
         .iter()
@@ -552,6 +556,7 @@ fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
         .saturating_mul(std::mem::size_of::<f32>());
     let compressed = bytes_coarse_centroids
         .saturating_add(bytes_residual_codebook)
+        .saturating_add(bytes_rotation)
         .saturating_add(bytes_posting_lists)
         .saturating_add(bytes_reconstructed_norms);
     let f32_bytes = index
@@ -565,6 +570,7 @@ fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
         unassigned_count: index.unassigned_buffer.len(),
         bytes_coarse_centroids,
         bytes_residual_codebook,
+        bytes_rotation,
         bytes_posting_lists,
         bytes_reconstructed_norms,
         compression_ratio: if compressed == 0 {
