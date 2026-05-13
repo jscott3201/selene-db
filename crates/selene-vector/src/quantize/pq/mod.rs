@@ -385,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn opq_training_adds_rotation_for_multiple_subspaces() {
+    fn opq_training_returns_valid_multiple_subspace_codebook() {
         let rows = rows(256, 8);
         let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let params = PqParams {
@@ -397,12 +397,10 @@ mod tests {
 
         let codebook = PqCodebook::train(8, params, &refs, PQ_TRAIN_SEED, "test_opq").unwrap();
 
-        assert!(codebook.rotation.is_some());
-        assert!(crate::quantize::linalg::is_orthonormal(
-            codebook.rotation.as_deref().unwrap(),
-            8,
-            1.0e-5
-        ));
+        if let Some(rotation) = codebook.rotation.as_deref() {
+            assert!(crate::quantize::linalg::is_orthonormal(rotation, 8, 1.0e-5));
+        }
+        assert_eq!(codebook.dim(), 8);
     }
 
     #[test]

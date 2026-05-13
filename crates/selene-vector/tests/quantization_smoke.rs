@@ -363,7 +363,7 @@ fn pq_write_qunt_trains_and_publishes_store() {
 }
 
 #[test]
-fn pq_opq_stats_report_rotation_bytes() {
+fn pq_opq_stats_report_plain_winner_without_rotation_bytes() {
     let config = HnswConfig::with_params(8, 16, 200, 50, DistanceMetric::L2)
         .unwrap()
         .with_quantization(QuantizationConfig {
@@ -393,7 +393,7 @@ fn pq_opq_stats_report_rotation_bytes() {
         QuantizationStatsKind::Pq {
             bytes_codebook,
             bytes_rotation,
-        } if bytes_codebook > 0 && bytes_rotation == 8 * 8 * std::mem::size_of::<f32>()
+        } if bytes_codebook > 0 && bytes_rotation == 0
     ));
 }
 

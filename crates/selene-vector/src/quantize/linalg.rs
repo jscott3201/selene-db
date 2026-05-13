@@ -75,7 +75,7 @@ pub(crate) fn procrustes_rotation(
         for col in 0..dim {
             let mut sum = 0.0;
             for component in 0..dim {
-                sum += svd.v[row * dim + component] * svd.u[col * dim + component];
+                sum += svd.u[row * dim + component] * svd.v[col * dim + component];
             }
             rotation[row * dim + col] = sum;
         }
@@ -277,6 +277,33 @@ mod tests {
         let rotation = procrustes_rotation(&identity(4), 4, "test").unwrap();
 
         assert!(is_orthonormal(&rotation, 4, 1.0e-5));
+    }
+
+    #[test]
+    fn procrustes_step_aligns_x_to_y_not_y_to_x() {
+        let true_rotation = vec![0.0, -1.0, 1.0, 0.0];
+        let samples = [[2.0, 0.0], [0.0, 1.0], [3.0, 1.0], [-1.0, 2.0]];
+        let targets = samples
+            .iter()
+            .map(|sample| mat_vec(&true_rotation, sample, 2))
+            .collect::<Vec<_>>();
+        let mut cross = vec![0.0; 4];
+        for (sample, target) in samples.iter().zip(&targets) {
+            for row in 0..2 {
+                for col in 0..2 {
+                    cross[row * 2 + col] += target[row] * sample[col];
+                }
+            }
+        }
+
+        let rotation = procrustes_rotation(&cross, 2, "test").unwrap();
+
+        for (observed, expected) in rotation.iter().zip(&true_rotation) {
+            assert!(
+                (observed - expected).abs() <= 1.0e-4,
+                "observed rotation {rotation:?} != {true_rotation:?}"
+            );
+        }
     }
 
     #[test]

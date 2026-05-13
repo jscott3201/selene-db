@@ -89,14 +89,14 @@ pub(crate) fn decode_ipqb(bytes: &[u8]) -> Result<IpqbBodyV1, VectorError> {
     let legacy = rkyv::from_bytes::<IpqbBodyV1Legacy, rkyv::rancor::Error>(body).ok();
     let decoded = match (v2, legacy) {
         (Ok(IpqbBodyV1::Empty), Some(IpqbBodyV1Legacy::Trained { codebook })) => {
-            IpqbBodyV1Legacy::Trained { codebook }.into()
-        }
-        (Ok(decoded), _) if validate_ipqb(&decoded).is_ok() => decoded,
-        (Ok(decoded), None) => {
+            let decoded: IpqbBodyV1 = IpqbBodyV1Legacy::Trained { codebook }.into();
             validate_ipqb(&decoded)?;
             decoded
         }
-        (Ok(_), Some(legacy)) => legacy.into(),
+        (Ok(decoded), _) => {
+            validate_ipqb(&decoded)?;
+            decoded
+        }
         (Err(v2_error), Some(legacy)) => {
             let decoded = legacy.into();
             validate_ipqb(&decoded).map_err(|legacy_error| {
@@ -257,6 +257,26 @@ mod tests {
         };
 
         let err = decode_ipqb(&raw_encode(&body)).expect_err("bad rotation rejected");
+
+        assert!(
+            matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("not orthonormal"))
+        );
+    }
+
+    #[test]
+    fn corrupted_v2_ipqb_rotation_does_not_silently_fall_back_to_legacy() {
+        let body = IpqbBodyV1::Trained {
+            codebook: PqCodebook {
+                m_subspaces: 1,
+                k_centroids: 256,
+                subspace_dim: 2,
+                centroids: vec![0.0; 512],
+                rotation: Some(vec![2.0, 0.0, 0.0, 1.0]),
+            },
+        };
+        let encoded = raw_encode(&body);
+
+        let err = decode_ipqb(&encoded).expect_err("bad v2 rotation rejected");
 
         assert!(
             matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("not orthonormal"))

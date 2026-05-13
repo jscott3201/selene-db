@@ -161,3 +161,34 @@ fn decoded_norms(codebook: &PqCodebook, codes: &[u8]) -> Vec<f32> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stats_count_rotation_bytes_when_rotation_is_present() {
+        let store = QuantizedStorePq {
+            codebook: PqCodebook {
+                m_subspaces: 2,
+                k_centroids: 256,
+                subspace_dim: 2,
+                centroids: vec![0.0; 2 * 256 * 2],
+                rotation: Some(crate::quantize::linalg::identity(4)),
+            },
+            codes: vec![0, 1, 2, 3],
+            approx_norms: None,
+        };
+
+        let stats = store.stats();
+
+        assert!(matches!(
+            stats.kind,
+            QuantizationStatsKind::Pq {
+                bytes_codebook,
+                bytes_rotation,
+            } if bytes_codebook == 2 * 256 * 2 * std::mem::size_of::<f32>()
+                && bytes_rotation == 4 * 4 * std::mem::size_of::<f32>()
+        ));
+    }
+}

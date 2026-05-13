@@ -26,7 +26,9 @@ pub(crate) fn train(
         ..params
     };
     let plain = PqCodebook::train_plain(dim, plain_params, rows, seed, context, None)?;
-    let mut best = PqCodebook::train_plain(
+    let mut best = plain.clone();
+    let mut best_error = reconstruction_mse(&plain, rows, dim);
+    let identity = PqCodebook::train_plain(
         dim,
         plain_params,
         rows,
@@ -34,10 +36,10 @@ pub(crate) fn train(
         context,
         Some(linalg::identity(dim)),
     )?;
-    let mut best_error = reconstruction_mse(&best, rows, dim);
-    let plain_error = reconstruction_mse(&plain, rows, dim);
-    if best_error > plain_error {
-        best_error = plain_error;
+    let identity_error = reconstruction_mse(&identity, rows, dim);
+    if identity_error + ERROR_DELTA_TOL < best_error {
+        best = identity;
+        best_error = identity_error;
     }
 
     let mut rotation = linalg::identity(dim);
@@ -61,7 +63,7 @@ pub(crate) fn train(
             Some(next_rotation.clone()),
         )?;
         let candidate_error = reconstruction_mse(&candidate, rows, dim);
-        if candidate_error <= best_error + ERROR_DELTA_TOL {
+        if candidate_error + ERROR_DELTA_TOL < best_error {
             best_error = candidate_error;
             best = candidate;
         }
@@ -74,10 +76,10 @@ pub(crate) fn train(
         }
     }
 
-    if !best
+    if best
         .rotation
         .as_deref()
-        .is_some_and(|rotation| linalg::is_orthonormal(rotation, dim, 1.0e-5))
+        .is_some_and(|rotation| !linalg::is_orthonormal(rotation, dim, 1.0e-5))
     {
         return Err(VectorError::OpqTrainingFailed {
             context,
@@ -131,4 +133,45 @@ fn cross_covariance(rows: &[&[f32]], decoded_rotated: &[Vec<f32>], dim: usize) -
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(count: usize, dim: usize) -> Vec<Vec<f32>> {
+        (0..count)
+            .map(|row| {
+                (0..dim)
+                    .map(|coord| ((row as f32 * 0.031) + (coord as f32 * 0.17)).sin())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn opq_returns_plain_codebook_when_outer_loop_cannot_beat_baseline() {
+        let rows = rows(256, 4);
+        let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let params = PqParams {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: true,
+        };
+        let plain_params = PqParams {
+            use_opq: false,
+            ..params
+        };
+        let plain =
+            PqCodebook::train_plain(4, plain_params, &refs, 0xB66E_0001_u64, "test", None).unwrap();
+
+        let trained = train(4, params, &refs, 0xB66E_0001_u64, "test").unwrap();
+
+        assert!(trained.rotation.is_none());
+        assert!(
+            (reconstruction_mse(&trained, &refs, 4) - reconstruction_mse(&plain, &refs, 4)).abs()
+                <= 1.0e-6
+        );
+    }
 }
