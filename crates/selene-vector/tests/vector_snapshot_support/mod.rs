@@ -223,9 +223,9 @@ fn deterministic_rows(
                     jitter + ((raw as f32 + coord as f32) * 0.013)
                 })
                 .collect();
-            let layer = if mixed_layers && raw % 17 == 0 {
+            let layer = if mixed_layers && raw.is_multiple_of(17) {
                 2
-            } else if mixed_layers && raw % 5 == 0 {
+            } else if mixed_layers && raw.is_multiple_of(5) {
                 1
             } else {
                 0
@@ -247,9 +247,9 @@ fn diverse_cluster_rows(dim: usize) -> Vec<(u64, Vec<f32>, u8)> {
             for (coord, value) in vector.iter_mut().enumerate().skip(2) {
                 *value = ((cluster + 1) as f32 * 0.13) + (coord as f32 * 0.011);
             }
-            let layer = if raw % 13 == 0 {
+            let layer = if raw.is_multiple_of(13) {
                 2
-            } else if raw % 5 == 0 {
+            } else if raw.is_multiple_of(5) {
                 1
             } else {
                 0
@@ -556,8 +556,7 @@ fn operation_not_supported_error(
     // HnswProvider so we don't need to broaden builder's visibility.
     provider
         .apply_upsert_for_test(&payload)
-        .err()
-        .expect("reserved op rejected")
+        .expect_err("reserved op rejected")
 }
 
 fn synthetic_error(fields: &SyntheticErrorFields) -> VectorError {

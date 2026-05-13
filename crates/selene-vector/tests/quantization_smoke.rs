@@ -358,6 +358,7 @@ fn pq_write_qunt_trains_and_publishes_store() {
         QuantizationStatsKind::Pq {
             bytes_codebook,
             bytes_rotation,
+            polysemous: false,
         } if bytes_codebook > 0 && bytes_rotation == 0
     ));
 }
@@ -395,6 +396,7 @@ fn pq_opq_stats_report_plain_winner_without_rotation_bytes() {
         QuantizationStatsKind::Pq {
             bytes_codebook,
             bytes_rotation,
+            polysemous: false,
         } if bytes_codebook > 0 && bytes_rotation == 0
     ));
 }

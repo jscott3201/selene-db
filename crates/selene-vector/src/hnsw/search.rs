@@ -10,7 +10,7 @@ use super::distance::{distance, dot_product};
 use super::{HnswGraph, HnswParams, InternalIndex};
 use crate::DistanceMetric;
 use crate::VectorError;
-use crate::quantize::QuantizedStore;
+use crate::quantize::{PqParams, QuantizedStore};
 
 /// A scored HNSW candidate shared by build and search paths.
 #[derive(Clone, Copy, Debug)]
@@ -279,18 +279,22 @@ impl<'a> Scorer<'a> {
             // polysemous-trained (V107). The two are checked independently
             // so that recovery drift is caught by the QUNT/IPQB validator,
             // not silently masked by the scorer.
-            let (polysemous_query_codes, polysemous_threshold) = if let Some(pq_params) =
-                params.quantization.pq
-                && pq_params.use_polysemous
-                && quantized.polysemous_trained()
-            {
-                (
-                    quantized.pq_encode_query_codes(query),
-                    pq_params.resolve_hamming_threshold(),
-                )
-            } else {
-                (None, 0)
-            };
+            //
+            // PqParams::resolve mirrors the trainer (PqCodebook::train),
+            // which falls back to PqParams::default_for_dim when the
+            // embedder leaves `quantization.pq` as `None`. Without this
+            // resolution the search-side filter would silently disable
+            // itself whenever the trainer used defaults.
+            let resolved_pq = PqParams::resolve(graph.dimensions(), params.quantization.pq);
+            let (polysemous_query_codes, polysemous_threshold) =
+                if resolved_pq.use_polysemous && quantized.polysemous_trained() {
+                    (
+                        quantized.pq_encode_query_codes(query),
+                        resolved_pq.resolve_hamming_threshold(),
+                    )
+                } else {
+                    (None, 0)
+                };
             return Self::Asymmetric {
                 query,
                 metric: params.metric,

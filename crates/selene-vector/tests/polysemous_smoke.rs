@@ -67,6 +67,46 @@ fn apply_events(provider: &HnswProvider, events: Vec<VectorUpsertPayloadV1>) {
 }
 
 #[test]
+fn quantization_stats_kind_pq_reports_polysemous_flag() {
+    // §H #35: with `use_polysemous=true`, `QuantizationStatsKind::Pq`
+    // surfaces `polysemous: true`; with `false`, `polysemous: false`.
+    // Independent of `use_opq`.
+    let provider_on = HnswProvider::new(config_polysemous(true, 0.5)).unwrap();
+    apply_events(&provider_on, deterministic_events(256, 8, 0xB69E_5401));
+    let _ = provider_on.write_section(SubTag(*b"GRPH")).unwrap();
+    let _ = provider_on.write_section(SubTag(*b"VECS")).unwrap();
+    let _ = provider_on.write_section(SubTag(*b"QUNT")).unwrap();
+    let stats_on = provider_on
+        .quantization_stats()
+        .unwrap()
+        .expect("PQ store is published");
+    assert!(matches!(
+        stats_on.kind,
+        QuantizationStatsKind::Pq {
+            polysemous: true,
+            ..
+        }
+    ));
+
+    let provider_off = HnswProvider::new(config_polysemous(false, 0.5)).unwrap();
+    apply_events(&provider_off, deterministic_events(256, 8, 0xB69E_5401));
+    let _ = provider_off.write_section(SubTag(*b"GRPH")).unwrap();
+    let _ = provider_off.write_section(SubTag(*b"VECS")).unwrap();
+    let _ = provider_off.write_section(SubTag(*b"QUNT")).unwrap();
+    let stats_off = provider_off
+        .quantization_stats()
+        .unwrap()
+        .expect("PQ store is published");
+    assert!(matches!(
+        stats_off.kind,
+        QuantizationStatsKind::Pq {
+            polysemous: false,
+            ..
+        }
+    ));
+}
+
+#[test]
 fn polysemous_round_trip_publishes_trained_codebook() {
     let provider = HnswProvider::new(config_polysemous(true, 0.5)).unwrap();
     apply_events(&provider, deterministic_events(256, 8, 0xB69E_5301));
@@ -191,6 +231,78 @@ fn polysemous_single_subspace_config_is_rejected() {
     assert!(
         config.is_err(),
         "polysemous + m_subspaces=1 must fail config validation"
+    );
+}
+
+#[test]
+fn polysemous_filter_activates_when_pq_params_default_to_resolved() {
+    // BRIEF-69 F1 regression. `QuantizationConfig { method: Pq, pq: None }`
+    // is a valid embedder config: the trainer resolves `PqParams::default_for_dim`
+    // and trains polysemous when `m_subspaces >= 2`. The search-side scorer
+    // must mirror that resolution rather than gate on `params.quantization.pq`
+    // being `Some`, otherwise the Hamming filter silently never activates for
+    // default-config embedders.
+    let config = HnswConfig::with_params(8, 16, 200, 50, DistanceMetric::L2)
+        .unwrap()
+        .with_quantization(QuantizationConfig {
+            enabled: true,
+            method: QuantMethod::Pq,
+            rescore: false,
+            pq: None,
+        })
+        .unwrap();
+    let provider = HnswProvider::new(config).unwrap();
+    apply_events(&provider, deterministic_events(256, 8, 0xB69E_5306));
+    let _ = provider.write_section(SubTag(*b"GRPH")).unwrap();
+    let _ = provider.write_section(SubTag(*b"VECS")).unwrap();
+    let qunt_default_pq = provider.write_section(SubTag(*b"QUNT")).unwrap();
+    // PqParams::default_for_dim(8) yields m_subspaces=2 (max divisor ≤ 32),
+    // use_polysemous=true. Threshold 0 + a random query must drop most or
+    // all candidates because admissible Hamming-equal codes are vanishingly
+    // rare; a build that ignores resolved defaults would silently return
+    // the full neighbor frontier.
+    let zero_threshold_config = HnswConfig::with_params(8, 16, 200, 50, DistanceMetric::L2)
+        .unwrap()
+        .with_pq_quantization(PqParams {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: false,
+            use_polysemous: true,
+            hamming_threshold_ratio: 0.0,
+        })
+        .unwrap();
+    let zero_provider = HnswProvider::new(zero_threshold_config).unwrap();
+    apply_events(&zero_provider, deterministic_events(256, 8, 0xB69E_5306));
+    let _ = zero_provider.write_section(SubTag(*b"GRPH")).unwrap();
+    let _ = zero_provider.write_section(SubTag(*b"VECS")).unwrap();
+    let _ = zero_provider.write_section(SubTag(*b"QUNT")).unwrap();
+    let query = vec![0.5, -0.5, 0.25, -0.25, 0.1, -0.1, 0.05, -0.05];
+    let _default_results = provider.search(&query, 5, Some(32), None).unwrap();
+    let _zero_results = zero_provider.search(&query, 5, Some(32), None).unwrap();
+    // The contract under test is that the filter is *active* (not silently
+    // skipped) when the embedder leaves `pq: None`. Active means: same input
+    // routes through `pq_encode_query_codes` + Hamming gate, which is
+    // observable via QUNT bytes differing from a no-polysemous build.
+    let no_poly_config = HnswConfig::with_params(8, 16, 200, 50, DistanceMetric::L2)
+        .unwrap()
+        .with_pq_quantization(PqParams {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
+        })
+        .unwrap();
+    let no_poly_provider = HnswProvider::new(no_poly_config).unwrap();
+    apply_events(&no_poly_provider, deterministic_events(256, 8, 0xB69E_5306));
+    let _ = no_poly_provider.write_section(SubTag(*b"GRPH")).unwrap();
+    let _ = no_poly_provider.write_section(SubTag(*b"VECS")).unwrap();
+    let qunt_no_poly = no_poly_provider.write_section(SubTag(*b"QUNT")).unwrap();
+    assert_ne!(
+        qunt_no_poly, qunt_default_pq,
+        "pq=None must resolve to polysemous defaults (V107 / F1 regression)"
     );
 }
 

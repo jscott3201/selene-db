@@ -389,6 +389,14 @@ mod tests {
     /// A Gray-coded σ (mapping linear order to a sequence whose byte XORs
     /// have low popcount for adjacent elements) MUST strictly beat the
     /// identity σ on the polysemous loss.
+    ///
+    /// Codex F4 hardening: a no-op SA solver that returns `[0,1,2,3]` would
+    /// pass `solver_loss <= identity_loss` trivially. This test pins:
+    ///   (a) sigma is a valid permutation,
+    ///   (b) sigma is NOT the identity (solver actually moved),
+    ///   (c) solver_loss is STRICTLY less than identity_loss, and
+    ///   (d) solver_loss matches the global optimum over all 4! = 24
+    ///       permutations (a 4-element brute force is tractable).
     #[test]
     fn polysemous_known_answer_k4_beats_identity() {
         let centroids = linear_centroids_1d(&[0.0, 1.0, 3.0, 7.0]);
@@ -406,11 +414,81 @@ mod tests {
         .unwrap();
         let solver_loss = total_loss_for_tests(&centroids, &sigmas[0], 4, 1);
 
-        assert!(
-            solver_loss <= identity_loss,
-            "solver loss {solver_loss} should not exceed identity loss {identity_loss}"
-        );
         assert!(is_valid_permutation(&sigmas[0], 4));
+        assert_ne!(
+            sigmas[0], identity,
+            "SA must produce a non-identity permutation on this exponentially-spaced corpus"
+        );
+        assert!(
+            solver_loss < identity_loss,
+            "solver loss {solver_loss} must be STRICTLY less than identity loss {identity_loss}"
+        );
+
+        // Brute-force the global optimum and confirm SA matches it.
+        let mut best_loss = f32::INFINITY;
+        let perms = enumerate_permutations(4);
+        for perm in &perms {
+            let loss = total_loss_for_tests(&centroids, perm, 4, 1);
+            if loss < best_loss {
+                best_loss = loss;
+            }
+        }
+        let tolerance = (best_loss.abs() * 1.0e-5).max(1.0e-6);
+        assert!(
+            (solver_loss - best_loss).abs() < tolerance,
+            "solver loss {solver_loss} should match global optimum {best_loss} within {tolerance}"
+        );
+    }
+
+    /// Codex F4 second half: §G correlation/improvement floor. The §G
+    /// contract is "polysemous σ produces measurable rank improvement over
+    /// identity for L2-vs-Hamming on a realistic centroid corpus." Use
+    /// 8 centroids on a 1-D line to keep enumeration tractable while still
+    /// having an interesting permutation space (40320 perms).
+    #[test]
+    fn polysemous_improvement_over_identity_meets_floor() {
+        let centroids = linear_centroids_1d(&[0.0, 1.0, 3.0, 7.0, 8.5, 11.0, 12.7, 16.2]);
+        let identity: Vec<u8> = (0u8..8).collect();
+        let identity_loss = total_loss_for_tests(&centroids, &identity, 8, 1);
+        let sigmas = train(
+            &centroids,
+            1,
+            8,
+            1,
+            POLYSEMOUS_TRAIN_SEED,
+            "test_improvement_floor",
+        )
+        .unwrap();
+        let solver_loss = total_loss_for_tests(&centroids, &sigmas[0], 8, 1);
+        assert_ne!(sigmas[0], identity);
+        // Improvement >= 10% — well below FAISS's typical 30–50% for
+        // structured data but tight enough that a degenerate solver fails.
+        let improvement = (identity_loss - solver_loss) / identity_loss.abs().max(1.0e-9);
+        assert!(
+            improvement >= 0.10,
+            "polysemous improvement {improvement:.4} must be at least 10% (identity_loss={identity_loss}, solver_loss={solver_loss})"
+        );
+    }
+
+    fn enumerate_permutations(k: usize) -> Vec<Vec<u8>> {
+        fn recurse(prefix: &mut Vec<u8>, remaining: &mut Vec<u8>, out: &mut Vec<Vec<u8>>) {
+            if remaining.is_empty() {
+                out.push(prefix.clone());
+                return;
+            }
+            for i in 0..remaining.len() {
+                let v = remaining.remove(i);
+                prefix.push(v);
+                recurse(prefix, remaining, out);
+                prefix.pop();
+                remaining.insert(i, v);
+            }
+        }
+        let mut prefix = Vec::with_capacity(k);
+        let mut remaining: Vec<u8> = (0..k as u8).collect();
+        let mut out = Vec::new();
+        recurse(&mut prefix, &mut remaining, &mut out);
+        out
     }
 
     #[test]

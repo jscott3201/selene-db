@@ -112,6 +112,7 @@ impl QuantizedStorePq {
             kind: QuantizationStatsKind::Pq {
                 bytes_codebook: self.bytes_codebook(),
                 bytes_rotation: self.bytes_rotation(),
+                polysemous: self.codebook.polysemous_trained,
             },
             bytes_norms: self.bytes_norms(),
             compression_ratio,
@@ -217,6 +218,7 @@ mod tests {
             QuantizationStatsKind::Pq {
                 bytes_codebook,
                 bytes_rotation,
+                polysemous: false,
             } if bytes_codebook == 2 * 256 * 2 * std::mem::size_of::<f32>()
                 && bytes_rotation == 4 * 4 * std::mem::size_of::<f32>()
         ));

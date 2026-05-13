@@ -141,6 +141,8 @@ pub enum IvfStats {
         bytes_reconstructed_norms: usize,
         /// Approximate `f32_bytes / compressed_bytes` ratio.
         compression_ratio: f32,
+        /// V116: whether the trained residual codebook is polysemous-permuted.
+        polysemous: bool,
     },
     /// Deferred IVF state below the training threshold.
     Deferred {

@@ -66,8 +66,9 @@ pub(crate) fn render_stats(stats: &QuantizationStatsSummary, out: &mut Vec<Strin
         QuantizationStatsKind::Pq {
             bytes_codebook,
             bytes_rotation,
+            polysemous,
         } => out.push(format!(
-            "stats method={} dim={} code_count={} bytes_codes={} bytes_codebook={} bytes_rotation={} bytes_norms={} compression_ratio={}",
+            "stats method={} dim={} code_count={} bytes_codes={} bytes_codebook={} bytes_rotation={} bytes_norms={} compression_ratio={} polysemous={}",
             quant_method_name(stats.method),
             stats.dim,
             stats.code_count,
@@ -75,7 +76,8 @@ pub(crate) fn render_stats(stats: &QuantizationStatsSummary, out: &mut Vec<Strin
             bytes_codebook,
             bytes_rotation,
             stats.bytes_norms,
-            format_score(stats.compression_ratio)
+            format_score(stats.compression_ratio),
+            polysemous,
         )),
     }
 }

@@ -230,6 +230,8 @@ pub enum QuantizationStatsKind {
         bytes_codebook: usize,
         /// Bytes used by an optional OPQ rotation matrix.
         bytes_rotation: usize,
+        /// V116: whether the trained codebook is polysemous-permuted.
+        polysemous: bool,
     },
 }
 
