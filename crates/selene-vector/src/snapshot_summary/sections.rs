@@ -120,13 +120,14 @@ fn render_qunt(bytes: &[u8]) -> String {
                 store.approx_norms.len()
             ),
             QuantizedStore::Pq(store) => format!(
-                "QUNT(len={}, blake3_8={}, method={:?}, dim={}, nodes={}, codebook_bytes={}, codes_bytes={}, norms={})",
+                "QUNT(len={}, blake3_8={}, method={:?}, dim={}, nodes={}, codebook_bytes={}, rotation_bytes={}, codes_bytes={}, norms={})",
                 bytes.len(),
                 blake3_8(bytes),
                 method_token(body.method),
                 body.dimensions,
                 body.node_count,
-                store.codebook.len() * std::mem::size_of::<f32>(),
+                store.codebook.bytes_codebook(),
+                store.codebook.bytes_rotation(),
                 store.codes.len(),
                 store.approx_norms.as_ref().map_or(0, Vec::len)
             ),

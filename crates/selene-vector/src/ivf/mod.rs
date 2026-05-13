@@ -133,6 +133,8 @@ pub enum IvfStats {
         bytes_coarse_centroids: usize,
         /// Bytes used by residual PQ codebook.
         bytes_residual_codebook: usize,
+        /// Bytes used by residual OPQ rotation, if present.
+        bytes_rotation: usize,
         /// Bytes used by posting-list PQ codes.
         bytes_posting_lists: usize,
         /// Bytes used by reconstructed norm cache.

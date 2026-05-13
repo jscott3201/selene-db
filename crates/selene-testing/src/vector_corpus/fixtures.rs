@@ -64,6 +64,7 @@ pub struct VectorPqSpec {
     pub m_subspaces: usize,
     pub k_centroids: u32,
     pub train_min_vectors: usize,
+    pub opq: bool,
 }
 
 impl VectorQuantizationSpec {
@@ -96,6 +97,7 @@ impl VectorQuantizationSpec {
             m_subspaces: 1,
             k_centroids: 256,
             train_min_vectors: 256,
+            opq: false,
         }),
     };
 
@@ -107,6 +109,7 @@ impl VectorQuantizationSpec {
             m_subspaces: 1,
             k_centroids: 256,
             train_min_vectors: 256,
+            opq: false,
         }),
     };
 
@@ -118,6 +121,19 @@ impl VectorQuantizationSpec {
             m_subspaces: 1,
             k_centroids: 256,
             train_min_vectors: 512,
+            opq: false,
+        }),
+    };
+
+    pub const PQ_OPQ: Self = Self {
+        enabled: true,
+        method: QuantMethodMirror::Pq,
+        rescore: false,
+        pq: Some(VectorPqSpec {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            opq: true,
         }),
     };
 }
@@ -157,6 +173,7 @@ impl IvfConfigSpec {
                 m_subspaces: 1,
                 k_centroids: 256,
                 train_min_vectors: 256,
+                opq: false,
             },
             training_min_vectors: 256,
         }
@@ -295,6 +312,7 @@ pub enum SyntheticErrorFields {
     IvfSectionInconsistent,
     IvfTrainingFailed,
     PqCodebookTrainFailed,
+    OpqTrainingFailed,
 }
 
 impl VectorCorpusInvocation {

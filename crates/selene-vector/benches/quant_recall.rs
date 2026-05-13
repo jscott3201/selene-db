@@ -25,29 +25,61 @@ fn bench_quant_recall(c: &mut Criterion) {
         SearchMode::F32,
         SearchMode::Sq8 { rescore: false },
         SearchMode::Sq8 { rescore: true },
-        SearchMode::Pq { rescore: false },
-        SearchMode::Pq { rescore: true },
+        SearchMode::Pq {
+            rescore: false,
+            use_opq: false,
+        },
+        SearchMode::Pq {
+            rescore: true,
+            use_opq: false,
+        },
     ] {
-        for ef_search in [10_usize, 25, 50, 100] {
-            let provider = provider_for(&corpus, mode, ef_search);
-            let observed = mean_recall_for_provider(&provider, &corpus, 10, ef_search);
-            let variant = format!("{}/recall_{observed:.3}", mode.name());
-            group.bench_function(BenchmarkId::new(variant, ef_search), |b| {
-                b.iter(|| {
-                    let recall = mean_recall_for_provider(&provider, &corpus, 10, ef_search);
-                    std::hint::black_box(recall);
-                });
-            });
-        }
+        bench_mode(&mut group, &corpus, mode);
     }
     group.finish();
+}
+
+fn bench_opq_recall(c: &mut Criterion) {
+    let corpus = synthetic_corpus(1024, 16);
+    let mut group = c.benchmark_group("opq_recall_at_10");
+    for mode in [
+        SearchMode::Pq {
+            rescore: false,
+            use_opq: true,
+        },
+        SearchMode::Pq {
+            rescore: true,
+            use_opq: true,
+        },
+    ] {
+        bench_mode(&mut group, &corpus, mode);
+    }
+    group.finish();
+}
+
+fn bench_mode(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    corpus: &SyntheticCorpus,
+    mode: SearchMode,
+) {
+    for ef_search in [10_usize, 25, 50, 100] {
+        let provider = provider_for(corpus, mode, ef_search);
+        let observed = mean_recall_for_provider(&provider, corpus, 10, ef_search);
+        let variant = format!("{}/recall_{observed:.3}", mode.name());
+        group.bench_function(BenchmarkId::new(variant, ef_search), |b| {
+            b.iter(|| {
+                let recall = mean_recall_for_provider(&provider, corpus, 10, ef_search);
+                std::hint::black_box(recall);
+            });
+        });
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum SearchMode {
     F32,
     Sq8 { rescore: bool },
-    Pq { rescore: bool },
+    Pq { rescore: bool, use_opq: bool },
 }
 
 impl SearchMode {
@@ -56,8 +88,22 @@ impl SearchMode {
             Self::F32 => "f32",
             Self::Sq8 { rescore: false } => "sq8",
             Self::Sq8 { rescore: true } => "sq8_rescore",
-            Self::Pq { rescore: false } => "pq",
-            Self::Pq { rescore: true } => "pq_rescore",
+            Self::Pq {
+                rescore: false,
+                use_opq: false,
+            } => "pq",
+            Self::Pq {
+                rescore: true,
+                use_opq: false,
+            } => "pq_rescore",
+            Self::Pq {
+                rescore: false,
+                use_opq: true,
+            } => "opq",
+            Self::Pq {
+                rescore: true,
+                use_opq: true,
+            } => "opq_rescore",
         }
     }
 
@@ -69,7 +115,7 @@ impl SearchMode {
                 rescore,
                 ..Default::default()
             },
-            Self::Pq { rescore } => QuantizationConfig {
+            Self::Pq { rescore, use_opq } => QuantizationConfig {
                 enabled: true,
                 method: QuantMethod::Pq,
                 rescore,
@@ -77,6 +123,7 @@ impl SearchMode {
                     m_subspaces: 2,
                     k_centroids: 256,
                     train_min_vectors: 256,
+                    use_opq,
                 }),
             },
         }
@@ -216,6 +263,6 @@ fn criterion_config() -> Criterion {
 criterion_group! {
     name = quant_recall_group;
     config = criterion_config();
-    targets = bench_quant_recall
+    targets = bench_quant_recall, bench_opq_recall
 }
 criterion_main!(quant_recall_group);

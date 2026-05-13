@@ -4,13 +4,24 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::{DistanceMetric, VectorError, snapshot};
 
+pub(crate) mod linalg;
+mod opq;
 mod pq;
 mod sq8;
 
-pub(crate) use pq::{PqCodebook, QuantizedStorePq};
+pub(crate) use pq::{PqCodebook, PqCodebookV1Legacy, QuantizedStorePq};
 #[cfg(test)]
 pub(crate) use sq8::PerCoordRange;
 pub(crate) use sq8::QuantizedStoreSq8;
+
+/// Maximum vector dimension for OPQ rotation training.
+pub const OPQ_MAX_DIM: usize = 1024;
+
+/// Return the maximum vector dimension that permits OPQ training.
+#[must_use]
+pub const fn opq_max_dim() -> usize {
+    OPQ_MAX_DIM
+}
 
 /// Quantization method tag for persisted quantized vector stores.
 #[derive(Archive, Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -52,6 +63,8 @@ pub struct PqParams {
     pub k_centroids: u32,
     /// Minimum vector count required before PQ training may run.
     pub train_min_vectors: usize,
+    /// Train an OPQ rotation alongside the PQ codebook when dimensions permit.
+    pub use_opq: bool,
 }
 
 impl PqParams {
@@ -70,6 +83,7 @@ impl PqParams {
             m_subspaces,
             k_centroids: Self::K_CENTROIDS_V1,
             train_min_vectors: Self::K_CENTROIDS_V1 as usize,
+            use_opq: dim <= OPQ_MAX_DIM,
         }
     }
 
@@ -111,6 +125,11 @@ impl PqParams {
                 ),
             });
         }
+        if self.use_opq && dim > OPQ_MAX_DIM {
+            return Err(VectorError::InvalidConfig {
+                reason: format!("OPQ requires dim <= OPQ_MAX_DIM ({OPQ_MAX_DIM}), observed {dim}"),
+            });
+        }
         Ok(())
     }
 }
@@ -141,6 +160,8 @@ pub enum QuantizationStatsKind {
     Pq {
         /// Bytes used by learned PQ centroids.
         bytes_codebook: usize,
+        /// Bytes used by an optional OPQ rotation matrix.
+        bytes_rotation: usize,
     },
 }
 
@@ -244,7 +265,8 @@ impl QuantizedStore {
 
 #[cfg(test)]
 mod tests {
-    use super::PqParams;
+    use super::{OPQ_MAX_DIM, PqParams};
+    use crate::VectorError;
 
     #[test]
     fn pq_default_for_dim_always_passes_validate_for_dim() {
@@ -262,5 +284,25 @@ mod tests {
 
         assert_eq!(params.m_subspaces, 1);
         params.validate_for_dim(17).unwrap();
+    }
+
+    #[test]
+    fn opq_default_respects_dim_cap() {
+        assert!(PqParams::default_for_dim(OPQ_MAX_DIM).use_opq);
+        assert!(!PqParams::default_for_dim(OPQ_MAX_DIM + 1).use_opq);
+    }
+
+    #[test]
+    fn explicit_opq_above_dim_cap_is_rejected() {
+        let params = PqParams {
+            use_opq: true,
+            ..PqParams::default_for_dim(OPQ_MAX_DIM + 1)
+        };
+
+        let err = params
+            .validate_for_dim(OPQ_MAX_DIM + 1)
+            .expect_err("explicit OPQ above the cap is invalid");
+
+        assert!(matches!(err, VectorError::InvalidConfig { .. }));
     }
 }

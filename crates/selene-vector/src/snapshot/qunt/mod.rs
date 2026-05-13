@@ -2,7 +2,10 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
+mod v1_legacy;
+
 use crate::hnsw::HnswGraph;
+use crate::quantize::linalg;
 use crate::quantize::{QuantMethod, QuantizedStore};
 use crate::{DistanceMetric, HnswConfig, PqParams, VectorError};
 
@@ -56,6 +59,9 @@ pub(crate) fn encode_qunt_store(
         node_count,
         store,
     };
+    if let Some(bytes) = v1_legacy::encode_if_legacy_compatible(&body)? {
+        return Ok(bytes);
+    }
     let archived = rkyv::to_bytes::<rkyv::rancor::Error>(&body)
         .map_err(|error| encode_failed(QUNT, error.to_string()))?;
     let mut out = Vec::with_capacity(PAYLOAD_MAGIC_QUNT.len() + archived.len());
@@ -71,8 +77,10 @@ pub(crate) fn decode_qunt(bytes: &[u8]) -> Result<QuntBodyV1, VectorError> {
     if magic != PAYLOAD_MAGIC_QUNT {
         return Err(decode_failed(QUNT, "QUNT magic mismatch"));
     }
-    let decoded = rkyv::from_bytes::<QuntBodyV1, rkyv::rancor::Error>(body)
-        .map_err(|error| decode_failed(QUNT, format!("rkyv decode failed: {error}")))?;
+    let decoded = match rkyv::from_bytes::<QuntBodyV1, rkyv::rancor::Error>(body) {
+        Ok(decoded) => decoded,
+        Err(v2_error) => v1_legacy::decode(body, v2_error)?,
+    };
     validate_qunt_body(&decoded)?;
     Ok(decoded)
 }
@@ -180,11 +188,11 @@ fn validate_pq_store(
     dim: usize,
     node_count: usize,
 ) -> Result<(), VectorError> {
-    let m = usize::try_from(store.m_subspaces)
+    let m = usize::try_from(store.codebook.m_subspaces)
         .map_err(|_| decode_failed(QUNT, "QUNT PQ m_subspaces overflow"))?;
-    let k = usize::try_from(store.k_centroids)
+    let k = usize::try_from(store.codebook.k_centroids)
         .map_err(|_| decode_failed(QUNT, "QUNT PQ k_centroids overflow"))?;
-    let subdim = usize::try_from(store.subspace_dim)
+    let subdim = usize::try_from(store.codebook.subspace_dim)
         .map_err(|_| decode_failed(QUNT, "QUNT PQ subspace_dim overflow"))?;
     if m == 0 || k == 0 || subdim == 0 {
         return Err(decode_failed(
@@ -198,22 +206,25 @@ fn validate_pq_store(
             format!("QUNT PQ m_subspaces * subspace_dim disagrees with dimensions {dim}"),
         ));
     }
-    if store.k_centroids != PqParams::K_CENTROIDS_V1 {
+    if store.codebook.k_centroids != PqParams::K_CENTROIDS_V1 {
         return Err(decode_failed(
             QUNT,
-            format!("QUNT PQ k_centroids {} is not supported", store.k_centroids),
+            format!(
+                "QUNT PQ k_centroids {} is not supported",
+                store.codebook.k_centroids
+            ),
         ));
     }
     let expected_codebook = m
         .checked_mul(k)
         .and_then(|value| value.checked_mul(subdim))
         .ok_or_else(|| decode_failed(QUNT, "QUNT PQ codebook length overflow"))?;
-    if store.codebook.len() != expected_codebook {
+    if store.codebook.centroids.len() != expected_codebook {
         return Err(decode_failed(
             QUNT,
             format!(
                 "QUNT PQ codebook length {} disagrees with expected {expected_codebook}",
-                store.codebook.len()
+                store.codebook.centroids.len()
             ),
         ));
     }
@@ -229,7 +240,7 @@ fn validate_pq_store(
             ),
         ));
     }
-    for (index, value) in store.codebook.iter().copied().enumerate() {
+    for (index, value) in store.codebook.centroids.iter().copied().enumerate() {
         if !value.is_finite() {
             return Err(decode_failed(
                 QUNT,
@@ -237,7 +248,41 @@ fn validate_pq_store(
             ));
         }
     }
+    validate_rotation(store.codebook.rotation.as_deref(), dim)?;
     validate_norms(store.approx_norms.as_deref(), node_count, false)?;
+    Ok(())
+}
+
+fn validate_rotation(rotation: Option<&[f32]>, dim: usize) -> Result<(), VectorError> {
+    let Some(rotation) = rotation else {
+        return Ok(());
+    };
+    let expected = dim
+        .checked_mul(dim)
+        .ok_or_else(|| decode_failed(QUNT, "QUNT PQ OPQ rotation length overflow"))?;
+    if rotation.len() != expected {
+        return Err(decode_failed(
+            QUNT,
+            format!(
+                "QUNT PQ OPQ rotation length {} disagrees with dim^2 {expected}",
+                rotation.len()
+            ),
+        ));
+    }
+    for (index, value) in rotation.iter().copied().enumerate() {
+        if !value.is_finite() {
+            return Err(decode_failed(
+                QUNT,
+                format!("non-finite QUNT PQ OPQ rotation component at index {index}: {value}"),
+            ));
+        }
+    }
+    if !linalg::is_orthonormal(rotation, dim, 1.0e-5) {
+        return Err(decode_failed(
+            QUNT,
+            "QUNT PQ OPQ rotation is not orthonormal",
+        ));
+    }
     Ok(())
 }
 
@@ -245,14 +290,38 @@ fn validate_store_for_config(
     store: &QuantizedStore,
     config: &HnswConfig,
 ) -> Result<(), VectorError> {
-    if let QuantizedStore::Pq(store) = store
-        && config.metric == DistanceMetric::Cosine
-        && store.approx_norms.is_none()
-    {
-        return Err(decode_failed(
-            QUNT,
-            "QUNT PQ cosine store requires approx_norms",
-        ));
+    if let QuantizedStore::Pq(store) = store {
+        let params = PqParams::resolve(config.dim, config.quantization.pq);
+        if store.codebook.m_subspaces as usize != params.m_subspaces {
+            return Err(decode_failed(
+                QUNT,
+                "QUNT PQ m_subspaces disagrees with provider config",
+            ));
+        }
+        if store.codebook.k_centroids != params.k_centroids {
+            return Err(decode_failed(
+                QUNT,
+                "QUNT PQ k_centroids disagrees with provider config",
+            ));
+        }
+        if store.codebook.dim() != config.dim {
+            return Err(decode_failed(
+                QUNT,
+                "QUNT PQ dimensions disagree with provider config",
+            ));
+        }
+        if !params.use_opq && store.codebook.rotation.is_some() {
+            return Err(decode_failed(
+                QUNT,
+                "QUNT PQ OPQ rotation present while provider config disables OPQ",
+            ));
+        }
+        if config.metric == DistanceMetric::Cosine && store.approx_norms.is_none() {
+            return Err(decode_failed(
+                QUNT,
+                "QUNT PQ cosine store requires approx_norms",
+            ));
+        }
     }
     Ok(())
 }
@@ -367,6 +436,7 @@ mod tests {
                     m_subspaces: 1,
                     k_centroids: 256,
                     train_min_vectors: 256,
+                    use_opq: false,
                 }),
                 ..Default::default()
             })
@@ -397,13 +467,21 @@ mod tests {
         }
     }
 
+    fn pq_mut(body: &mut QuntBodyV1) -> &mut crate::quantize::QuantizedStorePq {
+        match &mut body.store {
+            QuantizedStore::Pq(store) => store,
+            QuantizedStore::Sq8(_) => panic!("test body should be PQ"),
+        }
+    }
+
     #[test]
     fn qunt_roundtrip_preserves_bytes() {
         let graph = graph();
         let (bytes, _) = encode_qunt(&graph, &config()).unwrap();
         let decoded = decode_qunt(&bytes).unwrap();
+        let reencoded = encode_qunt_store(&graph, decoded.store).unwrap();
 
-        assert_eq!(bytes, raw_encode(&decoded));
+        assert_eq!(bytes, reencoded);
     }
 
     #[test]
@@ -413,9 +491,9 @@ mod tests {
 
         assert!(bytes.starts_with(&PAYLOAD_MAGIC_QUNT));
         let archived = &bytes[PAYLOAD_MAGIC_QUNT.len()..];
-        let decoded = rkyv::from_bytes::<QuntBodyV1, rkyv::rancor::Error>(archived)
-            .expect("method lives inside archived body");
+        let decoded = decode_qunt(&bytes).expect("method lives inside archived body");
         assert_eq!(decoded.method, QuantMethod::Sq8.to_wire());
+        assert!(!archived.is_empty());
     }
 
     #[test]
@@ -426,6 +504,34 @@ mod tests {
 
         assert_eq!(decoded.method, QuantMethod::Pq.to_wire());
         assert!(matches!(decoded.store, QuantizedStore::Pq(_)));
+    }
+
+    #[test]
+    fn qunt_decode_rejects_bad_pq_rotation_shape() {
+        let graph = pq_graph(2);
+        let (bytes, _) = encode_qunt(&graph, &pq_config(DistanceMetric::L2)).unwrap();
+        let mut decoded = decode_qunt(&bytes).unwrap();
+        pq_mut(&mut decoded).codebook.rotation = Some(vec![1.0, 0.0, 0.0]);
+
+        let err = decode_qunt(&raw_encode(&decoded)).expect_err("bad rotation rejected");
+
+        assert!(
+            matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("rotation length"))
+        );
+    }
+
+    #[test]
+    fn qunt_decode_rejects_non_orthonormal_pq_rotation() {
+        let graph = pq_graph(2);
+        let (bytes, _) = encode_qunt(&graph, &pq_config(DistanceMetric::L2)).unwrap();
+        let mut decoded = decode_qunt(&bytes).unwrap();
+        pq_mut(&mut decoded).codebook.rotation = Some(vec![2.0, 0.0, 0.0, 1.0]);
+
+        let err = decode_qunt(&raw_encode(&decoded)).expect_err("bad rotation rejected");
+
+        assert!(
+            matches!(err, VectorError::SectionDecodeFailed { reason, .. } if reason.contains("not orthonormal"))
+        );
     }
 
     #[test]

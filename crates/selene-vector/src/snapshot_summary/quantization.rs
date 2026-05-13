@@ -63,13 +63,17 @@ pub(crate) fn render_stats(stats: &QuantizationStatsSummary, out: &mut Vec<Strin
             stats.bytes_norms,
             format_score(stats.compression_ratio)
         )),
-        QuantizationStatsKind::Pq { bytes_codebook } => out.push(format!(
-            "stats method={} dim={} code_count={} bytes_codes={} bytes_codebook={} bytes_norms={} compression_ratio={}",
+        QuantizationStatsKind::Pq {
+            bytes_codebook,
+            bytes_rotation,
+        } => out.push(format!(
+            "stats method={} dim={} code_count={} bytes_codes={} bytes_codebook={} bytes_rotation={} bytes_norms={} compression_ratio={}",
             quant_method_name(stats.method),
             stats.dim,
             stats.code_count,
             stats.bytes_codes,
             bytes_codebook,
+            bytes_rotation,
             stats.bytes_norms,
             format_score(stats.compression_ratio)
         )),

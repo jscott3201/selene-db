@@ -301,6 +301,7 @@ fn error_fixtures_split_api_vs_synthetic() {
         VectorErrorKindMirror::IvfSectionInconsistent,
         VectorErrorKindMirror::IvfTrainingFailed,
         VectorErrorKindMirror::PqCodebookTrainFailed,
+        VectorErrorKindMirror::OpqTrainingFailed,
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();
@@ -414,6 +415,7 @@ fn recall_bench_uses_public_provider_search() {
     assert!(quant_bench.contains(".search(query, k, Some(ef_search), None)"));
     assert!(!quant_bench.contains("hnsw::search::search"));
     assert!(quant_bench.contains("benchmark_group(\"quant_recall_at_10\")"));
+    assert!(quant_bench.contains("benchmark_group(\"opq_recall_at_10\")"));
 }
 
 #[test]

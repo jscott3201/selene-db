@@ -157,6 +157,7 @@ pub enum VectorErrorKindMirror {
     IvfSectionInconsistent,
     IvfTrainingFailed,
     PqCodebookTrainFailed,
+    OpqTrainingFailed,
 }
 
 impl VectorErrorKindMirror {
@@ -183,6 +184,7 @@ impl VectorErrorKindMirror {
         Self::IvfSectionInconsistent,
         Self::IvfTrainingFailed,
         Self::PqCodebookTrainFailed,
+        Self::OpqTrainingFailed,
     ];
 
     #[must_use]
@@ -210,6 +212,7 @@ impl VectorErrorKindMirror {
             Self::IvfSectionInconsistent => "IvfSectionInconsistent",
             Self::IvfTrainingFailed => "IvfTrainingFailed",
             Self::PqCodebookTrainFailed => "PqCodebookTrainFailed",
+            Self::OpqTrainingFailed => "OpqTrainingFailed",
         }
     }
 }

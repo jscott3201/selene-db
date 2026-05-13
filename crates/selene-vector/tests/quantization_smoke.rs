@@ -355,7 +355,45 @@ fn pq_write_qunt_trains_and_publishes_store() {
     assert_eq!(stats.code_count, 256);
     assert!(matches!(
         stats.kind,
-        QuantizationStatsKind::Pq { bytes_codebook } if bytes_codebook > 0
+        QuantizationStatsKind::Pq {
+            bytes_codebook,
+            bytes_rotation,
+        } if bytes_codebook > 0 && bytes_rotation == 0
+    ));
+}
+
+#[test]
+fn pq_opq_stats_report_rotation_bytes() {
+    let config = HnswConfig::with_params(8, 16, 200, 50, DistanceMetric::L2)
+        .unwrap()
+        .with_quantization(QuantizationConfig {
+            enabled: true,
+            method: QuantMethod::Pq,
+            pq: Some(PqParams {
+                m_subspaces: 2,
+                k_centroids: 256,
+                train_min_vectors: 256,
+                use_opq: true,
+            }),
+            ..Default::default()
+        })
+        .unwrap();
+    let source = provider(config);
+    apply_events(&source, deterministic_events(256, 8, 166));
+
+    let (_grph, _vecs, qunt) = snapshot_bytes(&source);
+
+    assert!(qunt.starts_with(b"VQNT"));
+    let stats = source
+        .quantization_stats()
+        .unwrap()
+        .expect("OPQ store published after QUNT write");
+    assert!(matches!(
+        stats.kind,
+        QuantizationStatsKind::Pq {
+            bytes_codebook,
+            bytes_rotation,
+        } if bytes_codebook > 0 && bytes_rotation == 8 * 8 * std::mem::size_of::<f32>()
     ));
 }
 
@@ -440,6 +478,7 @@ fn pq_dim_not_divisible_by_m_rejected_at_validate() {
                 m_subspaces: 3,
                 k_centroids: 256,
                 train_min_vectors: 256,
+                use_opq: false,
             }),
             ..Default::default()
         })
@@ -492,6 +531,7 @@ fn config_pq(
                 m_subspaces: 1,
                 k_centroids: 256,
                 train_min_vectors,
+                use_opq: false,
             }),
         })
         .unwrap()

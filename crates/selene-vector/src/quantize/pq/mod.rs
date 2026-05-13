@@ -2,11 +2,14 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::clustering::{kmeans_train_subspace, nearest_centroid, squared_l2};
-use crate::hnsw::distance::dot_product;
-use crate::{DistanceMetric, PqParams, QuantMethod, VectorError, snapshot};
+mod encode;
+mod store;
 
-use super::{QuantizationStats, QuantizationStatsKind};
+pub(crate) use store::QuantizedStorePq;
+
+use crate::clustering::kmeans_train_subspace;
+use crate::quantize::{linalg, opq};
+use crate::{DistanceMetric, PqParams, VectorError, snapshot};
 
 pub(crate) const PQ_TRAIN_SEED: u64 = 0xB66E_0001_u64;
 
@@ -17,6 +20,28 @@ pub(crate) struct PqCodebook {
     pub(crate) k_centroids: u32,
     pub(crate) subspace_dim: u32,
     pub(crate) centroids: Vec<f32>,
+    pub(crate) rotation: Option<Vec<f32>>,
+}
+
+/// Decode-only pre-OPQ PQ codebook archive shape.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub(crate) struct PqCodebookV1Legacy {
+    pub(crate) m_subspaces: u32,
+    pub(crate) k_centroids: u32,
+    pub(crate) subspace_dim: u32,
+    pub(crate) centroids: Vec<f32>,
+}
+
+impl From<PqCodebookV1Legacy> for PqCodebook {
+    fn from(value: PqCodebookV1Legacy) -> Self {
+        Self {
+            m_subspaces: value.m_subspaces,
+            k_centroids: value.k_centroids,
+            subspace_dim: value.subspace_dim,
+            centroids: value.centroids,
+            rotation: None,
+        }
+    }
 }
 
 impl PqCodebook {
@@ -37,7 +62,34 @@ impl PqCodebook {
                 required: params.train_min_vectors,
             });
         }
+        if params.use_opq && params.m_subspaces > 1 {
+            return opq::train(dim, params, rows, seed, context);
+        }
 
+        Self::train_plain(dim, params, rows, seed, context, None)
+    }
+
+    pub(crate) fn train_plain(
+        dim: usize,
+        params: PqParams,
+        rows: &[&[f32]],
+        seed: u64,
+        context: &'static str,
+        rotation: Option<Vec<f32>>,
+    ) -> Result<Self, VectorError> {
+        params.validate_for_dim(dim)?;
+        for row in rows {
+            validate_row(row, dim)?;
+        }
+        if rows.len() < params.train_min_vectors {
+            return Err(VectorError::PqTrainingDeferred {
+                observed_vectors: rows.len(),
+                required: params.train_min_vectors,
+            });
+        }
+        if let Some(rotation) = rotation.as_deref() {
+            validate_rotation(rotation, dim, context)?;
+        }
         let m = params.m_subspaces;
         let k = params.k_centroids as usize;
         let subspace_dim = dim / m;
@@ -67,9 +119,11 @@ impl PqCodebook {
                 }
             })?,
             centroids,
+            rotation,
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn from_parts(
         m_subspaces: u32,
         k_centroids: u32,
@@ -81,6 +135,7 @@ impl PqCodebook {
             k_centroids,
             subspace_dim,
             centroids,
+            rotation: None,
         }
     }
 
@@ -92,11 +147,22 @@ impl PqCodebook {
         self.centroids.len() * std::mem::size_of::<f32>()
     }
 
+    pub(crate) fn bytes_rotation(&self) -> usize {
+        self.rotation
+            .as_ref()
+            .map_or(0, |rotation| rotation.len() * std::mem::size_of::<f32>())
+    }
+
     pub(crate) fn encode_row(&self, row: &[f32], out: &mut Vec<u8>) {
         let m = self.m_subspaces as usize;
         let k = self.k_centroids as usize;
         let subdim = self.subspace_dim as usize;
-        encode_row(row, &self.centroids, m, k, subdim, out);
+        if let Some(rotation) = self.rotation.as_deref() {
+            let rotated = linalg::mat_vec(rotation, row, self.dim());
+            encode::encode_row(&rotated, &self.centroids, m, k, subdim, out);
+        } else {
+            encode::encode_row(row, &self.centroids, m, k, subdim, out);
+        }
     }
 
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
@@ -104,235 +170,68 @@ impl PqCodebook {
         let m = self.m_subspaces as usize;
         let k = self.k_centroids as usize;
         let subdim = self.subspace_dim as usize;
-        let mut lut = vec![0.0; m * k];
-        for subspace in 0..m {
-            let query_start = subspace * subdim;
-            let query_slice = &query[query_start..query_start + subdim];
-            for centroid in 0..k {
-                let center = self.centroid(subspace, centroid);
-                lut[(subspace * k) + centroid] = match metric {
-                    DistanceMetric::Cosine | DistanceMetric::Dot => {
-                        dot_product(query_slice, center)
-                    }
-                    DistanceMetric::L2 => squared_l2(query_slice, center),
-                };
-            }
+        if let Some(rotation) = self.rotation.as_deref() {
+            let rotated = linalg::mat_vec(rotation, query, self.dim());
+            encode::build_query_lut(&rotated, &self.centroids, m, k, subdim, metric)
+        } else {
+            encode::build_query_lut(query, &self.centroids, m, k, subdim, metric)
         }
-        lut
     }
 
     pub(crate) fn lut_sum_for_codes(&self, lut: &[f32], codes: &[u8]) -> Option<f32> {
         let m = self.m_subspaces as usize;
         let k = self.k_centroids as usize;
-        if codes.len() != m || lut.len() != m.checked_mul(k)? {
-            return None;
-        }
-        Some(
-            codes
-                .iter()
-                .copied()
-                .enumerate()
-                .map(|(subspace, code)| lut[(subspace * k) + usize::from(code)])
-                .sum(),
-        )
+        encode::lut_sum_for_codes(lut, codes, m, k)
     }
 
     pub(crate) fn decode_codes(&self, codes: &[u8], out: &mut [f32]) -> Option<()> {
         let m = self.m_subspaces as usize;
+        let k = self.k_centroids as usize;
         let subdim = self.subspace_dim as usize;
-        if codes.len() != m || out.len() != self.dim() {
-            return None;
+        if self.rotation.is_none() {
+            return encode::decode_codes(&self.centroids, codes, m, k, subdim, out);
         }
-        for (subspace, code) in codes.iter().copied().enumerate() {
-            let start = subspace * subdim;
-            out[start..start + subdim].copy_from_slice(self.centroid(subspace, usize::from(code)));
-        }
+        let mut rotated = vec![0.0; self.dim()];
+        encode::decode_codes(&self.centroids, codes, m, k, subdim, &mut rotated)?;
+        let decoded = linalg::mat_transpose_vec(self.rotation.as_deref()?, &rotated, self.dim());
+        out.copy_from_slice(&decoded);
         Some(())
     }
+}
 
-    fn centroid(&self, subspace: usize, centroid: usize) -> &[f32] {
-        let k = self.k_centroids as usize;
-        let subdim = self.subspace_dim as usize;
-        let start = ((subspace * k) + centroid) * subdim;
-        &self.centroids[start..start + subdim]
+pub(crate) fn validate_rotation(
+    rotation: &[f32],
+    dim: usize,
+    context: &'static str,
+) -> Result<(), VectorError> {
+    if rotation.len() != dim.saturating_mul(dim) {
+        return Err(VectorError::OpqTrainingFailed {
+            context,
+            reason: format!(
+                "OPQ rotation length {} disagrees with dim^2 {}",
+                rotation.len(),
+                dim.saturating_mul(dim)
+            ),
+        });
     }
-}
-
-/// PQ quantized store in dense InternalIndex order.
-#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub(crate) struct QuantizedStorePq {
-    pub(crate) m_subspaces: u32,
-    pub(crate) k_centroids: u32,
-    pub(crate) subspace_dim: u32,
-    pub(crate) codebook: Vec<f32>,
-    pub(crate) codes: Vec<u8>,
-    pub(crate) approx_norms: Option<Vec<f32>>,
-}
-
-impl QuantizedStorePq {
-    pub(crate) fn build<'a>(
-        node_count: usize,
-        dim: usize,
-        metric: DistanceMetric,
-        params: PqParams,
-        vectors: impl Iterator<Item = &'a [f32]>,
-    ) -> Result<Self, VectorError> {
-        params.validate_for_dim(dim)?;
-        let rows = vectors.collect::<Vec<_>>();
-        if rows.len() != node_count {
-            return Err(snapshot::encode_failed(
-                snapshot::QUNT,
-                format!("expected {node_count} vectors, observed {}", rows.len()),
-            ));
-        }
-        if rows.len() < params.train_min_vectors {
-            return Err(VectorError::PqTrainingDeferred {
-                observed_vectors: rows.len(),
-                required: params.train_min_vectors,
+    for (index, value) in rotation.iter().copied().enumerate() {
+        if !value.is_finite() {
+            return Err(VectorError::OpqTrainingFailed {
+                context,
+                reason: format!("non-finite OPQ rotation component at index {index}: {value}"),
             });
         }
-        for row in &rows {
-            validate_row(row, dim)?;
-        }
-
-        let m = params.m_subspaces;
-        let k = params.k_centroids as usize;
-        let subspace_dim = dim / m;
-        let codebook = PqCodebook::train(dim, params, &rows, PQ_TRAIN_SEED, "qunt_pq_codebook")?;
-        let mut codes = Vec::with_capacity(node_count * m);
-        for row in &rows {
-            codebook.encode_row(row, &mut codes);
-        }
-        let approx_norms = if metric == DistanceMetric::Cosine {
-            Some(decoded_norms(
-                &codebook.centroids,
-                &codes,
-                m,
-                k,
-                subspace_dim,
-            ))
-        } else {
-            None
-        };
-
-        Ok(Self {
-            m_subspaces: u32::try_from(m)
-                .map_err(|_| snapshot::encode_failed(snapshot::QUNT, "PQ m_subspaces overflow"))?,
-            k_centroids: params.k_centroids,
-            subspace_dim: u32::try_from(subspace_dim)
-                .map_err(|_| snapshot::encode_failed(snapshot::QUNT, "PQ subspace_dim overflow"))?,
-            codebook: codebook.centroids,
-            codes,
-            approx_norms,
-        })
     }
-
-    pub(crate) fn node_count(&self) -> usize {
-        let m = self.m_subspaces as usize;
-        self.codes.len().checked_div(m).unwrap_or(0)
+    if !linalg::is_orthonormal(rotation, dim, 1.0e-5) {
+        return Err(VectorError::OpqTrainingFailed {
+            context,
+            reason: "OPQ rotation is not orthonormal".into(),
+        });
     }
-
-    pub(crate) fn dim(&self) -> usize {
-        (self.m_subspaces as usize).saturating_mul(self.subspace_dim as usize)
-    }
-
-    pub(crate) fn bytes_codes(&self) -> usize {
-        self.codes.len()
-    }
-
-    pub(crate) fn bytes_codebook(&self) -> usize {
-        self.codebook.len() * std::mem::size_of::<f32>()
-    }
-
-    pub(crate) fn bytes_norms(&self) -> usize {
-        self.approx_norms
-            .as_ref()
-            .map_or(0, |norms| norms.len() * std::mem::size_of::<f32>())
-    }
-
-    pub(crate) fn stats(&self) -> QuantizationStats {
-        let f32_bytes = self
-            .node_count()
-            .saturating_mul(self.dim())
-            .saturating_mul(std::mem::size_of::<f32>());
-        let quantized_bytes = self
-            .bytes_codes()
-            .saturating_add(self.bytes_codebook())
-            .saturating_add(self.bytes_norms());
-        let compression_ratio = if quantized_bytes == 0 {
-            0.0
-        } else {
-            f32_bytes as f32 / quantized_bytes as f32
-        };
-
-        QuantizationStats {
-            method: QuantMethod::Pq,
-            dim: self.dim(),
-            code_count: self.node_count(),
-            bytes_codes: self.bytes_codes(),
-            kind: QuantizationStatsKind::Pq {
-                bytes_codebook: self.bytes_codebook(),
-            },
-            bytes_norms: self.bytes_norms(),
-            compression_ratio,
-        }
-    }
-
-    pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
-        debug_assert_eq!(query.len(), self.dim(), "PQ query LUT dimension mismatch");
-        PqCodebook::from_parts(
-            self.m_subspaces,
-            self.k_centroids,
-            self.subspace_dim,
-            self.codebook.clone(),
-        )
-        .build_query_lut(query, metric)
-    }
-
-    pub(crate) fn lut_sum(&self, lut: &[f32], node_idx: usize) -> Option<f32> {
-        let m = self.m_subspaces as usize;
-        let k = self.k_centroids as usize;
-        if node_idx >= self.node_count() || lut.len() != m.checked_mul(k)? {
-            return None;
-        }
-        let row_start = node_idx.checked_mul(m)?;
-        let row = self.codes.get(row_start..row_start.checked_add(m)?)?;
-        Some(
-            row.iter()
-                .copied()
-                .enumerate()
-                .map(|(subspace, code)| lut[(subspace * k) + usize::from(code)])
-                .sum(),
-        )
-    }
-
-    pub(crate) fn approx_norm(&self, node_idx: usize) -> Option<f32> {
-        self.approx_norms
-            .as_ref()
-            .and_then(|norms| norms.get(node_idx).copied())
-    }
-
-    #[cfg(test)]
-    fn centroid(&self, subspace: usize, centroid: usize) -> &[f32] {
-        let k = self.k_centroids as usize;
-        let subdim = self.subspace_dim as usize;
-        let start = ((subspace * k) + centroid) * subdim;
-        &self.codebook[start..start + subdim]
-    }
-
-    #[cfg(test)]
-    fn decode_row(&self, node_idx: usize, out: &mut [f32]) {
-        let m = self.m_subspaces as usize;
-        let subdim = self.subspace_dim as usize;
-        let row = &self.codes[node_idx * m..(node_idx + 1) * m];
-        for (subspace, code) in row.iter().copied().enumerate() {
-            let start = subspace * subdim;
-            out[start..start + subdim].copy_from_slice(self.centroid(subspace, usize::from(code)));
-        }
-    }
+    Ok(())
 }
 
-fn validate_row(row: &[f32], dim: usize) -> Result<(), VectorError> {
+pub(super) fn validate_row(row: &[f32], dim: usize) -> Result<(), VectorError> {
     if row.len() != dim {
         return Err(VectorError::DimensionMismatch {
             expected: dim,
@@ -354,44 +253,18 @@ fn validate_row(row: &[f32], dim: usize) -> Result<(), VectorError> {
     Ok(())
 }
 
-fn encode_row(row: &[f32], codebook: &[f32], m: usize, k: usize, subdim: usize, out: &mut Vec<u8>) {
-    for subspace in 0..m {
-        let start = subspace * subdim;
-        let codebook_start = subspace * k * subdim;
-        let code = nearest_centroid(
-            &row[start..start + subdim],
-            &codebook[codebook_start..codebook_start + (k * subdim)],
-            k,
-            subdim,
-        );
-        out.push(u8::try_from(code).expect("BRIEF-66 fixes PQ K to 256"));
-    }
-}
-
-fn decoded_norms(codebook: &[f32], codes: &[u8], m: usize, k: usize, subdim: usize) -> Vec<f32> {
-    codes
-        .chunks_exact(m)
-        .map(|row| {
-            let mut sum = 0.0;
-            for (subspace, code) in row.iter().copied().enumerate() {
-                let start = ((subspace * k) + usize::from(code)) * subdim;
-                let centroid = &codebook[start..start + subdim];
-                sum += dot_product(centroid, centroid);
-            }
-            sum.sqrt()
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clustering::squared_l2;
+    use crate::hnsw::distance::dot_product;
 
     fn params(dim: usize) -> PqParams {
         PqParams {
             m_subspaces: (dim / 2).max(1),
             k_centroids: 256,
             train_min_vectors: 256,
+            use_opq: false,
         }
     }
 
@@ -509,6 +382,43 @@ mod tests {
         .unwrap();
 
         assert_eq!(store.approx_norms.as_ref().unwrap().len(), 256);
+    }
+
+    #[test]
+    fn opq_training_adds_rotation_for_multiple_subspaces() {
+        let rows = rows(256, 8);
+        let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let params = PqParams {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: true,
+        };
+
+        let codebook = PqCodebook::train(8, params, &refs, PQ_TRAIN_SEED, "test_opq").unwrap();
+
+        assert!(codebook.rotation.is_some());
+        assert!(crate::quantize::linalg::is_orthonormal(
+            codebook.rotation.as_deref().unwrap(),
+            8,
+            1.0e-5
+        ));
+    }
+
+    #[test]
+    fn opq_with_one_subspace_short_circuits_to_none_rotation() {
+        let rows = rows(256, 8);
+        let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let params = PqParams {
+            m_subspaces: 1,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: true,
+        };
+
+        let codebook = PqCodebook::train(8, params, &refs, PQ_TRAIN_SEED, "test_opq").unwrap();
+
+        assert!(codebook.rotation.is_none());
     }
 
     #[test]

@@ -1,0 +1,18 @@
+---
+source: crates/selene-vector/tests/vector_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+==== CONFIG ====
+slug="error-opq-training-failed"
+description="Synthetic OpqTrainingFailed shape."
+dim=8 m=16 ef_construction=200 ef_search=50 metric=L2 quantization_enabled=false quantization_rescore=false
+neighbor_select="default"
+==== GRAPH ====
+nodes=0 dim=8 entry_point=none max_layer=0
+node_head=[]
+==== SECTIONS ====
+<none>
+==== RESULT ====
+error.kind=OpqTrainingFailed
+error.induction_kind=synthetic
+error.rendered=OpqTrainingFailed{context="opq_rotation", reason="forced OPQ fixture"}

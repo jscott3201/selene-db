@@ -57,6 +57,7 @@ pub use procedures::pack_manifest;
 pub use provider::HnswProvider;
 pub use quantize::{
     PqParams, QuantMethod, QuantizationConfig, QuantizationStats, QuantizationStatsKind,
+    opq_max_dim,
 };
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{VectorInvocationResult, VectorSnapshot, VectorSnapshotInput};

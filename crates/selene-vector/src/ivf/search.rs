@@ -137,6 +137,7 @@ mod tests {
                 m_subspaces: 1,
                 k_centroids: 256,
                 train_min_vectors: 256,
+                use_opq: false,
             },
             256,
         )

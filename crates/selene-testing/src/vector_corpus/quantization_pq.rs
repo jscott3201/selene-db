@@ -134,3 +134,25 @@ pub(crate) fn training_deferred_entry() -> VectorCorpusEntry {
         covered_quant_methods: PQ_METHOD,
     }
 }
+
+pub(crate) fn opq_l2_entry() -> VectorCorpusEntry {
+    VectorCorpusEntry {
+        slug: "pq-opq-l2",
+        description: "PQ asymmetric L2 search with OPQ rotation.",
+        graph: VectorCorpusGraph::PqTrainingL2_256,
+        config: cfg(8, VectorMetricMirror::L2, VectorQuantizationSpec::PQ_OPQ),
+        invocation: search(
+            &[0.2, -0.4, 0.1, 0.8, -0.2, 0.3, -0.7, 0.5],
+            8,
+            Some(80),
+            None,
+        ),
+        category: VectorCorpusCategory::Quantization,
+        covered_surfaces: SEARCH_SURFACES,
+        covered_metrics: L2_METRIC,
+        covered_ops: INSERT_OP,
+        covered_errors: NO_ERRORS,
+        covered_magics: QUNT_MAGIC,
+        covered_quant_methods: PQ_METHOD,
+    }
+}

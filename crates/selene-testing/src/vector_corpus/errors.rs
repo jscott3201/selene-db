@@ -413,5 +413,22 @@ pub(crate) fn entries() -> Vec<VectorCorpusEntry> {
             covered_magics: NO_MAGICS,
             covered_quant_methods: PQ_QUANT,
         },
+        VectorCorpusEntry {
+            slug: "error-opq-training-failed",
+            description: "Synthetic OpqTrainingFailed shape.",
+            graph: G::Empty,
+            config: cfg(8, M::L2, Z::DISABLED),
+            invocation: synthetic_error(
+                E::OpqTrainingFailed,
+                SyntheticErrorFields::OpqTrainingFailed,
+            ),
+            category: C::Error,
+            covered_surfaces: ERROR_SURFACE,
+            covered_metrics: NO_METRICS,
+            covered_ops: NO_OPS,
+            covered_errors: &[E::OpqTrainingFailed],
+            covered_magics: NO_MAGICS,
+            covered_quant_methods: PQ_QUANT,
+        },
     ]
 }
