@@ -56,7 +56,11 @@ impl QuantMethod {
 }
 
 /// Product-quantization training and encoding parameters.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// Eq is intentionally NOT derived: `hamming_threshold_ratio: f32` cascades
+// non-Eq semantics through QuantizationConfig, HnswConfig, and IvfConfig
+// per BRIEF-69 §C.6 F7. NaN is rejected by `validate_for_dim`, so
+// `PartialEq` is the contract callers should use.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PqParams {
     /// Number of equal-width vector subspaces.
     pub m_subspaces: usize,
@@ -66,11 +70,27 @@ pub struct PqParams {
     pub train_min_vectors: usize,
     /// Train an OPQ rotation alongside the PQ codebook when dimensions permit.
     pub use_opq: bool,
+    /// Train polysemous-codes permutation when `m_subspaces >= 2`.
+    /// `default_for_dim` enables this for any default config with
+    /// `m_subspaces >= 2`; embedders can opt out by setting it to `false`.
+    pub use_polysemous: bool,
+    /// Hamming distance threshold as a fraction of the maximum (`8 * m`).
+    /// Search rejects candidates whose query/stored Hamming exceeds
+    /// `round(ratio * 8 * m_subspaces)`. Must be finite and in `[0.0, 1.0]`.
+    pub hamming_threshold_ratio: f32,
 }
 
 impl PqParams {
     /// Fixed v1 centroid count. One code byte selects one centroid.
     pub const K_CENTROIDS_V1: u32 = 256;
+
+    /// Default Hamming-threshold ratio when polysemous is enabled.
+    ///
+    /// Skip candidates whose Hamming distance from the query is more than
+    /// half the maximum (`4 * m_subspaces` bits). FAISS uses this midpoint
+    /// as a moderate default that prunes roughly half of candidates while
+    /// keeping recall@10 within 1–2% of unfiltered.
+    pub const DEFAULT_HAMMING_THRESHOLD_RATIO: f32 = 0.5;
 
     /// Derive the default PQ parameters for `dim`.
     #[must_use]
@@ -85,6 +105,11 @@ impl PqParams {
             k_centroids: Self::K_CENTROIDS_V1,
             train_min_vectors: Self::K_CENTROIDS_V1 as usize,
             use_opq: dim <= OPQ_MAX_DIM,
+            // Polysemous needs ≥ 2 subspaces to optimize against inter-
+            // subspace Hamming structure (V108). For single-subspace
+            // codebooks the permutation is degenerate; default off.
+            use_polysemous: m_subspaces >= 2,
+            hamming_threshold_ratio: Self::DEFAULT_HAMMING_THRESHOLD_RATIO,
         }
     }
 
@@ -131,12 +156,54 @@ impl PqParams {
                 reason: format!("OPQ requires dim <= OPQ_MAX_DIM ({OPQ_MAX_DIM}), observed {dim}"),
             });
         }
+        // V108: single-subspace codebooks have no inter-subspace Hamming
+        // structure to optimize. An explicit `use_polysemous=true` with
+        // `m_subspaces=1` is a config error, not a silent short-circuit.
+        if self.use_polysemous && self.m_subspaces < 2 {
+            return Err(VectorError::InvalidConfig {
+                reason: format!(
+                    "polysemous requires m_subspaces >= 2, observed {}",
+                    self.m_subspaces
+                ),
+            });
+        }
+        // V112 + F7: the ratio must be finite and in [0.0, 1.0]. NaN and
+        // out-of-range values are rejected (not clamped) so a bad config
+        // surfaces immediately at validate time rather than as silent
+        // recall regression at search time.
+        if !self.hamming_threshold_ratio.is_finite() {
+            return Err(VectorError::InvalidConfig {
+                reason: format!(
+                    "polysemous hamming_threshold_ratio must be finite, observed {}",
+                    self.hamming_threshold_ratio
+                ),
+            });
+        }
+        if !(0.0..=1.0).contains(&self.hamming_threshold_ratio) {
+            return Err(VectorError::InvalidConfig {
+                reason: format!(
+                    "polysemous hamming_threshold_ratio must be in [0.0, 1.0], observed {}",
+                    self.hamming_threshold_ratio
+                ),
+            });
+        }
         Ok(())
+    }
+
+    /// Resolve `hamming_threshold_ratio` to an integer Hamming distance over
+    /// `m_subspaces * 8` bits. Used by both HNSW and IVF Hamming filters
+    /// (V112).
+    #[must_use]
+    pub fn resolve_hamming_threshold(self) -> u32 {
+        let max_bits = self.m_subspaces.saturating_mul(8) as f32;
+        (self.hamming_threshold_ratio * max_bits).round() as u32
     }
 }
 
 /// User-facing quantization configuration for [`crate::HnswConfig`].
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+// Eq dropped because `PqParams` now carries an f32 `hamming_threshold_ratio`
+// (BRIEF-69 §C.6 F7). Callers should compare via `PartialEq`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct QuantizationConfig {
     /// Enable asymmetric quantized search when a QUNT store is loaded.
     pub enabled: bool,

@@ -38,7 +38,9 @@ impl Default for NeighborSelectionConfig {
 }
 
 /// Configuration for [`crate::HnswProvider`].
-#[derive(Clone, Debug, Eq, PartialEq)]
+// Eq dropped because `QuantizationConfig` transitively carries the f32
+// `hamming_threshold_ratio` introduced in BRIEF-69 §C.6 F7.
+#[derive(Clone, Debug, PartialEq)]
 pub struct HnswConfig {
     /// Vector dimensionality. Required; no default exists.
     pub dim: usize,
@@ -212,7 +214,9 @@ impl HnswConfig {
 }
 
 /// Configuration for [`crate::IvfProvider`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// Eq dropped because `PqParams` now carries the f32 `hamming_threshold_ratio`
+// introduced in BRIEF-69 §C.6 F7.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IvfConfig {
     /// Vector dimensionality. Required; no default exists.
     pub dim: usize,

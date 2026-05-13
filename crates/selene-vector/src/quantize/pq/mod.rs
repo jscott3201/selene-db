@@ -265,6 +265,8 @@ mod tests {
             k_centroids: 256,
             train_min_vectors: 256,
             use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         }
     }
 
@@ -393,6 +395,8 @@ mod tests {
             k_centroids: 256,
             train_min_vectors: 256,
             use_opq: true,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         };
 
         let codebook = PqCodebook::train(8, params, &refs, PQ_TRAIN_SEED, "test_opq").unwrap();
@@ -412,6 +416,8 @@ mod tests {
             k_centroids: 256,
             train_min_vectors: 256,
             use_opq: true,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         };
 
         let codebook = PqCodebook::train(8, params, &refs, PQ_TRAIN_SEED, "test_opq").unwrap();
