@@ -235,10 +235,10 @@ pub(crate) fn extend_candidate_pool(
                 continue;
             }
             if let Some(neighbor) = graph.node_by_idx(*neighbor_idx) {
-                expanded.push(Candidate {
-                    idx: *neighbor_idx,
-                    score: score(target, &neighbor.vector, params),
-                });
+                expanded.push(Candidate::admissible(
+                    *neighbor_idx,
+                    score(target, &neighbor.vector, params),
+                ));
             }
         }
     }
@@ -273,9 +273,8 @@ fn prune_neighbors(graph: &mut HnswGraph, idx: InternalIndex, layer: u8, params:
         .iter()
         .copied()
         .filter_map(|neighbor_idx| {
-            graph.node_by_idx(neighbor_idx).map(|neighbor| Candidate {
-                idx: neighbor_idx,
-                score: score(&target_vec, &neighbor.vector, params),
+            graph.node_by_idx(neighbor_idx).map(|neighbor| {
+                Candidate::admissible(neighbor_idx, score(&target_vec, &neighbor.vector, params))
             })
         })
         .collect();
@@ -388,10 +387,7 @@ mod tests {
     fn select_backfills_only_from_rejected_pile_not_raw_candidates() {
         let graph = graph(&[(1, &[1.0, 0.0], 0), (2, &[1.1, 0.0], 0)]);
         let mut candidates = candidates(&graph, &[0.0, 0.0]);
-        candidates.push(Candidate {
-            idx: 99,
-            score: f32::INFINITY,
-        });
+        candidates.push(Candidate::admissible(99, f32::INFINITY));
         let selected = select_neighbors_heuristic(&graph, candidates, 2, &params(), opts(true));
 
         assert_eq!(selected, vec![0, 1]);
@@ -403,11 +399,8 @@ mod tests {
         let selected = select_neighbors_heuristic(
             &graph,
             vec![
-                Candidate {
-                    idx: 99,
-                    score: f32::INFINITY,
-                },
-                Candidate { idx: 0, score: 0.0 },
+                Candidate::admissible(99, f32::INFINITY),
+                Candidate::admissible(0, 0.0),
             ],
             2,
             &params(),
@@ -427,14 +420,8 @@ mod tests {
         graph.nodes[0].neighbors[0] = vec![1, 2];
         graph.nodes[1].neighbors[0] = vec![2];
         let seeds = vec![
-            Candidate {
-                idx: 0,
-                score: -1.0,
-            },
-            Candidate {
-                idx: 1,
-                score: -2.0,
-            },
+            Candidate::admissible(0, -1.0),
+            Candidate::admissible(1, -2.0),
         ];
 
         let expanded = extend_candidate_pool(&graph, &seeds, 0, &[0.0, 0.0], &params(), 8);
@@ -458,10 +445,7 @@ mod tests {
 
         let expanded = extend_candidate_pool(
             &graph,
-            &[Candidate {
-                idx: 0,
-                score: -1.0,
-            }],
+            &[Candidate::admissible(0, -1.0)],
             0,
             &[0.0, 0.0],
             &params(),
@@ -483,10 +467,7 @@ mod tests {
 
         let expanded = extend_candidate_pool(
             &graph,
-            &[Candidate {
-                idx: 0,
-                score: -1.0,
-            }],
+            &[Candidate::admissible(0, -1.0)],
             1,
             &[0.0, 0.0],
             &params(),
@@ -512,10 +493,7 @@ mod tests {
     #[test]
     fn extend_pool_no_neighbors_passes_through_unchanged() {
         let graph = graph(&[(1, &[1.0, 0.0], 0)]);
-        let seeds = vec![Candidate {
-            idx: 0,
-            score: -1.0,
-        }];
+        let seeds = vec![Candidate::admissible(0, -1.0)];
 
         assert_eq!(
             extend_candidate_pool(&graph, &seeds, 0, &[0.0, 0.0], &params(), 8)
@@ -611,9 +589,8 @@ mod tests {
         graph
             .iter_nodes()
             .enumerate()
-            .map(|(idx, node)| Candidate {
-                idx: idx as InternalIndex,
-                score: score(target, &node.vector, &params),
+            .map(|(idx, node)| {
+                Candidate::admissible(idx as InternalIndex, score(target, &node.vector, &params))
             })
             .collect()
     }

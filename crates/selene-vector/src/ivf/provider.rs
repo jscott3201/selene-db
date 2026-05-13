@@ -174,13 +174,22 @@ impl IndexProvider for IvfProvider {
 
 impl IvfProvider {
     fn write_cqnt(&self) -> Result<Vec<u8>, ProviderError> {
+        // BRIEF-69 §I-10 / F2: every error path inside this CQNT→IPQB→POST
+        // staging dance must reset staging to Idle. Without the reset a
+        // mid-sequence encode/publish failure leaves staging in `Writing`,
+        // and the next snapshot attempt's IPQB/POST calls would silently
+        // proceed against stale `captured` instead of failing fast on
+        // "section write before CQNT".
         let captured = self.state.load_full();
         let trained = if captured.is_trained() || captured.len() < self.config.training_min_vectors
         {
             None
         } else {
             Some(Arc::new(
-                train(&captured.unassigned_buffer, &self.config).map_err(section_encode_err)?,
+                train(&captured.unassigned_buffer, &self.config).map_err(|err| {
+                    *self.staging.lock() = SectionStaging::Idle;
+                    section_encode_err(err)
+                })?,
             ))
         };
         let body = if let Some(trained) = &trained {
@@ -200,7 +209,10 @@ impl IvfProvider {
         } else {
             CqntBodyV1::Empty
         };
-        let bytes = encode_cqnt(&body).map_err(section_encode_err)?;
+        let bytes = encode_cqnt(&body).map_err(|err| {
+            *self.staging.lock() = SectionStaging::Idle;
+            section_encode_err(err)
+        })?;
         *self.staging.lock() = SectionStaging::Writing {
             captured: Arc::clone(&captured),
             publish_after_post: trained.is_some(),
@@ -235,7 +247,10 @@ impl IvfProvider {
         } else {
             IpqbBodyV1::Empty
         };
-        let bytes = encode_ipqb(&body).map_err(section_encode_err)?;
+        let bytes = encode_ipqb(&body).map_err(|err| {
+            *self.staging.lock() = SectionStaging::Idle;
+            section_encode_err(err)
+        })?;
         *self.staging.lock() = SectionStaging::Writing {
             captured,
             trained,
@@ -246,42 +261,54 @@ impl IvfProvider {
     }
 
     fn write_post(&self) -> Result<Vec<u8>, ProviderError> {
-        let (captured, trained, publish_after_post) = match &*self.staging.lock() {
-            SectionStaging::Writing {
-                captured,
-                trained,
-                publish_after_post,
-                ipqb_emitted: true,
-            } => (Arc::clone(captured), trained.clone(), *publish_after_post),
-            SectionStaging::Idle
-            | SectionStaging::Reading { .. }
-            | SectionStaging::Writing {
-                ipqb_emitted: false,
-                ..
-            } => {
-                *self.staging.lock() = SectionStaging::Idle;
-                return Err(ProviderError::InvalidPayload {
-                    reason: "POST section write before CQNT+IPQB".into(),
-                });
+        let (captured, trained, publish_after_post) = {
+            let mut staging = self.staging.lock();
+            match &*staging {
+                SectionStaging::Writing {
+                    captured,
+                    trained,
+                    publish_after_post,
+                    ipqb_emitted: true,
+                } => (Arc::clone(captured), trained.clone(), *publish_after_post),
+                SectionStaging::Writing {
+                    ipqb_emitted: false,
+                    ..
+                } => {
+                    *staging = SectionStaging::Idle;
+                    return Err(ProviderError::InvalidPayload {
+                        reason: "POST section write before CQNT+IPQB".into(),
+                    });
+                }
+                SectionStaging::Idle | SectionStaging::Reading { .. } => {
+                    return Err(ProviderError::InvalidPayload {
+                        reason: "POST section write before CQNT+IPQB".into(),
+                    });
+                }
             }
+        };
+        // Every fallible step below maps Err through `reset_then` so a
+        // mid-flight POST failure cannot leave staging in `Writing`.
+        let reset_then = |err: ProviderError| -> ProviderError {
+            *self.staging.lock() = SectionStaging::Idle;
+            err
         };
         let body = if let Some(trained) = &trained {
             PostBodyV1::Trained {
                 node_count: u32::try_from(captured.len()).map_err(|_| {
-                    section_encode_err(snapshot::encode_failed(
+                    reset_then(section_encode_err(snapshot::encode_failed(
                         snapshot::POST,
                         "IVF node_count exceeds POST range",
-                    ))
+                    )))
                 })?,
                 posting_lists: trained.posting_lists.clone(),
             }
         } else if captured.is_trained() {
             PostBodyV1::Trained {
                 node_count: u32::try_from(captured.len()).map_err(|_| {
-                    section_encode_err(snapshot::encode_failed(
+                    reset_then(section_encode_err(snapshot::encode_failed(
                         snapshot::POST,
                         "IVF node_count exceeds POST range",
-                    ))
+                    )))
                 })?,
                 posting_lists: captured.posting_lists.clone(),
             }
@@ -296,9 +323,10 @@ impl IvfProvider {
                     .collect(),
             }
         };
-        let bytes = encode_post(&body).map_err(section_encode_err)?;
+        let bytes = encode_post(&body).map_err(|err| reset_then(section_encode_err(err)))?;
         if publish_after_post && let Some(trained) = trained {
-            self.publish_trained_merge(&captured, &trained)?;
+            self.publish_trained_merge(&captured, &trained)
+                .map_err(reset_then)?;
         }
         *self.staging.lock() = SectionStaging::Idle;
         Ok(bytes)
@@ -563,6 +591,10 @@ fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
         .len()
         .saturating_mul(config.dim)
         .saturating_mul(std::mem::size_of::<f32>());
+    let polysemous = index
+        .residual_codebook
+        .as_deref()
+        .is_some_and(|codebook| codebook.polysemous_trained);
     IvfStats::Trained {
         k_coarse: config.k_coarse,
         n_probe_default: config.n_probe,
@@ -578,6 +610,7 @@ fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
         } else {
             f32_bytes as f32 / compressed as f32
         },
+        polysemous,
     }
 }
 

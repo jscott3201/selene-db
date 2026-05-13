@@ -20,6 +20,8 @@ fn config(training_min_vectors: usize) -> IvfConfig {
             k_centroids: 256,
             train_min_vectors: 256,
             use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
         },
         training_min_vectors,
     )
@@ -73,6 +75,98 @@ fn populate(provider: &IvfProvider, count: usize) {
 #[test]
 fn ivf_payload_magic_vivf_pinned() {
     assert_eq!(PAYLOAD_MAGIC_IVF, *b"VIVF");
+}
+
+#[test]
+fn ivf_stats_trained_reports_polysemous_flag() {
+    // §H #36 / V116: `IvfStats::Trained` surfaces `polysemous` from the
+    // residual codebook so observers (the diagnostic procedure, packs,
+    // ops dashboards) can verify the filter is actually in effect.
+    // Polysemous requires m_subspaces >= 2 and a residual distribution
+    // that k-means can fit; use dim=4 with synthetic random vectors so
+    // each subspace has 2 dims and 256 distinct residuals per subspace.
+    fn polysemous_ivf_change(node_id: u64, vector: [f32; 4]) -> Change {
+        let payload = VectorIvfUpsertV1 {
+            op: VectorOp::Insert,
+            node_id: NodeId::new(node_id),
+            vector: vector.to_vec(),
+        }
+        .encode()
+        .unwrap();
+        Change::IndexExtensionEvent {
+            provider: intern("selene-vector-ivf").unwrap(),
+            payload: Arc::from(payload),
+        }
+    }
+    fn populate_random(provider: &IvfProvider, count: usize, seed: u64) {
+        let mut rng = fastrand::Rng::with_seed(seed);
+        for idx in 0..count {
+            let vec = [
+                (rng.f32() * 2.0) - 1.0,
+                (rng.f32() * 2.0) - 1.0,
+                (rng.f32() * 2.0) - 1.0,
+                (rng.f32() * 2.0) - 1.0,
+            ];
+            provider
+                .on_change(&polysemous_ivf_change((idx + 1) as u64, vec))
+                .unwrap();
+        }
+    }
+    let poly_config = IvfConfig::with_params(
+        4,
+        4,
+        2,
+        DistanceMetric::L2,
+        PqParams {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: false,
+            use_polysemous: true,
+            hamming_threshold_ratio: 0.5,
+        },
+        256,
+    )
+    .unwrap();
+    let poly = IvfProvider::new(poly_config).unwrap();
+    populate_random(&poly, 256, 0xB69E_6001);
+    poly.write_section(SubTag(*b"CQNT")).unwrap();
+    poly.write_section(SubTag(*b"IPQB")).unwrap();
+    poly.write_section(SubTag(*b"POST")).unwrap();
+    match poly.ivf_stats().unwrap().unwrap() {
+        IvfStats::Trained {
+            polysemous: true, ..
+        } => {}
+        other => panic!("expected polysemous=true, observed {other:?}"),
+    }
+
+    let plain_config = IvfConfig::with_params(
+        4,
+        4,
+        2,
+        DistanceMetric::L2,
+        PqParams {
+            m_subspaces: 2,
+            k_centroids: 256,
+            train_min_vectors: 256,
+            use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
+        },
+        256,
+    )
+    .unwrap();
+    let plain = IvfProvider::new(plain_config).unwrap();
+    populate_random(&plain, 256, 0xB69E_6001);
+    plain.write_section(SubTag(*b"CQNT")).unwrap();
+    plain.write_section(SubTag(*b"IPQB")).unwrap();
+    plain.write_section(SubTag(*b"POST")).unwrap();
+    match plain.ivf_stats().unwrap().unwrap() {
+        IvfStats::Trained {
+            polysemous: false, ..
+        } => {}
+        other => panic!("expected polysemous=false, observed {other:?}"),
+    }
 }
 
 #[test]
@@ -162,6 +256,8 @@ fn trained_cqnt_metric_must_match_provider_config() {
                 k_centroids: 256,
                 train_min_vectors: 256,
                 use_opq: false,
+                use_polysemous: false,
+                hamming_threshold_ratio: 0.5,
             },
             256,
         )
@@ -190,6 +286,42 @@ fn ivf_search_returns_rows_after_training() {
 
     assert!(!rows.is_empty());
     assert!(rows.len() <= 5);
+}
+
+#[test]
+fn ivf_out_of_order_writes_clear_staging_and_recover() {
+    // BRIEF-69 §I-10 / Local Codex F2 behavioral coverage. After an
+    // out-of-order section write (IPQB before CQNT, POST before
+    // CQNT+IPQB), staging must be back at Idle so a fresh CQNT→IPQB→POST
+    // sequence completes cleanly. A lingering `Writing` would corrupt the
+    // next snapshot attempt by feeding it stale `captured`.
+    let provider = provider(256);
+    populate(&provider, 256);
+
+    let err = provider.write_section(SubTag(*b"IPQB")).unwrap_err();
+    assert!(
+        matches!(err, ProviderError::InvalidPayload { .. }),
+        "IPQB before CQNT must error: {err:?}"
+    );
+    let err = provider.write_section(SubTag(*b"POST")).unwrap_err();
+    assert!(
+        matches!(err, ProviderError::InvalidPayload { .. }),
+        "POST before CQNT+IPQB must error: {err:?}"
+    );
+
+    // Clean sequence must now succeed; if staging had leaked to `Writing`
+    // the second CQNT call would either re-emit stale `captured` or POST
+    // would publish an inconsistent merge.
+    let _cqnt = provider.write_section(SubTag(*b"CQNT")).unwrap();
+    let _ipqb = provider.write_section(SubTag(*b"IPQB")).unwrap();
+    let _post = provider.write_section(SubTag(*b"POST")).unwrap();
+    match provider.ivf_stats().unwrap().unwrap() {
+        IvfStats::Trained {
+            posting_list_lengths,
+            ..
+        } => assert_eq!(posting_list_lengths.iter().sum::<u32>(), 256),
+        other => panic!("expected trained stats after recovery, observed {other:?}"),
+    }
 }
 
 #[test]

@@ -10,7 +10,7 @@ use super::distance::{distance, dot_product};
 use super::{HnswGraph, HnswParams, InternalIndex};
 use crate::DistanceMetric;
 use crate::VectorError;
-use crate::quantize::QuantizedStore;
+use crate::quantize::{PqParams, QuantizedStore};
 
 /// A scored HNSW candidate shared by build and search paths.
 #[derive(Clone, Copy, Debug)]
@@ -19,9 +19,24 @@ pub(crate) struct Candidate {
     pub(crate) idx: InternalIndex,
     /// Higher-is-better score for the active distance metric.
     pub(crate) score: f32,
+    /// `false` when the candidate's score is a `NEG_INFINITY` placeholder
+    /// (scorer returned `None`, e.g. polysemous Hamming-filter fail).
+    /// Non-admissible candidates may still expand the frontier during beam
+    /// descent, but must not enter the result set and must not be resurrected
+    /// by post-beam rescoring.
+    pub(crate) admissible: bool,
 }
 
 impl Candidate {
+    /// Construct a candidate that is admissible to the result set.
+    pub(crate) const fn admissible(idx: InternalIndex, score: f32) -> Self {
+        Self {
+            idx,
+            score,
+            admissible: true,
+        }
+    }
+
     /// Sort by score descending, then provider-local index ascending.
     pub(crate) fn cmp(left: &Self, right: &Self) -> Ordering {
         right
@@ -77,6 +92,11 @@ pub fn search(
     beam.sort_by(Candidate::cmp);
     if params.quantization.rescore && scorer.is_asymmetric() {
         for candidate in &mut beam {
+            // Rescore only admissible candidates; a non-admissible candidate
+            // (polysemous Hamming-filter fail) must stay out of the result.
+            if !candidate.admissible {
+                continue;
+            }
             if let Some(node) = graph.node_by_idx(candidate.idx) {
                 candidate.score = score(query, &node.vector, params);
             }
@@ -88,6 +108,9 @@ pub fn search(
     Ok(beam
         .into_iter()
         .filter_map(|candidate| {
+            if !candidate.admissible {
+                return None;
+            }
             graph
                 .node_by_idx(candidate.idx)
                 .map(|node| (node.node_id, candidate.score))
@@ -124,14 +147,29 @@ pub(crate) fn beam_search_layer(
         // expansion cannot improve top-ef. This preserves the BRIEF-59
         // bounded-beam fix while allowing filtered nodes to route until the
         // admission set is full.
+        //
+        // BRIEF-69 cloud-Codex P1: non-admissible candidates carry a
+        // `NEG_INFINITY` placeholder score (the scorer returned `None`),
+        // which makes `Candidate::cmp` always say they're worse than every
+        // admissible result entry. Without the admissibility gate below,
+        // the loop would short-circuit before expanding a non-admissible
+        // candidate's neighbors — and those neighbors are exactly where
+        // the next admissible result entry might live. We only treat the
+        // current candidate as a termination signal when it is itself
+        // admissible (i.e. carries a real score the cmp can reason about).
         if result.len() >= ef
+            && candidate.admissible
             && let Some(worst) = result.last()
             && Candidate::cmp(&candidate, worst).is_gt()
         {
             break;
         }
 
-        if candidate_passes_filter(graph, candidate.idx, filter) {
+        // Admissibility gate: non-admissible candidates (e.g. polysemous
+        // Hamming-filter failures or scorer-None nodes) may still expand the
+        // frontier below, but must never enter `result` — otherwise they
+        // leak into top-k whenever fewer than `ef` candidates are admissible.
+        if candidate.admissible && candidate_passes_filter(graph, candidate.idx, filter) {
             result.push(candidate);
             result.sort_by(Candidate::cmp);
             if result.len() > ef {
@@ -213,6 +251,17 @@ pub(crate) enum Scorer<'a> {
         query_norm: f32,
         lut: Vec<f32>,
         quantized: &'a QuantizedStore,
+        /// Pre-computed polysemous query codes (BRIEF-69 §C.3). Populated
+        /// when `params.quantization.pq.use_polysemous && quantized.polysemous_trained()`;
+        /// `None` disables the Hamming pre-filter so non-polysemous stores
+        /// behave exactly as they did before BRIEF-69.
+        polysemous_query_codes: Option<Box<[u8]>>,
+        /// Hamming distance cutoff (V112). When `polysemous_query_codes` is
+        /// `Some`, candidates whose stored-vs-query Hamming exceeds this
+        /// threshold are marked non-admissible. The admission bit added in
+        /// Stage 1 delta 2 keeps them out of the result set even though
+        /// they may still expand the frontier.
+        polysemous_threshold: u32,
     },
 }
 
@@ -225,12 +274,35 @@ impl<'a> Scorer<'a> {
         if params.quantization.enabled
             && let Some(quantized) = graph.quantized()
         {
+            // The polysemous filter activates only when the embedder
+            // requested it AND the loaded codebook self-identifies as
+            // polysemous-trained (V107). The two are checked independently
+            // so that recovery drift is caught by the QUNT/IPQB validator,
+            // not silently masked by the scorer.
+            //
+            // PqParams::resolve mirrors the trainer (PqCodebook::train),
+            // which falls back to PqParams::default_for_dim when the
+            // embedder leaves `quantization.pq` as `None`. Without this
+            // resolution the search-side filter would silently disable
+            // itself whenever the trainer used defaults.
+            let resolved_pq = PqParams::resolve(graph.dimensions(), params.quantization.pq);
+            let (polysemous_query_codes, polysemous_threshold) =
+                if resolved_pq.use_polysemous && quantized.polysemous_trained() {
+                    (
+                        quantized.pq_encode_query_codes(query),
+                        resolved_pq.resolve_hamming_threshold(),
+                    )
+                } else {
+                    (None, 0)
+                };
             return Self::Asymmetric {
                 query,
                 metric: params.metric,
                 query_norm: dot_product(query, query).sqrt(),
                 lut: quantized.build_query_lut(query, params.metric),
                 quantized,
+                polysemous_query_codes,
+                polysemous_threshold,
             };
         }
         Self::f32(query, params.metric)
@@ -250,10 +322,32 @@ impl<'a> Scorer<'a> {
                 query_norm,
                 lut,
                 quantized,
+                polysemous_query_codes,
+                polysemous_threshold,
             } => {
                 let node_idx = idx as usize;
                 if node_idx >= quantized.node_count() {
                     return Some(score_for_metric(*metric, query, &node.vector));
+                }
+                // BRIEF-69 §C.3 Hamming pre-filter: when polysemous codes
+                // are available AND the stored bytes are also polysemous,
+                // skip ADC LUT lookup for candidates whose Hamming distance
+                // from the query exceeds the threshold. Returning `None`
+                // routes through `push_candidate` to a non-admissible
+                // Candidate (BRIEF-69 Stage 1 delta 2 / V110) — the
+                // candidate may still expand the frontier but cannot enter
+                // the result set or be resurrected by rescore.
+                if let Some(query_codes) = polysemous_query_codes
+                    && let Some(stored_codes) = quantized.pq_codes_for(node_idx)
+                {
+                    let hamming = query_codes
+                        .iter()
+                        .zip(stored_codes)
+                        .map(|(left, right)| (left ^ right).count_ones())
+                        .sum::<u32>();
+                    if hamming > *polysemous_threshold {
+                        return None;
+                    }
                 }
                 let lut_sum = quantized.lut_sum(lut, node_idx)?;
                 // §O.New-2: keep quantized and f32 scores on the same scale.
@@ -301,9 +395,16 @@ fn push_candidate(
         return;
     }
     if graph.node_by_idx(idx).is_some() {
+        let scored = scorer.score(graph, idx);
+        // Capture admissibility from `Some(_)` vs `None` *before* the
+        // unwrap_or collapses both into NEG_INFINITY for ordering. Without
+        // this bit, a polysemous Hamming-filter fail (or any future
+        // `None`-returning scorer) would leak into top-k via the score
+        // ordering path even though the scorer explicitly excluded it.
         out.push(Candidate {
             idx,
-            score: scorer.score(graph, idx).unwrap_or(f32::NEG_INFINITY),
+            score: scored.unwrap_or(f32::NEG_INFINITY),
+            admissible: scored.is_some(),
         });
     }
 }

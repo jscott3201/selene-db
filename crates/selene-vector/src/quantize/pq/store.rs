@@ -112,6 +112,7 @@ impl QuantizedStorePq {
             kind: QuantizationStatsKind::Pq {
                 bytes_codebook: self.bytes_codebook(),
                 bytes_rotation: self.bytes_rotation(),
+                polysemous: self.codebook.polysemous_trained,
             },
             bytes_norms: self.bytes_norms(),
             compression_ratio,
@@ -136,6 +137,35 @@ impl QuantizedStorePq {
         self.approx_norms
             .as_ref()
             .and_then(|norms| norms.get(node_idx).copied())
+    }
+
+    /// Return the PQ code bytes for `node_idx`, or `None` when the index is
+    /// out of range. Used by the polysemous Hamming pre-filter to avoid
+    /// rebuilding the LUT-sum slicing logic for what is fundamentally a
+    /// byte-level read.
+    pub(crate) fn codes_for(&self, node_idx: usize) -> Option<&[u8]> {
+        let m = self.codebook.m_subspaces as usize;
+        if node_idx >= self.node_count() {
+            return None;
+        }
+        let row_start = node_idx.checked_mul(m)?;
+        self.codes.get(row_start..row_start.checked_add(m)?)
+    }
+
+    /// Encode `query` against the (possibly polysemous-permuted) codebook,
+    /// returning the byte representation used for Hamming pre-filtering.
+    pub(crate) fn encode_query_codes(&self, query: &[f32]) -> Box<[u8]> {
+        let m = self.codebook.m_subspaces as usize;
+        let mut codes = Vec::with_capacity(m);
+        self.codebook.encode_row(query, &mut codes);
+        codes.into_boxed_slice()
+    }
+
+    /// Whether this store's codebook has been polysemous-permuted. The
+    /// Hamming pre-filter remains a no-op when this returns `false`, so
+    /// non-polysemous goldens cannot accidentally exercise the filter.
+    pub(crate) fn polysemous_trained(&self) -> bool {
+        self.codebook.polysemous_trained
     }
 
     #[cfg(test)]
@@ -175,6 +205,7 @@ mod tests {
                 subspace_dim: 2,
                 centroids: vec![0.0; 2 * 256 * 2],
                 rotation: Some(crate::quantize::linalg::identity(4)),
+                polysemous_trained: false,
             },
             codes: vec![0, 1, 2, 3],
             approx_norms: None,
@@ -187,6 +218,7 @@ mod tests {
             QuantizationStatsKind::Pq {
                 bytes_codebook,
                 bytes_rotation,
+                polysemous: false,
             } if bytes_codebook == 2 * 256 * 2 * std::mem::size_of::<f32>()
                 && bytes_rotation == 4 * 4 * std::mem::size_of::<f32>()
         ));

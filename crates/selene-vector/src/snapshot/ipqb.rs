@@ -4,7 +4,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 
 use crate::VectorError;
 use crate::quantize::linalg;
-use crate::quantize::{PqCodebook, PqCodebookV1Legacy};
+use crate::quantize::{PqCodebook, PqCodebookV1Legacy, PqCodebookV2Legacy};
 
 use super::{IPQB, decode_failed, encode_failed};
 
@@ -29,6 +29,15 @@ enum IpqbBodyV1Legacy {
     Trained { codebook: PqCodebookV1Legacy },
 }
 
+/// Decode/encode shape from BRIEF-68 (post-OPQ, pre-polysemous). Used so
+/// IVF-PQ snapshots produced before BRIEF-69 stay byte-identical when
+/// `polysemous_trained = false`.
+#[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
+enum IpqbBodyV2Legacy {
+    Empty,
+    Trained { codebook: PqCodebookV2Legacy },
+}
+
 impl From<IpqbBodyV1Legacy> for IpqbBodyV1 {
     fn from(value: IpqbBodyV1Legacy) -> Self {
         match value {
@@ -40,9 +49,25 @@ impl From<IpqbBodyV1Legacy> for IpqbBodyV1 {
     }
 }
 
+impl From<IpqbBodyV2Legacy> for IpqbBodyV1 {
+    fn from(value: IpqbBodyV2Legacy) -> Self {
+        match value {
+            IpqbBodyV2Legacy::Empty => Self::Empty,
+            IpqbBodyV2Legacy::Trained { codebook } => Self::Trained {
+                codebook: codebook.into(),
+            },
+        }
+    }
+}
+
 pub(crate) fn encode_ipqb(body: &IpqbBodyV1) -> Result<Vec<u8>, VectorError> {
     validate_ipqb(body)?;
-    if let Some(bytes) = encode_ipqb_legacy_if_compatible(body)? {
+    // Encode cascade: v1 legacy (BRIEF-66 byte parity) → v2 legacy
+    // (BRIEF-68 byte parity) → v3 flag-bearing archive.
+    if let Some(bytes) = encode_ipqb_v1_legacy_if_compatible(body)? {
+        return Ok(bytes);
+    }
+    if let Some(bytes) = encode_ipqb_v2_legacy_if_compatible(body)? {
         return Ok(bytes);
     }
     let archived = rkyv::to_bytes::<rkyv::rancor::Error>(body)
@@ -53,11 +78,11 @@ pub(crate) fn encode_ipqb(body: &IpqbBodyV1) -> Result<Vec<u8>, VectorError> {
     Ok(out)
 }
 
-fn encode_ipqb_legacy_if_compatible(body: &IpqbBodyV1) -> Result<Option<Vec<u8>>, VectorError> {
+fn encode_ipqb_v1_legacy_if_compatible(body: &IpqbBodyV1) -> Result<Option<Vec<u8>>, VectorError> {
     let legacy = match body {
         IpqbBodyV1::Empty => IpqbBodyV1Legacy::Empty,
         IpqbBodyV1::Trained { codebook } => {
-            if codebook.rotation.is_some() {
+            if codebook.rotation.is_some() || codebook.polysemous_trained {
                 return Ok(None);
             }
             IpqbBodyV1Legacy::Trained {
@@ -78,6 +103,24 @@ fn encode_ipqb_legacy_if_compatible(body: &IpqbBodyV1) -> Result<Option<Vec<u8>>
     Ok(Some(out))
 }
 
+fn encode_ipqb_v2_legacy_if_compatible(body: &IpqbBodyV1) -> Result<Option<Vec<u8>>, VectorError> {
+    let legacy = match body {
+        IpqbBodyV1::Empty => IpqbBodyV2Legacy::Empty,
+        IpqbBodyV1::Trained { codebook } => {
+            let Some(v2) = codebook.as_v2_legacy() else {
+                return Ok(None);
+            };
+            IpqbBodyV2Legacy::Trained { codebook: v2 }
+        }
+    };
+    let archived = rkyv::to_bytes::<rkyv::rancor::Error>(&legacy)
+        .map_err(|error| encode_failed(IPQB, error.to_string()))?;
+    let mut out = Vec::with_capacity(PAYLOAD_MAGIC_IPQB.len() + archived.len());
+    out.extend_from_slice(&PAYLOAD_MAGIC_IPQB);
+    out.extend_from_slice(&archived);
+    Ok(Some(out))
+}
+
 pub(crate) fn decode_ipqb(bytes: &[u8]) -> Result<IpqbBodyV1, VectorError> {
     let Some((magic, body)) = bytes.split_at_checked(PAYLOAD_MAGIC_IPQB.len()) else {
         return Err(decode_failed(IPQB, "IPQB magic mismatch"));
@@ -85,32 +128,58 @@ pub(crate) fn decode_ipqb(bytes: &[u8]) -> Result<IpqbBodyV1, VectorError> {
     if magic != PAYLOAD_MAGIC_IPQB {
         return Err(decode_failed(IPQB, "IPQB magic mismatch"));
     }
-    let v2 = rkyv::from_bytes::<IpqbBodyV1, rkyv::rancor::Error>(body);
-    let legacy = rkyv::from_bytes::<IpqbBodyV1Legacy, rkyv::rancor::Error>(body).ok();
-    let decoded = match (v2, legacy) {
-        (Ok(IpqbBodyV1::Empty), Some(IpqbBodyV1Legacy::Trained { codebook })) => {
+    // Each successive shape decodes from the same `body` bytes; the
+    // ambiguity (every encoded `Empty` payload also decodes as `Empty`
+    // under wider shapes) is handled by preferring the *widest* decoder
+    // that surfaces a `Trained` body. Conversely, a successful `Trained`
+    // decode in any shape wins over an `Empty` decode in a wider shape
+    // (BRIEF-66/67 byte goldens stay loadable).
+    let v3 = rkyv::from_bytes::<IpqbBodyV1, rkyv::rancor::Error>(body);
+    let v2 = rkyv::from_bytes::<IpqbBodyV2Legacy, rkyv::rancor::Error>(body).ok();
+    let v1 = rkyv::from_bytes::<IpqbBodyV1Legacy, rkyv::rancor::Error>(body).ok();
+    let decoded = match (v3, v2, v1) {
+        // Pre-BRIEF-69 archive resolving as Empty in v3 but Trained in v2:
+        // honor the v2 Trained body (carries rotation but not polysemous).
+        (Ok(IpqbBodyV1::Empty), Some(IpqbBodyV2Legacy::Trained { codebook }), _) => {
+            let decoded: IpqbBodyV1 = IpqbBodyV2Legacy::Trained { codebook }.into();
+            validate_ipqb(&decoded)?;
+            decoded
+        }
+        // Pre-BRIEF-68 archive resolving as Empty in v3/v2 but Trained
+        // in v1 legacy: honor the v1 Trained body (no rotation, no flag).
+        (Ok(IpqbBodyV1::Empty), _, Some(IpqbBodyV1Legacy::Trained { codebook })) => {
             let decoded: IpqbBodyV1 = IpqbBodyV1Legacy::Trained { codebook }.into();
             validate_ipqb(&decoded)?;
             decoded
         }
-        (Ok(decoded), _) => {
+        (Ok(decoded), _, _) => {
             validate_ipqb(&decoded)?;
             decoded
         }
-        (Err(v2_error), Some(legacy)) => {
-            let decoded = legacy.into();
+        (Err(v3_error), Some(v2_body), _) => {
+            let decoded: IpqbBodyV1 = v2_body.into();
             validate_ipqb(&decoded).map_err(|legacy_error| {
                 decode_failed(
                     IPQB,
-                    format!("rkyv decode failed: v2={v2_error}; legacy={legacy_error}"),
+                    format!("rkyv decode failed: v3={v3_error}; v2={legacy_error}"),
                 )
             })?;
             decoded
         }
-        (Err(v2_error), None) => {
+        (Err(v3_error), None, Some(v1_body)) => {
+            let decoded: IpqbBodyV1 = v1_body.into();
+            validate_ipqb(&decoded).map_err(|legacy_error| {
+                decode_failed(
+                    IPQB,
+                    format!("rkyv decode failed: v3={v3_error}; v1={legacy_error}"),
+                )
+            })?;
+            decoded
+        }
+        (Err(v3_error), None, None) => {
             return Err(decode_failed(
                 IPQB,
-                format!("rkyv decode failed: {v2_error}"),
+                format!("rkyv decode failed: {v3_error}"),
             ));
         }
     };
@@ -234,6 +303,7 @@ mod tests {
                 subspace_dim: 2,
                 centroids: vec![0.0; 512],
                 rotation: Some(vec![1.0, 0.0, 0.0]),
+                polysemous_trained: false,
             },
         };
 
@@ -253,6 +323,7 @@ mod tests {
                 subspace_dim: 2,
                 centroids: vec![0.0; 512],
                 rotation: Some(vec![2.0, 0.0, 0.0, 1.0]),
+                polysemous_trained: false,
             },
         };
 
@@ -272,6 +343,7 @@ mod tests {
                 subspace_dim: 2,
                 centroids: vec![0.0; 512],
                 rotation: Some(vec![2.0, 0.0, 0.0, 1.0]),
+                polysemous_trained: false,
             },
         };
         let encoded = raw_encode(&body);

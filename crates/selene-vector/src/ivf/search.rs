@@ -39,6 +39,29 @@ pub fn search(
     };
     let probes = coarse.nearest_probes(query, probe_count);
     let query_norm = dot_product(query, query).sqrt();
+    // BRIEF-69 §C.4 polysemous setup. The filter activates only when the
+    // embedder requested it AND the residual codebook self-identifies as
+    // polysemous-trained (V107). Drift between the two is rejected at
+    // recovery time by `validate_trained_codebook`, so reaching the
+    // search path means the two flags MUST already agree; the `&&` here
+    // is defense in depth rather than a drift-masking gate.
+    let polysemous_active = config.pq.use_polysemous && codebook.polysemous_trained;
+    let polysemous_threshold = if polysemous_active {
+        config.pq.resolve_hamming_threshold()
+    } else {
+        0
+    };
+    // §C.4 / F4: Dot/Cosine encode the query code ONCE because their LUT
+    // path uses the raw query (centroid contribution is folded in via
+    // `centroid_dot` per entry). L2 must encode PER probe because the
+    // residual is `query - coarse_centroid[c]`, which differs per
+    // probed centroid.
+    let cached_query_codes: Option<Box<[u8]>> =
+        if polysemous_active && config.metric != DistanceMetric::L2 {
+            Some(codebook_encode_row(codebook, query))
+        } else {
+            None
+        };
     let mut out = Vec::new();
     for centroid_id in probes {
         let Some(centroid) = coarse.centroid(centroid_id) else {
@@ -57,7 +80,32 @@ pub fn search(
         };
         let lut = codebook.build_query_lut(&residual_query, config.metric);
         let centroid_dot = dot_product(query, centroid);
+        // For L2 the per-probe residual changes, so we re-encode the
+        // query codes against the (possibly polysemous-permuted) codebook
+        // for *this* residual. For Dot/Cosine we reuse the cached codes.
+        let probe_query_codes: Option<Box<[u8]>> = if polysemous_active {
+            match config.metric {
+                DistanceMetric::L2 => Some(codebook_encode_row(codebook, &residual_query)),
+                _ => cached_query_codes.clone(),
+            }
+        } else {
+            None
+        };
         for entry in &list.entries {
+            // Hamming pre-filter (V111): skip the LUT lookup entirely
+            // when the stored polysemous code is too far from the query
+            // in bit space. `continue` here directly converts the
+            // filter-pass rate to throughput.
+            if let Some(query_codes) = probe_query_codes.as_deref() {
+                let hamming = query_codes
+                    .iter()
+                    .zip(entry.codes.iter())
+                    .map(|(left, right)| (left ^ right).count_ones())
+                    .sum::<u32>();
+                if hamming > polysemous_threshold {
+                    continue;
+                }
+            }
             let Some(lut_sum) = codebook.lut_sum_for_codes(&lut, &entry.codes) else {
                 continue;
             };
@@ -88,6 +136,12 @@ pub fn search(
     });
     out.truncate(k);
     Ok(out)
+}
+
+fn codebook_encode_row(codebook: &crate::quantize::PqCodebook, row: &[f32]) -> Box<[u8]> {
+    let mut codes = Vec::with_capacity(codebook.m_subspaces as usize);
+    codebook.encode_row(row, &mut codes);
+    codes.into_boxed_slice()
 }
 
 fn validate_query(query: &[f32], dim: usize) -> Result<(), VectorError> {
@@ -138,6 +192,8 @@ mod tests {
                 k_centroids: 256,
                 train_min_vectors: 256,
                 use_opq: false,
+                use_polysemous: false,
+                hamming_threshold_ratio: 0.5,
             },
             256,
         )

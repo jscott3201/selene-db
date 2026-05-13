@@ -146,6 +146,8 @@ fn provider_for(
                 k_centroids: 256,
                 train_min_vectors: 256,
                 use_opq,
+                use_polysemous: false,
+                hamming_threshold_ratio: 0.5,
             }),
         })
         .expect("PQ config is valid");
