@@ -162,4 +162,62 @@ pub enum VectorError {
         /// Configured PQ subspace count.
         m_subspaces: usize,
     },
+
+    /// IVF-PQ training cannot run until enough vectors are present.
+    #[error("IVF training deferred: observed {observed_vectors} vectors, required {required}")]
+    #[diagnostic(code(SLENE_VEC_017))]
+    IvfTrainingDeferred {
+        /// Current vector count.
+        observed_vectors: usize,
+        /// Minimum vector count required by the active IVF config.
+        required: usize,
+    },
+
+    /// IVF payload or section dimensionality does not match the provider.
+    #[error("IVF dimension mismatch: expected {expected}, observed {observed}")]
+    #[diagnostic(code(SLENE_VEC_018))]
+    IvfDimensionMismatch {
+        /// Expected vector dimension.
+        expected: usize,
+        /// Observed vector dimension.
+        observed: usize,
+    },
+
+    /// IVF search probe count is outside the configured coarse-list range.
+    #[error("invalid IVF n_probe {n_probe}; k_coarse is {k_coarse}")]
+    #[diagnostic(code(SLENE_VEC_019))]
+    IvfInvalidNProbe {
+        /// Requested probe count.
+        n_probe: u32,
+        /// Configured coarse centroid count.
+        k_coarse: u32,
+    },
+
+    /// IVF snapshot sections are not mutually consistent.
+    #[error("inconsistent IVF snapshot sections: {reason}")]
+    #[diagnostic(code(SLENE_VEC_020))]
+    IvfSectionInconsistent {
+        /// Human-readable consistency failure.
+        reason: String,
+    },
+
+    /// IVF coarse quantizer training failed.
+    #[error("IVF training failed in {context}: {reason}")]
+    #[diagnostic(code(SLENE_VEC_021))]
+    IvfTrainingFailed {
+        /// Training context.
+        context: &'static str,
+        /// Human-readable failure.
+        reason: String,
+    },
+
+    /// Shared PQ codebook training failed.
+    #[error("PQ codebook training failed in {context}: {reason}")]
+    #[diagnostic(code(SLENE_VEC_022))]
+    PqCodebookTrainFailed {
+        /// Training context.
+        context: &'static str,
+        /// Human-readable failure.
+        reason: String,
+    },
 }

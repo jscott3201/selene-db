@@ -16,7 +16,7 @@ use selene_vector::snapshot_summary::{
 };
 use selene_vector::{
     DistanceMetric, HnswConfig, NeighborSelectionConfig, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK,
-    QuantMethod, VectorOp,
+    PAYLOAD_MAGIC_IVF, QuantMethod, VectorOp,
 };
 
 mod vector_snapshot_support;
@@ -199,6 +199,10 @@ fn payload_magic_mirror_matches_constants() {
         ("VGRP", *b"VGRP"),
         ("VVEC", *b"VVEC"),
         ("VQNT", *b"VQNT"),
+        ("VIVF", PAYLOAD_MAGIC_IVF),
+        ("VCQB", *b"VCQB"),
+        ("VIPB", *b"VIPB"),
+        ("VPOS", *b"VPOS"),
     ];
     assert_eq!(magic_constants(), expected);
 }
@@ -291,6 +295,12 @@ fn error_fixtures_split_api_vs_synthetic() {
         VectorErrorKindMirror::EncodeFailed,
         VectorErrorKindMirror::InternalIndexExhausted,
         VectorErrorKindMirror::PqTrainingDeferred,
+        VectorErrorKindMirror::IvfTrainingDeferred,
+        VectorErrorKindMirror::IvfDimensionMismatch,
+        VectorErrorKindMirror::IvfInvalidNProbe,
+        VectorErrorKindMirror::IvfSectionInconsistent,
+        VectorErrorKindMirror::IvfTrainingFailed,
+        VectorErrorKindMirror::PqCodebookTrainFailed,
     ]
     .into_iter()
     .collect::<BTreeSet<_>>();

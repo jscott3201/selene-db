@@ -31,9 +31,11 @@
 #![deny(missing_docs)]
 
 pub(crate) mod builder;
+pub(crate) mod clustering;
 pub mod config;
 pub mod error;
 pub mod hnsw;
+pub mod ivf;
 pub mod payload;
 pub mod procedures;
 pub mod provider;
@@ -42,13 +44,14 @@ pub(crate) mod snapshot;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod snapshot_summary;
 
-pub use config::{DistanceMetric, HnswConfig, NeighborSelectionConfig};
+pub use config::{DistanceMetric, HnswConfig, IvfConfig, NeighborSelectionConfig};
 pub use error::VectorError;
 pub use hnsw::distance;
 pub use hnsw::{HnswGraph, HnswNode, HnswParams, insert_node, random_layer, random_layer_default};
+pub use ivf::{IvfIndex, IvfProvider, IvfStats};
 pub use payload::{
-    BulkInsertRow, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, VectorBulkInsertPayloadV1, VectorOp,
-    VectorUpsertPayloadV1,
+    BulkInsertRow, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_IVF, VectorBulkInsertPayloadV1,
+    VectorIvfUpsertV1, VectorOp, VectorUpsertPayloadV1,
 };
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;

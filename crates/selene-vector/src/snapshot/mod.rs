@@ -10,12 +10,18 @@ use crate::config::DistanceMetric;
 use crate::hnsw::{HnswGraph, HnswNode, InternalIndex};
 use crate::{HnswConfig, VectorError};
 
+pub(crate) mod cqnt;
 pub(crate) mod grph;
+pub(crate) mod ipqb;
+pub(crate) mod post;
 pub(crate) mod qunt;
 mod tags;
 pub(crate) mod vecs;
 
-pub(crate) use tags::{DECLARED_SUB_TAGS, GRPH, QUNT, VECS, VECT, is_declared};
+pub(crate) use tags::{
+    CQNT, DECLARED_SUB_TAGS, DECLARED_SUB_TAGS_IVF, GRPH, IPQB, IVFP, POST, QUNT, VECS, VECT,
+    is_declared, is_declared_ivf,
+};
 
 const MAX_LAYER: u8 = 32;
 

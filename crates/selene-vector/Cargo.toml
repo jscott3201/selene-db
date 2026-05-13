@@ -50,5 +50,9 @@ harness = false
 name = "quant_recall"
 harness = false
 
+[[bench]]
+name = "ivfpq_recall"
+harness = false
+
 [lints]
 workspace = true

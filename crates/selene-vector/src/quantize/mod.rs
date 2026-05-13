@@ -7,7 +7,7 @@ use crate::{DistanceMetric, VectorError, snapshot};
 mod pq;
 mod sq8;
 
-pub(crate) use pq::QuantizedStorePq;
+pub(crate) use pq::{PqCodebook, QuantizedStorePq};
 #[cfg(test)]
 pub(crate) use sq8::PerCoordRange;
 pub(crate) use sq8::QuantizedStoreSq8;

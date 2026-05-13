@@ -70,5 +70,24 @@ pub fn render_vector_error(error: &VectorError) -> String {
         VectorError::PqDimensionNotDivisible { dim, m_subspaces } => {
             format!("{kind}{{dim={dim}, m_subspaces={m_subspaces}}}")
         }
+        VectorError::IvfTrainingDeferred {
+            observed_vectors,
+            required,
+        } => format!("{kind}{{observed_vectors={observed_vectors}, required={required}}}"),
+        VectorError::IvfDimensionMismatch { expected, observed } => {
+            format!("{kind}{{expected={expected}, observed={observed}}}")
+        }
+        VectorError::IvfInvalidNProbe { n_probe, k_coarse } => {
+            format!("{kind}{{n_probe={n_probe}, k_coarse={k_coarse}}}")
+        }
+        VectorError::IvfSectionInconsistent { reason } => {
+            format!("{kind}{{reason={reason:?}}}")
+        }
+        VectorError::IvfTrainingFailed { context, reason } => {
+            format!("{kind}{{context={context:?}, reason={reason:?}}}")
+        }
+        VectorError::PqCodebookTrainFailed { context, reason } => {
+            format!("{kind}{{context={context:?}, reason={reason:?}}}")
+        }
     }
 }
