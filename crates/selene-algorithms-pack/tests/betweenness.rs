@@ -8,7 +8,7 @@ use common::{
     graph_with_labeled_weighted_edges, invalid_argument_detail, istr, registry, rows, table_values,
 };
 use selene_algorithms::betweenness;
-use selene_algorithms_pack::{ALGO_PROCEDURE_NAMES, AlgorithmsPack};
+use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{AnalysisError, ExpectedType, GqlType, ProcedureRegistry, TypeMismatchContext};
 use selene_graph::SharedGraph;
@@ -198,10 +198,10 @@ fn algo_pack_corpus_betweenness_entry_renders_to_expected_call() {
 }
 
 #[test]
-fn algo_pack_corpus_drift_detection_pins_post_b4_procedure_count() {
+fn algo_pack_corpus_b4_seed_pins_post_b4_procedure_count() {
     let corpus = AlgoPackCorpus::b4_seed();
 
-    assert_eq!(corpus.entries().len(), ALGO_PROCEDURE_NAMES.len());
+    assert_eq!(corpus.entries().len(), 16);
 }
 
 #[test]

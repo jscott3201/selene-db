@@ -53,6 +53,25 @@ pub enum AlgoPackInvocation {
         /// Nullable sample-size argument.
         sample_size: Option<usize>,
     },
+    /// `algo.label_propagation`.
+    LabelPropagation {
+        /// Projection name.
+        projection_name: &'static str,
+        /// Nullable max-iteration argument.
+        max_iter: Option<usize>,
+    },
+    /// `algo.louvain`.
+    Louvain {
+        /// Projection name.
+        projection_name: &'static str,
+        /// Nullable max-iteration argument.
+        max_iter: Option<usize>,
+    },
+    /// `algo.triangle_count`.
+    TriangleCount {
+        /// Projection name.
+        projection_name: &'static str,
+    },
     /// `algo.wcc`.
     Wcc {
         /// Projection name.
@@ -151,6 +170,25 @@ impl AlgoPackInvocation {
                 quoted(projection_name),
                 nullable_usize(*sample_size)
             ),
+            Self::LabelPropagation {
+                projection_name,
+                max_iter,
+            } => format!(
+                "CALL algo.label_propagation({}, {})",
+                quoted(projection_name),
+                nullable_usize(*max_iter)
+            ),
+            Self::Louvain {
+                projection_name,
+                max_iter,
+            } => format!(
+                "CALL algo.louvain({}, {})",
+                quoted(projection_name),
+                nullable_usize(*max_iter)
+            ),
+            Self::TriangleCount { projection_name } => {
+                format!("CALL algo.triangle_count({})", quoted(projection_name))
+            }
             Self::Wcc { projection_name } => {
                 format!("CALL algo.wcc({})", quoted(projection_name))
             }
@@ -359,6 +397,41 @@ impl AlgoPackCorpus {
                     sample_size: None,
                 },
             },
+        );
+        corpus
+    }
+
+    /// Construct the B5 corpus including community adapters.
+    #[must_use]
+    pub fn b5_seed() -> Self {
+        let mut corpus = Self::b4_seed();
+        corpus.entries.splice(
+            6..6,
+            [
+                AlgoPackCorpusEntry {
+                    name: "label_propagation_defaults",
+                    category: AlgoPackCorpusCategory::Algorithm,
+                    invocation: AlgoPackInvocation::LabelPropagation {
+                        projection_name: "p",
+                        max_iter: None,
+                    },
+                },
+                AlgoPackCorpusEntry {
+                    name: "louvain_defaults",
+                    category: AlgoPackCorpusCategory::Algorithm,
+                    invocation: AlgoPackInvocation::Louvain {
+                        projection_name: "p",
+                        max_iter: None,
+                    },
+                },
+                AlgoPackCorpusEntry {
+                    name: "triangle_count",
+                    category: AlgoPackCorpusCategory::Algorithm,
+                    invocation: AlgoPackInvocation::TriangleCount {
+                        projection_name: "p",
+                    },
+                },
+            ],
         );
         corpus
     }

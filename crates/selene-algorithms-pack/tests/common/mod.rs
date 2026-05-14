@@ -103,6 +103,39 @@ pub fn graph_with_labeled_unweighted_edges(
     graph_with_labeled_edges(id, labels, &weighted_edges, false)
 }
 
+pub fn graph_with_count_and_weighted_edges(
+    id: u64,
+    node_count: usize,
+    edges: &[(usize, usize, f64)],
+) -> (SharedGraph, Vec<NodeId>) {
+    let shared = SharedGraph::new(GraphId::new(id));
+    let label = istr("Person");
+    let rel = istr("LINK");
+    let weight = istr("w");
+    let mut txn = shared.begin_write();
+    let mut nodes = Vec::with_capacity(node_count);
+    for _ in 0..node_count {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .expect("fixture node inserts"),
+        );
+    }
+    for &(source, target, value) in edges {
+        txn.mutator()
+            .create_edge(
+                rel,
+                nodes[source],
+                nodes[target],
+                PropertyMap::from_pairs([(weight, Value::Float(value))])
+                    .expect("weight property builds"),
+            )
+            .expect("fixture edge inserts");
+    }
+    txn.commit().expect("fixture commit succeeds");
+    (shared, nodes)
+}
+
 pub fn build_weighted_projection(
     graph: &SharedGraph,
     registry: &dyn ProcedureRegistry,
@@ -186,6 +219,30 @@ pub fn table_values(table: &BindingTable) -> Vec<Vec<Value>> {
         .iter()
         .map(|row| row.values().to_vec())
         .collect()
+}
+
+pub fn assert_no_extended(value: &Value) {
+    match value {
+        Value::List(values) => {
+            for value in values {
+                assert_no_extended(value);
+            }
+        }
+        Value::Record(record) => {
+            if let selene_core::Record::Open(fields) = record.as_ref() {
+                for (_, value) in fields {
+                    assert_no_extended(value);
+                }
+            }
+        }
+        Value::RecordTyped(record) => {
+            for value in record.values.iter().flatten() {
+                assert_no_extended(value);
+            }
+        }
+        Value::Extended { .. } => panic!("algorithm adapters must not emit Value::Extended"),
+        _ => {}
+    }
 }
 
 pub fn assert_invalid_argument(err: ExecutorError) {
