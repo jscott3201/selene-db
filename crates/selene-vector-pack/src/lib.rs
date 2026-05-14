@@ -14,6 +14,8 @@ mod delete;
 mod error;
 mod ivf_bulk_delete;
 mod ivf_bulk_upsert;
+mod ivf_search;
+mod ivf_stats;
 mod provider;
 mod registry;
 mod search;
