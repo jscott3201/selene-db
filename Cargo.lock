@@ -2278,6 +2278,7 @@ dependencies = [
 name = "selene-vector-pack"
 version = "0.0.0"
 dependencies = [
+ "fastrand",
  "insta",
  "roaring",
  "selene-core",

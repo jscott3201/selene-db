@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{Value, intern};
+use selene_core::Value;
 use selene_gql::{GqlType, MutationContext, ProcedureError, ProcedureResult};
 use selene_pack::{
     ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -12,13 +12,14 @@ use selene_vector::{HnswParams, VectorOp, VectorUpsertPayloadV1, random_layer_de
 use crate::{
     args::{expect_arity, required_f32_list, required_node_ref, required_string},
     error::invalid_argument,
-    provider::{reject_non_default_index, with_hnsw_provider_mut},
+    provider::{
+        HNSW_PROVIDER_NAME, emit_payload_bytes, reject_non_default_index, with_hnsw_provider_mut,
+    },
     state::VectorPackState,
 };
 
 static UPSERT_NAME: [&str; 2] = ["vector", "upsert"];
 const UPSERT_PROC: &str = "vector.upsert";
-const HNSW_PROVIDER_NAME: &str = "selene-vector";
 
 pub(crate) fn procedure(state: Arc<VectorPackState>) -> Arc<dyn ExternalMutationProcedure> {
     Arc::new(UpsertProcedure { state })
@@ -97,12 +98,7 @@ pub(crate) fn emit_payload(
     let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
         detail: format!("{procedure}: payload encode failed: {error}"),
     })?;
-    let provider = intern(HNSW_PROVIDER_NAME).map_err(|_| ProcedureError::Internal {
-        detail: format!("{procedure}: provider name interner capacity exhausted"),
-    })?;
-    ctx.mutator()
-        .extension_event(provider, Arc::from(bytes.into_boxed_slice()));
-    Ok(())
+    emit_payload_bytes(ctx, procedure, HNSW_PROVIDER_NAME, bytes)
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {

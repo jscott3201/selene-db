@@ -7,16 +7,23 @@ use selene_pack::{
     ProcedurePackRegistry, RegistryError,
 };
 
-use crate::{delete, search, state::VectorPackState, upsert};
+use crate::{
+    bulk_delete, bulk_upsert, delete, ivf_bulk_delete, ivf_bulk_upsert, search,
+    state::VectorPackState, upsert,
+};
 
 /// Static external pack name registered with `selene-pack`.
 pub const VECTOR_PACK_NAME: &str = "vector";
 
 /// Canonical procedure names registered by the vector pack.
-pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 3] = [
+pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 7] = [
     &["vector", "search"],
     &["vector", "upsert"],
     &["vector", "delete"],
+    &["vector", "bulk_upsert"],
+    &["vector", "bulk_delete"],
+    &["vector", "ivf_bulk_upsert"],
+    &["vector", "ivf_bulk_delete"],
 ];
 
 /// Construct-time handle for the vector procedure pack.
@@ -60,6 +67,10 @@ impl VectorPack {
         vec![
             upsert::procedure(Arc::clone(&self.state)),
             delete::procedure(Arc::clone(&self.state)),
+            bulk_upsert::procedure(Arc::clone(&self.state)),
+            bulk_delete::procedure(Arc::clone(&self.state)),
+            ivf_bulk_upsert::procedure(Arc::clone(&self.state)),
+            ivf_bulk_delete::procedure(Arc::clone(&self.state)),
         ]
     }
 }

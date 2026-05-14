@@ -13,6 +13,7 @@ description = "Procedure-pack adapters for selene vector indexes"
 test-harness = ["selene-gql/test-harness"]
 
 [dependencies]
+fastrand.workspace = true
 roaring.workspace = true
 selene-core = { path = "../selene-core", version = "0.0.0" }
 selene-gql = { path = "../selene-gql", version = "0.0.0" }
