@@ -7,6 +7,7 @@
 #![deny(missing_docs)]
 
 mod args;
+mod betweenness;
 mod error;
 mod pagerank;
 mod pathfinding;

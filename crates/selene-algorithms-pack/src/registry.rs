@@ -6,18 +6,21 @@ use selene_pack::{
     ExternalGraphProcedure, ExternalProcedurePack, ProcedurePackRegistry, RegistryError,
 };
 
-use crate::{pagerank, pathfinding, projection, state::AlgorithmsPackState, structural};
+use crate::{
+    betweenness, pagerank, pathfinding, projection, state::AlgorithmsPackState, structural,
+};
 
 /// Static external pack name registered with `selene-pack`.
 pub const ALGORITHMS_PACK_NAME: &str = "selene-algorithms";
 
 /// Canonical procedure names registered by the algorithms pack.
-pub const ALGO_PROCEDURE_NAMES: [&[&str]; 15] = [
+pub const ALGO_PROCEDURE_NAMES: [&[&str]; 16] = [
     &["algo", "projection_build"],
     &["algo", "projection_get"],
     &["algo", "projection_drop"],
     &["algo", "projection_list"],
     &["algo", "pagerank"],
+    &["algo", "betweenness"],
     &["algo", "wcc"],
     &["algo", "scc"],
     &["algo", "wcc_count"],
@@ -65,6 +68,7 @@ impl AlgorithmsPack {
     fn procedures(&self) -> Vec<Arc<dyn ExternalGraphProcedure>> {
         let mut procedures = projection::procedures(Arc::clone(&self.state));
         procedures.push(pagerank::procedure(Arc::clone(&self.state)));
+        procedures.push(betweenness::procedure(Arc::clone(&self.state)));
         procedures.extend(structural::procedures(Arc::clone(&self.state)));
         procedures.extend(pathfinding::procedures(Arc::clone(&self.state)));
         procedures
