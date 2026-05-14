@@ -27,6 +27,7 @@ pub mod catalog;
 pub mod centrality;
 pub mod community;
 pub mod error;
+pub mod parallel;
 pub mod pathfinding;
 pub mod projection;
 #[cfg(any(test, feature = "test-harness"))]
@@ -37,6 +38,7 @@ pub use catalog::{ProjectionCatalog, ProjectionRef};
 pub use centrality::{PageRankConfig, betweenness, pagerank};
 pub use community::{label_propagation, louvain, triangle_count};
 pub use error::AlgorithmsError;
+pub use parallel::Parallelism;
 pub use pathfinding::{PathResult, PathfindingError, apsp, dijkstra, sssp};
 pub use projection::{GraphProjection, ProjNeighbor, ProjectionConfig};
 #[cfg(any(test, feature = "test-harness"))]

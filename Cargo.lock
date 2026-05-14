@@ -2101,9 +2101,12 @@ dependencies = [
 name = "selene-algorithms"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "insta",
+ "mimalloc",
  "parking_lot",
  "proptest",
+ "rayon",
  "roaring",
  "selene-core",
  "selene-graph",
