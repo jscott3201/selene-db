@@ -7,10 +7,11 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::sync::Arc;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
 use selene_gql::{
-    ExecutionPlan, ImplDefinedCaps, MutationContext, ProcedureContext, ProcedureRegistry, Session,
-    StatementOutput, analyze, execute_statement, parse, plan,
+    ExecutionPlan, PipelineOp, ProcedureContext, ProcedureError, ProcedureHandle,
+    ProcedureMutability, ProcedureRegistry, ProcedureResult, ProcedureTier, Session,
+    StatementCategory, StatementOutput, analyze, execute_statement, parse, plan,
 };
 use selene_graph::{IndexProvider, SharedGraph, SubTag};
 use selene_pack::ProcedurePackRegistry;
@@ -34,24 +35,17 @@ const IVF_STATS_DEFAULT: &str = "CALL vector.ivf_stats('default') YIELD state";
 
 fn bench_search(c: &mut Criterion) {
     let state = BenchState::new_hnsw(HNSW_GRAPH_SCALE, 81_001);
+    let plan = state.plan(SEARCH_DEFAULT);
     c.bench_function("vector_pack/search_default", |b| {
-        b.iter(|| std::hint::black_box(state.execute(SEARCH_DEFAULT)));
+        b.iter(|| std::hint::black_box(state.execute_cached(&plan)));
     });
 }
 
 fn bench_upsert(c: &mut Criterion) {
     c.bench_function("vector_pack/upsert_default", |b| {
         b.iter_batched(
-            || BenchState::empty_hnsw(1, 81_002),
-            |state| {
-                std::hint::black_box(state.execute_mutation(
-                    &["vector", "upsert"],
-                    upsert_args(
-                        state.node_ids[0],
-                        hnsw_vector_value(&hnsw_vectors(1, 81_102)[0]),
-                    ),
-                ));
-            },
+            || BenchRun::new_hnsw_mutation(1, 81_002, upsert_source(&hnsw_vectors(1, 81_102)[0])),
+            |run| std::hint::black_box(run.execute()),
             BatchSize::SmallInput,
         );
     });
@@ -60,13 +54,11 @@ fn bench_upsert(c: &mut Criterion) {
 fn bench_bulk_upsert(c: &mut Criterion) {
     c.bench_function("vector_pack/bulk_upsert_default", |b| {
         b.iter_batched(
-            || BenchState::empty_hnsw(BULK_BATCH_SIZE, 81_003),
-            |state| {
-                std::hint::black_box(state.execute_mutation(
-                    &["vector", "bulk_upsert"],
-                    bulk_upsert_args(&state.node_ids, hnsw_vectors(BULK_BATCH_SIZE, 81_103)),
-                ));
+            || {
+                let vectors = hnsw_vectors(BULK_BATCH_SIZE, 81_103);
+                BenchRun::new_hnsw_mutation(BULK_BATCH_SIZE, 81_003, bulk_upsert_source(&vectors))
             },
+            |run| std::hint::black_box(run.execute()),
             BatchSize::SmallInput,
         );
     });
@@ -74,21 +66,24 @@ fn bench_bulk_upsert(c: &mut Criterion) {
 
 fn bench_ivf_search(c: &mut Criterion) {
     let state = BenchState::new_ivf_trained(IVF_GRAPH_SCALE, 81_004);
+    let plan = state.plan(IVF_SEARCH_DEFAULT);
     c.bench_function("vector_pack/ivf_search_default", |b| {
-        b.iter(|| std::hint::black_box(state.execute(IVF_SEARCH_DEFAULT)));
+        b.iter(|| std::hint::black_box(state.execute_cached(&plan)));
     });
 }
 
 fn bench_ivf_bulk_upsert(c: &mut Criterion) {
     c.bench_function("vector_pack/ivf_bulk_upsert_default", |b| {
         b.iter_batched(
-            || BenchState::empty_ivf(BULK_BATCH_SIZE, 81_005),
-            |state| {
-                std::hint::black_box(state.execute_mutation(
-                    &["vector", "ivf_bulk_upsert"],
-                    ivf_bulk_upsert_args(&state.node_ids, ivf_vectors(BULK_BATCH_SIZE, 81_105)),
-                ));
+            || {
+                let vectors = ivf_vectors(BULK_BATCH_SIZE, 81_105);
+                BenchRun::new_ivf_mutation(
+                    BULK_BATCH_SIZE,
+                    81_005,
+                    ivf_bulk_upsert_source(&vectors),
+                )
             },
+            |run| std::hint::black_box(run.execute()),
             BatchSize::SmallInput,
         );
     });
@@ -96,15 +91,38 @@ fn bench_ivf_bulk_upsert(c: &mut Criterion) {
 
 fn bench_ivf_stats(c: &mut Criterion) {
     let state = BenchState::new_ivf_trained(IVF_GRAPH_SCALE, 81_006);
+    let plan = state.plan(IVF_STATS_DEFAULT);
     c.bench_function("vector_pack/ivf_stats_default", |b| {
-        b.iter(|| std::hint::black_box(state.execute(IVF_STATS_DEFAULT)));
+        b.iter(|| std::hint::black_box(state.execute_cached(&plan)));
     });
 }
 
 struct BenchState {
     graph: SharedGraph,
     registry: ProcedurePackRegistry,
-    node_ids: Vec<NodeId>,
+}
+
+struct BenchRun {
+    state: BenchState,
+    plan: ExecutionPlan,
+}
+
+impl BenchRun {
+    fn new_hnsw_mutation(scale: usize, graph_id: u64, source: String) -> Self {
+        let state = BenchState::empty_hnsw(scale, graph_id);
+        let plan = state.mutation_plan(&source);
+        Self { state, plan }
+    }
+
+    fn new_ivf_mutation(scale: usize, graph_id: u64, source: String) -> Self {
+        let state = BenchState::empty_ivf(scale, graph_id);
+        let plan = state.mutation_plan(&source);
+        Self { state, plan }
+    }
+
+    fn execute(&self) -> usize {
+        self.state.execute_cached(&self.plan)
+    }
 }
 
 impl BenchState {
@@ -115,10 +133,9 @@ impl BenchState {
 
     fn new_hnsw(scale: usize, graph_id: u64) -> Self {
         let state = Self::empty_hnsw(scale, graph_id);
-        state.execute_mutation(
-            &["vector", "bulk_upsert"],
-            bulk_upsert_args(&state.node_ids, hnsw_vectors(scale, graph_id)),
-        );
+        let source = bulk_upsert_source(&hnsw_vectors(scale, graph_id));
+        let plan = state.mutation_plan(&source);
+        state.execute_cached(&plan);
         state
     }
 
@@ -131,10 +148,9 @@ impl BenchState {
         let scale = scale.max(IVF_GRAPH_SCALE);
         let provider = Arc::new(IvfProvider::new(ivf_config()).unwrap());
         let state = Self::with_provider(scale, graph_id, Arc::clone(&provider));
-        state.execute_mutation(
-            &["vector", "ivf_bulk_upsert"],
-            ivf_bulk_upsert_args(&state.node_ids, ivf_vectors(scale, graph_id)),
-        );
+        let source = ivf_bulk_upsert_source(&ivf_vectors(scale, graph_id));
+        let plan = state.mutation_plan(&source);
+        state.execute_cached(&plan);
         train_ivf(&provider);
         debug_assert!(matches!(
             provider.ivf_stats().unwrap().unwrap(),
@@ -155,47 +171,76 @@ impl BenchState {
             .with_provider(provider as Arc<dyn IndexProvider>)
             .build()
             .expect("bench graph builds");
-        let node_ids = create_nodes(&graph, scale.max(1));
-        Self {
-            graph,
-            registry,
-            node_ids,
-        }
+        create_nodes(&graph, scale.max(1));
+        Self { graph, registry }
     }
 
-    fn execute(&self, source: &str) -> usize {
-        let plan = planned(source, &self.registry);
+    fn plan(&self, source: &str) -> ExecutionPlan {
+        planned(source, &self.registry)
+    }
+
+    fn mutation_plan(&self, source: &str) -> ExecutionPlan {
+        // Mutation procedures take NodeRef inputs, but v1.0 GQL has no NodeRef
+        // literal. Plan a MATCH-fed CALL as read-tier, then restore the real
+        // mutation metadata so execution still uses the public CALL pipeline.
+        let planning_registry = ReadMirrorRegistry {
+            inner: &self.registry,
+        };
+        let mut plan = planned(source, &planning_registry);
+        plan.category = StatementCategory::DataModifying;
+        patch_call_metadata(&mut plan, &self.registry);
+        plan
+    }
+
+    fn execute_cached(&self, plan: &ExecutionPlan) -> usize {
         let mut session = Session::new(&self.graph);
-        match execute_statement(&plan, &mut session, &self.registry).expect("bench query executes")
-        {
+        match execute_statement(plan, &mut session, &self.registry).expect("bench query executes") {
             StatementOutput::Rows(table) => table.row_count(),
             StatementOutput::Empty => 0,
             _ => panic!("unexpected statement output for bench query"),
         }
     }
+}
 
-    fn execute_mutation(&self, name: &[&str], args: Vec<Value>) -> usize {
-        let interned = name.iter().map(|segment| istr(segment)).collect::<Vec<_>>();
-        let metadata = self
-            .registry
-            .lookup(&interned)
-            .expect("mutation procedure registered");
-        let mut txn = self.graph.begin_write();
-        let caps = ImplDefinedCaps::default();
-        let result = {
-            let mut ctx =
-                ProcedureContext::Mutation(MutationContext::for_test(txn.mutator(), &caps));
-            self.registry.execute(metadata.handle, &args, &mut ctx)
-        };
-        match result {
-            Ok(result) => {
-                txn.commit().expect("mutation commit succeeds");
-                result.rows.len()
+struct ReadMirrorRegistry<'a> {
+    inner: &'a dyn ProcedureRegistry,
+}
+
+impl ProcedureRegistry for ReadMirrorRegistry<'_> {
+    fn lookup(&self, name: &[IStr]) -> Option<selene_gql::ProcedureMetadata> {
+        self.inner.lookup(name).map(|mut metadata| {
+            metadata.mutability = ProcedureMutability::Read;
+            metadata.tier = ProcedureTier::Graph;
+            metadata
+        })
+    }
+
+    fn execute(
+        &self,
+        _handle: ProcedureHandle,
+        _args: &[Value],
+        _ctx: &mut ProcedureContext<'_, '_>,
+    ) -> Result<ProcedureResult, ProcedureError> {
+        unreachable!("read-mirror registry is only used during benchmark planning")
+    }
+}
+
+fn patch_call_metadata(plan: &mut ExecutionPlan, registry: &dyn ProcedureRegistry) {
+    for op in &mut plan.pipeline {
+        match op {
+            PipelineOp::Call(call) => {
+                let metadata = registry
+                    .lookup(call.procedure.as_ref())
+                    .expect("planned procedure still registered");
+                call.handle = metadata.handle;
+                call.tier = metadata.tier;
+                call.mutability = metadata.mutability;
+                call.output_schema = metadata.output_schema;
             }
-            Err(err) => {
-                txn.rollback();
-                panic!("bench mutation failed: {err:?}");
+            PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
+                patch_call_metadata(rhs, registry);
             }
+            _ => {}
         }
     }
 }
@@ -206,21 +251,17 @@ fn planned(source: &str, registry: &dyn ProcedureRegistry) -> ExecutionPlan {
     plan(&analyzed, registry).expect("bench query plans")
 }
 
-fn create_nodes(graph: &SharedGraph, count: usize) -> Vec<NodeId> {
+fn create_nodes(graph: &SharedGraph, count: usize) {
     let mut txn = graph.begin_write();
-    let mut node_ids = Vec::with_capacity(count);
     {
         let mut mutator = txn.mutator();
         for _ in 0..count {
-            node_ids.push(
-                mutator
-                    .create_node(LabelSet::single(istr("Vec")), PropertyMap::new())
-                    .expect("bench node inserts"),
-            );
+            mutator
+                .create_node(LabelSet::single(istr("Vec")), PropertyMap::new())
+                .expect("bench node inserts");
         }
     }
     txn.commit().expect("bench graph commits");
-    node_ids
 }
 
 fn hnsw_vectors(count: usize, seed: u64) -> Vec<[f64; HNSW_DIM]> {
@@ -246,52 +287,43 @@ fn ivf_vectors(count: usize, seed: u64) -> Vec<[f64; IVF_DIM]> {
         .collect()
 }
 
-fn hnsw_vector_value(row: &[f64; HNSW_DIM]) -> Value {
-    Value::List(row.iter().copied().map(Value::Float).collect())
-}
-
-fn hnsw_matrix(rows: Vec<[f64; HNSW_DIM]>) -> Value {
-    Value::List(
-        rows.iter()
-            .map(|row| Value::List(row.iter().copied().map(Value::Float).collect()))
-            .collect(),
+fn upsert_source(vector: &[f64; HNSW_DIM]) -> String {
+    format!(
+        "MATCH (n:Vec) CALL vector.upsert('default', n, {})",
+        vector_literal(vector)
     )
 }
 
-fn ivf_matrix(rows: Vec<[f64; IVF_DIM]>) -> Value {
-    Value::List(
-        rows.iter()
-            .map(|row| Value::List(row.iter().copied().map(Value::Float).collect()))
-            .collect(),
+fn bulk_upsert_source(vectors: &[[f64; HNSW_DIM]]) -> String {
+    format!(
+        "MATCH (n:Vec) WITH collect(n) AS nodes CALL vector.bulk_upsert('default', nodes, {})",
+        matrix_literal(vectors)
     )
 }
 
-fn node_ref_list(node_ids: &[NodeId]) -> Value {
-    Value::List(node_ids.iter().copied().map(Value::NodeRef).collect())
+fn ivf_bulk_upsert_source(vectors: &[[f64; IVF_DIM]]) -> String {
+    format!(
+        "MATCH (n:Vec) WITH collect(n) AS nodes CALL vector.ivf_bulk_upsert('default', nodes, {})",
+        matrix_literal(vectors)
+    )
 }
 
-fn upsert_args(node_id: NodeId, vector: Value) -> Vec<Value> {
-    vec![
-        Value::String(istr("default")),
-        Value::NodeRef(node_id),
-        vector,
-    ]
+fn vector_literal<const N: usize>(row: &[f64; N]) -> String {
+    let values = row
+        .iter()
+        .map(|value| format!("{value:.8}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{values}]")
 }
 
-fn bulk_upsert_args(node_ids: &[NodeId], vectors: Vec<[f64; HNSW_DIM]>) -> Vec<Value> {
-    vec![
-        Value::String(istr("default")),
-        node_ref_list(node_ids),
-        hnsw_matrix(vectors),
-    ]
-}
-
-fn ivf_bulk_upsert_args(node_ids: &[NodeId], vectors: Vec<[f64; IVF_DIM]>) -> Vec<Value> {
-    vec![
-        Value::String(istr("default")),
-        node_ref_list(node_ids),
-        ivf_matrix(vectors),
-    ]
+fn matrix_literal<const N: usize>(rows: &[[f64; N]]) -> String {
+    let rows = rows
+        .iter()
+        .map(vector_literal)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{rows}]")
 }
 
 fn ivf_config() -> IvfConfig {

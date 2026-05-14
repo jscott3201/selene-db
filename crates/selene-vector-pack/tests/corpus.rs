@@ -1,7 +1,10 @@
 //! Vector-pack mirror corpus tests.
 
+use std::collections::BTreeSet;
+
 use selene_core::{IStr, intern};
 use selene_gql::{ProcedureMutability, ProcedureRegistry, ProcedureTier};
+use selene_testing::VectorPackCorpus;
 use selene_vector_pack::{VECTOR_PROCEDURE_NAMES, VectorPack};
 
 fn istr(value: &str) -> IStr {
@@ -26,4 +29,22 @@ fn registry_exposes_three_graph_tier_vector_procedures() {
     }
 
     assert_eq!(graph_tier_count, 3);
+}
+
+#[test]
+fn vector_pack_corpus_covers_every_registered_procedure() {
+    let observed = VectorPackCorpus::b4_seed()
+        .entries()
+        .iter()
+        .map(|entry| entry.invocation.procedure_name())
+        .collect::<BTreeSet<_>>();
+    let declared = VECTOR_PROCEDURE_NAMES
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        observed, declared,
+        "vector_pack corpus drift vs VECTOR_PROCEDURE_NAMES"
+    );
 }
