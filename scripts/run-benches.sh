@@ -85,6 +85,7 @@ selene-gql:parse:criterion
 selene-gql:analyze:criterion
 selene-gql:plan_optimize:criterion
 selene-gql:iai_gates:iai
+selene-algorithms:algo_bench:criterion
 selene-algorithms-pack:algo_pack:criterion
 selene-vector-pack:vector_pack:criterion
 selene-vector:recall:criterion
