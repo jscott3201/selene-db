@@ -190,6 +190,25 @@ mod tests {
     }
 
     #[test]
+    fn apply_insert_reports_duplicate_node_id() {
+        let prev = graph_with_node();
+        let payload = VectorUpsertPayloadV1 {
+            op: VectorOp::Insert,
+            node_id: NodeId::new(1),
+            vector: vec![0.0, 1.0],
+            max_layer: 0,
+        };
+
+        let err =
+            apply_upsert(&prev, &payload, &config(2)).expect_err("duplicate node id rejected");
+
+        assert!(matches!(
+            err,
+            VectorError::DuplicateNodeId { node_id } if node_id == NodeId::new(1)
+        ));
+    }
+
+    #[test]
     fn capacity_preflight_rejects_projected_overflow() {
         let err = ensure_bulk_capacity(InternalIndex::MAX as usize, 1)
             .expect_err("projected count overflows InternalIndex");

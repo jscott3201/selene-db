@@ -19,11 +19,11 @@ pub(crate) struct Candidate {
     pub(crate) idx: InternalIndex,
     /// Higher-is-better score for the active distance metric.
     pub(crate) score: f32,
-    /// `false` when the candidate's score is a `NEG_INFINITY` placeholder
-    /// (scorer returned `None`, e.g. polysemous Hamming-filter fail).
-    /// Non-admissible candidates may still expand the frontier during beam
-    /// descent, but must not enter the result set and must not be resurrected
-    /// by post-beam rescoring.
+    /// `false` when the candidate must route but cannot be yielded: the scorer
+    /// returned `None` (e.g. polysemous Hamming-filter fail), or the physical
+    /// slot is tombstoned. Non-admissible candidates may still expand the
+    /// frontier during beam descent, but must not enter the result set and must
+    /// not be resurrected by post-beam rescoring.
     pub(crate) admissible: bool,
 }
 
@@ -397,7 +397,7 @@ fn push_candidate(
     if Some(idx) == exclude || !visited.insert(idx) {
         return;
     }
-    if graph.is_alive_idx(idx) && graph.node_by_idx(idx).is_some() {
+    if graph.node_by_idx(idx).is_some() {
         let scored = scorer.score(graph, idx);
         // Capture admissibility from `Some(_)` vs `None` *before* the
         // unwrap_or collapses both into NEG_INFINITY for ordering. Without
@@ -407,7 +407,7 @@ fn push_candidate(
         out.push(Candidate {
             idx,
             score: scored.unwrap_or(f32::NEG_INFINITY),
-            admissible: scored.is_some(),
+            admissible: scored.is_some() && graph.is_alive_idx(idx),
         });
     }
 }
@@ -439,9 +439,10 @@ mod tests {
     use selene_core::NodeId;
 
     use super::super::build::insert_node;
+    use super::super::delete::tombstone_node;
     use super::*;
     use crate::quantize::QuantizedStoreSq8;
-    use crate::{HnswConfig, QuantizationConfig};
+    use crate::{HnswConfig, HnswNode, QuantizationConfig};
 
     #[test]
     fn lut_l2_score_matches_neg_sqrt_scale() {
@@ -482,6 +483,35 @@ mod tests {
         assert_eq!(
             zero,
             score_for_metric(DistanceMetric::Cosine, &[0.0, 0.0], &[3.0, 4.0])
+        );
+    }
+
+    #[test]
+    fn tombstoned_articulation_node_still_routes_beam() {
+        let config =
+            HnswConfig::with_params(2, 4, 16, 1, DistanceMetric::L2).expect("test config is valid");
+        let params = HnswParams::from_config(&config);
+        let mut graph = HnswGraph::empty(2);
+        let mut entry = HnswNode::new(NodeId::new(1), Arc::from([0.0, 0.0]), 0).unwrap();
+        let mut bridge = HnswNode::new(NodeId::new(2), Arc::from([100.0, 0.0]), 0).unwrap();
+        let target = HnswNode::new(NodeId::new(3), Arc::from([2.0, 0.0]), 0).unwrap();
+        entry.neighbors[0] = vec![1];
+        bridge.neighbors[0] = vec![2];
+        graph.nodes = vec![entry, bridge, target];
+        graph.node_id_to_idx.insert(NodeId::new(1), 0);
+        graph.node_id_to_idx.insert(NodeId::new(2), 1);
+        graph.node_id_to_idx.insert(NodeId::new(3), 2);
+        graph.mark_alive_idx(0);
+        graph.mark_alive_idx(1);
+        graph.mark_alive_idx(2);
+        graph.entry_point = Some(0);
+
+        tombstone_node(&mut graph, NodeId::new(2)).expect("bridge tombstone succeeds");
+        let results = search(&graph, &[2.0, 0.0], 1, 1, &params, None).expect("search succeeds");
+
+        assert_eq!(
+            results.first().map(|(node_id, _)| *node_id),
+            Some(NodeId::new(3))
         );
     }
 

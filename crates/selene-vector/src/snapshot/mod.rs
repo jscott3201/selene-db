@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use roaring::RoaringBitmap;
 use selene_core::NodeId;
 use smallvec::SmallVec;
 
@@ -42,11 +43,10 @@ pub(crate) fn assemble_graph(
     graph.entry_point = header.entry_point;
     graph.max_layer = header.max_layer;
     graph.node_id_to_idx = HashMap::with_capacity(node_count);
-    let live_indices = live_indices.unwrap_or_else(|| {
-        (0..node_count)
-            .map(|idx| idx as InternalIndex)
-            .collect::<Vec<_>>()
-    });
+    let live_set: RoaringBitmap = match live_indices {
+        Some(indices) => indices.into_iter().collect(),
+        None => (0..header.node_count).collect(),
+    };
 
     for (idx, node) in nodes.into_iter().enumerate() {
         let start = idx.checked_mul(dimensions).ok_or_else(|| {
@@ -73,7 +73,7 @@ pub(crate) fn assemble_graph(
                 "node_count exceeds InternalIndex range while assembling graph",
             )
         })?;
-        if live_indices.contains(&idx) {
+        if live_set.contains(idx) {
             graph.mark_alive_idx(idx);
             graph.node_id_to_idx.insert(node_id, idx);
         }

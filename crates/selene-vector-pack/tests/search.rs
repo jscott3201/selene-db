@@ -82,6 +82,36 @@ fn execute_mutation_direct(
     }
 }
 
+fn execute_mutation_batch_direct(
+    graph: &SharedGraph,
+    registry: &dyn ProcedureRegistry,
+    calls: &[(&[&str], Vec<Value>)],
+) -> Result<Vec<Change>, ProcedureError> {
+    let mut txn = graph.begin_write();
+    let caps = ImplDefinedCaps::default();
+    let mut result = Ok(());
+    {
+        let mut ctx = ProcedureContext::Mutation(MutationContext::for_test(txn.mutator(), &caps));
+        for (name, args) in calls {
+            let interned = name.iter().map(|segment| istr(segment)).collect::<Vec<_>>();
+            let metadata = registry
+                .lookup(&interned)
+                .expect("mutation procedure registered");
+            if let Err(err) = registry.execute(metadata.handle, args, &mut ctx) {
+                result = Err(err);
+                break;
+            }
+        }
+    }
+    match result {
+        Ok(()) => Ok(txn.commit().expect("mutation commit succeeds").changes),
+        Err(err) => {
+            txn.rollback();
+            Err(err)
+        }
+    }
+}
+
 fn upsert_args(node_id: NodeId, vector: Vec<Value>) -> Vec<Value> {
     vec![
         Value::String(istr("default")),
@@ -448,7 +478,7 @@ fn vector_upsert_with_nan_component_errors_at_adapter() {
 }
 
 #[test]
-fn vector_upsert_duplicate_node_id_returns_invalid_argument() {
+fn vector_upsert_duplicate_node_id_emits_events_for_provider_validation() {
     let pack = VectorPack::new();
     let registry = registry(&pack);
     let (graph, _, nodes) = graph_with_nodes(8_712, &["Vec"]);
@@ -461,13 +491,72 @@ fn vector_upsert_duplicate_node_id_returns_invalid_argument() {
             Value::Float(0.0),
         ],
     );
-    execute_mutation_direct(&graph, &registry, &["vector", "upsert"], &args)
-        .expect("first upsert succeeds");
 
-    let err = execute_mutation_direct(&graph, &registry, &["vector", "upsert"], &args)
-        .expect_err("duplicate is rejected");
+    let changes = execute_mutation_batch_direct(
+        &graph,
+        &registry,
+        &[
+            (&["vector", "upsert"], args.clone()),
+            (&["vector", "upsert"], args),
+        ],
+    )
+    .expect("adapter emits duplicate upserts for provider validation");
 
-    assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    assert_eq!(index_extension_event_count(&changes), 2);
+}
+
+#[test]
+fn vector_delete_then_upsert_same_tx_reuses_node_id() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(87_121, &["Vec"]);
+    execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "upsert"],
+        &upsert_args(
+            nodes[0],
+            vec![
+                Value::Float(1.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+            ],
+        ),
+    )
+    .expect("seed upsert succeeds");
+
+    let changes = execute_mutation_batch_direct(
+        &graph,
+        &registry,
+        &[
+            (
+                &["vector", "delete"],
+                vec![Value::String(istr("default")), Value::NodeRef(nodes[0])],
+            ),
+            (
+                &["vector", "upsert"],
+                upsert_args(
+                    nodes[0],
+                    vec![
+                        Value::Float(0.0),
+                        Value::Float(1.0),
+                        Value::Float(0.0),
+                        Value::Float(0.0),
+                    ],
+                ),
+            ),
+        ],
+    )
+    .expect("delete then upsert in one transaction succeeds");
+    let table = rows(execute_ok(
+        "CALL vector.search('default', [0.0, 1.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        &graph,
+        &registry,
+    ));
+
+    assert_eq!(index_extension_event_count(&changes), 2);
+    assert_eq!(node_ids(&table), vec![nodes[0]]);
 }
 
 #[test]
@@ -582,6 +671,18 @@ search_default [Search] CALL vector.search('default', [1.000000, 0.000000, 0.000
 upsert_default [Upsert] CALL vector.upsert('default', 42, [1.000000, 0.000000, 0.000000, 0.000000])
 delete_default [Delete] CALL vector.delete('default', 42)
 ");
+}
+
+fn index_extension_event_count(changes: &[Change]) -> usize {
+    changes
+        .iter()
+        .filter(|change| {
+            matches!(
+                change,
+                Change::IndexExtensionEvent { provider, .. } if *provider == istr("selene-vector")
+            )
+        })
+        .count()
 }
 
 struct WrongVectProvider;

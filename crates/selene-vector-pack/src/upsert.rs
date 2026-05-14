@@ -67,11 +67,6 @@ impl ExternalMutationProcedure for UpsertProcedure {
                     vector.len()
                 )));
             }
-            if provider.snapshot().idx_for(node_id).is_some() {
-                return Err(invalid_argument(format!(
-                    "{UPSERT_PROC}: duplicate vector node id {node_id}"
-                )));
-            }
             for (index, value) in vector.iter().copied().enumerate() {
                 if !value.is_finite() {
                     return Err(invalid_argument(format!(
