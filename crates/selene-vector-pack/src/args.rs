@@ -1,5 +1,6 @@
 //! Small explicit argument parsers for vector adapters.
 
+use roaring::RoaringBitmap;
 use selene_core::{NodeId, Value};
 use selene_gql::ProcedureError;
 
@@ -176,6 +177,29 @@ pub(crate) fn nullable_option_usize(
     }
 }
 
+pub(crate) fn nullable_option_u32(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<Option<u32>, ProcedureError> {
+    match &args[index] {
+        Value::Null => Ok(None),
+        Value::Int(value) if *value >= 0 => u32::try_from(*value)
+            .map(Some)
+            .map_err(|_| invalid_argument(format!("{procedure}: {name} is too large"))),
+        Value::Int(_) => Err(invalid_argument(format!(
+            "{procedure}: {name} must be non-negative"
+        ))),
+        Value::Uint(value) => u32::try_from(*value)
+            .map(Some)
+            .map_err(|_| invalid_argument(format!("{procedure}: {name} is too large"))),
+        other => Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be INTEGER or NULL, got {other:?}"
+        ))),
+    }
+}
+
 pub(crate) fn nullable_node_ref_list(
     procedure: &'static str,
     args: &[Value],
@@ -201,6 +225,20 @@ pub(crate) fn nullable_node_ref_list(
     }
 }
 
+pub(crate) fn try_filter_from_node_refs(nodes: &[NodeId]) -> Result<RoaringBitmap, ProcedureError> {
+    let mut filter = RoaringBitmap::new();
+    for node_id in nodes {
+        let raw = u32::try_from(node_id.get()).map_err(|_| {
+            invalid_argument(format!(
+                "filter_nodes contains node id {} above u32::MAX",
+                node_id.get()
+            ))
+        })?;
+        filter.insert(raw);
+    }
+    Ok(filter)
+}
+
 fn numeric_to_f32(
     procedure: &'static str,
     name: &'static str,
@@ -219,6 +257,87 @@ fn numeric_to_f32(
         }
     };
     Ok(converted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PROC: &str = "vector.ivf_search";
+
+    #[test]
+    fn nullable_option_u32_accepts_null() {
+        let args = [Value::Null];
+
+        assert_eq!(
+            nullable_option_u32(PROC, &args, 0, "n_probe").expect("null accepted"),
+            None
+        );
+    }
+
+    #[test]
+    fn nullable_option_u32_accepts_valid_signed_integer() {
+        let args = [Value::Int(32)];
+
+        assert_eq!(
+            nullable_option_u32(PROC, &args, 0, "n_probe").expect("int accepted"),
+            Some(32)
+        );
+    }
+
+    #[test]
+    fn nullable_option_u32_rejects_negative_integer() {
+        let args = [Value::Int(-1)];
+
+        let err = nullable_option_u32(PROC, &args, 0, "n_probe").expect_err("negative rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn nullable_option_u32_rejects_signed_overflow() {
+        let args = [Value::Int(i64::from(u32::MAX) + 1)];
+
+        let err = nullable_option_u32(PROC, &args, 0, "n_probe").expect_err("overflow rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn nullable_option_u32_rejects_non_integer() {
+        let args = [Value::Bool(true)];
+
+        let err = nullable_option_u32(PROC, &args, 0, "n_probe").expect_err("bool rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn nullable_option_u32_accepts_valid_unsigned_integer() {
+        let args = [Value::Uint(17)];
+
+        assert_eq!(
+            nullable_option_u32(PROC, &args, 0, "n_probe").expect("uint accepted"),
+            Some(17)
+        );
+    }
+
+    #[test]
+    fn nullable_option_u32_rejects_unsigned_overflow() {
+        let args = [Value::Uint(u64::from(u32::MAX) + 1)];
+
+        let err = nullable_option_u32(PROC, &args, 0, "n_probe").expect_err("overflow rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn filter_rejects_node_id_above_roaring_range() {
+        let err = try_filter_from_node_refs(&[NodeId::new(u64::from(u32::MAX) + 1)])
+            .expect_err("overflow rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
 }
 
 fn numeric_to_f32_at(
