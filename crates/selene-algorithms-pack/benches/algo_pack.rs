@@ -57,7 +57,9 @@ fn bench_apsp(c: &mut Criterion) {
     let state = BenchState::with_projection(APSP_GRAPH_SCALE, 76_004);
     c.bench_function("algo_pack/algo_apsp_default", |b| {
         b.iter(|| {
-            std::hint::black_box(state.execute("CALL algo.apsp('p', 96) YIELD source_node, cost"));
+            std::hint::black_box(
+                state.execute("CALL algo.apsp('p', 96, NULL) YIELD source_node, cost"),
+            );
         });
     });
 }
@@ -89,7 +91,7 @@ fn bench_triangle_count(c: &mut Criterion) {
     c.bench_function("algo_pack/algo_triangle_count_default", |b| {
         b.iter(|| {
             std::hint::black_box(
-                state.execute("CALL algo.triangle_count('p') YIELD node_id, triangle_count"),
+                state.execute("CALL algo.triangle_count('p', NULL) YIELD node_id, triangle_count"),
             );
         });
     });

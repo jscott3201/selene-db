@@ -8,8 +8,8 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
-    GraphProjection, PageRankConfig, ProjectionConfig, apsp, betweenness, louvain, pagerank,
-    triangle_count,
+    ApspConfig, GraphProjection, PageRankConfig, Parallelism, ProjectionConfig,
+    TriangleCountConfig, apsp, betweenness, louvain, pagerank, triangle_count,
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::{SeleneGraph, SharedGraph};
@@ -19,6 +19,10 @@ const BENCH_SCALES: &[usize] = &[200, 1_000, 10_000];
 const APSP_SCALES: &[usize] = &[200, 500, 1_000];
 const BENCH_BETWEENNESS_SAMPLE_SIZE: usize = 256;
 const BENCH_LOUVAIN_MAX_ITER: usize = 50;
+const PARALLELISM_BENCH_MODES: &[(&str, Parallelism)] = &[
+    ("sequential", Parallelism::Sequential),
+    ("auto", Parallelism::Auto),
+];
 
 const BENCH_PAGERANK_CONFIG: PageRankConfig = PageRankConfig {
     damping: 0.85,
@@ -55,9 +59,12 @@ fn bench_triangle_count(c: &mut Criterion) {
     for &scale in BENCH_SCALES {
         // Local planted communities keep triangle_count from measuring a mostly-empty result.
         let state = BenchState::from_planted_community(scale, 82_200 + scale as u64);
-        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
-            b.iter(|| black_box(triangle_count(&state.projection)));
-        });
+        for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
+            let config = TriangleCountConfig { parallelism };
+            group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
+                b.iter(|| black_box(triangle_count(&state.projection, config)));
+            });
+        }
     }
     group.finish();
 }
@@ -66,9 +73,15 @@ fn bench_apsp(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/apsp");
     for &scale in APSP_SCALES {
         let state = BenchState::from_bench_fixture(scale);
-        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
-            b.iter(|| black_box(apsp(&state.projection, scale).expect("apsp bench succeeds")));
-        });
+        for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
+            let config = ApspConfig {
+                max_nodes: scale,
+                parallelism,
+            };
+            group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
+                b.iter(|| black_box(apsp(&state.projection, config).expect("apsp bench succeeds")));
+            });
+        }
     }
     group.finish();
 }

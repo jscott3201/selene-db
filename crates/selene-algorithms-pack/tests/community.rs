@@ -8,7 +8,9 @@ use common::{
     execute_result, graph_with_count_and_weighted_edges, graph_with_edges,
     graph_with_labeled_weighted_edges, invalid_argument_detail, istr, registry, rows, table_values,
 };
-use selene_algorithms::{label_propagation, louvain, triangle_count};
+use selene_algorithms::{
+    Parallelism, TriangleCountConfig, label_propagation, louvain, triangle_count,
+};
 use selene_algorithms_pack::{ALGO_PROCEDURE_NAMES, AlgorithmsPack};
 use selene_core::{NodeId, Value};
 use selene_gql::{AnalysisError, ExpectedType, GqlType, ProcedureRegistry, TypeMismatchContext};
@@ -75,13 +77,19 @@ fn algo_triangle_count_signature_matches_declared_metadata() {
     let registry = registry(&pack);
     let metadata = lookup(&registry, &["algo", "triangle_count"]);
 
-    assert_eq!(metadata.signature.parameters.len(), 1);
+    assert_eq!(metadata.signature.parameters.len(), 2);
     assert_eq!(
         metadata.signature.parameters[0].name.as_str(),
         "projection_name"
     );
     assert_eq!(metadata.signature.parameters[0].ty, GqlType::String);
     assert!(!metadata.signature.parameters[0].nullable);
+    assert_eq!(
+        metadata.signature.parameters[1].name.as_str(),
+        "parallelism"
+    );
+    assert_eq!(metadata.signature.parameters[1].ty, GqlType::Integer);
+    assert!(metadata.signature.parameters[1].nullable);
     assert_eq!(
         output_columns(&metadata),
         vec![
@@ -167,7 +175,7 @@ fn algo_triangle_count_matches_direct_api() {
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.triangle_count('p') YIELD node_id, triangle_count",
+        "CALL algo.triangle_count('p', NULL) YIELD node_id, triangle_count",
         &graph,
         &registry,
     ));
@@ -214,7 +222,7 @@ fn algo_triangle_count_rows_sorted_desc_by_count_then_asc_by_node_id() {
     build_unweighted_projection(&graph, &registry, "p", &[]);
 
     let table = rows(execute_ok(
-        "CALL algo.triangle_count('p') YIELD node_id, triangle_count",
+        "CALL algo.triangle_count('p', NULL) YIELD node_id, triangle_count",
         &graph,
         &registry,
     ));
@@ -271,7 +279,7 @@ fn algo_triangle_count_returns_zero_rows_for_empty_projection() {
     build_empty_projection(&graph, &registry, "empty");
 
     let table = rows(execute_ok(
-        "CALL algo.triangle_count('empty') YIELD node_id, triangle_count",
+        "CALL algo.triangle_count('empty', NULL) YIELD node_id, triangle_count",
         &graph,
         &registry,
     ));
@@ -357,12 +365,12 @@ fn algo_triangle_count_ignores_projection_edge_weights() {
     build_weighted_projection(&graph, &registry, "weighted", &[]);
 
     let unweighted = rows(execute_ok(
-        "CALL algo.triangle_count('unweighted') YIELD node_id, triangle_count",
+        "CALL algo.triangle_count('unweighted', NULL) YIELD node_id, triangle_count",
         &graph,
         &registry,
     ));
     let weighted = rows(execute_ok(
-        "CALL algo.triangle_count('weighted') YIELD node_id, triangle_count",
+        "CALL algo.triangle_count('weighted', NULL) YIELD node_id, triangle_count",
         &graph,
         &registry,
     ));
@@ -484,23 +492,6 @@ fn algo_louvain_rejects_static_non_integer_max_iter_at_analyze_time() {
 }
 
 #[test]
-fn algo_triangle_count_rejects_wrong_arity_at_analyze_time() {
-    let pack = AlgorithmsPack::new();
-    let registry = registry(&pack);
-
-    let err = analyze_failure("CALL algo.triangle_count() YIELD triangle_count", &registry);
-
-    assert!(matches!(
-        err,
-        AnalysisError::WrongArgumentCount {
-            expected: 1,
-            actual: 0,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn algo_louvain_emits_level_zero_for_all_rows_in_v1_0() {
     let pack = AlgorithmsPack::new();
     let registry = registry(&pack);
@@ -531,7 +522,7 @@ fn value_extended_not_emitted_in_any_community_adapter_output() {
     for source in [
         "CALL algo.label_propagation('p', NULL) YIELD node_id, community",
         "CALL algo.louvain('p', NULL) YIELD node_id, community, level",
-        "CALL algo.triangle_count('p') YIELD node_id, triangle_count",
+        "CALL algo.triangle_count('p', NULL) YIELD node_id, triangle_count",
     ] {
         let table = rows(execute_ok(source, &graph, &registry));
         for row in table.rows() {
@@ -552,7 +543,7 @@ fn algo_pack_corpus_community_entries_render_to_expected_calls() {
         )
     );
     assert!(rendered.contains("louvain_defaults [Algorithm] CALL algo.louvain('p', NULL)"));
-    assert!(rendered.contains("triangle_count [Algorithm] CALL algo.triangle_count('p')"));
+    assert!(rendered.contains("triangle_count [Algorithm] CALL algo.triangle_count('p', NULL)"));
 }
 
 #[test]
@@ -596,10 +587,15 @@ fn direct_triangle_count_rows(
     weight_property: Option<&str>,
 ) -> Vec<Vec<Value>> {
     direct_algorithm_rows(graph, name, &[], weight_property, |projection| {
-        triangle_count(projection)
-            .into_iter()
-            .map(|(node_id, count)| vec![Value::NodeRef(node_id), Value::Uint(count as u64)])
-            .collect()
+        triangle_count(
+            projection,
+            TriangleCountConfig {
+                parallelism: Parallelism::Auto,
+            },
+        )
+        .into_iter()
+        .map(|(node_id, count)| vec![Value::NodeRef(node_id), Value::Uint(count as u64)])
+        .collect()
     })
 }
 

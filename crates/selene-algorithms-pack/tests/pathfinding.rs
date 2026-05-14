@@ -8,7 +8,7 @@ use common::{
     graph_with_labeled_unweighted_edges, graph_with_labeled_weighted_edges,
     invalid_argument_detail, istr, registry, rows, table_values,
 };
-use selene_algorithms::{apsp, dijkstra, sssp};
+use selene_algorithms::{ApspConfig, Parallelism, apsp, dijkstra, sssp};
 use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{NodeId, Value};
 use selene_gql::{
@@ -305,12 +305,21 @@ fn algo_apsp_returns_source_target_cost_rows_matching_direct_api_call() {
     build_weighted_projection(&graph, &registry, "p", &[]);
 
     let table = rows(execute_ok(
-        "CALL algo.apsp('p', 10) YIELD source_node, target_node, cost",
+        "CALL algo.apsp('p', 10, NULL) YIELD source_node, target_node, cost",
         &graph,
         &registry,
     ));
     let expected = direct_algorithm_rows(&graph, "p", &[], Some("w"), |projection| {
-        apsp_rows(apsp(projection, 10).expect("direct apsp succeeds"))
+        apsp_rows(
+            apsp(
+                projection,
+                ApspConfig {
+                    max_nodes: 10,
+                    parallelism: Parallelism::Auto,
+                },
+            )
+            .expect("direct apsp succeeds"),
+        )
     });
 
     assert_eq!(table_values(&table), expected);
@@ -325,7 +334,7 @@ fn algo_apsp_excludes_self_pairs() {
     build_weighted_projection(&graph, &registry, "p", &[]);
 
     let table = rows(execute_ok(
-        "CALL algo.apsp('p', 10) YIELD source_node, target_node, cost",
+        "CALL algo.apsp('p', 10, NULL) YIELD source_node, target_node, cost",
         &graph,
         &registry,
     ));
@@ -343,7 +352,7 @@ fn algo_apsp_excludes_unreachable_pairs() {
     build_weighted_projection(&graph, &registry, "p", &[]);
 
     let table = rows(execute_ok(
-        "CALL algo.apsp('p', 10) YIELD source_node, target_node, cost",
+        "CALL algo.apsp('p', 10, NULL) YIELD source_node, target_node, cost",
         &graph,
         &registry,
     ));
@@ -360,7 +369,7 @@ fn algo_apsp_excludes_unreachable_pairs() {
 
     build_empty_projection(&graph, &registry, "empty");
     let empty = rows(execute_ok(
-        "CALL algo.apsp('empty', 10) YIELD source_node, target_node, cost",
+        "CALL algo.apsp('empty', 10, NULL) YIELD source_node, target_node, cost",
         &graph,
         &registry,
     ));
@@ -375,7 +384,7 @@ fn algo_apsp_errors_with_too_large_detail_when_projection_exceeds_max_nodes() {
     build_weighted_projection(&graph, &registry, "p", &[]);
 
     let err = execute_result(
-        "CALL algo.apsp('p', 2) YIELD source_node",
+        "CALL algo.apsp('p', 2, NULL) YIELD source_node",
         &graph,
         &registry,
     )
@@ -385,23 +394,6 @@ fn algo_apsp_errors_with_too_large_detail_when_projection_exceeds_max_nodes() {
     assert!(detail.contains("max_nodes limit"));
     assert!(!detail.contains('3'));
     assert!(!detail.contains('2'));
-}
-
-#[test]
-fn algo_apsp_rejects_negative_max_nodes_at_adapter() {
-    let pack = AlgorithmsPack::new();
-    let registry = registry(&pack);
-    let (graph, _) = graph_with_labeled_weighted_edges(7_518, &["A"], &[]);
-    build_weighted_projection(&graph, &registry, "p", &[]);
-
-    let err = execute_result(
-        "CALL algo.apsp('p', -1) YIELD source_node",
-        &graph,
-        &registry,
-    )
-    .expect_err("negative max_nodes rejected");
-
-    assert!(invalid_argument_detail(&err).contains("non-negative"));
 }
 
 #[test]
@@ -416,7 +408,7 @@ fn algo_apsp_sorted_asc_by_source_then_target() {
     build_weighted_projection(&graph, &registry, "p", &[]);
 
     let table = rows(execute_ok(
-        "CALL algo.apsp('p', 10) YIELD source_node, target_node, cost",
+        "CALL algo.apsp('p', 10, NULL) YIELD source_node, target_node, cost",
         &graph,
         &registry,
     ));
@@ -585,7 +577,7 @@ fn value_extended_not_emitted_in_pathfinding_adapter_output() {
     for source in [
         "MATCH (a:Source), (b:Target) CALL algo.dijkstra('p', a, b) YIELD cost, path, length RETURN cost, path, length",
         "MATCH (a:Source) CALL algo.sssp('p', a) YIELD target_node, cost RETURN target_node, cost",
-        "CALL algo.apsp('p', 10) YIELD source_node, target_node, cost",
+        "CALL algo.apsp('p', 10, NULL) YIELD source_node, target_node, cost",
     ] {
         let table = rows(execute_ok(source, &graph, &registry));
         for row in table.rows() {

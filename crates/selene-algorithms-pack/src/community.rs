@@ -1,8 +1,11 @@
 //! Community algorithm procedure adapters.
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use selene_algorithms::{label_propagation, louvain, triangle_count};
+use selene_algorithms::{
+    Parallelism, TriangleCountConfig, label_propagation, louvain, triangle_count,
+};
 use selene_core::{NodeId, Value};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult};
 use selene_pack::{
@@ -11,6 +14,7 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, nullable_usize, required_string},
+    error::invalid_argument,
     state::{AlgorithmsPackState, with_algorithm_projection},
 };
 
@@ -24,6 +28,7 @@ const TRIANGLE_COUNT_PROC: &str = "algo.triangle_count";
 
 const DEFAULT_MAX_ITER_LABEL_PROPAGATION: usize = 50;
 const DEFAULT_MAX_ITER_LOUVAIN: usize = 50;
+const MAX_PARALLELISM_THREADS: usize = 1024;
 
 pub(crate) fn procedures(state: Arc<AlgorithmsPackState>) -> Vec<Arc<dyn ExternalGraphProcedure>> {
     vec![
@@ -133,7 +138,10 @@ impl ExternalProcedureMetadata for TriangleCountProcedure {
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
-        vec![parameter("projection_name", GqlType::String, false)]
+        vec![
+            parameter("projection_name", GqlType::String, false),
+            parameter("parallelism", GqlType::Integer, true),
+        ]
     }
 
     fn output_columns(&self) -> Vec<ExternalOutputColumn> {
@@ -150,9 +158,9 @@ impl ExternalGraphProcedure for TriangleCountProcedure {
         ctx: &GraphContext<'_>,
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
-        let projection_name = parse_triangle_count_args(args)?;
+        let (projection_name, config) = parse_triangle_count_args(args)?;
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = triangle_count(projection)
+            let rows = triangle_count(projection, config)
                 .into_iter()
                 .map(|(node_id, count)| vec![Value::NodeRef(node_id), Value::Uint(count as u64)])
                 .collect();
@@ -181,9 +189,54 @@ fn parse_louvain_args(args: &[Value]) -> Result<(String, usize), ProcedureError>
     Ok((projection_name, max_iter))
 }
 
-fn parse_triangle_count_args(args: &[Value]) -> Result<String, ProcedureError> {
-    expect_arity(TRIANGLE_COUNT_PROC, args, 1)?;
-    required_string(TRIANGLE_COUNT_PROC, args, 0, "projection_name")
+fn parse_triangle_count_args(
+    args: &[Value],
+) -> Result<(String, TriangleCountConfig), ProcedureError> {
+    expect_arity(TRIANGLE_COUNT_PROC, args, 2)?;
+    let projection_name = required_string(TRIANGLE_COUNT_PROC, args, 0, "projection_name")?;
+    let parallelism = parse_parallelism(TRIANGLE_COUNT_PROC, &args[1])?;
+    Ok((projection_name, TriangleCountConfig { parallelism }))
+}
+
+fn parse_parallelism(
+    procedure: &'static str,
+    value: &Value,
+) -> Result<Parallelism, ProcedureError> {
+    match value {
+        Value::Null => Ok(Parallelism::Auto),
+        Value::Int(0) => Ok(Parallelism::Sequential),
+        Value::Int(value) if *value > 0 => {
+            let threads = usize::try_from(*value)
+                .map_err(|_| invalid_argument(format!("{procedure}: parallelism is too large")))?;
+            threads_parallelism(procedure, threads)
+        }
+        Value::Int(_) => Err(invalid_argument(format!(
+            "{procedure}: parallelism must be NULL, 0, or a positive thread count"
+        ))),
+        Value::Uint(0) => Ok(Parallelism::Sequential),
+        Value::Uint(value) => {
+            let threads = usize::try_from(*value)
+                .map_err(|_| invalid_argument(format!("{procedure}: parallelism is too large")))?;
+            threads_parallelism(procedure, threads)
+        }
+        other => Err(invalid_argument(format!(
+            "{procedure}: expected parallelism to be INTEGER or NULL, got {other:?}"
+        ))),
+    }
+}
+
+fn threads_parallelism(
+    procedure: &'static str,
+    threads: usize,
+) -> Result<Parallelism, ProcedureError> {
+    if threads > MAX_PARALLELISM_THREADS {
+        return Err(invalid_argument(format!(
+            "{procedure}: parallelism exceeds adapter-side cap of {MAX_PARALLELISM_THREADS} threads"
+        )));
+    }
+    Ok(Parallelism::Threads(
+        NonZeroUsize::new(threads).expect("positive thread count"),
+    ))
 }
 
 fn node_community_columns() -> Vec<ExternalOutputColumn> {
@@ -236,11 +289,50 @@ mod tests {
     }
 
     #[test]
-    fn triangle_count_args_rejects_extra_argument() {
-        let err = parse_triangle_count_args(&[projection_name(), Value::Int(0)])
-            .expect_err("extra argument rejected");
+    fn triangle_count_args_rejects_missing_parallelism_argument() {
+        let err = parse_triangle_count_args(&[projection_name()])
+            .expect_err("parallelism argument is required");
 
         assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn triangle_count_args_parse_parallelism_null_zero_and_thread_count() {
+        let (_, auto) = parse_triangle_count_args(&[projection_name(), Value::Null])
+            .expect("NULL parallelism parses");
+        let (_, sequential) = parse_triangle_count_args(&[projection_name(), Value::Int(0)])
+            .expect("zero parallelism parses");
+        let (_, threaded) = parse_triangle_count_args(&[projection_name(), Value::Uint(4)])
+            .expect("uint parallelism parses");
+
+        assert_eq!(auto.parallelism, Parallelism::Auto);
+        assert_eq!(sequential.parallelism, Parallelism::Sequential);
+        assert_eq!(
+            threaded.parallelism,
+            Parallelism::Threads(NonZeroUsize::new(4).unwrap())
+        );
+    }
+
+    #[test]
+    fn triangle_count_args_reject_negative_parallelism() {
+        let err = parse_triangle_count_args(&[projection_name(), Value::Int(-1)])
+            .expect_err("negative parallelism rejected");
+
+        let ProcedureError::InvalidArgument { detail } = err else {
+            panic!("expected InvalidArgument, got {err:?}");
+        };
+        assert!(detail.contains("parallelism"));
+    }
+
+    #[test]
+    fn triangle_count_args_reject_parallelism_above_adapter_cap() {
+        let err = parse_triangle_count_args(&[projection_name(), Value::Uint(1025)])
+            .expect_err("oversized parallelism rejected");
+
+        let ProcedureError::InvalidArgument { detail } = err else {
+            panic!("expected InvalidArgument, got {err:?}");
+        };
+        assert!(detail.contains("1024"));
     }
 
     #[test]

@@ -21,9 +21,10 @@ use std::collections::BTreeSet;
 
 use roaring::RoaringBitmap;
 use selene_algorithms::{
-    AlgoResult, AlgoSnapshotInput, GraphProjection, GraphSummary, PageRankConfig, ProjectionConfig,
-    algo_summary, apsp, articulation_points, betweenness, bridges, dijkstra, label_propagation,
-    louvain, pagerank, scc, scc_count, sssp, topological_sort, triangle_count, wcc, wcc_count,
+    AlgoResult, AlgoSnapshotInput, ApspConfig, GraphProjection, GraphSummary, PageRankConfig,
+    Parallelism, ProjectionConfig, TriangleCountConfig, algo_summary, apsp, articulation_points,
+    betweenness, bridges, dijkstra, label_propagation, louvain, pagerank, scc, scc_count, sssp,
+    topological_sort, triangle_count, wcc, wcc_count,
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::SharedGraph;
@@ -442,7 +443,13 @@ fn dispatch(
             ("sssp", format!("source=n{}", source_row), owner)
         }
         AlgoCorpusInvocation::Apsp { max_nodes } => {
-            let owner = match apsp(proj, max_nodes) {
+            let owner = match apsp(
+                proj,
+                ApspConfig {
+                    max_nodes,
+                    parallelism: Parallelism::Sequential,
+                },
+            ) {
                 Ok(v) => ResultOwner::ApspMatrix(v),
                 Err(e) => ResultOwner::Err(short_path_err(&e)),
             };
@@ -491,7 +498,12 @@ fn dispatch(
         AlgoCorpusInvocation::TriangleCount => (
             "triangle_count",
             String::new(),
-            ResultOwner::NodePairsUsize(triangle_count(proj)),
+            ResultOwner::NodePairsUsize(triangle_count(
+                proj,
+                TriangleCountConfig {
+                    parallelism: Parallelism::Sequential,
+                },
+            )),
         ),
         // `AlgoCorpusInvocation` is `#[non_exhaustive]` from an external
         // crate, so a wildcard arm is required. The

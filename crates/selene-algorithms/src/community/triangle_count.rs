@@ -15,8 +15,18 @@
 
 use selene_core::NodeId;
 
+use rayon::prelude::*;
+
+use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
+
+/// Configuration for per-node triangle count.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TriangleCountConfig {
+    /// Requested parallel execution policy.
+    pub parallelism: Parallelism,
+}
 
 /// Count triangles per node in the projection's undirected view.
 ///
@@ -28,11 +38,82 @@ use crate::structural::RowIndex;
 /// (§E29). Self-loops do NOT form triangles; parallel edges collapse to a
 /// single edge in the binary-search adjacency.
 #[must_use]
-pub fn triangle_count(proj: &GraphProjection) -> Vec<(NodeId, usize)> {
-    let idx = RowIndex::new(proj);
-    if idx.is_empty() {
+pub fn triangle_count(proj: &GraphProjection, config: TriangleCountConfig) -> Vec<(NodeId, usize)> {
+    match config.parallelism {
+        Parallelism::Sequential => triangle_count_sequential(proj),
+        Parallelism::Auto | Parallelism::Threads(_) => {
+            triangle_count_parallel(proj, config.parallelism)
+        }
+    }
+}
+
+fn triangle_count_sequential(proj: &GraphProjection) -> Vec<(NodeId, usize)> {
+    let adjacency = build_dense_adjacency(proj);
+    if adjacency.is_empty() {
         return Vec::new();
     }
+
+    let result = (0..adjacency.row_count())
+        .map(|row| {
+            (
+                adjacency.node_at_row(row),
+                count_triangles_at_row(row, &adjacency),
+            )
+        })
+        .collect();
+    sort_triangle_count_results(result)
+}
+
+fn triangle_count_parallel(
+    proj: &GraphProjection,
+    parallelism: Parallelism,
+) -> Vec<(NodeId, usize)> {
+    let adjacency = build_dense_adjacency(proj);
+    if adjacency.is_empty() {
+        return Vec::new();
+    }
+
+    let runner =
+        ParallelRunner::new(parallelism).expect("ParallelRunner builds for valid parallelism");
+    let result = runner.install(|| {
+        (0..adjacency.row_count())
+            .into_par_iter()
+            .map(|row| {
+                (
+                    adjacency.node_at_row(row),
+                    count_triangles_at_row(row, &adjacency),
+                )
+            })
+            .collect()
+    });
+    sort_triangle_count_results(result)
+}
+
+struct DenseAdjacency {
+    idx: RowIndex,
+    adj: Vec<Vec<u32>>,
+}
+
+impl DenseAdjacency {
+    fn is_empty(&self) -> bool {
+        self.idx.is_empty()
+    }
+
+    fn row_count(&self) -> usize {
+        self.idx.len()
+    }
+
+    fn node_at_row(&self, row: usize) -> NodeId {
+        self.idx.node_id_of(row as u32)
+    }
+
+    fn neighbors(&self, row: usize) -> &[u32] {
+        &self.adj[row]
+    }
+}
+
+fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency {
+    let idx = RowIndex::new(proj);
     let n = idx.len();
 
     // Build sorted+deduped undirected adjacency per dense index. Self-loops
@@ -58,27 +139,28 @@ pub fn triangle_count(proj: &GraphProjection) -> Vec<(NodeId, usize)> {
         neighbors.sort_unstable();
         neighbors.dedup();
     }
+    DenseAdjacency { idx, adj }
+}
 
-    let mut counts: Vec<usize> = vec![0; n];
-    for u in 0..n {
-        let u_neighbors = &adj[u];
-        for i in 0..u_neighbors.len() {
-            // Pair walk: pick `v < w` (already sorted), check `adj[v]` for w.
-            // The `binary_search` gives O(log d) per pair → O(d² log d) per
-            // vertex worst case. Acceptable per §J Q12.
-            for j in (i + 1)..u_neighbors.len() {
-                let v = u_neighbors[i];
-                let w = u_neighbors[j];
-                if adj[v as usize].binary_search(&w).is_ok() {
-                    counts[u] += 1;
-                }
+fn count_triangles_at_row(row: usize, adjacency: &DenseAdjacency) -> usize {
+    let mut count = 0;
+    let neighbors = adjacency.neighbors(row);
+    for i in 0..neighbors.len() {
+        // Pair walk: pick `v < w` (already sorted), check `adj[v]` for w.
+        // The `binary_search` gives O(log d) per pair → O(d² log d) per
+        // vertex worst case. Acceptable per §J Q12.
+        for j in (i + 1)..neighbors.len() {
+            let v = neighbors[i];
+            let w = neighbors[j];
+            if adjacency.neighbors(v as usize).binary_search(&w).is_ok() {
+                count += 1;
             }
         }
     }
+    count
+}
 
-    let mut result: Vec<(NodeId, usize)> = (0..n as u32)
-        .map(|d| (idx.node_id_of(d), counts[d as usize]))
-        .collect();
+fn sort_triangle_count_results(mut result: Vec<(NodeId, usize)>) -> Vec<(NodeId, usize)> {
     // §E27: DESC by count with NodeId ASC tie-break. Explicit comparator per
     // `feedback_dijkstra_tie_break_needs_both_rules`.
     result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.get().cmp(&b.0.get())));

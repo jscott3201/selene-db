@@ -30,6 +30,39 @@ impl Parallelism {
     }
 }
 
+pub(crate) struct ParallelRunner {
+    pool: Option<rayon::ThreadPool>,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("rayon thread pool build failed: {0}")]
+pub(crate) struct ParallelRunnerError(#[from] rayon::ThreadPoolBuildError);
+
+impl ParallelRunner {
+    pub(crate) fn new(parallelism: Parallelism) -> Result<Self, ParallelRunnerError> {
+        let pool = match parallelism {
+            Parallelism::Threads(threads) => Some(
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(threads.get())
+                    .build()?,
+            ),
+            Parallelism::Sequential | Parallelism::Auto => None,
+        };
+        Ok(Self { pool })
+    }
+
+    pub(crate) fn install<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R + Send,
+        R: Send,
+    {
+        match &self.pool {
+            Some(pool) => pool.install(f),
+            None => f(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{

@@ -231,7 +231,10 @@ impl AlgoPackInvocation {
                 nullable_usize(*max_iter)
             ),
             Self::TriangleCount { projection_name } => {
-                format!("CALL algo.triangle_count({})", quoted(projection_name))
+                format!(
+                    "CALL algo.triangle_count({}, NULL)",
+                    quoted(projection_name)
+                )
             }
             Self::Wcc { projection_name } => {
                 format!("CALL algo.wcc({})", quoted(projection_name))
@@ -270,7 +273,10 @@ impl AlgoPackInvocation {
                 projection_name,
                 max_nodes,
             } => {
-                format!("CALL algo.apsp({}, {max_nodes})", quoted(projection_name))
+                format!(
+                    "CALL algo.apsp({}, {max_nodes}, NULL)",
+                    quoted(projection_name)
+                )
             }
         }
     }

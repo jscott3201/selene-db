@@ -1,6 +1,10 @@
 //! Integration tests for `apsp` per spec 16 §E18.
 
-use selene_algorithms::{GraphProjection, PathfindingError, ProjectionConfig, apsp};
+use std::num::NonZeroUsize;
+
+use selene_algorithms::{
+    ApspConfig, GraphProjection, Parallelism, PathfindingError, ProjectionConfig, apsp,
+};
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_graph::SharedGraph;
 
@@ -25,6 +29,21 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
         None,
     )
     .unwrap()
+}
+
+fn apsp_config(max_nodes: usize, parallelism: Parallelism) -> ApspConfig {
+    ApspConfig {
+        max_nodes,
+        parallelism,
+    }
+}
+
+fn sequential_apsp_config(max_nodes: usize) -> ApspConfig {
+    apsp_config(max_nodes, Parallelism::Sequential)
+}
+
+fn threads4() -> Parallelism {
+    Parallelism::Threads(NonZeroUsize::new(4).expect("non-zero thread count"))
 }
 
 fn build_graph(count: usize, edges: &[(usize, usize, f64)]) -> (SharedGraph, Vec<NodeId>) {
@@ -53,7 +72,7 @@ fn build_graph(count: usize, edges: &[(usize, usize, f64)]) -> (SharedGraph, Vec
 fn apsp_empty_projection_returns_empty() {
     let shared = SharedGraph::new(GraphId::new(1));
     let proj = build_proj(&shared);
-    assert!(apsp(&proj, 100).unwrap().is_empty());
+    assert!(apsp(&proj, sequential_apsp_config(100)).unwrap().is_empty());
 }
 
 #[test]
@@ -61,7 +80,7 @@ fn apsp_excludes_self_pairs() {
     // §E18 — self-pairs are excluded (asymmetric to sssp's source-inclusion).
     let (shared, nodes) = build_graph(2, &[(0, 1, 5.0)]);
     let proj = build_proj(&shared);
-    let result = apsp(&proj, 10).unwrap();
+    let result = apsp(&proj, sequential_apsp_config(10)).unwrap();
     for &(s, t, _) in &result {
         assert_ne!(s, t, "self-pair must not appear in apsp output");
     }
@@ -73,7 +92,7 @@ fn apsp_excludes_unreachable_pairs() {
     // n0 -> n1; n2 isolated. apsp must NOT emit (n0, n2) or (n1, n2).
     let (shared, nodes) = build_graph(3, &[(0, 1, 1.0)]);
     let proj = build_proj(&shared);
-    let result = apsp(&proj, 10).unwrap();
+    let result = apsp(&proj, sequential_apsp_config(10)).unwrap();
     for &(s, t, _) in &result {
         assert!(
             !(s == nodes[0] && t == nodes[2]),
@@ -96,7 +115,7 @@ fn apsp_excludes_unreachable_pairs() {
 fn apsp_too_large_rejected_with_caller_limit() {
     let (shared, _) = build_graph(5, &[]);
     let proj = build_proj(&shared);
-    let err = apsp(&proj, 3).unwrap_err();
+    let err = apsp(&proj, sequential_apsp_config(3)).unwrap_err();
     let PathfindingError::TooLarge { nodes, limit } = err else {
         panic!("expected TooLarge, got {err:?}");
     };
@@ -110,7 +129,7 @@ fn apsp_triangle_directed() {
     // Distances: (n0, n1, 1), (n0, n2, 3), (n1, n2, 2). Sorted ASC.
     let (shared, nodes) = build_graph(3, &[(0, 1, 1.0), (1, 2, 2.0), (0, 2, 10.0)]);
     let proj = build_proj(&shared);
-    let result = apsp(&proj, 10).unwrap();
+    let result = apsp(&proj, sequential_apsp_config(10)).unwrap();
     assert_eq!(
         result,
         vec![
@@ -125,7 +144,7 @@ fn apsp_triangle_directed() {
 fn apsp_result_sorted_by_source_then_target() {
     let (shared, nodes) = build_graph(4, &[(0, 1, 1.0), (1, 2, 1.0), (2, 3, 1.0), (0, 3, 5.0)]);
     let proj = build_proj(&shared);
-    let result = apsp(&proj, 10).unwrap();
+    let result = apsp(&proj, sequential_apsp_config(10)).unwrap();
     for w in result.windows(2) {
         let lhs = (w[0].0.get(), w[0].1.get());
         let rhs = (w[1].0.get(), w[1].1.get());
@@ -139,7 +158,7 @@ fn apsp_negative_weight_propagates_error() {
     // The error fires on whichever source first traverses the negative edge.
     let (shared, _) = build_graph(2, &[(0, 1, -1.0)]);
     let proj = build_proj(&shared);
-    let err = apsp(&proj, 10).unwrap_err();
+    let err = apsp(&proj, sequential_apsp_config(10)).unwrap_err();
     assert!(matches!(err, PathfindingError::NegativeWeight { .. }));
 }
 
@@ -147,7 +166,7 @@ fn apsp_negative_weight_propagates_error() {
 fn apsp_nan_weight_propagates_error() {
     let (shared, _) = build_graph(2, &[(0, 1, f64::NAN)]);
     let proj = build_proj(&shared);
-    let err = apsp(&proj, 10).unwrap_err();
+    let err = apsp(&proj, sequential_apsp_config(10)).unwrap_err();
     assert!(matches!(err, PathfindingError::NaNWeight { .. }));
 }
 
@@ -166,7 +185,7 @@ fn apsp_consistent_with_per_source_sssp() {
         ],
     );
     let proj = build_proj(&shared);
-    let apsp_result = apsp(&proj, 10).unwrap();
+    let apsp_result = apsp(&proj, sequential_apsp_config(10)).unwrap();
     let mut expected: Vec<(NodeId, NodeId, f64)> = Vec::new();
     for s in proj.iter_nodes() {
         for (t, d) in sssp(&proj, s).unwrap() {
@@ -177,4 +196,61 @@ fn apsp_consistent_with_per_source_sssp() {
     }
     expected.sort_by_key(|&(s, t, _)| (s.get(), t.get()));
     assert_eq!(apsp_result, expected);
+}
+
+#[test]
+fn apsp_parallel_modes_match_sequential_output() {
+    let (shared, _) = build_graph(
+        6,
+        &[
+            (0, 1, 1.0),
+            (1, 2, 2.0),
+            (2, 3, 3.0),
+            (3, 4, 4.0),
+            (4, 5, 5.0),
+            (0, 5, 100.0),
+            (1, 4, 1.5),
+        ],
+    );
+    let proj = build_proj(&shared);
+    let sequential = apsp(&proj, sequential_apsp_config(10)).unwrap();
+    let auto = apsp(&proj, apsp_config(10, Parallelism::Auto)).unwrap();
+    let threaded = apsp(&proj, apsp_config(10, threads4())).unwrap();
+
+    assert_eq!(auto, sequential);
+    assert_eq!(threaded, sequential);
+}
+
+#[test]
+fn apsp_parallel_result_is_deterministic_under_repetition() {
+    let (shared, _) = build_graph(
+        8,
+        &[
+            (0, 1, 1.0),
+            (0, 2, 1.0),
+            (1, 3, 1.0),
+            (2, 3, 1.0),
+            (3, 4, 2.0),
+            (4, 5, 2.0),
+            (5, 6, 2.0),
+            (6, 7, 2.0),
+            (1, 7, 20.0),
+        ],
+    );
+    let proj = build_proj(&shared);
+    let expected = apsp(&proj, apsp_config(10, threads4())).unwrap();
+
+    for _ in 0..50 {
+        let observed = apsp(&proj, apsp_config(10, threads4())).unwrap();
+        assert_eq!(observed, expected);
+    }
+}
+
+#[test]
+fn apsp_parallel_propagates_pathfinding_errors() {
+    let (shared, _) = build_graph(2, &[(0, 1, -1.0)]);
+    let proj = build_proj(&shared);
+    let err = apsp(&proj, apsp_config(10, threads4())).unwrap_err();
+
+    assert!(matches!(err, PathfindingError::NegativeWeight { .. }));
 }
