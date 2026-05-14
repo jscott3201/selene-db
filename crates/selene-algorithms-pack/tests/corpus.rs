@@ -1,10 +1,9 @@
 //! Algorithms-pack corpus mirror tests.
 
-use selene_algorithms_pack::ALGO_PROCEDURE_NAMES;
 use selene_testing::AlgoPackCorpus;
 
 #[test]
-fn algo_pack_corpus_pagerank_entry_matches_golden() {
+fn corpus_renders_in_deterministic_order() {
     let corpus = AlgoPackCorpus::b5_seed();
 
     insta::assert_snapshot!(corpus.render(), @r"
@@ -28,11 +27,4 @@ dijkstra [Algorithm] MATCH (source), (target) CALL algo.dijkstra('p', source, ta
 sssp [Algorithm] MATCH (source) CALL algo.sssp('p', source) YIELD target_node, cost
 apsp [Algorithm] CALL algo.apsp('p', 100)
 ");
-}
-
-#[test]
-fn algo_pack_corpus_drift_detection_pins_registered_procedure_count() {
-    let corpus = AlgoPackCorpus::b5_seed();
-
-    assert_eq!(corpus.entries().len(), ALGO_PROCEDURE_NAMES.len());
 }

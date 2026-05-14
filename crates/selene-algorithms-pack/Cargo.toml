@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Procedure-pack adapters for selene graph algorithms"
+autobenches = false
+
+[features]
+test-harness = []
 
 [dependencies]
 parking_lot.workspace = true
@@ -17,9 +21,19 @@ selene-gql = { path = "../selene-gql", version = "0.0.0" }
 selene-pack = { path = "../selene-pack", version = "0.0.0" }
 
 [dev-dependencies]
+criterion.workspace = true
 insta.workspace = true
+mimalloc.workspace = true
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
 selene-testing = { path = "../selene-testing", version = "0.0.0" }
+
+[[test]]
+name = "algo_pack_snapshot_corpus"
+required-features = ["test-harness"]
+
+[[bench]]
+name = "algo_pack"
+harness = false
 
 [lints]
 workspace = true

@@ -1,13 +1,31 @@
 //! Mirror corpus for `selene-algorithms-pack` procedure invocations.
 
 /// Stable category tag for algorithms-pack corpus entries.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AlgoPackCorpusCategory {
     /// Projection-catalog procedure coverage.
     Projection,
     /// Algorithm adapter procedure coverage.
     Algorithm,
 }
+
+impl AlgoPackCorpusCategory {
+    /// All declared algorithms-pack corpus categories.
+    pub const ALL: &'static [Self] = &[Self::Projection, Self::Algorithm];
+
+    /// Stable category label used by drift tests to anchor exhaustive matching.
+    #[must_use]
+    pub const fn stable_label(self) -> &'static str {
+        match self {
+            Self::Projection => "Projection",
+            Self::Algorithm => "Algorithm",
+        }
+    }
+}
+
+const _ASSERT_CATEGORY_ALL_MATCHES_VARIANT_COUNT: () = {
+    assert!(AlgoPackCorpusCategory::ALL.len() == 2);
+};
 
 /// Procedure invocation mirrored by the algorithms-pack corpus.
 #[derive(Clone, Debug, PartialEq)]
@@ -127,6 +145,32 @@ pub enum AlgoPackInvocation {
 }
 
 impl AlgoPackInvocation {
+    /// Return the canonical procedure name path for this invocation.
+    #[must_use]
+    pub const fn procedure_name(&self) -> &'static [&'static str] {
+        match self {
+            Self::ProjectionBuild { .. } => &["algo", "projection_build"],
+            Self::ProjectionGet { .. } => &["algo", "projection_get"],
+            Self::ProjectionDrop { .. } => &["algo", "projection_drop"],
+            Self::ProjectionList => &["algo", "projection_list"],
+            Self::Pagerank { .. } => &["algo", "pagerank"],
+            Self::Betweenness { .. } => &["algo", "betweenness"],
+            Self::LabelPropagation { .. } => &["algo", "label_propagation"],
+            Self::Louvain { .. } => &["algo", "louvain"],
+            Self::TriangleCount { .. } => &["algo", "triangle_count"],
+            Self::Wcc { .. } => &["algo", "wcc"],
+            Self::Scc { .. } => &["algo", "scc"],
+            Self::WccCount { .. } => &["algo", "wcc_count"],
+            Self::SccCount { .. } => &["algo", "scc_count"],
+            Self::TopologicalSort { .. } => &["algo", "topological_sort"],
+            Self::ArticulationPoints { .. } => &["algo", "articulation_points"],
+            Self::Bridges { .. } => &["algo", "bridges"],
+            Self::Dijkstra { .. } => &["algo", "dijkstra"],
+            Self::Sssp { .. } => &["algo", "sssp"],
+            Self::Apsp { .. } => &["algo", "apsp"],
+        }
+    }
+
     /// Render a deterministic GQL `CALL` string for snapshot testing.
     #[must_use]
     pub fn render_call(&self) -> String {
@@ -241,6 +285,19 @@ pub struct AlgoPackCorpusEntry {
     pub category: AlgoPackCorpusCategory,
     /// Mirrored invocation.
     pub invocation: AlgoPackInvocation,
+}
+
+impl AlgoPackCorpusEntry {
+    /// Render this entry to a deterministic single-line snapshot row.
+    #[must_use]
+    pub fn render(&self) -> String {
+        format!(
+            "{} [{:?}] {}\n",
+            self.name,
+            self.category,
+            self.invocation.render_call()
+        )
+    }
 }
 
 /// Corpus mirror used by algorithms-pack tests.
@@ -447,14 +504,7 @@ impl AlgoPackCorpus {
     pub fn render(&self) -> String {
         self.entries
             .iter()
-            .map(|entry| {
-                format!(
-                    "{} [{:?}] {}\n",
-                    entry.name,
-                    entry.category,
-                    entry.invocation.render_call()
-                )
-            })
+            .map(AlgoPackCorpusEntry::render)
             .collect()
     }
 }
@@ -481,4 +531,146 @@ fn nullable_f64(value: Option<f64>) -> String {
 
 fn nullable_usize(value: Option<usize>) -> String {
     value.map_or_else(|| "NULL".to_string(), |value| value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::{AlgoPackCorpus, AlgoPackCorpusCategory, AlgoPackInvocation};
+
+    #[test]
+    fn procedure_name_returns_static_slice_for_pagerank_variant() {
+        let invocation = AlgoPackInvocation::Pagerank {
+            projection_name: "p",
+            damping: None,
+            max_iterations: None,
+            tolerance: None,
+        };
+
+        assert_eq!(invocation.procedure_name(), &["algo", "pagerank"]);
+    }
+
+    #[test]
+    fn procedure_name_returns_static_slice_for_betweenness_variant() {
+        let invocation = AlgoPackInvocation::Betweenness {
+            projection_name: "p",
+            sample_size: None,
+        };
+
+        assert_eq!(invocation.procedure_name(), &["algo", "betweenness"]);
+    }
+
+    #[test]
+    fn procedure_name_returns_static_slice_for_louvain_variant() {
+        let invocation = AlgoPackInvocation::Louvain {
+            projection_name: "p",
+            max_iter: None,
+        };
+
+        assert_eq!(invocation.procedure_name(), &["algo", "louvain"]);
+    }
+
+    #[test]
+    fn procedure_name_covers_all_19_variants() {
+        let invocations = [
+            AlgoPackInvocation::ProjectionBuild {
+                name: "p",
+                node_labels: &[],
+                edge_labels: &[],
+                weight_property: None,
+            },
+            AlgoPackInvocation::ProjectionGet { name: "p" },
+            AlgoPackInvocation::ProjectionDrop { name: "p" },
+            AlgoPackInvocation::ProjectionList,
+            AlgoPackInvocation::Pagerank {
+                projection_name: "p",
+                damping: None,
+                max_iterations: None,
+                tolerance: None,
+            },
+            AlgoPackInvocation::Betweenness {
+                projection_name: "p",
+                sample_size: None,
+            },
+            AlgoPackInvocation::LabelPropagation {
+                projection_name: "p",
+                max_iter: None,
+            },
+            AlgoPackInvocation::Louvain {
+                projection_name: "p",
+                max_iter: None,
+            },
+            AlgoPackInvocation::TriangleCount {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::Wcc {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::Scc {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::WccCount {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::SccCount {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::TopologicalSort {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::ArticulationPoints {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::Bridges {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::Dijkstra {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::Sssp {
+                projection_name: "p",
+            },
+            AlgoPackInvocation::Apsp {
+                projection_name: "p",
+                max_nodes: 100,
+            },
+        ];
+
+        let mut names = BTreeSet::new();
+        for invocation in invocations {
+            let name = invocation.procedure_name();
+            assert_eq!(name.len(), 2);
+            assert_eq!(name[0], "algo");
+            assert!(names.insert(name));
+        }
+        assert_eq!(names.len(), 19);
+    }
+
+    #[test]
+    fn category_all_matches_exhaustive_anchor() {
+        let declared = AlgoPackCorpusCategory::ALL
+            .iter()
+            .map(|category| category.stable_label())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            declared,
+            ["Projection", "Algorithm"]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
+    }
+
+    #[test]
+    fn entry_render_matches_corpus_render_line() {
+        let corpus = AlgoPackCorpus::b5_seed();
+        let rendered_entries = corpus
+            .entries()
+            .iter()
+            .map(super::AlgoPackCorpusEntry::render)
+            .collect::<String>();
+
+        assert_eq!(corpus.render(), rendered_entries);
+    }
 }
