@@ -1,6 +1,6 @@
 //! Small explicit argument parsers for adapter procedures.
 
-use selene_core::{IStr, Value, intern_with_admission};
+use selene_core::{IStr, NodeId, Value, intern_with_admission};
 use selene_gql::ProcedureError;
 
 use crate::error::invalid_argument;
@@ -30,6 +30,20 @@ pub(crate) fn required_string(
         Value::ExternalString(value) => Ok(value.to_string()),
         other => Err(invalid_argument(format!(
             "{procedure} expected {name} to be STRING, got {other:?}"
+        ))),
+    }
+}
+
+pub(crate) fn required_node_ref(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<NodeId, ProcedureError> {
+    match &args[index] {
+        Value::NodeRef(value) => Ok(*value),
+        other => Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be NODE, got {other:?}"
         ))),
     }
 }
@@ -112,6 +126,24 @@ pub(crate) fn nullable_usize(
             .map_err(|_| invalid_argument(format!("{procedure} {name} is too large"))),
         other => Err(invalid_argument(format!(
             "{procedure} expected {name} to be INTEGER or NULL, got {other:?}"
+        ))),
+    }
+}
+
+pub(crate) fn required_nonnegative_usize(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<usize, ProcedureError> {
+    match &args[index] {
+        Value::Int(value) if *value >= 0 => usize::try_from(*value)
+            .map_err(|_| invalid_argument(format!("{procedure}: {name} is too large"))),
+        Value::Int(_) => Err(invalid_argument(format!(
+            "{procedure}: {name} must be non-negative"
+        ))),
+        other => Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be INTEGER, got {other:?}"
         ))),
     }
 }

@@ -81,6 +81,23 @@ pub enum AlgoPackInvocation {
         /// Projection name.
         projection_name: &'static str,
     },
+    /// `algo.dijkstra`.
+    Dijkstra {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.sssp`.
+    Sssp {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.apsp`.
+    Apsp {
+        /// Projection name.
+        projection_name: &'static str,
+        /// Required all-pairs bound.
+        max_nodes: usize,
+    },
 }
 
 impl AlgoPackInvocation {
@@ -139,6 +156,24 @@ impl AlgoPackInvocation {
             }
             Self::Bridges { projection_name } => {
                 format!("CALL algo.bridges({})", quoted(projection_name))
+            }
+            Self::Dijkstra { projection_name } => {
+                format!(
+                    "MATCH (source), (target) CALL algo.dijkstra({}, source, target) YIELD cost, path, length",
+                    quoted(projection_name)
+                )
+            }
+            Self::Sssp { projection_name } => {
+                format!(
+                    "MATCH (source) CALL algo.sssp({}, source) YIELD target_node, cost",
+                    quoted(projection_name)
+                )
+            }
+            Self::Apsp {
+                projection_name,
+                max_nodes,
+            } => {
+                format!("CALL algo.apsp({}, {max_nodes})", quoted(projection_name))
             }
         }
     }
@@ -258,6 +293,37 @@ impl AlgoPackCorpus {
                 category: AlgoPackCorpusCategory::Algorithm,
                 invocation: AlgoPackInvocation::Bridges {
                     projection_name: "p",
+                },
+            },
+        ]);
+        corpus
+    }
+
+    /// Construct the B3 corpus including pathfinding adapters.
+    #[must_use]
+    pub fn b3_seed() -> Self {
+        let mut corpus = Self::b2_seed();
+        corpus.entries.extend([
+            AlgoPackCorpusEntry {
+                name: "dijkstra",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Dijkstra {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "sssp",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Sssp {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "apsp",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Apsp {
+                    projection_name: "p",
+                    max_nodes: 100,
                 },
             },
         ]);

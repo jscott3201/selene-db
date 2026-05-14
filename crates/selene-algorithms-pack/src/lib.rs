@@ -9,6 +9,7 @@
 mod args;
 mod error;
 mod pagerank;
+mod pathfinding;
 mod projection;
 mod registry;
 mod state;
