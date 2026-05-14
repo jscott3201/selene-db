@@ -12,7 +12,9 @@ use crate::snapshot::qunt::PAYLOAD_MAGIC_QUNT;
 use crate::snapshot::vecs::PAYLOAD_MAGIC_VECS;
 use crate::{
     DistanceMetric, HnswConfig, HnswGraph, NeighborSelectionConfig, PAYLOAD_MAGIC,
-    PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_IVF, PqParams, QuantMethod, VectorError, VectorOp,
+    PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_BULK_DELETE, PAYLOAD_MAGIC_IVF,
+    PAYLOAD_MAGIC_IVF_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_INSERT, PqParams, QuantMethod,
+    VectorError, VectorOp,
 };
 
 pub mod errors;
@@ -475,10 +477,13 @@ pub fn magic_constants() -> &'static [(&'static str, [u8; 4])] {
     &[
         ("VECU", PAYLOAD_MAGIC),
         ("VECB", PAYLOAD_MAGIC_BULK),
+        ("VECD", PAYLOAD_MAGIC_BULK_DELETE),
         ("VGRP", PAYLOAD_MAGIC_GRPH),
         ("VVEC", PAYLOAD_MAGIC_VECS),
         ("VQNT", PAYLOAD_MAGIC_QUNT),
         ("VIVF", PAYLOAD_MAGIC_IVF),
+        ("VIVB", PAYLOAD_MAGIC_IVF_BULK_INSERT),
+        ("VIVD", PAYLOAD_MAGIC_IVF_BULK_DELETE),
         ("VCQB", PAYLOAD_MAGIC_CQNT),
         ("VIPB", PAYLOAD_MAGIC_IPQB),
         ("VPOS", PAYLOAD_MAGIC_POST),

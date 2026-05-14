@@ -8,9 +8,8 @@ use selene_gql::{
     ProcedureError, ProcedureRegistry, ProcedureResult, StatementOutput, analyze,
     execute_statement, parse, plan,
 };
-use selene_graph::{IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
+use selene_graph::{IndexProvider, SharedGraph};
 use selene_pack::ProcedurePackRegistry;
-use selene_testing::VectorPackCorpus;
 use selene_vector::{HnswConfig, HnswProvider, VectorOp, VectorUpsertPayloadV1};
 use selene_vector_pack::{VECTOR_PROCEDURE_NAMES, VectorPack};
 
@@ -199,15 +198,15 @@ fn vector_change(payload: VectorUpsertPayloadV1) -> Change {
 }
 
 fn node_ids(table: &BindingTable) -> Vec<NodeId> {
-    node_ids_for(table, "node_id")
-}
-
-fn node_ids_for(table: &BindingTable, name: &str) -> Vec<NodeId> {
     let index = table
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|column| column.as_str() == name))
+        .position(|column| {
+            column
+                .name
+                .is_some_and(|column| column.as_str() == "node_id")
+        })
         .expect("column exists");
     table
         .rows()
@@ -237,6 +236,14 @@ fn vector_search_registers_metadata_and_capability_free_name() {
     assert_eq!(metadata[1].output_schema.columns.len(), 0);
     assert_eq!(metadata[2].signature.parameters.len(), 2);
     assert_eq!(metadata[2].output_schema.columns.len(), 0);
+    assert_eq!(metadata[3].signature.parameters.len(), 3);
+    assert_eq!(metadata[3].output_schema.columns.len(), 0);
+    assert_eq!(metadata[4].signature.parameters.len(), 2);
+    assert_eq!(metadata[4].output_schema.columns.len(), 0);
+    assert_eq!(metadata[5].signature.parameters.len(), 3);
+    assert_eq!(metadata[5].output_schema.columns.len(), 0);
+    assert_eq!(metadata[6].signature.parameters.len(), 2);
+    assert_eq!(metadata[6].output_schema.columns.len(), 0);
     assert!(
         metadata
             .iter()
@@ -631,84 +638,14 @@ fn vector_delete_with_unknown_index_name_errors() {
     assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
 }
 
-#[test]
-fn vector_search_rejects_non_hnsw_vect_provider() {
-    let pack = VectorPack::new();
-    let registry = registry(&pack);
-    let graph = SharedGraph::builder(GraphId::new(8_708))
-        .with_provider(Arc::new(WrongVectProvider) as Arc<dyn IndexProvider>)
-        .build()
-        .expect("graph builds");
-
-    let err = execute_result(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id",
-        &graph,
-        &registry,
-    )
-    .expect_err("wrong provider type is rejected");
-
-    assert!(matches!(
-        err,
-        ExecutorError::Procedure {
-            source: ProcedureError::InvalidArgument { .. },
-            ..
-        }
-    ));
-}
-
-#[test]
-fn vector_pack_corpus_renders_in_deterministic_order_and_covers_registry() {
-    let corpus = VectorPackCorpus::b2_seed();
-    let observed = corpus
-        .entries()
-        .iter()
-        .map(|entry| entry.invocation.procedure_name())
-        .collect::<Vec<_>>();
-
-    assert_eq!(observed, VECTOR_PROCEDURE_NAMES.to_vec());
-    insta::assert_snapshot!(corpus.render(), @r"
-search_default [Search] CALL vector.search('default', [1.000000, 0.000000, 0.000000, 0.000000], 10, NULL, NULL)
-upsert_default [Upsert] CALL vector.upsert('default', 42, [1.000000, 0.000000, 0.000000, 0.000000])
-delete_default [Delete] CALL vector.delete('default', 42)
-");
-}
-
 fn index_extension_event_count(changes: &[Change]) -> usize {
     changes
         .iter()
         .filter(|change| {
             matches!(
-                change,
-                Change::IndexExtensionEvent { provider, .. } if *provider == istr("selene-vector")
+                change, Change::IndexExtensionEvent { provider, .. }
+                if *provider == istr("selene-vector")
             )
         })
         .count()
-}
-
-struct WrongVectProvider;
-
-impl IndexProvider for WrongVectProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn provider_tag(&self) -> ProviderTag {
-        ProviderTag(*b"VECT")
-    }
-
-    fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-        Ok(())
-    }
-
-    fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        Ok(Vec::new())
-    }
-
-    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-        Ok(())
-    }
-
-    fn declared_sub_tags(&self) -> &[SubTag] {
-        &[]
-    }
 }

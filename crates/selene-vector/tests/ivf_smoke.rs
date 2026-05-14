@@ -7,8 +7,8 @@ use selene_graph::{IndexProvider, ProviderError, SubTag};
 use selene_vector::{
     DistanceMetric, HnswConfig, HnswProvider, IvfBulkInsertRow, IvfConfig, IvfProvider, IvfStats,
     PAYLOAD_MAGIC_IVF, PAYLOAD_MAGIC_IVF_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_INSERT, PqParams,
-    VectorIvfBulkDeleteV1, VectorIvfBulkInsertV1, VectorIvfUpsertV1, VectorOp,
-    VectorUpsertPayloadV1,
+    VectorBulkDeletePayloadV1, VectorIvfBulkDeleteV1, VectorIvfBulkInsertV1, VectorIvfUpsertV1,
+    VectorOp, VectorUpsertPayloadV1,
 };
 
 fn config(training_min_vectors: usize) -> IvfConfig {
@@ -583,5 +583,52 @@ fn hnsw_ignores_vivf_events_and_ivf_ignores_vecu_events() {
     ivf.on_change(&hnsw_change(1, [1.0, 0.0])).unwrap();
 
     assert_eq!(hnsw.snapshot().len(), 0);
+    assert_eq!(ivf.snapshot().len(), 0);
+}
+
+#[test]
+fn cross_routing_ivf_bulk_payload_into_hnsw_provider_is_rejected() {
+    let hnsw =
+        HnswProvider::new(HnswConfig::with_params(2, 16, 200, 50, DistanceMetric::L2).unwrap())
+            .unwrap();
+    let payload = VectorIvfBulkInsertV1 {
+        rows: vec![IvfBulkInsertRow {
+            node_id: NodeId::new(1),
+            vector: vec![1.0, 0.0],
+        }],
+    }
+    .encode()
+    .unwrap();
+    let change = Change::IndexExtensionEvent {
+        provider: intern("selene-vector").unwrap(),
+        payload: Arc::from(payload),
+    };
+
+    let err = hnsw
+        .on_change(&change)
+        .expect_err("IVF bulk payload rejected by HNSW provider");
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
+    assert_eq!(hnsw.snapshot().len(), 0);
+}
+
+#[test]
+fn cross_routing_hnsw_bulk_payload_into_ivf_provider_is_rejected() {
+    let ivf = provider(256);
+    let payload = VectorBulkDeletePayloadV1 {
+        node_ids: vec![NodeId::new(1)],
+    }
+    .encode()
+    .unwrap();
+    let change = Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").unwrap(),
+        payload: Arc::from(payload),
+    };
+
+    let err = ivf
+        .on_change(&change)
+        .expect_err("HNSW bulk payload rejected by IVF provider");
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
     assert_eq!(ivf.snapshot().len(), 0);
 }

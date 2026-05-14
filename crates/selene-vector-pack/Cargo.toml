@@ -29,5 +29,9 @@ selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["v
 name = "search"
 required-features = ["test-harness"]
 
+[[test]]
+name = "bulk"
+required-features = ["test-harness"]
+
 [lints]
 workspace = true
