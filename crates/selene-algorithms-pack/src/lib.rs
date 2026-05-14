@@ -12,6 +12,7 @@ mod pagerank;
 mod projection;
 mod registry;
 mod state;
+mod structural;
 
 pub use pagerank::{DEFAULT_DAMPING, DEFAULT_MAX_ITERATIONS, DEFAULT_TOLERANCE};
 pub use registry::{ALGO_PROCEDURE_NAMES, ALGORITHMS_PACK_NAME, AlgorithmsPack};

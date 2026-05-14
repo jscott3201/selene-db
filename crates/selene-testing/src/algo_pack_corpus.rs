@@ -46,6 +46,41 @@ pub enum AlgoPackInvocation {
         /// Nullable tolerance argument.
         tolerance: Option<f64>,
     },
+    /// `algo.wcc`.
+    Wcc {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.scc`.
+    Scc {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.wcc_count`.
+    WccCount {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.scc_count`.
+    SccCount {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.topological_sort`.
+    TopologicalSort {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.articulation_points`.
+    ArticulationPoints {
+        /// Projection name.
+        projection_name: &'static str,
+    },
+    /// `algo.bridges`.
+    Bridges {
+        /// Projection name.
+        projection_name: &'static str,
+    },
 }
 
 impl AlgoPackInvocation {
@@ -84,6 +119,27 @@ impl AlgoPackInvocation {
                 nullable_usize(*max_iterations),
                 nullable_f64(*tolerance)
             ),
+            Self::Wcc { projection_name } => {
+                format!("CALL algo.wcc({})", quoted(projection_name))
+            }
+            Self::Scc { projection_name } => {
+                format!("CALL algo.scc({})", quoted(projection_name))
+            }
+            Self::WccCount { projection_name } => {
+                format!("CALL algo.wcc_count({})", quoted(projection_name))
+            }
+            Self::SccCount { projection_name } => {
+                format!("CALL algo.scc_count({})", quoted(projection_name))
+            }
+            Self::TopologicalSort { projection_name } => {
+                format!("CALL algo.topological_sort({})", quoted(projection_name))
+            }
+            Self::ArticulationPoints { projection_name } => {
+                format!("CALL algo.articulation_points({})", quoted(projection_name))
+            }
+            Self::Bridges { projection_name } => {
+                format!("CALL algo.bridges({})", quoted(projection_name))
+            }
         }
     }
 }
@@ -148,6 +204,64 @@ impl AlgoPackCorpus {
                 },
             ],
         }
+    }
+
+    /// Construct the B2 corpus including structural adapters.
+    #[must_use]
+    pub fn b2_seed() -> Self {
+        let mut corpus = Self::b1_seed();
+        corpus.entries.extend([
+            AlgoPackCorpusEntry {
+                name: "wcc",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Wcc {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "scc",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Scc {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "wcc_count",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::WccCount {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "scc_count",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::SccCount {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "topological_sort",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::TopologicalSort {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "articulation_points",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::ArticulationPoints {
+                    projection_name: "p",
+                },
+            },
+            AlgoPackCorpusEntry {
+                name: "bridges",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Bridges {
+                    projection_name: "p",
+                },
+            },
+        ]);
+        corpus
     }
 
     /// Borrow corpus entries in deterministic order.
