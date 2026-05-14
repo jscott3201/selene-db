@@ -14,6 +14,7 @@ use selene_core::{
 
 use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
 use crate::error::{GraphError, GraphResult};
+use crate::index_provider::{IndexProvider, ProviderTag};
 use crate::store::{edge_row_index, node_row_index};
 use crate::write_txn::WriteTxn;
 
@@ -292,6 +293,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn
             .changes
             .push(Change::IndexExtensionEvent { provider, payload });
+    }
+
+    /// Look up a registered index provider through the held write transaction.
+    #[must_use]
+    pub fn index_provider_by_tag(&self, tag: ProviderTag) -> Option<Arc<dyn IndexProvider>> {
+        self.txn
+            .providers
+            .iter()
+            .find(|provider| provider.provider_tag() == tag)
+            .map(Arc::clone)
     }
 
     /// Borrow the transaction-local working graph.

@@ -59,6 +59,13 @@ impl<'a, 'g> MutationContext<'a, 'g> {
         Self { mutator, caps }
     }
 
+    /// Construct a mutation context for external procedure test harnesses.
+    #[cfg(any(test, feature = "test-harness"))]
+    #[must_use]
+    pub fn for_test(mutator: Mutator<'a, 'g>, caps: &'a ImplDefinedCaps) -> Self {
+        Self::new(mutator, caps)
+    }
+
     /// Borrow the transaction-local working graph.
     #[must_use]
     pub fn snapshot(&self) -> &SeleneGraph {
@@ -68,6 +75,12 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     /// Borrow the mutation funnel.
     pub fn mutator(&mut self) -> &mut Mutator<'a, 'g> {
         &mut self.mutator
+    }
+
+    /// Look up a registered index provider through the held write transaction.
+    #[must_use]
+    pub fn index_provider_by_tag(&self, tag: ProviderTag) -> Option<Arc<dyn IndexProvider>> {
+        self.mutator.index_provider_by_tag(tag)
     }
 
     /// Borrow implementation-defined executor caps.
