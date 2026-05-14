@@ -2278,8 +2278,10 @@ dependencies = [
 name = "selene-vector-pack"
 version = "0.0.0"
 dependencies = [
+ "criterion",
  "fastrand",
  "insta",
+ "mimalloc",
  "roaring",
  "selene-core",
  "selene-gql",

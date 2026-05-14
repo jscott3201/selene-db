@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 description = "Procedure-pack adapters for selene vector indexes"
+autobenches = false
 
 [features]
 test-harness = ["selene-gql/test-harness"]
@@ -22,7 +23,10 @@ selene-pack = { path = "../selene-pack", version = "0.0.0" }
 selene-vector = { path = "../selene-vector", version = "0.0.0" }
 
 [dev-dependencies]
+criterion.workspace = true
 insta.workspace = true
+selene-gql = { path = "../selene-gql", version = "0.0.0", features = ["test-harness"] }
+mimalloc.workspace = true
 selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
 
 [[test]]
@@ -40,6 +44,10 @@ required-features = ["test-harness"]
 [[test]]
 name = "vector_pack_snapshot_corpus"
 required-features = ["test-harness"]
+
+[[bench]]
+name = "vector_pack"
+harness = false
 
 [lints]
 workspace = true
