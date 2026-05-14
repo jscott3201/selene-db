@@ -5,7 +5,7 @@ use selene_testing::AlgoPackCorpus;
 
 #[test]
 fn algo_pack_corpus_pagerank_entry_matches_golden() {
-    let corpus = AlgoPackCorpus::b2_seed();
+    let corpus = AlgoPackCorpus::b3_seed();
 
     insta::assert_snapshot!(corpus.render(), @r"
 projection_build_all [Projection] CALL algo.projection_build('p', NULL, NULL, NULL)
@@ -20,12 +20,15 @@ scc_count [Algorithm] CALL algo.scc_count('p')
 topological_sort [Algorithm] CALL algo.topological_sort('p')
 articulation_points [Algorithm] CALL algo.articulation_points('p')
 bridges [Algorithm] CALL algo.bridges('p')
+dijkstra [Algorithm] MATCH (source), (target) CALL algo.dijkstra('p', source, target) YIELD cost, path, length
+sssp [Algorithm] MATCH (source) CALL algo.sssp('p', source) YIELD target_node, cost
+apsp [Algorithm] CALL algo.apsp('p', 100)
 ");
 }
 
 #[test]
 fn algo_pack_corpus_drift_detection_pins_registered_procedure_count() {
-    let corpus = AlgoPackCorpus::b2_seed();
+    let corpus = AlgoPackCorpus::b3_seed();
 
     assert_eq!(corpus.entries().len(), ALGO_PROCEDURE_NAMES.len());
 }

@@ -6,13 +6,13 @@ use selene_pack::{
     ExternalGraphProcedure, ExternalProcedurePack, ProcedurePackRegistry, RegistryError,
 };
 
-use crate::{pagerank, projection, state::AlgorithmsPackState, structural};
+use crate::{pagerank, pathfinding, projection, state::AlgorithmsPackState, structural};
 
 /// Static external pack name registered with `selene-pack`.
 pub const ALGORITHMS_PACK_NAME: &str = "selene-algorithms";
 
 /// Canonical procedure names registered by the algorithms pack.
-pub const ALGO_PROCEDURE_NAMES: [&[&str]; 12] = [
+pub const ALGO_PROCEDURE_NAMES: [&[&str]; 15] = [
     &["algo", "projection_build"],
     &["algo", "projection_get"],
     &["algo", "projection_drop"],
@@ -25,6 +25,9 @@ pub const ALGO_PROCEDURE_NAMES: [&[&str]; 12] = [
     &["algo", "topological_sort"],
     &["algo", "articulation_points"],
     &["algo", "bridges"],
+    &["algo", "dijkstra"],
+    &["algo", "sssp"],
+    &["algo", "apsp"],
 ];
 
 /// Construct-time handle for the algorithms procedure pack.
@@ -63,6 +66,7 @@ impl AlgorithmsPack {
         let mut procedures = projection::procedures(Arc::clone(&self.state));
         procedures.push(pagerank::procedure(Arc::clone(&self.state)));
         procedures.extend(structural::procedures(Arc::clone(&self.state)));
+        procedures.extend(pathfinding::procedures(Arc::clone(&self.state)));
         procedures
     }
 }

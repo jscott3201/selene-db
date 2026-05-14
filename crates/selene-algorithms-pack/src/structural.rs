@@ -3,8 +3,7 @@
 use std::sync::Arc;
 
 use selene_algorithms::{
-    AlgorithmsError, GraphProjection, articulation_points, bridges, scc, scc_count,
-    topological_sort, wcc, wcc_count,
+    articulation_points, bridges, scc, scc_count, topological_sort, wcc, wcc_count,
 };
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
@@ -13,8 +12,8 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, required_string},
-    error::{algorithm_error, topo_sort_error},
-    state::AlgorithmsPackState,
+    error::topo_sort_error,
+    state::{AlgorithmsPackState, with_algorithm_projection},
 };
 
 static WCC_NAME: [&str; 2] = ["algo", "wcc"];
@@ -82,7 +81,7 @@ impl ExternalGraphProcedure for WccProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(WCC_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
                 rows: wcc(projection)
                     .into_iter()
@@ -118,7 +117,7 @@ impl ExternalGraphProcedure for SccProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(SCC_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
                 rows: scc(projection)
                     .into_iter()
@@ -154,7 +153,7 @@ impl ExternalGraphProcedure for WccCountProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(WCC_COUNT_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(single_uint_result(wcc_count(projection) as u64))
         })
     }
@@ -185,7 +184,7 @@ impl ExternalGraphProcedure for SccCountProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(SCC_COUNT_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(single_uint_result(scc_count(projection) as u64))
         })
     }
@@ -219,7 +218,7 @@ impl ExternalGraphProcedure for TopologicalSortProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(TOPO_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             let rows = topological_sort(projection)
                 .map_err(topo_sort_error)?
                 .into_iter()
@@ -257,7 +256,7 @@ impl ExternalGraphProcedure for ArticulationPointsProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(ARTICULATION_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
                 rows: articulation_points(projection)
                     .into_iter()
@@ -296,7 +295,7 @@ impl ExternalGraphProcedure for BridgesProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(BRIDGES_PROC, args)?;
-        with_structural_projection(&self.state, ctx, &projection_name, |projection| {
+        with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
                 rows: bridges(projection)
                     .into_iter()
@@ -307,26 +306,6 @@ impl ExternalGraphProcedure for BridgesProcedure {
             })
         })
     }
-}
-
-fn with_structural_projection<R>(
-    state: &AlgorithmsPackState,
-    ctx: &GraphContext<'_>,
-    projection_name: &str,
-    f: impl FnOnce(&GraphProjection) -> Result<R, ProcedureError>,
-) -> Result<R, ProcedureError> {
-    let graph_id = ctx.snapshot().graph_id();
-    state.with_catalog(graph_id, |catalog| {
-        catalog
-            .ensure_fresh(ctx.snapshot(), projection_name)
-            .map_err(algorithm_error)?;
-        let projection = catalog.get(projection_name).ok_or_else(|| {
-            algorithm_error(AlgorithmsError::NoSuchProjection {
-                name: projection_name.to_owned(),
-            })
-        })?;
-        f(projection.projection())
-    })
 }
 
 fn parse_projection_name(
