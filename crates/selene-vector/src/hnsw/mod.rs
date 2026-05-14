@@ -7,6 +7,7 @@
 //! section bodies.
 
 pub mod build;
+pub(crate) mod delete;
 pub mod distance;
 mod graph;
 pub mod params;

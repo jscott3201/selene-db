@@ -105,6 +105,9 @@ impl ProcedureRegistry for ProcedurePackRegistry {
             (TierEntry::Mutation(procedure), ProcedureContext::Mutation(mutation_ctx)) => {
                 procedure.execute(mutation_ctx, args)
             }
+            (TierEntry::ExternalMutation(procedure), ProcedureContext::Mutation(mutation_ctx)) => {
+                procedure.execute(mutation_ctx, args)
+            }
             _ => Err(ProcedureError::TierMismatch {
                 expected: entry.tier(),
                 actual: actual_tier,
@@ -159,8 +162,16 @@ impl ProcedurePackRegistryBuilder {
     #[must_use]
     pub fn with_external_pack(mut self, pack: ExternalProcedurePack) -> Self {
         self.external_pack_names.push(pack.name());
-        for procedure in pack.into_graph_procedures() {
+        let (graph_procedures, mutation_procedures) = pack.into_procedures();
+        for procedure in graph_procedures {
             self.pending.push(PendingEntry::external_graph(
+                ProcedureHandle::new(self.next_handle),
+                procedure,
+            ));
+            self.next_handle += 1;
+        }
+        for procedure in mutation_procedures {
+            self.pending.push(PendingEntry::external_mutation(
                 ProcedureHandle::new(self.next_handle),
                 procedure,
             ));
@@ -236,6 +247,10 @@ mod tests {
     use crate::builtin::{
         BuiltInMetadata, GraphProcedureBuiltIn, MutationProcedureBuiltIn, StaticOutputColumn,
         StaticParameter,
+    };
+    use crate::{
+        ExternalGraphProcedure, ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter,
+        ExternalProcedureMetadata, ExternalProcedurePack,
     };
 
     use super::*;
@@ -314,6 +329,62 @@ mod tests {
     }
 
     impl MutationProcedureBuiltIn for TestMutationBuiltin {
+        fn execute(
+            &self,
+            _ctx: &mut MutationContext<'_, '_>,
+            _args: &[Value],
+        ) -> Result<ProcedureResult, ProcedureError> {
+            Ok(ProcedureResult { rows: Vec::new() })
+        }
+    }
+
+    struct TestExternalGraph {
+        name: &'static [&'static str],
+    }
+
+    impl ExternalProcedureMetadata for TestExternalGraph {
+        fn name(&self) -> &'static [&'static str] {
+            self.name
+        }
+
+        fn signature(&self) -> Vec<ExternalParameter> {
+            Vec::new()
+        }
+
+        fn output_columns(&self) -> Vec<ExternalOutputColumn> {
+            Vec::new()
+        }
+    }
+
+    impl ExternalGraphProcedure for TestExternalGraph {
+        fn execute(
+            &self,
+            _ctx: &selene_gql::GraphContext<'_>,
+            _args: &[Value],
+        ) -> Result<ProcedureResult, ProcedureError> {
+            Ok(ProcedureResult { rows: Vec::new() })
+        }
+    }
+
+    struct TestExternalMutation {
+        name: &'static [&'static str],
+    }
+
+    impl ExternalProcedureMetadata for TestExternalMutation {
+        fn name(&self) -> &'static [&'static str] {
+            self.name
+        }
+
+        fn signature(&self) -> Vec<ExternalParameter> {
+            Vec::new()
+        }
+
+        fn output_columns(&self) -> Vec<ExternalOutputColumn> {
+            Vec::new()
+        }
+    }
+
+    impl ExternalMutationProcedure for TestExternalMutation {
         fn execute(
             &self,
             _ctx: &mut MutationContext<'_, '_>,
@@ -424,6 +495,62 @@ mod tests {
         let metadata = registry.lookup(&name).expect("mutation procedure exists");
 
         assert_eq!(metadata.tier, ProcedureTier::Mutation);
+    }
+
+    #[test]
+    fn external_pack_with_mutation_procedures_registers_both_tiers() {
+        let registry = ProcedurePackRegistryBuilder::new()
+            .with_external_pack(
+                ExternalProcedurePack::new(
+                    "test-pack",
+                    vec![Arc::new(TestExternalGraph {
+                        name: &["ext", "read"],
+                    })],
+                )
+                .with_mutation_procedures(vec![Arc::new(TestExternalMutation {
+                    name: &["ext", "write"],
+                })]),
+            )
+            .build()
+            .expect("external pack registers");
+        let read_name = [
+            selene_core::intern("ext").expect("interns"),
+            selene_core::intern("read").expect("interns"),
+        ];
+        let write_name = [
+            selene_core::intern("ext").expect("interns"),
+            selene_core::intern("write").expect("interns"),
+        ];
+
+        let read = registry.lookup(&read_name).expect("read procedure exists");
+        let write = registry
+            .lookup(&write_name)
+            .expect("write procedure exists");
+
+        assert_eq!(read.tier, ProcedureTier::Graph);
+        assert_eq!(read.mutability, ProcedureMutability::Read);
+        assert_eq!(write.tier, ProcedureTier::Mutation);
+        assert_eq!(write.mutability, ProcedureMutability::GraphWrite);
+    }
+
+    #[test]
+    fn external_pack_rejects_same_name_across_graph_and_mutation_tiers() {
+        let err = ProcedurePackRegistryBuilder::new()
+            .with_external_pack(
+                ExternalProcedurePack::new(
+                    "test-pack",
+                    vec![Arc::new(TestExternalGraph {
+                        name: &["ext", "same"],
+                    })],
+                )
+                .with_mutation_procedures(vec![Arc::new(TestExternalMutation {
+                    name: &["ext", "same"],
+                })]),
+            )
+            .build()
+            .expect_err("same name across tiers is rejected");
+
+        assert!(matches!(err, RegistryError::TierMismatch { .. }));
     }
 
     /// Regression: BRIEF-41 round-1 Codex F1.

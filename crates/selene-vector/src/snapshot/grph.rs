@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use rkyv::{Archive, Deserialize, Serialize};
+use roaring::RoaringBitmap;
 
 use crate::hnsw::{HnswGraph, InternalIndex};
 use crate::{HnswConfig, VectorError};
@@ -11,6 +12,9 @@ use super::{GRPH, decode_failed, encode_failed, max_layer_cap, metric_to_wire, n
 
 /// Magic prefix for version-1 `GRPH` section bodies.
 pub(crate) const PAYLOAD_MAGIC_GRPH: [u8; 4] = *b"VGRP";
+
+/// Magic prefix for version-2 `GRPH` section bodies.
+pub(crate) const PAYLOAD_MAGIC_GRPH_V2: [u8; 4] = *b"VGP2";
 
 /// Archived header for the `GRPH` section.
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -41,6 +45,18 @@ pub(crate) struct GrphNodeV1 {
 }
 
 type GrphBodyV1 = (GrphHeaderV1, Vec<GrphNodeV1>);
+type GrphBodyV2 = (GrphHeaderV1, Vec<GrphNodeV1>, Vec<InternalIndex>);
+
+/// Decoded `GRPH` topology plus optional explicit liveness state.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GrphBody {
+    /// Version-shared topology header.
+    pub(crate) header: GrphHeaderV1,
+    /// Physical-slot topology nodes.
+    pub(crate) nodes: Vec<GrphNodeV1>,
+    /// Live physical slots. `None` means V1 all-alive semantics.
+    pub(crate) live_indices: Option<Vec<InternalIndex>>,
+}
 
 pub(crate) fn encode_grph(graph: &HnswGraph, config: &HnswConfig) -> Result<Vec<u8>, VectorError> {
     let node_count = u32::try_from(graph.len())
@@ -65,29 +81,63 @@ pub(crate) fn encode_grph(graph: &HnswGraph, config: &HnswConfig) -> Result<Vec<
             neighbors: node.neighbors.iter().cloned().collect(),
         })
         .collect::<Vec<_>>();
-    let body: GrphBodyV1 = (header, nodes);
-    let archived = rkyv::to_bytes::<rkyv::rancor::Error>(&body)
-        .map_err(|error| encode_failed(GRPH, error.to_string()))?;
-    let mut out = Vec::with_capacity(PAYLOAD_MAGIC_GRPH.len() + archived.len());
-    out.extend_from_slice(&PAYLOAD_MAGIC_GRPH);
+    let live_indices = graph.live_indices().collect::<Vec<_>>();
+    let all_alive = live_indices.len() == graph.len();
+    let (magic, archived) = if all_alive {
+        let body: GrphBodyV1 = (header, nodes);
+        (
+            PAYLOAD_MAGIC_GRPH,
+            rkyv::to_bytes::<rkyv::rancor::Error>(&body)
+                .map_err(|error| encode_failed(GRPH, error.to_string()))?,
+        )
+    } else {
+        let body: GrphBodyV2 = (header, nodes, live_indices);
+        (
+            PAYLOAD_MAGIC_GRPH_V2,
+            rkyv::to_bytes::<rkyv::rancor::Error>(&body)
+                .map_err(|error| encode_failed(GRPH, error.to_string()))?,
+        )
+    };
+    let mut out = Vec::with_capacity(magic.len() + archived.len());
+    out.extend_from_slice(&magic);
     out.extend_from_slice(&archived);
     Ok(out)
 }
 
-pub(crate) fn decode_grph(bytes: &[u8]) -> Result<GrphBodyV1, VectorError> {
+pub(crate) fn decode_grph(bytes: &[u8]) -> Result<GrphBody, VectorError> {
     let Some((magic, body)) = bytes.split_at_checked(PAYLOAD_MAGIC_GRPH.len()) else {
         return Err(decode_failed(GRPH, "GRPH magic mismatch"));
     };
-    if magic != PAYLOAD_MAGIC_GRPH {
-        return Err(decode_failed(GRPH, "GRPH magic mismatch"));
+    if magic == PAYLOAD_MAGIC_GRPH {
+        let (header, nodes) = rkyv::from_bytes::<GrphBodyV1, rkyv::rancor::Error>(body)
+            .map_err(|error| decode_failed(GRPH, format!("rkyv decode failed: {error}")))?;
+        validate_grph(&header, &nodes, None)?;
+        return Ok(GrphBody {
+            header,
+            nodes,
+            live_indices: None,
+        });
     }
-    let decoded = rkyv::from_bytes::<GrphBodyV1, rkyv::rancor::Error>(body)
-        .map_err(|error| decode_failed(GRPH, format!("rkyv decode failed: {error}")))?;
-    validate_grph(&decoded.0, &decoded.1)?;
-    Ok(decoded)
+    if magic == PAYLOAD_MAGIC_GRPH_V2 {
+        let (header, nodes, live_indices) =
+            rkyv::from_bytes::<GrphBodyV2, rkyv::rancor::Error>(body)
+                .map_err(|error| decode_failed(GRPH, format!("rkyv decode failed: {error}")))?;
+        validate_grph(&header, &nodes, Some(&live_indices))?;
+        return Ok(GrphBody {
+            header,
+            nodes,
+            live_indices: Some(live_indices),
+        });
+    }
+
+    Err(decode_failed(GRPH, "GRPH magic mismatch"))
 }
 
-fn validate_grph(header: &GrphHeaderV1, nodes: &[GrphNodeV1]) -> Result<(), VectorError> {
+fn validate_grph(
+    header: &GrphHeaderV1,
+    nodes: &[GrphNodeV1],
+    live_indices: Option<&[InternalIndex]>,
+) -> Result<(), VectorError> {
     let node_count = node_count_usize(header.node_count, GRPH)?;
     if node_count != nodes.len() {
         return Err(decode_failed(
@@ -103,8 +153,14 @@ fn validate_grph(header: &GrphHeaderV1, nodes: &[GrphNodeV1]) -> Result<(), Vect
     for (idx, node) in nodes.iter().enumerate() {
         validate_node(idx, node, nodes, &mut seen)?;
     }
-    validate_entry_point(header, nodes)?;
-    let observed_max = nodes.iter().map(|node| node.max_layer).max().unwrap_or(0);
+    let live = validate_live_indices(node_count, live_indices)?;
+    validate_entry_point(header, nodes, &live)?;
+    let observed_max = live
+        .iter()
+        .filter_map(|idx| nodes.get(idx as usize))
+        .map(|node| node.max_layer)
+        .max()
+        .unwrap_or(0);
     if header.max_layer != observed_max {
         return Err(decode_failed(
             GRPH,
@@ -115,6 +171,38 @@ fn validate_grph(header: &GrphHeaderV1, nodes: &[GrphNodeV1]) -> Result<(), Vect
         ));
     }
     Ok(())
+}
+
+fn validate_live_indices(
+    node_count: usize,
+    live_indices: Option<&[InternalIndex]>,
+) -> Result<RoaringBitmap, VectorError> {
+    let mut live = RoaringBitmap::new();
+    match live_indices {
+        None => {
+            for idx in 0..node_count {
+                let idx = InternalIndex::try_from(idx)
+                    .map_err(|_| decode_failed(GRPH, "node_count exceeds InternalIndex range"))?;
+                live.insert(idx);
+            }
+        }
+        Some(indices) => {
+            for idx in indices {
+                let slot = usize::try_from(*idx)
+                    .map_err(|_| decode_failed(GRPH, "live index exceeds usize range"))?;
+                if slot >= node_count {
+                    return Err(decode_failed(
+                        GRPH,
+                        format!("live index {idx} out of bounds for {node_count} nodes"),
+                    ));
+                }
+                if !live.insert(*idx) {
+                    return Err(decode_failed(GRPH, format!("duplicate live index {idx}")));
+                }
+            }
+        }
+    }
+    Ok(live)
 }
 
 fn validate_node(
@@ -179,14 +267,21 @@ fn validate_node(
     Ok(())
 }
 
-fn validate_entry_point(header: &GrphHeaderV1, nodes: &[GrphNodeV1]) -> Result<(), VectorError> {
-    match (nodes.is_empty(), header.entry_point) {
+fn validate_entry_point(
+    header: &GrphHeaderV1,
+    nodes: &[GrphNodeV1],
+    live: &RoaringBitmap,
+) -> Result<(), VectorError> {
+    match (live.is_empty(), header.entry_point) {
         (true, None) => Ok(()),
         (true, Some(_)) => Err(decode_failed(GRPH, "empty graph must not have entry_point")),
-        (false, None) => Err(decode_failed(GRPH, "non-empty graph requires entry_point")),
+        (false, None) => Err(decode_failed(GRPH, "live graph requires entry_point")),
         (false, Some(entry)) => {
             let entry_idx = usize::try_from(entry)
                 .map_err(|_| decode_failed(GRPH, "entry_point exceeds usize range"))?;
+            if !live.contains(entry) {
+                return Err(decode_failed(GRPH, "entry_point is not live"));
+            }
             let Some(entry_node) = nodes.get(entry_idx) else {
                 return Err(decode_failed(GRPH, "entry_point out of bounds"));
             };

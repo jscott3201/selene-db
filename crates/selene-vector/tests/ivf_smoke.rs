@@ -46,6 +46,20 @@ fn ivf_change(node_id: u64, vector: [f32; 2]) -> Change {
     }
 }
 
+fn ivf_delete_change(node_id: u64) -> Change {
+    let payload = VectorIvfUpsertV1 {
+        op: VectorOp::Delete,
+        node_id: NodeId::new(node_id),
+        vector: Vec::new(),
+    }
+    .encode()
+    .unwrap();
+    Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").unwrap(),
+        payload: Arc::from(payload),
+    }
+}
+
 fn hnsw_change(node_id: u64, vector: [f32; 2]) -> Change {
     let payload = VectorUpsertPayloadV1 {
         op: VectorOp::Insert,
@@ -286,6 +300,63 @@ fn ivf_search_returns_rows_after_training() {
 
     assert!(!rows.is_empty());
     assert!(rows.len() <= 5);
+}
+
+#[test]
+fn ivf_delete_removes_node_from_search_candidates() {
+    let provider = provider(256);
+    populate(&provider, 256);
+    provider.write_section(SubTag(*b"CQNT")).unwrap();
+    provider.write_section(SubTag(*b"IPQB")).unwrap();
+    provider.write_section(SubTag(*b"POST")).unwrap();
+
+    provider
+        .on_change(&ivf_delete_change(3))
+        .expect("delete succeeds");
+    let rows = provider
+        .search(&[2.0, 2.0], 256, Some(4), None)
+        .expect("search succeeds");
+
+    assert!(!rows.iter().any(|(node_id, _)| *node_id == NodeId::new(3)));
+    assert_eq!(provider.snapshot().len(), 255);
+}
+
+#[test]
+fn ivf_delete_untrained_index_is_idempotent() {
+    let provider = provider(256);
+
+    provider
+        .on_change(&ivf_delete_change(404))
+        .expect("missing delete succeeds");
+
+    assert!(provider.snapshot().is_empty());
+}
+
+#[test]
+fn ivf_delete_existing_deferred_row_not_resurrected_on_train() {
+    let provider = provider(256);
+    populate(&provider, 255);
+    provider
+        .on_change(&ivf_delete_change(2))
+        .expect("deferred delete succeeds");
+    provider
+        .on_change(&ivf_change(256, [256.0, 3.0]))
+        .expect("insert succeeds");
+    provider
+        .on_change(&ivf_change(257, [257.0, 4.0]))
+        .expect("insert succeeds");
+
+    provider.write_section(SubTag(*b"CQNT")).unwrap();
+    provider.write_section(SubTag(*b"IPQB")).unwrap();
+    provider.write_section(SubTag(*b"POST")).unwrap();
+
+    let snapshot = provider.snapshot();
+    assert!(snapshot.is_trained());
+    assert_eq!(snapshot.len(), 256);
+    let rows = provider
+        .search(&[1.0, 1.0], 300, Some(4), None)
+        .expect("search succeeds");
+    assert!(!rows.iter().any(|(node_id, _)| *node_id == NodeId::new(2)));
 }
 
 #[test]

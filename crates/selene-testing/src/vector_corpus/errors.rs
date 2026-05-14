@@ -174,23 +174,6 @@ pub(crate) fn entries() -> Vec<VectorCorpusEntry> {
             covered_quant_methods: NO_QUANT,
         },
         VectorCorpusEntry {
-            slug: "error-operation-delete-not-supported",
-            description: "OperationNotSupportedYet from reserved Delete op.",
-            graph: G::SingleOriginCosine,
-            config: cfg(4, M::Cosine, Z::DISABLED),
-            invocation: api_error(
-                E::OperationNotSupportedYet,
-                ApiInductionPayload::OperationDelete,
-            ),
-            category: C::Error,
-            covered_surfaces: ERROR_SURFACE,
-            covered_metrics: NO_METRICS,
-            covered_ops: &[O::Delete],
-            covered_errors: &[E::OperationNotSupportedYet],
-            covered_magics: &[X::Vecu],
-            covered_quant_methods: NO_QUANT,
-        },
-        VectorCorpusEntry {
             slug: "error-duplicate-node-id",
             description: "DuplicateNodeId from re-inserting an existing node.",
             graph: G::SingleOriginCosine,

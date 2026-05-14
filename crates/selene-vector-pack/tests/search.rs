@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use selene_core::{Change, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_gql::{
-    BindingTable, ExecutionPlan, ExecutorError, ProcedureError, ProcedureRegistry, StatementOutput,
-    analyze, execute_statement, parse, plan,
+    BindingTable, ExecutionPlan, ExecutorError, ImplDefinedCaps, MutationContext, ProcedureContext,
+    ProcedureError, ProcedureRegistry, ProcedureResult, StatementOutput, analyze,
+    execute_statement, parse, plan,
 };
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SharedGraph, SubTag};
 use selene_pack::ProcedurePackRegistry;
@@ -51,6 +52,72 @@ fn rows(output: StatementOutput) -> BindingTable {
         StatementOutput::Rows(table) => table,
         other => panic!("expected rows, got {other:?}"),
     }
+}
+
+fn execute_mutation_direct(
+    graph: &SharedGraph,
+    registry: &dyn ProcedureRegistry,
+    name: &[&str],
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    let interned = name.iter().map(|segment| istr(segment)).collect::<Vec<_>>();
+    let metadata = registry
+        .lookup(&interned)
+        .expect("mutation procedure registered");
+    let mut txn = graph.begin_write();
+    let caps = ImplDefinedCaps::default();
+    let result = {
+        let mut ctx = ProcedureContext::Mutation(MutationContext::for_test(txn.mutator(), &caps));
+        registry.execute(metadata.handle, args, &mut ctx)
+    };
+    match result {
+        Ok(result) => {
+            txn.commit().expect("mutation commit succeeds");
+            Ok(result)
+        }
+        Err(err) => {
+            txn.rollback();
+            Err(err)
+        }
+    }
+}
+
+fn execute_mutation_batch_direct(
+    graph: &SharedGraph,
+    registry: &dyn ProcedureRegistry,
+    calls: &[(&[&str], Vec<Value>)],
+) -> Result<Vec<Change>, ProcedureError> {
+    let mut txn = graph.begin_write();
+    let caps = ImplDefinedCaps::default();
+    let mut result = Ok(());
+    {
+        let mut ctx = ProcedureContext::Mutation(MutationContext::for_test(txn.mutator(), &caps));
+        for (name, args) in calls {
+            let interned = name.iter().map(|segment| istr(segment)).collect::<Vec<_>>();
+            let metadata = registry
+                .lookup(&interned)
+                .expect("mutation procedure registered");
+            if let Err(err) = registry.execute(metadata.handle, args, &mut ctx) {
+                result = Err(err);
+                break;
+            }
+        }
+    }
+    match result {
+        Ok(()) => Ok(txn.commit().expect("mutation commit succeeds").changes),
+        Err(err) => {
+            txn.rollback();
+            Err(err)
+        }
+    }
+}
+
+fn upsert_args(node_id: NodeId, vector: Vec<Value>) -> Vec<Value> {
+    vec![
+        Value::String(istr("default")),
+        Value::NodeRef(node_id),
+        Value::List(vector),
+    ]
 }
 
 fn graph_with_vectors(id: u64) -> (SharedGraph, Arc<HnswProvider>, Vec<NodeId>) {
@@ -101,6 +168,29 @@ fn graph_with_labeled_vectors(
     (graph, provider, node_ids)
 }
 
+fn graph_with_nodes(id: u64, labels: &[&str]) -> (SharedGraph, Arc<HnswProvider>, Vec<NodeId>) {
+    let provider = Arc::new(HnswProvider::new(HnswConfig::new(4).unwrap()).unwrap());
+    let dyn_provider: Arc<dyn IndexProvider> = provider.clone();
+    let graph = SharedGraph::builder(GraphId::new(id))
+        .with_provider(dyn_provider)
+        .build()
+        .expect("graph builds");
+    let mut node_ids = Vec::with_capacity(labels.len());
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for label in labels {
+            node_ids.push(
+                mutator
+                    .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+                    .expect("fixture node inserts"),
+            );
+        }
+        txn.commit().expect("fixture commit succeeds");
+    }
+    (graph, provider, node_ids)
+}
+
 fn vector_change(payload: VectorUpsertPayloadV1) -> Change {
     Change::IndexExtensionEvent {
         provider: istr("selene-vector"),
@@ -133,17 +223,25 @@ fn node_ids_for(table: &BindingTable, name: &str) -> Vec<NodeId> {
 fn vector_search_registers_metadata_and_capability_free_name() {
     let pack = VectorPack::new();
     let registry = registry(&pack);
-    let interned: Vec<_> = VECTOR_PROCEDURE_NAMES[0]
+    let metadata = VECTOR_PROCEDURE_NAMES
         .iter()
-        .map(|segment| istr(segment))
-        .collect();
-    let metadata = registry
-        .lookup(&interned)
-        .expect("vector.search is registered");
+        .map(|name| {
+            let interned: Vec<_> = name.iter().map(|segment| istr(segment)).collect();
+            registry.lookup(&interned).expect("procedure is registered")
+        })
+        .collect::<Vec<_>>();
 
-    assert_eq!(metadata.signature.parameters.len(), 5);
-    assert_eq!(metadata.output_schema.columns.len(), 2);
-    assert_eq!(metadata.capability_required, None);
+    assert_eq!(metadata[0].signature.parameters.len(), 5);
+    assert_eq!(metadata[0].output_schema.columns.len(), 2);
+    assert_eq!(metadata[1].signature.parameters.len(), 3);
+    assert_eq!(metadata[1].output_schema.columns.len(), 0);
+    assert_eq!(metadata[2].signature.parameters.len(), 2);
+    assert_eq!(metadata[2].output_schema.columns.len(), 0);
+    assert!(
+        metadata
+            .iter()
+            .all(|metadata| metadata.capability_required.is_none())
+    );
 }
 
 #[test]
@@ -308,6 +406,232 @@ fn vector_search_requires_registered_vect_provider() {
 }
 
 #[test]
+fn vector_upsert_inserts_vector_and_search_returns_it() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _provider, nodes) = graph_with_nodes(8_709, &["Vec"]);
+
+    execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "upsert"],
+        &upsert_args(
+            nodes[0],
+            vec![
+                Value::Float(1.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+            ],
+        ),
+    )
+    .expect("upsert succeeds");
+    let table = rows(execute_ok(
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        &graph,
+        &registry,
+    ));
+
+    assert_eq!(node_ids(&table), vec![nodes[0]]);
+}
+
+#[test]
+fn vector_upsert_with_wrong_dim_errors_at_adapter() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(8_710, &["Vec"]);
+
+    let err = execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "upsert"],
+        &upsert_args(nodes[0], vec![Value::Float(1.0), Value::Float(0.0)]),
+    )
+    .expect_err("dimension mismatch is rejected");
+
+    assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+}
+
+#[test]
+fn vector_upsert_with_nan_component_errors_at_adapter() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(8_711, &["Vec"]);
+
+    let err = execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "upsert"],
+        &upsert_args(
+            nodes[0],
+            vec![
+                Value::Float(f64::NAN),
+                Value::Float(0.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+            ],
+        ),
+    )
+    .expect_err("non-finite component is rejected");
+
+    assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+}
+
+#[test]
+fn vector_upsert_duplicate_node_id_emits_events_for_provider_validation() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(8_712, &["Vec"]);
+    let args = upsert_args(
+        nodes[0],
+        vec![
+            Value::Float(1.0),
+            Value::Float(0.0),
+            Value::Float(0.0),
+            Value::Float(0.0),
+        ],
+    );
+
+    let changes = execute_mutation_batch_direct(
+        &graph,
+        &registry,
+        &[
+            (&["vector", "upsert"], args.clone()),
+            (&["vector", "upsert"], args),
+        ],
+    )
+    .expect("adapter emits duplicate upserts for provider validation");
+
+    assert_eq!(index_extension_event_count(&changes), 2);
+}
+
+#[test]
+fn vector_delete_then_upsert_same_tx_reuses_node_id() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(87_121, &["Vec"]);
+    execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "upsert"],
+        &upsert_args(
+            nodes[0],
+            vec![
+                Value::Float(1.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+            ],
+        ),
+    )
+    .expect("seed upsert succeeds");
+
+    let changes = execute_mutation_batch_direct(
+        &graph,
+        &registry,
+        &[
+            (
+                &["vector", "delete"],
+                vec![Value::String(istr("default")), Value::NodeRef(nodes[0])],
+            ),
+            (
+                &["vector", "upsert"],
+                upsert_args(
+                    nodes[0],
+                    vec![
+                        Value::Float(0.0),
+                        Value::Float(1.0),
+                        Value::Float(0.0),
+                        Value::Float(0.0),
+                    ],
+                ),
+            ),
+        ],
+    )
+    .expect("delete then upsert in one transaction succeeds");
+    let table = rows(execute_ok(
+        "CALL vector.search('default', [0.0, 1.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        &graph,
+        &registry,
+    ));
+
+    assert_eq!(index_extension_event_count(&changes), 2);
+    assert_eq!(node_ids(&table), vec![nodes[0]]);
+}
+
+#[test]
+fn vector_delete_removes_vector_from_search() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(8_713, &["Vec"]);
+    execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "upsert"],
+        &upsert_args(
+            nodes[0],
+            vec![
+                Value::Float(1.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+                Value::Float(0.0),
+            ],
+        ),
+    )
+    .unwrap();
+
+    execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "delete"],
+        &[Value::String(istr("default")), Value::NodeRef(nodes[0])],
+    )
+    .expect("delete succeeds");
+    let table = rows(execute_ok(
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        &graph,
+        &registry,
+    ));
+
+    assert!(table.rows().is_empty());
+}
+
+#[test]
+fn vector_delete_of_non_existent_node_succeeds_silently() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(8_714, &["Vec"]);
+
+    execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "delete"],
+        &[Value::String(istr("default")), Value::NodeRef(nodes[0])],
+    )
+    .expect("missing delete succeeds");
+}
+
+#[test]
+fn vector_delete_with_unknown_index_name_errors() {
+    let pack = VectorPack::new();
+    let registry = registry(&pack);
+    let (graph, _, nodes) = graph_with_nodes(8_715, &["Vec"]);
+
+    let err = execute_mutation_direct(
+        &graph,
+        &registry,
+        &["vector", "delete"],
+        &[
+            Value::String(istr("embedding_idx")),
+            Value::NodeRef(nodes[0]),
+        ],
+    )
+    .expect_err("unknown index rejected");
+
+    assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+}
+
+#[test]
 fn vector_search_rejects_non_hnsw_vect_provider() {
     let pack = VectorPack::new();
     let registry = registry(&pack);
@@ -334,7 +658,7 @@ fn vector_search_rejects_non_hnsw_vect_provider() {
 
 #[test]
 fn vector_pack_corpus_renders_in_deterministic_order_and_covers_registry() {
-    let corpus = VectorPackCorpus::b1_seed();
+    let corpus = VectorPackCorpus::b2_seed();
     let observed = corpus
         .entries()
         .iter()
@@ -344,7 +668,21 @@ fn vector_pack_corpus_renders_in_deterministic_order_and_covers_registry() {
     assert_eq!(observed, VECTOR_PROCEDURE_NAMES.to_vec());
     insta::assert_snapshot!(corpus.render(), @r"
 search_default [Search] CALL vector.search('default', [1.000000, 0.000000, 0.000000, 0.000000], 10, NULL, NULL)
+upsert_default [Upsert] CALL vector.upsert('default', 42, [1.000000, 0.000000, 0.000000, 0.000000])
+delete_default [Delete] CALL vector.delete('default', 42)
 ");
+}
+
+fn index_extension_event_count(changes: &[Change]) -> usize {
+    changes
+        .iter()
+        .filter(|change| {
+            matches!(
+                change,
+                Change::IndexExtensionEvent { provider, .. } if *provider == istr("selene-vector")
+            )
+        })
+        .count()
 }
 
 struct WrongVectProvider;

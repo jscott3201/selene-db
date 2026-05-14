@@ -173,6 +173,10 @@ fn bulk(rows: &[(u64, &[f32], u8)]) -> VectorCorpusEvent {
     }
 }
 
+fn delete(node_id_raw: u64) -> VectorCorpusEvent {
+    VectorCorpusEvent::Delete { node_id_raw }
+}
+
 fn api_error(kind: VectorErrorKindMirror, payload: ApiInductionPayload) -> VectorCorpusInvocation {
     VectorCorpusInvocation::DeliberateApiError { kind, payload }
 }
@@ -409,6 +413,22 @@ fn entries() -> Vec<VectorCorpusEntry> {
             covered_ops: &[O::Insert],
             covered_errors: &[],
             covered_magics: &[X::Vecb, X::Vgrp, X::Vvec],
+            covered_quant_methods: &[],
+        },
+        VectorCorpusEntry {
+            slug: "recovery-replay-30-delete-vecu",
+            description: "Snapshot recovery followed by one VECU Delete event.",
+            graph: G::MixedLayerCosine30,
+            config: cfg(4, M::Cosine, Z::DISABLED),
+            invocation: VectorCorpusInvocation::RecoveryReplay {
+                post_snapshot_events: vec![delete(1)],
+            },
+            category: C::Recovery,
+            covered_surfaces: &[S::RecoveryReplay, S::EventVecu],
+            covered_metrics: &[M::Cosine],
+            covered_ops: &[O::Delete],
+            covered_errors: &[],
+            covered_magics: &[X::Vecu, X::Vgrp, X::Vvec],
             covered_quant_methods: &[],
         },
         VectorCorpusEntry {

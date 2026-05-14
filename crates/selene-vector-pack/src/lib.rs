@@ -8,11 +8,13 @@
 #![deny(missing_docs)]
 
 mod args;
+mod delete;
 mod error;
 mod provider;
 mod registry;
 mod search;
 mod state;
+mod upsert;
 
 pub use registry::{VECTOR_PACK_NAME, VECTOR_PROCEDURE_NAMES, VectorPack};
 pub use state::VectorPackState;

@@ -250,6 +250,9 @@ pub enum VectorCorpusEvent {
         vector: Vec<f32>,
         max_layer: u8,
     },
+    Delete {
+        node_id_raw: u64,
+    },
     Bulk {
         rows: Vec<(u64, Vec<f32>, u8)>,
     },
@@ -315,7 +318,6 @@ pub enum ApiInductionPayload {
     DimensionsLockedSearch,
     InvalidPayloadEmptyBulk,
     OperationUpdate,
-    OperationDelete,
     DuplicateNodeId,
     NonFiniteVector,
     MaxLayerExceedsCap,

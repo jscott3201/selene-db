@@ -3,16 +3,21 @@
 use std::sync::Arc;
 
 use selene_pack::{
-    ExternalGraphProcedure, ExternalProcedurePack, ProcedurePackRegistry, RegistryError,
+    ExternalGraphProcedure, ExternalMutationProcedure, ExternalProcedurePack,
+    ProcedurePackRegistry, RegistryError,
 };
 
-use crate::{search, state::VectorPackState};
+use crate::{delete, search, state::VectorPackState, upsert};
 
 /// Static external pack name registered with `selene-pack`.
 pub const VECTOR_PACK_NAME: &str = "vector";
 
 /// Canonical procedure names registered by the vector pack.
-pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 1] = [&["vector", "search"]];
+pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 3] = [
+    &["vector", "search"],
+    &["vector", "upsert"],
+    &["vector", "delete"],
+];
 
 /// Construct-time handle for the vector procedure pack.
 #[derive(Clone, Debug, Default)]
@@ -31,6 +36,7 @@ impl VectorPack {
     #[must_use]
     pub fn external_pack(&self) -> ExternalProcedurePack {
         ExternalProcedurePack::new(VECTOR_PACK_NAME, self.procedures())
+            .with_mutation_procedures(self.mutation_procedures())
     }
 
     /// Construct a registry containing platform built-ins and the vector pack.
@@ -48,5 +54,12 @@ impl VectorPack {
 
     fn procedures(&self) -> Vec<Arc<dyn ExternalGraphProcedure>> {
         vec![search::procedure(Arc::clone(&self.state))]
+    }
+
+    fn mutation_procedures(&self) -> Vec<Arc<dyn ExternalMutationProcedure>> {
+        vec![
+            upsert::procedure(Arc::clone(&self.state)),
+            delete::procedure(Arc::clone(&self.state)),
+        ]
     }
 }

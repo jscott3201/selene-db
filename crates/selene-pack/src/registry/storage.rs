@@ -15,7 +15,9 @@ use crate::{
         UNSTABLE_BUILTIN_CONTENT_HASH,
     },
     error::RegistryError,
-    external::{ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter},
+    external::{
+        ExternalGraphProcedure, ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter,
+    },
 };
 
 use selene_gql::ProcedureMutability;
@@ -27,6 +29,7 @@ pub(crate) enum TierEntry {
     Graph(Arc<dyn GraphProcedureBuiltIn>),
     Mutation(Arc<dyn MutationProcedureBuiltIn>),
     ExternalGraph(Arc<dyn ExternalGraphProcedure>),
+    ExternalMutation(Arc<dyn ExternalMutationProcedure>),
 }
 
 impl std::fmt::Debug for TierEntry {
@@ -41,7 +44,7 @@ impl TierEntry {
     pub(crate) fn tier(&self) -> ProcedureTier {
         match self {
             Self::Graph(_) | Self::ExternalGraph(_) => ProcedureTier::Graph,
-            Self::Mutation(_) => ProcedureTier::Mutation,
+            Self::Mutation(_) | Self::ExternalMutation(_) => ProcedureTier::Mutation,
         }
     }
 
@@ -50,6 +53,7 @@ impl TierEntry {
             Self::Graph(procedure) => procedure.tier(),
             Self::Mutation(procedure) => procedure.tier(),
             Self::ExternalGraph(_) => ProcedureTier::Graph,
+            Self::ExternalMutation(_) => ProcedureTier::Mutation,
         }
     }
 
@@ -58,6 +62,7 @@ impl TierEntry {
             Self::Graph(procedure) => procedure.mutability(),
             Self::Mutation(procedure) => procedure.mutability(),
             Self::ExternalGraph(_) => ProcedureMutability::Read,
+            Self::ExternalMutation(_) => ProcedureMutability::GraphWrite,
         }
     }
 
@@ -66,6 +71,7 @@ impl TierEntry {
             Self::Graph(procedure) => procedure.name(),
             Self::Mutation(procedure) => procedure.name(),
             Self::ExternalGraph(procedure) => procedure.name(),
+            Self::ExternalMutation(procedure) => procedure.name(),
         }
     }
 
@@ -74,6 +80,7 @@ impl TierEntry {
             Self::Graph(procedure) => procedure.content_hash(),
             Self::Mutation(procedure) => procedure.content_hash(),
             Self::ExternalGraph(_) => UNSTABLE_BUILTIN_CONTENT_HASH,
+            Self::ExternalMutation(_) => UNSTABLE_BUILTIN_CONTENT_HASH,
         }
     }
 }
@@ -112,6 +119,17 @@ impl PendingEntry {
             handle,
             attempted_tier: ProcedureTier::Graph,
             entry: TierEntry::ExternalGraph(procedure),
+        }
+    }
+
+    pub(crate) fn external_mutation(
+        handle: ProcedureHandle,
+        procedure: Arc<dyn ExternalMutationProcedure>,
+    ) -> Self {
+        Self {
+            handle,
+            attempted_tier: ProcedureTier::Mutation,
+            entry: TierEntry::ExternalMutation(procedure),
         }
     }
 }
@@ -268,6 +286,18 @@ fn procedure_metadata(pending: &PendingEntry) -> Result<ProcedureMetadata, Regis
                 .collect::<Result<Vec<_>, _>>()?,
         ),
         TierEntry::ExternalGraph(procedure) => (
+            procedure
+                .signature()
+                .iter()
+                .map(external_parameter)
+                .collect::<Result<Vec<_>, _>>()?,
+            procedure
+                .output_columns()
+                .iter()
+                .map(external_output_column)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        TierEntry::ExternalMutation(procedure) => (
             procedure
                 .signature()
                 .iter()

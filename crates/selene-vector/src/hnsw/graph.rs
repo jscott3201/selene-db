@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use roaring::RoaringBitmap;
 use selene_core::NodeId;
 use smallvec::SmallVec;
 
@@ -63,6 +64,7 @@ impl HnswNode {
 #[derive(Debug)]
 pub struct HnswGraph {
     pub(crate) nodes: Vec<HnswNode>,
+    pub(crate) alive: RoaringBitmap,
     pub(crate) entry_point: Option<InternalIndex>,
     pub(crate) max_layer: u8,
     pub(crate) node_id_to_idx: HashMap<NodeId, InternalIndex>,
@@ -76,6 +78,7 @@ impl HnswGraph {
     pub fn empty(dimensions: u16) -> Self {
         Self {
             nodes: Vec::new(),
+            alive: RoaringBitmap::new(),
             entry_point: None,
             max_layer: 0,
             node_id_to_idx: HashMap::new(),
@@ -89,6 +92,7 @@ impl HnswGraph {
     pub fn with_capacity(dimensions: u16, capacity: usize) -> Self {
         Self {
             nodes: Vec::with_capacity(capacity),
+            alive: RoaringBitmap::new(),
             entry_point: None,
             max_layer: 0,
             node_id_to_idx: HashMap::with_capacity(capacity),
@@ -105,6 +109,7 @@ impl HnswGraph {
     pub(crate) fn clone_for_mutation(&self) -> Self {
         Self {
             nodes: self.nodes.clone(),
+            alive: self.alive.clone(),
             entry_point: self.entry_point,
             max_layer: self.max_layer,
             node_id_to_idx: self.node_id_to_idx.clone(),
@@ -134,6 +139,12 @@ impl HnswGraph {
     #[must_use]
     pub fn len(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Return the number of live, searchable nodes.
+    #[must_use]
+    pub fn live_len(&self) -> usize {
+        self.alive.len() as usize
     }
 
     /// Return true when the graph contains no indexed nodes.
@@ -174,12 +185,36 @@ impl HnswGraph {
     /// Look up the provider-local index for a source graph node ID.
     #[must_use]
     pub fn idx_for(&self, id: NodeId) -> Option<InternalIndex> {
-        self.node_id_to_idx.get(&id).copied()
+        self.node_id_to_idx
+            .get(&id)
+            .copied()
+            .filter(|idx| self.is_alive_idx(*idx))
     }
 
     /// Iterate over all indexed nodes in provider-local order.
     pub fn iter_nodes(&self) -> impl Iterator<Item = &HnswNode> {
         self.nodes.iter()
+    }
+
+    /// Iterate over live provider-local indexes in ascending physical order.
+    pub(crate) fn live_indices(&self) -> impl Iterator<Item = InternalIndex> + '_ {
+        self.alive
+            .iter()
+            .filter(|idx| (*idx as usize) < self.nodes.len())
+    }
+
+    /// Return true when `idx` addresses a live physical slot.
+    #[must_use]
+    pub fn is_alive_idx(&self, idx: InternalIndex) -> bool {
+        self.alive.contains(idx) && (idx as usize) < self.nodes.len()
+    }
+
+    pub(crate) fn mark_alive_idx(&mut self, idx: InternalIndex) {
+        self.alive.insert(idx);
+    }
+
+    pub(crate) fn clear_alive_idx(&mut self, idx: InternalIndex) {
+        self.alive.remove(idx);
     }
 
     /// Return the neighbor list for `idx` at `layer`.

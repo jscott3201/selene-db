@@ -5,23 +5,29 @@
 pub enum VectorPackCorpusCategory {
     /// HNSW read-tier search procedure coverage.
     Search,
+    /// HNSW mutation-tier upsert procedure coverage.
+    Upsert,
+    /// HNSW mutation-tier delete procedure coverage.
+    Delete,
 }
 
 impl VectorPackCorpusCategory {
     /// All declared vector-pack corpus categories.
-    pub const ALL: &'static [Self] = &[Self::Search];
+    pub const ALL: &'static [Self] = &[Self::Search, Self::Upsert, Self::Delete];
 
     /// Stable category label used by drift tests to anchor exhaustive matching.
     #[must_use]
     pub const fn stable_label(self) -> &'static str {
         match self {
             Self::Search => "Search",
+            Self::Upsert => "Upsert",
+            Self::Delete => "Delete",
         }
     }
 }
 
 const _ASSERT_CATEGORY_ALL_MATCHES_VARIANT_COUNT: () = {
-    assert!(VectorPackCorpusCategory::ALL.len() == 1);
+    assert!(VectorPackCorpusCategory::ALL.len() == 3);
 };
 
 /// Procedure invocation mirrored by the vector-pack corpus.
@@ -40,6 +46,22 @@ pub enum VectorPackInvocation {
         /// Optional node-filter IDs. Empty means NULL.
         filter_nodes: &'static [u64],
     },
+    /// `vector.upsert`.
+    Upsert {
+        /// v1.0 sentinel index name.
+        index_name: &'static str,
+        /// Source graph node ID.
+        node_id: u64,
+        /// Vector components.
+        vector: &'static [f32],
+    },
+    /// `vector.delete`.
+    Delete {
+        /// v1.0 sentinel index name.
+        index_name: &'static str,
+        /// Source graph node ID.
+        node_id: u64,
+    },
 }
 
 impl VectorPackInvocation {
@@ -48,6 +70,8 @@ impl VectorPackInvocation {
     pub const fn procedure_name(&self) -> &'static [&'static str] {
         match self {
             Self::Search { .. } => &["vector", "search"],
+            Self::Upsert { .. } => &["vector", "upsert"],
+            Self::Delete { .. } => &["vector", "delete"],
         }
     }
 
@@ -68,6 +92,19 @@ impl VectorPackInvocation {
                 nullable_usize(*ef_search),
                 node_filter(filter_nodes)
             ),
+            Self::Upsert {
+                index_name,
+                node_id,
+                vector,
+            } => format!(
+                "CALL vector.upsert({}, {node_id}, {})",
+                quoted(index_name),
+                f32_list(vector)
+            ),
+            Self::Delete {
+                index_name,
+                node_id,
+            } => format!("CALL vector.delete({}, {node_id})", quoted(index_name)),
         }
     }
 }
@@ -119,6 +156,32 @@ impl VectorPackCorpus {
                 },
             }],
         }
+    }
+
+    /// Construct the B2 seed corpus, preserving B1 entries in order.
+    #[must_use]
+    pub fn b2_seed() -> Self {
+        let mut corpus = Self::b1_seed();
+        corpus.entries.extend([
+            VectorPackCorpusEntry {
+                name: "upsert_default",
+                category: VectorPackCorpusCategory::Upsert,
+                invocation: VectorPackInvocation::Upsert {
+                    index_name: "default",
+                    node_id: 42,
+                    vector: &[1.0, 0.0, 0.0, 0.0],
+                },
+            },
+            VectorPackCorpusEntry {
+                name: "delete_default",
+                category: VectorPackCorpusCategory::Delete,
+                invocation: VectorPackInvocation::Delete {
+                    index_name: "default",
+                    node_id: 42,
+                },
+            },
+        ]);
+        corpus
     }
 
     /// Borrow corpus entries in deterministic order.
@@ -181,14 +244,46 @@ mod tests {
     }
 
     #[test]
-    fn procedure_name_covers_all_variants() {
-        let invocations = [VectorPackInvocation::Search {
+    fn procedure_name_returns_static_slice_for_upsert_variant() {
+        let invocation = VectorPackInvocation::Upsert {
             index_name: "default",
-            query: &[1.0],
-            k: 1,
-            ef_search: None,
-            filter_nodes: &[],
-        }];
+            node_id: 1,
+            vector: &[1.0],
+        };
+
+        assert_eq!(invocation.procedure_name(), &["vector", "upsert"]);
+    }
+
+    #[test]
+    fn procedure_name_returns_static_slice_for_delete_variant() {
+        let invocation = VectorPackInvocation::Delete {
+            index_name: "default",
+            node_id: 1,
+        };
+
+        assert_eq!(invocation.procedure_name(), &["vector", "delete"]);
+    }
+
+    #[test]
+    fn procedure_name_covers_all_variants() {
+        let invocations = [
+            VectorPackInvocation::Search {
+                index_name: "default",
+                query: &[1.0],
+                k: 1,
+                ef_search: None,
+                filter_nodes: &[],
+            },
+            VectorPackInvocation::Upsert {
+                index_name: "default",
+                node_id: 1,
+                vector: &[1.0],
+            },
+            VectorPackInvocation::Delete {
+                index_name: "default",
+                node_id: 1,
+            },
+        ];
 
         let mut names = BTreeSet::new();
         for invocation in invocations {
@@ -197,7 +292,7 @@ mod tests {
             assert_eq!(name[0], "vector");
             assert!(names.insert(name));
         }
-        assert_eq!(names.len(), 1);
+        assert_eq!(names.len(), 3);
     }
 
     #[test]
@@ -207,7 +302,12 @@ mod tests {
             .map(|category| category.stable_label())
             .collect::<BTreeSet<_>>();
 
-        assert_eq!(declared, ["Search"].into_iter().collect::<BTreeSet<_>>());
+        assert_eq!(
+            declared,
+            ["Search", "Upsert", "Delete"]
+                .into_iter()
+                .collect::<BTreeSet<_>>()
+        );
     }
 
     #[test]
@@ -220,5 +320,33 @@ mod tests {
             .collect::<String>();
 
         assert_eq!(corpus.render(), rendered_entries);
+    }
+
+    #[test]
+    fn corpus_b1_seed_unchanged_inside_b2_seed() {
+        let b1 = VectorPackCorpus::b1_seed();
+        let b2 = VectorPackCorpus::b2_seed();
+
+        assert_eq!(&b2.entries()[..b1.entries().len()], b1.entries());
+    }
+
+    #[test]
+    fn corpus_b2_seed_covers_all_declared_procedures() {
+        let names = VectorPackCorpus::b2_seed()
+            .entries()
+            .iter()
+            .map(|entry| entry.invocation.procedure_name())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            names,
+            [
+                &["vector", "search"][..],
+                &["vector", "upsert"][..],
+                &["vector", "delete"][..],
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+        );
     }
 }
