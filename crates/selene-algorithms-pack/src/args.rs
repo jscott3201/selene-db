@@ -130,6 +130,29 @@ pub(crate) fn nullable_usize(
     }
 }
 
+pub(crate) fn nullable_option_usize(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<Option<usize>, ProcedureError> {
+    match &args[index] {
+        Value::Null => Ok(None),
+        Value::Int(value) if *value >= 0 => usize::try_from(*value)
+            .map(Some)
+            .map_err(|_| invalid_argument(format!("{procedure}: {name} is too large"))),
+        Value::Int(_) => Err(invalid_argument(format!(
+            "{procedure}: {name} must be non-negative"
+        ))),
+        Value::Uint(value) => usize::try_from(*value)
+            .map(Some)
+            .map_err(|_| invalid_argument(format!("{procedure}: {name} is too large"))),
+        other => Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be INTEGER or NULL, got {other:?}"
+        ))),
+    }
+}
+
 pub(crate) fn required_nonnegative_usize(
     procedure: &'static str,
     args: &[Value],

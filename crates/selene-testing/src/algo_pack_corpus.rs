@@ -46,6 +46,13 @@ pub enum AlgoPackInvocation {
         /// Nullable tolerance argument.
         tolerance: Option<f64>,
     },
+    /// `algo.betweenness`.
+    Betweenness {
+        /// Projection name.
+        projection_name: &'static str,
+        /// Nullable sample-size argument.
+        sample_size: Option<usize>,
+    },
     /// `algo.wcc`.
     Wcc {
         /// Projection name.
@@ -135,6 +142,14 @@ impl AlgoPackInvocation {
                 nullable_f64(*damping),
                 nullable_usize(*max_iterations),
                 nullable_f64(*tolerance)
+            ),
+            Self::Betweenness {
+                projection_name,
+                sample_size,
+            } => format!(
+                "CALL algo.betweenness({}, {})",
+                quoted(projection_name),
+                nullable_usize(*sample_size)
             ),
             Self::Wcc { projection_name } => {
                 format!("CALL algo.wcc({})", quoted(projection_name))
@@ -327,6 +342,24 @@ impl AlgoPackCorpus {
                 },
             },
         ]);
+        corpus
+    }
+
+    /// Construct the B4 corpus including betweenness centrality.
+    #[must_use]
+    pub fn b4_seed() -> Self {
+        let mut corpus = Self::b3_seed();
+        corpus.entries.insert(
+            5,
+            AlgoPackCorpusEntry {
+                name: "betweenness_defaults",
+                category: AlgoPackCorpusCategory::Algorithm,
+                invocation: AlgoPackInvocation::Betweenness {
+                    projection_name: "p",
+                    sample_size: None,
+                },
+            },
+        );
         corpus
     }
 
