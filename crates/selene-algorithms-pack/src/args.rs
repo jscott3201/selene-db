@@ -142,6 +142,8 @@ pub(crate) fn required_nonnegative_usize(
         Value::Int(_) => Err(invalid_argument(format!(
             "{procedure}: {name} must be non-negative"
         ))),
+        Value::Uint(value) => usize::try_from(*value)
+            .map_err(|_| invalid_argument(format!("{procedure}: {name} is too large"))),
         other => Err(invalid_argument(format!(
             "{procedure}: expected {name} to be INTEGER, got {other:?}"
         ))),

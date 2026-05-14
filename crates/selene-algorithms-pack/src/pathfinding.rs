@@ -248,4 +248,25 @@ mod tests {
 
         assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
     }
+
+    #[test]
+    fn apsp_args_accept_unsigned_max_nodes() {
+        let (projection, max_nodes) = parse_apsp_args(&[projection_name(), Value::Uint(12)])
+            .expect("unsigned max_nodes parses");
+
+        assert_eq!(projection, "p");
+        assert_eq!(max_nodes, 12);
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn apsp_args_reject_unsigned_max_nodes_overflow() {
+        let err = parse_apsp_args(&[projection_name(), Value::Uint(u64::MAX)])
+            .expect_err("oversized unsigned max_nodes rejected");
+
+        let ProcedureError::InvalidArgument { detail } = err else {
+            panic!("expected InvalidArgument, got {err:?}");
+        };
+        assert_eq!(detail, "algo.apsp: max_nodes is too large");
+    }
 }
