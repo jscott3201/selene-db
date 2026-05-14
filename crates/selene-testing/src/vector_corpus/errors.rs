@@ -308,7 +308,7 @@ pub(crate) fn entries() -> Vec<VectorCorpusEntry> {
             covered_metrics: &[M::L2],
             covered_ops: NO_OPS,
             covered_errors: &[E::IvfTrainingDeferred],
-            covered_magics: &[X::Vivf, X::Vcqb, X::Vipb, X::Vpos],
+            covered_magics: &[X::Vivf, X::Vivb, X::Vivd, X::Vcqb, X::Vipb, X::Vpos],
             covered_quant_methods: PQ_QUANT,
         },
         VectorCorpusEntry {

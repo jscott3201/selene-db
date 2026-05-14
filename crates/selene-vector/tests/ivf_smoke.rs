@@ -5,8 +5,10 @@ use std::sync::Arc;
 use selene_core::{Change, NodeId, intern};
 use selene_graph::{IndexProvider, ProviderError, SubTag};
 use selene_vector::{
-    DistanceMetric, HnswConfig, HnswProvider, IvfConfig, IvfProvider, IvfStats, PAYLOAD_MAGIC_IVF,
-    PqParams, VectorIvfUpsertV1, VectorOp, VectorUpsertPayloadV1,
+    DistanceMetric, HnswConfig, HnswProvider, IvfBulkInsertRow, IvfConfig, IvfProvider, IvfStats,
+    PAYLOAD_MAGIC_IVF, PAYLOAD_MAGIC_IVF_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_INSERT, PqParams,
+    VectorBulkDeletePayloadV1, VectorIvfBulkDeleteV1, VectorIvfBulkInsertV1, VectorIvfUpsertV1,
+    VectorOp, VectorUpsertPayloadV1,
 };
 
 fn config(training_min_vectors: usize) -> IvfConfig {
@@ -60,6 +62,39 @@ fn ivf_delete_change(node_id: u64) -> Change {
     }
 }
 
+fn ivf_bulk_insert_change(rows: &[(u64, [f32; 2])]) -> Change {
+    let payload = VectorIvfBulkInsertV1 {
+        rows: rows
+            .iter()
+            .map(|(node_id, vector)| IvfBulkInsertRow {
+                node_id: NodeId::new(*node_id),
+                vector: vector.to_vec(),
+            })
+            .collect(),
+    }
+    .encode()
+    .unwrap();
+    Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").unwrap(),
+        payload: Arc::from(payload),
+    }
+}
+
+fn ivf_bulk_delete_change(node_ids: &[u64]) -> Change {
+    let payload = VectorIvfBulkDeleteV1 {
+        node_ids: node_ids
+            .iter()
+            .map(|node_id| NodeId::new(*node_id))
+            .collect(),
+    }
+    .encode()
+    .unwrap();
+    Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").unwrap(),
+        payload: Arc::from(payload),
+    }
+}
+
 fn hnsw_change(node_id: u64, vector: [f32; 2]) -> Change {
     let payload = VectorUpsertPayloadV1 {
         op: VectorOp::Insert,
@@ -89,6 +124,8 @@ fn populate(provider: &IvfProvider, count: usize) {
 #[test]
 fn ivf_payload_magic_vivf_pinned() {
     assert_eq!(PAYLOAD_MAGIC_IVF, *b"VIVF");
+    assert_eq!(PAYLOAD_MAGIC_IVF_BULK_INSERT, *b"VIVB");
+    assert_eq!(PAYLOAD_MAGIC_IVF_BULK_DELETE, *b"VIVD");
 }
 
 #[test]
@@ -360,6 +397,146 @@ fn ivf_delete_existing_deferred_row_not_resurrected_on_train() {
 }
 
 #[test]
+fn ivf_bulk_insert_untrained_appends_all_rows_to_deferred_buffer() {
+    let provider = provider(256);
+
+    provider
+        .on_change(&ivf_bulk_insert_change(&[
+            (1, [1.0, 0.0]),
+            (2, [2.0, 0.0]),
+            (3, [3.0, 0.0]),
+        ]))
+        .expect("bulk insert succeeds");
+
+    let snapshot = provider.snapshot();
+    assert!(!snapshot.is_trained());
+    assert_eq!(snapshot.len(), 3);
+    assert!(matches!(
+        provider.ivf_stats().unwrap(),
+        Some(IvfStats::Deferred {
+            observed_vectors: 3,
+            required: 256
+        })
+    ));
+}
+
+#[test]
+fn ivf_bulk_insert_trained_routes_rows_to_postings_without_retraining() {
+    let provider = provider(256);
+    populate(&provider, 256);
+    provider.write_section(SubTag(*b"CQNT")).unwrap();
+    provider.write_section(SubTag(*b"IPQB")).unwrap();
+    provider.write_section(SubTag(*b"POST")).unwrap();
+
+    provider
+        .on_change(&ivf_bulk_insert_change(&[
+            (300, [300.0, 3.0]),
+            (301, [301.0, 4.0]),
+        ]))
+        .expect("bulk insert succeeds");
+
+    match provider.ivf_stats().unwrap().unwrap() {
+        IvfStats::Trained {
+            posting_list_lengths,
+            unassigned_count,
+            ..
+        } => {
+            assert_eq!(posting_list_lengths.iter().sum::<u32>(), 258);
+            assert_eq!(unassigned_count, 0);
+        }
+        other => panic!("expected trained stats, observed {other:?}"),
+    }
+}
+
+#[test]
+fn ivf_bulk_insert_rejects_existing_duplicate_atomically() {
+    let provider = provider(256);
+    populate(&provider, 1);
+
+    let err = provider
+        .on_change(&ivf_bulk_insert_change(&[(1, [9.0, 9.0]), (2, [2.0, 0.0])]))
+        .expect_err("existing duplicate rejected");
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
+    assert_eq!(provider.snapshot().len(), 1);
+}
+
+#[test]
+fn ivf_bulk_insert_rejects_bad_row_before_partial_publish() {
+    let provider = provider(256);
+    let payload = VectorIvfBulkInsertV1 {
+        rows: vec![
+            IvfBulkInsertRow {
+                node_id: NodeId::new(1),
+                vector: vec![1.0, 0.0],
+            },
+            IvfBulkInsertRow {
+                node_id: NodeId::new(2),
+                vector: vec![f32::NAN, 0.0],
+            },
+        ],
+    }
+    .encode()
+    .unwrap();
+    let change = Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").unwrap(),
+        payload: Arc::from(payload),
+    };
+
+    let err = provider
+        .on_change(&change)
+        .expect_err("non-finite row rejected");
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
+    assert!(provider.snapshot().is_empty());
+}
+
+#[test]
+fn ivf_bulk_delete_removes_deferred_rows_and_is_idempotent() {
+    let provider = provider(256);
+    populate(&provider, 5);
+
+    provider
+        .on_change(&ivf_bulk_delete_change(&[2, 4, 99]))
+        .expect("bulk delete succeeds");
+
+    let snapshot = provider.snapshot();
+    assert_eq!(snapshot.len(), 3);
+    assert!(matches!(
+        provider.ivf_stats().unwrap(),
+        Some(IvfStats::Deferred {
+            observed_vectors: 3,
+            required: 256
+        })
+    ));
+}
+
+#[test]
+fn ivf_bulk_delete_removes_trained_posting_entries_from_search() {
+    let provider = provider(256);
+    populate(&provider, 256);
+    provider.write_section(SubTag(*b"CQNT")).unwrap();
+    provider.write_section(SubTag(*b"IPQB")).unwrap();
+    provider.write_section(SubTag(*b"POST")).unwrap();
+
+    provider
+        .on_change(&ivf_bulk_delete_change(&[3, 4, 5]))
+        .expect("bulk delete succeeds");
+
+    let rows = provider
+        .search(&[2.0, 2.0], 256, Some(4), None)
+        .expect("search succeeds");
+    assert_eq!(provider.snapshot().len(), 253);
+    for node_id in [3, 4, 5] {
+        assert!(
+            !rows
+                .iter()
+                .any(|(candidate, _)| *candidate == NodeId::new(node_id))
+        );
+    }
+}
+
+#[test]
 fn ivf_out_of_order_writes_clear_staging_and_recover() {
     // BRIEF-69 §I-10 / Local Codex F2 behavioral coverage. After an
     // out-of-order section write (IPQB before CQNT, POST before
@@ -406,5 +583,52 @@ fn hnsw_ignores_vivf_events_and_ivf_ignores_vecu_events() {
     ivf.on_change(&hnsw_change(1, [1.0, 0.0])).unwrap();
 
     assert_eq!(hnsw.snapshot().len(), 0);
+    assert_eq!(ivf.snapshot().len(), 0);
+}
+
+#[test]
+fn cross_routing_ivf_bulk_payload_into_hnsw_provider_is_rejected() {
+    let hnsw =
+        HnswProvider::new(HnswConfig::with_params(2, 16, 200, 50, DistanceMetric::L2).unwrap())
+            .unwrap();
+    let payload = VectorIvfBulkInsertV1 {
+        rows: vec![IvfBulkInsertRow {
+            node_id: NodeId::new(1),
+            vector: vec![1.0, 0.0],
+        }],
+    }
+    .encode()
+    .unwrap();
+    let change = Change::IndexExtensionEvent {
+        provider: intern("selene-vector").unwrap(),
+        payload: Arc::from(payload),
+    };
+
+    let err = hnsw
+        .on_change(&change)
+        .expect_err("IVF bulk payload rejected by HNSW provider");
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
+    assert_eq!(hnsw.snapshot().len(), 0);
+}
+
+#[test]
+fn cross_routing_hnsw_bulk_payload_into_ivf_provider_is_rejected() {
+    let ivf = provider(256);
+    let payload = VectorBulkDeletePayloadV1 {
+        node_ids: vec![NodeId::new(1)],
+    }
+    .encode()
+    .unwrap();
+    let change = Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").unwrap(),
+        payload: Arc::from(payload),
+    };
+
+    let err = ivf
+        .on_change(&change)
+        .expect_err("HNSW bulk payload rejected by IVF provider");
+
+    assert!(matches!(err, ProviderError::InvalidPayload { .. }));
     assert_eq!(ivf.snapshot().len(), 0);
 }

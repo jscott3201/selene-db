@@ -9,11 +9,27 @@ pub enum VectorPackCorpusCategory {
     Upsert,
     /// HNSW mutation-tier delete procedure coverage.
     Delete,
+    /// HNSW mutation-tier bulk-upsert procedure coverage.
+    BulkUpsert,
+    /// HNSW mutation-tier bulk-delete procedure coverage.
+    BulkDelete,
+    /// IVF mutation-tier bulk-upsert procedure coverage.
+    IvfBulkUpsert,
+    /// IVF mutation-tier bulk-delete procedure coverage.
+    IvfBulkDelete,
 }
 
 impl VectorPackCorpusCategory {
     /// All declared vector-pack corpus categories.
-    pub const ALL: &'static [Self] = &[Self::Search, Self::Upsert, Self::Delete];
+    pub const ALL: &'static [Self] = &[
+        Self::Search,
+        Self::Upsert,
+        Self::Delete,
+        Self::BulkUpsert,
+        Self::BulkDelete,
+        Self::IvfBulkUpsert,
+        Self::IvfBulkDelete,
+    ];
 
     /// Stable category label used by drift tests to anchor exhaustive matching.
     #[must_use]
@@ -22,12 +38,16 @@ impl VectorPackCorpusCategory {
             Self::Search => "Search",
             Self::Upsert => "Upsert",
             Self::Delete => "Delete",
+            Self::BulkUpsert => "BulkUpsert",
+            Self::BulkDelete => "BulkDelete",
+            Self::IvfBulkUpsert => "IvfBulkUpsert",
+            Self::IvfBulkDelete => "IvfBulkDelete",
         }
     }
 }
 
 const _ASSERT_CATEGORY_ALL_MATCHES_VARIANT_COUNT: () = {
-    assert!(VectorPackCorpusCategory::ALL.len() == 3);
+    assert!(VectorPackCorpusCategory::ALL.len() == 7);
 };
 
 /// Procedure invocation mirrored by the vector-pack corpus.
@@ -62,6 +82,38 @@ pub enum VectorPackInvocation {
         /// Source graph node ID.
         node_id: u64,
     },
+    /// `vector.bulk_upsert`.
+    BulkUpsert {
+        /// v1.0 sentinel index name.
+        index_name: &'static str,
+        /// Source graph node IDs.
+        node_ids: &'static [u64],
+        /// Vector components per node ID.
+        vectors: &'static [&'static [f32]],
+    },
+    /// `vector.bulk_delete`.
+    BulkDelete {
+        /// v1.0 sentinel index name.
+        index_name: &'static str,
+        /// Source graph node IDs.
+        node_ids: &'static [u64],
+    },
+    /// `vector.ivf_bulk_upsert`.
+    IvfBulkUpsert {
+        /// v1.0 sentinel index name.
+        index_name: &'static str,
+        /// Source graph node IDs.
+        node_ids: &'static [u64],
+        /// Vector components per node ID.
+        vectors: &'static [&'static [f32]],
+    },
+    /// `vector.ivf_bulk_delete`.
+    IvfBulkDelete {
+        /// v1.0 sentinel index name.
+        index_name: &'static str,
+        /// Source graph node IDs.
+        node_ids: &'static [u64],
+    },
 }
 
 impl VectorPackInvocation {
@@ -72,6 +124,10 @@ impl VectorPackInvocation {
             Self::Search { .. } => &["vector", "search"],
             Self::Upsert { .. } => &["vector", "upsert"],
             Self::Delete { .. } => &["vector", "delete"],
+            Self::BulkUpsert { .. } => &["vector", "bulk_upsert"],
+            Self::BulkDelete { .. } => &["vector", "bulk_delete"],
+            Self::IvfBulkUpsert { .. } => &["vector", "ivf_bulk_upsert"],
+            Self::IvfBulkDelete { .. } => &["vector", "ivf_bulk_delete"],
         }
     }
 
@@ -105,6 +161,42 @@ impl VectorPackInvocation {
                 index_name,
                 node_id,
             } => format!("CALL vector.delete({}, {node_id})", quoted(index_name)),
+            Self::BulkUpsert {
+                index_name,
+                node_ids,
+                vectors,
+            } => format!(
+                "CALL vector.bulk_upsert({}, {}, {})",
+                quoted(index_name),
+                u64_list(node_ids),
+                f32_matrix(vectors)
+            ),
+            Self::BulkDelete {
+                index_name,
+                node_ids,
+            } => format!(
+                "CALL vector.bulk_delete({}, {})",
+                quoted(index_name),
+                u64_list(node_ids)
+            ),
+            Self::IvfBulkUpsert {
+                index_name,
+                node_ids,
+                vectors,
+            } => format!(
+                "CALL vector.ivf_bulk_upsert({}, {}, {})",
+                quoted(index_name),
+                u64_list(node_ids),
+                f32_matrix(vectors)
+            ),
+            Self::IvfBulkDelete {
+                index_name,
+                node_ids,
+            } => format!(
+                "CALL vector.ivf_bulk_delete({}, {})",
+                quoted(index_name),
+                u64_list(node_ids)
+            ),
         }
     }
 }
@@ -184,6 +276,49 @@ impl VectorPackCorpus {
         corpus
     }
 
+    /// Construct the B3 seed corpus, preserving B2 entries in order.
+    #[must_use]
+    pub fn b3_seed() -> Self {
+        let mut corpus = Self::b2_seed();
+        corpus.entries.extend([
+            VectorPackCorpusEntry {
+                name: "bulk_upsert_default",
+                category: VectorPackCorpusCategory::BulkUpsert,
+                invocation: VectorPackInvocation::BulkUpsert {
+                    index_name: "default",
+                    node_ids: &[42, 43],
+                    vectors: &[&[1.0, 0.0, 0.0, 0.0], &[0.0, 1.0, 0.0, 0.0]],
+                },
+            },
+            VectorPackCorpusEntry {
+                name: "bulk_delete_default",
+                category: VectorPackCorpusCategory::BulkDelete,
+                invocation: VectorPackInvocation::BulkDelete {
+                    index_name: "default",
+                    node_ids: &[42, 43],
+                },
+            },
+            VectorPackCorpusEntry {
+                name: "ivf_bulk_upsert_default",
+                category: VectorPackCorpusCategory::IvfBulkUpsert,
+                invocation: VectorPackInvocation::IvfBulkUpsert {
+                    index_name: "default",
+                    node_ids: &[42, 43],
+                    vectors: &[&[1.0, 0.0, 0.0, 0.0], &[0.0, 1.0, 0.0, 0.0]],
+                },
+            },
+            VectorPackCorpusEntry {
+                name: "ivf_bulk_delete_default",
+                category: VectorPackCorpusCategory::IvfBulkDelete,
+                invocation: VectorPackInvocation::IvfBulkDelete {
+                    index_name: "default",
+                    node_ids: &[42, 43],
+                },
+            },
+        ]);
+        corpus
+    }
+
     /// Borrow corpus entries in deterministic order.
     #[must_use]
     pub fn entries(&self) -> &[VectorPackCorpusEntry] {
@@ -221,6 +356,16 @@ fn node_filter(nodes: &[u64]) -> String {
         return "NULL".to_string();
     }
     let rendered = nodes.iter().map(u64::to_string).collect::<Vec<_>>();
+    format!("[{}]", rendered.join(", "))
+}
+
+fn u64_list(values: &[u64]) -> String {
+    let rendered = values.iter().map(u64::to_string).collect::<Vec<_>>();
+    format!("[{}]", rendered.join(", "))
+}
+
+fn f32_matrix(rows: &[&[f32]]) -> String {
+    let rendered = rows.iter().map(|row| f32_list(row)).collect::<Vec<_>>();
     format!("[{}]", rendered.join(", "))
 }
 
@@ -265,6 +410,46 @@ mod tests {
     }
 
     #[test]
+    fn procedure_name_returns_static_slice_for_bulk_variants() {
+        let invocations = [
+            (
+                VectorPackInvocation::BulkUpsert {
+                    index_name: "default",
+                    node_ids: &[1],
+                    vectors: &[&[1.0]],
+                },
+                &["vector", "bulk_upsert"][..],
+            ),
+            (
+                VectorPackInvocation::BulkDelete {
+                    index_name: "default",
+                    node_ids: &[1],
+                },
+                &["vector", "bulk_delete"][..],
+            ),
+            (
+                VectorPackInvocation::IvfBulkUpsert {
+                    index_name: "default",
+                    node_ids: &[1],
+                    vectors: &[&[1.0]],
+                },
+                &["vector", "ivf_bulk_upsert"][..],
+            ),
+            (
+                VectorPackInvocation::IvfBulkDelete {
+                    index_name: "default",
+                    node_ids: &[1],
+                },
+                &["vector", "ivf_bulk_delete"][..],
+            ),
+        ];
+
+        for (invocation, expected) in invocations {
+            assert_eq!(invocation.procedure_name(), expected);
+        }
+    }
+
+    #[test]
     fn procedure_name_covers_all_variants() {
         let invocations = [
             VectorPackInvocation::Search {
@@ -283,6 +468,24 @@ mod tests {
                 index_name: "default",
                 node_id: 1,
             },
+            VectorPackInvocation::BulkUpsert {
+                index_name: "default",
+                node_ids: &[1],
+                vectors: &[&[1.0]],
+            },
+            VectorPackInvocation::BulkDelete {
+                index_name: "default",
+                node_ids: &[1],
+            },
+            VectorPackInvocation::IvfBulkUpsert {
+                index_name: "default",
+                node_ids: &[1],
+                vectors: &[&[1.0]],
+            },
+            VectorPackInvocation::IvfBulkDelete {
+                index_name: "default",
+                node_ids: &[1],
+            },
         ];
 
         let mut names = BTreeSet::new();
@@ -292,7 +495,7 @@ mod tests {
             assert_eq!(name[0], "vector");
             assert!(names.insert(name));
         }
-        assert_eq!(names.len(), 3);
+        assert_eq!(names.len(), 7);
     }
 
     #[test]
@@ -304,9 +507,17 @@ mod tests {
 
         assert_eq!(
             declared,
-            ["Search", "Upsert", "Delete"]
-                .into_iter()
-                .collect::<BTreeSet<_>>()
+            [
+                "Search",
+                "Upsert",
+                "Delete",
+                "BulkUpsert",
+                "BulkDelete",
+                "IvfBulkUpsert",
+                "IvfBulkDelete",
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
         );
     }
 
@@ -344,6 +555,38 @@ mod tests {
                 &["vector", "search"][..],
                 &["vector", "upsert"][..],
                 &["vector", "delete"][..],
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+        );
+    }
+
+    #[test]
+    fn corpus_b2_seed_unchanged_inside_b3_seed() {
+        let b2 = VectorPackCorpus::b2_seed();
+        let b3 = VectorPackCorpus::b3_seed();
+
+        assert_eq!(&b3.entries()[..b2.entries().len()], b2.entries());
+    }
+
+    #[test]
+    fn corpus_b3_seed_covers_all_declared_procedures() {
+        let names = VectorPackCorpus::b3_seed()
+            .entries()
+            .iter()
+            .map(|entry| entry.invocation.procedure_name())
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            names,
+            [
+                &["vector", "search"][..],
+                &["vector", "upsert"][..],
+                &["vector", "delete"][..],
+                &["vector", "bulk_upsert"][..],
+                &["vector", "bulk_delete"][..],
+                &["vector", "ivf_bulk_upsert"][..],
+                &["vector", "ivf_bulk_delete"][..],
             ]
             .into_iter()
             .collect::<BTreeSet<_>>()

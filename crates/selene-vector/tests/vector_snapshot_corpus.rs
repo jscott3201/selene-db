@@ -16,7 +16,8 @@ use selene_vector::snapshot_summary::{
 };
 use selene_vector::{
     DistanceMetric, HnswConfig, NeighborSelectionConfig, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK,
-    PAYLOAD_MAGIC_IVF, QuantMethod, VectorOp,
+    PAYLOAD_MAGIC_BULK_DELETE, PAYLOAD_MAGIC_IVF, PAYLOAD_MAGIC_IVF_BULK_DELETE,
+    PAYLOAD_MAGIC_IVF_BULK_INSERT, QuantMethod, VectorOp,
 };
 
 mod vector_snapshot_support;
@@ -249,10 +250,13 @@ fn payload_magic_mirror_matches_constants() {
     let expected = [
         ("VECU", PAYLOAD_MAGIC),
         ("VECB", PAYLOAD_MAGIC_BULK),
+        ("VECD", PAYLOAD_MAGIC_BULK_DELETE),
         ("VGRP", *b"VGRP"),
         ("VVEC", *b"VVEC"),
         ("VQNT", *b"VQNT"),
         ("VIVF", PAYLOAD_MAGIC_IVF),
+        ("VIVB", PAYLOAD_MAGIC_IVF_BULK_INSERT),
+        ("VIVD", PAYLOAD_MAGIC_IVF_BULK_DELETE),
         ("VCQB", *b"VCQB"),
         ("VIPB", *b"VIPB"),
         ("VPOS", *b"VPOS"),

@@ -8,8 +8,12 @@
 #![deny(missing_docs)]
 
 mod args;
+mod bulk_delete;
+mod bulk_upsert;
 mod delete;
 mod error;
+mod ivf_bulk_delete;
+mod ivf_bulk_upsert;
 mod provider;
 mod registry;
 mod search;

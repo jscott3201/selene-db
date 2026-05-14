@@ -67,6 +67,72 @@ pub(crate) fn required_node_ref(
     }
 }
 
+pub(crate) fn required_node_ref_list(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<Vec<NodeId>, ProcedureError> {
+    let Value::List(values) = &args[index] else {
+        return Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be LIST<NODE>, got {:?}",
+            args[index]
+        )));
+    };
+    values
+        .iter()
+        .enumerate()
+        .map(|(item_index, value)| match value {
+            Value::NodeRef(node_id) => Ok(*node_id),
+            other => Err(invalid_argument(format!(
+                "{procedure}: expected {name}[{item_index}] to be NODE, got {other:?}"
+            ))),
+        })
+        .collect()
+}
+
+pub(crate) fn required_f32_matrix(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+    expected_outer_len: usize,
+) -> Result<Vec<Vec<f32>>, ProcedureError> {
+    let Value::List(rows) = &args[index] else {
+        return Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be LIST<LIST<FLOAT>>, got {:?}",
+            args[index]
+        )));
+    };
+    if rows.len() != expected_outer_len {
+        return Err(invalid_argument(format!(
+            "{procedure}: {name} length {} does not match node_ids length {expected_outer_len}",
+            rows.len()
+        )));
+    }
+    rows.iter()
+        .enumerate()
+        .map(|(row_index, row)| {
+            let Value::List(values) = row else {
+                return Err(invalid_argument(format!(
+                    "{procedure}: expected {name}[{row_index}] to be LIST<FLOAT>, got {row:?}"
+                )));
+            };
+            values
+                .iter()
+                .enumerate()
+                .map(|(col_index, value)| {
+                    numeric_to_f32_at(
+                        procedure,
+                        &format!("{name}[{row_index}][{col_index}]"),
+                        value,
+                    )
+                })
+                .collect()
+        })
+        .collect()
+}
+
 pub(crate) fn required_usize(
     procedure: &'static str,
     args: &[Value],
@@ -149,6 +215,25 @@ fn numeric_to_f32(
         other => {
             return Err(invalid_argument(format!(
                 "{procedure} expected {name}[{item_index}] to be FLOAT, got {other:?}"
+            )));
+        }
+    };
+    Ok(converted)
+}
+
+fn numeric_to_f32_at(
+    procedure: &'static str,
+    location: &str,
+    value: &Value,
+) -> Result<f32, ProcedureError> {
+    let converted = match value {
+        Value::Float(value) => *value as f32,
+        Value::Float32(value) => *value,
+        Value::Int(value) => *value as f32,
+        Value::Uint(value) => *value as f32,
+        other => {
+            return Err(invalid_argument(format!(
+                "{procedure}: expected {location} to be FLOAT, got {other:?}"
             )));
         }
     };

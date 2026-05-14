@@ -253,6 +253,9 @@ pub enum VectorCorpusEvent {
     Delete {
         node_id_raw: u64,
     },
+    BulkDelete {
+        node_id_raws: Vec<u64>,
+    },
     Bulk {
         rows: Vec<(u64, Vec<f32>, u8)>,
     },

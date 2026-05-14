@@ -8,7 +8,7 @@ use roaring::RoaringBitmap;
 use selene_core::{Change, NodeId};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
-use crate::builder::{apply_bulk_upsert, apply_upsert};
+use crate::builder::{apply_bulk_delete, apply_bulk_upsert, apply_upsert};
 use crate::payload::{EventKind, decode_event};
 use crate::snapshot::grph::{GrphBody, decode_grph, encode_grph};
 use crate::snapshot::qunt::{decode_qunt, encode_qunt, validate_qunt_for_graph};
@@ -249,20 +249,32 @@ impl IndexProvider for HnswProvider {
                 reason: format!("selene-vector payload decode: {err:?}: {err}"),
             })?;
         let prev = self.state.load_full();
-        let next =
-            match event {
-                EventKind::Upsert(payload) => {
-                    apply_upsert(&prev, &payload, &self.config).map_err(|err| {
-                        ProviderError::InvalidPayload {
-                            reason: format!("selene-vector apply_upsert: {err:?}: {err}"),
-                        }
-                    })?
-                }
-                EventKind::Bulk(payload) => apply_bulk_upsert(&prev, &payload, &self.config)
-                    .map_err(|err| ProviderError::InvalidPayload {
+        let next = match event {
+            EventKind::Upsert(payload) => {
+                apply_upsert(&prev, &payload, &self.config).map_err(|err| {
+                    ProviderError::InvalidPayload {
+                        reason: format!("selene-vector apply_upsert: {err:?}: {err}"),
+                    }
+                })?
+            }
+            EventKind::Bulk(payload) => {
+                apply_bulk_upsert(&prev, &payload, &self.config).map_err(|err| {
+                    ProviderError::InvalidPayload {
                         reason: format!("selene-vector apply_bulk_upsert: {err:?}: {err}"),
-                    })?,
-            };
+                    }
+                })?
+            }
+            EventKind::BulkDelete(payload) => {
+                apply_bulk_delete(&prev, &payload).map_err(|err| ProviderError::InvalidPayload {
+                    reason: format!("selene-vector apply_bulk_delete: {err:?}: {err}"),
+                })?
+            }
+            EventKind::IvfBulkInsert | EventKind::IvfBulkDelete => {
+                return Err(ProviderError::InvalidPayload {
+                    reason: "selene-vector provider cannot apply IVF bulk payload".into(),
+                });
+            }
+        };
         self.state.store(Arc::new(next));
         Ok(())
     }

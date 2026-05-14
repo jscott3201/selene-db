@@ -16,8 +16,8 @@ use selene_vector::snapshot_summary::{
 };
 use selene_vector::{
     BulkInsertRow, DistanceMetric, HnswConfig, HnswProvider, NeighborSelectionConfig, PqParams,
-    QuantMethod, QuantizationConfig, VectorBulkInsertPayloadV1, VectorError, VectorOp,
-    VectorUpsertPayloadV1,
+    QuantMethod, QuantizationConfig, VectorBulkDeletePayloadV1, VectorBulkInsertPayloadV1,
+    VectorError, VectorOp, VectorUpsertPayloadV1,
 };
 
 pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
@@ -372,6 +372,14 @@ fn change_for_event(event: &VectorCorpusEvent) -> Change {
         }
         .encode()
         .expect("VECU delete encodes"),
+        VectorCorpusEvent::BulkDelete { node_id_raws } => VectorBulkDeletePayloadV1 {
+            node_ids: node_id_raws
+                .iter()
+                .map(|node_id_raw| NodeId::new(*node_id_raw))
+                .collect(),
+        }
+        .encode()
+        .expect("VECD encodes"),
         VectorCorpusEvent::Bulk { rows } => VectorBulkInsertPayloadV1 {
             rows: rows
                 .iter()
