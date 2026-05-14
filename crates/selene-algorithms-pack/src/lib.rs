@@ -8,6 +8,7 @@
 
 mod args;
 mod betweenness;
+mod community;
 mod error;
 mod pagerank;
 mod pathfinding;
