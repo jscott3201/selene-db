@@ -26,8 +26,8 @@ pub use activation::{
 };
 pub use error::RegistryError;
 pub use external::{
-    ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
-    ExternalProcedurePack,
+    ExternalGraphProcedure, ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter,
+    ExternalProcedureMetadata, ExternalProcedurePack,
 };
 pub use history::PackHistorySource;
 pub use manifest::{
