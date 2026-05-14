@@ -26,11 +26,13 @@ pub(crate) use tags::{
 const MAX_LAYER: u8 = 32;
 
 pub(crate) fn assemble_graph(
-    header: grph::GrphHeaderV1,
-    nodes: Vec<grph::GrphNodeV1>,
+    body: grph::GrphBody,
     vecs: vecs::VecsBodyV1,
     config: &HnswConfig,
 ) -> Result<HnswGraph, VectorError> {
+    let header = body.header;
+    let nodes = body.nodes;
+    let live_indices = body.live_indices;
     validate_config(&header, config)?;
     validate_cross_section(&header, &vecs)?;
 
@@ -40,6 +42,11 @@ pub(crate) fn assemble_graph(
     graph.entry_point = header.entry_point;
     graph.max_layer = header.max_layer;
     graph.node_id_to_idx = HashMap::with_capacity(node_count);
+    let live_indices = live_indices.unwrap_or_else(|| {
+        (0..node_count)
+            .map(|idx| idx as InternalIndex)
+            .collect::<Vec<_>>()
+    });
 
     for (idx, node) in nodes.into_iter().enumerate() {
         let start = idx.checked_mul(dimensions).ok_or_else(|| {
@@ -66,7 +73,10 @@ pub(crate) fn assemble_graph(
                 "node_count exceeds InternalIndex range while assembling graph",
             )
         })?;
-        graph.node_id_to_idx.insert(node_id, idx);
+        if live_indices.contains(&idx) {
+            graph.mark_alive_idx(idx);
+            graph.node_id_to_idx.insert(node_id, idx);
+        }
     }
 
     Ok(graph)

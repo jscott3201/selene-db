@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::hnsw::InternalIndex;
 use crate::hnsw::build::{insert_node, validate_finite};
+use crate::hnsw::delete::tombstone_node;
 use crate::payload::{VectorBulkInsertPayloadV1, VectorOp, VectorUpsertPayloadV1};
 use crate::{HnswConfig, HnswGraph, HnswParams, VectorError};
 
@@ -20,7 +21,8 @@ pub(crate) fn apply_upsert(
 ) -> Result<HnswGraph, VectorError> {
     match payload.op {
         VectorOp::Insert => apply_insert(prev, payload, config),
-        VectorOp::Update | VectorOp::Delete => Err(VectorError::OperationNotSupportedYet {
+        VectorOp::Delete => apply_delete(prev, payload),
+        VectorOp::Update => Err(VectorError::OperationNotSupportedYet {
             op: payload.op,
             node_id: payload.node_id,
             brief: "future",
@@ -50,6 +52,15 @@ fn apply_insert(
         payload.max_layer,
         &params,
     )?;
+    Ok(next)
+}
+
+fn apply_delete(
+    prev: &HnswGraph,
+    payload: &VectorUpsertPayloadV1,
+) -> Result<HnswGraph, VectorError> {
+    let mut next = prev.clone_for_mutation();
+    tombstone_node(&mut next, payload.node_id)?;
     Ok(next)
 }
 

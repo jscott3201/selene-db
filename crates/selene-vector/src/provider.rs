@@ -10,7 +10,7 @@ use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use crate::builder::{apply_bulk_upsert, apply_upsert};
 use crate::payload::{EventKind, decode_event};
-use crate::snapshot::grph::{GrphHeaderV1, GrphNodeV1, decode_grph, encode_grph};
+use crate::snapshot::grph::{GrphBody, decode_grph, encode_grph};
 use crate::snapshot::qunt::{decode_qunt, encode_qunt, validate_qunt_for_graph};
 use crate::snapshot::vecs::{VecsBodyV1, decode_vecs, encode_vecs};
 use crate::{
@@ -38,7 +38,7 @@ pub struct HnswProvider {
 enum SectionStaging {
     Idle,
     Reading {
-        grph: Option<(GrphHeaderV1, Vec<GrphNodeV1>)>,
+        grph: Option<GrphBody>,
         vecs: Option<VecsBodyV1>,
     },
     Writing {
@@ -276,7 +276,7 @@ impl HnswProvider {
     fn read_grph(&self, bytes: &[u8]) -> Result<(), ProviderError> {
         *self.staging.lock() = SectionStaging::Idle;
         let decoded = decode_grph(bytes).map_err(section_decode_err)?;
-        snapshot::validate_config(&decoded.0, &self.config).map_err(section_decode_err)?;
+        snapshot::validate_config(&decoded.header, &self.config).map_err(section_decode_err)?;
         *self.staging.lock() = SectionStaging::Reading {
             grph: Some(decoded),
             vecs: None,
@@ -292,7 +292,7 @@ impl HnswProvider {
                 return Err(section_decode_err(err));
             }
         };
-        let (header, nodes, vecs) = {
+        let (grph, vecs) = {
             let mut staging = self.staging.lock();
             match &mut *staging {
                 SectionStaging::Reading {
@@ -315,12 +315,12 @@ impl HnswProvider {
                 SectionStaging::Reading {
                     grph: Some(grph),
                     vecs: Some(vecs),
-                } => (grph.0, grph.1, vecs),
+                } => (grph, vecs),
                 _ => unreachable!("read staging checked before replacement"),
             }
         };
-        let graph = snapshot::assemble_graph(header, nodes, vecs, &self.config)
-            .map_err(section_decode_err)?;
+        let graph =
+            snapshot::assemble_graph(grph, vecs, &self.config).map_err(section_decode_err)?;
         self.state.store(Arc::new(graph));
         Ok(())
     }

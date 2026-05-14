@@ -110,22 +110,117 @@ fn on_change_propagates_update_not_supported() {
 }
 
 #[test]
-fn on_change_propagates_delete_not_supported() {
+fn on_change_delete_missing_node_is_idempotent() {
     let provider = provider();
-    let change = vector_change(VectorUpsertPayloadV1 {
-        op: VectorOp::Delete,
-        node_id: NodeId::new(1),
-        vector: Vec::new(),
-        max_layer: 0,
-    });
+    let change = vector_change(delete_payload(NodeId::new(1)));
 
-    let err = provider.on_change(&change).expect_err("delete is deferred");
+    provider
+        .on_change(&change)
+        .expect("missing delete succeeds");
 
-    assert!(matches!(
-        err,
-        ProviderError::InvalidPayload { reason }
-            if reason.contains("OperationNotSupportedYet") && reason.contains("future")
-    ));
+    assert_eq!(provider.snapshot().live_len(), 0);
+    assert_eq!(provider.snapshot().entry_point(), None);
+}
+
+#[test]
+fn delete_removes_node_from_search_results() {
+    let provider = provider();
+    for raw in 1..=5 {
+        provider
+            .on_change(&vector_change(insert_payload(
+                NodeId::new(raw),
+                vec![raw as f32, 0.0, 0.0, 0.0],
+                0,
+            )))
+            .unwrap();
+    }
+
+    provider
+        .on_change(&vector_change(delete_payload(NodeId::new(3))))
+        .expect("delete succeeds");
+    let results = provider
+        .search(&[3.0, 0.0, 0.0, 0.0], 5, Some(16), None)
+        .expect("search succeeds");
+
+    assert_eq!(provider.snapshot().len(), 5);
+    assert_eq!(provider.snapshot().live_len(), 4);
+    assert!(!results.iter().any(|(id, _)| *id == NodeId::new(3)));
+}
+
+#[test]
+fn delete_all_nodes_clears_entry_point() {
+    let provider = provider();
+    for raw in 1..=3 {
+        provider
+            .on_change(&vector_change(insert_payload(
+                NodeId::new(raw),
+                vec![raw as f32, 0.0, 0.0, 0.0],
+                raw as u8 - 1,
+            )))
+            .unwrap();
+    }
+
+    for raw in 1..=3 {
+        provider
+            .on_change(&vector_change(delete_payload(NodeId::new(raw))))
+            .unwrap();
+    }
+
+    assert_eq!(provider.snapshot().entry_point(), None);
+    assert_eq!(provider.snapshot().live_len(), 0);
+    assert!(
+        provider
+            .search(&[1.0, 0.0, 0.0, 0.0], 3, Some(16), None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn delete_then_insert_reuses_node_id_correctly() {
+    let provider = provider();
+    provider
+        .on_change(&vector_change(insert_payload(
+            NodeId::new(1),
+            vec![1.0, 0.0, 0.0, 0.0],
+            0,
+        )))
+        .unwrap();
+    provider
+        .on_change(&vector_change(delete_payload(NodeId::new(1))))
+        .unwrap();
+    provider
+        .on_change(&vector_change(insert_payload(
+            NodeId::new(1),
+            vec![0.0, 1.0, 0.0, 0.0],
+            0,
+        )))
+        .expect("same NodeId can be reinserted after delete");
+
+    let results = provider
+        .search(&[0.0, 1.0, 0.0, 0.0], 1, Some(16), None)
+        .unwrap();
+
+    assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(1)));
+}
+
+#[test]
+fn delete_node_id_above_u32_max_does_not_panic() {
+    let provider = provider();
+    let node_id = NodeId::new(u64::from(u32::MAX) + 1);
+    provider
+        .on_change(&vector_change(insert_payload(
+            node_id,
+            vec![1.0, 0.0, 0.0, 0.0],
+            0,
+        )))
+        .unwrap();
+
+    provider
+        .on_change(&vector_change(delete_payload(node_id)))
+        .expect("large NodeId delete succeeds");
+
+    assert_eq!(provider.snapshot().live_len(), 0);
 }
 
 #[test]
@@ -229,6 +324,15 @@ fn insert_payload(node_id: NodeId, vector: Vec<f32>, max_layer: u8) -> VectorUps
         node_id,
         vector,
         max_layer,
+    }
+}
+
+fn delete_payload(node_id: NodeId) -> VectorUpsertPayloadV1 {
+    VectorUpsertPayloadV1 {
+        op: VectorOp::Delete,
+        node_id,
+        vector: Vec::new(),
+        max_layer: 0,
     }
 }
 

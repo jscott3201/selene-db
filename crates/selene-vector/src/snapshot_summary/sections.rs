@@ -35,8 +35,9 @@ pub(crate) fn render_sections(sections: &VectorSectionsSummary, out: &mut Vec<St
 
 fn render_grph(bytes: &[u8]) -> String {
     match decode_grph(bytes) {
-        Ok((header, nodes)) => {
-            let head = nodes
+        Ok(body) => {
+            let head = body
+                .nodes
                 .iter()
                 .take(4)
                 .map(|node| {
@@ -55,12 +56,12 @@ fn render_grph(bytes: &[u8]) -> String {
                 "GRPH(len={}, blake3_8={}, dim={}, nodes={}, entry_point={}, max_layer={}, head=[{}])",
                 bytes.len(),
                 blake3_8(bytes),
-                header.dimensions,
-                header.node_count,
-                header
+                body.header.dimensions,
+                body.header.node_count,
+                body.header
                     .entry_point
                     .map_or_else(|| "none".to_string(), |idx| format!("idx{idx}")),
-                header.max_layer,
+                body.header.max_layer,
                 head
             )
         }

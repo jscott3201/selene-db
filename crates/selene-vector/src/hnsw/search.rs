@@ -76,13 +76,16 @@ pub fn search(
         });
     }
     validate_query(query)?;
-    if graph.is_empty() || k == 0 {
+    if graph.live_len() == 0 || k == 0 {
         return Ok(Vec::new());
     }
 
     let Some(mut current_entry) = graph.entry_point() else {
         return Ok(Vec::new());
     };
+    if !graph.is_alive_idx(current_entry) {
+        return Ok(Vec::new());
+    }
     let scorer = Scorer::for_search(graph, query, params);
     for layer in (1..=graph.max_layer()).rev() {
         current_entry = greedy_search_layer(graph, current_entry, layer, &scorer);
@@ -103,19 +106,19 @@ pub fn search(
         }
         beam.sort_by(Candidate::cmp);
     }
-    beam.truncate(k);
-
-    Ok(beam
+    let mut results = beam
         .into_iter()
         .filter_map(|candidate| {
-            if !candidate.admissible {
+            if !candidate.admissible || !graph.is_alive_idx(candidate.idx) {
                 return None;
             }
             graph
                 .node_by_idx(candidate.idx)
                 .map(|node| (node.node_id, candidate.score))
         })
-        .collect())
+        .collect::<Vec<_>>();
+    results.truncate(k);
+    Ok(results)
 }
 
 /// Search one HNSW layer with an `ef`-bounded beam.
@@ -211,7 +214,7 @@ pub(crate) fn greedy_search_layer(
             break;
         };
         for neighbor_idx in neighbors {
-            if graph.node_by_idx(*neighbor_idx).is_none() {
+            if !graph.is_alive_idx(*neighbor_idx) {
                 continue;
             }
             let neighbor_score = scorer
@@ -394,7 +397,7 @@ fn push_candidate(
     if Some(idx) == exclude || !visited.insert(idx) {
         return;
     }
-    if graph.node_by_idx(idx).is_some() {
+    if graph.is_alive_idx(idx) && graph.node_by_idx(idx).is_some() {
         let scored = scorer.score(graph, idx);
         // Capture admissibility from `Some(_)` vs `None` *before* the
         // unwrap_or collapses both into NEG_INFINITY for ordering. Without
@@ -416,7 +419,7 @@ fn candidate_passes_filter(
 ) -> bool {
     graph
         .node_by_idx(idx)
-        .is_some_and(|node| passes_filter(node.node_id, filter))
+        .is_some_and(|node| graph.is_alive_idx(idx) && passes_filter(node.node_id, filter))
 }
 
 fn passes_filter(node_id: NodeId, filter: Option<&RoaringBitmap>) -> bool {

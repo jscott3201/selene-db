@@ -364,6 +364,14 @@ fn change_for_event(event: &VectorCorpusEvent) -> Change {
         }
         .encode()
         .expect("VECU encodes"),
+        VectorCorpusEvent::Delete { node_id_raw } => VectorUpsertPayloadV1 {
+            op: VectorOp::Delete,
+            node_id: NodeId::new(*node_id_raw),
+            vector: Vec::new(),
+            max_layer: 0,
+        }
+        .encode()
+        .expect("VECU delete encodes"),
         VectorCorpusEvent::Bulk { rows } => VectorBulkInsertPayloadV1 {
             rows: rows
                 .iter()
@@ -466,15 +474,6 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
                 op: VectorOp::Update,
                 node_id: NodeId::new(1),
                 vector: vec![1.0, 0.0, 0.0, 0.0],
-                max_layer: 0,
-            },
-        ),
-        ApiInductionPayload::OperationDelete => operation_not_supported_error(
-            provider,
-            VectorUpsertPayloadV1 {
-                op: VectorOp::Delete,
-                node_id: NodeId::new(1),
-                vector: Vec::new(),
                 max_layer: 0,
             },
         ),

@@ -73,6 +73,7 @@ pub fn insert_node(
     let new_idx = graph.nodes.len() as InternalIndex;
     let node_max_layer = node.max_layer;
     graph.nodes.push(node);
+    graph.mark_alive_idx(new_idx);
     graph.node_id_to_idx.insert(node_id, new_idx);
 
     if graph.nodes.len() == 1 {
@@ -176,6 +177,9 @@ pub(crate) fn select_neighbors_heuristic(
         if !seen.insert(candidate.idx) {
             continue;
         }
+        if !graph.is_alive_idx(candidate.idx) {
+            continue;
+        }
         let Some(candidate_node) = graph.node_by_idx(candidate.idx) else {
             continue;
         };
@@ -195,7 +199,7 @@ pub(crate) fn select_neighbors_heuristic(
             if selected.len() >= m {
                 break;
             }
-            if graph.node_by_idx(candidate.idx).is_some() && !selected.contains(&candidate.idx) {
+            if graph.is_alive_idx(candidate.idx) && !selected.contains(&candidate.idx) {
                 selected.push(candidate.idx);
             }
         }
@@ -221,7 +225,7 @@ pub(crate) fn extend_candidate_pool(
     let mut expanded = Vec::with_capacity(seeds.len().min(cap));
 
     for seed in seeds {
-        if seen.insert(seed.idx) && graph.node_by_idx(seed.idx).is_some() {
+        if seen.insert(seed.idx) && graph.is_alive_idx(seed.idx) {
             expanded.push(*seed);
         }
     }
@@ -234,7 +238,9 @@ pub(crate) fn extend_candidate_pool(
             if !seen.insert(*neighbor_idx) {
                 continue;
             }
-            if let Some(neighbor) = graph.node_by_idx(*neighbor_idx) {
+            if graph.is_alive_idx(*neighbor_idx)
+                && let Some(neighbor) = graph.node_by_idx(*neighbor_idx)
+            {
                 expanded.push(Candidate::admissible(
                     *neighbor_idx,
                     score(target, &neighbor.vector, params),
@@ -273,6 +279,9 @@ fn prune_neighbors(graph: &mut HnswGraph, idx: InternalIndex, layer: u8, params:
         .iter()
         .copied()
         .filter_map(|neighbor_idx| {
+            if !graph.is_alive_idx(neighbor_idx) {
+                return None;
+            }
             graph.node_by_idx(neighbor_idx).map(|neighbor| {
                 Candidate::admissible(neighbor_idx, score(&target_vec, &neighbor.vector, params))
             })
@@ -577,6 +586,7 @@ mod tests {
             graph.nodes.push(
                 HnswNode::new(node_id, Arc::from(*vector), *layer).expect("test node is valid"),
             );
+            graph.mark_alive_idx(idx as InternalIndex);
             graph.node_id_to_idx.insert(node_id, idx as InternalIndex);
         }
         graph.entry_point = (!graph.nodes.is_empty()).then_some(0);
