@@ -83,6 +83,7 @@ fn run_write(
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
             &mut txn,
+            graph.index_providers(),
         );
         execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
     };
@@ -133,6 +134,7 @@ fn show_node_types_on_open_graph_returns_empty_schemaful_table() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
@@ -184,6 +186,7 @@ fn show_node_types_renders_key_labels_not_internal_name() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
@@ -261,6 +264,7 @@ fn show_edge_types_renders_label_not_internal_name() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
@@ -299,6 +303,7 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
@@ -349,6 +354,7 @@ fn catalog_op_without_write_txn_returns_invalid_transaction_state() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
@@ -371,6 +377,7 @@ fn create_edge_type_without_write_txn_returns_invalid_transaction_state() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)

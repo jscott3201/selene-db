@@ -143,6 +143,10 @@ impl CoreProvider {
 }
 
 impl IndexProvider for CoreProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn provider_tag(&self) -> ProviderTag {
         ProviderTag(CORE_PROVIDER_TAG)
     }

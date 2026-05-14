@@ -1,6 +1,8 @@
 //! Procedure execution context tiers.
 
-use selene_graph::{Mutator, SeleneGraph};
+use std::sync::Arc;
+
+use selene_graph::{IndexProvider, Mutator, ProviderTag, SeleneGraph};
 
 use crate::{ImplDefinedCaps, ProcedureTier};
 
@@ -8,11 +10,20 @@ use crate::{ImplDefinedCaps, ProcedureTier};
 pub struct GraphContext<'a> {
     snapshot: &'a SeleneGraph,
     caps: &'a ImplDefinedCaps,
+    providers: &'a [Arc<dyn IndexProvider>],
 }
 
 impl<'a> GraphContext<'a> {
-    pub(crate) const fn new(snapshot: &'a SeleneGraph, caps: &'a ImplDefinedCaps) -> Self {
-        Self { snapshot, caps }
+    pub(crate) const fn new(
+        snapshot: &'a SeleneGraph,
+        caps: &'a ImplDefinedCaps,
+        providers: &'a [Arc<dyn IndexProvider>],
+    ) -> Self {
+        Self {
+            snapshot,
+            caps,
+            providers,
+        }
     }
 
     /// Borrow the graph snapshot visible to this procedure call.
@@ -25,6 +36,15 @@ impl<'a> GraphContext<'a> {
     #[must_use]
     pub const fn impl_defined_caps(&self) -> &'a ImplDefinedCaps {
         self.caps
+    }
+
+    /// Look up a registered index provider by its fixed provider tag.
+    #[must_use]
+    pub fn index_provider_by_tag(&self, tag: ProviderTag) -> Option<Arc<dyn IndexProvider>> {
+        self.providers
+            .iter()
+            .find(|provider| provider.provider_tag() == tag)
+            .map(Arc::clone)
     }
 }
 

@@ -42,6 +42,10 @@ impl RecordingProvider {
 }
 
 impl IndexProvider for RecordingProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -92,6 +96,10 @@ impl WalAppendingProvider {
 }
 
 impl IndexProvider for WalAppendingProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn provider_tag(&self) -> ProviderTag {
         ProviderTag(*b"WALP")
     }
@@ -128,6 +136,10 @@ impl IndexProvider for WalAppendingProvider {
 struct NoopProvider;
 
 impl IndexProvider for NoopProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn provider_tag(&self) -> ProviderTag {
         ProviderTag(*b"NOOP")
     }

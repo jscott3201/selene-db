@@ -113,7 +113,12 @@ fn tx_op_inside_execute_pipeline_returns_implementation_defined() {
     let graph = SharedGraph::new(GraphId::new(3828));
     let op = tx_op("START TRANSACTION");
     let caps = ImplDefinedCaps::default();
-    let mut ctx = TxContext::read_only(graph.read(), &caps, &EmptyProcedureRegistry);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    );
     let input = BindingTable::new(
         BindingTableSchema {
             columns: Vec::new(),

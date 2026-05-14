@@ -138,6 +138,10 @@ impl HnswProvider {
 }
 
 impl IndexProvider for HnswProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
     fn provider_tag(&self) -> ProviderTag {
         snapshot::VECT
     }

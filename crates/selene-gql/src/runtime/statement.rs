@@ -43,12 +43,13 @@ fn execute_read_only(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let table = if let Some(txn) = session.active_txn.as_mut() {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn);
+        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn, providers);
         execute_plan(plan, &mut ctx)?
     } else {
-        let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps, registry);
+        let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps, registry, providers);
         execute_plan(plan, &mut ctx)?
     };
     Ok(output_from_table(plan, table))
@@ -70,6 +71,7 @@ fn execute_inside_explicit_tx(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let txn = session
         .active_txn
@@ -77,7 +79,7 @@ fn execute_inside_explicit_tx(
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "explicit-TX path entered without active transaction",
         })?;
-    let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn);
+    let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn, providers);
     let result = execute_plan(plan, &mut ctx);
     if result.is_err() {
         session.aborted = true;
@@ -90,11 +92,18 @@ fn execute_auto_commit(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let principal = session.principal();
     let mut txn = session.graph().begin_write();
     let result = {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, &mut txn);
+        let mut ctx = TxContext::write(
+            snapshot,
+            &plan.impl_defined_caps,
+            registry,
+            &mut txn,
+            providers,
+        );
         execute_plan(plan, &mut ctx)
     };
     match result {

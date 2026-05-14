@@ -33,6 +33,7 @@ where
         ProcedureTier::Graph => Ok(ProcedureContext::Graph(GraphContext::new(
             ctx.snapshot(),
             ctx.impl_defined_caps(),
+            ctx.providers(),
         ))),
         ProcedureTier::Mutation => {
             let caps = ctx.impl_defined_caps();

@@ -49,6 +49,7 @@ mod tests {
             Arc::new(selene_graph::SeleneGraph::new(GraphId::new(991))),
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
+            &[],
         )
     }
 
@@ -79,6 +80,7 @@ mod tests {
             graph.read(),
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
+            graph.index_providers(),
         );
 
         let table = execute_plan(&plan, &mut ctx).expect("plan executes");
@@ -104,6 +106,7 @@ mod tests {
             graph.read(),
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
+            graph.index_providers(),
         );
 
         let table = execute_plan(&plan, &mut ctx).expect("plan executes");
