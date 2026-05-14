@@ -512,7 +512,11 @@ fn apply_payload(
 ) -> Result<(), VectorError> {
     match payload.op {
         VectorOp::Insert => {}
-        VectorOp::Update | VectorOp::Delete => {
+        VectorOp::Delete => {
+            apply_delete(index, payload.node_id);
+            return Ok(());
+        }
+        VectorOp::Update => {
             return Err(VectorError::OperationNotSupportedYet {
                 op: payload.op,
                 node_id: payload.node_id,
@@ -552,6 +556,24 @@ fn apply_payload(
     }
     index.vector_count += 1;
     Ok(())
+}
+
+fn apply_delete(index: &mut IvfIndex, node_id: NodeId) {
+    let before_deferred = index.unassigned_buffer.len();
+    index.unassigned_buffer.retain(|row| row.node_id != node_id);
+    let removed_deferred = before_deferred - index.unassigned_buffer.len();
+
+    let mut removed_posted = 0_usize;
+    for list in &mut index.posting_lists {
+        let before = list.entries.len();
+        list.entries.retain(|entry| entry.node_id != node_id);
+        removed_posted += before - list.entries.len();
+    }
+
+    let removed = removed_deferred + removed_posted;
+    if removed > 0 {
+        index.vector_count = index.vector_count.saturating_sub(removed);
+    }
 }
 
 fn stats_for(index: &IvfIndex, config: &IvfConfig) -> IvfStats {
