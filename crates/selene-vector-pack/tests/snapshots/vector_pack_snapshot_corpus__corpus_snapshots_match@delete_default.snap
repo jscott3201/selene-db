@@ -1,0 +1,5 @@
+---
+source: crates/selene-vector-pack/tests/vector_pack_snapshot_corpus.rs
+expression: entry.render()
+---
+delete_default [Delete] CALL vector.delete('default', 42)

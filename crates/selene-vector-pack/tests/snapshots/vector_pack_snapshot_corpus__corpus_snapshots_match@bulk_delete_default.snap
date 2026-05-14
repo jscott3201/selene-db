@@ -1,0 +1,5 @@
+---
+source: crates/selene-vector-pack/tests/vector_pack_snapshot_corpus.rs
+expression: entry.render()
+---
+bulk_delete_default [BulkDelete] CALL vector.bulk_delete('default', [42, 43])

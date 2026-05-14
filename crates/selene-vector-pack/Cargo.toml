@@ -37,5 +37,9 @@ required-features = ["test-harness"]
 name = "ivf_read"
 required-features = ["test-harness"]
 
+[[test]]
+name = "vector_pack_snapshot_corpus"
+required-features = ["test-harness"]
+
 [lints]
 workspace = true
