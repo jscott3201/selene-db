@@ -86,6 +86,7 @@ selene-gql:analyze:criterion
 selene-gql:plan_optimize:criterion
 selene-gql:iai_gates:iai
 selene-algorithms-pack:algo_pack:criterion
+selene-vector-pack:vector_pack:criterion
 selene-vector:recall:criterion
 selene-vector:quant_recall:criterion
 selene-vector:ivfpq_recall:criterion
