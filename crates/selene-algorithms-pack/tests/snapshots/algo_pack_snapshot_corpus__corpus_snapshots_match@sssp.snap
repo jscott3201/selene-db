@@ -1,0 +1,5 @@
+---
+source: crates/selene-algorithms-pack/tests/algo_pack_snapshot_corpus.rs
+expression: entry.render()
+---
+sssp [Algorithm] MATCH (source) CALL algo.sssp('p', source) YIELD target_node, cost
