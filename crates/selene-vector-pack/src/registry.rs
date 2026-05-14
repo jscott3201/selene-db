@@ -8,15 +8,15 @@ use selene_pack::{
 };
 
 use crate::{
-    bulk_delete, bulk_upsert, delete, ivf_bulk_delete, ivf_bulk_upsert, search,
-    state::VectorPackState, upsert,
+    bulk_delete, bulk_upsert, delete, ivf_bulk_delete, ivf_bulk_upsert, ivf_search, ivf_stats,
+    search, state::VectorPackState, upsert,
 };
 
 /// Static external pack name registered with `selene-pack`.
 pub const VECTOR_PACK_NAME: &str = "vector";
 
 /// Canonical procedure names registered by the vector pack.
-pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 7] = [
+pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 9] = [
     &["vector", "search"],
     &["vector", "upsert"],
     &["vector", "delete"],
@@ -24,6 +24,8 @@ pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 7] = [
     &["vector", "bulk_delete"],
     &["vector", "ivf_bulk_upsert"],
     &["vector", "ivf_bulk_delete"],
+    &["vector", "ivf_search"],
+    &["vector", "ivf_stats"],
 ];
 
 /// Construct-time handle for the vector procedure pack.
@@ -60,7 +62,11 @@ impl VectorPack {
     }
 
     fn procedures(&self) -> Vec<Arc<dyn ExternalGraphProcedure>> {
-        vec![search::procedure(Arc::clone(&self.state))]
+        vec![
+            search::procedure(Arc::clone(&self.state)),
+            ivf_search::procedure(Arc::clone(&self.state)),
+            ivf_stats::procedure(Arc::clone(&self.state)),
+        ]
     }
 
     fn mutation_procedures(&self) -> Vec<Arc<dyn ExternalMutationProcedure>> {

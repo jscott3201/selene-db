@@ -53,6 +53,23 @@ pub(crate) fn with_hnsw_provider_mut<R>(
     f(hnsw)
 }
 
+pub(crate) fn with_ivf_provider<R>(
+    ctx: &GraphContext<'_>,
+    procedure: &'static str,
+    f: impl FnOnce(&IvfProvider) -> Result<R, ProcedureError>,
+) -> Result<R, ProcedureError> {
+    let provider = ctx.index_provider_by_tag(IVFP_TAG).ok_or_else(|| {
+        invalid_argument(format!("{procedure}: no IVFP index provider registered"))
+    })?;
+    let ivf = provider
+        .as_any()
+        .downcast_ref::<IvfProvider>()
+        .ok_or_else(|| {
+            invalid_argument(format!("{procedure}: IVFP provider is not an IVF provider"))
+        })?;
+    f(ivf)
+}
+
 pub(crate) fn with_ivf_provider_mut<R>(
     ctx: &MutationContext<'_, '_>,
     procedure: &'static str,

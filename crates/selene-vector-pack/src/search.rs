@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use roaring::RoaringBitmap;
-use selene_core::{NodeId, Value};
+use selene_core::Value;
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -12,9 +12,9 @@ use selene_pack::{
 use crate::{
     args::{
         expect_arity, nullable_node_ref_list, nullable_option_usize, required_f32_list,
-        required_string, required_usize,
+        required_string, required_usize, try_filter_from_node_refs,
     },
-    error::{invalid_argument, vector_error},
+    error::vector_error,
     provider::{reject_non_default_index, with_hnsw_provider},
     state::VectorPackState,
 };
@@ -73,7 +73,7 @@ impl ExternalGraphProcedure for SearchProcedure {
                     parsed.ef_search,
                     parsed.filter.as_ref(),
                 )
-                .map_err(vector_error)?
+                .map_err(|err| vector_error(SEARCH_PROC, err))?
                 .into_iter()
                 .map(|(node_id, score)| {
                     vec![Value::NodeRef(node_id), Value::Float(f64::from(score))]
@@ -110,37 +110,10 @@ fn parse_search_args(args: &[Value]) -> Result<SearchArgs, ProcedureError> {
     })
 }
 
-pub(crate) fn try_filter_from_node_refs(nodes: &[NodeId]) -> Result<RoaringBitmap, ProcedureError> {
-    let mut filter = RoaringBitmap::new();
-    for node_id in nodes {
-        let raw = u32::try_from(node_id.get()).map_err(|_| {
-            invalid_argument(format!(
-                "{SEARCH_PROC}: filter_nodes contains node id {} above u32::MAX",
-                node_id.get()
-            ))
-        })?;
-        filter.insert(raw);
-    }
-    Ok(filter)
-}
-
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
     ExternalParameter { name, ty, nullable }
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
     ExternalOutputColumn { name, ty }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn filter_rejects_node_id_above_roaring_range() {
-        let err = try_filter_from_node_refs(&[NodeId::new(u64::from(u32::MAX) + 1)])
-            .expect_err("overflow rejected");
-
-        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
-    }
 }

@@ -33,5 +33,9 @@ required-features = ["test-harness"]
 name = "bulk"
 required-features = ["test-harness"]
 
+[[test]]
+name = "ivf_read"
+required-features = ["test-harness"]
+
 [lints]
 workspace = true
