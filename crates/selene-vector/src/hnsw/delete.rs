@@ -13,23 +13,30 @@ use super::{HnswGraph, InternalIndex};
 /// [`NodeId`]. If the deleted node was the entry point or occupied the current
 /// maximum layer, the live entry point is recomputed eagerly.
 pub(crate) fn tombstone_node(graph: &mut HnswGraph, node_id: NodeId) -> Result<(), VectorError> {
-    let Some(idx) = graph.node_id_to_idx.remove(&node_id) else {
-        return Ok(());
-    };
-    if !graph.is_alive_idx(idx) {
-        return Ok(());
-    }
-
-    let deleted_max_layer = graph.node_by_idx(idx).map_or(0, |node| node.max_layer);
-    graph.clear_alive_idx(idx);
-
-    if graph.entry_point == Some(idx) || deleted_max_layer == graph.max_layer {
+    if tombstone_node_no_recompute(graph, node_id)? {
         recompute_entry_point(graph);
     }
     Ok(())
 }
 
-fn recompute_entry_point(graph: &mut HnswGraph) {
+pub(crate) fn tombstone_node_no_recompute(
+    graph: &mut HnswGraph,
+    node_id: NodeId,
+) -> Result<bool, VectorError> {
+    let Some(idx) = graph.node_id_to_idx.remove(&node_id) else {
+        return Ok(false);
+    };
+    if !graph.is_alive_idx(idx) {
+        return Ok(false);
+    }
+
+    let deleted_max_layer = graph.node_by_idx(idx).map_or(0, |node| node.max_layer);
+    graph.clear_alive_idx(idx);
+
+    Ok(graph.entry_point == Some(idx) || deleted_max_layer == graph.max_layer)
+}
+
+pub(crate) fn recompute_entry_point(graph: &mut HnswGraph) {
     let mut best: Option<(InternalIndex, u8)> = None;
     for idx in graph.live_indices() {
         let Some(node) = graph.node_by_idx(idx) else {

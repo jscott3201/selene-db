@@ -7,6 +7,9 @@ use selene_core::NodeId;
 
 use crate::VectorError;
 
+mod bulk;
+pub use bulk::{PAYLOAD_MAGIC_BULK_DELETE, VectorBulkDeletePayloadV1};
+
 const MAX_LAYER: u8 = 32;
 
 /// Magic prefix for every selene-vector mutation event payload.
@@ -274,6 +277,7 @@ impl VectorBulkInsertPayloadV1 {
 pub(crate) enum EventKind {
     Upsert(VectorUpsertPayloadV1),
     Bulk(VectorBulkInsertPayloadV1),
+    BulkDelete(VectorBulkDeletePayloadV1),
 }
 
 pub(crate) fn decode_event(bytes: &[u8]) -> Result<EventKind, VectorError> {
@@ -288,6 +292,9 @@ pub(crate) fn decode_event(bytes: &[u8]) -> Result<EventKind, VectorError> {
     match magic {
         PAYLOAD_MAGIC => VectorUpsertPayloadV1::decode(bytes).map(EventKind::Upsert),
         PAYLOAD_MAGIC_BULK => VectorBulkInsertPayloadV1::decode(bytes).map(EventKind::Bulk),
+        PAYLOAD_MAGIC_BULK_DELETE => {
+            VectorBulkDeletePayloadV1::decode(bytes).map(EventKind::BulkDelete)
+        }
         other => Err(invalid_payload(format!(
             "unknown vector event magic {}",
             String::from_utf8_lossy(&other)
@@ -523,6 +530,9 @@ mod tests {
                 max_layer: 0,
             }],
         };
+        let bulk_delete = VectorBulkDeletePayloadV1 {
+            node_ids: vec![NodeId::new(3)],
+        };
 
         assert!(matches!(
             decode_event(&upsert.encode().unwrap()).unwrap(),
@@ -531,6 +541,10 @@ mod tests {
         assert!(matches!(
             decode_event(&bulk.encode().unwrap()).unwrap(),
             EventKind::Bulk(decoded) if decoded == bulk
+        ));
+        assert!(matches!(
+            decode_event(&bulk_delete.encode().unwrap()).unwrap(),
+            EventKind::BulkDelete(decoded) if decoded == bulk_delete
         ));
     }
 
