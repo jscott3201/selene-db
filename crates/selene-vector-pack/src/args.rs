@@ -53,6 +53,20 @@ pub(crate) fn required_f32_list(
         .collect()
 }
 
+pub(crate) fn required_node_ref(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<NodeId, ProcedureError> {
+    match &args[index] {
+        Value::NodeRef(node_id) => Ok(*node_id),
+        other => Err(invalid_argument(format!(
+            "{procedure}: expected {name} to be NODE, got {other:?}"
+        ))),
+    }
+}
+
 pub(crate) fn required_usize(
     procedure: &'static str,
     args: &[Value],

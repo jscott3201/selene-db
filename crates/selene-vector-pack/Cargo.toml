@@ -10,7 +10,7 @@ homepage.workspace = true
 description = "Procedure-pack adapters for selene vector indexes"
 
 [features]
-test-harness = []
+test-harness = ["selene-gql/test-harness"]
 
 [dependencies]
 roaring.workspace = true
