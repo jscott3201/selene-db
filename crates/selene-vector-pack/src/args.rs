@@ -259,6 +259,25 @@ fn numeric_to_f32(
     Ok(converted)
 }
 
+fn numeric_to_f32_at(
+    procedure: &'static str,
+    location: &str,
+    value: &Value,
+) -> Result<f32, ProcedureError> {
+    let converted = match value {
+        Value::Float(value) => *value as f32,
+        Value::Float32(value) => *value,
+        Value::Int(value) => *value as f32,
+        Value::Uint(value) => *value as f32,
+        other => {
+            return Err(invalid_argument(format!(
+                "{procedure}: expected {location} to be FLOAT, got {other:?}"
+            )));
+        }
+    };
+    Ok(converted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,23 +357,4 @@ mod tests {
 
         assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
     }
-}
-
-fn numeric_to_f32_at(
-    procedure: &'static str,
-    location: &str,
-    value: &Value,
-) -> Result<f32, ProcedureError> {
-    let converted = match value {
-        Value::Float(value) => *value as f32,
-        Value::Float32(value) => *value,
-        Value::Int(value) => *value as f32,
-        Value::Uint(value) => *value as f32,
-        other => {
-            return Err(invalid_argument(format!(
-                "{procedure}: expected {location} to be FLOAT, got {other:?}"
-            )));
-        }
-    };
-    Ok(converted)
 }
