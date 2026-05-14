@@ -269,6 +269,11 @@ impl IndexProvider for HnswProvider {
                     reason: format!("selene-vector apply_bulk_delete: {err:?}: {err}"),
                 })?
             }
+            EventKind::IvfBulkInsert | EventKind::IvfBulkDelete => {
+                return Err(ProviderError::InvalidPayload {
+                    reason: "selene-vector provider cannot apply IVF bulk payload".into(),
+                });
+            }
         };
         self.state.store(Arc::new(next));
         Ok(())

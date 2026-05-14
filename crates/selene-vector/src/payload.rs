@@ -8,7 +8,11 @@ use selene_core::NodeId;
 use crate::VectorError;
 
 mod bulk;
-pub use bulk::{PAYLOAD_MAGIC_BULK_DELETE, VectorBulkDeletePayloadV1};
+pub use bulk::{
+    IvfBulkInsertRow, PAYLOAD_MAGIC_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_DELETE,
+    PAYLOAD_MAGIC_IVF_BULK_INSERT, VectorBulkDeletePayloadV1, VectorIvfBulkDeleteV1,
+    VectorIvfBulkInsertV1,
+};
 
 const MAX_LAYER: u8 = 32;
 
@@ -278,6 +282,8 @@ pub(crate) enum EventKind {
     Upsert(VectorUpsertPayloadV1),
     Bulk(VectorBulkInsertPayloadV1),
     BulkDelete(VectorBulkDeletePayloadV1),
+    IvfBulkInsert,
+    IvfBulkDelete,
 }
 
 pub(crate) fn decode_event(bytes: &[u8]) -> Result<EventKind, VectorError> {
@@ -294,6 +300,12 @@ pub(crate) fn decode_event(bytes: &[u8]) -> Result<EventKind, VectorError> {
         PAYLOAD_MAGIC_BULK => VectorBulkInsertPayloadV1::decode(bytes).map(EventKind::Bulk),
         PAYLOAD_MAGIC_BULK_DELETE => {
             VectorBulkDeletePayloadV1::decode(bytes).map(EventKind::BulkDelete)
+        }
+        PAYLOAD_MAGIC_IVF_BULK_INSERT => {
+            VectorIvfBulkInsertV1::decode(bytes).map(|_| EventKind::IvfBulkInsert)
+        }
+        PAYLOAD_MAGIC_IVF_BULK_DELETE => {
+            VectorIvfBulkDeleteV1::decode(bytes).map(|_| EventKind::IvfBulkDelete)
         }
         other => Err(invalid_payload(format!(
             "unknown vector event magic {}",
@@ -533,6 +545,15 @@ mod tests {
         let bulk_delete = VectorBulkDeletePayloadV1 {
             node_ids: vec![NodeId::new(3)],
         };
+        let ivf_bulk_insert = VectorIvfBulkInsertV1 {
+            rows: vec![IvfBulkInsertRow {
+                node_id: NodeId::new(4),
+                vector: vec![4.0],
+            }],
+        };
+        let ivf_bulk_delete = VectorIvfBulkDeleteV1 {
+            node_ids: vec![NodeId::new(5)],
+        };
 
         assert!(matches!(
             decode_event(&upsert.encode().unwrap()).unwrap(),
@@ -545,6 +566,14 @@ mod tests {
         assert!(matches!(
             decode_event(&bulk_delete.encode().unwrap()).unwrap(),
             EventKind::BulkDelete(decoded) if decoded == bulk_delete
+        ));
+        assert!(matches!(
+            decode_event(&ivf_bulk_insert.encode().unwrap()).unwrap(),
+            EventKind::IvfBulkInsert
+        ));
+        assert!(matches!(
+            decode_event(&ivf_bulk_delete.encode().unwrap()).unwrap(),
+            EventKind::IvfBulkDelete
         ));
     }
 

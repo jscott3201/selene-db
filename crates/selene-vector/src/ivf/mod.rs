@@ -7,6 +7,7 @@ use selene_core::NodeId;
 use crate::quantize::PqCodebook;
 
 pub mod coarse;
+mod mutate;
 pub mod posting;
 mod provider;
 pub mod search;

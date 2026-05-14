@@ -50,9 +50,10 @@ pub use hnsw::distance;
 pub use hnsw::{HnswGraph, HnswNode, HnswParams, insert_node, random_layer, random_layer_default};
 pub use ivf::{IvfIndex, IvfProvider, IvfStats};
 pub use payload::{
-    BulkInsertRow, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_BULK_DELETE, PAYLOAD_MAGIC_IVF,
-    VectorBulkDeletePayloadV1, VectorBulkInsertPayloadV1, VectorIvfUpsertV1, VectorOp,
-    VectorUpsertPayloadV1,
+    BulkInsertRow, IvfBulkInsertRow, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_BULK_DELETE,
+    PAYLOAD_MAGIC_IVF, PAYLOAD_MAGIC_IVF_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_INSERT,
+    VectorBulkDeletePayloadV1, VectorBulkInsertPayloadV1, VectorIvfBulkDeleteV1,
+    VectorIvfBulkInsertV1, VectorIvfUpsertV1, VectorOp, VectorUpsertPayloadV1,
 };
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;

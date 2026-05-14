@@ -8,18 +8,19 @@ use selene_core::{Change, NodeId};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use super::coarse::CoarseQuantizer;
+use super::mutate::{
+    IvfEventKind, apply_bulk_delete, apply_bulk_insert, apply_payload, decode_ivf_event,
+};
 use super::train::{append_encoded, train};
 use super::validate::{
     deferred_rows_to_raw, inconsistent, validate_posting_lists, validate_trained_codebook,
-    validate_vector,
 };
-use super::{IVF_PROVIDER_NAME, IvfIndex, IvfStats, RawVector, TrainedIvf, search};
-use crate::payload::VectorIvfUpsertV1;
+use super::{IVF_PROVIDER_NAME, IvfIndex, IvfStats, TrainedIvf, search};
 use crate::quantize::PqCodebook;
 use crate::snapshot::cqnt::{CqntBodyV1, decode_cqnt, encode_cqnt};
 use crate::snapshot::ipqb::{IpqbBodyV1, decode_ipqb, encode_ipqb};
 use crate::snapshot::post::{PostBodyV1, decode_post, encode_post};
-use crate::{IvfConfig, VectorError, VectorOp, snapshot};
+use crate::{IvfConfig, VectorError, snapshot};
 
 /// Stateful vector index provider registered under the `IVFP` provider tag.
 pub struct IvfProvider {
@@ -155,18 +156,35 @@ impl IndexProvider for IvfProvider {
         if provider.as_str() != IVF_PROVIDER_NAME {
             return Ok(());
         }
-        let payload = VectorIvfUpsertV1::decode(payload.as_ref()).map_err(|err| {
-            ProviderError::InvalidPayload {
+        let event =
+            decode_ivf_event(payload.as_ref()).map_err(|err| ProviderError::InvalidPayload {
                 reason: format!("selene-vector-ivf payload decode: {err:?}: {err}"),
-            }
-        })?;
+            })?;
         let prev = self.state.load_full();
         let mut next = (*prev).clone();
-        apply_payload(&mut next, &payload, &self.config).map_err(|err| {
-            ProviderError::InvalidPayload {
-                reason: format!("selene-vector-ivf apply_upsert: {err:?}: {err}"),
+        match event {
+            IvfEventKind::Upsert(payload) => {
+                apply_payload(&mut next, &payload, &self.config).map_err(|err| {
+                    ProviderError::InvalidPayload {
+                        reason: format!("selene-vector-ivf apply_upsert: {err:?}: {err}"),
+                    }
+                })?;
             }
-        })?;
+            IvfEventKind::BulkInsert(payload) => {
+                apply_bulk_insert(&mut next, &payload, &self.config).map_err(|err| {
+                    ProviderError::InvalidPayload {
+                        reason: format!("selene-vector-ivf apply_bulk_insert: {err:?}: {err}"),
+                    }
+                })?;
+            }
+            IvfEventKind::BulkDelete(payload) => {
+                apply_bulk_delete(&mut next, &payload).map_err(|err| {
+                    ProviderError::InvalidPayload {
+                        reason: format!("selene-vector-ivf apply_bulk_delete: {err:?}: {err}"),
+                    }
+                })?;
+            }
+        }
         self.state.store(Arc::new(next));
         Ok(())
     }
@@ -502,77 +520,6 @@ fn assemble_index(
         _ => Err(inconsistent(
             "CQNT/IPQB/POST must be all empty, deferred, or all trained",
         )),
-    }
-}
-
-fn apply_payload(
-    index: &mut IvfIndex,
-    payload: &VectorIvfUpsertV1,
-    config: &IvfConfig,
-) -> Result<(), VectorError> {
-    match payload.op {
-        VectorOp::Insert => {}
-        VectorOp::Delete => {
-            apply_delete(index, payload.node_id);
-            return Ok(());
-        }
-        VectorOp::Update => {
-            return Err(VectorError::OperationNotSupportedYet {
-                op: payload.op,
-                node_id: payload.node_id,
-                brief: "future",
-            });
-        }
-    }
-    validate_vector(payload.node_id, &payload.vector, config)?;
-    if index.contains_node(payload.node_id) {
-        return Err(VectorError::DuplicateNodeId {
-            node_id: payload.node_id,
-        });
-    }
-    let vector: Arc<[f32]> = Arc::from(payload.vector.clone());
-    if index.is_trained() {
-        let coarse = index
-            .coarse_quantizer
-            .as_deref()
-            .expect("is_trained checked coarse");
-        let codebook = index
-            .residual_codebook
-            .as_deref()
-            .expect("is_trained checked codebook");
-        append_encoded(
-            &mut index.posting_lists,
-            coarse,
-            codebook,
-            payload.node_id,
-            &vector,
-            config,
-        )?;
-    } else {
-        index.unassigned_buffer.push(RawVector {
-            node_id: payload.node_id,
-            vector,
-        });
-    }
-    index.vector_count += 1;
-    Ok(())
-}
-
-fn apply_delete(index: &mut IvfIndex, node_id: NodeId) {
-    let before_deferred = index.unassigned_buffer.len();
-    index.unassigned_buffer.retain(|row| row.node_id != node_id);
-    let removed_deferred = before_deferred - index.unassigned_buffer.len();
-
-    let mut removed_posted = 0_usize;
-    for list in &mut index.posting_lists {
-        let before = list.entries.len();
-        list.entries.retain(|entry| entry.node_id != node_id);
-        removed_posted += before - list.entries.len();
-    }
-
-    let removed = removed_deferred + removed_posted;
-    if removed > 0 {
-        index.vector_count = index.vector_count.saturating_sub(removed);
     }
 }
 
