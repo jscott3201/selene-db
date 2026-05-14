@@ -42,6 +42,7 @@ fn tx_context_with_reopt_hook_carries_through_dispatch() {
         Arc::new(SeleneGraph::new(GraphId::new(1_001))),
         &caps,
         &EmptyProcedureRegistry,
+        &[],
         &hook,
     );
     let plan = exec_common::planned("RETURN 1 AS n");

@@ -1,0 +1,32 @@
+[package]
+name = "selene-vector-pack"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Procedure-pack adapters for selene vector indexes"
+
+[features]
+test-harness = []
+
+[dependencies]
+roaring.workspace = true
+selene-core = { path = "../selene-core", version = "0.0.0" }
+selene-gql = { path = "../selene-gql", version = "0.0.0" }
+selene-graph = { path = "../selene-graph", version = "0.0.0" }
+selene-pack = { path = "../selene-pack", version = "0.0.0" }
+selene-vector = { path = "../selene-vector", version = "0.0.0" }
+
+[dev-dependencies]
+insta.workspace = true
+selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
+
+[[test]]
+name = "search"
+required-features = ["test-harness"]
+
+[lints]
+workspace = true

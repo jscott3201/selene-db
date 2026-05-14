@@ -275,7 +275,12 @@ fn procedure_returning_zero_rows_drops_input_row() {
     );
     let plan = planned("CALL pkg.empty() YIELD out", &registry);
     let graph = graph(3902);
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps, &registry);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &registry,
+        graph.index_providers(),
+    );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).unwrap();
 
@@ -294,7 +299,12 @@ fn procedure_returning_one_unit_row_emits_one_row_per_input() {
     );
     let plan = planned("CALL pkg.unit()", &registry);
     let graph = graph(3903);
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps, &registry);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &registry,
+        graph.index_providers(),
+    );
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).unwrap();
 
@@ -466,7 +476,12 @@ fn mutation_tier_procedure_in_read_only_context_returns_invalid_transaction_stat
     );
     let plan = planned("CALL pkg.create()", &registry);
     let graph = graph(3910);
-    let mut ctx = TxContext::read_only(graph.read(), &plan.impl_defined_caps, &registry);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &registry,
+        graph.index_providers(),
+    );
 
     let err =
         execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect_err("needs write txn");

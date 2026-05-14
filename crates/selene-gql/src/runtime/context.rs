@@ -2,7 +2,7 @@
 
 use std::{fmt, sync::Arc};
 
-use selene_graph::{Mutator, SeleneGraph, WriteTxn};
+use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
     ProcedureRegistry, SourceSpan,
@@ -27,6 +27,7 @@ pub struct TxContext<'a, 'g> {
     snapshot: Arc<SeleneGraph>,
     impl_defined_caps: &'a ImplDefinedCaps,
     registry: &'a dyn ProcedureRegistry,
+    providers: &'a [Arc<dyn IndexProvider>],
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
@@ -38,11 +39,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
+        providers: &'a [Arc<dyn IndexProvider>],
     ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
             registry,
+            providers,
             reopt_hook: None,
             write_txn: None,
         }
@@ -54,12 +57,14 @@ impl<'a, 'g> TxContext<'a, 'g> {
         snapshot: Arc<SeleneGraph>,
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
+        providers: &'a [Arc<dyn IndexProvider>],
         reopt_hook: &'a dyn AdaptiveOptimizer,
     ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
             registry,
+            providers,
             reopt_hook: Some(reopt_hook),
             write_txn: None,
         }
@@ -72,11 +77,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
+        providers: &'a [Arc<dyn IndexProvider>],
     ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
             registry,
+            providers,
             reopt_hook: None,
             write_txn: Some(txn),
         }
@@ -154,6 +161,12 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.registry
     }
 
+    /// Borrow the fixed index-provider registry visible to this statement.
+    #[must_use]
+    pub const fn providers(&self) -> &'a [Arc<dyn IndexProvider>] {
+        self.providers
+    }
+
     /// Borrow the adaptive optimizer hook, when one was supplied.
     #[must_use]
     pub const fn reopt_hook(&self) -> Option<&dyn AdaptiveOptimizer> {
@@ -167,6 +180,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .debug_struct("TxContext")
             .field("snapshot", &self.snapshot)
             .field("impl_defined_caps", self.impl_defined_caps)
+            .field("providers", &self.providers.len())
             .field("reopt_hook", &self.reopt_hook.is_some())
             .field("write_txn", &self.write_txn.is_some())
             .finish()

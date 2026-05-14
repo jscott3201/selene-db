@@ -76,7 +76,12 @@ fn expand_both_dedups_self_loops_to_one_row() {
     }
     let plan = planned("MATCH (a:LoopNode)-[e:LOOPS]-(b) RETURN a, e, b");
     let caps = ImplDefinedCaps::default();
-    let ctx = TxContext::read_only(graph.read(), &caps, &EmptyProcedureRegistry);
+    let ctx = TxContext::read_only(
+        graph.read(),
+        &caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    );
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
 
     let table = execute_pattern(pattern, &ctx);

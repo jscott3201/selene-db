@@ -278,6 +278,10 @@ mod tests {
     }
 
     impl IndexProvider for RecordingProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }
@@ -536,6 +540,10 @@ mod tests {
     }
 
     impl IndexProvider for ReentrantProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }
@@ -609,6 +617,10 @@ mod tests {
     }
 
     impl IndexProvider for PanickingProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }
@@ -666,6 +678,10 @@ mod tests {
     }
 
     impl IndexProvider for SlowProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }
@@ -754,6 +770,10 @@ mod tests {
     }
 
     impl IndexProvider for ConditionallyTagPanickingProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             if self
                 .panic_during_fanout

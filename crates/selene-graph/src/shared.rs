@@ -157,6 +157,12 @@ impl SharedGraph {
             .map(Arc::clone)
     }
 
+    /// Borrow the fixed provider registry for executor procedure contexts.
+    #[must_use]
+    pub fn index_providers(&self) -> &[Arc<dyn IndexProvider>] {
+        &self.providers
+    }
+
     /// Register a built-in node property index for `(label, property)`.
     ///
     /// The current node columns are scanned under the write lock and the
@@ -425,6 +431,10 @@ mod tests {
     }
 
     impl IndexProvider for TestProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }

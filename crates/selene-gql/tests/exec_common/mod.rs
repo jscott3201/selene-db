@@ -137,11 +137,12 @@ impl ExecFixture {
         }
     }
 
-    pub fn context_caps<'a>(&self, plan: &'a ExecutionPlan) -> TxContext<'a, 'a> {
+    pub fn context_caps<'a>(&'a self, plan: &'a ExecutionPlan) -> TxContext<'a, 'a> {
         TxContext::read_only(
             self.graph.read(),
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
+            self.graph.index_providers(),
         )
     }
 
@@ -312,6 +313,7 @@ pub fn empty_graph_context(caps: &selene_gql::ImplDefinedCaps) -> TxContext<'_, 
         Arc::new(selene_graph::SeleneGraph::new(GraphId::new(999))),
         caps,
         &EmptyProcedureRegistry,
+        &[],
     )
 }
 

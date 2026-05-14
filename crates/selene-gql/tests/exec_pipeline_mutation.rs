@@ -37,6 +37,7 @@ fn run_write(
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
             &mut txn,
+            graph.index_providers(),
         );
         let input = if let Some(pattern) = &plan.pattern_plan {
             execute_pattern(pattern, &ctx)?
@@ -355,6 +356,7 @@ fn mutation_without_write_txn_returns_invalid_transaction_state() {
         graph.read(),
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
+        graph.index_providers(),
     );
 
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect_err("write errors");
@@ -385,6 +387,7 @@ fn mutator_error_surfaces_as_graph_mutation_executor_error() {
         &plan.impl_defined_caps,
         &EmptyProcedureRegistry,
         &mut txn,
+        graph.index_providers(),
     );
 
     let err = execute_pipeline(&plan.pipeline, table, &mut ctx).expect_err("write errors");
@@ -477,6 +480,7 @@ fn mutation_aborts_op_on_first_row_error_no_partial_rollback() {
             &plan.impl_defined_caps,
             &EmptyProcedureRegistry,
             &mut txn,
+            graph.index_providers(),
         );
         execute_pipeline(&plan.pipeline, table, &mut ctx)
     };

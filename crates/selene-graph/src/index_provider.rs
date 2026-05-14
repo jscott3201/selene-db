@@ -1,6 +1,6 @@
 //! Stateful extension-provider protocol per spec 06.
 
-use std::fmt;
+use std::{any::Any, fmt};
 
 use selene_core::Change;
 
@@ -61,6 +61,9 @@ impl fmt::Display for SubTag {
 /// Provider authors who spawn threads inside `on_change` must not block
 /// the callback on those threads' progress.
 pub trait IndexProvider: Send + Sync + 'static {
+    /// Erased self reference for downcasting by procedure-pack adapters.
+    fn as_any(&self) -> &dyn Any;
+
     /// Stable 4-byte ASCII tag uniquely identifying this provider.
     fn provider_tag(&self) -> ProviderTag;
 
@@ -182,6 +185,10 @@ mod tests {
     }
 
     impl IndexProvider for RecordingProvider {
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }
