@@ -1,6 +1,6 @@
 # selene-db benchmarks
 
-_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `2de0757`)._
+_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `11537ed`)._
 
 > Methodology: `scripts/run-benches.sh --profile full --layer criterion`
 > (sequential execution; concurrent `cargo bench` is blocked by the script's
@@ -20,7 +20,7 @@ _Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.
 | Memory | 16.0 GiB | `sysctl -n hw.memsize` |
 | OS | macOS 26.5 (build 25F71) | `sw_vers` |
 | rustc | 1.95.0 (59807616e 2026-04-14) | `rustc --version` |
-| Commit | `d25a8b5` | `git rev-parse --short HEAD` |
+| Commit | `11537ed` | `git rev-parse --short HEAD` |
 
 ## §1 selene-graph hot paths
 
@@ -132,9 +132,9 @@ Registered token: `selene-vector-pack:vector_pack:criterion`.
 
 ## §7 selene-vector (HNSW + IVF recall + replay)
 
-Registered tokens: `selene-vector:recall:criterion`,
-`selene-vector:quant_recall:criterion`, `selene-vector:ivfpq_recall:criterion`,
-`selene-vector:composition_replay:criterion`.
+Registered tokens: `selene-vector:build:criterion`,
+`selene-vector:recall:criterion`, `selene-vector:quant_recall:criterion`,
+`selene-vector:ivfpq_recall:criterion`, `selene-vector:composition_replay:criterion`.
 
 ### §7a `vector_recall_at_10` (HNSW baseline; ext_select toggle)
 
@@ -177,6 +177,14 @@ Linear in `n_probe`; sub-µs cold-cache lookup at `n_probe=1`.
 | **opq_polysemous** | **1.17 s** | **1.17 s** |
 
 OPQ rotation on insert is ~48× slower than plain PQ. Significant for insert-heavy workloads — favor `plain_pq` unless polysemous OPQ is needed for the workload's recall target.
+
+### §7e `vector_hnsw_build` (cold direct HNSW construction)
+
+| Bench | n=100 | n=1000 | n=5000 | Notes |
+|---|---:|---:|---:|---|
+| `vector_hnsw_build` | 2.09 ms | **71.04 ms** | 578.2 ms | Direct `insert_node` build; dim=16, M=8, ef_construction=64, L2; deterministic `BUILD_SEED = 0x9100_0001`. |
+
+Directional donor note: `_design/perf-baselines.md:92` reports 1.31 s @ n=1k under unspecified dim/M; nearby text suggests dim=384, M=16. This bench is dim=16, M=8, so 71.04 ms @ n=1k is a non-parity signal (~18.4× lower wall-clock), not an apples-to-apples claim. Scaling is super-linear: 5× rows from 1k to 5k costs ~8.1×.
 
 ## §iai-callgrind (deferred; instruction-count baselines pending)
 
