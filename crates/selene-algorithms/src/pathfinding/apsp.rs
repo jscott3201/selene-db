@@ -8,9 +8,21 @@
 
 use selene_core::NodeId;
 
+use rayon::prelude::*;
+
+use crate::parallel::{ParallelRunner, Parallelism};
 use crate::pathfinding::error::PathfindingError;
 use crate::pathfinding::sssp::sssp;
 use crate::projection::GraphProjection;
+
+/// Configuration for all-pairs shortest path.
+#[derive(Debug, Clone, Copy)]
+pub struct ApspConfig {
+    /// Caller-supplied upper bound for the projection node count.
+    pub max_nodes: usize,
+    /// Requested parallel execution policy.
+    pub parallelism: Parallelism,
+}
 
 /// All-pairs shortest path. Returns `(source, target, cost)` triples sorted
 /// ASC by `(source, target)`, **excluding self-pairs and unreachable pairs**
@@ -19,19 +31,27 @@ use crate::projection::GraphProjection;
 /// Returns [`PathfindingError::TooLarge`] when `proj.node_count() > max_nodes`
 /// (caller-supplied limit; no in-crate default per §O.4). Returns
 /// [`PathfindingError::NegativeWeight`] / [`PathfindingError::NaNWeight`] on
-/// the first offending edge encountered across any source's traversal.
+/// invalid edge weights. Sequential mode preserves first-error-wins traversal
+/// order; parallel modes may return any concurrently encountered error.
 pub fn apsp(
     proj: &GraphProjection,
-    max_nodes: usize,
+    config: ApspConfig,
 ) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
     let n = proj.node_count();
-    if n > max_nodes {
+    if n > config.max_nodes {
         return Err(PathfindingError::TooLarge {
             nodes: n,
-            limit: max_nodes,
+            limit: config.max_nodes,
         });
     }
 
+    match config.parallelism {
+        Parallelism::Sequential => apsp_sequential(proj),
+        Parallelism::Auto | Parallelism::Threads(_) => apsp_parallel(proj, config.parallelism),
+    }
+}
+
+fn apsp_sequential(proj: &GraphProjection) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
     // Why: `iter_nodes()` returns ASC by NodeId per spec 16 §E03, so
     // result.push() order is already ASC by source; we only need to ensure
     // each sssp call returns ASC by target (which it does per §E17), then
@@ -53,4 +73,33 @@ pub fn apsp(
     }
     result.sort_by_key(|&(s, t, _)| (s.get(), t.get()));
     Ok(result)
+}
+
+fn apsp_parallel(
+    proj: &GraphProjection,
+    parallelism: Parallelism,
+) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
+    let sources: Vec<NodeId> = proj.iter_nodes().collect();
+    let runner =
+        ParallelRunner::new(parallelism).expect("ParallelRunner builds for valid parallelism");
+
+    runner.install(|| {
+        sources
+            .into_par_iter()
+            .map(|source| {
+                let mut rows = Vec::new();
+                for (target, cost) in sssp(proj, source)? {
+                    if source != target {
+                        rows.push((source, target, cost));
+                    }
+                }
+                Ok(rows)
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|nested| {
+                let mut result: Vec<(NodeId, NodeId, f64)> = nested.into_iter().flatten().collect();
+                result.sort_by_key(|&(s, t, _)| (s.get(), t.get()));
+                result
+            })
+    })
 }

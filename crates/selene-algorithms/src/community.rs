@@ -40,4 +40,4 @@ mod triangle_count;
 
 pub use label_propagation::label_propagation;
 pub use louvain::louvain;
-pub use triangle_count::triangle_count;
+pub use triangle_count::{TriangleCountConfig, triangle_count};

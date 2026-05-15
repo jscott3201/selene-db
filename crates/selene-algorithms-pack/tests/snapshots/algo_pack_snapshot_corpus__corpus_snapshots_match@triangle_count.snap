@@ -2,4 +2,4 @@
 source: crates/selene-algorithms-pack/tests/algo_pack_snapshot_corpus.rs
 expression: entry.render()
 ---
-triangle_count [Algorithm] CALL algo.triangle_count('p')
+triangle_count [Algorithm] CALL algo.triangle_count('p', NULL)

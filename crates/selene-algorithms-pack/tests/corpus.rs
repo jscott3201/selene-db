@@ -15,7 +15,7 @@ pagerank_defaults [Algorithm] CALL algo.pagerank('p', NULL, NULL, NULL)
 betweenness_defaults [Algorithm] CALL algo.betweenness('p', NULL)
 label_propagation_defaults [Algorithm] CALL algo.label_propagation('p', NULL)
 louvain_defaults [Algorithm] CALL algo.louvain('p', NULL)
-triangle_count [Algorithm] CALL algo.triangle_count('p')
+triangle_count [Algorithm] CALL algo.triangle_count('p', NULL)
 wcc [Algorithm] CALL algo.wcc('p')
 scc [Algorithm] CALL algo.scc('p')
 wcc_count [Algorithm] CALL algo.wcc_count('p')
@@ -25,6 +25,6 @@ articulation_points [Algorithm] CALL algo.articulation_points('p')
 bridges [Algorithm] CALL algo.bridges('p')
 dijkstra [Algorithm] MATCH (source), (target) CALL algo.dijkstra('p', source, target) YIELD cost, path, length
 sssp [Algorithm] MATCH (source) CALL algo.sssp('p', source) YIELD target_node, cost
-apsp [Algorithm] CALL algo.apsp('p', 100)
+apsp [Algorithm] CALL algo.apsp('p', 100, NULL)
 ");
 }
