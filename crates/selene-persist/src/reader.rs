@@ -96,7 +96,7 @@ impl<'a> Iterator for WalEntryStream<'a> {
                 return Some(Err(error.into()));
             }
             let header = match read_entry_header(&mut self.file, offset) {
-                Ok((header, _)) => header,
+                Ok((header, _bytes_consumed)) => header,
                 Err(error) => {
                     self.stopped = true;
                     return Some(Err(error));
@@ -373,13 +373,30 @@ mod tests {
         {
             let mut file = File::create(&path).unwrap();
             file.write_all(b"SLDB").unwrap();
-            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&3_u16.to_le_bytes()).unwrap();
             file.write_all(&0_u16.to_le_bytes()).unwrap();
             file.write_all(&0_u64.to_le_bytes()).unwrap();
         }
         assert!(matches!(
             WalReader::open(&path),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 3, minor: 0 })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unsupported_v1_file_is_rejected() {
+        let path = temp_path("version-v1");
+        {
+            let mut file = File::create(&path).unwrap();
+            file.write_all(b"SLDB").unwrap();
+            file.write_all(&1_u16.to_le_bytes()).unwrap();
+            file.write_all(&0_u16.to_le_bytes()).unwrap();
+            file.write_all(&0_u64.to_le_bytes()).unwrap();
+        }
+        assert!(matches!(
+            WalReader::open(&path),
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
         ));
         let _ = fs::remove_file(path);
     }

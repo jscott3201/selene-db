@@ -110,7 +110,7 @@ pub struct WalWriter {
 }
 
 impl WalWriter {
-    /// Open a WAL file for append, creating the v1 header for a new file.
+    /// Open a WAL file for append, creating the v2 header for a new file.
     ///
     /// Existing files are scanned once to find the last valid entry. A partial
     /// or checksum-invalid tail is truncated to the last valid offset.
@@ -308,8 +308,8 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
         }
 
         file.seek(SeekFrom::Start(offset))?;
-        let header = match read_entry_header(&mut *file, offset) {
-            Ok((header, _)) => header,
+        let (header, bytes_consumed) = match read_entry_header(&mut *file, offset) {
+            Ok(header) => header,
             Err(PersistError::TruncatedEntry { .. }) | Err(PersistError::HeaderCodec(_)) => {
                 return Ok(Scan {
                     last_sequence: previous,
@@ -332,7 +332,7 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
                 truncate_to: last_valid_offset,
             });
         }
-        let payload_start = file.stream_position()?;
+        let payload_start = offset.saturating_add(bytes_consumed as u64);
         let payload_end = payload_start.saturating_add(u64::from(header.payload_len));
         if payload_end > file_len {
             return Ok(Scan {

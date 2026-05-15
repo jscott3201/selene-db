@@ -17,6 +17,7 @@ miette.workspace = true
 serde.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
 blake3.workspace = true
+xxhash-rust.workspace = true
 zstd.workspace = true
 tracing.workspace = true
 
