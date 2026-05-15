@@ -20,10 +20,21 @@
 
 use std::collections::VecDeque;
 
+use rayon::prelude::*;
 use selene_core::NodeId;
 
+use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::{RowIndex, SENTINEL};
+
+/// Configuration for betweenness centrality.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BetweennessConfig {
+    /// Optional deterministic sample size for approximate betweenness.
+    pub sample_size: Option<usize>,
+    /// Requested parallel execution policy.
+    pub parallelism: Parallelism,
+}
 
 /// Compute betweenness centrality for every node in the projection.
 ///
@@ -32,34 +43,152 @@ use crate::structural::{RowIndex, SENTINEL};
 /// `vec![]`.
 ///
 /// When `sample_size` is `Some(k)` with `0 < k < node_count`, sources are
-/// sampled deterministically (`step = node_count / k`) and the final
-/// centrality is scaled by `node_count / k` per §E24. `Some(k)` with
-/// `k >= node_count` is equivalent to `None`. `Some(0)` returns zero
-/// centrality for every node.
+/// sampled deterministically using endpoint-aware spacing and the final
+/// centrality is scaled by `node_count / k` per §E24. `Some(k)` with `k >=
+/// node_count` is equivalent to `None`. `Some(0)` returns zero centrality for
+/// every node.
 #[must_use]
-pub fn betweenness(proj: &GraphProjection, sample_size: Option<usize>) -> Vec<(NodeId, f64)> {
-    let idx = RowIndex::new(proj);
-    let n = idx.len();
+pub fn betweenness(proj: &GraphProjection, config: BetweennessConfig) -> Vec<(NodeId, f64)> {
+    match config.parallelism {
+        Parallelism::Sequential => betweenness_sequential(proj, config.sample_size),
+        Parallelism::Auto | Parallelism::Threads(_) => {
+            betweenness_parallel(proj, config.sample_size, config.parallelism)
+        }
+    }
+}
+
+fn betweenness_sequential(
+    proj: &GraphProjection,
+    sample_size: Option<usize>,
+) -> Vec<(NodeId, f64)> {
+    let adjacency = DenseAdjacency::new(proj);
+    let n = adjacency.len();
     if n == 0 {
         return Vec::new();
     }
 
-    // Cache directed out-neighbor lists once (BFS revisits these per source).
-    let mut out_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n);
-    for d in 0..n as u32 {
-        let node = idx.node_id_of(d);
-        let neighbors: Vec<u32> = proj
-            .out_neighbors(node)
-            .iter()
-            .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
-            .collect();
-        out_neighbors_dense.push(neighbors);
+    let (sources, scale) = compute_sample_sources(n, sample_size);
+    let mut state = WorkerState::new(n);
+    for source in sources {
+        accumulate_brandes_at_source(&adjacency, source, &mut state);
+    }
+    apply_sample_scaling(&mut state.centrality, scale);
+    project_and_sort_centrality_pairs(&adjacency, state.centrality)
+}
+
+fn betweenness_parallel(
+    proj: &GraphProjection,
+    sample_size: Option<usize>,
+    parallelism: Parallelism,
+) -> Vec<(NodeId, f64)> {
+    let adjacency = DenseAdjacency::new(proj);
+    let n = adjacency.len();
+    if n == 0 {
+        return Vec::new();
     }
 
-    let mut centrality: Vec<f64> = vec![0.0; n];
+    let (sources, scale) = compute_sample_sources(n, sample_size);
+    let runner =
+        ParallelRunner::new(parallelism).expect("ParallelRunner builds for valid parallelism");
+    let mut state = runner.install(|| {
+        sources
+            .into_par_iter()
+            .fold(
+                || WorkerState::new(n),
+                |mut state, source| {
+                    accumulate_brandes_at_source(&adjacency, source, &mut state);
+                    state
+                },
+            )
+            .reduce(|| WorkerState::new(n), WorkerState::merge)
+    });
 
-    // Determine source dense indices per §E24.
-    //
+    apply_sample_scaling(&mut state.centrality, scale);
+    project_and_sort_centrality_pairs(&adjacency, state.centrality)
+}
+
+struct DenseAdjacency {
+    idx: RowIndex,
+    out_neighbors_dense: Vec<Vec<u32>>,
+}
+
+impl DenseAdjacency {
+    fn new(proj: &GraphProjection) -> Self {
+        let idx = RowIndex::new(proj);
+        let n = idx.len();
+        let mut out_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n);
+        for d in 0..n as u32 {
+            let node = idx.node_id_of(d);
+            let neighbors: Vec<u32> = proj
+                .out_neighbors(node)
+                .iter()
+                .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+                .collect();
+            out_neighbors_dense.push(neighbors);
+        }
+        Self {
+            idx,
+            out_neighbors_dense,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.out_neighbors_dense.len()
+    }
+
+    fn node_id_of(&self, dense: u32) -> NodeId {
+        self.idx.node_id_of(dense)
+    }
+
+    fn out_neighbors(&self, dense: u32) -> &[u32] {
+        &self.out_neighbors_dense[dense as usize]
+    }
+}
+
+struct WorkerState {
+    centrality: Vec<f64>,
+    pred: Vec<Vec<u32>>,
+    sigma: Vec<f64>,
+    dist: Vec<u32>,
+    delta: Vec<f64>,
+    queue: VecDeque<u32>,
+    stack: Vec<u32>,
+}
+
+impl WorkerState {
+    fn new(n: usize) -> Self {
+        Self {
+            centrality: vec![0.0; n],
+            pred: (0..n).map(|_| Vec::new()).collect(),
+            sigma: vec![0.0; n],
+            dist: vec![SENTINEL; n],
+            delta: vec![0.0; n],
+            queue: VecDeque::with_capacity(n),
+            stack: Vec::with_capacity(n),
+        }
+    }
+
+    fn reset_for_source(&mut self) {
+        for v in 0..self.centrality.len() {
+            self.pred[v].clear();
+            self.sigma[v] = 0.0;
+            self.dist[v] = SENTINEL;
+            self.delta[v] = 0.0;
+        }
+        self.queue.clear();
+        self.stack.clear();
+    }
+
+    fn merge(mut a: Self, b: Self) -> Self {
+        debug_assert_eq!(a.centrality.len(), b.centrality.len());
+        for (x, y) in a.centrality.iter_mut().zip(&b.centrality) {
+            *x += y;
+        }
+        a
+    }
+}
+
+fn compute_sample_sources(n: usize, sample_size: Option<usize>) -> (Vec<u32>, f64) {
     // Why endpoint-aware spacing (PR #60 Codex P2):
     // The donor's `step = n / k` indexing biases toward low dense indices
     // because integer floor division never reaches the tail. For example
@@ -70,7 +199,7 @@ pub fn betweenness(proj: &GraphProjection, sample_size: Option<usize>) -> Vec<(N
     // intermediate samples evenly: `n=5, k=4` → `[0, 1, 2, 4]`; `n=10, k=3`
     // → `[0, 4, 9]`. The k == 1 case degenerates to a single sample at
     // index 0 (the formula divides by zero otherwise).
-    let (sources, scale): (Vec<u32>, f64) = match sample_size {
+    match sample_size {
         Some(0) => (Vec::new(), 1.0),
         Some(1) if n > 1 => (vec![0u32], n as f64),
         Some(k) if k < n && k >= 2 => {
@@ -80,78 +209,66 @@ pub fn betweenness(proj: &GraphProjection, sample_size: Option<usize>) -> Vec<(N
             (sampled, n as f64 / k as f64)
         }
         _ => ((0..n as u32).collect(), 1.0),
-    };
+    }
+}
 
-    // Per-iteration state arrays — allocated once, cleared between sources.
-    let mut pred: Vec<Vec<u32>> = (0..n).map(|_| Vec::new()).collect();
-    let mut sigma: Vec<f64> = vec![0.0; n];
-    let mut dist: Vec<u32> = vec![SENTINEL; n];
-    let mut delta: Vec<f64> = vec![0.0; n];
+fn accumulate_brandes_at_source(adjacency: &DenseAdjacency, source: u32, state: &mut WorkerState) {
+    state.reset_for_source();
+    let si = source as usize;
+    state.sigma[si] = 1.0;
+    state.dist[si] = 0;
+    state.queue.push_back(source);
 
-    for &s in &sources {
-        // Reset per-source state. Why: clearing in-place is O(n) per source
-        // and avoids reallocation; per-source vectors are wasteful.
-        for v in 0..n {
-            pred[v].clear();
-            sigma[v] = 0.0;
-            dist[v] = SENTINEL;
-            delta[v] = 0.0;
-        }
-
-        let si = s as usize;
-        sigma[si] = 1.0;
-        dist[si] = 0;
-        let mut queue: VecDeque<u32> = VecDeque::new();
-        let mut stack: Vec<u32> = Vec::new();
-        queue.push_back(s);
-
-        // BFS phase: discover shortest paths.
-        while let Some(v) = queue.pop_front() {
-            stack.push(v);
-            let vi = v as usize;
-            let d_v = dist[vi];
-            for &w in &out_neighbors_dense[vi] {
-                let wi = w as usize;
-                if dist[wi] == SENTINEL {
-                    queue.push_back(w);
-                    dist[wi] = d_v + 1;
-                }
-                if dist[wi] == d_v + 1 {
-                    sigma[wi] += sigma[vi];
-                    pred[wi].push(v);
-                }
-            }
-        }
-
-        // Dependency accumulation: walk back through the stack in reverse
-        // BFS order.
-        while let Some(w) = stack.pop() {
+    // BFS phase: discover shortest paths.
+    while let Some(v) = state.queue.pop_front() {
+        state.stack.push(v);
+        let vi = v as usize;
+        let d_v = state.dist[vi];
+        for &w in adjacency.out_neighbors(v) {
             let wi = w as usize;
-            for &v in &pred[wi] {
-                let vi = v as usize;
-                // Why: sigma[v] / sigma[w] is well-defined because sigma[w]
-                // is positive (w was reached via at least one shortest path)
-                // when pred[w] is non-empty.
-                let increment = (sigma[vi] / sigma[wi]) * (1.0 + delta[wi]);
-                delta[vi] += increment;
+            if state.dist[wi] == SENTINEL {
+                state.queue.push_back(w);
+                state.dist[wi] = d_v + 1;
             }
-            if w != s {
-                centrality[wi] += delta[wi];
+            if state.dist[wi] == d_v + 1 {
+                state.sigma[wi] += state.sigma[vi];
+                state.pred[wi].push(v);
             }
         }
     }
 
-    // Apply sample-size scaling (§E24). When scale == 1.0 this is a no-op
-    // but the multiply is cheaper than branching.
+    // Dependency accumulation: walk back through the stack in reverse BFS order.
+    while let Some(w) = state.stack.pop() {
+        let wi = w as usize;
+        for &v in &state.pred[wi] {
+            let vi = v as usize;
+            // Why: sigma[v] / sigma[w] is well-defined because sigma[w] is
+            // positive when pred[w] is non-empty.
+            let increment = (state.sigma[vi] / state.sigma[wi]) * (1.0 + state.delta[wi]);
+            state.delta[vi] += increment;
+        }
+        if w != source {
+            state.centrality[wi] += state.delta[wi];
+        }
+    }
+}
+
+fn apply_sample_scaling(centrality: &mut [f64], scale: f64) {
     if scale != 1.0 {
-        for slot in centrality.iter_mut() {
+        for slot in centrality {
             *slot *= scale;
         }
     }
+}
 
-    // Materialize + sort DESC by score with NodeId ASC tie-break (§E21).
-    let mut result: Vec<(NodeId, f64)> = (0..n as u32)
-        .map(|d| (idx.node_id_of(d), centrality[d as usize]))
+fn project_and_sort_centrality_pairs(
+    adjacency: &DenseAdjacency,
+    centrality: Vec<f64>,
+) -> Vec<(NodeId, f64)> {
+    let mut result: Vec<(NodeId, f64)> = centrality
+        .into_iter()
+        .enumerate()
+        .map(|(d, score)| (adjacency.node_id_of(d as u32), score))
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     result

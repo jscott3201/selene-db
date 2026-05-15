@@ -69,7 +69,7 @@ fn bench_betweenness(c: &mut Criterion) {
     c.bench_function("algo_pack/algo_betweenness_default", |b| {
         b.iter(|| {
             std::hint::black_box(
-                state.execute("CALL algo.betweenness('p', NULL) YIELD node_id, score"),
+                state.execute("CALL algo.betweenness('p', NULL, NULL) YIELD node_id, score"),
             );
         });
     });

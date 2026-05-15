@@ -35,7 +35,7 @@ pub mod snapshot_summary;
 pub mod structural;
 
 pub use catalog::{ProjectionCatalog, ProjectionRef};
-pub use centrality::{PageRankConfig, betweenness, pagerank};
+pub use centrality::{BetweennessConfig, PageRankConfig, betweenness, pagerank};
 pub use community::{TriangleCountConfig, label_propagation, louvain, triangle_count};
 pub use error::AlgorithmsError;
 pub use parallel::Parallelism;

@@ -210,7 +210,7 @@ impl AlgoPackInvocation {
                 projection_name,
                 sample_size,
             } => format!(
-                "CALL algo.betweenness({}, {})",
+                "CALL algo.betweenness({}, {}, NULL)",
                 quoted(projection_name),
                 nullable_usize(*sample_size)
             ),
