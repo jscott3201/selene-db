@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-//! Criterion benches for sequential graph-algorithm baselines.
+//! Criterion benches for graph-algorithm baselines.
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
