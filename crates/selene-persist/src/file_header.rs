@@ -7,7 +7,7 @@ use crate::{PersistError, PersistResult};
 /// WAL file magic.
 pub const WAL_MAGIC: [u8; 4] = *b"SLDB";
 /// WAL major format version.
-pub const WAL_VERSION_MAJOR: u16 = 1;
+pub const WAL_VERSION_MAJOR: u16 = 2;
 /// WAL minor format version.
 pub const WAL_VERSION_MINOR: u16 = 0;
 /// Fixed WAL file header length.
@@ -25,7 +25,7 @@ pub struct WalFileHeader {
 }
 
 impl WalFileHeader {
-    /// Construct a v1.0 WAL file header.
+    /// Construct a v2.0 WAL file header.
     #[must_use]
     pub const fn new(snapshot_seq: u64) -> Self {
         Self {
@@ -107,10 +107,21 @@ mod tests {
     fn unsupported_version_is_reported() {
         let mut bytes = Vec::new();
         WalFileHeader::new(0).write_to(&mut bytes).unwrap();
-        bytes[4..6].copy_from_slice(&2u16.to_le_bytes());
+        bytes[4..6].copy_from_slice(&1u16.to_le_bytes());
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+        ));
+    }
+
+    #[test]
+    fn v3_future_version_is_rejected() {
+        let mut bytes = Vec::new();
+        WalFileHeader::new(0).write_to(&mut bytes).unwrap();
+        bytes[4..6].copy_from_slice(&3u16.to_le_bytes());
+        assert!(matches!(
+            WalFileHeader::read_from(&mut bytes.as_slice()),
+            Err(PersistError::UnsupportedVersion { major: 3, minor: 0 })
         ));
     }
 

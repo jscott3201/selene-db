@@ -1,7 +1,7 @@
 //! Read-only WAL iteration.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufReader, Read};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
@@ -51,9 +51,10 @@ impl WalReader {
     where
         F: Fn(&WalEntryHeader) -> bool + 'static,
     {
-        let mut file = File::open(&self.path)?;
+        let file = File::open(&self.path)?;
+        let mut file = BufReader::with_capacity(64 * 1024, file);
         WalFileHeader::read_from(&mut file)?;
-        let file_len = file.metadata()?.len();
+        let file_len = file.get_ref().metadata()?.len();
         Ok(WalEntryStream {
             file,
             file_len,
@@ -68,7 +69,7 @@ impl WalReader {
 
 /// Streaming WAL entry iterator.
 pub struct WalEntryStream<'a> {
-    file: File,
+    file: BufReader<File>,
     file_len: u64,
     next_offset: u64,
     previous_sequence: u64,
@@ -91,12 +92,8 @@ impl<'a> Iterator for WalEntryStream<'a> {
             }
 
             let offset = self.next_offset;
-            if let Err(error) = self.file.seek(SeekFrom::Start(offset)) {
-                self.stopped = true;
-                return Some(Err(error.into()));
-            }
-            let header = match read_entry_header(&mut self.file, offset) {
-                Ok((header, _)) => header,
+            let (header, bytes_consumed) = match read_entry_header(&mut self.file, offset) {
+                Ok(header) => header,
                 Err(error) => {
                     self.stopped = true;
                     return Some(Err(error));
@@ -115,13 +112,7 @@ impl<'a> Iterator for WalEntryStream<'a> {
                 self.stopped = true;
                 return Some(Err(error));
             }
-            let payload_start = match self.file.stream_position() {
-                Ok(position) => position,
-                Err(error) => {
-                    self.stopped = true;
-                    return Some(Err(error.into()));
-                }
-            };
+            let payload_start = offset.saturating_add(bytes_consumed as u64);
             let payload_end = payload_start.saturating_add(u64::from(header.payload_len));
             if payload_end > self.file_len {
                 self.stopped = true;
@@ -224,6 +215,21 @@ mod tests {
         }]
     }
 
+    fn large_changes(seed: u32, len: usize) -> Vec<Change> {
+        let mut state = seed;
+        let mut payload = Vec::with_capacity(len);
+        for _ in 0..len {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            payload.push((state >> 24) as u8);
+        }
+        vec![Change::IndexExtensionEvent {
+            provider: intern("reader.boundary").unwrap(),
+            payload: Arc::from(payload),
+        }]
+    }
+
     fn append(path: &Path, principal: Option<Arc<[u8]>>, id: u64) {
         let mut writer = WalWriter::open(path, WalConfig::default()).unwrap();
         writer
@@ -281,6 +287,30 @@ mod tests {
             entries[0].header.principal.as_deref(),
             Some(b"alice".as_slice())
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn bufreader_handles_partial_buffer_boundary() {
+        let path = temp_path("buffer-boundary");
+        let first = large_changes(0x1234_5678, 70 * 1024);
+        let second = large_changes(0x8765_4321, 70 * 1024);
+        {
+            let mut writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+            writer
+                .append(HlcTimestamp::new(1, 0), Origin::Local, None, &first)
+                .unwrap();
+            writer
+                .append(HlcTimestamp::new(1, 1), Origin::Local, None, &second)
+                .unwrap();
+        }
+        let reader = WalReader::open(&path).unwrap();
+        let entries: Vec<_> = reader
+            .iterate(|_| true)
+            .unwrap()
+            .map(|result| result.unwrap().body().unwrap())
+            .collect();
+        assert_eq!(entries, vec![first, second]);
         let _ = fs::remove_file(path);
     }
 
@@ -373,13 +403,30 @@ mod tests {
         {
             let mut file = File::create(&path).unwrap();
             file.write_all(b"SLDB").unwrap();
-            file.write_all(&2_u16.to_le_bytes()).unwrap();
+            file.write_all(&3_u16.to_le_bytes()).unwrap();
             file.write_all(&0_u16.to_le_bytes()).unwrap();
             file.write_all(&0_u64.to_le_bytes()).unwrap();
         }
         assert!(matches!(
             WalReader::open(&path),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 3, minor: 0 })
+        ));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unsupported_v1_file_is_rejected() {
+        let path = temp_path("version-v1");
+        {
+            let mut file = File::create(&path).unwrap();
+            file.write_all(b"SLDB").unwrap();
+            file.write_all(&1_u16.to_le_bytes()).unwrap();
+            file.write_all(&0_u16.to_le_bytes()).unwrap();
+            file.write_all(&0_u64.to_le_bytes()).unwrap();
+        }
+        assert!(matches!(
+            WalReader::open(&path),
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
         ));
         let _ = fs::remove_file(path);
     }

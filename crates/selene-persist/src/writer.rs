@@ -110,7 +110,7 @@ pub struct WalWriter {
 }
 
 impl WalWriter {
-    /// Open a WAL file for append, creating the v1 header for a new file.
+    /// Open a WAL file for append, creating the v2 header for a new file.
     ///
     /// Existing files are scanned once to find the last valid entry. A partial
     /// or checksum-invalid tail is truncated to the last valid offset.
@@ -308,9 +308,18 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
         }
 
         file.seek(SeekFrom::Start(offset))?;
-        let header = match read_entry_header(&mut *file, offset) {
-            Ok((header, _)) => header,
-            Err(PersistError::TruncatedEntry { .. }) | Err(PersistError::HeaderCodec(_)) => {
+        let (header, bytes_consumed) = match read_entry_header(&mut *file, offset) {
+            Ok(header) => header,
+            // Treat oversized decoded headers as torn-tail too: with the
+            // fixed-layout v2 format, garbage bytes can decode as a valid
+            // u32 payload_len > MAX_WAL_ENTRY_BYTES or u16 principal_len > cap.
+            // Pre-v2 (postcard varint), oversized lengths surfaced as
+            // HeaderCodec; v2 surfaces them as typed cap errors that must be
+            // routed through the same recovery path.
+            Err(PersistError::TruncatedEntry { .. })
+            | Err(PersistError::HeaderCodec(_))
+            | Err(PersistError::PayloadTooLarge { .. })
+            | Err(PersistError::PrincipalTooLarge { .. }) => {
                 return Ok(Scan {
                     last_sequence: previous,
                     truncate_to: last_valid_offset,
@@ -332,7 +341,7 @@ fn scan_existing(file: &mut File) -> PersistResult<Scan> {
                 truncate_to: last_valid_offset,
             });
         }
-        let payload_start = file.stream_position()?;
+        let payload_start = offset.saturating_add(bytes_consumed as u64);
         let payload_end = payload_start.saturating_add(u64::from(header.payload_len));
         if payload_end > file_len {
             return Ok(Scan {
@@ -470,6 +479,59 @@ mod tests {
         {
             let mut file = OpenOptions::new().append(true).open(&path).unwrap();
             file.write_all(&[0, 1, 2]).unwrap();
+        }
+        let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+        assert_eq!(writer.last_sequence(), 1);
+        assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn oversized_payload_len_in_tail_truncates_on_open() {
+        let path = temp_path("tail-payload-oversize");
+        {
+            let mut writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+            writer
+                .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+                .unwrap();
+            writer.flush().unwrap();
+        }
+        let valid_len = fs::metadata(&path).unwrap().len();
+        // Write a 32-byte fixed-prefix header whose payload_len is u32::MAX
+        // (> MAX_WAL_ENTRY_BYTES). read_entry_header returns PayloadTooLarge;
+        // scan_existing must treat this as torn-tail and truncate back.
+        let mut garbage = [0_u8; 32];
+        garbage[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
+        {
+            let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&garbage).unwrap();
+        }
+        let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+        assert_eq!(writer.last_sequence(), 1);
+        assert_eq!(fs::metadata(&path).unwrap().len(), valid_len);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn oversized_principal_len_in_tail_truncates_on_open() {
+        let path = temp_path("tail-principal-oversize");
+        {
+            let mut writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+            writer
+                .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
+                .unwrap();
+            writer.flush().unwrap();
+        }
+        let valid_len = fs::metadata(&path).unwrap().len();
+        // Fixed-prefix with valid payload_len = 0 but principal_len_p1 large
+        // enough that principal_len > MAX_PRINCIPAL_BYTES. read_entry_header
+        // returns PrincipalTooLarge; scan_existing must treat as torn-tail.
+        let mut garbage = [0_u8; 32];
+        let oversized_p1 = (MAX_PRINCIPAL_BYTES as u16).saturating_add(2);
+        garbage[30..32].copy_from_slice(&oversized_p1.to_le_bytes());
+        {
+            let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+            file.write_all(&garbage).unwrap();
         }
         let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
         assert_eq!(writer.last_sequence(), 1);

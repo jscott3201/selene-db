@@ -14,7 +14,7 @@ pub enum PersistError {
     #[diagnostic(code(SLENE_P_001))]
     Io(#[from] std::io::Error),
 
-    /// Postcard encode/decode failure for the entry header.
+    /// WAL entry-header encode/decode failure.
     #[error("wal header codec: {0}")]
     #[diagnostic(code(SLENE_P_002))]
     HeaderCodec(String),

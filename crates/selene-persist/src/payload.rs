@@ -52,13 +52,8 @@ pub(crate) fn verify_checksum(header: &WalEntryHeader, bytes: &[u8]) -> PersistR
 }
 
 pub(crate) fn checksum_lo(bytes: &[u8]) -> u32 {
-    let hash = blake3::hash(bytes);
-    u32::from_le_bytes([
-        hash.as_bytes()[0],
-        hash.as_bytes()[1],
-        hash.as_bytes()[2],
-        hash.as_bytes()[3],
-    ])
+    let hash = xxhash_rust::xxh3::xxh3_64(bytes);
+    (hash & 0xFFFF_FFFF) as u32
 }
 
 #[cfg(test)]
@@ -129,6 +124,11 @@ mod tests {
         let changes = vec![change(vec![8_u8; COMPRESS_THRESHOLD * 4])];
         let encoded = encode_changes(&changes).unwrap();
         assert_eq!(encoded.checksum_lo, checksum_lo(&encoded.bytes));
+    }
+
+    #[test]
+    fn xxh3_checksum_is_stable() {
+        assert_eq!(checksum_lo(b"selene"), 0xD795_2FA1);
     }
 
     #[test]

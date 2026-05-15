@@ -1,6 +1,6 @@
 # selene-db benchmarks
 
-_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `d25a8b5`)._
+_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `2de0757`)._
 
 > Methodology: `scripts/run-benches.sh --profile full --layer criterion`
 > (sequential execution; concurrent `cargo bench` is blocked by the script's
@@ -51,14 +51,16 @@ Registered tokens: `selene-persist:wal:criterion`,
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `persist_wal_append_single` | 57.21 ms | 286.3 ms | 562.0 ms | Per-entry fsync; scale = WAL entries, not graph nodes. |
-| `persist_wal_append_single_no_fsync` | **11.77 ms** | 57.69 ms | 114.0 ms | `SyncPolicy::OnFlushOnly`; donor-parity diagnostic with append/threshold/drop fsync suppressed. |
-| `persist_wal_append_batch_1000` | 5.36 ms | 8.48 ms | 11.52 ms | **49× faster than per-entry at 100k** — batching wins. |
-| `persist_wal_append_batch_1000_no_fsync` | **1.42 ms** | 4.02 ms | 6.87 ms | Batched donor-parity diagnostic; timed body does not call `flush()`. |
-| `persist_wal_replay` | 51.46 ms | 276.3 ms | 551.7 ms | Linear in entry count. |
-| `persist_snapshot_write` | 666.8 µs | 1.83 ms | 3.48 ms | Snapshot capture; sub-linear at 100k. |
-| `persist_snapshot_read` | 540.1 µs | 2.34 ms | 4.58 ms | Snapshot read-and-apply. |
-| `persist_full_recovery` | 26.17 ms | 135.7 ms | 284.7 ms | Snapshot reconciliation + WAL replay. |
+| `persist_wal_append_single` | 59.51 ms | 293.7 ms | 588.9 ms | Per-entry fsync; scale = WAL entries, not graph nodes. |
+| `persist_wal_append_single_no_fsync` | **11.16 ms** | 54.49 ms | 108.6 ms | `SyncPolicy::OnFlushOnly`; donor-parity diagnostic with append/threshold/drop fsync suppressed. |
+| `persist_wal_append_batch_1000` | 6.31 ms | 8.02 ms | 10.95 ms | **54× faster than per-entry at 100k** — batching wins. |
+| `persist_wal_append_batch_1000_no_fsync` | **1.46 ms** | 3.79 ms | 6.37 ms | Batched donor-parity diagnostic; timed body does not call `flush()`. |
+| `persist_wal_replay` | **4.04 ms** | 16.78 ms | 30.51 ms | BRIEF-90 WAL v2: fixed-layout header + xxh3 checksum + BufReader. |
+| `persist_snapshot_write` | 719.3 µs | 2.12 ms | 4.58 ms | Snapshot capture; sub-linear at 100k. |
+| `persist_snapshot_read` | 549.6 µs | 2.35 ms | 4.68 ms | Snapshot read-and-apply. |
+| `persist_full_recovery` | 2.93 ms | 12.91 ms | 24.75 ms | Snapshot reconciliation + WAL v2 replay. |
+
+BRIEF-90: fixed-layout header (no postcard varint) + xxh3 checksum + BufReader on iterate path; WAL v1→v2.
 
 Platform note: donor WAL append baselines were measured with snapshot-only sync behavior. The `_no_fsync` rows use `SyncPolicy::OnFlushOnly`, which suppresses append fsync, threshold-triggered fsync, and drop-time fsync; an explicit caller-issued `flush()` would still sync. There is no replay `_no_fsync` sibling because replay's timed body is read-only, so sync policy would not isolate a useful signal.
 
