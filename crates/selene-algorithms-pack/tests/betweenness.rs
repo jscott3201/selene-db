@@ -7,7 +7,7 @@ use common::{
     build_weighted_projection, direct_algorithm_rows, execute_ok, execute_result, graph_with_edges,
     graph_with_labeled_weighted_edges, invalid_argument_detail, istr, registry, rows, table_values,
 };
-use selene_algorithms::betweenness;
+use selene_algorithms::{BetweennessConfig, Parallelism, betweenness};
 use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{AnalysisError, ExpectedType, GqlType, ProcedureRegistry, TypeMismatchContext};
@@ -20,7 +20,7 @@ fn algo_betweenness_signature_matches_declared_metadata() {
     let registry = registry(&pack);
     let metadata = lookup(&registry);
 
-    assert_eq!(metadata.signature.parameters.len(), 2);
+    assert_eq!(metadata.signature.parameters.len(), 3);
     assert_eq!(
         metadata.signature.parameters[0].name.as_str(),
         "projection_name"
@@ -33,6 +33,12 @@ fn algo_betweenness_signature_matches_declared_metadata() {
     );
     assert_eq!(metadata.signature.parameters[1].ty, GqlType::Integer);
     assert!(metadata.signature.parameters[1].nullable);
+    assert_eq!(
+        metadata.signature.parameters[2].name.as_str(),
+        "parallelism"
+    );
+    assert_eq!(metadata.signature.parameters[2].ty, GqlType::Integer);
+    assert!(metadata.signature.parameters[2].nullable);
     assert_eq!(
         metadata
             .output_schema
@@ -52,7 +58,7 @@ fn algo_betweenness_returns_node_score_rows_matching_direct_api_call_for_none_sa
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('p', NULL) YIELD node_id, score",
+        "CALL algo.betweenness('p', NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -69,7 +75,7 @@ fn algo_betweenness_returns_node_score_rows_matching_direct_api_call_for_full_sa
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('p', 4) YIELD node_id, score",
+        "CALL algo.betweenness('p', 4, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -86,7 +92,7 @@ fn algo_betweenness_returns_all_zero_scores_when_sample_size_zero() {
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('p', 0) YIELD node_id, score",
+        "CALL algo.betweenness('p', 0, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -105,7 +111,7 @@ fn algo_betweenness_returns_node_score_rows_matching_direct_api_call_for_sampled
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('p', 4) YIELD node_id, score",
+        "CALL algo.betweenness('p', 4, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -122,7 +128,7 @@ fn algo_betweenness_sorted_desc_by_score_then_asc_by_node_id() {
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('p', NULL) YIELD node_id, score",
+        "CALL algo.betweenness('p', NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -144,7 +150,7 @@ fn algo_betweenness_errors_on_missing_projection_name() {
     let (graph, _) = graph_with_edges(7_606, &[(0, 1)]);
 
     let err = execute_result(
-        "CALL algo.betweenness('missing', NULL) YIELD node_id",
+        "CALL algo.betweenness('missing', NULL, NULL) YIELD node_id",
         &graph,
         &registry,
     )
@@ -161,7 +167,7 @@ fn algo_betweenness_returns_zero_rows_for_empty_projection() {
     build_empty_projection(&graph, &registry, "empty");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('empty', NULL) YIELD node_id, score",
+        "CALL algo.betweenness('empty', NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -177,12 +183,12 @@ fn algo_betweenness_is_deterministic_across_repeated_calls() {
     build_projection(&graph, &registry, "p");
 
     let first = rows(execute_ok(
-        "CALL algo.betweenness('p', 2) YIELD node_id, score",
+        "CALL algo.betweenness('p', 2, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
     let second = rows(execute_ok(
-        "CALL algo.betweenness('p', 2) YIELD node_id, score",
+        "CALL algo.betweenness('p', 2, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -194,7 +200,10 @@ fn algo_betweenness_is_deterministic_across_repeated_calls() {
 fn algo_pack_corpus_betweenness_entry_renders_to_expected_call() {
     let rendered = AlgoPackCorpus::b4_seed().render();
 
-    assert!(rendered.contains("betweenness_defaults [Algorithm] CALL algo.betweenness('p', NULL)"));
+    assert!(
+        rendered
+            .contains("betweenness_defaults [Algorithm] CALL algo.betweenness('p', NULL, NULL)")
+    );
 }
 
 #[test]
@@ -217,12 +226,12 @@ fn algo_betweenness_ignores_projection_edge_weights() {
     build_weighted_projection(&graph, &registry, "weighted", &[]);
 
     let unweighted = rows(execute_ok(
-        "CALL algo.betweenness('unweighted', NULL) YIELD node_id, score",
+        "CALL algo.betweenness('unweighted', NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
     let weighted = rows(execute_ok(
-        "CALL algo.betweenness('weighted', NULL) YIELD node_id, score",
+        "CALL algo.betweenness('weighted', NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -240,7 +249,7 @@ fn algo_betweenness_rejects_wrong_arity_at_analyze_time() {
     assert!(matches!(
         err,
         AnalysisError::WrongArgumentCount {
-            expected: 2,
+            expected: 3,
             actual: 1,
             ..
         }
@@ -252,7 +261,10 @@ fn algo_betweenness_rejects_static_non_integer_sample_size_at_analyze_time() {
     let pack = AlgorithmsPack::new();
     let registry = registry(&pack);
 
-    let err = analyze_failure("CALL algo.betweenness('p', 1.5) YIELD node_id", &registry);
+    let err = analyze_failure(
+        "CALL algo.betweenness('p', 1.5, NULL) YIELD node_id",
+        &registry,
+    );
     let AnalysisError::TypeMismatch {
         context,
         expected,
@@ -279,7 +291,7 @@ fn value_extended_not_emitted_in_betweenness_adapter_output() {
     build_projection(&graph, &registry, "p");
 
     let table = rows(execute_ok(
-        "CALL algo.betweenness('p', NULL) YIELD node_id, score",
+        "CALL algo.betweenness('p', NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -299,7 +311,7 @@ fn nullable_option_usize_accepts_value_uint_on_all_targets_via_dynamic_arg() {
     build_unweighted_projection(&graph, &registry, "p", &["Person"]);
 
     let table = rows(execute_ok(
-        "MATCH (cfg:Config) CALL algo.betweenness('p', cfg.sample) YIELD node_id, score RETURN node_id, score",
+        "MATCH (cfg:Config) CALL algo.betweenness('p', cfg.sample, NULL) YIELD node_id, score RETURN node_id, score",
         &graph,
         &registry,
     ));
@@ -316,7 +328,7 @@ fn nullable_option_usize_rejects_non_integer_with_integer_or_null_detail_via_dyn
     build_unweighted_projection(&graph, &registry, "p", &["Person"]);
 
     let err = execute_result(
-        "MATCH (cfg:Config) CALL algo.betweenness('p', cfg.sample) YIELD node_id RETURN node_id",
+        "MATCH (cfg:Config) CALL algo.betweenness('p', cfg.sample, NULL) YIELD node_id RETURN node_id",
         &graph,
         &registry,
     )
@@ -336,7 +348,15 @@ fn direct_betweenness_rows(
         name,
         node_labels.unwrap_or(&[]),
         None,
-        |projection| betweenness_rows(betweenness(projection, sample_size)),
+        |projection| {
+            betweenness_rows(betweenness(
+                projection,
+                BetweennessConfig {
+                    sample_size,
+                    parallelism: Parallelism::Auto,
+                },
+            ))
+        },
     )
 }
 

@@ -8,7 +8,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
-    ApspConfig, GraphProjection, PageRankConfig, Parallelism, ProjectionConfig,
+    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism, ProjectionConfig,
     TriangleCountConfig, apsp, betweenness, louvain, pagerank, triangle_count,
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
@@ -47,9 +47,15 @@ fn bench_betweenness(c: &mut Criterion) {
         let state = BenchState::from_bench_fixture(scale);
         // Sample large betweenness fixtures so the 10k baseline stays bounded.
         let sample_size = betweenness_sample_size(scale);
-        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
-            b.iter(|| black_box(betweenness(&state.projection, sample_size)));
-        });
+        for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
+            let config = BetweennessConfig {
+                sample_size,
+                parallelism,
+            };
+            group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
+                b.iter(|| black_box(betweenness(&state.projection, config)));
+            });
+        }
     }
     group.finish();
 }

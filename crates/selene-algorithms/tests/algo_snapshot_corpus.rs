@@ -21,10 +21,10 @@ use std::collections::BTreeSet;
 
 use roaring::RoaringBitmap;
 use selene_algorithms::{
-    AlgoResult, AlgoSnapshotInput, ApspConfig, GraphProjection, GraphSummary, PageRankConfig,
-    Parallelism, ProjectionConfig, TriangleCountConfig, algo_summary, apsp, articulation_points,
-    betweenness, bridges, dijkstra, label_propagation, louvain, pagerank, scc, scc_count, sssp,
-    topological_sort, triangle_count, wcc, wcc_count,
+    AlgoResult, AlgoSnapshotInput, ApspConfig, BetweennessConfig, GraphProjection, GraphSummary,
+    PageRankConfig, Parallelism, ProjectionConfig, TriangleCountConfig, algo_summary, apsp,
+    articulation_points, betweenness, bridges, dijkstra, label_propagation, louvain, pagerank, scc,
+    scc_count, sssp, topological_sort, triangle_count, wcc, wcc_count,
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::SharedGraph;
@@ -482,7 +482,13 @@ fn dispatch(
             (
                 "betweenness",
                 label,
-                ResultOwner::NodePairsFloat(betweenness(proj, sample_size)),
+                ResultOwner::NodePairsFloat(betweenness(
+                    proj,
+                    BetweennessConfig {
+                        sample_size,
+                        parallelism: Parallelism::Sequential,
+                    },
+                )),
             )
         }
         AlgoCorpusInvocation::LabelPropagation { max_iter } => (

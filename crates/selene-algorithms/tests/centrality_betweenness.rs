@@ -1,7 +1,10 @@
 //! Integration tests for `betweenness` per spec 16 §E19–§E24.
 
 use roaring::RoaringBitmap;
-use selene_algorithms::{GraphProjection, ProjectionConfig, betweenness};
+use selene_algorithms::{
+    BetweennessConfig, GraphProjection, Parallelism, ProjectionConfig,
+    betweenness as run_betweenness,
+};
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::SharedGraph;
 
@@ -44,6 +47,16 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<Node
     }
     txn.commit().unwrap();
     (shared, nodes)
+}
+
+fn betweenness(proj: &GraphProjection, sample_size: Option<usize>) -> Vec<(NodeId, f64)> {
+    run_betweenness(
+        proj,
+        BetweennessConfig {
+            sample_size,
+            parallelism: Parallelism::Sequential,
+        },
+    )
 }
 
 #[test]
