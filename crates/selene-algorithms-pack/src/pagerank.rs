@@ -11,6 +11,7 @@ use selene_pack::{
 use crate::{
     args::{expect_arity, nullable_f64, nullable_usize, required_string},
     error::{algorithm_error, invalid_argument},
+    parallel::parse_parallelism,
     state::AlgorithmsPackState,
 };
 
@@ -43,6 +44,7 @@ impl ExternalProcedureMetadata for PageRankProcedure {
             parameter("damping", GqlType::Float, true),
             parameter("max_iterations", GqlType::Integer, true),
             parameter("tolerance", GqlType::Float, true),
+            parameter("parallelism", GqlType::Integer, true),
         ]
     }
 
@@ -83,7 +85,7 @@ impl ExternalGraphProcedure for PageRankProcedure {
 pub(crate) fn parse_pagerank_args(
     args: &[Value],
 ) -> Result<(String, PageRankConfig), ProcedureError> {
-    expect_arity(PAGERANK_PROC, args, 4)?;
+    expect_arity(PAGERANK_PROC, args, 5)?;
     let projection_name = required_string(PAGERANK_PROC, args, 0, "projection_name")?;
     let damping = nullable_f64(PAGERANK_PROC, args, 1, "damping", DEFAULT_DAMPING)?;
     let max_iter = nullable_usize(
@@ -94,6 +96,7 @@ pub(crate) fn parse_pagerank_args(
         DEFAULT_MAX_ITERATIONS,
     )?;
     let tolerance = nullable_f64(PAGERANK_PROC, args, 3, "tolerance", DEFAULT_TOLERANCE)?;
+    let parallelism = parse_parallelism(PAGERANK_PROC, &args[4])?;
     validate_config(damping, tolerance)?;
     Ok((
         projection_name,
@@ -101,6 +104,7 @@ pub(crate) fn parse_pagerank_args(
             damping,
             max_iter,
             tolerance,
+            parallelism,
         },
     ))
 }
@@ -145,13 +149,19 @@ mod tests {
 
     #[test]
     fn null_args_resolve_to_defaults() {
-        let (_, config) =
-            parse_pagerank_args(&[projection_name(), Value::Null, Value::Null, Value::Null])
-                .expect("NULL args resolve");
+        let (_, config) = parse_pagerank_args(&[
+            projection_name(),
+            Value::Null,
+            Value::Null,
+            Value::Null,
+            Value::Null,
+        ])
+        .expect("NULL args resolve");
 
         assert_eq!(config.damping, DEFAULT_DAMPING);
         assert_eq!(config.max_iter, DEFAULT_MAX_ITERATIONS);
         assert_eq!(config.tolerance, DEFAULT_TOLERANCE);
+        assert_eq!(config.parallelism, selene_algorithms::Parallelism::Auto);
     }
 
     #[test]
@@ -161,6 +171,7 @@ mod tests {
             Value::Float(DEFAULT_DAMPING),
             Value::Int(0),
             Value::Float(DEFAULT_TOLERANCE),
+            Value::Null,
         ])
         .expect("zero max_iter is accepted");
 
@@ -172,6 +183,7 @@ mod tests {
         let err = parse_pagerank_args(&[
             projection_name(),
             Value::Float(f64::INFINITY),
+            Value::Null,
             Value::Null,
             Value::Null,
         ])
@@ -187,6 +199,7 @@ mod tests {
             Value::Float(1.1),
             Value::Null,
             Value::Null,
+            Value::Null,
         ])
         .expect_err("out-of-range damping rejected");
 
@@ -200,6 +213,7 @@ mod tests {
             Value::Null,
             Value::Null,
             Value::Float(-0.1),
+            Value::Null,
         ])
         .expect_err("negative tolerance rejected");
 

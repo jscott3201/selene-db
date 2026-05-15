@@ -1,9 +1,8 @@
 //! Betweenness centrality procedure adapter.
 
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use selene_algorithms::{BetweennessConfig, Parallelism, betweenness};
+use selene_algorithms::{BetweennessConfig, betweenness};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -11,13 +10,12 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, nullable_option_usize, required_string},
-    error::invalid_argument,
+    parallel::parse_parallelism,
     state::{AlgorithmsPackState, with_algorithm_projection},
 };
 
 static BETWEENNESS_NAME: [&str; 2] = ["algo", "betweenness"];
 const BETWEENNESS_PROC: &str = "algo.betweenness";
-const MAX_PARALLELISM_THREADS: usize = 1024;
 
 pub(crate) fn procedure(state: Arc<AlgorithmsPackState>) -> Arc<dyn ExternalGraphProcedure> {
     Arc::new(BetweennessProcedure { state })
@@ -76,47 +74,6 @@ fn parse_betweenness_args(args: &[Value]) -> Result<(String, BetweennessConfig),
             sample_size,
             parallelism,
         },
-    ))
-}
-
-fn parse_parallelism(
-    procedure: &'static str,
-    value: &Value,
-) -> Result<Parallelism, ProcedureError> {
-    match value {
-        Value::Null => Ok(Parallelism::Auto),
-        Value::Int(0) => Ok(Parallelism::Sequential),
-        Value::Int(value) if *value > 0 => {
-            let threads = usize::try_from(*value)
-                .map_err(|_| invalid_argument(format!("{procedure}: parallelism is too large")))?;
-            threads_parallelism(procedure, threads)
-        }
-        Value::Int(_) => Err(invalid_argument(format!(
-            "{procedure}: parallelism must be NULL, 0, or a positive thread count"
-        ))),
-        Value::Uint(0) => Ok(Parallelism::Sequential),
-        Value::Uint(value) => {
-            let threads = usize::try_from(*value)
-                .map_err(|_| invalid_argument(format!("{procedure}: parallelism is too large")))?;
-            threads_parallelism(procedure, threads)
-        }
-        other => Err(invalid_argument(format!(
-            "{procedure}: expected parallelism to be INTEGER or NULL, got {other:?}"
-        ))),
-    }
-}
-
-fn threads_parallelism(
-    procedure: &'static str,
-    threads: usize,
-) -> Result<Parallelism, ProcedureError> {
-    if threads > MAX_PARALLELISM_THREADS {
-        return Err(invalid_argument(format!(
-            "{procedure}: parallelism exceeds adapter-side cap of {MAX_PARALLELISM_THREADS} threads"
-        )));
-    }
-    Ok(Parallelism::Threads(
-        NonZeroUsize::new(threads).expect("positive thread count"),
     ))
 }
 

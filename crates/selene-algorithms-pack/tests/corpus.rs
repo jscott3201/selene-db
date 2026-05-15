@@ -11,7 +11,7 @@ projection_build_all [Projection] CALL algo.projection_build('p', NULL, NULL, NU
 projection_get [Projection] CALL algo.projection_get('p')
 projection_drop [Projection] CALL algo.projection_drop('p')
 projection_list [Projection] CALL algo.projection_list()
-pagerank_defaults [Algorithm] CALL algo.pagerank('p', NULL, NULL, NULL)
+pagerank_defaults [Algorithm] CALL algo.pagerank('p', NULL, NULL, NULL, NULL)
 betweenness_defaults [Algorithm] CALL algo.betweenness('p', NULL, NULL)
 label_propagation_defaults [Algorithm] CALL algo.label_propagation('p', NULL)
 louvain_defaults [Algorithm] CALL algo.louvain('p', NULL)

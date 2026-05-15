@@ -1,9 +1,8 @@
 //! Pathfinding algorithm procedure adapters.
 
-use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use selene_algorithms::{ApspConfig, Parallelism, apsp, dijkstra, sssp};
+use selene_algorithms::{ApspConfig, apsp, dijkstra, sssp};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -11,7 +10,8 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, required_node_ref, required_nonnegative_usize, required_string},
-    error::{invalid_argument, pathfinding_error},
+    error::pathfinding_error,
+    parallel::parse_parallelism,
     state::{AlgorithmsPackState, with_algorithm_projection},
 };
 
@@ -22,7 +22,6 @@ static APSP_NAME: [&str; 2] = ["algo", "apsp"];
 const DIJKSTRA_PROC: &str = "algo.dijkstra";
 const SSSP_PROC: &str = "algo.sssp";
 const APSP_PROC: &str = "algo.apsp";
-const MAX_PARALLELISM_THREADS: usize = 1024;
 
 pub(crate) fn procedures(state: Arc<AlgorithmsPackState>) -> Vec<Arc<dyn ExternalGraphProcedure>> {
     vec![
@@ -211,47 +210,6 @@ fn parse_apsp_args(args: &[Value]) -> Result<(String, ApspConfig), ProcedureErro
     ))
 }
 
-fn parse_parallelism(
-    procedure: &'static str,
-    value: &Value,
-) -> Result<Parallelism, ProcedureError> {
-    match value {
-        Value::Null => Ok(Parallelism::Auto),
-        Value::Int(0) => Ok(Parallelism::Sequential),
-        Value::Int(value) if *value > 0 => {
-            let threads = usize::try_from(*value)
-                .map_err(|_| invalid_argument(format!("{procedure}: parallelism is too large")))?;
-            threads_parallelism(procedure, threads)
-        }
-        Value::Int(_) => Err(invalid_argument(format!(
-            "{procedure}: parallelism must be NULL, 0, or a positive thread count"
-        ))),
-        Value::Uint(0) => Ok(Parallelism::Sequential),
-        Value::Uint(value) => {
-            let threads = usize::try_from(*value)
-                .map_err(|_| invalid_argument(format!("{procedure}: parallelism is too large")))?;
-            threads_parallelism(procedure, threads)
-        }
-        other => Err(invalid_argument(format!(
-            "{procedure}: expected parallelism to be INTEGER or NULL, got {other:?}"
-        ))),
-    }
-}
-
-fn threads_parallelism(
-    procedure: &'static str,
-    threads: usize,
-) -> Result<Parallelism, ProcedureError> {
-    if threads > MAX_PARALLELISM_THREADS {
-        return Err(invalid_argument(format!(
-            "{procedure}: parallelism exceeds adapter-side cap of {MAX_PARALLELISM_THREADS} threads"
-        )));
-    }
-    Ok(Parallelism::Threads(
-        NonZeroUsize::new(threads).expect("positive thread count"),
-    ))
-}
-
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
     ExternalParameter { name, ty, nullable }
 }
@@ -262,6 +220,9 @@ fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroUsize;
+
+    use selene_algorithms::Parallelism;
     use selene_core::{NodeId, Value, intern};
 
     use super::*;

@@ -1,7 +1,7 @@
 //! Integration tests for `pagerank` per spec 16 §E19–§E23.
 
 use roaring::RoaringBitmap;
-use selene_algorithms::{GraphProjection, PageRankConfig, ProjectionConfig, pagerank};
+use selene_algorithms::{GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank};
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::SharedGraph;
 
@@ -51,6 +51,7 @@ fn default_config() -> PageRankConfig {
         damping: 0.85,
         max_iter: 100,
         tolerance: 1e-6,
+        parallelism: Parallelism::Sequential,
     }
 }
 
@@ -83,6 +84,7 @@ fn pagerank_max_iter_zero_returns_initial_uniform_scores() {
         damping: 0.85,
         max_iter: 0,
         tolerance: 1e-9,
+        parallelism: Parallelism::Sequential,
     };
     let result = pagerank(&proj, cfg);
     assert_eq!(result.len(), 3);
@@ -172,6 +174,7 @@ fn pagerank_convergence_threshold_terminates_early() {
         damping: 0.85,
         max_iter: 1000,
         tolerance: 1e-3,
+        parallelism: Parallelism::Sequential,
     };
     let result = pagerank(&proj, cfg);
     let total: f64 = result.iter().map(|&(_, s)| s).sum();
@@ -278,6 +281,7 @@ fn pagerank_zero_damping_pure_teleport() {
         damping: 0.0,
         max_iter: 50,
         tolerance: 1e-9,
+        parallelism: Parallelism::Sequential,
     };
     let result = pagerank(&proj, cfg);
     let expected = 1.0 / 4.0;

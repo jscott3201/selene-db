@@ -28,15 +28,22 @@ const BENCH_PAGERANK_CONFIG: PageRankConfig = PageRankConfig {
     damping: 0.85,
     max_iter: 100,
     tolerance: 1e-6,
+    parallelism: Parallelism::Sequential,
 };
 
 fn bench_pagerank(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/pagerank");
     for &scale in BENCH_SCALES {
         let state = BenchState::from_bench_fixture(scale);
-        group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {
-            b.iter(|| black_box(pagerank(&state.projection, BENCH_PAGERANK_CONFIG)));
-        });
+        for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
+            let config = PageRankConfig {
+                parallelism,
+                ..BENCH_PAGERANK_CONFIG
+            };
+            group.bench_function(BenchmarkId::new(mode, scale_label(scale)), |b| {
+                b.iter(|| black_box(pagerank(&state.projection, config)));
+            });
+        }
     }
     group.finish();
 }

@@ -200,7 +200,7 @@ impl AlgoPackInvocation {
                 max_iterations,
                 tolerance,
             } => format!(
-                "CALL algo.pagerank({}, {}, {}, {})",
+                "CALL algo.pagerank({}, {}, {}, {}, NULL)",
                 quoted(projection_name),
                 nullable_f64(*damping),
                 nullable_usize(*max_iterations),
