@@ -66,10 +66,15 @@ fn build_corpus(n: usize, dim: usize, seed: u64) -> Vec<(NodeId, Arc<[f32]>, u8)
 }
 
 fn criterion_config() -> Criterion {
+    let quick = std::env::var("SELENE_BENCH_PROFILE")
+        .ok()
+        .is_none_or(|profile| {
+            !profile.eq_ignore_ascii_case("full") && !profile.eq_ignore_ascii_case("stress")
+        });
     Criterion::default()
         .sample_size(10)
         .warm_up_time(Duration::from_millis(100))
-        .measurement_time(Duration::from_secs(30))
+        .measurement_time(Duration::from_secs(if quick { 5 } else { 30 }))
 }
 
 criterion_group! {
