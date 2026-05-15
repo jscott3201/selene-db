@@ -20,7 +20,7 @@ use selene_pack::{
     ActivationError, ActivationRegistry, GraphCommitSink, LifecycleEvent, LifecycleSink, NoopSink,
     Principal, RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE, Uploaded,
 };
-use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig, WalReader, WalWriter};
+use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalReader, WalWriter};
 use serde_json::{Value, json};
 
 struct RecordingProvider {
@@ -80,7 +80,7 @@ impl WalAppendingProvider {
         let writer = WalWriter::open(
             path,
             WalConfig {
-                fsync_every_n: 1,
+                sync_policy: SyncPolicy::EveryN(1),
                 snapshot_seq: 0,
             },
         )

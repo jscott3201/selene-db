@@ -7,8 +7,8 @@ use selene_core::{
     PropertyMap, PropertyValueType, Value, intern,
 };
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, WalConfig,
-    WalWriter,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
+    WalConfig, WalWriter,
 };
 
 use crate::{
@@ -87,7 +87,7 @@ fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {
     let mut writer = WalWriter::open(
         &dir.join(DEFAULT_WAL_FILE_NAME),
         WalConfig {
-            fsync_every_n: 1,
+            sync_policy: SyncPolicy::EveryN(1),
             snapshot_seq,
         },
     )

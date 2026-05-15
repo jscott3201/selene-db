@@ -17,14 +17,50 @@ use crate::{PersistError, PersistResult, WalEntryHeader};
 /// Conventional v1.0 single-file WAL name used by embedders.
 pub const DEFAULT_WAL_FILE_NAME: &str = "wal.log";
 
+/// WAL fsync scheduling policy.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyncPolicy {
+    /// Flush and fsync after every `N` appended entries, on explicit flush,
+    /// and when the writer is dropped.
+    ///
+    /// `EveryN(1)` is durability-by-default. Values greater than `1` opt into
+    /// group commit. `EveryN(0)` is normalized to `EveryN(1)` on open.
+    EveryN(u32),
+    /// Never fsync during append or drop; only explicit [`WalWriter::flush`]
+    /// fsyncs.
+    ///
+    /// This is an explicit opt-in for benchmark parity and offline paths where
+    /// durability is provided elsewhere. It is not the production default.
+    OnFlushOnly,
+}
+
+impl SyncPolicy {
+    /// Return the `EveryN` threshold when this policy syncs on append.
+    #[must_use]
+    pub const fn as_every_n(self) -> Option<u32> {
+        match self {
+            Self::EveryN(value) => Some(value),
+            Self::OnFlushOnly => None,
+        }
+    }
+
+    const fn normalized(self) -> Self {
+        match self {
+            Self::EveryN(0) => Self::EveryN(1),
+            policy => policy,
+        }
+    }
+
+    const fn syncs_on_drop(self) -> bool {
+        matches!(self, Self::EveryN(_))
+    }
+}
+
 /// WAL writer configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WalConfig {
-    /// Flush and fsync after this many appended entries.
-    ///
-    /// `1` is durability-by-default. Values greater than `1` opt into group
-    /// commit. `0` is normalized to `1`.
-    pub fsync_every_n: u32,
+    /// Flush and fsync schedule.
+    pub sync_policy: SyncPolicy,
     /// Highest WAL sequence covered by the snapshot this file extends.
     ///
     /// Written into the file header on a fresh file, and used to seed
@@ -38,7 +74,18 @@ pub struct WalConfig {
 impl Default for WalConfig {
     fn default() -> Self {
         Self {
-            fsync_every_n: 1,
+            sync_policy: SyncPolicy::EveryN(1),
+            snapshot_seq: 0,
+        }
+    }
+}
+
+impl WalConfig {
+    /// Construct a WAL config with the legacy group-commit threshold.
+    #[must_use]
+    pub const fn with_fsync_every_n(fsync_every_n: u32) -> Self {
+        Self {
+            sync_policy: SyncPolicy::EveryN(fsync_every_n),
             snapshot_seq: 0,
         }
     }
@@ -53,7 +100,7 @@ impl Default for WalConfig {
 pub struct WalWriter {
     file: File,
     last_sequence: u64,
-    fsync_every_n: u32,
+    sync_policy: SyncPolicy,
     entries_since_fsync: u32,
     /// File offset of the last fully-committed entry's end. On any
     /// append-time error, the file is truncated and re-seeked to this
@@ -77,7 +124,7 @@ impl WalWriter {
     /// Returns I/O, header, sequence, lock, or checksum errors encountered
     /// while opening and validating the WAL.
     pub fn open(path: &Path, config: WalConfig) -> PersistResult<Self> {
-        let fsync_every_n = config.fsync_every_n.max(1);
+        let sync_policy = config.sync_policy.normalized();
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
@@ -122,7 +169,7 @@ impl WalWriter {
         Ok(Self {
             file,
             last_sequence,
-            fsync_every_n,
+            sync_policy,
             entries_since_fsync: 0,
             committed_offset: scan.truncate_to,
         })
@@ -157,7 +204,10 @@ impl WalWriter {
         )?;
         let header_bytes = encode_entry_header(&header)?;
         let pending_count = self.entries_since_fsync.saturating_add(1);
-        let needs_fsync = pending_count >= self.fsync_every_n;
+        let needs_fsync = match self.sync_policy {
+            SyncPolicy::EveryN(threshold) => pending_count >= threshold,
+            SyncPolicy::OnFlushOnly => false,
+        };
 
         // Single contiguous record. Write it in one syscall via a Vec
         // assembly so partial writes are easier to reason about.
@@ -222,7 +272,9 @@ impl WalWriter {
 
 impl Drop for WalWriter {
     fn drop(&mut self) {
-        if let Err(error) = self.file.sync_data() {
+        if self.sync_policy.syncs_on_drop()
+            && let Err(error) = self.file.sync_data()
+        {
             tracing::error!(%error, "failed to fsync WAL writer on drop");
         }
         // The exclusive file lock is released when `file` is dropped.
@@ -431,11 +483,12 @@ mod tests {
         let mut writer = WalWriter::open(
             &path,
             WalConfig {
-                fsync_every_n: 3,
+                sync_policy: SyncPolicy::EveryN(3),
                 snapshot_seq: 0,
             },
         )
         .unwrap();
+        assert_eq!(writer.sync_policy.as_every_n(), Some(3));
         writer
             .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes())
             .unwrap();
@@ -448,6 +501,65 @@ mod tests {
             .unwrap();
         assert_eq!(writer.entries_since_fsync, 0);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn wal_config_default_is_every_n_1() {
+        assert_eq!(WalConfig::default().sync_policy, SyncPolicy::EveryN(1));
+    }
+
+    #[test]
+    fn with_fsync_every_n_preserves_legacy_threshold() {
+        assert_eq!(
+            WalConfig::with_fsync_every_n(7),
+            WalConfig {
+                sync_policy: SyncPolicy::EveryN(7),
+                snapshot_seq: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn every_n_zero_normalizes_to_one_on_open() {
+        let path = temp_path("normalize");
+        let writer = WalWriter::open(
+            &path,
+            WalConfig {
+                sync_policy: SyncPolicy::EveryN(0),
+                snapshot_seq: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(writer.sync_policy.as_every_n(), Some(1));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn on_flush_only_accumulates_until_explicit_flush() {
+        let path = temp_path("on-flush");
+        let mut writer = WalWriter::open(
+            &path,
+            WalConfig {
+                sync_policy: SyncPolicy::OnFlushOnly,
+                snapshot_seq: 0,
+            },
+        )
+        .unwrap();
+        for tick in 0..3 {
+            writer
+                .append(HlcTimestamp::new(1, tick), Origin::Local, None, &changes())
+                .unwrap();
+        }
+        assert_eq!(writer.entries_since_fsync, 3);
+        writer.flush().unwrap();
+        assert_eq!(writer.entries_since_fsync, 0);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn on_flush_only_drop_does_not_fsync() {
+        assert!(!SyncPolicy::OnFlushOnly.syncs_on_drop());
+        assert!(SyncPolicy::EveryN(1).syncs_on_drop());
     }
 
     #[test]
@@ -485,7 +597,7 @@ mod tests {
         let mut writer = WalWriter::open(
             &path,
             WalConfig {
-                fsync_every_n: 1,
+                sync_policy: SyncPolicy::EveryN(1),
                 snapshot_seq: 100,
             },
         )
@@ -507,7 +619,7 @@ mod tests {
             let mut writer = WalWriter::open(
                 &path,
                 WalConfig {
-                    fsync_every_n: 1,
+                    sync_policy: SyncPolicy::EveryN(1),
                     snapshot_seq: 100,
                 },
             )
@@ -522,7 +634,7 @@ mod tests {
         let writer = WalWriter::open(
             &path,
             WalConfig {
-                fsync_every_n: 1,
+                sync_policy: SyncPolicy::EveryN(1),
                 snapshot_seq: 0,
             },
         )

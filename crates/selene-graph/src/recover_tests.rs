@@ -7,7 +7,7 @@ use selene_core::{
 };
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, PersistError, SectionCompression, SnapshotBuilder, SnapshotConfig,
-    WalConfig, WalWriter,
+    SyncPolicy, WalConfig, WalWriter,
 };
 
 use crate::{CORE_PROVIDER_TAG, GraphError, GraphTypeDef, ProviderTag, SharedGraph};
@@ -54,7 +54,7 @@ fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {
     let mut writer = WalWriter::open(
         &path,
         WalConfig {
-            fsync_every_n: 1,
+            sync_policy: SyncPolicy::EveryN(1),
             snapshot_seq,
         },
     )

@@ -9,8 +9,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use criterion::Criterion;
 use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, WalConfig,
-    WalWriter,
+    DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
+    WalConfig, WalWriter,
 };
 use selene_testing::BenchProfile;
 
@@ -81,7 +81,7 @@ pub(crate) fn write_wal(dir: &Path, entries: usize, batch_size: usize, snapshot_
     let mut writer = WalWriter::open(
         &path,
         WalConfig {
-            fsync_every_n: 1_000,
+            sync_policy: SyncPolicy::EveryN(1_000),
             snapshot_seq,
         },
     )
