@@ -1,10 +1,12 @@
 //! Immutable graph snapshot and read accessors.
 
+use std::borrow::Cow;
 use std::ops::RangeBounds;
 use std::sync::Arc;
 
 use imbl::HashMap;
 use roaring::RoaringBitmap;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
@@ -57,7 +59,7 @@ pub struct SeleneGraph {
     /// Bitmap of edge rows carrying each edge label.
     pub idx_edge_label: HashMap<IStr, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
-    pub property_index: HashMap<(IStr, IStr), Arc<TypedIndex>>,
+    pub property_index: FxHashMap<(IStr, IStr), Arc<TypedIndex>>,
 }
 
 impl SeleneGraph {
@@ -78,7 +80,7 @@ impl SeleneGraph {
             adjacency_in: HashMap::new(),
             idx_label: HashMap::new(),
             idx_edge_label: HashMap::new(),
-            property_index: HashMap::new(),
+            property_index: FxHashMap::default(),
         }
     }
 
@@ -238,7 +240,7 @@ impl SeleneGraph {
         label: &IStr,
         property: &IStr,
         value: &Value,
-    ) -> Option<RoaringBitmap> {
+    ) -> Option<Cow<'_, RoaringBitmap>> {
         self.property_index
             .get(&(*label, *property))
             .and_then(|index| index.lookup_eq(value))

@@ -9,13 +9,13 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use imbl::HashMap;
+use rustc_hash::FxHashMap;
 use selene_core::{IStr, LabelSet, PropertyMap, Value};
 
 use crate::error::{GraphError, GraphResult};
 use crate::typed_index::{TypedIndex, TypedIndexKind, TypedIndexValueError};
 
-type PropertyIndexMap = HashMap<(IStr, IStr), Arc<TypedIndex>>;
+type PropertyIndexMap = FxHashMap<(IStr, IStr), Arc<TypedIndex>>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut PropertyIndexMap,

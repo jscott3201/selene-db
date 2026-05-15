@@ -103,6 +103,7 @@ fn bench_composite_index_proxy(c: &mut Criterion) {
                             &fixture.age_key(),
                             &Value::Int(fixture.sample_age_value()),
                         )
+                        .map(std::borrow::Cow::into_owned)
                         .unwrap_or_default();
                     let mut name_rows = fixture
                         .graph()
@@ -111,6 +112,7 @@ fn bench_composite_index_proxy(c: &mut Criterion) {
                             &fixture.name_key(),
                             &Value::String(fixture.sample_name_value()),
                         )
+                        .map(std::borrow::Cow::into_owned)
                         .unwrap_or_default();
                     name_rows &= age_rows;
                     std::hint::black_box(name_rows.len());

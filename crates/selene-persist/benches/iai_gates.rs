@@ -14,7 +14,7 @@ use iai_callgrind::{
 use selene_core::{Change, HlcTimestamp, Origin};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, ProviderRegistry, RecoveryProvider, RecoveryResult, SnapshotReader,
-    WalConfig, WalReader, WalWriter, recover,
+    SyncPolicy, WalConfig, WalReader, WalWriter, recover,
 };
 
 #[library_benchmark]
@@ -23,7 +23,7 @@ fn wal_append_single_1k() -> u64 {
     let mut writer = WalWriter::open(
         &dir.path().join(DEFAULT_WAL_FILE_NAME),
         WalConfig {
-            fsync_every_n: 1_000,
+            sync_policy: SyncPolicy::EveryN(1_000),
             snapshot_seq: 0,
         },
     )

@@ -2,7 +2,7 @@
 
 An embeddable property graph engine for Rust, built to the ISO/IEC 39075:2024 GQL standard.
 
-`selene-db` is a multi-crate Rust workspace that ships a small, high-performance graph core with a deliberate extension boundary. The query language is **strict ISO GQL**: no Cypher, no SQL, no SPARQL grammar in the engine. Capabilities the standard does not define — vectors, time-series, RDF, GraphRAG, full-text — live in opt-in extension crates that plug in through stable interfaces.
+`selene-db` is a multi-crate Rust workspace that ships a graph core with a deliberate extension boundary. The query language is **strict ISO GQL**: no Cypher, no SQL, no SPARQL grammar in the engine. Capabilities outside the ISO graph core, such as graph algorithms and vector indexes, live in opt-in extension crates that plug in through stable interfaces.
 
 The engine is library-only: no transport, no auth, no server. Embedders take the workspace crates as dependencies and run the engine in-process.
 
@@ -13,9 +13,23 @@ The engine is library-only: no transport, no auth, no server. Embedders take the
 - **Strict-serializable** transaction isolation; single graph write-lock with lock-free reads.
 - **Write-ahead log** (`SLDB` magic) and **rkyv-archived snapshots** (`SLSN` magic) with two-step recovery; the persistence crate never sees the graph types directly.
 - **Procedure-pack registry**: JSON-manifest-validated, typestate-sealed activation; one mutation funnel for both graph writes and lifecycle audit, atomic via the WAL.
-- **Graph algorithm library**: 15 public surfaces across structural (WCC / SCC / topological sort / articulation points / bridges), pathfinding (Dijkstra / SSSP / APSP), centrality (PageRank / Brandes betweenness), and community (label propagation / Louvain / triangle count). Each runs over a frozen `GraphProjection` with cached CSR adjacency; algorithms are pure functions of `&GraphProjection`.
+- **Graph algorithm library**: 15 public functions across structural (WCC / SCC / topological sort / articulation points / bridges), pathfinding (Dijkstra / SSSP / APSP), centrality (PageRank / Brandes betweenness), and community (label propagation / Louvain / triangle count). Each runs over a frozen `GraphProjection` with cached CSR adjacency; the algorithms pack exposes 19 `algo.*` procedures.
+- **Vector index extension**: HNSW and IVF providers with SQ8/PQ/OPQ quantization and 9 `vector.*` procedure-pack adapters.
 - **Snapshot-protected** runtime surfaces: planner, executor, procedure-pack, and algorithm outputs are pinned by golden snapshots for drift detection.
 - **Forbids unsafe Rust** workspace-wide; `missing_docs = "deny"`; per-file LOC cap; `rustls`-only TLS posture in transitive dependencies.
+
+## Capabilities
+
+| Capability | Backing crate | How it is exposed |
+|---|---|---|
+| ISO/IEC 39075:2024 GQL | [`selene-gql`](crates/selene-gql) | Parser, semantic analyzer, planner, optimizer, and row-at-a-time executor. |
+| In-memory property graph | [`selene-graph`](crates/selene-graph) | Copy-on-write snapshots, label indexes, typed property indexes, composite indexes, and the mutation funnel. |
+| Strict-serializable transactions | [`selene-graph`](crates/selene-graph) | Single write lock for mutation; lock-free read snapshots through `ArcSwap`. |
+| Persistence | [`selene-persist`](crates/selene-persist) | Graph-blind WAL (`SLDB`) and snapshot (`SLSN`) formats with two-step recovery. |
+| Procedure packs | [`selene-pack`](crates/selene-pack) | JSON-manifest activation, frozen procedure registry, and graph/mutation-tier external pack adapters. |
+| Graph algorithms | [`selene-algorithms`](crates/selene-algorithms) + [`selene-algorithms-pack`](crates/selene-algorithms-pack) | Pure `GraphProjection` algorithms plus `CALL algo.*` adapters. |
+| Vector indexes | [`selene-vector`](crates/selene-vector) + [`selene-vector-pack`](crates/selene-vector-pack) | `IndexProvider` implementations for HNSW/IVF plus `CALL vector.*` adapters. |
+| Test corpus mirrors | [`selene-testing`](crates/selene-testing) | Shared fixtures and pure-mirror snapshot DSLs consumed by crate integration tests. |
 
 ## Workspace layout
 
@@ -27,9 +41,17 @@ The engine is library-only: no transport, no auth, no server. Embedders take the
 | [`selene-gql`](crates/selene-gql) | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, `ProcedureRegistry` trait. |
 | [`selene-pack`](crates/selene-pack) | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate activation state machine, atomic mutation-funnel audit, canonical blake3 content hashing, and platform built-ins (`selene.health`, `selene.create_index`, `selene.drop_index`, `selene.pack.history`). |
 | [`selene-algorithms`](crates/selene-algorithms) | `GraphProjection` + `ProjectionCatalog` foundation, four algorithm families (structural / pathfinding / centrality / community), D21 snapshot harness. Independent of the GQL crate. |
+| [`selene-algorithms-pack`](crates/selene-algorithms-pack) | Procedure-pack adapters that expose `selene-algorithms` through GQL `CALL` by registering an external pack with `selene-pack`. |
+| [`selene-vector`](crates/selene-vector) | Opt-in HNSW and IVF vector index extension with search, mutation replay, snapshots, quantization, and `IndexProvider` registration. |
+| [`selene-vector-pack`](crates/selene-vector-pack) | Procedure-pack adapters that expose vector search, mutation, bulk mutation, IVF search, and IVF stats through GQL `CALL`. |
 | [`selene-testing`](crates/selene-testing) | Shared test fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / procedure-pack / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
-Opt-in extension crates plug in through the procedure-pack and `IndexProvider` hooks. Capabilities like vectors, spatial, time-series, RDF, GraphRAG, and full-text live in their own crates and are not part of the core workspace.
+Opt-in extension crates plug in through the procedure-pack and `IndexProvider` hooks. This workspace currently ships graph algorithms and vector indexes as extension crates.
+
+## Performance
+
+- Benchmark execution is local and script-driven: use `scripts/run-benches.sh`, not raw `cargo bench --workspace`, so criterion benches run sequentially and iai-callgrind gates run only where supported.
+- [`BENCHMARKS.md`](BENCHMARKS.md) is the committed, dated measurement record. `_design/perf-baselines.md` is a developer-local donor-comparison target file and is intentionally gitignored.
 
 ## Quickstart
 
@@ -44,10 +66,10 @@ selene-gql = { path = "path/to/selene-db/crates/selene-gql" }
 selene-persist = { path = "path/to/selene-db/crates/selene-persist" }
 ```
 
-A minimal session: build a graph, parse-analyze-plan-execute a GQL statement, observe results.
+Direct mutation via the graph crate's write API:
 
 ```rust
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_core::{GraphId, LabelSet, PropertyMap, Value, intern};
 use selene_graph::SharedGraph;
 
 let graph = SharedGraph::new(GraphId::new(1));
@@ -63,7 +85,30 @@ tx.mutator()
 tx.commit().unwrap();
 ```
 
-Running GQL goes through the `selene-gql` parser, semantic analyzer, planner, and executor — see the crate docs for the embedder-facing API.
+End-to-end GQL execution over the graph built above:
+
+```rust
+use selene_gql::{
+    EmptyProcedureRegistry, StatementOutput, analyze, execute_statement, parse, plan,
+};
+use selene_core::{Value, intern};
+
+let registry = EmptyProcedureRegistry;
+let statement = parse("MATCH (p:Person) RETURN p.name").unwrap();
+let analyzed = analyze(statement, &registry, None).unwrap();
+let planned = plan(&analyzed, &registry).unwrap();
+let mut session = selene_gql::Session::new(&graph);
+let output = execute_statement(&planned, &mut session, &registry).unwrap();
+
+let StatementOutput::Rows(rows) = output else {
+    panic!("query should return rows");
+};
+assert_eq!(rows.row_count(), 1);
+assert_eq!(
+    rows.rows()[0].values()[0],
+    Value::String(intern("Ada").unwrap())
+);
+```
 
 ## ISO/IEC 39075:2024 conformance posture
 
@@ -77,7 +122,7 @@ Running GQL goes through the `selene-gql` parser, semantic analyzer, planner, an
 
 ## Architecture decisions
 
-Twenty-one numbered decisions (`D1`–`D21`) define the workspace shape. They live in `CLAUDE.md` (decision log section) and in per-spec amendment ranges:
+Twenty-one numbered decisions (`D1`–`D21`) define the workspace shape. They are referenced from the spec files and milestone log:
 
 - D1 — v1.0 is an embeddable library (no server, transport, or auth).
 - D5 — Vectors and other non-graph capabilities live in their own extension crates, never in `selene-graph`.
@@ -112,7 +157,7 @@ Every PR exercises the full gate set:
 | `cargo-audit` | Vulnerability advisories against the locked dependency graph. |
 | `file-size cap (700 LOC)` | Per-file line-count gate. |
 | `no-secret scan` | Baseline secret-pattern grep against tracked source. |
-| `bench invocation lint` | Static checks that benches use the sanctioned runner script. |
+| `bench invocation lint` | Static checks that benches use the sanctioned runner script, bench tests stay pinned, mimalloc dev-deps are present where required, and `scripts/run-benches.sh` has smoke coverage. |
 | `third-party attribution current` | `THIRDPARTY.md` is in sync with `Cargo.lock` (regenerated via `cargo-about`). |
 
 Benchmarks are local-only and run via `scripts/run-benches.sh` — never `cargo bench --workspace`, which can dispatch bench binaries concurrently. iai-callgrind requires Linux + valgrind; the runner degrades to criterion-only on macOS without error.

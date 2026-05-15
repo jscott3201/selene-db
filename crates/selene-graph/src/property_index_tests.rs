@@ -14,6 +14,7 @@ fn rows(indexes: &PropertyIndexMap, label: IStr, property: IStr, value: &Value) 
         indexes
             .get(&(label, property))
             .and_then(|index| index.lookup_eq(value))
+            .map(std::borrow::Cow::into_owned)
             .unwrap_or_default(),
     )
 }
@@ -35,7 +36,7 @@ fn apply_node_create_populates_matching_indexes() {
     let label = intern("pi.create.label").unwrap();
     let age = intern("pi.create.age").unwrap();
     let name = intern("pi.create.name").unwrap();
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     indexes.insert(
         (label, name),
@@ -65,7 +66,7 @@ fn apply_node_delete_removes_matching_entries() {
     let label = intern("pi.delete.label").unwrap();
     let age = intern("pi.delete.age").unwrap();
     let props = property_map([(age, Value::Int(30))]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     apply_node_create(&mut indexes, &LabelSet::single(label), &props, 4);
 
@@ -79,7 +80,7 @@ fn apply_node_update_with_label_add_inserts_relevant_property() {
     let label = intern("pi.update.label-add").unwrap();
     let age = intern("pi.update.label-add.age").unwrap();
     let props = property_map([(age, Value::Int(41))]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
 
     apply_node_update(
@@ -99,7 +100,7 @@ fn apply_node_update_with_label_remove_deletes_relevant_property() {
     let label = intern("pi.update.label-remove").unwrap();
     let age = intern("pi.update.label-remove.age").unwrap();
     let props = property_map([(age, Value::Int(41))]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     apply_node_create(&mut indexes, &LabelSet::single(label), &props, 8);
 
@@ -121,7 +122,7 @@ fn apply_node_update_with_property_set_moves_rows_between_keys() {
     let age = intern("pi.update.prop-set.age").unwrap();
     let old_props = property_map([(age, Value::Int(41))]);
     let new_props = property_map([(age, Value::Int(42))]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 8);
 
@@ -144,7 +145,7 @@ fn apply_node_update_with_property_remove_drops_row() {
     let age = intern("pi.update.prop-remove.age").unwrap();
     let old_props = property_map([(age, Value::Int(41))]);
     let new_props = PropertyMap::new();
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 8);
 
@@ -165,7 +166,7 @@ fn kind_mismatch_skips_commit_update() {
     let label = intern("pi.kind.label").unwrap();
     let age = intern("pi.kind.age").unwrap();
     let props = property_map([(age, Value::String(intern("pi.kind.old").unwrap()))]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
 
     apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0);
@@ -178,7 +179,7 @@ fn null_values_are_skipped() {
     let label = intern("pi.null.label").unwrap();
     let age = intern("pi.null.age").unwrap();
     let props = property_map([(age, Value::Null)]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
 
     apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0);
@@ -199,7 +200,7 @@ fn untouched_indexes_keep_their_arc() {
         (age, Value::Int(2)),
         (name, Value::String(intern("pi.cow.ada").unwrap())),
     ]);
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     indexes.insert(
         (label, name),
@@ -290,7 +291,10 @@ fn rebuild_property_indexes_is_lenient_on_kind_drift() {
 
     // The matching row landed; the mismatched row was logged and skipped.
     let index = graph.property_index.get(&(label, age)).unwrap();
-    let hits = index.lookup_eq(&Value::Int(30)).unwrap_or_default();
+    let hits = index
+        .lookup_eq(&Value::Int(30))
+        .map(std::borrow::Cow::into_owned)
+        .unwrap_or_default();
     assert!(hits.contains(0));
     assert!(!hits.contains(1));
 }
@@ -309,7 +313,7 @@ fn apply_node_update_only_touches_affected_indexes() {
     let unrelated_label = intern("pi.affected.other-label").unwrap();
     let unrelated_property = intern("pi.affected.other-prop").unwrap();
 
-    let mut indexes = PropertyIndexMap::new();
+    let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), Arc::new(TypedIndex::new(TypedIndexKind::I64)));
     // Many unrelated indexes that the update should NOT touch.
     for i in 0..10 {
