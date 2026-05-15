@@ -39,7 +39,11 @@ fn bench_edge_create_cascade(c: &mut Criterion) {
                             .delete_node(fixture.sample_node_id())
                             .expect("cascade delete succeeds");
                     }
-                    std::hint::black_box(txn.commit().expect("commit succeeds").changes.len());
+                    let changes = txn.commit().expect("commit succeeds").changes.len();
+                    // Return the per-iteration graph so Criterion drops it
+                    // after timing; this benchmark measures mutation +
+                    // commit, not fixture teardown.
+                    std::hint::black_box((shared, changes))
                 },
                 BatchSize::SmallInput,
             );
@@ -83,9 +87,11 @@ fn bench_mutation_commit_batches(c: &mut Criterion) {
                                         .expect("node update succeeds");
                                 }
                             }
-                            std::hint::black_box(
-                                txn.commit().expect("commit succeeds").changes.len(),
-                            );
+                            let changes = txn.commit().expect("commit succeeds").changes.len();
+                            // Return the per-iteration graph so Criterion
+                            // drops it after timing; this benchmark measures
+                            // mutation + commit, not fixture teardown.
+                            std::hint::black_box((shared, changes))
                         },
                         BatchSize::SmallInput,
                     );
