@@ -8,7 +8,7 @@ use selene_core::{Value, intern};
 use super::*;
 
 fn row_index(index: &TypedIndex, value: &Value) -> RoaringBitmap {
-    index.lookup_eq(value).expect("kind matches")
+    index.lookup_eq(value).expect("kind matches").into_owned()
 }
 
 #[test]
@@ -94,6 +94,26 @@ fn insert_remove_round_trips_for_each_kind() {
         assert!(row_index(&index, &value).is_empty());
         assert_eq!(index.cardinality(), 0);
     }
+}
+
+#[test]
+fn lookup_eq_returns_cow_variants_for_hit_and_empty_match() {
+    let mut index = TypedIndex::new(TypedIndexKind::I64);
+    index.insert(&Value::Int(7), 3).unwrap();
+
+    let hit = index.lookup_eq(&Value::Int(7)).expect("kind matches");
+    assert!(matches!(hit, std::borrow::Cow::Borrowed(_)));
+    assert!(hit.contains(3));
+
+    let missing = index.lookup_eq(&Value::Int(8)).expect("kind matches");
+    assert!(matches!(missing, std::borrow::Cow::Owned(_)));
+    assert!(missing.is_empty());
+
+    assert!(
+        index
+            .lookup_eq(&Value::String(intern("wrong").unwrap()))
+            .is_none()
+    );
 }
 
 #[test]

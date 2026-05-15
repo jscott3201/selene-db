@@ -122,31 +122,27 @@ fn typed_index_rows(
         return linear_rows_filtered_by_bounds(scan, property, bounds, ctx);
     };
     let value = |literal: &Literal| literal_value(literal);
-    let indexed = match bounds {
-        TypedIndexBounds::Equality(literal) => {
-            ctx.snapshot()
-                .nodes_with_property_eq(&label, &property, &value(literal))
-        }
-        TypedIndexBounds::GreaterThan(literal) => ctx.snapshot().nodes_with_property_range(
-            &label,
-            &property,
-            (Excluded(value(literal)), Unbounded),
-        ),
-        TypedIndexBounds::GreaterEqual(literal) => ctx.snapshot().nodes_with_property_range(
-            &label,
-            &property,
-            (Included(value(literal)), Unbounded),
-        ),
-        TypedIndexBounds::LessThan(literal) => ctx.snapshot().nodes_with_property_range(
-            &label,
-            &property,
-            (Unbounded, Excluded(value(literal))),
-        ),
-        TypedIndexBounds::LessEqual(literal) => ctx.snapshot().nodes_with_property_range(
-            &label,
-            &property,
-            (Unbounded, Included(value(literal))),
-        ),
+    let indexed_rows = match bounds {
+        TypedIndexBounds::Equality(literal) => ctx
+            .snapshot()
+            .nodes_with_property_eq(&label, &property, &value(literal))
+            .map(|rows| rows.iter().collect::<Vec<_>>()),
+        TypedIndexBounds::GreaterThan(literal) => ctx
+            .snapshot()
+            .nodes_with_property_range(&label, &property, (Excluded(value(literal)), Unbounded))
+            .map(|rows| rows.iter().collect::<Vec<_>>()),
+        TypedIndexBounds::GreaterEqual(literal) => ctx
+            .snapshot()
+            .nodes_with_property_range(&label, &property, (Included(value(literal)), Unbounded))
+            .map(|rows| rows.iter().collect::<Vec<_>>()),
+        TypedIndexBounds::LessThan(literal) => ctx
+            .snapshot()
+            .nodes_with_property_range(&label, &property, (Unbounded, Excluded(value(literal))))
+            .map(|rows| rows.iter().collect::<Vec<_>>()),
+        TypedIndexBounds::LessEqual(literal) => ctx
+            .snapshot()
+            .nodes_with_property_range(&label, &property, (Unbounded, Included(value(literal))))
+            .map(|rows| rows.iter().collect::<Vec<_>>()),
         TypedIndexBounds::Range {
             lo,
             lo_inclusive,
@@ -165,11 +161,10 @@ fn typed_index_rows(
             };
             ctx.snapshot()
                 .nodes_with_property_range(&label, &property, (lo, hi))
+                .map(|rows| rows.iter().collect::<Vec<_>>())
         }
     };
-    indexed
-        .map(|rows| rows.iter().collect())
-        .unwrap_or_else(|| linear_rows_filtered_by_bounds(scan, property, bounds, ctx))
+    indexed_rows.unwrap_or_else(|| linear_rows_filtered_by_bounds(scan, property, bounds, ctx))
 }
 
 fn bitmap_union_rows(

@@ -68,6 +68,7 @@ fastrand = "2"
 parking_lot = "0.12"
 rayon = "1"
 imbl = { version = "7.0", default-features = false }
+rustc-hash = "2.1"
 roaring = "0.11"
 triomphe = "0.1"
 tracing = "0.1"

@@ -1,5 +1,6 @@
 //! Built-in per-`(label, property)` value index. See spec 03 section 5.2.
 
+use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -236,16 +237,16 @@ impl TypedIndex {
 
     /// Return the rows matching `value` exactly.
     #[must_use]
-    pub(crate) fn lookup_eq(&self, value: &Value) -> Option<RoaringBitmap> {
+    pub(crate) fn lookup_eq(&self, value: &Value) -> Option<Cow<'_, RoaringBitmap>> {
         match (self, typed_key(value).ok()?) {
-            (Self::I64(index), TypedKey::I64(key)) => Some(cloned_or_empty(index.get(&key))),
-            (Self::F64(index), TypedKey::F64(key)) => Some(cloned_or_empty(index.get(&key))),
-            (Self::String(index), TypedKey::String(key)) => Some(cloned_or_empty(index.get(&key))),
-            (Self::Date(index), TypedKey::Date(key)) => Some(cloned_or_empty(index.get(&key))),
+            (Self::I64(index), TypedKey::I64(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::F64(index), TypedKey::F64(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::String(index), TypedKey::String(key)) => Some(cow_or_empty(index.get(&key))),
+            (Self::Date(index), TypedKey::Date(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::LocalDateTime(index), TypedKey::LocalDateTime(key)) => {
-                Some(cloned_or_empty(index.get(&key)))
+                Some(cow_or_empty(index.get(&key)))
             }
-            (Self::Uuid(index), TypedKey::Uuid(key)) => Some(cloned_or_empty(index.get(&key))),
+            (Self::Uuid(index), TypedKey::Uuid(key)) => Some(cow_or_empty(index.get(&key))),
             _ => None,
         }
     }
@@ -507,8 +508,10 @@ fn cardinality<K>(index: &BTreeMap<K, RoaringBitmap>) -> u64 {
     index.values().map(RoaringBitmap::len).sum()
 }
 
-fn cloned_or_empty(bitmap: Option<&RoaringBitmap>) -> RoaringBitmap {
-    bitmap.cloned().unwrap_or_default()
+fn cow_or_empty(bitmap: Option<&RoaringBitmap>) -> Cow<'_, RoaringBitmap> {
+    bitmap
+        .map(Cow::Borrowed)
+        .unwrap_or_else(|| Cow::Owned(RoaringBitmap::new()))
 }
 
 fn remove_row<K: Ord>(index: &mut BTreeMap<K, RoaringBitmap>, key: &K, row: u32) {
