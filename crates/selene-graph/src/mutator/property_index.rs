@@ -22,20 +22,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ) -> GraphResult<()> {
         if self
             .txn
-            .working
+            .read()
             .property_index
             .contains_key(&(label, property))
         {
             return Err(GraphError::PropertyIndexAlreadyExists { label, property });
         }
         let index =
-            crate::property_index::build_property_index(&self.txn.working, label, property, kind)?;
+            crate::property_index::build_property_index(self.txn.read(), label, property, kind)?;
+        let graph_id = self.txn.read().graph_id();
         self.txn
-            .working
+            .guard_mut()
             .property_index
             .insert((label, property), Arc::new(index));
         self.txn.changes.push(Change::SchemaChanged {
-            graph: self.txn.working.graph_id(),
+            graph: graph_id,
             change: SchemaChange::PropertyIndexCreated {
                 label,
                 property,
@@ -50,17 +51,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// The operation is idempotent. Dropping an absent index succeeds and emits
     /// no WAL change.
     pub fn drop_property_index(&mut self, label: IStr, property: IStr) -> GraphResult<()> {
-        if self
+        if !self
             .txn
-            .working
+            .read()
             .property_index
-            .remove(&(label, property))
-            .is_none()
+            .contains_key(&(label, property))
         {
             return Ok(());
         }
+        let graph_id = self.txn.read().graph_id();
+        self.txn
+            .guard_mut()
+            .property_index
+            .remove(&(label, property));
         self.txn.changes.push(Change::SchemaChanged {
-            graph: self.txn.working.graph_id(),
+            graph: graph_id,
             change: SchemaChange::PropertyIndexDropped { label, property },
         });
         Ok(())

@@ -20,7 +20,7 @@ use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
 pub struct SharedGraph {
-    shared: Arc<RwLock<SeleneGraph>>,
+    shared: Arc<RwLock<Arc<SeleneGraph>>>,
     snapshot: Arc<ArcSwap<SeleneGraph>>,
     allocator: Arc<Mutex<IdAllocator>>,
     providers: Vec<Arc<dyn IndexProvider>>,
@@ -121,9 +121,10 @@ impl SharedGraph {
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
         let allocator = IdAllocator::from_meta_with_floors(&graph.meta, node_floor, edge_floor);
-        snapshot.store(Arc::new(graph.clone()));
+        let graph = Arc::new(graph);
+        snapshot.store(Arc::clone(&graph));
         Ok(Self {
-            shared: Arc::new(RwLock::new(graph.clone())),
+            shared: Arc::new(RwLock::new(graph)),
             snapshot,
             allocator: Arc::new(Mutex::new(allocator)),
             providers,
@@ -181,12 +182,11 @@ impl SharedGraph {
         kind: TypedIndexKind,
     ) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        if txn.working.property_index.contains_key(&(label, property)) {
+        if txn.read().property_index.contains_key(&(label, property)) {
             return Err(GraphError::PropertyIndexAlreadyExists { label, property });
         }
-        let index =
-            crate::property_index::build_property_index(&txn.working, label, property, kind)?;
-        txn.working
+        let index = crate::property_index::build_property_index(txn.read(), label, property, kind)?;
+        txn.guard_mut()
             .property_index
             .insert((label, property), Arc::new(index));
         txn.commit()?;
@@ -199,14 +199,10 @@ impl SharedGraph {
     /// publishing a new snapshot.
     pub fn drop_property_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        if txn
-            .working
-            .property_index
-            .remove(&(label, property))
-            .is_none()
-        {
+        if !txn.read().property_index.contains_key(&(label, property)) {
             return Ok(());
         }
+        txn.guard_mut().property_index.remove(&(label, property));
         txn.commit()?;
         Ok(())
     }
@@ -250,6 +246,12 @@ impl SharedGraph {
             self.allocator.lock(),
             self.providers.clone(),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn locked_arc_ptr_for_test(&self) -> *const SeleneGraph {
+        let guard = self.shared.read();
+        Arc::as_ptr(&*guard)
     }
 }
 

@@ -45,9 +45,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         };
         graph_type.node_types.push(node_type.clone());
         graph_type.validate_ref()?;
-        self.txn.working.meta.bound_type = Some(Arc::new(graph_type));
+        let graph_id = self.txn.read().graph_id();
+        self.txn.guard_mut().meta.bound_type = Some(Arc::new(graph_type));
         self.txn.changes.push(Change::SchemaChanged {
-            graph: self.txn.working.graph_id(),
+            graph: graph_id,
             change: SchemaChange::NodeTypeAdded {
                 graph_type: implicit_graph_type_id(),
                 label: name,
@@ -91,9 +92,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         };
         graph_type.edge_types.push(edge_type.clone());
         graph_type.validate_ref()?;
-        self.txn.working.meta.bound_type = Some(Arc::new(graph_type.clone()));
+        let graph_id = self.txn.read().graph_id();
+        self.txn.guard_mut().meta.bound_type = Some(Arc::new(graph_type.clone()));
         self.txn.changes.push(Change::SchemaChanged {
-            graph: self.txn.working.graph_id(),
+            graph: graph_id,
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: implicit_graph_type_id(),
                 label,
@@ -134,9 +136,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .without_node_type(name)
             .expect("node type existed above");
         next.validate_ref()?;
-        self.txn.working.meta.bound_type = Some(Arc::new(next));
+        let graph_id = self.txn.read().graph_id();
+        self.txn.guard_mut().meta.bound_type = Some(Arc::new(next));
         self.txn.changes.push(Change::SchemaChanged {
-            graph: self.txn.working.graph_id(),
+            graph: graph_id,
             change: SchemaChange::NodeTypeDropped {
                 graph_type: implicit_graph_type_id(),
                 name,
@@ -159,9 +162,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 reason: format!("edge type {name} does not exist"),
             })?;
         next.validate_ref()?;
-        self.txn.working.meta.bound_type = Some(Arc::new(next));
+        let graph_id = self.txn.read().graph_id();
+        self.txn.guard_mut().meta.bound_type = Some(Arc::new(next));
         self.txn.changes.push(Change::SchemaChanged {
-            graph: self.txn.working.graph_id(),
+            graph: graph_id,
             change: SchemaChange::EdgeTypeDropped {
                 graph_type: implicit_graph_type_id(),
                 name,
@@ -172,7 +176,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     fn current_graph_type(&self) -> GraphResult<GraphTypeDef> {
         self.txn
-            .working
+            .read()
             .meta
             .bound_type
             .as_deref()
