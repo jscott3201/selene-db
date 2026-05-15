@@ -1,9 +1,12 @@
 //! Sorted label sets per spec 02 section 5.3.
 //!
-//! Labels are ordered by [`IStr`] interner-key order. The inline capacity of 3
-//! matches the common node-label case; larger sets spill cleanly to the heap.
-//! Edges semantically carry exactly one label, but that constraint is enforced
-//! by `selene-graph`, not by this plain set type.
+//! Labels are ordered in memory by [`IStr`] interner-key order. On the wire,
+//! labels serialize in canonical lexicographic order by [`IStr::as_str`] and
+//! deserialize by re-sorting into the receiver's local interner-key order
+//! before duplicate validation. The inline capacity of 3 matches the common
+//! node-label case; larger sets spill cleanly to the heap. Edges semantically
+//! carry exactly one label, but that constraint is enforced by `selene-graph`,
+//! not by this plain set type.
 
 use std::error::Error;
 use std::fmt;
@@ -14,13 +17,13 @@ use rkyv::{
     ser::{Allocator, Writer},
     vec::{ArchivedVec, VecResolver},
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 use crate::IStr;
 
 /// Sorted set of graph labels.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct LabelSet(SmallVec<[IStr; 3]>);
 
 #[derive(Debug)]
@@ -124,17 +127,27 @@ impl Default for LabelSet {
     }
 }
 
+impl Serialize for LabelSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut raw = self.0.clone();
+        raw.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        raw.serialize(serializer)
+    }
+}
+
 impl<'de> Deserialize<'de> for LabelSet {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let raw: SmallVec<[IStr; 3]> = SmallVec::deserialize(deserializer)?;
+        let mut raw: SmallVec<[IStr; 3]> = SmallVec::deserialize(deserializer)?;
+        raw.sort_unstable_by_key(|label| *label);
         for window in raw.windows(2) {
             if window[0] >= window[1] {
-                return Err(serde::de::Error::custom(
-                    "LabelSet must be sorted by IStr order with no duplicates",
-                ));
+                return Err(serde::de::Error::custom("LabelSet has duplicate labels"));
             }
         }
         Ok(Self(raw))
@@ -156,7 +169,9 @@ where
     IStr: RkyvSerialize<S>,
 {
     fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-        ArchivedVec::serialize_from_slice(self.0.as_slice(), serializer)
+        let mut raw = self.0.clone();
+        raw.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        ArchivedVec::serialize_from_slice(raw.as_slice(), serializer)
     }
 }
 
@@ -171,6 +186,7 @@ where
         for label in self.as_slice() {
             raw.push(label.deserialize(deserializer)?);
         }
+        raw.sort_unstable_by_key(|label| *label);
         for window in raw.windows(2) {
             if window[0] >= window[1] {
                 rkyv::rancor::fail!(InvalidArchivedLabelSet);
@@ -268,18 +284,20 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_rejects_unsorted_payload() {
-        let a = label("ls.de.bad.a");
-        let b = label("ls.de.bad.b");
+    fn deserialize_resorts_payload_by_receiver_handle() {
+        let b = label("ls.de.bad.zebra");
+        let a = label("ls.de.bad.apple");
         let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
             let mut v = SmallVec::<[IStr; 3]>::new();
-            v.push(b);
             v.push(a);
+            v.push(b);
             v
         })
         .unwrap();
-        let result: Result<LabelSet, _> = postcard::from_bytes(&bytes);
-        assert!(result.is_err());
+        let result: LabelSet = postcard::from_bytes(&bytes).unwrap();
+        assert!(result.contains(&a));
+        assert!(result.contains(&b));
+        assert!(result.sorted_deduped_invariant_holds());
     }
 
     #[test]
@@ -319,10 +337,20 @@ mod tests {
     }
 
     #[test]
-    fn rkyv_deserialize_rejects_unsorted_payload() {
-        let a = label("ls.rkyv.bad.a");
-        let b = label("ls.rkyv.bad.b");
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![b, a]).unwrap();
+    fn rkyv_deserialize_resorts_payload_by_receiver_handle() {
+        let b = label("ls.rkyv.bad.zebra");
+        let a = label("ls.rkyv.bad.apple");
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![a, b]).unwrap();
+        let result = rkyv::from_bytes::<LabelSet, rkyv::rancor::Error>(&bytes).unwrap();
+        assert!(result.contains(&a));
+        assert!(result.contains(&b));
+        assert!(result.sorted_deduped_invariant_holds());
+    }
+
+    #[test]
+    fn rkyv_deserialize_rejects_duplicate_payload() {
+        let a = label("ls.rkyv.dup.a");
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![a, a]).unwrap();
         let result = rkyv::from_bytes::<LabelSet, rkyv::rancor::Error>(&bytes);
         assert!(result.is_err());
     }

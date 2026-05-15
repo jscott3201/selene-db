@@ -1,12 +1,15 @@
 //! Property maps per spec 02 section 5.2.
 //!
-//! Keys are always ordered by [`IStr`] interner-key order, not lexicographic
-//! order. Compact maps are closed-shape views over a fixed key set; inserting
-//! an unknown key widens them to the standard open representation.
+//! Keys are ordered in memory by [`IStr`] interner-key order for fast lookups.
+//! The wire format is different: maps serialize keys in canonical
+//! lexicographic order by [`IStr::as_str`], and deserialize by re-sorting into
+//! the receiver's local interner-key order before validating duplicate keys.
+//! Compact maps are closed-shape views over a fixed key set; inserting an
+//! unknown key widens them to the standard open representation.
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 use crate::{CoreError, CoreResult, IStr, Value};
@@ -14,7 +17,7 @@ use crate::{CoreError, CoreResult, IStr, Value};
 const MAX_PROPERTY_COUNT: usize = u32::MAX as usize;
 
 /// Property storage for open and closed graph values.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PropertyMap {
     /// Open graph representation: sorted key/value pairs.
     Standard(SmallVec<[(IStr, Value); 6]>),
@@ -219,13 +222,39 @@ impl Default for PropertyMap {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 enum PropertyMapWire {
     Standard(SmallVec<[(IStr, Value); 6]>),
     Compact {
         keys: Arc<[IStr]>,
         values: SmallVec<[Option<Value>; 6]>,
     },
+}
+
+impl Serialize for PropertyMap {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Standard(entries) => {
+                let mut entries = entries.clone();
+                entries.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
+                PropertyMapWire::Standard(entries).serialize(serializer)
+            }
+            Self::Compact { keys, values } => {
+                let mut pairs: Vec<(IStr, Option<Value>)> =
+                    keys.iter().copied().zip(values.iter().cloned()).collect();
+                pairs.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
+                let (keys, values): (Vec<_>, SmallVec<_>) = pairs.into_iter().unzip();
+                PropertyMapWire::Compact {
+                    keys: Arc::from(keys),
+                    values,
+                }
+                .serialize(serializer)
+            }
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for PropertyMap {
@@ -235,11 +264,12 @@ impl<'de> Deserialize<'de> for PropertyMap {
     {
         let wire = PropertyMapWire::deserialize(deserializer)?;
         match wire {
-            PropertyMapWire::Standard(entries) => {
+            PropertyMapWire::Standard(mut entries) => {
+                entries.sort_unstable_by_key(|(key, _)| *key);
                 for window in entries.windows(2) {
                     if window[0].0 >= window[1].0 {
                         return Err(serde::de::Error::custom(
-                            "PropertyMap::Standard entries must be sorted by IStr key with no duplicates",
+                            "PropertyMap::Standard entries have duplicate keys",
                         ));
                     }
                 }
@@ -253,14 +283,21 @@ impl<'de> Deserialize<'de> for PropertyMap {
                         values.len(),
                     )));
                 }
-                for window in keys.windows(2) {
-                    if window[0] >= window[1] {
+                let mut pairs: Vec<(IStr, Option<Value>)> =
+                    keys.iter().copied().zip(values).collect();
+                pairs.sort_unstable_by_key(|(key, _)| *key);
+                for window in pairs.windows(2) {
+                    if window[0].0 >= window[1].0 {
                         return Err(serde::de::Error::custom(
-                            "PropertyMap::Compact keys must be sorted by IStr order with no duplicates",
+                            "PropertyMap::Compact keys have duplicates",
                         ));
                     }
                 }
-                Ok(Self::Compact { keys, values })
+                let (keys, values): (Vec<_>, SmallVec<_>) = pairs.into_iter().unzip();
+                Ok(Self::Compact {
+                    keys: Arc::from(keys),
+                    values,
+                })
             }
         }
     }
@@ -411,20 +448,29 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_rejects_unsorted_standard_keys() {
-        let a = key("pm.de.std.a");
-        let b = key("pm.de.std.b");
-        let valid = PropertyMap::from_pairs([(a, int(1)), (b, int(2))]).unwrap();
-        let bytes = postcard::to_allocvec(&valid).unwrap();
-        let round: PropertyMap = postcard::from_bytes(&bytes).unwrap();
-        assert_eq!(round, valid);
-
+    fn deserialize_resorts_standard_keys_by_receiver_handle() {
+        let b = key("pm.de.std.zebra");
+        let a = key("pm.de.std.apple");
         let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
-        entries.push((b, int(2)));
         entries.push((a, int(1)));
-        let bad = PropertyMapWire::Standard(entries);
-        let bad_bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
-        let result: Result<PropertyMap, _> = postcard::from_bytes(&bad_bytes);
+        entries.push((b, int(2)));
+        let wire = PropertyMapWire::Standard(entries);
+        let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
+        let result: PropertyMap = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(result.get(&a), Some(&int(1)));
+        assert_eq!(result.get(&b), Some(&int(2)));
+        assert!(result.sorted_invariant_holds());
+    }
+
+    #[test]
+    fn deserialize_rejects_duplicate_standard_keys() {
+        let a = key("pm.de.std.dup");
+        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        entries.push((a, int(1)));
+        entries.push((a, int(2)));
+        let wire = PropertyMapWire::Standard(entries);
+        let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bytes);
         assert!(result.is_err());
     }
 
@@ -442,15 +488,29 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_rejects_unsorted_compact_keys() {
-        let a = key("pm.de.cmpsort.a");
-        let b = key("pm.de.cmpsort.b");
-        let bad = PropertyMapWire::Compact {
-            keys: Arc::from([b, a]),
+    fn deserialize_resorts_compact_keys_and_values_by_receiver_handle() {
+        let b = key("pm.de.cmpsort.zebra");
+        let a = key("pm.de.cmpsort.apple");
+        let wire = PropertyMapWire::Compact {
+            keys: Arc::from([a, b]),
             values: SmallVec::from_vec(vec![Some(int(1)), Some(int(2))]),
         };
-        let bad_bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
-        let result: Result<PropertyMap, _> = postcard::from_bytes(&bad_bytes);
+        let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
+        let result: PropertyMap = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(result.get(&a), Some(&int(1)));
+        assert_eq!(result.get(&b), Some(&int(2)));
+        assert!(result.sorted_invariant_holds());
+    }
+
+    #[test]
+    fn deserialize_rejects_duplicate_compact_keys() {
+        let a = key("pm.de.cmpdup.a");
+        let bad = PropertyMapWire::Compact {
+            keys: Arc::from([a, a]),
+            values: SmallVec::from_vec(vec![Some(int(1)), Some(int(2))]),
+        };
+        let bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bytes);
         assert!(result.is_err());
     }
 

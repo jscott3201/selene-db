@@ -280,17 +280,11 @@ impl TypedIndex {
                 })?;
                 Some(range_union(index, &start, &end))
             }
-            Self::String(index) => {
-                let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::String(key)) => Some(key),
-                    _ => None,
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::String(key)) => Some(key),
-                    _ => None,
-                })?;
-                Some(range_union(index, &start, &end))
-            }
+            // Why: `IStr` ordering is admission-order, not lexicographic.
+            // BRIEF-92 makes the v1.0 correctness cut by forcing runtime scan
+            // fallback for string ranges until a string-bytes secondary index
+            // exists.
+            Self::String(_) => None,
             Self::Date(index) => {
                 let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
                     Ok(TypedKey::Date(key)) => Some(key),
@@ -335,10 +329,10 @@ impl TypedIndex {
     /// order), not lexicographic — see `selene_core::IStr` rustdoc. So a
     /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval is
     /// not possible; lex-equivalent keys can be scattered throughout the
-    /// map. Switching the StringBtree key from `IStr` to `String` would
-    /// enable range iteration but lose interning's compactness — a
-    /// trade-off out of scope for v1.0 (deferred to a future brief if
-    /// prefix-query latency becomes a hot path).
+    /// map. BRIEF-92 applies the same v1.0 correctness cut to string range
+    /// lookups by returning `None` from [`Self::lookup_range`], letting
+    /// runtime scan fallback preserve query semantics until a string-bytes
+    /// secondary index lands in a future brief.
     #[must_use]
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {

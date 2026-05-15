@@ -7,11 +7,12 @@ use selene_core::{
 };
 
 use super::sections::{
-    decode_edges, decode_graph_types, decode_meta, decode_nodes, encode_edges, encode_graph_types,
-    encode_meta, encode_nodes, ensure_section_within_cap,
+    SchemaEntry, SchemaKey, decode_edges, decode_graph_types, decode_meta, decode_nodes,
+    decode_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
+    ensure_section_within_cap,
 };
 use super::*;
-use crate::{GraphError, SharedGraph};
+use crate::{GraphError, SharedGraph, TypedIndexKind};
 
 fn prop(name: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
@@ -192,6 +193,87 @@ fn encode_decode_round_trip_empty_graph_types() {
     let graph = graph_with_node();
     let rows = decode_graph_types(&encode_graph_types(&graph).unwrap()).unwrap();
     assert!(rows.is_empty());
+}
+
+#[test]
+fn scma_decode_resorts_rows_by_receiver_handle() {
+    let zebra = intern("core.scma.zebra").unwrap();
+    let apple = intern("core.scma.apple").unwrap();
+    let zebra_prop = intern("core.scma.zebra.prop").unwrap();
+    let apple_prop = intern("core.scma.apple.prop").unwrap();
+    let zebra_key = SchemaKey {
+        label: zebra,
+        property: zebra_prop,
+    };
+    let apple_key = SchemaKey {
+        label: apple,
+        property: apple_prop,
+    };
+    let rows = vec![
+        (
+            apple_key,
+            SchemaEntry {
+                kind: TypedIndexKind::I64,
+            },
+        ),
+        (
+            zebra_key,
+            SchemaEntry {
+                kind: TypedIndexKind::String,
+            },
+        ),
+    ];
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+        .unwrap()
+        .into_vec();
+
+    let decoded = decode_schemas(&bytes).unwrap();
+
+    assert_eq!(
+        decoded,
+        vec![
+            (
+                zebra_key,
+                SchemaEntry {
+                    kind: TypedIndexKind::String
+                }
+            ),
+            (
+                apple_key,
+                SchemaEntry {
+                    kind: TypedIndexKind::I64
+                }
+            ),
+        ]
+    );
+}
+
+#[test]
+fn scma_decode_rejects_duplicate_keys_after_resort() {
+    let label = intern("core.scma.dup.label").unwrap();
+    let property = intern("core.scma.dup.property").unwrap();
+    let key = SchemaKey { label, property };
+    let rows = vec![
+        (
+            key,
+            SchemaEntry {
+                kind: TypedIndexKind::I64,
+            },
+        ),
+        (
+            key,
+            SchemaEntry {
+                kind: TypedIndexKind::String,
+            },
+        ),
+    ];
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+        .unwrap()
+        .into_vec();
+
+    let result = decode_schemas(&bytes);
+
+    assert!(result.is_err());
 }
 
 #[test]

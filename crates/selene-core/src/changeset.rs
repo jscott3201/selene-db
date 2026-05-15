@@ -1,11 +1,14 @@
 //! WAL change payloads per spec 02 section 9.
 //!
 //! The principal/audit actor lives in the WAL entry header per D12; these
-//! payloads carry only the graph mutation itself.
+//! payloads carry only the graph mutation itself. Diff payloads keep
+//! [`IStr`]-handle sorted storage in memory, but serialize key lists in
+//! canonical lexicographic order by [`IStr::as_str`] and re-sort into the
+//! receiver's local handle order after decode.
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 use crate::{
@@ -86,7 +89,7 @@ pub enum Change {
 }
 
 /// Label set difference.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LabelDiff {
     /// Labels added by the mutation.
     pub added: SmallVec<[IStr; 2]>,
@@ -119,10 +122,23 @@ impl LabelDiff {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct LabelDiffWire {
     added: SmallVec<[IStr; 2]>,
     removed: SmallVec<[IStr; 2]>,
+}
+
+impl Serialize for LabelDiff {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut added = self.added.clone();
+        let mut removed = self.removed.clone();
+        added.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        removed.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        LabelDiffWire { added, removed }.serialize(serializer)
+    }
 }
 
 impl<'de> Deserialize<'de> for LabelDiff {
@@ -130,7 +146,9 @@ impl<'de> Deserialize<'de> for LabelDiff {
     where
         D: Deserializer<'de>,
     {
-        let wire = LabelDiffWire::deserialize(deserializer)?;
+        let mut wire = LabelDiffWire::deserialize(deserializer)?;
+        wire.added.sort_unstable_by_key(|key| *key);
+        wire.removed.sort_unstable_by_key(|key| *key);
         validate_sorted_unique(&wire.added, "LabelDiff.added")?;
         validate_sorted_unique(&wire.removed, "LabelDiff.removed")?;
         validate_disjoint(&wire.added, &wire.removed, "label")?;
@@ -142,7 +160,7 @@ impl<'de> Deserialize<'de> for LabelDiff {
 }
 
 /// Property map difference.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PropertyDiff {
     /// Keys set to a new value. Use [`Value::Null`] for an explicit null set.
     pub set: SmallVec<[(IStr, Value); 4]>,
@@ -192,10 +210,23 @@ impl PropertyDiff {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 struct PropertyDiffWire {
     set: SmallVec<[(IStr, Value); 4]>,
     removed: SmallVec<[IStr; 2]>,
+}
+
+impl Serialize for PropertyDiff {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut set = self.set.clone();
+        let mut removed = self.removed.clone();
+        set.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
+        removed.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        PropertyDiffWire { set, removed }.serialize(serializer)
+    }
 }
 
 impl<'de> Deserialize<'de> for PropertyDiff {
@@ -203,11 +234,13 @@ impl<'de> Deserialize<'de> for PropertyDiff {
     where
         D: Deserializer<'de>,
     {
-        let wire = PropertyDiffWire::deserialize(deserializer)?;
+        let mut wire = PropertyDiffWire::deserialize(deserializer)?;
+        wire.set.sort_unstable_by_key(|(key, _)| *key);
+        wire.removed.sort_unstable_by_key(|key| *key);
         for window in wire.set.windows(2) {
             if window[0].0 >= window[1].0 {
                 return Err(serde::de::Error::custom(
-                    "PropertyDiff.set entries must be sorted by key with no duplicates",
+                    "PropertyDiff.set entries have duplicate keys",
                 ));
             }
         }
@@ -561,6 +594,31 @@ mod tests {
     }
 
     #[test]
+    fn label_diff_deserialize_resorts_by_receiver_handle() {
+        let b = istr("change.deser.label.zebra");
+        let a = istr("change.deser.label.apple");
+        let bad = LabelDiffWireSer {
+            added: smallvec![a, b],
+            removed: SmallVec::new(),
+        };
+        let bytes = postcard::to_allocvec(&bad).unwrap();
+        let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round.added, SmallVec::<[IStr; 2]>::from_vec(vec![b, a]));
+    }
+
+    #[test]
+    fn label_diff_deserialize_rejects_duplicate_added() {
+        let label = istr("change.deser.label.dup");
+        let bad = LabelDiffWireSer {
+            added: smallvec![label, label],
+            removed: SmallVec::new(),
+        };
+        let bytes = postcard::to_allocvec(&bad).unwrap();
+        let result: Result<LabelDiff, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn label_diff_deserialize_rejects_overlap() {
         let label = istr("change.deser.bad");
         let mut added = SmallVec::<[IStr; 2]>::new();
@@ -570,6 +628,34 @@ mod tests {
         let bad = LabelDiffWireSer { added, removed };
         let bytes = postcard::to_allocvec(&bad).unwrap();
         let result: Result<LabelDiff, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn property_diff_deserialize_resorts_by_receiver_handle() {
+        let b = istr("change.deser.prop.zebra");
+        let a = istr("change.deser.prop.apple");
+        let bad = PropertyDiffWireSer {
+            set: smallvec![(a, Value::Int(1)), (b, Value::Int(2))],
+            removed: SmallVec::new(),
+        };
+        let bytes = postcard::to_allocvec(&bad).unwrap();
+        let round: PropertyDiff = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(
+            round.set,
+            SmallVec::<[(IStr, Value); 4]>::from_vec(vec![(b, Value::Int(2)), (a, Value::Int(1)),])
+        );
+    }
+
+    #[test]
+    fn property_diff_deserialize_rejects_duplicate_set_key() {
+        let key = istr("change.deser.prop.dup");
+        let bad = PropertyDiffWireSer {
+            set: smallvec![(key, Value::Int(1)), (key, Value::Int(2))],
+            removed: SmallVec::new(),
+        };
+        let bytes = postcard::to_allocvec(&bad).unwrap();
+        let result: Result<PropertyDiff, _> = postcard::from_bytes(&bytes);
         assert!(result.is_err());
     }
 

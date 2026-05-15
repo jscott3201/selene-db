@@ -13,6 +13,11 @@
 //! instances pre-dating this change. When v1.0 ships, any further format
 //! change to a CORE section bumps the envelope version so old snapshots
 //! fail with `PersistError::UnsupportedVersion` instead of garbled bytes.
+//!
+//! `CORE/SCMA` schema rows are stored in memory by [`IStr`] handle order via
+//! [`SchemaKey::Ord`]. Their wire order is canonical lexicographic order by
+//! `(label.as_str(), property.as_str())`; decode re-sorts to the receiver's
+//! local handle order before duplicate validation.
 
 use std::sync::Arc;
 
@@ -179,7 +184,9 @@ impl EdgeArchiveRow {
 ///
 /// In v1.0, schema entries map one-to-one with built-in property index
 /// registrations. BRIEF-15 (closed-graph types) extends the [`SchemaEntry`]
-/// payload but keeps the section sub-tag stable.
+/// payload but keeps the section sub-tag stable. In-memory order follows
+/// local [`IStr`] handles; the `CORE/SCMA` wire order is lexicographic by
+/// `label.as_str()` and `property.as_str()` for cross-process stability.
 #[derive(
     Clone,
     Copy,
@@ -354,16 +361,25 @@ pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Prov
             )
         })
         .collect();
-    rows.sort_by_key(|(key, _)| *key);
+    rows.sort_by(schema_wire_cmp);
     encode_rkyv(&rows, "CORE/SCMA")
 }
 
 pub(super) fn decode_schemas(
     bytes: &[u8],
 ) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
-    let rows: Vec<(SchemaKey, SchemaEntry)> = decode_rkyv(bytes, "CORE/SCMA")?;
+    let mut rows: Vec<(SchemaKey, SchemaEntry)> = decode_rkyv(bytes, "CORE/SCMA")?;
+    rows.sort_unstable_by_key(|(key, _)| *key);
     validate_sorted_unique(&rows, "CORE/SCMA")?;
     Ok(rows)
+}
+
+fn schema_wire_cmp(
+    lhs: &(SchemaKey, SchemaEntry),
+    rhs: &(SchemaKey, SchemaEntry),
+) -> std::cmp::Ordering {
+    (lhs.0.label.as_str(), lhs.0.property.as_str())
+        .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
 }
 
 pub(super) fn ensure_section_within_cap(
