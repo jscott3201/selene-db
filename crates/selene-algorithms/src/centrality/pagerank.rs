@@ -8,8 +8,10 @@
 //! State arrays sized by live count via `RowIndex` (§E20). Result sorted
 //! DESC by score with NodeId ASC tie-break (§E21).
 
+use rayon::prelude::*;
 use selene_core::NodeId;
 
+use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
@@ -28,6 +30,8 @@ pub struct PageRankConfig {
     /// Convergence tolerance. `0.0` runs all `max_iter` iterations
     /// regardless per §O.10.
     pub tolerance: f64,
+    /// Requested parallel execution policy.
+    pub parallelism: Parallelism,
 }
 
 /// Compute PageRank scores for every node in the projection.
@@ -41,6 +45,13 @@ pub struct PageRankConfig {
 /// non-finite results would only occur on caller-supplied invalid configs).
 #[must_use]
 pub fn pagerank(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+    match config.parallelism {
+        Parallelism::Sequential => pagerank_sequential(proj, config),
+        Parallelism::Auto | Parallelism::Threads(_) => pagerank_parallel(proj, config),
+    }
+}
+
+fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
         return Vec::new();
@@ -117,6 +128,87 @@ pub fn pagerank(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, 
             break;
         }
     }
+
+    // Materialize result + sort DESC by score with NodeId ASC tie-break
+    // (§E21 / §O.2). Uses total_cmp for NaN-soundness.
+    let mut result: Vec<(NodeId, f64)> = (0..n_usize as u32)
+        .map(|d| (idx.node_id_of(d), scores[d as usize]))
+        .collect();
+    result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
+    result
+}
+
+fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+    let idx = RowIndex::new(proj);
+    if idx.is_empty() {
+        return Vec::new();
+    }
+    let n_usize = idx.len();
+    let n_f64 = n_usize as f64;
+    let teleport = (1.0 - config.damping) / n_f64;
+    let initial = 1.0 / n_f64;
+
+    let mut scores: Vec<f64> = vec![initial; n_usize];
+    let mut new_scores: Vec<f64> = vec![0.0; n_usize];
+
+    let mut in_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n_usize);
+    let mut out_degree_dense: Vec<usize> = vec![0; n_usize];
+    let mut dangling_rows: Vec<u32> = Vec::new();
+
+    for d in 0..n_usize as u32 {
+        let node = idx.node_id_of(d);
+        let out_degree = proj
+            .out_neighbors(node)
+            .iter()
+            .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+            .count();
+        out_degree_dense[d as usize] = out_degree;
+        if out_degree == 0 {
+            dangling_rows.push(d);
+        }
+
+        let in_neighbors: Vec<u32> = proj
+            .in_neighbors(node)
+            .iter()
+            .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+            .collect();
+        in_neighbors_dense.push(in_neighbors);
+    }
+
+    let runner = ParallelRunner::new(config.parallelism)
+        .expect("ParallelRunner builds for valid parallelism");
+    runner.install(|| {
+        for _ in 0..config.max_iter {
+            let dangling_mass: f64 = dangling_rows.par_iter().map(|&u| scores[u as usize]).sum();
+            let spread = if dangling_mass > 0.0 {
+                config.damping * dangling_mass / n_f64
+            } else {
+                0.0
+            };
+
+            new_scores.par_iter_mut().enumerate().for_each(|(v, slot)| {
+                let mut inbound = 0.0;
+                for &u in &in_neighbors_dense[v] {
+                    let out_degree = out_degree_dense[u as usize];
+                    debug_assert!(out_degree > 0);
+                    inbound += scores[u as usize] / out_degree as f64;
+                }
+                *slot = teleport + (config.damping * inbound) + spread;
+            });
+
+            let max_diff = new_scores
+                .par_iter()
+                .zip(scores.par_iter())
+                .map(|(new, old)| (new - old).abs())
+                .reduce(|| 0.0_f64, f64::max);
+
+            std::mem::swap(&mut scores, &mut new_scores);
+
+            if max_diff < config.tolerance {
+                break;
+            }
+        }
+    });
 
     // Materialize result + sort DESC by score with NodeId ASC tie-break
     // (§E21 / §O.2). Uses total_cmp for NaN-soundness.

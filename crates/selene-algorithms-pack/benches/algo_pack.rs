@@ -35,7 +35,9 @@ fn bench_pagerank(c: &mut Criterion) {
     c.bench_function("algo_pack/algo_pagerank_default", |b| {
         b.iter(|| {
             std::hint::black_box(
-                state.execute("CALL algo.pagerank('p', NULL, NULL, NULL) YIELD node_id, score"),
+                state.execute(
+                    "CALL algo.pagerank('p', NULL, NULL, NULL, NULL) YIELD node_id, score",
+                ),
             );
         });
     });

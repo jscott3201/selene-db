@@ -11,6 +11,7 @@ mod betweenness;
 mod community;
 mod error;
 mod pagerank;
+mod parallel;
 mod pathfinding;
 mod projection;
 mod registry;
