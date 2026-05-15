@@ -45,26 +45,25 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             raw: id.get(),
             max: u32::MAX as u64 + 1,
         })? as usize;
-        ensure_node_rows(&mut self.txn.working, row);
-        if row == self.txn.working.node_store.len() {
-            self.txn.working.node_store.labels.push(labels.clone());
-            self.txn.working.node_store.properties.push(props.clone());
-        } else {
-            self.txn.working.node_store.labels.set(row, labels.clone());
-            self.txn
-                .working
-                .node_store
-                .properties
-                .set(row, props.clone());
+        {
+            let graph = self.txn.guard_mut();
+            ensure_node_rows(graph, row);
+            if row == graph.node_store.len() {
+                graph.node_store.labels.push(labels.clone());
+                graph.node_store.properties.push(props.clone());
+            } else {
+                graph.node_store.labels.set(row, labels.clone());
+                graph.node_store.properties.set(row, props.clone());
+            }
+            graph.node_store.alive.insert(row as u32);
+            insert_node_labels(&mut graph.idx_label, row as u32, &labels);
+            crate::property_index::apply_node_create(
+                &mut graph.property_index,
+                &labels,
+                &props,
+                row as u32,
+            );
         }
-        self.txn.working.node_store.alive.insert(row as u32);
-        insert_node_labels(&mut self.txn.working.idx_label, row as u32, &labels);
-        crate::property_index::apply_node_create(
-            &mut self.txn.working.property_index,
-            &labels,
-            &props,
-            row as u32,
-        );
         self.txn.changes.push(Change::NodeCreated {
             id,
             labels,
@@ -89,45 +88,42 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             raw: id.get(),
             max: u32::MAX as u64 + 1,
         })? as usize;
-        ensure_edge_rows(&mut self.txn.working, row)?;
-        if row == self.txn.working.edge_store.len() {
-            self.txn.working.edge_store.label.push(label);
-            self.txn.working.edge_store.source.push(source);
-            self.txn.working.edge_store.target.push(target);
-            self.txn.working.edge_store.properties.push(props.clone());
-        } else {
-            self.txn.working.edge_store.label.set(row, label);
-            self.txn.working.edge_store.source.set(row, source);
-            self.txn.working.edge_store.target.set(row, target);
-            self.txn
-                .working
-                .edge_store
-                .properties
-                .set(row, props.clone());
-        }
-        self.txn.working.edge_store.alive.insert(row as u32);
-        insert_index_row(&mut self.txn.working.idx_edge_label, label, row as u32);
+        {
+            let graph = self.txn.guard_mut();
+            ensure_edge_rows(graph, row)?;
+            if row == graph.edge_store.len() {
+                graph.edge_store.label.push(label);
+                graph.edge_store.source.push(source);
+                graph.edge_store.target.push(target);
+                graph.edge_store.properties.push(props.clone());
+            } else {
+                graph.edge_store.label.set(row, label);
+                graph.edge_store.source.set(row, source);
+                graph.edge_store.target.set(row, target);
+                graph.edge_store.properties.set(row, props.clone());
+            }
+            graph.edge_store.alive.insert(row as u32);
+            insert_index_row(&mut graph.idx_edge_label, label, row as u32);
 
-        self.txn
-            .working
-            .adjacency_out
-            .entry(source)
-            .or_default()
-            .add(AdjacencyEdge {
-                label,
-                neighbor: target,
-                edge_id: id,
-            });
-        self.txn
-            .working
-            .adjacency_in
-            .entry(target)
-            .or_default()
-            .add(AdjacencyEdge {
-                label,
-                neighbor: source,
-                edge_id: id,
-            });
+            graph
+                .adjacency_out
+                .entry(source)
+                .or_default()
+                .add(AdjacencyEdge {
+                    label,
+                    neighbor: target,
+                    edge_id: id,
+                });
+            graph
+                .adjacency_in
+                .entry(target)
+                .or_default()
+                .add(AdjacencyEdge {
+                    label,
+                    neighbor: source,
+                    edge_id: id,
+                });
+        }
         self.txn.changes.push(Change::EdgeCreated {
             id,
             label,
@@ -150,7 +146,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // Compute the new label set without mutating the working graph yet.
         let old_labels = self
             .txn
-            .working
+            .read()
             .node_store
             .labels
             .get(row)
@@ -169,7 +165,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // be safely rolled back or aborted without leaking inconsistent state.
         let old_props = self
             .txn
-            .working
+            .read()
             .node_store
             .properties
             .get(row)
@@ -181,22 +177,25 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // Now atomic in the working graph: write columns, then update indexes.
         let new_labels = labels.clone();
         let new_props = props.clone();
-        self.txn.working.node_store.labels.set(row, labels);
-        self.txn.working.node_store.properties.set(row, props);
-        for label in labels_diff.added.iter().copied() {
-            insert_index_row(&mut self.txn.working.idx_label, label, row as u32);
+        {
+            let graph = self.txn.guard_mut();
+            graph.node_store.labels.set(row, labels);
+            graph.node_store.properties.set(row, props);
+            for label in labels_diff.added.iter().copied() {
+                insert_index_row(&mut graph.idx_label, label, row as u32);
+            }
+            for label in labels_diff.removed.iter() {
+                remove_index_row(&mut graph.idx_label, label, row as u32);
+            }
+            crate::property_index::apply_node_update(
+                &mut graph.property_index,
+                &old_labels,
+                &old_props,
+                &new_labels,
+                &new_props,
+                row as u32,
+            );
         }
-        for label in labels_diff.removed.iter() {
-            remove_index_row(&mut self.txn.working.idx_label, label, row as u32);
-        }
-        crate::property_index::apply_node_update(
-            &mut self.txn.working.property_index,
-            &old_labels,
-            &old_props,
-            &new_labels,
-            &new_props,
-            row as u32,
-        );
 
         self.txn.changes.push(Change::NodeUpdated {
             id,
@@ -214,14 +213,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         let row = self.require_live_edge(id)?;
         let mut props = self
             .txn
-            .working
+            .read()
             .edge_store
             .properties
             .get(row)
             .cloned()
             .unwrap_or_default();
         apply_property_diff(&mut props, &props_diff)?;
-        self.txn.working.edge_store.properties.set(row, props);
+        self.txn.guard_mut().edge_store.properties.set(row, props);
         self.txn.changes.push(Change::EdgeUpdated {
             id,
             properties_diff: props_diff,
@@ -232,37 +231,37 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Delete an alive node and cascade delete incident edges.
     pub fn delete_node(&mut self, id: NodeId) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
-        let labels = self
-            .txn
-            .working
+        let graph = self.txn.read();
+        let labels = graph
             .node_store
             .labels
             .get(row)
             .cloned()
             .unwrap_or_default();
-        let props = self
-            .txn
-            .working
+        let props = graph
             .node_store
             .properties
             .get(row)
             .cloned()
             .unwrap_or_default();
         let mut incident = BTreeSet::new();
-        if let Some(outgoing) = self.txn.working.adjacency_out.get(&id) {
+        if let Some(outgoing) = graph.adjacency_out.get(&id) {
             incident.extend(outgoing.iter().map(|edge| edge.edge_id));
         }
-        if let Some(incoming) = self.txn.working.adjacency_in.get(&id) {
+        if let Some(incoming) = graph.adjacency_in.get(&id) {
             incident.extend(incoming.iter().map(|edge| edge.edge_id));
         }
-        remove_node_labels(&mut self.txn.working.idx_label, row as u32, &labels);
-        crate::property_index::apply_node_delete(
-            &mut self.txn.working.property_index,
-            &labels,
-            &props,
-            row as u32,
-        );
-        self.txn.working.node_store.alive.remove(row as u32);
+        {
+            let graph = self.txn.guard_mut();
+            remove_node_labels(&mut graph.idx_label, row as u32, &labels);
+            crate::property_index::apply_node_delete(
+                &mut graph.property_index,
+                &labels,
+                &props,
+                row as u32,
+            );
+            graph.node_store.alive.remove(row as u32);
+        }
         self.txn.changes.push(Change::NodeDeleted { id });
         for edge_id in incident {
             self.delete_edge_inner(edge_id, true)?;
@@ -308,41 +307,39 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Borrow the transaction-local working graph.
     #[must_use]
     pub fn read(&self) -> &crate::SeleneGraph {
-        &self.txn.working
+        self.txn.read()
     }
 
     fn delete_edge_inner(&mut self, id: EdgeId, record_change: bool) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
-        let label = *self
-            .txn
-            .working
+        let graph = self.txn.read();
+        let label = *graph
             .edge_store
             .label
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
-        let source = *self
-            .txn
-            .working
+        let source = *graph
             .edge_store
             .source
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
-        let target = *self
-            .txn
-            .working
+        let target = *graph
             .edge_store
             .target
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
-        self.txn.working.edge_store.alive.remove(row as u32);
-        remove_index_row(&mut self.txn.working.idx_edge_label, &label, row as u32);
-        if let Some(mut entry) = self.txn.working.adjacency_out.get(&source).cloned() {
-            entry.remove(id);
-            update_or_remove_entry(&mut self.txn.working.adjacency_out, source, entry);
-        }
-        if let Some(mut entry) = self.txn.working.adjacency_in.get(&target).cloned() {
-            entry.remove(id);
-            update_or_remove_entry(&mut self.txn.working.adjacency_in, target, entry);
+        {
+            let graph = self.txn.guard_mut();
+            graph.edge_store.alive.remove(row as u32);
+            remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
+            if let Some(mut entry) = graph.adjacency_out.get(&source).cloned() {
+                entry.remove(id);
+                update_or_remove_entry(&mut graph.adjacency_out, source, entry);
+            }
+            if let Some(mut entry) = graph.adjacency_in.get(&target).cloned() {
+                entry.remove(id);
+                update_or_remove_entry(&mut graph.adjacency_in, target, entry);
+            }
         }
         if record_change {
             self.txn.changes.push(Change::EdgeDeleted { id });
@@ -352,10 +349,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     fn require_live_node(&self, id: NodeId) -> GraphResult<usize> {
         let row = node_row_index(id).ok_or(GraphError::NodeNotFound { id })?;
-        if row as usize >= self.txn.working.node_store.len() {
+        let graph = self.txn.read();
+        if row as usize >= graph.node_store.len() {
             return Err(GraphError::NodeNotFound { id });
         }
-        if !self.txn.working.node_store.is_alive(row) {
+        if !graph.node_store.is_alive(row) {
             return Err(GraphError::NodeNotAlive { id });
         }
         Ok(row as usize)
@@ -363,10 +361,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     fn require_live_edge(&self, id: EdgeId) -> GraphResult<usize> {
         let row = edge_row_index(id).ok_or(GraphError::EdgeNotFound { id })?;
-        if row as usize >= self.txn.working.edge_store.len() {
+        let graph = self.txn.read();
+        if row as usize >= graph.edge_store.len() {
             return Err(GraphError::EdgeNotFound { id });
         }
-        if !self.txn.working.edge_store.is_alive(row) {
+        if !graph.edge_store.is_alive(row) {
             return Err(GraphError::EdgeNotAlive { id });
         }
         Ok(row as usize)

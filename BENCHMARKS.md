@@ -1,12 +1,15 @@
 # selene-db benchmarks
 
-_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `ff6000f`)._
+_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `d25a8b5`)._
 
 > Methodology: `scripts/run-benches.sh --profile full --layer criterion`
 > (sequential execution; concurrent `cargo bench` is blocked by the script's
 > `pgrep` guard). Medians are criterion 0.8 wall-clock. iai-callgrind
 > instruction-count baselines are deferred to the v1.0.0 release-prep
 > panic-audit pass.
+> BRIEF-89 bulk-mutation benches return their per-iteration `SharedGraph`
+> from the timed routine so Criterion drops fixture teardown after timing;
+> those rows measure mutation + commit, not graph deallocation.
 
 ## Hardware footprint
 
@@ -17,7 +20,7 @@ _Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.
 | Memory | 16.0 GiB | `sysctl -n hw.memsize` |
 | OS | macOS 26.5 (build 25F71) | `sw_vers` |
 | rustc | 1.95.0 (59807616e 2026-04-14) | `rustc --version` |
-| Commit | `ff6000f` | `git rev-parse --short HEAD` |
+| Commit | `d25a8b5` | `git rev-parse --short HEAD` |
 
 ## §1 selene-graph hot paths
 
@@ -32,10 +35,10 @@ Registered tokens: `selene-graph:single_graph:criterion`,
 | `graph_typed_index_point` | **4.53 ns** | 4.44 ns | 4.67 ns | Restored flat-curve via `lookup_eq` -> `Option<Cow<'_, RoaringBitmap>>` per BRIEF-88; tri-state semantics preserved. |
 | `graph_typed_index_range` | 20.10 µs | 178.8 µs | 294.4 µs | Sub-linear range scan. |
 | `graph_composite_index_proxy` | 52.12 ns | 143.2 ns | 287.8 ns | Linear. |
-| `graph_edge_create_cascade` | 809.9 µs | 2.37 ms | 4.43 ms | Linear write amortization. |
-| `graph_mutation_commit_batch` (10) | 874.4 µs | 2.44 ms | 4.49 ms | Batch of 10 mutations per commit. |
-| `graph_mutation_commit_batch` (100) | 932.1 µs | 2.59 ms | 4.50 ms | Batch of 100. |
-| `graph_mutation_commit_batch` (1000) | 1.34 ms | 2.94 ms | 5.12 ms | Batch of 1000; batching wins at higher cardinality. |
+| `graph_edge_create_cascade` | 211.7 µs | 153.0 µs | 343.5 µs | Mutation + commit body; fixture teardown excluded from timed routine. |
+| `graph_mutation_commit_batch` (10) | 262.5 µs | 231.8 µs | 360.8 µs | Restored via in-place mutation against `Arc<SeleneGraph>` write lock + explicit `pre_txn` rollback per BRIEF-89; three-clone cascade replaced with one COW clone at first mutation. |
+| `graph_mutation_commit_batch` (100) | 322.7 µs | 292.4 µs | 434.0 µs | Batch of 100; fixture teardown excluded from timed routine. |
+| `graph_mutation_commit_batch` (1000) | 783.9 µs | 603.7 µs | 761.9 µs | Batch of 1000; batching wins at higher cardinality. |
 | `graph_concurrent_reads` | 76.78 µs | 84.18 µs | 84.72 µs | **Flat above 10k** — ArcSwap snapshot read confirmed O(1). |
 | `graph_bfs` (depth=1) | 99.36 ns | 98.31 ns | 99.66 ns | Depth-1 BFS independent of N. |
 | `graph_bfs` (depth=10) | 10.90 µs | 11.09 µs | 11.28 µs | Mostly traversal cost. |
