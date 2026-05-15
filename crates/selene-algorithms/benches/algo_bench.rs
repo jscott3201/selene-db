@@ -13,9 +13,11 @@ use selene_algorithms::{
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::{SeleneGraph, SharedGraph};
+use selene_testing::bench_fixtures::BENCHMARK_SCALES as BENCH_SCALES;
 use selene_testing::{BenchFixture, BenchProfile};
 
-const BENCH_SCALES: &[usize] = &[200, 1_000, 10_000];
+// All-pairs SSSP iterates every source; N=1000 is roughly 10^6 output tuples.
+// Bump only with measured wall-clock evidence per BRIEF-87 section B.2.
 const APSP_SCALES: &[usize] = &[200, 500, 1_000];
 const BENCH_BETWEENNESS_SAMPLE_SIZE: usize = 256;
 const BENCH_LOUVAIN_MAX_ITER: usize = 50;

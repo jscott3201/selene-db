@@ -1,5 +1,7 @@
 //! Benchmark profile envelopes shared by Criterion and iai-callgrind benches.
 
+use crate::bench_fixtures::BENCHMARK_SCALES;
+
 /// Benchmark scale envelope selected by `SELENE_BENCH_PROFILE`.
 ///
 /// Unknown values intentionally fall back to [`BenchProfile::Quick`] so CI
@@ -9,9 +11,9 @@
 pub enum BenchProfile {
     /// CI default: one 1k-node scale.
     Quick,
-    /// Local development: 1k, 10k, and 50k.
+    /// Publish-quality release-prep scales.
     Full,
-    /// Nightly stress tracking: adds 100k.
+    /// Nightly stress tracking: adds 250k.
     Stress,
 }
 
@@ -31,8 +33,8 @@ impl BenchProfile {
     pub const fn scales(self) -> &'static [usize] {
         match self {
             Self::Quick => &[1_000],
-            Self::Full => &[1_000, 10_000, 50_000],
-            Self::Stress => &[1_000, 10_000, 50_000, 100_000],
+            Self::Full => BENCHMARK_SCALES,
+            Self::Stress => &[1_000, 10_000, 50_000, 100_000, 250_000],
         }
     }
 
@@ -62,12 +64,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bench_profile_scales_match_design() {
+    fn bench_profile_full_uses_canonical_scales() {
         assert_eq!(BenchProfile::Quick.scales(), &[1_000]);
-        assert_eq!(BenchProfile::Full.scales(), &[1_000, 10_000, 50_000]);
+        assert_eq!(BenchProfile::Full.scales(), BENCHMARK_SCALES);
         assert_eq!(
             BenchProfile::Stress.scales(),
-            &[1_000, 10_000, 50_000, 100_000]
+            &[1_000, 10_000, 50_000, 100_000, 250_000]
         );
     }
 
