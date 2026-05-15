@@ -434,6 +434,7 @@ fn bench_invocation_hygiene_is_declared() {
 
     assert!(cargo.contains("autobenches = false"));
     assert!(cargo.contains("name = \"recall\""));
+    assert!(cargo.contains("name = \"build\""));
     assert!(cargo.contains("name = \"quant_recall\""));
     assert!(cargo.contains("harness = false"));
     assert!(cargo.contains("name = \"composition_replay\""));
@@ -447,6 +448,7 @@ fn scripts_run_benches_includes_recall_entry() {
     .expect("read run-benches.sh");
 
     assert!(script.contains("selene-vector:recall:criterion"));
+    assert!(script.contains("selene-vector:build:criterion"));
     assert!(script.contains("selene-vector:quant_recall:criterion"));
     assert!(script.contains("selene-vector:composition_replay:criterion"));
 }

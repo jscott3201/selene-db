@@ -47,6 +47,10 @@ name = "recall"
 harness = false
 
 [[bench]]
+name = "build"
+harness = false
+
+[[bench]]
 name = "quant_recall"
 harness = false
 

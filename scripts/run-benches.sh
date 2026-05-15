@@ -99,6 +99,7 @@ selene-gql:iai_gates:iai
 selene-algorithms:algo_bench:criterion
 selene-algorithms-pack:algo_pack:criterion
 selene-vector-pack:vector_pack:criterion
+selene-vector:build:criterion
 selene-vector:recall:criterion
 selene-vector:quant_recall:criterion
 selene-vector:ivfpq_recall:criterion
