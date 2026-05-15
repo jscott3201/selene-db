@@ -3,6 +3,9 @@
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_graph::{SeleneGraph, SharedGraph, TypedIndexKind};
 
+/// Canonical publish-quality graph-size scales for release-prep benchmarks.
+pub const BENCHMARK_SCALES: &[usize] = &[10_000, 50_000, 100_000];
+
 /// Deterministic in-memory graph fixture used by benchmark binaries.
 ///
 /// The graph contains `scale` nodes, roughly `3 * scale` directed edges, a
@@ -177,6 +180,11 @@ fn istr(value: &str) -> IStr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn benchmark_scales_constant_is_pinned() {
+        assert_eq!(BENCHMARK_SCALES, &[10_000, 50_000, 100_000]);
+    }
 
     #[test]
     fn fixture_is_deterministic() {

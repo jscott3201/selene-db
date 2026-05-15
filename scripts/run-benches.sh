@@ -5,6 +5,17 @@
 
 set -euo pipefail
 
+# Profiles select benchmark workload envelopes through
+# crates/selene-testing/src/bench_profiles.rs::BenchProfile::scales():
+#   --profile quick  => short local smoke measurements
+#   --profile full   => publish-quality BENCHMARKS.md refresh scales
+#   --profile stress => opt-in larger local stress envelope
+#
+# Layers select the measurement backend:
+#   --layer criterion => wall-clock medians
+#   --layer iai       => iai-callgrind instruction counts (requires valgrind)
+#   --layer both      => criterion plus iai where valgrind is available
+
 PROFILE="quick"
 LAYER="both"
 SAVE_BASELINE=""
