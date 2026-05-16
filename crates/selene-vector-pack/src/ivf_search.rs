@@ -15,7 +15,7 @@ use crate::{
         required_string, required_usize, try_filter_from_node_refs,
     },
     error::vector_error,
-    provider::{reject_non_default_index, with_ivf_provider},
+    provider::with_ivf_provider,
     state::VectorPackState,
 };
 
@@ -96,7 +96,6 @@ struct IvfSearchArgs {
 fn parse_ivf_search_args(args: &[Value]) -> Result<IvfSearchArgs, ProcedureError> {
     expect_arity(IVF_SEARCH_PROC, args, 5)?;
     let index_name = required_string(IVF_SEARCH_PROC, args, 0, "index_name")?;
-    reject_non_default_index(IVF_SEARCH_PROC, &index_name)?;
     let query = required_f32_list(IVF_SEARCH_PROC, args, 1, "query")?;
     let k = required_usize(IVF_SEARCH_PROC, args, 2, "k")?;
     let n_probe = nullable_option_u32(IVF_SEARCH_PROC, args, 3, "n_probe")?;
@@ -154,17 +153,17 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_rejects_non_default_index() {
-        let err = parse_ivf_search_args(&[
+    fn parse_args_preserves_index_name() {
+        let parsed = parse_ivf_search_args(&[
             Value::String(intern("embedding_idx").expect("test string interns")),
             Value::List(vec![Value::Float(1.0)]),
             Value::Int(1),
             Value::Null,
             Value::Null,
         ])
-        .expect_err("non-default index rejected");
+        .expect("args parse");
 
-        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+        assert_eq!(parsed.index_name, "embedding_idx");
     }
 
     #[test]

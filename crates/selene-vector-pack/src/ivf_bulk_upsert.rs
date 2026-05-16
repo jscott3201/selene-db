@@ -12,9 +12,7 @@ use selene_vector::{IvfBulkInsertRow, VectorIvfBulkInsertV1};
 use crate::{
     args::{expect_arity, required_f32_matrix, required_node_ref_list, required_string},
     bulk_upsert::{parameter, reject_empty_batch, validate_node_ids, validate_vectors},
-    provider::{
-        IVF_PROVIDER_NAME, emit_payload_bytes, reject_non_default_index, with_ivf_provider_mut,
-    },
+    provider::{IVF_PROVIDER_NAME, emit_payload_bytes, with_ivf_provider_mut},
     state::VectorPackState,
 };
 
@@ -60,7 +58,6 @@ impl ExternalMutationProcedure for IvfBulkUpsertProcedure {
         let _state = &self.state;
         expect_arity(IVF_BULK_UPSERT_PROC, args, 3)?;
         let index_name = required_string(IVF_BULK_UPSERT_PROC, args, 0, "index_name")?;
-        reject_non_default_index(IVF_BULK_UPSERT_PROC, &index_name)?;
         let node_ids = required_node_ref_list(IVF_BULK_UPSERT_PROC, args, 1, "node_ids")?;
         let vectors =
             required_f32_matrix(IVF_BULK_UPSERT_PROC, args, 2, "vectors", node_ids.len())?;
@@ -81,7 +78,13 @@ impl ExternalMutationProcedure for IvfBulkUpsertProcedure {
         let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
             detail: format!("{IVF_BULK_UPSERT_PROC}: payload encode failed: {error}"),
         })?;
-        emit_payload_bytes(ctx, IVF_BULK_UPSERT_PROC, IVF_PROVIDER_NAME, bytes)?;
+        emit_payload_bytes(
+            ctx,
+            IVF_BULK_UPSERT_PROC,
+            IVF_PROVIDER_NAME,
+            &index_name,
+            bytes,
+        )?;
         Ok(ProcedureResult { rows: Vec::new() })
     }
 }

@@ -12,9 +12,7 @@ use selene_vector::VectorIvfBulkDeleteV1;
 use crate::{
     args::{expect_arity, required_node_ref_list, required_string},
     bulk_upsert::{parameter, reject_empty_batch, validate_node_ids},
-    provider::{
-        IVF_PROVIDER_NAME, emit_payload_bytes, reject_non_default_index, with_ivf_provider_mut,
-    },
+    provider::{IVF_PROVIDER_NAME, emit_payload_bytes, with_ivf_provider_mut},
     state::VectorPackState,
 };
 
@@ -55,7 +53,6 @@ impl ExternalMutationProcedure for IvfBulkDeleteProcedure {
         let _state = &self.state;
         expect_arity(IVF_BULK_DELETE_PROC, args, 2)?;
         let index_name = required_string(IVF_BULK_DELETE_PROC, args, 0, "index_name")?;
-        reject_non_default_index(IVF_BULK_DELETE_PROC, &index_name)?;
         let node_ids = required_node_ref_list(IVF_BULK_DELETE_PROC, args, 1, "node_ids")?;
         reject_empty_batch(IVF_BULK_DELETE_PROC, &node_ids)?;
         validate_node_ids(IVF_BULK_DELETE_PROC, &node_ids)?;
@@ -65,7 +62,13 @@ impl ExternalMutationProcedure for IvfBulkDeleteProcedure {
         let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
             detail: format!("{IVF_BULK_DELETE_PROC}: payload encode failed: {error}"),
         })?;
-        emit_payload_bytes(ctx, IVF_BULK_DELETE_PROC, IVF_PROVIDER_NAME, bytes)?;
+        emit_payload_bytes(
+            ctx,
+            IVF_BULK_DELETE_PROC,
+            IVF_PROVIDER_NAME,
+            &index_name,
+            bytes,
+        )?;
         Ok(ProcedureResult { rows: Vec::new() })
     }
 }

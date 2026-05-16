@@ -12,9 +12,7 @@ use selene_vector::{HnswParams, VectorOp, VectorUpsertPayloadV1, random_layer_de
 use crate::{
     args::{expect_arity, required_f32_list, required_node_ref, required_string},
     error::invalid_argument,
-    provider::{
-        HNSW_PROVIDER_NAME, emit_payload_bytes, reject_non_default_index, with_hnsw_provider_mut,
-    },
+    provider::{HNSW_PROVIDER_NAME, emit_payload_bytes, with_hnsw_provider_mut},
     state::VectorPackState,
 };
 
@@ -55,7 +53,6 @@ impl ExternalMutationProcedure for UpsertProcedure {
     ) -> Result<ProcedureResult, ProcedureError> {
         expect_arity(UPSERT_PROC, args, 3)?;
         let index_name = required_string(UPSERT_PROC, args, 0, "index_name")?;
-        reject_non_default_index(UPSERT_PROC, &index_name)?;
         let node_id = required_node_ref(UPSERT_PROC, args, 1, "node_id")?;
         let vector = required_f32_list(UPSERT_PROC, args, 2, "vector")?;
         let state = Arc::clone(&self.state);
@@ -86,7 +83,7 @@ impl ExternalMutationProcedure for UpsertProcedure {
             vector,
             max_layer,
         };
-        emit_payload(ctx, UPSERT_PROC, payload)?;
+        emit_payload(ctx, UPSERT_PROC, &index_name, payload)?;
         Ok(ProcedureResult { rows: Vec::new() })
     }
 }
@@ -94,12 +91,13 @@ impl ExternalMutationProcedure for UpsertProcedure {
 pub(crate) fn emit_payload(
     ctx: &mut MutationContext<'_, '_>,
     procedure: &'static str,
+    index_name: &str,
     payload: VectorUpsertPayloadV1,
 ) -> Result<(), ProcedureError> {
     let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
         detail: format!("{procedure}: payload encode failed: {error}"),
     })?;
-    emit_payload_bytes(ctx, procedure, HNSW_PROVIDER_NAME, bytes)
+    emit_payload_bytes(ctx, procedure, HNSW_PROVIDER_NAME, index_name, bytes)
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {

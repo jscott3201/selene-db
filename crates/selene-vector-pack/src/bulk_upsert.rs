@@ -13,9 +13,7 @@ use selene_vector::{BulkInsertRow, HnswParams, VectorBulkInsertPayloadV1, random
 use crate::{
     args::{expect_arity, required_f32_matrix, required_node_ref_list, required_string},
     error::invalid_argument,
-    provider::{
-        HNSW_PROVIDER_NAME, emit_payload_bytes, reject_non_default_index, with_hnsw_provider_mut,
-    },
+    provider::{HNSW_PROVIDER_NAME, emit_payload_bytes, with_hnsw_provider_mut},
     state::VectorPackState,
 };
 
@@ -60,7 +58,6 @@ impl ExternalMutationProcedure for BulkUpsertProcedure {
     ) -> Result<ProcedureResult, ProcedureError> {
         expect_arity(BULK_UPSERT_PROC, args, 3)?;
         let index_name = required_string(BULK_UPSERT_PROC, args, 0, "index_name")?;
-        reject_non_default_index(BULK_UPSERT_PROC, &index_name)?;
         let node_ids = required_node_ref_list(BULK_UPSERT_PROC, args, 1, "node_ids")?;
         let vectors = required_f32_matrix(BULK_UPSERT_PROC, args, 2, "vectors", node_ids.len())?;
         reject_empty_batch(BULK_UPSERT_PROC, &node_ids)?;
@@ -104,7 +101,13 @@ impl ExternalMutationProcedure for BulkUpsertProcedure {
         let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
             detail: format!("{BULK_UPSERT_PROC}: payload encode failed: {error}"),
         })?;
-        emit_payload_bytes(ctx, BULK_UPSERT_PROC, HNSW_PROVIDER_NAME, bytes)?;
+        emit_payload_bytes(
+            ctx,
+            BULK_UPSERT_PROC,
+            HNSW_PROVIDER_NAME,
+            &index_name,
+            bytes,
+        )?;
         Ok(ProcedureResult { rows: Vec::new() })
     }
 }
