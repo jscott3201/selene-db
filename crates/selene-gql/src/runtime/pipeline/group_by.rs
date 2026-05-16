@@ -13,11 +13,11 @@ pub(super) fn execute(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let input_schema = table.schema().clone();
+    let (input_schema, input_rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, aggregates);
     let mut groups = Vec::<Group>::new();
 
-    for row in table.rows() {
+    for row in &input_rows {
         let key = evaluate_key_tuple(keys, row, &input_schema, ctx)?;
         let index = groups
             .iter()

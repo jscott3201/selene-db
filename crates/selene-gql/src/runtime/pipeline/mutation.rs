@@ -195,8 +195,8 @@ fn execute_set_property(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let schema = table.schema().clone();
-    for row in table.rows() {
+    let (schema, rows) = table.into_parts();
+    for row in &rows {
         let value = evaluator::evaluate(&value.expr, row, &schema, ctx)?;
         let diff = property_diff([(key, value)], [], span)?;
         match element {
@@ -219,7 +219,7 @@ fn execute_set_property(
             }
         }
     }
-    Ok(table)
+    Ok(BindingTable::new(schema, rows))
 }
 
 fn execute_set_label(

@@ -16,13 +16,12 @@ pub(super) fn execute(
         });
     }
 
-    let schema = table.schema().clone();
-    let rows = table
-        .rows()
-        .iter()
+    let (schema, input_rows) = table.into_parts();
+    let rows = input_rows
+        .into_iter()
         .filter_map(
-            |row| match evaluator::evaluate(&predicate.expr, row, &schema, ctx) {
-                Ok(Value::Bool(true)) => Some(Ok(row.clone())),
+            |row| match evaluator::evaluate(&predicate.expr, &row, &schema, ctx) {
+                Ok(Value::Bool(true)) => Some(Ok(row)),
                 Ok(Value::Bool(false) | Value::Null) => None,
                 Ok(_) => None,
                 Err(err) => Some(Err(err)),

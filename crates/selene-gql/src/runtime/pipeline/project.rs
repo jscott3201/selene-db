@@ -8,15 +8,14 @@ pub(super) fn execute(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let input_schema = table.schema().clone();
+    let (input_schema, input_rows) = table.into_parts();
     let output_schema = schema_for_items(items);
-    let rows = table
-        .rows()
-        .iter()
+    let rows = input_rows
+        .into_iter()
         .map(|row| {
             let values = items
                 .iter()
-                .map(|item| project_value(item, row, &input_schema, ctx))
+                .map(|item| project_value(item, &row, &input_schema, ctx))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Binding::new(values))
         })
