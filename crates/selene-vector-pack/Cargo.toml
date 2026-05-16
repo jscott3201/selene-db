@@ -54,6 +54,10 @@ required-features = ["test-harness"]
 name = "registry_default_transparency"
 required-features = ["test-harness"]
 
+[[test]]
+name = "multi_index_lifecycle"
+required-features = ["test-harness"]
+
 [[bench]]
 name = "vector_pack"
 harness = false
