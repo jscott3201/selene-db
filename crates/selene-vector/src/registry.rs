@@ -22,8 +22,12 @@ use crate::snapshot::wrapper::{
 };
 use crate::{HnswConfig, HnswProvider, IvfConfig, IvfProvider, VectorError, snapshot};
 
+mod coverage;
+use coverage::validate_snapshot_wrapper_coverage;
+
 const DEFAULT_INDEX_NAME: &str = "default";
 const LIFECYCLE_PROVIDER_NAME: &str = "selene-vector-lifecycle";
+const MAX_INDEX_NAME_BYTES: usize = u16::MAX as usize;
 
 /// Kind discriminator for named vector indexes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -324,6 +328,7 @@ impl Catalog {
         config: HnswConfig,
     ) -> Result<CreateIndexOutcome, VectorError> {
         validate_index_name(name)?;
+        // Lock order: hnsw before ivf.
         let mut hnsw = hnsw_registry.entries.write();
         let ivf = ivf_registry.entries.read();
         if name != DEFAULT_INDEX_NAME && ivf.contains_key(name) {
@@ -371,6 +376,7 @@ impl Catalog {
         config: IvfConfig,
     ) -> Result<CreateIndexOutcome, VectorError> {
         validate_index_name(name)?;
+        // Lock order: hnsw before ivf.
         let hnsw = hnsw_registry.entries.read();
         let mut ivf = ivf_registry.entries.write();
         if name != DEFAULT_INDEX_NAME && hnsw.contains_key(name) {
@@ -415,6 +421,7 @@ impl Catalog {
         if name == DEFAULT_INDEX_NAME {
             return Err(registry_invalid("cannot drop the default vector index"));
         }
+        // Lock order: hnsw before ivf.
         let mut hnsw = hnsw_registry.entries.write();
         let mut ivf = ivf_registry.entries.write();
         if hnsw.remove(name).is_some() {
@@ -439,6 +446,7 @@ impl Catalog {
         ivf_registry: &IvfIndexRegistry,
         name: &str,
     ) -> Option<VectorIndexKind> {
+        // Lock order: hnsw before ivf.
         let hnsw = hnsw_registry.entries.read();
         let ivf = ivf_registry.entries.read();
         if hnsw.contains_key(name) {
@@ -462,6 +470,7 @@ impl Catalog {
         hnsw_registry: &HnswIndexRegistry,
         ivf_registry: &IvfIndexRegistry,
     ) -> Vec<IndexListEntry> {
+        // Lock order: hnsw before ivf.
         let hnsw = hnsw_registry.entries.read();
         let ivf = ivf_registry.entries.read();
         let mut entries = Vec::with_capacity(hnsw.len() + ivf.len());
@@ -553,9 +562,20 @@ impl HnswIndexRegistry {
                 provider.read_section(sub_tag, &entry.section)?;
                 next.insert(entry.name, provider);
             }
+            if !next.contains_key(DEFAULT_INDEX_NAME) {
+                return Err(ProviderError::InvalidPayload {
+                    reason: "VECT GRPH wrapper missing 'default' entry".to_owned(),
+                });
+            }
             *self.entries.write() = next;
             return Ok(());
         }
+        let staged_names = self.entries.read().keys().cloned().collect::<Vec<_>>();
+        validate_snapshot_wrapper_coverage(
+            sub_tag,
+            staged_names,
+            entries.iter().map(|entry| entry.name.as_ref()),
+        )?;
         for entry in entries {
             let provider = self
                 .get(&entry.name)
@@ -681,9 +701,20 @@ impl IvfIndexRegistry {
                 provider.read_section(sub_tag, &entry.section)?;
                 next.insert(entry.name, provider);
             }
+            if !next.contains_key(DEFAULT_INDEX_NAME) {
+                return Err(ProviderError::InvalidPayload {
+                    reason: "IVFP CQNT wrapper missing 'default' entry".to_owned(),
+                });
+            }
             *self.entries.write() = next;
             return Ok(());
         }
+        let staged_names = self.entries.read().keys().cloned().collect::<Vec<_>>();
+        validate_snapshot_wrapper_coverage(
+            sub_tag,
+            staged_names,
+            entries.iter().map(|entry| entry.name.as_ref()),
+        )?;
         for entry in entries {
             let provider = self
                 .get(&entry.name)
@@ -818,6 +849,11 @@ pub fn decode_ivf_config(bytes: &[u8]) -> Result<IvfConfig, VectorError> {
 fn validate_index_name(name: &str) -> Result<(), VectorError> {
     if name.is_empty() {
         return Err(registry_invalid("vector index name must be non-empty"));
+    }
+    if name.len() > MAX_INDEX_NAME_BYTES {
+        return Err(registry_invalid(format!(
+            "vector index name exceeds {MAX_INDEX_NAME_BYTES}-byte wire limit"
+        )));
     }
     Ok(())
 }

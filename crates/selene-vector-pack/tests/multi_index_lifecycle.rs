@@ -11,7 +11,7 @@ use selene_gql::{
 use selene_graph::{IndexProvider, SharedGraph, SubTag};
 use selene_pack::ProcedurePackRegistry;
 use selene_vector::{
-    DistanceMetric, HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry, PqParams,
+    Catalog, DistanceMetric, HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry, PqParams,
     VectorIvfBulkInsertV1, encode_named_payload,
 };
 use selene_vector_pack::{VectorPack, VectorPackConfig};
@@ -180,6 +180,34 @@ fn create_index_idempotent_and_conflicting_config_errors() {
         ProcedureError::InvalidArgument { detail }
             if detail.contains("different HNSW config")
     ));
+}
+
+#[test]
+fn create_index_rejects_oversized_name() {
+    let pack = deterministic_pack();
+    let procedures = registry(&pack);
+    let (graph, hnsw, ivf, _nodes) = graph_with_registries(109_405, 1);
+    let oversized = "x".repeat(u16::MAX as usize + 1);
+
+    let err = execute_mutation_direct(
+        &graph,
+        &procedures,
+        &["vector", "create_index"],
+        &create_index_args(&oversized, "hnsw", &[("dim", Value::Int(2))]),
+    )
+    .expect_err("oversized create rejected");
+    assert!(matches!(
+        err,
+        ProcedureError::InvalidArgument { detail } if detail.contains("wire limit")
+    ));
+
+    let catalog = Catalog::from_registries(hnsw, ivf);
+    assert!(
+        catalog
+            .list_indexes()
+            .iter()
+            .all(|entry| entry.name.as_ref() != oversized)
+    );
 }
 
 #[test]
