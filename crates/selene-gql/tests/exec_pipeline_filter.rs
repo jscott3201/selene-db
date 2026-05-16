@@ -2,7 +2,8 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, node_ids_for, planned};
+use exec_common::{ExecFixture, execute_pattern, istr, node_ids_for, planned, props};
+use selene_core::{LabelSet, Value};
 use selene_gql::{ExecutorError, PipelineOp, ValueExpr, execute_pipeline};
 
 #[test]
@@ -47,6 +48,46 @@ fn filter_drops_rows_where_expr_is_null() {
     let filtered = execute_pipeline(&[filter], table, &mut ctx).expect("filter executes");
 
     assert!(filtered.is_empty());
+}
+
+#[test]
+fn where_date_a_lt_date_b_filters_rows() {
+    let fixture = ExecFixture::build();
+    let event = istr("Event");
+    let date_a = istr("date_a");
+    let date_b = istr("date_b");
+    let matching;
+    {
+        let mut txn = fixture.graph.begin_write();
+        let mut mutator = txn.mutator();
+        matching = mutator
+            .create_node(
+                LabelSet::single(event),
+                props([
+                    (date_a, Value::Date("2024-01-01".parse().unwrap())),
+                    (date_b, Value::Date("2024-01-02".parse().unwrap())),
+                ]),
+            )
+            .expect("matching event inserts");
+        mutator
+            .create_node(
+                LabelSet::single(event),
+                props([
+                    (date_a, Value::Date("2024-01-03".parse().unwrap())),
+                    (date_b, Value::Date("2024-01-02".parse().unwrap())),
+                ]),
+            )
+            .expect("non-matching event inserts");
+        txn.commit().expect("events commit");
+    }
+
+    let plan = planned("MATCH (n:Event) WHERE n.date_a < n.date_b RETURN n");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let mut ctx = fixture.context_caps(&plan);
+    let table = execute_pattern(pattern, &ctx);
+    let filtered = execute_pipeline(&plan.pipeline, table, &mut ctx).expect("filter executes");
+
+    assert_eq!(node_ids_for(&filtered, "n"), vec![Some(matching.get())]);
 }
 
 #[test]
