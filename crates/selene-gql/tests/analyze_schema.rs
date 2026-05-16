@@ -4,7 +4,7 @@ use selene_core::{IStr, LabelSet, PropertyValueType, intern};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, EdgeDirection, EdgePattern, EmptyProcedureRegistry,
     GraphPattern, InsertStatement, LabelExpr, Literal, MutationPipeline, MutationStatement,
-    NodePattern, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
+    NodePattern, NonEmpty, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
 };
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 use selene_testing::{person_company_graph_type, person_only_graph_type};
@@ -217,10 +217,11 @@ fn rejects_unknown_label_on_undirected_insert_edge() {
         span: SourceSpan::new(0, 3),
     };
     let statement = Statement::Mutate(MutationPipeline {
-        statements: vec![MutationStatement::Insert(InsertStatement {
+        statements: NonEmpty::try_from_vec(vec![MutationStatement::Insert(InsertStatement {
             patterns: vec![pattern],
             span: SourceSpan::new(0, 3),
-        })],
+        })])
+        .expect("non-empty"),
         terminator: None,
         span: SourceSpan::new(0, 3),
     });
@@ -496,10 +497,11 @@ fn edge_direction_matrix_checks_right_and_left_but_defers_undirected() {
         span: SourceSpan::new(0, 3),
     };
     let statement = Statement::Mutate(MutationPipeline {
-        statements: vec![MutationStatement::Insert(InsertStatement {
+        statements: NonEmpty::try_from_vec(vec![MutationStatement::Insert(InsertStatement {
             patterns: vec![pattern],
             span: SourceSpan::new(0, 3),
-        })],
+        })])
+        .expect("non-empty"),
         terminator: None,
         span: SourceSpan::new(0, 3),
     });

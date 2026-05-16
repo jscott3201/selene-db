@@ -50,7 +50,7 @@ pub(crate) fn bind_pipeline_statement(
                     | ProcedureMutability::Admin
             ) {
                 return Err(AnalysisError::MutatingProcedureInReadPipeline {
-                    procedure: call.name.clone().into_boxed_slice(),
+                    procedure: call.name.clone().into_vec().into_boxed_slice(),
                     mutability: metadata.mutability,
                     span: call.span,
                 });

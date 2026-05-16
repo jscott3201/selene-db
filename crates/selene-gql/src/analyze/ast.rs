@@ -1,7 +1,8 @@
 //! Analyzer output AST wrapper.
 
 use crate::{
-    DdlStatement, MutationPipeline, ProcedureCall, QueryPipeline, SetOp, SourceSpan, Statement,
+    DdlStatement, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline, SetOp, SourceSpan,
+    Statement,
     analyze::{
         binding::BindingUse,
         category::StatementCategory,
@@ -73,7 +74,7 @@ pub enum AnalyzedStatementKind {
         /// First pipeline.
         first: QueryPipeline,
         /// Remaining pipelines paired with their set operator.
-        rest: Vec<(SetOp, QueryPipeline)>,
+        rest: NonEmpty<(SetOp, QueryPipeline)>,
         /// Source span.
         span: SourceSpan,
     },

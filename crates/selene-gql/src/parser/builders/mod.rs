@@ -14,7 +14,7 @@ use crate::{
     ast::{
         LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
         QueryPipeline, ReturnClause, ReturnItem, SetOp, SourceSpan, Statement, UnwindStatement,
-        WithClause,
+        WithClause, util::NonEmpty,
     },
     error::ParserError,
 };
@@ -75,7 +75,8 @@ fn build_composite(
 
     Ok(Statement::Composite {
         first,
-        rest,
+        rest: NonEmpty::try_from_vec(rest)
+            .expect("grammar guarantees >= 1: composite_query set operator"),
         span: source_span,
     })
 }

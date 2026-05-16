@@ -8,7 +8,7 @@ use exec_common::empty_graph_context;
 use selene_core::{Value, intern};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
-    ImplDefinedCaps, Literal, SourceSpan, UnaryOp, ValueExpr,
+    ImplDefinedCaps, Literal, NonEmpty, SourceSpan, UnaryOp, ValueExpr,
 };
 
 fn span() -> SourceSpan {
@@ -284,7 +284,7 @@ fn lossy_integer_float_ordering_is_data_exception() {
 #[test]
 fn function_call_is_explicitly_unsupported() {
     let expr = ValueExpr::FunctionCall {
-        name: vec![intern("unsupported").unwrap()],
+        name: NonEmpty::try_from_vec(vec![intern("unsupported").unwrap()]).expect("non-empty"),
         args: Vec::new(),
         star: false,
         distinct: false,

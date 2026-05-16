@@ -173,8 +173,8 @@ fn collect_empty_returns_empty_list() {
 #[test]
 fn function_call_with_let_shadow_does_not_misread_column() {
     use selene_gql::{
-        AnalyzedType, Binding, BindingTableColumn, BindingTableSchema, ImplDefinedCaps, SourceSpan,
-        ValueExpr, runtime::evaluate_for_test,
+        AnalyzedType, Binding, BindingTableColumn, BindingTableSchema, ImplDefinedCaps, NonEmpty,
+        SourceSpan, ValueExpr, runtime::evaluate_for_test,
     };
 
     let sum = exec_common::istr("sum");
@@ -197,7 +197,7 @@ fn function_call_with_let_shadow_does_not_misread_column() {
     let caps = ImplDefinedCaps::default();
     let ctx = exec_common::empty_graph_context(&caps);
     let expr = ValueExpr::FunctionCall {
-        name: vec![sum],
+        name: NonEmpty::try_from_vec(vec![sum]).expect("non-empty"),
         args: vec![ValueExpr::Variable {
             name: x,
             span: SourceSpan::new(4, 1),

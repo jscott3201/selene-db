@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::{GqlType, LabelExpr, SourceSpan, analyze::types::AnalyzedType};
+use crate::{GqlType, LabelExpr, SourceSpan, Vec2OrMore, analyze::types::AnalyzedType};
 
 /// Stable, opaque identifier for a binding declaration.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -356,7 +356,10 @@ impl BindingDecl {
         };
         match labels.take() {
             Some(prior) => {
-                *labels = Some(LabelExpr::Conjunction(vec![prior, next]));
+                *labels = Some(LabelExpr::Conjunction(
+                    Vec2OrMore::try_from_vec(vec![prior, next])
+                        .expect("refine_label_expr always merges exactly two labels"),
+                ));
             }
             None => {
                 *labels = Some(next);

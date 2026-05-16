@@ -25,7 +25,7 @@ pub(crate) fn lookup_metadata(
     ctx: &BindContext,
     call: &ProcedureCall,
 ) -> Result<ProcedureMetadata, AnalysisError> {
-    let procedure = call.name.clone().into_boxed_slice();
+    let procedure = call.name.clone().into_vec().into_boxed_slice();
     ctx.registry()
         .lookup(&call.name)
         .ok_or(AnalysisError::UnknownProcedure {
@@ -39,7 +39,7 @@ pub(crate) fn bind_procedure_call_with_metadata(
     call: &ProcedureCall,
     metadata: ProcedureMetadata,
 ) -> Result<(), AnalysisError> {
-    let procedure = call.name.clone().into_boxed_slice();
+    let procedure = call.name.clone().into_vec().into_boxed_slice();
 
     let expected = metadata.signature.parameters.len();
     let actual = call.args.len();

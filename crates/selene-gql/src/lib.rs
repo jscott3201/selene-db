@@ -41,7 +41,8 @@ pub use crate::ast::{
         LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
         QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, UnwindStatement, WithClause,
     },
-    types::{GqlType, RecordType, ValueType},
+    types::{GqlType, RecordType},
+    util::{EmptyVecError, NonEmpty, Vec2OrMore},
 };
 pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};

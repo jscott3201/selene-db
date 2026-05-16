@@ -4,7 +4,7 @@ use selene_core::IStr;
 
 use crate::ast::{
     call::ProcedureCall, ddl::DdlStatement, expr::ValueExpr, mutation::MutationPipeline,
-    pattern::MatchClause, span::SourceSpan, types::GqlType,
+    pattern::MatchClause, span::SourceSpan, types::GqlType, util::NonEmpty,
 };
 
 /// Top-level GQL statement.
@@ -17,8 +17,9 @@ pub enum Statement {
     Composite {
         /// First pipeline.
         first: QueryPipeline,
-        /// Remaining pipelines paired with their set operator.
-        rest: Vec<(SetOp, QueryPipeline)>,
+        /// Remaining pipelines paired with their set operator; type-enforced
+        /// non-empty because a composite statement has at least one set op.
+        rest: NonEmpty<(SetOp, QueryPipeline)>,
         /// Source span.
         span: SourceSpan,
     },

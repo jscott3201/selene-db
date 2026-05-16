@@ -2,7 +2,9 @@
 
 use selene_core::IStr;
 
-use crate::ast::{pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, types::GqlType};
+use crate::ast::{
+    pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, types::GqlType, util::NonEmpty,
+};
 
 /// Value expression.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -85,7 +87,7 @@ pub enum ValueExpr {
         /// values. Bare functions (`count(...)`) are a single-element
         /// path; namespaced calls (`db.bar()`, `pkg.subpkg.fn()`) preserve
         /// every segment.
-        name: Vec<IStr>,
+        name: NonEmpty<IStr>,
         /// Function arguments.
         args: Vec<ValueExpr>,
         /// `true` for `count(*)`.

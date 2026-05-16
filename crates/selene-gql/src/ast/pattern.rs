@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::ast::{expr::ValueExpr, span::SourceSpan};
+use crate::ast::{expr::ValueExpr, span::SourceSpan, util::Vec2OrMore};
 
 /// Path traversal mode for `MATCH`.
 #[derive(
@@ -49,9 +49,9 @@ pub enum LabelExpr {
     /// One label name.
     Single(IStr),
     /// Conjunction.
-    Conjunction(Vec<LabelExpr>),
+    Conjunction(Vec2OrMore<LabelExpr>),
     /// Disjunction.
-    Disjunction(Vec<LabelExpr>),
+    Disjunction(Vec2OrMore<LabelExpr>),
     /// Negation.
     Negation(Box<LabelExpr>),
     /// Wildcard label.

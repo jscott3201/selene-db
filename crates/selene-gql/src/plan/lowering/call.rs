@@ -58,13 +58,13 @@ pub(crate) fn plan_call(
     let metadata = registry
         .lookup(&call.name)
         .ok_or_else(|| PlannerError::UnknownProcedure {
-            procedure: call.name.clone().into_boxed_slice(),
+            procedure: call.name.clone().into_vec().into_boxed_slice(),
             span: call.span,
         })?;
 
     if metadata.signature.parameters.len() != call.args.len() {
         return Err(PlannerError::ProcedureMetadataMismatch {
-            procedure: call.name.clone().into_boxed_slice(),
+            procedure: call.name.clone().into_vec().into_boxed_slice(),
             detail: "signature parameter count changed",
             span: call.span,
         });
@@ -93,7 +93,7 @@ pub(crate) fn plan_call(
     validate_output_schema(call, &metadata, analyzed)?;
 
     let mut planned = PlannedCall {
-        procedure: call.name.clone().into_boxed_slice(),
+        procedure: call.name.clone().into_vec().into_boxed_slice(),
         handle: metadata.handle,
         args,
         yield_cols,
@@ -173,7 +173,7 @@ fn validate_signature(
                 "signature parameter type changed"
             };
             return Err(PlannerError::ProcedureMetadataMismatch {
-                procedure: call.name.clone().into_boxed_slice(),
+                procedure: call.name.clone().into_vec().into_boxed_slice(),
                 detail,
                 span: arg.span,
             });
@@ -240,7 +240,7 @@ fn expected_yield_type_for_decl(
 
 fn output_schema_changed(call: &ProcedureCall, span: crate::SourceSpan) -> PlannerError {
     PlannerError::ProcedureMetadataMismatch {
-        procedure: call.name.clone().into_boxed_slice(),
+        procedure: call.name.clone().into_vec().into_boxed_slice(),
         detail: "output column type changed",
         span,
     }
