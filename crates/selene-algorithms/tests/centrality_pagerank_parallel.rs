@@ -8,6 +8,7 @@ use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::SharedGraph;
 
 const PAGERANK_FIXED_ITER_RELATIVE_TOLERANCE: f64 = 1e-9;
+const PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE: f64 = 1e-12;
 
 fn istr(name: &str) -> IStr {
     intern(name).unwrap()
@@ -21,6 +22,21 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
             name: "test".to_string(),
             node_labels: vec![],
             edge_labels: vec![],
+            weight_property: None,
+        },
+        None,
+    )
+    .unwrap()
+}
+
+fn build_proj_with_edge_labels(shared: &SharedGraph, edge_labels: Vec<IStr>) -> GraphProjection {
+    let snapshot = shared.read();
+    GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "test".to_string(),
+            node_labels: vec![],
+            edge_labels,
             weight_property: None,
         },
         None,
@@ -48,6 +64,32 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
     }
     txn.commit().unwrap();
     shared
+}
+
+fn build_label_filtered_asymmetric_graph() -> (SharedGraph, IStr) {
+    let shared = SharedGraph::new(GraphId::new(96_003));
+    let label = istr("N");
+    let knows = istr("KNOWS");
+    let owns = istr("OWNS");
+
+    let mut txn = shared.begin_write();
+    let mut nodes = Vec::with_capacity(4);
+    for _ in 0..4 {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .unwrap(),
+        );
+    }
+    txn.mutator()
+        .create_edge(knows, nodes[0], nodes[1], PropertyMap::new())
+        .unwrap();
+    txn.mutator()
+        .create_edge(owns, nodes[2], nodes[3], PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    (shared, knows)
 }
 
 fn fixture_projection() -> GraphProjection {
@@ -104,6 +146,27 @@ fn assert_outputs_close(expected: &[(NodeId, f64)], observed: &[(NodeId, f64)], 
     }
 }
 
+fn assert_outputs_abs_close(
+    expected: &[(NodeId, f64)],
+    observed: &[(NodeId, f64)],
+    tolerance: f64,
+) {
+    assert_eq!(observed.len(), expected.len());
+    for ((expected_node, expected_score), (observed_node, observed_score)) in
+        expected.iter().zip(observed)
+    {
+        assert_eq!(
+            observed_node, expected_node,
+            "parallel mode must preserve §E21 result ordering"
+        );
+        let absolute = (observed_score - expected_score).abs();
+        assert!(
+            absolute <= tolerance,
+            "score for {expected_node:?} differed: expected {expected_score}, observed {observed_score}, absolute {absolute}, tolerance {tolerance}"
+        );
+    }
+}
+
 #[test]
 fn pagerank_parallel_matches_sequential_fixed_iter() {
     let proj = fixture_projection();
@@ -141,4 +204,44 @@ fn pagerank_parallel_is_stable_under_repeat() {
         let observed = pagerank(&proj, config(32, 0.0, threads4()));
         assert_outputs_close(&expected, &observed, PAGERANK_FIXED_ITER_RELATIVE_TOLERANCE);
     }
+}
+
+#[test]
+fn pagerank_seq_par_parity_on_directed_dag() {
+    let shared = build_graph(4, &[(0, 1), (1, 2), (2, 3)]);
+    let proj = build_proj(&shared);
+    let sequential = pagerank(&proj, config(100, 0.0, Parallelism::Sequential));
+    let auto = pagerank(&proj, config(100, 0.0, Parallelism::Auto));
+    let threaded = pagerank(&proj, config(100, 0.0, threads4()));
+
+    assert_outputs_abs_close(
+        &sequential,
+        &auto,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+    assert_outputs_abs_close(
+        &sequential,
+        &threaded,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+}
+
+#[test]
+fn pagerank_seq_par_parity_on_label_filtered_asymmetric() {
+    let (shared, knows) = build_label_filtered_asymmetric_graph();
+    let proj = build_proj_with_edge_labels(&shared, vec![knows]);
+    let sequential = pagerank(&proj, config(100, 0.0, Parallelism::Sequential));
+    let auto = pagerank(&proj, config(100, 0.0, Parallelism::Auto));
+    let threaded = pagerank(&proj, config(100, 0.0, threads4()));
+
+    assert_outputs_abs_close(
+        &sequential,
+        &auto,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
+    assert_outputs_abs_close(
+        &sequential,
+        &threaded,
+        PAGERANK_DIRECTED_PARITY_ABSOLUTE_TOLERANCE,
+    );
 }
