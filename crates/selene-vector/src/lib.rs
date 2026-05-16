@@ -39,6 +39,7 @@ pub mod payload;
 pub mod procedures;
 pub mod provider;
 pub(crate) mod quantize;
+pub mod registry;
 pub(crate) mod snapshot;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod snapshot_summary;
@@ -60,5 +61,6 @@ pub use quantize::{
     PqParams, QuantMethod, QuantizationConfig, QuantizationStats, QuantizationStatsKind,
     opq_max_dim,
 };
+pub use registry::{Catalog, HnswIndexRegistry, IvfIndexRegistry};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{VectorInvocationResult, VectorSnapshot, VectorSnapshotInput};
