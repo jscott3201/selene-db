@@ -60,7 +60,7 @@ impl ExternalMutationProcedure for UpsertProcedure {
         let vector = required_f32_list(UPSERT_PROC, args, 2, "vector")?;
         let state = Arc::clone(&self.state);
 
-        let max_layer = with_hnsw_provider_mut(ctx, UPSERT_PROC, |provider| {
+        let max_layer = with_hnsw_provider_mut(ctx, UPSERT_PROC, &index_name, |provider| {
             let dim = provider.config().dim;
             if vector.len() != dim {
                 return Err(invalid_argument(format!(

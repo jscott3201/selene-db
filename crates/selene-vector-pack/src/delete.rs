@@ -56,7 +56,7 @@ impl ExternalMutationProcedure for DeleteProcedure {
         reject_non_default_index(DELETE_PROC, &index_name)?;
         let node_id = required_node_ref(DELETE_PROC, args, 1, "node_id")?;
 
-        with_hnsw_provider_mut(ctx, DELETE_PROC, |_provider| Ok(()))?;
+        with_hnsw_provider_mut(ctx, DELETE_PROC, &index_name, |_provider| Ok(()))?;
         emit_payload(
             ctx,
             DELETE_PROC,

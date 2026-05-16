@@ -65,7 +65,7 @@ impl ExternalGraphProcedure for SearchProcedure {
     ) -> Result<ProcedureResult, ProcedureError> {
         let _state = &self.state;
         let parsed = parse_search_args(args)?;
-        with_hnsw_provider(ctx, SEARCH_PROC, |provider| {
+        with_hnsw_provider(ctx, SEARCH_PROC, &parsed.index_name, |provider| {
             let rows = provider
                 .search(
                     &parsed.query,
@@ -85,6 +85,7 @@ impl ExternalGraphProcedure for SearchProcedure {
 }
 
 struct SearchArgs {
+    index_name: String,
     query: Vec<f32>,
     k: usize,
     ef_search: Option<usize>,
@@ -103,6 +104,7 @@ fn parse_search_args(args: &[Value]) -> Result<SearchArgs, ProcedureError> {
         .map(try_filter_from_node_refs)
         .transpose()?;
     Ok(SearchArgs {
+        index_name,
         query,
         k,
         ef_search,

@@ -65,7 +65,7 @@ impl ExternalGraphProcedure for IvfSearchProcedure {
     ) -> Result<ProcedureResult, ProcedureError> {
         let _state = &self.state;
         let parsed = parse_ivf_search_args(args)?;
-        with_ivf_provider(ctx, IVF_SEARCH_PROC, |provider| {
+        with_ivf_provider(ctx, IVF_SEARCH_PROC, &parsed.index_name, |provider| {
             let rows = provider
                 .search(
                     &parsed.query,
@@ -86,6 +86,7 @@ impl ExternalGraphProcedure for IvfSearchProcedure {
 
 #[derive(Debug)]
 struct IvfSearchArgs {
+    index_name: String,
     query: Vec<f32>,
     k: usize,
     n_probe: Option<u32>,
@@ -104,6 +105,7 @@ fn parse_ivf_search_args(args: &[Value]) -> Result<IvfSearchArgs, ProcedureError
         .map(try_filter_from_node_refs)
         .transpose()?;
     Ok(IvfSearchArgs {
+        index_name,
         query,
         k,
         n_probe,

@@ -66,7 +66,7 @@ impl ExternalMutationProcedure for BulkUpsertProcedure {
         reject_empty_batch(BULK_UPSERT_PROC, &node_ids)?;
         let state = Arc::clone(&self.state);
 
-        let max_layers = with_hnsw_provider_mut(ctx, BULK_UPSERT_PROC, |provider| {
+        let max_layers = with_hnsw_provider_mut(ctx, BULK_UPSERT_PROC, &index_name, |provider| {
             validate_vectors(BULK_UPSERT_PROC, &vectors, provider.config().dim)?;
             validate_node_ids(BULK_UPSERT_PROC, &node_ids)?;
             let params = HnswParams::from_config(provider.config());

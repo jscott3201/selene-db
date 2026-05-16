@@ -59,7 +59,7 @@ impl ExternalMutationProcedure for IvfBulkDeleteProcedure {
         let node_ids = required_node_ref_list(IVF_BULK_DELETE_PROC, args, 1, "node_ids")?;
         reject_empty_batch(IVF_BULK_DELETE_PROC, &node_ids)?;
         validate_node_ids(IVF_BULK_DELETE_PROC, &node_ids)?;
-        with_ivf_provider_mut(ctx, IVF_BULK_DELETE_PROC, |_provider| Ok(()))?;
+        with_ivf_provider_mut(ctx, IVF_BULK_DELETE_PROC, &index_name, |_provider| Ok(()))?;
 
         let payload = VectorIvfBulkDeleteV1 { node_ids };
         let bytes = payload.encode().map_err(|error| ProcedureError::Internal {

@@ -66,8 +66,8 @@ impl ExternalGraphProcedure for IvfStatsProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let _state = &self.state;
-        parse_ivf_stats_args(args)?;
-        with_ivf_provider(ctx, IVF_STATS_PROC, |provider| {
+        let index_name = parse_ivf_stats_args(args)?;
+        with_ivf_provider(ctx, IVF_STATS_PROC, &index_name, |provider| {
             let rows = match provider
                 .ivf_stats()
                 .map_err(|err| vector_error(IVF_STATS_PROC, err))?
@@ -80,10 +80,11 @@ impl ExternalGraphProcedure for IvfStatsProcedure {
     }
 }
 
-fn parse_ivf_stats_args(args: &[Value]) -> Result<(), ProcedureError> {
+fn parse_ivf_stats_args(args: &[Value]) -> Result<String, ProcedureError> {
     expect_arity(IVF_STATS_PROC, args, 1)?;
     let index_name = required_string(IVF_STATS_PROC, args, 0, "index_name")?;
-    reject_non_default_index(IVF_STATS_PROC, &index_name)
+    reject_non_default_index(IVF_STATS_PROC, &index_name)?;
+    Ok(index_name)
 }
 
 fn stats_row(stats: IvfStats) -> Result<Vec<Value>, ProcedureError> {

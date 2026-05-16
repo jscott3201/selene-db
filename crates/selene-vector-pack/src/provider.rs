@@ -5,7 +5,7 @@ use std::sync::Arc;
 use selene_core::intern;
 use selene_gql::{GraphContext, MutationContext, ProcedureError};
 use selene_graph::ProviderTag;
-use selene_vector::{HnswProvider, IvfProvider};
+use selene_vector::{HnswIndexRegistry, HnswProvider, IvfIndexRegistry, IvfProvider};
 
 use crate::error::invalid_argument;
 
@@ -18,11 +18,20 @@ pub(crate) const IVF_PROVIDER_NAME: &str = "selene-vector-ivf";
 pub(crate) fn with_hnsw_provider<R>(
     ctx: &GraphContext<'_>,
     procedure: &'static str,
+    index_name: &str,
     f: impl FnOnce(&HnswProvider) -> Result<R, ProcedureError>,
 ) -> Result<R, ProcedureError> {
     let provider = ctx.index_provider_by_tag(VECT_TAG).ok_or_else(|| {
         invalid_argument(format!("{procedure}: no VECT index provider registered"))
     })?;
+    if let Some(registry) = provider.as_any().downcast_ref::<HnswIndexRegistry>() {
+        let hnsw = registry.get(index_name).ok_or_else(|| {
+            invalid_argument(format!(
+                "{procedure}: VECT registry has no vector index '{index_name}'"
+            ))
+        })?;
+        return f(hnsw.as_ref());
+    }
     let hnsw = provider
         .as_any()
         .downcast_ref::<HnswProvider>()
@@ -37,11 +46,20 @@ pub(crate) fn with_hnsw_provider<R>(
 pub(crate) fn with_hnsw_provider_mut<R>(
     ctx: &MutationContext<'_, '_>,
     procedure: &'static str,
+    index_name: &str,
     f: impl FnOnce(&HnswProvider) -> Result<R, ProcedureError>,
 ) -> Result<R, ProcedureError> {
     let provider = ctx.index_provider_by_tag(VECT_TAG).ok_or_else(|| {
         invalid_argument(format!("{procedure}: no VECT index provider registered"))
     })?;
+    if let Some(registry) = provider.as_any().downcast_ref::<HnswIndexRegistry>() {
+        let hnsw = registry.get(index_name).ok_or_else(|| {
+            invalid_argument(format!(
+                "{procedure}: VECT registry has no vector index '{index_name}'"
+            ))
+        })?;
+        return f(hnsw.as_ref());
+    }
     let hnsw = provider
         .as_any()
         .downcast_ref::<HnswProvider>()
@@ -56,11 +74,20 @@ pub(crate) fn with_hnsw_provider_mut<R>(
 pub(crate) fn with_ivf_provider<R>(
     ctx: &GraphContext<'_>,
     procedure: &'static str,
+    index_name: &str,
     f: impl FnOnce(&IvfProvider) -> Result<R, ProcedureError>,
 ) -> Result<R, ProcedureError> {
     let provider = ctx.index_provider_by_tag(IVFP_TAG).ok_or_else(|| {
         invalid_argument(format!("{procedure}: no IVFP index provider registered"))
     })?;
+    if let Some(registry) = provider.as_any().downcast_ref::<IvfIndexRegistry>() {
+        let ivf = registry.get(index_name).ok_or_else(|| {
+            invalid_argument(format!(
+                "{procedure}: IVFP registry has no vector index '{index_name}'"
+            ))
+        })?;
+        return f(ivf.as_ref());
+    }
     let ivf = provider
         .as_any()
         .downcast_ref::<IvfProvider>()
@@ -73,11 +100,20 @@ pub(crate) fn with_ivf_provider<R>(
 pub(crate) fn with_ivf_provider_mut<R>(
     ctx: &MutationContext<'_, '_>,
     procedure: &'static str,
+    index_name: &str,
     f: impl FnOnce(&IvfProvider) -> Result<R, ProcedureError>,
 ) -> Result<R, ProcedureError> {
     let provider = ctx.index_provider_by_tag(IVFP_TAG).ok_or_else(|| {
         invalid_argument(format!("{procedure}: no IVFP index provider registered"))
     })?;
+    if let Some(registry) = provider.as_any().downcast_ref::<IvfIndexRegistry>() {
+        let ivf = registry.get(index_name).ok_or_else(|| {
+            invalid_argument(format!(
+                "{procedure}: IVFP registry has no vector index '{index_name}'"
+            ))
+        })?;
+        return f(ivf.as_ref());
+    }
     let ivf = provider
         .as_any()
         .downcast_ref::<IvfProvider>()

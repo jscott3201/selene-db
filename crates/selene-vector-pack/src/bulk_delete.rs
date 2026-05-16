@@ -59,7 +59,7 @@ impl ExternalMutationProcedure for BulkDeleteProcedure {
         let node_ids = required_node_ref_list(BULK_DELETE_PROC, args, 1, "node_ids")?;
         reject_empty_batch(BULK_DELETE_PROC, &node_ids)?;
         validate_node_ids(BULK_DELETE_PROC, &node_ids)?;
-        with_hnsw_provider_mut(ctx, BULK_DELETE_PROC, |_provider| Ok(()))?;
+        with_hnsw_provider_mut(ctx, BULK_DELETE_PROC, &index_name, |_provider| Ok(()))?;
 
         let payload = VectorBulkDeletePayloadV1 { node_ids };
         let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
