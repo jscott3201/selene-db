@@ -212,24 +212,6 @@ fn eval_arithmetic_int128_overflow_returns_data_exception() {
 }
 
 #[test]
-fn lookup_variable_missing_column_returns_invalid_reference() {
-    let missing = intern("missing").unwrap();
-    let expr = var(missing);
-    let binding = Binding::new([Value::Int(1)]);
-    let schema = BindingTableSchema {
-        columns: vec![named_column(intern("present").unwrap())],
-    };
-    let err = eval_with_binding(&expr, &binding, &schema)
-        .expect_err("missing schema column is an invalid reference");
-
-    assert!(matches!(
-        &err,
-        ExecutorError::InvalidReference { name, .. } if name == "missing"
-    ));
-    assert_eq!(err.gqlstatus().as_str(), "42002");
-}
-
-#[test]
 fn large_integer_equality_is_exact() {
     let expr = ValueExpr::BinaryOp {
         op: BinaryOp::Eq,

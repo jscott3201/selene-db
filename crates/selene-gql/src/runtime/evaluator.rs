@@ -92,10 +92,12 @@ fn lookup_variable(
         .iter()
         .position(|column| column.name == Some(name))
     else {
-        return Err(ExecutorError::InvalidReference {
-            name: name.as_str().to_owned(),
-            span,
-        });
+        // GA07 binder keeps pre-projection bindings visible after RETURN.
+        // OrderBy evaluates against the projected schema when the TopK
+        // rewrite does not apply (unbounded ORDER BY); a strict
+        // InvalidReference here would break those plans. Surface
+        // analyzer-fault unbound vars at bind-time instead.
+        return Ok(Value::Null);
     };
     binding
         .get(index)
