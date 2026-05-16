@@ -210,6 +210,83 @@ fn louvain_weighted_projection_biases_partition() {
 }
 
 #[test]
+fn louvain_weighted_degree_invariant_and_heavy_edge_assignment() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let nlabel = istr("N");
+    let rel = istr("R");
+    let weight_key = istr("w");
+    let mut txn = shared.begin_write();
+    let mut nodes = Vec::with_capacity(3);
+    for _ in 0..3 {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(nlabel), PropertyMap::new())
+                .unwrap(),
+        );
+    }
+
+    let mut light = PropertyMap::new();
+    light.set(weight_key, selene_core::Value::Int(1)).unwrap();
+    txn.mutator()
+        .create_edge(rel, nodes[0], nodes[1], light.clone())
+        .unwrap();
+    txn.mutator()
+        .create_edge(rel, nodes[1], nodes[0], light)
+        .unwrap();
+
+    let mut heavy = PropertyMap::new();
+    heavy.set(weight_key, selene_core::Value::Int(100)).unwrap();
+    txn.mutator()
+        .create_edge(rel, nodes[1], nodes[2], heavy.clone())
+        .unwrap();
+    txn.mutator()
+        .create_edge(rel, nodes[2], nodes[1], heavy)
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot = shared.read();
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "weighted-tie-break".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: Some(weight_key),
+        },
+        None,
+    )
+    .unwrap();
+    let total_weight: f64 = proj
+        .iter_nodes()
+        .flat_map(|node| proj.out_neighbors(node))
+        .map(|neighbor| neighbor.weight)
+        .sum();
+    let weighted_degree_sum: f64 = proj
+        .iter_nodes()
+        .map(|node| {
+            proj.out_neighbors(node)
+                .iter()
+                .chain(proj.in_neighbors(node))
+                .map(|neighbor| neighbor.weight)
+                .sum::<f64>()
+        })
+        .sum();
+    assert!(
+        (weighted_degree_sum - (2.0 * total_weight)).abs() <= 1.0e-12,
+        "weighted degree invariant must be Σd_i = 2m"
+    );
+
+    let result = louvain(&proj, 50);
+    let comm_n1 = result.iter().find(|&&(n, _, _)| n == nodes[1]).unwrap().1;
+    let comm_n2 = result.iter().find(|&&(n, _, _)| n == nodes[2]).unwrap().1;
+
+    assert_eq!(
+        comm_n1, comm_n2,
+        "heavy high-NodeId edge should pull n1 toward n2"
+    );
+}
+
+#[test]
 fn louvain_handles_sparse_row_projection() {
     // §E26: state arrays sized by RowIndex, not max_row + 1.
     let shared = SharedGraph::new(GraphId::new(1));
