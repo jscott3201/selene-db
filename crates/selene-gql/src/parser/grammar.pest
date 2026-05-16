@@ -402,7 +402,7 @@ primary = {
 // Reduce:               reduce ( acc = init, x IN list | step )
 //
 // PEG ordering: tried before `function_call` so `any(x IN list WHERE p)`
-// does not greedily match as a user function. A plain call like `any(x)`
+// avoids greedy matching as a user function. A plain call like `any(x)`
 // (no `IN`) fails the rule and backtracks to `function_call`. Likewise,
 // a list literal `[1, 2, 3]` fails at the missing `IN` after the first
 // element and backtracks to `list_lit`. Iteration-variable names are
