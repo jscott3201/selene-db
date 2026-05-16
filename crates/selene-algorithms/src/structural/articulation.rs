@@ -26,8 +26,8 @@
 //! indexed by dense indices via [`RowIndex`]; sparse rows are translated at
 //! the projection boundary.
 
-use std::collections::HashMap;
-
+// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
+use rustc_hash::FxHashMap as HashMap;
 use selene_core::NodeId;
 
 use crate::projection::GraphProjection;
@@ -124,7 +124,7 @@ fn biconn_dfs(state: &mut BiconnState, start: u32, proj: &GraphProjection, idx: 
     // Per-DFS undirected neighbor cache: dense → sorted-with-multiplicity
     // neighbor dense indices. Multiplicity is preserved (no HashSet dedupe)
     // so parallel edges are visible to the lowlink rule.
-    let mut neighbors_cache: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut neighbors_cache: HashMap<u32, Vec<u32>> = HashMap::default();
 
     state.disc[start as usize] = state.timer;
     state.low[start as usize] = state.timer;

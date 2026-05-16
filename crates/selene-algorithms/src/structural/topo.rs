@@ -4,8 +4,8 @@
 //! `NodeId` for deterministic output: the ready queue is sorted before each
 //! batch flush, matching donor `aether-db-algorithms/src/structural.rs:266-329`.
 
-use std::collections::HashMap;
-
+// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
+use rustc_hash::FxHashMap as HashMap;
 use selene_core::NodeId;
 use thiserror::Error;
 
@@ -44,7 +44,8 @@ pub fn topological_sort(proj: &GraphProjection) -> Result<Vec<(NodeId, usize)>, 
 
     // Compute in-degree against the projection (NOT the underlying graph), so
     // edges to nodes outside the projection don't inflate the count.
-    let mut in_degree: HashMap<NodeId, u32> = HashMap::with_capacity(total);
+    let mut in_degree: HashMap<NodeId, u32> = HashMap::default();
+    in_degree.reserve(total);
     for nid in proj.iter_nodes() {
         in_degree.entry(nid).or_insert(0);
         for nb in proj.out_neighbors(nid) {

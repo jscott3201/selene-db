@@ -22,8 +22,8 @@
 //! candidates do NOT replace — but the sorted iteration makes the algorithm
 //! robust to a future `>=` change.
 
-use std::collections::HashMap;
-
+// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
+use rustc_hash::FxHashMap as HashMap;
 use selene_core::NodeId;
 
 use crate::projection::GraphProjection;
@@ -95,14 +95,15 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
     // comm_degree_sum[community_id] = Σ weighted_degree[v] for v ∈ community.
     // Kept as a `HashMap` because community IDs are sparse (start = N distinct
     // singletons, may merge down to ≪ N) and the key set changes per move.
-    let mut comm_degree_sum: HashMap<u32, f64> = HashMap::with_capacity(n);
+    let mut comm_degree_sum: HashMap<u32, f64> = HashMap::default();
+    comm_degree_sum.reserve(n);
     for d in 0..n as u32 {
         let c = community[d as usize];
         *comm_degree_sum.entry(c).or_insert(0.0) += weighted_degree[d as usize];
     }
 
     // Reused per-node scratch.
-    let mut comm_weights: HashMap<u32, f64> = HashMap::new();
+    let mut comm_weights: HashMap<u32, f64> = HashMap::default();
     // Sorted-candidate buffer for §E30 determinism. Built fresh per node.
     let mut sorted_candidates: Vec<(u32, f64)> = Vec::new();
 
