@@ -132,6 +132,104 @@ fn projection_edge_label_filter() {
 }
 
 #[test]
+fn projection_transpose_invariant_holds_on_directed_dag() {
+    let shared = SharedGraph::new(GraphId::new(96_001));
+    let label = istr("N");
+    let rel = istr("R");
+
+    let mut txn = shared.begin_write();
+    let mut nodes = Vec::with_capacity(4);
+    for _ in 0..4 {
+        nodes.push(
+            txn.mutator()
+                .create_node(LabelSet::single(label), PropertyMap::new())
+                .unwrap(),
+        );
+    }
+    for (source, target) in [(0, 1), (1, 2), (2, 3)] {
+        txn.mutator()
+            .create_edge(rel, nodes[source], nodes[target], PropertyMap::new())
+            .unwrap();
+    }
+    txn.commit().unwrap();
+
+    let snapshot = shared.read();
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "directed-dag".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(proj.node_count(), 4);
+    assert_eq!(proj.edge_count(), 3);
+    assert_eq!(proj.out_neighbors(nodes[0])[0].node_id, nodes[1]);
+    assert_eq!(proj.in_neighbors(nodes[3])[0].node_id, nodes[2]);
+}
+
+#[test]
+fn projection_transpose_invariant_holds_on_label_filtered_non_reciprocal() {
+    let shared = SharedGraph::new(GraphId::new(96_002));
+    let label = istr("N");
+    let knows = istr("KNOWS");
+    let owns = istr("OWNS");
+
+    let mut txn = shared.begin_write();
+    let a = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    let b = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    let c = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    let d = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    txn.mutator()
+        .create_edge(knows, a, b, PropertyMap::new())
+        .unwrap();
+    txn.mutator()
+        .create_edge(owns, c, d, PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot = shared.read();
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "knows-only".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![knows],
+            weight_property: None,
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(proj.node_count(), 4);
+    assert_eq!(proj.edge_count(), 1);
+    assert_eq!(proj.out_neighbors(a)[0].node_id, b);
+    assert_eq!(proj.in_neighbors(b)[0].node_id, a);
+    assert!(proj.out_neighbors(b).is_empty(), "KNOWS edge is one-way");
+    assert!(
+        proj.out_neighbors(c).is_empty(),
+        "OWNS edge is filtered out"
+    );
+    assert!(proj.in_neighbors(d).is_empty(), "OWNS edge is filtered out");
+}
+
+#[test]
 fn projection_weight_extraction() {
     let (shared, nodes, _) = fixture_small();
     let snapshot = shared.read();

@@ -114,6 +114,8 @@ impl GraphProjection {
             &config.edge_labels,
             config.weight_property.as_ref(),
         );
+        #[cfg(debug_assertions)]
+        assert_csr_transpose(&nodes, &out_csr, &in_csr);
 
         Ok(Self {
             name: config.name.clone(),
@@ -230,4 +232,30 @@ impl GraphProjection {
     pub fn edge_labels(&self) -> &[IStr] {
         &self.edge_labels
     }
+}
+
+#[cfg(debug_assertions)]
+fn assert_csr_transpose(nodes: &RoaringBitmap, out_csr: &ProjCsr, in_csr: &ProjCsr) {
+    let mut out_edges = Vec::with_capacity(out_csr.total_neighbors());
+    for row in nodes.iter() {
+        let source = NodeId::new(u64::from(row) + 1);
+        for neighbor in out_csr.neighbors_of_row(row) {
+            out_edges.push((neighbor.edge_id, source, neighbor.node_id));
+        }
+    }
+
+    let mut in_edges = Vec::with_capacity(in_csr.total_neighbors());
+    for row in nodes.iter() {
+        let target = NodeId::new(u64::from(row) + 1);
+        for neighbor in in_csr.neighbors_of_row(row) {
+            in_edges.push((neighbor.edge_id, neighbor.node_id, target));
+        }
+    }
+
+    out_edges.sort_unstable();
+    in_edges.sort_unstable();
+    debug_assert_eq!(
+        out_edges, in_edges,
+        "GraphProjection out/in CSR transpose invariant violated"
+    );
 }

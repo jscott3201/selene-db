@@ -20,8 +20,10 @@ use crate::structural::RowIndex;
 #[derive(Debug, Clone, Copy)]
 pub struct PageRankConfig {
     /// Damping factor — probability of following an out-edge versus random
-    /// teleport. Typical value 0.85. Must be in `[0.0, 1.0]`; callers are
-    /// responsible for validating before passing.
+    /// teleport. Typical value 0.85. Must be finite and in `[0.0, 1.0)`;
+    /// the exclusive upper bound preserves the teleport floor that gives the
+    /// power iteration a convergence guarantee. Callers are responsible for
+    /// validating before passing.
     pub damping: f64,
     /// Maximum power-iteration count. Algorithm terminates earlier when
     /// `max |new[v] - score[v]| < tolerance` across all v. `0` returns the
@@ -52,6 +54,11 @@ pub fn pagerank(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, 
 }
 
 fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+    debug_assert!(
+        config.damping.is_finite() && (0.0..1.0).contains(&config.damping),
+        "damping must be finite and in [0.0, 1.0); got {}",
+        config.damping
+    );
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
         return Vec::new();
@@ -139,6 +146,11 @@ fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(N
 }
 
 fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+    debug_assert!(
+        config.damping.is_finite() && (0.0..1.0).contains(&config.damping),
+        "damping must be finite and in [0.0, 1.0); got {}",
+        config.damping
+    );
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
         return Vec::new();

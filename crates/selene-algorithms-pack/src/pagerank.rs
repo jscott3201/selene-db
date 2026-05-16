@@ -24,6 +24,7 @@ pub const DEFAULT_TOLERANCE: f64 = 1e-6;
 
 static PAGERANK_NAME: [&str; 2] = ["algo", "pagerank"];
 const PAGERANK_PROC: &str = "algo.pagerank";
+const DAMPING_CONVERGENCE_DETAIL: &str = "algo.pagerank damping must be finite and in [0.0, 1.0) so PageRank keeps a positive teleport floor and retains its convergence guarantee";
 
 pub(crate) fn procedure(state: Arc<AlgorithmsPackState>) -> Arc<dyn ExternalGraphProcedure> {
     Arc::new(PageRankProcedure { state })
@@ -110,13 +111,8 @@ pub(crate) fn parse_pagerank_args(
 }
 
 fn validate_config(damping: f64, tolerance: f64) -> Result<(), ProcedureError> {
-    if !damping.is_finite() {
-        return Err(invalid_argument("algo.pagerank damping must be finite"));
-    }
-    if !(0.0..=1.0).contains(&damping) {
-        return Err(invalid_argument(
-            "algo.pagerank damping must be in [0.0, 1.0]",
-        ));
+    if !damping.is_finite() || !(0.0..1.0).contains(&damping) {
+        return Err(invalid_argument(DAMPING_CONVERGENCE_DETAIL));
     }
     if !tolerance.is_finite() {
         return Err(invalid_argument("algo.pagerank tolerance must be finite"));
@@ -145,6 +141,13 @@ mod tests {
 
     fn projection_name() -> Value {
         Value::String(intern("p").expect("test string interns"))
+    }
+
+    fn invalid_argument_detail(err: ProcedureError) -> String {
+        let ProcedureError::InvalidArgument { detail } = err else {
+            panic!("expected InvalidArgument, got {err:?}");
+        };
+        detail
     }
 
     #[test]
@@ -179,17 +182,39 @@ mod tests {
     }
 
     #[test]
-    fn non_finite_damping_rejected() {
+    fn pagerank_rejects_damping_one_with_clear_error() {
         let err = parse_pagerank_args(&[
             projection_name(),
-            Value::Float(f64::INFINITY),
+            Value::Float(1.0),
             Value::Null,
             Value::Null,
             Value::Null,
         ])
-        .expect_err("non-finite damping rejected");
+        .expect_err("damping one rejected");
 
-        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+        let detail = invalid_argument_detail(err);
+        assert!(detail.contains("[0.0, 1.0)"));
+        assert!(detail.contains("teleport"));
+        assert!(detail.contains("convergence guarantee"));
+    }
+
+    #[test]
+    fn pagerank_rejects_damping_nan_or_inf() {
+        for damping in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let err = parse_pagerank_args(&[
+                projection_name(),
+                Value::Float(damping),
+                Value::Null,
+                Value::Null,
+                Value::Null,
+            ])
+            .expect_err("non-finite damping rejected");
+
+            let detail = invalid_argument_detail(err);
+            assert!(detail.contains("finite"));
+            assert!(detail.contains("[0.0, 1.0)"));
+            assert!(detail.contains("convergence guarantee"));
+        }
     }
 
     #[test]
@@ -203,7 +228,8 @@ mod tests {
         ])
         .expect_err("out-of-range damping rejected");
 
-        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+        let detail = invalid_argument_detail(err);
+        assert!(detail.contains("[0.0, 1.0)"));
     }
 
     #[test]
