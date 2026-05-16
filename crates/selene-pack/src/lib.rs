@@ -1,9 +1,12 @@
-//! Built-in procedure pack registry for selene-db.
+//! Built-in procedure-pack registry for selene-db.
 //!
-//! `selene-pack` owns concrete built-in registration and implements the
-//! procedure-registry boundary consumed by `selene-gql`. Registration is
-//! construct-time-only in v1.0; callers receive a frozen registry that supports
-//! plan-time lookup and runtime dispatch.
+//! `selene-pack` owns manifest validation, built-in registration, lifecycle
+//! activation history, and the concrete `ProcedureRegistry` implementation
+//! consumed by `selene-gql`. Registration is construct-time-only in v1.0:
+//! callers receive a frozen registry that supports plan-time lookup and
+//! runtime dispatch while WAL/audit sinks record lifecycle transitions. This
+//! crate defers query planning and procedure tier enforcement to `selene-gql`.
+//! See Spec 08 §7 and Spec 14.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

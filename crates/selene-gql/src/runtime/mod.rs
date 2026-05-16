@@ -1,8 +1,13 @@
-//! Query executor runtime surfaces.
+//! GQL execution runtime.
 //!
-//! BRIEF-31 intentionally exposes only the scan/evaluator scaffolding needed
-//! for M5d Phase A. Later executor briefs add join, pipeline, mutation,
-//! catalog, transaction-control, and CALL dispatch.
+//! The runtime consumes an optimized `ExecutionPlan` and a transaction context,
+//! walks pattern join trees into binding tables, applies pipeline operators,
+//! dispatches procedure calls through tier-checked contexts, and coordinates
+//! statement-level transaction control. It relies on parser, analyzer, and
+//! planner invariants for binding and type structure; this layer owns runtime
+//! three-valued logic, mutation routing through `Mutator`, provider error
+//! propagation, and statement output shaping. See Spec 08 §5-§8 and Spec 14
+//! §3-§8.
 
 mod binding_table;
 mod context;

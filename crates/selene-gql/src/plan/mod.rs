@@ -1,11 +1,13 @@
-//! Query planner entry points and unoptimized execution-plan IR.
+//! Query planner entry points and execution-plan IR.
 //!
-//! Lowers an [`AnalyzedStatement`] into a literal, unoptimized
-//! [`ExecutionPlan`] covering reads, mutations, DDL, CALL, and
-//! transaction control. The optimizer is explicit: callers that want rewrites
-//! call [`optimize`] after [`plan`]. The durable planner contract is spec 13;
-//! `_spec/13-iso-gql-planner.md` is a
-//! local-only mirror per the underscore-folder convention.
+//! The planner lowers an [`AnalyzedStatement`] into a literal
+//! [`ExecutionPlan`] covering reads, mutations, DDL, CALL, and transaction
+//! control, with binding-table schemas attached wherever row shape changes.
+//! Optimizer rewrites are explicit: callers that want canonicalization or
+//! access-path selection call [`optimize`] after [`plan`]. This layer relies on
+//! analyzer binding/type/write-set invariants and defers provider fanout,
+//! three-valued logic evaluation, and transaction effects to the runtime. See
+//! Spec 08 §6-§8 and Spec 13.
 
 mod error;
 mod ir;

@@ -1,4 +1,11 @@
 //! Pest-backed GQL parser entry points.
+//!
+//! The parser admits one GQL program, enforces the string-interner admission
+//! budget, builds the public AST with source spans preserved, and runs the
+//! Flagger before callers see unsupported syntax. It does not resolve names,
+//! infer types, or choose execution behavior; those invariants start at the
+//! analyzer. Deferred grammar surfaces return `ParserError::NotImplemented`
+//! with v1.0 support guidance. See ISO GQL Clause 14 and Spec 07.
 
 mod budget;
 mod builders;

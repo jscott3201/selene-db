@@ -1,9 +1,12 @@
-//! Read-only HNSW graph model and distance kernels.
+//! HNSW graph model and distance kernels.
 //!
-//! HNSW stores one vector node with a neighbor list for every layer from
-//! layer 0 through `max_layer`, inclusive. Layer 0 is the dense base graph;
-//! higher layers are progressively sparser routing layers. GRPH/VECS snapshot
-//! sections preserve this shape across persistence boundaries.
+//! HNSW stores one vector node with a neighbor list for every layer from layer
+//! 0 through `max_layer`, inclusive. Layer 0 is the dense base graph; higher
+//! layers are progressively sparser routing layers, layer sampling follows the
+//! standard exponential-decay formula, and `MAX_LAYER` caps persisted layer
+//! width. The provider owns mutation replay and snapshot section routing; this
+//! module owns graph shape, insertion/search invariants, and metric scoring.
+//! See Malkov and Yashunin 2018 and Spec 17 VECT/GRPH/VECS invariants.
 
 pub mod build;
 pub(crate) mod delete;

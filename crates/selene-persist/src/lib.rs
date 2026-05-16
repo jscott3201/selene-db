@@ -1,11 +1,11 @@
 //! Persistence formats for selene-db.
 //!
-//! This crate owns persistence formats described in
-//! `_spec/04-persistence-format.md`. It writes and reads the BRIEF-10 WAL
-//! format, writes and reads the BRIEF-11 snapshot envelope, and exposes the
-//! BRIEF-12 recovery contract that routes bytes and changes to caller-owned
-//! providers. It does not own graph state and intentionally depends only on
-//! `selene-core` among selene crates.
+//! This crate owns WAL entry headers, snapshot envelopes, section tables,
+//! compression flags, and recovery streaming. It validates byte-level limits
+//! before handing decoded changes or section payloads to caller-owned
+//! providers, and it never owns graph state. Among selene crates it depends
+//! only on `selene-core`, keeping persistence reusable below graph and runtime
+//! layers. See Spec 04.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
