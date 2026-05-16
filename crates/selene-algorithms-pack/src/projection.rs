@@ -1,6 +1,6 @@
 //! Projection-catalog procedure adapters.
 
-use std::{sync::Arc, sync::Arc as StdArc};
+use std::sync::{Arc, Arc as StdArc};
 
 use selene_algorithms::{GraphProjection, ProjectionConfig};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
@@ -199,18 +199,51 @@ impl ExternalGraphProcedure for ProjectionList {
         self.state.with_catalog(graph_id, |catalog| {
             let mut names = catalog.names();
             names.sort();
-            let mut rows = Vec::with_capacity(names.len());
-            for name in names {
-                catalog
-                    .ensure_fresh(ctx.snapshot(), &name)
-                    .map_err(algorithm_error)?;
-                if let Some(projection) = catalog.get(&name) {
-                    rows.push(projection_row(projection.projection()));
-                }
-            }
+            let snapshots: Vec<ProjectionSnapshot> = names
+                .iter()
+                .map(|name| {
+                    catalog
+                        .ensure_fresh(ctx.snapshot(), name)
+                        .map_err(algorithm_error)?;
+                    let projection = catalog.get(name).ok_or_else(|| {
+                        algorithm_error(selene_algorithms::AlgorithmsError::NoSuchProjection {
+                            name: name.clone(),
+                        })
+                    })?;
+                    Ok(ProjectionSnapshot::from(projection.projection()))
+                })
+                .collect::<Result<_, ProcedureError>>()?;
+            let rows = snapshots.into_iter().map(projection_snapshot_row).collect();
             Ok(ProcedureResult { rows })
         })
     }
+}
+
+struct ProjectionSnapshot {
+    name: StdArc<str>,
+    generation: u64,
+    node_count: u64,
+    edge_count: u64,
+}
+
+impl From<&GraphProjection> for ProjectionSnapshot {
+    fn from(projection: &GraphProjection) -> Self {
+        Self {
+            name: StdArc::<str>::from(projection.name()),
+            generation: projection.generation(),
+            node_count: projection.node_count() as u64,
+            edge_count: projection.edge_count() as u64,
+        }
+    }
+}
+
+fn projection_snapshot_row(snapshot: ProjectionSnapshot) -> Vec<Value> {
+    vec![
+        Value::ExternalString(snapshot.name),
+        Value::Uint(snapshot.generation),
+        Value::Uint(snapshot.node_count),
+        Value::Uint(snapshot.edge_count),
+    ]
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
@@ -231,12 +264,7 @@ fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
 }
 
 fn projection_row(projection: &GraphProjection) -> Vec<Value> {
-    vec![
-        Value::ExternalString(StdArc::<str>::from(projection.name())),
-        Value::Uint(projection.generation()),
-        Value::Uint(projection.node_count() as u64),
-        Value::Uint(projection.edge_count() as u64),
-    ]
+    projection_snapshot_row(ProjectionSnapshot::from(projection))
 }
 
 fn unit_result() -> ProcedureResult {
