@@ -22,6 +22,7 @@ mod snapshot_summary;
 mod statement;
 mod subplan;
 mod value_compare;
+mod value_key;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};

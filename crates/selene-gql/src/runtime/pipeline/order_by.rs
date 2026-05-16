@@ -15,15 +15,11 @@ pub(super) fn execute(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let schema = table.schema().clone();
-    let mut keyed_rows = table
-        .rows()
-        .iter()
+    let (schema, rows) = table.into_parts();
+    let mut keyed_rows = rows
+        .into_iter()
         .map(|row| {
-            evaluate_key_tuple(keys, row, &schema, ctx).map(|tuple| KeyedRow {
-                tuple,
-                row: row.clone(),
-            })
+            evaluate_key_tuple(keys, &row, &schema, ctx).map(|tuple| KeyedRow { tuple, row })
         })
         .collect::<Result<Vec<_>, _>>()?;
 

@@ -17,9 +17,8 @@ pub(super) fn execute(
 ) -> Result<BindingTable, ExecutorError> {
     context::validate_call_tier(call)?;
     let registry = ctx.registry();
-    let input_schema = table.schema().clone();
+    let (input_schema, rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, call);
-    let (_, rows) = table.into_parts();
     let mut output = Vec::new();
 
     for row in rows {

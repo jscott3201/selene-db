@@ -2172,6 +2172,7 @@ dependencies = [
  "pest_derive",
  "proptest",
  "rstest",
+ "rustc-hash",
  "selene-core",
  "selene-graph",
  "selene-persist",

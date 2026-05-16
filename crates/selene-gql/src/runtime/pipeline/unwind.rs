@@ -12,7 +12,7 @@ pub(super) fn execute(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let input_schema = table.schema().clone();
+    let (input_schema, input_rows) = table.into_parts();
     let mut output_schema = input_schema.clone();
     output_schema.columns.push(BindingTableColumn {
         name: Some(alias),
@@ -21,8 +21,8 @@ pub(super) fn execute(
     });
 
     let mut rows = Vec::new();
-    for row in table.rows() {
-        match evaluator::evaluate(&source.expr, row, &input_schema, ctx)? {
+    for row in input_rows {
+        match evaluator::evaluate(&source.expr, &row, &input_schema, ctx)? {
             Value::List(values) => {
                 for value in values {
                     let mut output = row.values().to_vec();

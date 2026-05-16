@@ -1,14 +1,18 @@
+use rustc_hash::FxHashSet;
 use selene_core::Value;
 
 use crate::{
     Aggregate, SourceSpan,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext, evaluator, value_compare},
+    runtime::{
+        Binding, BindingTableSchema, ExecutorError, TxContext, evaluator, value_compare,
+        value_key::RuntimeEqKey,
+    },
 };
 
 pub(super) struct AggregateSlot {
     aggregate: Aggregate,
     state: AggregateState,
-    seen: Vec<Value>,
+    seen: FxHashSet<RuntimeEqKey>,
 }
 
 impl AggregateSlot {
@@ -16,7 +20,7 @@ impl AggregateSlot {
         Ok(Self {
             aggregate: aggregate.clone(),
             state: AggregateState::new(classify(aggregate)?),
-            seen: Vec::new(),
+            seen: FxHashSet::default(),
         })
     }
 
@@ -41,14 +45,10 @@ impl AggregateSlot {
             return Ok(());
         }
         if self.aggregate.distinct {
-            if self
-                .seen
-                .iter()
-                .any(|seen| values_equal_for_distinct(seen, &value))
-            {
+            let key = RuntimeEqKey::from_row(vec![value.clone()]);
+            if !self.seen.insert(key) {
                 return Ok(());
             }
-            self.seen.push(value.clone());
         }
         self.state.observe(Some(value), self.aggregate.span)
     }
@@ -290,14 +290,6 @@ fn count_to_value(count: u64, span: SourceSpan) -> Result<Value, ExecutorError> 
     i64::try_from(count)
         .map(Value::Int)
         .map_err(|_| data_exception_value("aggregate count is out of range", span))
-}
-
-fn values_equal_for_distinct(lhs: &Value, rhs: &Value) -> bool {
-    match (lhs, rhs) {
-        (Value::Null, Value::Null) => true,
-        (Value::Null, _) | (_, Value::Null) => false,
-        _ => value_compare::equal_non_null(lhs, rhs),
-    }
 }
 
 fn i64_to_f64_exact(value: i64) -> Option<f64> {

@@ -104,6 +104,13 @@ fn count_distinct_dedups_cross_type_numeric_equivalents() {
 }
 
 #[test]
+fn aggregate_distinct_uses_runtime_eq_semantics() {
+    let table = execute_read("UNWIND [1, 1.0, 1] AS x RETURN count(DISTINCT x) AS c");
+
+    assert_eq!(column_values(&table, "c"), vec![Value::Int(1)]);
+}
+
+#[test]
 fn min_max_empty_returns_null() {
     let table = execute_read("MATCH (n:Missing) RETURN min(n.age) AS mn, max(n.age) AS mx");
 
