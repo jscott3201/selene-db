@@ -11,6 +11,7 @@ pub mod pattern;
 pub mod span;
 pub mod statement;
 pub mod types;
+pub mod util;
 
 pub use call::{ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{
@@ -34,3 +35,4 @@ pub use statement::{
     WithClause,
 };
 pub use types::{GqlType, RecordType, ValueType};
+pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};
