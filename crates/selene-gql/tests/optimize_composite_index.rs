@@ -10,6 +10,24 @@ fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
 }
 
+fn property_names(count: usize) -> Vec<IStr> {
+    (0..count).map(|index| istr(&format!("p{index}"))).collect()
+}
+
+fn equality_predicate_source(count: usize) -> String {
+    (0..count)
+        .map(|index| format!("n.p{index} = {index}"))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+fn match_with_equality_count(count: usize) -> String {
+    format!(
+        "MATCH (n:Doc) WHERE {} RETURN n",
+        equality_predicate_source(count)
+    )
+}
+
 fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::ExecutionPlan {
     let statement = parse(source).expect("test input parses");
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("test input analyzes");
@@ -52,6 +70,41 @@ fn composite_lookup_uses_declaration_order() {
     assert_eq!(keys[0].0, istr("tenant"));
     assert_eq!(keys[1].0, istr("kind"));
     assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn composite_index_lookup_does_not_panic_on_oversized_candidates() {
+    let catalog = MockIndexCatalog::new();
+    let source = match_with_equality_count(64);
+
+    let result = std::panic::catch_unwind(|| optimized_one(&source, &catalog));
+
+    assert!(result.is_ok());
+    let plan = result.expect("optimizer should not panic");
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(matches!(scan.access, ScanAccess::Linear));
+}
+
+#[test]
+fn composite_index_lookup_rewrites_at_cap_boundary() {
+    let catalog =
+        MockIndexCatalog::new().with_node_composite_index(istr("Doc"), property_names(16));
+    let plan = optimized_one(&match_with_equality_count(16), &catalog);
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(scan.access, ScanAccess::CompositeLookup { .. }));
+    assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn composite_index_lookup_bails_above_cap() {
+    let catalog =
+        MockIndexCatalog::new().with_node_composite_index(istr("Doc"), property_names(17));
+    let plan = optimized_one(&match_with_equality_count(17), &catalog);
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(scan.access, ScanAccess::Linear));
+    assert_eq!(scan.property_predicates.len(), 17);
 }
 
 #[test]

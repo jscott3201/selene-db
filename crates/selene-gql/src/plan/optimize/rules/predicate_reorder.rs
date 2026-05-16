@@ -70,10 +70,58 @@ fn reorder_bucket(
         selectivity::estimate(left, ctx, scan_ctx)
             .partial_cmp(&selectivity::estimate(right, ctx, scan_ctx))
             .unwrap_or(Ordering::Equal)
+            .then_with(|| left.expr_id.get().cmp(&right.expr_id.get()))
     });
     let after = predicates
         .iter()
         .map(|pred| pred.expr_id)
         .collect::<Vec<_>>();
     after != before
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ExprId, FilterPredicateKind, Literal, SourceSpan, analyze::AnalyzedType};
+
+    fn ne_predicate(expr_id: u32) -> FilterPredicate {
+        let span = SourceSpan::new(0, 1);
+        FilterPredicate {
+            expr: crate::ValueExpr::BinaryOp {
+                op: crate::BinaryOp::Ne,
+                lhs: Box::new(crate::ValueExpr::Literal(Literal::Integer(1, span))),
+                rhs: Box::new(crate::ValueExpr::Literal(Literal::Integer(2, span))),
+                span,
+            },
+            expr_id: ExprId::new(expr_id),
+            ty: AnalyzedType::DYNAMIC,
+            binding_refs: Vec::new(),
+            kind: FilterPredicateKind::Expression,
+            index_consumed: false,
+            span,
+        }
+    }
+
+    #[test]
+    fn predicate_reorder_canonical_under_equal_selectivity() {
+        let mut predicates = vec![ne_predicate(3), ne_predicate(1), ne_predicate(2)];
+        let ctx = OptimizeContext::default();
+        let scan_ctx = selectivity::ScanContext {
+            bindings: &[],
+            statistics: None,
+        };
+
+        let changed = reorder_bucket(&mut predicates, &ctx, &scan_ctx);
+
+        // ExprId is stable within a plan but can be re-issued by rules that
+        // synthesize expressions; the tie-break only canonicalizes one run.
+        assert!(changed);
+        assert_eq!(
+            predicates
+                .iter()
+                .map(|predicate| predicate.expr_id.get())
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
 }

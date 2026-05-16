@@ -12,6 +12,8 @@ use super::index_helpers::single_label;
 /// Rewrite multi-property equality predicates to composite index access.
 pub struct CompositeIndexLookup;
 
+const MAX_COMPOSITE_CANDIDATES: usize = 16;
+
 impl Rule for CompositeIndexLookup {
     fn name(&self) -> &'static str {
         "composite_index_lookup"
@@ -106,7 +108,9 @@ fn find_composite_match(
     catalog: &dyn crate::IndexCatalog,
 ) -> Option<(crate::CompositeIndexHandle, Vec<usize>)> {
     let n = candidates.len();
-    debug_assert!(n <= 64, "subset enumeration assumes <= 64 candidates");
+    if n > MAX_COMPOSITE_CANDIDATES {
+        return None;
+    }
     // From largest subset down to size 2; within each size, iterate masks in
     // ascending order for deterministic plans when multiple indexes match.
     for size in (2..=n).rev() {
