@@ -24,6 +24,11 @@ fn valid_quote_escapes_still_parse() {
 }
 
 #[test]
+fn mid_string_quote_escape_parses() {
+    parse("RETURN 'a\\'b' AS value").expect("mid-string \\' parses");
+}
+
+#[test]
 fn unterminated_string_escape_rejected() {
     assert_syntax_contains("RETURN '\\' AS value", "unterminated string escape");
 }

@@ -541,9 +541,10 @@ bin_lit = @{ ("+" | "-")? ~ "0" ~ ("b" | "B") ~ ("0" | "1") ~ ("0" | "1" | "_")*
 // escapes produce the precise decode_escape diagnostic instead of a generic
 // tokenization failure.
 string_lit        = ${ "'" ~ single_inner ~ "'" }
-single_inner      = @{ (escape_seq | dangling_escape | "''" | !("'" | "\\") ~ ANY)* }
-escape_seq        = @{ "\\" ~ (("'" ~ &"'") | (!"'" ~ ANY)) }
+single_inner      = @{ (escaped_quote | dangling_escape | escape_seq | "''" | !("'" | "\\") ~ ANY)* }
+escaped_quote     = @{ "\\" ~ "'" ~ &((!"'" ~ ANY)* ~ "'") }
 dangling_escape   = @{ "\\" ~ &"'" }
+escape_seq        = @{ "\\" ~ ANY }
 
 // List literal
 list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
