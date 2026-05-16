@@ -190,16 +190,20 @@ impl QuantizedStorePq {
 
 fn decoded_norms(codebook: &PqCodebook, codes: &[u8]) -> Vec<f32> {
     let dim = codebook.dim();
-    codes
-        .chunks_exact(codebook.m_subspaces as usize)
-        .map(|row| {
-            let mut decoded = vec![0.0; dim];
-            codebook
-                .decode_codes(row, &mut decoded)
-                .expect("codes chunk length matches PQ subspaces");
-            dot_product(&decoded, &decoded).sqrt()
-        })
-        .collect()
+    let mut decoded = vec![0.0; dim];
+    let mut norms = Vec::with_capacity(
+        codes
+            .len()
+            .checked_div(codebook.m_subspaces as usize)
+            .unwrap_or(0),
+    );
+    for row in codes.chunks_exact(codebook.m_subspaces as usize) {
+        codebook
+            .decode_codes(row, &mut decoded)
+            .expect("codes chunk length matches PQ subspaces");
+        norms.push(dot_product(&decoded, &decoded).sqrt());
+    }
+    norms
 }
 
 #[cfg(test)]
