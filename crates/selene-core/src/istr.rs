@@ -44,8 +44,7 @@ static INTERNER: OnceLock<ThreadedRodeo<Spur>> = OnceLock::new();
 /// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 54000 contract.
 ///
 /// Uses `parking_lot::Mutex` with no poison semantics so a panic in the
-/// admission predicate path cannot brick all future intern calls. See brief
-/// BRIEF-98 §O.
+/// admission predicate path cannot brick all future intern calls.
 static ADMISSION_LOCK: Mutex<()> = Mutex::new(());
 
 fn interner() -> &'static ThreadedRodeo<Spur> {

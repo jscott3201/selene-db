@@ -1,6 +1,6 @@
 //! Procedure-pack manifest accessor for the future `vector.*` procedure set.
 
-/// Embedded BRIEF-57 procedure-pack manifest stub.
+/// Embedded procedure-pack manifest stub.
 ///
 /// The manifest has `pack_name = "vector"` and no procedures yet. Procedure
 /// registration is deferred to future `selene-vector-pack` work.

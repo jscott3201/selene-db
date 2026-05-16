@@ -163,8 +163,11 @@ fn build_pipeline_statement(
         Rule::limit_stmt => build_limit_or_offset(pair, budget).map(PipelineStatement::Limit),
         Rule::return_stmt => build_return_clause(pair, budget).map(PipelineStatement::Return),
         Rule::with_stmt => build_with_clause(pair, budget).map(PipelineStatement::With),
-        Rule::for_stmt => Err(not_implemented(&pair, "FOR lands in BRIEF-18")),
-        Rule::match_view_stmt => Err(not_implemented(&pair, "MATCH VIEW lands in BRIEF-18")),
+        Rule::for_stmt => Err(not_implemented(&pair, "FOR is not yet supported in v1.0")),
+        Rule::match_view_stmt => Err(not_implemented(
+            &pair,
+            "MATCH VIEW is not yet supported in v1.0",
+        )),
         Rule::call_stmt => call::build_pipeline_call(pair, budget).map(PipelineStatement::Call),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }
@@ -207,7 +210,7 @@ fn build_select_pipeline(
                 } else {
                     return Err(not_implemented(
                         &from_child,
-                        "SELECT FROM graph-name resolution lands in M5b",
+                        "SELECT FROM graph-name resolution is not yet supported in v1.0",
                     ));
                 }
             }
@@ -420,7 +423,7 @@ pub(super) fn build_return_clause(
             Rule::no_bindings => {
                 return Err(not_implemented(
                     &child,
-                    "RETURN NO BINDINGS lands in BRIEF-18",
+                    "RETURN NO BINDINGS is not yet supported in v1.0",
                 ));
             }
             _ => return Err(unexpected_pair(child, "unexpected RETURN child")),
@@ -610,6 +613,8 @@ pub(super) fn not_implemented(pair: &Pair<'_, Rule>, message: &'static str) -> P
     ParserError::not_implemented(
         message,
         span(pair),
-        Some("see BRIEF-17 / BRIEF-18 scope split"),
+        Some(
+            "this construct is not yet supported in v1.0; see `CALL selene.feature_status` for the current support matrix",
+        ),
     )
 }

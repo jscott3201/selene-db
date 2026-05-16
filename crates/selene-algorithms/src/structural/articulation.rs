@@ -9,7 +9,7 @@
 //!
 //! ## Why multiplicity is preserved
 //!
-//! Codex P1 review on BRIEF-52 PR #58 caught that `HashSet`-based dedupe
+//! Review caught that `HashSet`-based dedupe
 //! collapses parallel edges between the same endpoints: two `friend` edges
 //! between `n1` and `n2` would be seen as a single edge by the DFS, and
 //! removing one would (incorrectly) be reported as disconnecting the graph.

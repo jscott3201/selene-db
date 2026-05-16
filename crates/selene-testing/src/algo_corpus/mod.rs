@@ -54,12 +54,12 @@ pub enum AlgoCorpusCategory {
 }
 
 impl AlgoCorpus {
-    /// The curated M5f closure corpus. ≥18 entries covering every algorithm
+    /// The curated algorithm closure corpus. ≥18 entries covering every algorithm
     /// surface plus per-family edge cases (empty / sparse-row / max_iter=0).
     #[must_use]
     pub fn m5f() -> Self {
         Self {
-            entries: M5F_ENTRIES.to_vec(),
+            entries: ALGO_ENTRIES.to_vec(),
         }
     }
 
@@ -82,10 +82,10 @@ impl AlgoCorpus {
 }
 
 // ---------------------------------------------------------------------------
-// M5F entries
+// Algorithm entries
 // ---------------------------------------------------------------------------
 
-const M5F_ENTRIES: &[AlgoCorpusEntry] = &[
+const ALGO_ENTRIES: &[AlgoCorpusEntry] = &[
     // === Structural (7 algorithm surfaces + 1 sparse-row + 1 empty) ===
     AlgoCorpusEntry {
         slug: "structural_wcc_two_triangles_bridge",

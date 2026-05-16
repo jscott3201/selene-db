@@ -17,8 +17,8 @@ pub enum StatementOutput {
 
 /// Execute one planned statement against a caller-owned session.
 ///
-/// The procedure registry argument is threaded now for BRIEF-39 CALL execution;
-/// Phase A dispatch does not invoke procedures yet.
+/// The procedure registry argument is optional because statement kinds without
+/// CALL should not force embedders to construct a registry.
 pub fn execute_statement(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,

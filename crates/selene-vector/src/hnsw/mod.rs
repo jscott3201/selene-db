@@ -2,9 +2,8 @@
 //!
 //! HNSW stores one vector node with a neighbor list for every layer from
 //! layer 0 through `max_layer`, inclusive. Layer 0 is the dense base graph;
-//! higher layers are progressively sparser routing layers. BRIEFs 59 and 60
-//! add insertion and search; BRIEF-61 snapshots this shape through GRPH/VECS
-//! section bodies.
+//! higher layers are progressively sparser routing layers. GRPH/VECS snapshot
+//! sections preserve this shape across persistence boundaries.
 
 pub mod build;
 pub(crate) mod delete;

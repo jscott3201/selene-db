@@ -15,7 +15,7 @@ use crate::{HnswConfig, HnswGraph, HnswParams, VectorError};
 /// # Errors
 ///
 /// Returns [`VectorError`] when the payload is malformed for the configured
-/// graph or asks for an operation deferred beyond BRIEF-59.
+/// graph or asks for an unsupported operation.
 pub(crate) fn apply_upsert(
     prev: &HnswGraph,
     payload: &VectorUpsertPayloadV1,

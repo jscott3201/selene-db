@@ -276,7 +276,7 @@ mod tests {
             ),
             (
                 PropertyValueType::Duration,
-                Value::Duration("PT1H2M3S".parse().unwrap()),
+                Value::Duration("PT1H2S".parse().unwrap()),
             ),
             (PropertyValueType::Null, Value::Null),
             (

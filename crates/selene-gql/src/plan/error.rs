@@ -8,9 +8,8 @@ use crate::{GqlStatus, SourceSpan, analyze::BindingId};
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum PlannerError {
-    /// The planner reached a syntactic surface intentionally deferred beyond
-    /// BRIEF-26.
-    #[error("planner cannot lower {feature}: not implemented in this brief")]
+    /// The planner reached a syntactic surface not supported in v1.0.
+    #[error("planner cannot lower {feature}: not supported in v1.0")]
     #[diagnostic(code(SLENE_P_010))]
     NotImplemented {
         /// Stable missing-feature tag asserted by tests.

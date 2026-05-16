@@ -207,47 +207,47 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (FeatureId::GP03, "inline procedures are out of v1.0 scope"),
     (
         FeatureId::GP05,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP06,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP07,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP08,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP09,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP10,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP11,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP12,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP13,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP14,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP15,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP18,

@@ -29,9 +29,9 @@ enum IpqbBodyV1Legacy {
     Trained { codebook: PqCodebookV1Legacy },
 }
 
-/// Decode/encode shape from BRIEF-68 (post-OPQ, pre-polysemous). Used so
-/// IVF-PQ snapshots produced before BRIEF-69 stay byte-identical when
-/// `polysemous_trained = false`.
+/// Decode/encode shape from the post-OPQ, pre-polysemous archive. Used so
+/// IVF-PQ snapshots produced before the polysemous flag stay byte-identical
+/// when `polysemous_trained = false`.
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
 enum IpqbBodyV2Legacy {
     Empty,
@@ -62,6 +62,8 @@ impl From<IpqbBodyV2Legacy> for IpqbBodyV1 {
 
 pub(crate) fn encode_ipqb(body: &IpqbBodyV1) -> Result<Vec<u8>, VectorError> {
     validate_ipqb(body)?;
+    // Why: these historical labels pin the exact byte-parity fixtures this
+    // encoder must keep producing for legacy archives.
     // Encode cascade: v1 legacy (BRIEF-66 byte parity) → v2 legacy
     // (BRIEF-68 byte parity) → v3 flag-bearing archive.
     if let Some(bytes) = encode_ipqb_v1_legacy_if_compatible(body)? {
@@ -133,20 +135,22 @@ pub(crate) fn decode_ipqb(bytes: &[u8]) -> Result<IpqbBodyV1, VectorError> {
     // under wider shapes) is handled by preferring the *widest* decoder
     // that surfaces a `Trained` body. Conversely, a successful `Trained`
     // decode in any shape wins over an `Empty` decode in a wider shape
+    // Why: these historical labels identify the fixture generations that must
+    // continue to decode from stored bytes.
     // (BRIEF-66/67 byte goldens stay loadable).
     let v3 = rkyv::from_bytes::<IpqbBodyV1, rkyv::rancor::Error>(body);
     let v2 = rkyv::from_bytes::<IpqbBodyV2Legacy, rkyv::rancor::Error>(body).ok();
     let v1 = rkyv::from_bytes::<IpqbBodyV1Legacy, rkyv::rancor::Error>(body).ok();
     let decoded = match (v3, v2, v1) {
-        // Pre-BRIEF-69 archive resolving as Empty in v3 but Trained in v2:
+        // Pre-polysemous archive resolving as Empty in v3 but Trained in v2:
         // honor the v2 Trained body (carries rotation but not polysemous).
         (Ok(IpqbBodyV1::Empty), Some(IpqbBodyV2Legacy::Trained { codebook }), _) => {
             let decoded: IpqbBodyV1 = IpqbBodyV2Legacy::Trained { codebook }.into();
             validate_ipqb(&decoded)?;
             decoded
         }
-        // Pre-BRIEF-68 archive resolving as Empty in v3/v2 but Trained
-        // in v1 legacy: honor the v1 Trained body (no rotation, no flag).
+        // Pre-OPQ archive resolving as Empty in v3/v2 but Trained in v1
+        // legacy: honor the v1 Trained body (no rotation, no flag).
         (Ok(IpqbBodyV1::Empty), _, Some(IpqbBodyV1Legacy::Trained { codebook })) => {
             let decoded: IpqbBodyV1 = IpqbBodyV1Legacy::Trained { codebook }.into();
             validate_ipqb(&decoded)?;

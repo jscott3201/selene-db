@@ -25,7 +25,7 @@
 //! | `ProcedureNameLengthBounded` | `ProcedureNameTooLong` |
 //! | `ContentHashCanonical` | `InvalidContentHashFormat` |
 //! | `ContentHashConsistency` | `ContentHashMismatch` |
-//! | `ActivationLifecycleAtomicity` | `WAL_AUDIT_COVERAGE` (BRIEF-46) |
+//! | `ActivationLifecycleAtomicity` | `WAL_AUDIT_COVERAGE` |
 //! | `RegistryConflictDetection` | activation seal conflict detection |
 
 /// Maximum procedure entries accepted in one procedure-pack manifest.
@@ -242,5 +242,5 @@ pub const ACTIVATION_SEAL_COVERAGE: &[Gate] = &[Gate::RegistryConflictDetection]
 /// WAL/audit gates enforced in v1.0.
 pub const WAL_AUDIT_COVERAGE: &[Gate] = &[Gate::ActivationLifecycleAtomicity];
 
-/// Known validation gates deferred to later M5e briefs.
+/// Known validation gates deferred beyond v1.0.
 pub const DEFERRED_GATES: &[Gate] = &[];

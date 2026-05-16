@@ -204,12 +204,12 @@ impl IndexProvider for IvfProvider {
 
 impl IvfProvider {
     fn write_cqnt(&self) -> Result<Vec<u8>, ProviderError> {
-        // BRIEF-69 §I-10 / F2: every error path inside this CQNT→IPQB→POST
-        // staging dance must reset staging to Idle. Without the reset a
-        // mid-sequence encode/publish failure leaves staging in `Writing`,
-        // and the next snapshot attempt's IPQB/POST calls would silently
-        // proceed against stale `captured` instead of failing fast on
-        // "section write before CQNT".
+        // Every error path inside this CQNT→IPQB→POST staging dance must
+        // reset staging to Idle. Without the reset a mid-sequence
+        // encode/publish failure leaves staging in `Writing`, and the next
+        // snapshot attempt's IPQB/POST calls would silently proceed against
+        // stale `captured` instead of failing fast on "section write before
+        // CQNT".
         let captured = self.state.load_full();
         let trained = if captured.is_trained() || captured.len() < self.config.training_min_vectors
         {

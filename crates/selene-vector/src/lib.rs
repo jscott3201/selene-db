@@ -4,7 +4,7 @@
 //! crate set. It owns the `VECT` [`selene_graph::IndexProvider`] registration
 //! and the future `vector.*` procedure-pack namespace.
 //!
-//! BRIEF-60 adds the read-only HNSW graph shape, scalar distance kernels,
+//! The crate provides the read-only HNSW graph shape, scalar distance kernels,
 //! fresh-vector insertion, replay of `IndexExtensionEvent` payloads, and HNSW
 //! search with an optional RoaringBitmap pre-filter:
 //!
@@ -18,10 +18,9 @@
 //! assert_eq!(cosine_similarity(&a, &b), 0.0);
 //! ```
 //!
-//! BRIEF-61 adds deterministic GRPH/VECS snapshot bodies. BRIEF-62 adds the
-//! VECB bulk-insert wire format. BRIEF-63 adds the QUNT SQ8 quantization
-//! overlay and asymmetric search. BRIEF-64 adds the D21 snapshot harness.
-//! Procedure registration moves to future `selene-vector-pack` work.
+//! Deterministic GRPH/VECS snapshot bodies, the VECB bulk-insert wire format,
+//! QUNT quantization overlays, and asymmetric search all live here. Procedure
+//! registration moves to future `selene-vector-pack` work.
 //!
 //! The Rust crate name is `selene-vector`, while the procedure-pack name is
 //! `vector`. Future procedures therefore register as `vector.knn`,

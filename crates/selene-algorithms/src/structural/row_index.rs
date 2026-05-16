@@ -5,7 +5,7 @@
 //! per D11). Sizing DFS / union-find state by `max_row + 1` ties memory to the
 //! largest live `NodeId` rather than the live-node count — a 100-node
 //! projection at row 10⁶ would otherwise allocate megabytes per state array
-//! (Codex P1 review on BRIEF-52 PR #58).
+//! (review-discovered invariant).
 //!
 //! `RowIndex` builds a one-time mapping `sparse_row ↔ dense_index` where
 //! `dense_index ∈ 0..live_count`. Algorithms then size state arrays by

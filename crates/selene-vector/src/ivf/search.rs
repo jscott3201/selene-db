@@ -39,18 +39,18 @@ pub fn search(
     };
     let probes = coarse.nearest_probes(query, probe_count);
     let query_norm = dot_product(query, query).sqrt();
-    // BRIEF-69 §C.4 polysemous setup. The filter activates only when the
-    // embedder requested it AND the residual codebook self-identifies as
-    // polysemous-trained (V107). Drift between the two is rejected at
-    // recovery time by `validate_trained_codebook`, so reaching the
-    // search path means the two flags MUST already agree; the `&&` here
-    // is defense in depth rather than a drift-masking gate.
+    // Polysemous setup. The filter activates only when the embedder requested
+    // it AND the residual codebook self-identifies as polysemous-trained.
+    // Drift between the two is rejected at recovery time by
+    // `validate_trained_codebook`, so reaching the search path means the two
+    // flags MUST already agree; the `&&` here is defense in depth rather than
+    // a drift-masking gate.
     let polysemous_active = config.pq.use_polysemous && codebook.polysemous_trained;
-    // BRIEF-95a: the stored IVF PQ codes are residual-frame codes. Dot and
-    // Cosine score in the raw-query frame with centroid contribution folded
-    // back per entry, so their query bytes are not comparable to stored
-    // residual bytes. Keep the Hamming pre-filter only for L2 until a
-    // metric-specific residual-frame query-code proof lands.
+    // The stored IVF PQ codes are residual-frame codes. Dot and Cosine score
+    // in the raw-query frame with centroid contribution folded back per entry,
+    // so their query bytes are not comparable to stored residual bytes. Keep
+    // the Hamming pre-filter only for L2 until a metric-specific residual-frame
+    // query-code proof lands.
     let hamming_filter_active = polysemous_active && config.metric == DistanceMetric::L2;
     let polysemous_threshold = if hamming_filter_active {
         config.pq.resolve_hamming_threshold()

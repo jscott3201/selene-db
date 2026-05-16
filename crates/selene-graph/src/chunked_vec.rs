@@ -184,8 +184,7 @@ mod tests {
 
     #[test]
     fn push_does_not_clone_tail_per_call() {
-        // Regression for the BRIEF-07 quadratic-push P2 finding: pushing into
-        // a non-full tail must NOT touch frozen chunks' Arcs.
+        // Pushing into a non-full tail must NOT touch frozen chunks' Arcs.
         let mut vec = ChunkedVec::new();
         for value in 0..CHUNK_SIZE {
             vec.push(value);

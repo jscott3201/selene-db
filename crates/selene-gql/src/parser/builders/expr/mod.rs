@@ -58,20 +58,20 @@ pub(super) fn build_value_expr(
         Rule::simple_case | Rule::searched_case => call::build_case_expr(pair, budget),
         Rule::cast_expr => Err(not_implemented(
             &pair,
-            "CAST expression builder lands in M5b",
+            "CAST expressions are not yet supported in v1.0",
         )),
         Rule::labels_expr => Err(not_implemented(
             &pair,
-            "LABELS expression builder lands in M5b",
+            "LABELS expressions are not yet supported in v1.0",
         )),
         Rule::trim_expr => Err(not_implemented(
             &pair,
-            "TRIM expression builder lands in M5b",
+            "TRIM expressions are not yet supported in v1.0",
         )),
         Rule::list_iter_expr | Rule::list_comprehension | Rule::list_quant | Rule::list_reduce => {
             Err(not_implemented(
                 &pair,
-                "list-iteration expression builders land in M5b",
+                "list-iteration expressions are not yet supported in v1.0",
             ))
         }
         _ => Err(unexpected_pair(pair, "expected value expression")),
@@ -303,7 +303,7 @@ fn build_postfix(
             Rule::temporal_prop_access => {
                 return Err(not_implemented(
                     &op_child,
-                    "temporal property access lands in M5b",
+                    "temporal property access is not yet supported in v1.0",
                 ));
             }
             _ => return Err(unexpected_pair(op_child, "expected postfix operator")),

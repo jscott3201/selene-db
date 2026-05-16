@@ -60,10 +60,10 @@ pub(crate) fn encode_qunt_store(
         node_count,
         store,
     };
-    // Encode-tier cascade: try v1 first (BRIEF-66 byte parity when
-    // rotation=None AND polysemous_trained=false), then v2 (BRIEF-68 byte
-    // parity when polysemous_trained=false), then the v3 flag-bearing
-    // archive when polysemous_trained=true.
+    // Encode-tier cascade: try v1 first (byte parity when rotation=None AND
+    // polysemous_trained=false), then v2 (byte parity when
+    // polysemous_trained=false), then the v3 flag-bearing archive when
+    // polysemous_trained=true.
     if let Some(bytes) = v1_legacy::encode_if_legacy_compatible(&body)? {
         return Ok(bytes);
     }

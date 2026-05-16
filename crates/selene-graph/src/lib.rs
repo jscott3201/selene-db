@@ -2,9 +2,9 @@
 //!
 //! Storage, concurrency, built-in label/property indexes, the typed mutation
 //! funnel, and the auto-registered CORE persistence provider live here.
-//! Composite indexes, edge property indexes, schema validation for closed
-//! graphs, catalog bootstrap, and the procedure-pack `selene.create_index`
-//! wrapper land in subsequent briefs.
+//! Composite indexes, schema validation for closed graphs, catalog bootstrap,
+//! and the procedure-pack `selene.create_index` wrapper live here; edge
+//! property indexes remain outside the v1.0 storage contract.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

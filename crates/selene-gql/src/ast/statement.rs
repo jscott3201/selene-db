@@ -261,7 +261,7 @@ pub struct WithClause {
     pub span: SourceSpan,
 }
 
-/// Helper used when BRIEF-18 adds type-bearing DDL statements.
+/// Helper for type-bearing DDL statements.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct TypedBinding {
     /// Binding name.

@@ -105,15 +105,15 @@ pub fn dijkstra(
     });
 
     while let Some(DijkstraEntry { dense, cost }) = heap.pop() {
-        // Lazy stale-entry pruning per §O.10: stale heap copies skipped here.
+        // Lazy stale-entry pruning: stale heap copies are skipped here.
         if cost > dist[dense as usize] {
             continue;
         }
-        // Early-exit per PR #59 Codex P1 (line 109): if the target is already
-        // settled and pop cost exceeds dist[to_dense], no further relaxation
-        // can produce an equal- or smaller-cost path to to_dense (pop cost is
-        // monotonic, edge weights are non-negative). Returning earlier than
-        // this can lock in the wrong predecessor under §E16 tie-break.
+        // Early-exit after the target is settled: if pop cost exceeds
+        // dist[to_dense], no further relaxation can produce an equal- or
+        // smaller-cost path to to_dense (pop cost is monotonic, edge weights
+        // are non-negative). Returning earlier than this can lock in the wrong
+        // predecessor under the Spec 16 §E16 tie-break.
         if dist[to_dense as usize].is_finite() && cost > dist[to_dense as usize] {
             break;
         }
@@ -123,7 +123,7 @@ pub fn dijkstra(
             let Some(next_dense) = idx.dense_of(node_sparse_row(nb.node_id)) else {
                 continue;
             };
-            // §E15 lazy weight validation BEFORE heap insertion (§E15 + O.A.1).
+            // Spec 16 §E15 lazy weight validation BEFORE heap insertion.
             if nb.weight.is_nan() {
                 return Err(PathfindingError::NaNWeight {
                     source_node,
@@ -151,10 +151,10 @@ pub fn dijkstra(
                 && prev[next_dense as usize] != u32::MAX
                 && dense < prev[next_dense as usize]
             {
-                // Equal-cost tie-break per §E16 + PR #59 Codex P1 (line 142):
-                // when an alternative path reaches `next` at the same cost
-                // but via a smaller predecessor dense index (= smaller NodeId
-                // per §E03 ASC ordering), rewrite `prev` to that predecessor.
+                // Equal-cost tie-break per Spec 16 §E16: when an alternative
+                // path reaches `next` at the same cost but via a smaller
+                // predecessor dense index (= smaller NodeId per §E03 ASC
+                // ordering), rewrite `prev` to that predecessor.
                 // No heap push: cost didn't decrease, so no new relaxations
                 // are needed from `next` (its dist is unchanged).
                 prev[next_dense as usize] = dense;

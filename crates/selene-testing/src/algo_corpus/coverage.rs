@@ -14,8 +14,8 @@ pub const ALGORITHM_COVERAGE: &[AlgoSurface] = AlgoSurface::ALL;
 /// Stable mirror of `selene_algorithms`'s public algorithm surfaces.
 ///
 /// Excludes foundation types (`GraphProjection`, `ProjectionCatalog`) which
-/// are not algorithms in the M5f spec sense — they are exercised by every
-/// corpus entry's projection build but do not appear as `AlgoSurface`
+/// are not algorithm surfaces — they are exercised by every corpus entry's
+/// projection build but do not appear as `AlgoSurface`
 /// variants.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum AlgoSurface {

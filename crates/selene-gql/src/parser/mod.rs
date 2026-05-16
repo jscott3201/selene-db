@@ -28,16 +28,11 @@ mod pest_impl {
 
 /// Parse one GQL program.
 ///
-/// BRIEF-17 constructs AST nodes for read-side query pipelines and expression
-/// forms. BRIEF-18 adds mutation, DDL, CALL, and transaction-control builders;
-/// later briefs still route deferred grammar surfaces through
-/// [`ParserError::NotImplemented`].
-///
 /// # Errors
 ///
 /// Returns [`ParserError::SyntaxError`] for parse failures and
 /// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
-/// intentionally land after BRIEF-17.
+/// are not yet supported in v1.0.
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     guard::validate(source)?;
     let mut pairs =
@@ -235,8 +230,8 @@ mod tests {
     fn signed_integer_overflow_reports_syntax_error() {
         // `-9223372036854775808` is i64::MIN; pest produces unary(-) over the
         // unsigned magnitude `9223372036854775808`, which doesn't fit in i64.
-        // BRIEF-17 will fold the sign into int_lit decoding; for now this is a
-        // bounded, intentional limitation surfaced as a syntax error.
+        // Signed numeric literals are parsed as unary expressions; reject a
+        // bare magnitude that overflows i64 as a syntax error.
         let err =
             parse("RETURN -9223372036854775808").expect_err("magnitude overflow should error");
         assert!(matches!(err, ParserError::SyntaxError { .. }));

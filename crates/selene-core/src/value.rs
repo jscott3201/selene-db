@@ -2,8 +2,8 @@
 //!
 //! The [`Value`] variant order is canonical and append-only. Reordering,
 //! removing, or inserting variants in the middle is a major-version and
-//! durability-format change. Serialization derives intentionally land in
-//! BRIEF-06 alongside the `Codec` trait.
+//! durability-format change. Serialization derives are part of the same
+//! durability contract as the `Codec` trait.
 
 use std::sync::Arc;
 
@@ -210,7 +210,6 @@ fn value_variant_zoned() -> jiff::Zoned {
 
 impl PartialEq for Value {
     fn eq(&self, rhs: &Self) -> bool {
-        // Value::Hash deferred to BRIEF-104; ensure NaN bit-patterns hash equal there.
         match (self, rhs) {
             (Self::Bool(lhs), Self::Bool(rhs)) => lhs == rhs,
             (Self::Int(lhs), Self::Int(rhs)) => lhs == rhs,

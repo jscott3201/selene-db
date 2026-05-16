@@ -7,7 +7,7 @@ use selene_gql::{
 
 use crate::{MockIndexCatalog, MockProcedureRegistry};
 
-/// Curated GQL statement corpus used by the M5c plan-snapshot harness.
+/// Curated GQL statement corpus used by the plan-snapshot harness.
 #[derive(Clone, Debug)]
 pub struct PlanCorpus {
     entries: Vec<PlanCorpusEntry>,
@@ -62,7 +62,7 @@ pub enum PlanCorpusRegistry {
 }
 
 impl PlanCorpus {
-    /// Return the canonical M5c plan-snapshot corpus.
+    /// Return the canonical plan-snapshot corpus.
     #[must_use]
     pub fn m5c() -> Self {
         Self {

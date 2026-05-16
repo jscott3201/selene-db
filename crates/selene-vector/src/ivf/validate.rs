@@ -54,10 +54,9 @@ pub(crate) fn validate_trained_codebook(
             "IPQB OPQ rotation present while provider config disables OPQ",
         ));
     }
-    // BRIEF-69 V106 / cloud-Codex P2: same drift-rejection contract as
-    // QUNT. Recovery surfaces a polysemous-flag mismatch as an
-    // IvfSectionInconsistent rather than letting the search-time gate
-    // silently disable the filter post-restore.
+    // Same drift-rejection contract as QUNT. Recovery surfaces a
+    // polysemous-flag mismatch as an IvfSectionInconsistent rather than
+    // letting the search-time gate silently disable the filter post-restore.
     if config.pq.use_polysemous != codebook.polysemous_trained {
         return Err(inconsistent(format!(
             "IPQB polysemous flag drift: config use_polysemous={}, codebook polysemous_trained={}",

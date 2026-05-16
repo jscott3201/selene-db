@@ -96,9 +96,9 @@ impl RecoveryState {
     /// Apply one WAL change to recovery state.
     ///
     /// `SchemaChange` routing is intentionally exhaustive: silent-skip
-    /// wildcards are forbidden by BRIEF-93. The executable intent matrix lives
-    /// in `SCHEMA_CHANGE_INTENT` in this module's tests; new variants must
-    /// update both this match and that table.
+    /// wildcards are forbidden. The executable intent matrix lives in
+    /// `SCHEMA_CHANGE_INTENT` in this module's tests; new variants must update
+    /// both this match and that table.
     pub(crate) fn apply_change(&mut self, change: &Change) -> Result<(), crate::ProviderError> {
         match change {
             Change::NodeCreated {
@@ -192,8 +192,8 @@ impl RecoveryState {
                     }
                     SchemaChange::ProcedurePackLifecycle { .. } => {
                         // Procedure-pack lifecycle changes are pure audit history.
-                        // BRIEF-47 reads them from the WAL directly; graph-state
-                        // recovery intentionally has no materialized state to update.
+                        // Pack-history readers consume them from the WAL directly;
+                        // graph-state recovery has no materialized state to update.
                     }
                     SchemaChange::ProcedurePackActivated { .. }
                     | SchemaChange::ProcedurePackDeprecated { .. }
@@ -586,8 +586,8 @@ fn runtime_value_type(value_type: &ValueType) -> Result<PropertyValueType, crate
 
 /// Return the diagnostic name for a schema-change payload.
 ///
-/// Exhaustive naming is part of BRIEF-93's silent-skip-forbidden contract and
-/// is covered by the `SCHEMA_CHANGE_INTENT` test table.
+/// Exhaustive naming is part of the silent-skip-forbidden contract and is
+/// covered by the `SCHEMA_CHANGE_INTENT` test table.
 fn schema_change_variant(change: &SchemaChange) -> &'static str {
     match change {
         SchemaChange::GraphCreated { .. } => "GraphCreated",

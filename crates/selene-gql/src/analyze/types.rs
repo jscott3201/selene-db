@@ -31,7 +31,7 @@ impl ExprId {
 ///
 /// `Dynamic` is the explicit sink for static-inference gaps. It is not a
 /// hint downstream stages can ignore; planners and executors must handle it
-/// deliberately until BRIEF-22 resolves more expressions statically.
+/// deliberately.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum AnalyzedType {
     /// Statically resolved type.
@@ -41,7 +41,7 @@ pub enum AnalyzedType {
 }
 
 impl AnalyzedType {
-    /// Canonical dynamic type cell used by BRIEF-21.
+    /// Canonical dynamic type cell.
     pub const DYNAMIC: Self = Self::Dynamic;
 
     /// Return true when this type cell is dynamic.

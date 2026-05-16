@@ -7,7 +7,7 @@
 // aligned with opengql/grammar v1.9.0 where the donor name diverged.
 //
 // FEATURE comments tag rules whose surface area belongs to a v1.0 claimed
-// feature ID. The Flagger (BRIEF-19) will reject unsupported surfaces.
+// feature ID. The Flagger rejects unsupported surfaces before execution.
 // -------------------------------------------------------------------
 // PEG grammar (pest). Case-insensitive keywords via ^"keyword".
 // All whitespace and comments handled implicitly by WHITESPACE/COMMENT.

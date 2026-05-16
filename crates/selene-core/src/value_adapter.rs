@@ -7,8 +7,7 @@
 //! Locking policy: this module uses `parking_lot::RwLock` with no poison
 //! semantics, so a panic inside any adapter callback executed under the guard
 //! cannot brick all subsequent `Value::Extended` evaluations. selene-core uses
-//! parking_lot for `Mutex`/`RwLock` and std for `OnceLock`/atomics. See brief
-//! BRIEF-98 §O.
+//! parking_lot for `Mutex`/`RwLock` and std for `OnceLock`/atomics.
 
 use std::any::Any;
 use std::cmp::Ordering;

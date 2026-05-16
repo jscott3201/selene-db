@@ -1,4 +1,4 @@
-//! Polysemous-codes simulated-annealing permutation solver (BRIEF-69, M9.B5).
+//! Polysemous-codes simulated-annealing permutation solver.
 //!
 //! Polysemous codes are PQ codes re-indexed so that `popcount(σ(i) XOR σ(j))`
 //! correlates with `||c_i − c_j||`. After training, the same PQ encoding path
