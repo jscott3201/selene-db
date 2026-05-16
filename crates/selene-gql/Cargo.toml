@@ -29,6 +29,7 @@ insta.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+selene-persist = { path = "../selene-persist", version = "0.0.0" }
 selene-testing = { path = "../selene-testing", version = "0.0.0" }
 
 [[test]]

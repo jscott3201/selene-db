@@ -93,6 +93,12 @@ impl RecoveryState {
         Ok(())
     }
 
+    /// Apply one WAL change to recovery state.
+    ///
+    /// `SchemaChange` routing is intentionally exhaustive: silent-skip
+    /// wildcards are forbidden by BRIEF-93. The executable intent matrix lives
+    /// in `SCHEMA_CHANGE_INTENT` in this module's tests; new variants must
+    /// update both this match and that table.
     pub(crate) fn apply_change(&mut self, change: &Change) -> Result<(), crate::ProviderError> {
         match change {
             Change::NodeCreated {
@@ -171,14 +177,37 @@ impl RecoveryState {
                 row.alive = false;
             }
             Change::SchemaChanged { change, .. } => {
-                if let Some(pending) = pending_property_index_change(change) {
-                    self.pending_property_index_changes.push(pending);
-                } else if is_catalog_schema_change(change) {
-                    self.pending_schema_changes.push(change.clone());
-                } else if matches!(change, SchemaChange::ProcedurePackLifecycle { .. }) {
-                    // Procedure-pack lifecycle changes are pure audit history.
-                    // BRIEF-47 reads them from the WAL directly; graph-state
-                    // recovery intentionally has no materialized state to update.
+                match change {
+                    SchemaChange::NodeTypeAdded { .. }
+                    | SchemaChange::EdgeTypeAdded { .. }
+                    | SchemaChange::NodeTypeDropped { .. }
+                    | SchemaChange::EdgeTypeDropped { .. } => {
+                        self.pending_schema_changes.push(change.clone());
+                    }
+                    SchemaChange::PropertyIndexCreated { .. }
+                    | SchemaChange::PropertyIndexDropped { .. } => {
+                        let pending = pending_property_index_change(change)
+                            .expect("property-index variants map to pending recovery intent");
+                        self.pending_property_index_changes.push(pending);
+                    }
+                    SchemaChange::ProcedurePackLifecycle { .. } => {
+                        // Procedure-pack lifecycle changes are pure audit history.
+                        // BRIEF-47 reads them from the WAL directly; graph-state
+                        // recovery intentionally has no materialized state to update.
+                    }
+                    SchemaChange::ProcedurePackActivated { .. }
+                    | SchemaChange::ProcedurePackDeprecated { .. }
+                    | SchemaChange::ProcedurePackDisabled { .. } => {
+                        // Why: legacy, never emitted; postcard discriminant
+                        // pinned for ABI stability.
+                    }
+                    SchemaChange::GraphCreated { .. }
+                    | SchemaChange::GraphDropped { .. }
+                    | SchemaChange::GraphTypeCreated { .. }
+                    | SchemaChange::GraphTypeDropped { .. }
+                    | SchemaChange::RecordTypeAdded { .. } => {
+                        return Err(unsupported_schema_recovery(change));
+                    }
                 }
             }
             Change::IndexExtensionEvent { .. } => {}
@@ -320,16 +349,6 @@ fn pending_property_index_change(change: &SchemaChange) -> Option<PendingIndex> 
     }
 }
 
-fn is_catalog_schema_change(change: &SchemaChange) -> bool {
-    matches!(
-        change,
-        SchemaChange::NodeTypeAdded { .. }
-            | SchemaChange::EdgeTypeAdded { .. }
-            | SchemaChange::NodeTypeDropped { .. }
-            | SchemaChange::EdgeTypeDropped { .. }
-    )
-}
-
 fn replay_property_index_changes(
     graph: &mut SeleneGraph,
     changes: &[PendingIndex],
@@ -389,11 +408,25 @@ fn replay_schema_changes(
     Ok(())
 }
 
+/// Apply a graph-type schema change to the recovered bound graph type.
+///
+/// This match is exhaustive by design. Variants that are handled outside
+/// graph-type replay or intentionally ignored must say so inline; unsupported
+/// variants reject loudly so recovery never silently drops new durable schema
+/// payloads. See the `SCHEMA_CHANGE_INTENT` test table for the executable
+/// contract.
 fn apply_schema_change(
     graph_type: &mut GraphTypeDef,
     change: &SchemaChange,
 ) -> Result<(), crate::ProviderError> {
     match change {
+        SchemaChange::GraphCreated { .. }
+        | SchemaChange::GraphDropped { .. }
+        | SchemaChange::GraphTypeCreated { .. }
+        | SchemaChange::GraphTypeDropped { .. }
+        | SchemaChange::RecordTypeAdded { .. } => {
+            return Err(unsupported_schema_recovery(change));
+        }
         SchemaChange::NodeTypeAdded { label, def, .. } => {
             // Why: snapshot sections store the bound graph type at recovery
             // index 0 in v1.0. SchemaChange.graph_type uses the durable
@@ -423,7 +456,20 @@ fn apply_schema_change(
                 ))
             })?;
         }
-        _ => {}
+        SchemaChange::ProcedurePackActivated { .. }
+        | SchemaChange::ProcedurePackDeprecated { .. }
+        | SchemaChange::ProcedurePackDisabled { .. } => {
+            // Why: legacy, never emitted; postcard discriminant pinned for ABI
+            // stability.
+        }
+        SchemaChange::PropertyIndexCreated { .. } | SchemaChange::PropertyIndexDropped { .. } => {
+            // Why: property-index intent is queued by apply_change and replayed
+            // after primary node/edge rows materialize.
+        }
+        SchemaChange::ProcedurePackLifecycle { .. } => {
+            // Why: lifecycle events are audit history consumed from the WAL by
+            // selene-pack; CORE graph recovery has no materialized state.
+        }
     }
     Ok(())
 }
@@ -538,14 +584,35 @@ fn runtime_value_type(value_type: &ValueType) -> Result<PropertyValueType, crate
     })
 }
 
+/// Return the diagnostic name for a schema-change payload.
+///
+/// Exhaustive naming is part of BRIEF-93's silent-skip-forbidden contract and
+/// is covered by the `SCHEMA_CHANGE_INTENT` test table.
 fn schema_change_variant(change: &SchemaChange) -> &'static str {
     match change {
+        SchemaChange::GraphCreated { .. } => "GraphCreated",
+        SchemaChange::GraphDropped { .. } => "GraphDropped",
+        SchemaChange::GraphTypeCreated { .. } => "GraphTypeCreated",
+        SchemaChange::GraphTypeDropped { .. } => "GraphTypeDropped",
         SchemaChange::NodeTypeAdded { .. } => "NodeTypeAdded",
         SchemaChange::EdgeTypeAdded { .. } => "EdgeTypeAdded",
         SchemaChange::NodeTypeDropped { .. } => "NodeTypeDropped",
         SchemaChange::EdgeTypeDropped { .. } => "EdgeTypeDropped",
-        _ => "SchemaChanged",
+        SchemaChange::RecordTypeAdded { .. } => "RecordTypeAdded",
+        SchemaChange::ProcedurePackActivated { .. } => "ProcedurePackActivated",
+        SchemaChange::ProcedurePackDeprecated { .. } => "ProcedurePackDeprecated",
+        SchemaChange::ProcedurePackDisabled { .. } => "ProcedurePackDisabled",
+        SchemaChange::PropertyIndexCreated { .. } => "PropertyIndexCreated",
+        SchemaChange::PropertyIndexDropped { .. } => "PropertyIndexDropped",
+        SchemaChange::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
     }
+}
+
+fn unsupported_schema_recovery(change: &SchemaChange) -> crate::ProviderError {
+    inconsistent(format!(
+        "WAL {} is not supported by CORE graph recovery; add an explicit recovery intent",
+        schema_change_variant(change)
+    ))
 }
 
 fn require_live_node(

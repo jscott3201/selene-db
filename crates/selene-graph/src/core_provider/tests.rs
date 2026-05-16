@@ -532,8 +532,13 @@ fn recovery_mode_on_change_applies_each_change_variant() {
         provider.as_ref(),
         &Change::SchemaChanged {
             graph: GraphId::new(1),
-            change: SchemaChange::GraphDropped {
-                id: GraphId::new(9),
+            change: SchemaChange::ProcedurePackLifecycle {
+                event: selene_core::PackLifecycleEvent::Activated {
+                    pack_name: intern("core.pack").unwrap(),
+                    content_hash: [0_u8; 32],
+                    principal: intern("core.principal").unwrap(),
+                    at: jiff::Timestamp::new(1, 0).unwrap(),
+                },
             },
         },
     )
