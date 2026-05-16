@@ -41,6 +41,15 @@ pub enum ScopeKind {
     CaseBranch,
 }
 
+impl ScopeKind {
+    /// Return true when a scope boundary must keep inner pattern refinements
+    /// from mutating declarations in an outer scope.
+    #[must_use]
+    pub const fn is_subquery_boundary(self) -> bool {
+        matches!(self, Self::Subquery)
+    }
+}
+
 /// One lexical scope in a [`BindingScopeTree`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BindingScope {
@@ -157,7 +166,7 @@ impl BindingScopeTree {
         span: SourceSpan,
         labels: Option<crate::LabelExpr>,
     ) -> Result<(BindingId, bool), AnalysisError> {
-        if let Some(existing) = self.resolve(scope, name) {
+        if let Some((existing, existing_scope)) = self.resolve_with_scope(scope, name) {
             // Cross-element-kind reuse is a semantic error: a node variable
             // cannot be silently rebound as an edge/path variable, and vice
             // versa. Same-element-kind reuse (NodePattern <-> InsertNode,
@@ -179,7 +188,9 @@ impl BindingScopeTree {
                     prior_span: prior_decl.span(),
                 });
             }
-            self.decls[existing.get() as usize].refine_label_expr(labels);
+            if !self.crosses_subquery_boundary(scope, existing_scope) {
+                self.decls[existing.get() as usize].refine_label_expr(labels);
+            }
             return Ok((existing, true));
         }
         Ok((
@@ -196,11 +207,20 @@ impl BindingScopeTree {
     }
 
     pub(crate) fn resolve(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {
+        self.resolve_with_scope(scope, name)
+            .map(|(binding, _)| binding)
+    }
+
+    pub(crate) fn resolve_with_scope(
+        &self,
+        scope: ScopeId,
+        name: IStr,
+    ) -> Option<(BindingId, ScopeId)> {
         let mut cursor = Some(scope);
         while let Some(scope_id) = cursor {
             let scope = self.scope(scope_id)?;
             if let Some(id) = self.resolve_local(scope_id, name) {
-                return Some(id);
+                return Some((id, scope_id));
             }
             if scope.boundary {
                 return None;
@@ -208,6 +228,23 @@ impl BindingScopeTree {
             cursor = scope.parent;
         }
         None
+    }
+
+    fn crosses_subquery_boundary(&self, from: ScopeId, to: ScopeId) -> bool {
+        let mut cursor = Some(from);
+        while let Some(scope_id) = cursor {
+            if scope_id == to {
+                return false;
+            }
+            let Some(scope) = self.scope(scope_id) else {
+                return false;
+            };
+            if scope.kind.is_subquery_boundary() {
+                return true;
+            }
+            cursor = scope.parent;
+        }
+        false
     }
 
     fn declare_unchecked(

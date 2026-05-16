@@ -151,6 +151,25 @@ fn pattern_reuse_records_reference_not_shadow() {
 }
 
 #[test]
+fn exists_subquery_does_not_refine_outer_label_expr() {
+    let analyzed =
+        analyze_one("MATCH (n) WHERE EXISTS { MATCH (n:Person) } RETURN n").expect("analyzes");
+    let outer = analyzed
+        .scopes
+        .declarations()
+        .iter()
+        .find(|decl| {
+            decl.kind() == BindingDeclKind::NodePattern && decl.name().as_str() == "n"
+        })
+        .expect("outer n declaration exists");
+
+    assert!(
+        outer.label_expr().is_none(),
+        "outer n must not inherit inner EXISTS label refinement"
+    );
+}
+
+#[test]
 fn with_projection_boundary_hides_pre_with_bindings() {
     let err = analyze_one("MATCH (n) WITH 1 AS x RETURN n").expect_err("n is hidden");
     assert!(matches!(err, AnalysisError::UndefinedReference { .. }));
