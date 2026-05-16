@@ -46,22 +46,17 @@ pub fn search(
     // search path means the two flags MUST already agree; the `&&` here
     // is defense in depth rather than a drift-masking gate.
     let polysemous_active = config.pq.use_polysemous && codebook.polysemous_trained;
-    let polysemous_threshold = if polysemous_active {
+    // BRIEF-95a: the stored IVF PQ codes are residual-frame codes. Dot and
+    // Cosine score in the raw-query frame with centroid contribution folded
+    // back per entry, so their query bytes are not comparable to stored
+    // residual bytes. Keep the Hamming pre-filter only for L2 until a
+    // metric-specific residual-frame query-code proof lands.
+    let hamming_filter_active = polysemous_active && config.metric == DistanceMetric::L2;
+    let polysemous_threshold = if hamming_filter_active {
         config.pq.resolve_hamming_threshold()
     } else {
         0
     };
-    // §C.4 / F4: Dot/Cosine encode the query code ONCE because their LUT
-    // path uses the raw query (centroid contribution is folded in via
-    // `centroid_dot` per entry). L2 must encode PER probe because the
-    // residual is `query - coarse_centroid[c]`, which differs per
-    // probed centroid.
-    let cached_query_codes: Option<Box<[u8]>> =
-        if polysemous_active && config.metric != DistanceMetric::L2 {
-            Some(codebook_encode_row(codebook, query))
-        } else {
-            None
-        };
     let mut out = Vec::new();
     for centroid_id in probes {
         let Some(centroid) = coarse.centroid(centroid_id) else {
@@ -80,14 +75,12 @@ pub fn search(
         };
         let lut = codebook.build_query_lut(&residual_query, config.metric);
         let centroid_dot = dot_product(query, centroid);
-        // For L2 the per-probe residual changes, so we re-encode the
-        // query codes against the (possibly polysemous-permuted) codebook
-        // for *this* residual. For Dot/Cosine we reuse the cached codes.
-        let probe_query_codes: Option<Box<[u8]>> = if polysemous_active {
-            match config.metric {
-                DistanceMetric::L2 => Some(codebook_encode_row(codebook, &residual_query)),
-                _ => cached_query_codes.clone(),
-            }
+        // For L2 the per-probe residual changes, so we re-encode the query
+        // codes against the possibly polysemous-permuted codebook for this
+        // residual. Dot/Cosine disable this filter above because raw-query
+        // codes and residual posting codes are different frames.
+        let probe_query_codes: Option<Box<[u8]>> = if hamming_filter_active {
+            Some(codebook_encode_row(codebook, &residual_query))
         } else {
             None
         };

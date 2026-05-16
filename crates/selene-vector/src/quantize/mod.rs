@@ -73,6 +73,9 @@ pub struct PqParams {
     /// Train polysemous-codes permutation when `m_subspaces >= 2`.
     /// `default_for_dim` enables this for any default config with
     /// `m_subspaces >= 2`; embedders can opt out by setting it to `false`.
+    /// IVF v1 applies the search-time Hamming pre-filter only for `L2`
+    /// because Dot/Cosine score raw-query terms against residual posting
+    /// codes, which are not comparable Hamming frames.
     pub use_polysemous: bool,
     /// Hamming distance threshold as a fraction of the maximum (`8 * m`).
     /// Search rejects candidates whose query/stored Hamming exceeds

@@ -551,6 +551,16 @@ mod tests {
     }
 
     #[test]
+    fn apply_permutation_with_2d_subspace() {
+        let mut centroids = vec![10.0_f32, 11.0, 20.0, 21.0, 30.0, 31.0];
+        let sigma = vec![2, 0, 1];
+
+        apply_permutation(&mut centroids, &[sigma], 1, 3, 2, "test_apply_2d").unwrap();
+
+        assert_eq!(centroids, vec![20.0, 21.0, 30.0, 31.0, 10.0, 11.0]);
+    }
+
+    #[test]
     fn polysemous_apply_permutation_rejects_non_permutation() {
         let mut centroids = vec![1.0_f32, 2.0, 3.0, 4.0];
         let invalid = vec![0u8, 0, 1, 2];

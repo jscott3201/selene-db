@@ -131,6 +131,56 @@ impl PqCodebook {
         if let Some(rotation) = rotation.as_deref() {
             validate_rotation(rotation, dim, context)?;
         }
+        Self::train_plain_inner(dim, params, rows, seed, context, rotation)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn train_plain_relaxed_for_tests(
+        dim: usize,
+        params: PqParams,
+        rows: &[&[f32]],
+        seed: u64,
+        context: &'static str,
+        rotation: Option<Vec<f32>>,
+    ) -> Result<Self, VectorError> {
+        if params.m_subspaces == 0 || !dim.is_multiple_of(params.m_subspaces) {
+            return Err(VectorError::PqDimensionNotDivisible {
+                dim,
+                m_subspaces: params.m_subspaces,
+            });
+        }
+        if params.k_centroids == 0 || params.k_centroids > PqParams::K_CENTROIDS_V1 {
+            return Err(VectorError::InvalidConfig {
+                reason: format!(
+                    "test PQ k_centroids must be in 1..={}, observed {}",
+                    PqParams::K_CENTROIDS_V1,
+                    params.k_centroids
+                ),
+            });
+        }
+        if rows.len() < params.train_min_vectors || rows.len() < params.k_centroids as usize {
+            return Err(VectorError::PqTrainingDeferred {
+                observed_vectors: rows.len(),
+                required: params.train_min_vectors.max(params.k_centroids as usize),
+            });
+        }
+        for row in rows {
+            validate_row(row, dim)?;
+        }
+        if let Some(rotation) = rotation.as_deref() {
+            validate_rotation(rotation, dim, context)?;
+        }
+        Self::train_plain_inner(dim, params, rows, seed, context, rotation)
+    }
+
+    fn train_plain_inner(
+        dim: usize,
+        params: PqParams,
+        rows: &[&[f32]],
+        seed: u64,
+        context: &'static str,
+        rotation: Option<Vec<f32>>,
+    ) -> Result<Self, VectorError> {
         let m = params.m_subspaces;
         let k = params.k_centroids as usize;
         let subspace_dim = dim / m;
@@ -375,6 +425,51 @@ mod tests {
     fn pq_default_m_subspaces_derives_from_dim() {
         assert_eq!(PqParams::default_for_dim(128).m_subspaces, 16);
         assert_eq!(PqParams::default_for_dim(1).m_subspaces, 1);
+    }
+
+    #[test]
+    fn pq_encode_decode_with_rotation_distinguishes_direction() {
+        let angle = std::f32::consts::FRAC_PI_6;
+        let (s, c) = angle.sin_cos();
+        let codebook = PqCodebook {
+            m_subspaces: 2,
+            k_centroids: 2,
+            subspace_dim: 1,
+            centroids: vec![0.0, c, -s, s],
+            rotation: Some(vec![c, -s, s, c]),
+            polysemous_trained: false,
+        };
+        let mut codes = Vec::new();
+
+        codebook.encode_row(&[1.0, 0.0], &mut codes);
+
+        assert_eq!(codes, vec![1, 1]);
+        let mut decoded = vec![0.0; 2];
+        codebook.decode_codes(&codes, &mut decoded).unwrap();
+        assert!((decoded[0] - 1.0).abs() <= 1.0e-6);
+        assert!(decoded[1].abs() <= 1.0e-6);
+    }
+
+    #[test]
+    fn cosine_lut_asymmetric_score_matches_hand_derived() {
+        let codebook = PqCodebook {
+            m_subspaces: 1,
+            k_centroids: 1,
+            subspace_dim: 2,
+            centroids: vec![0.0, 5.0],
+            rotation: None,
+            polysemous_trained: false,
+        };
+        let query = [3.0, 0.0];
+        let lut = codebook.build_query_lut(&query, DistanceMetric::Cosine);
+        let lut_sum = codebook.lut_sum_for_codes(&lut, &[0]).unwrap();
+        let query_norm = dot_product(&query, &query).sqrt();
+        let approx_norm = 5.0_f32;
+
+        let score = (lut_sum / (query_norm * approx_norm)) - 1.0;
+
+        assert_eq!(lut_sum, 0.0);
+        assert!((score + 1.0).abs() <= f32::EPSILON);
     }
 
     #[test]

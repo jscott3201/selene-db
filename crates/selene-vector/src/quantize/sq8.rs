@@ -304,6 +304,18 @@ mod tests {
     }
 
     #[test]
+    fn approx_norm_uses_dequantized_values() {
+        let store = build(&[&[0.0], &[1.0], &[0.3]]);
+        let mut decoded = vec![0.0; 1];
+        store.dequantize(2, &mut decoded);
+
+        let norm = store.approx_norm(2).unwrap();
+
+        assert_ne!(decoded[0].to_bits(), 0.3_f32.to_bits());
+        assert_eq!(norm.to_bits(), decoded[0].abs().to_bits());
+    }
+
+    #[test]
     fn empty_graph_build_uses_zero_ranges() {
         let store =
             QuantizedStoreSq8::build(0, 3, std::iter::empty()).expect("empty SQ8 store builds");
