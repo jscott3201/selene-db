@@ -33,6 +33,30 @@ fn typed_index_range_scan_uses_bounds_and_residuals() {
 }
 
 #[test]
+fn typed_index_string_range_uses_runtime_linear_fallback() {
+    let fixture = ExecFixture::build();
+    let catalog = fixture.index_catalog();
+    let plan = optimized(
+        "MATCH (n:Person) WHERE n.email >= 'b' AND n.email < 'd' RETURN n",
+        &catalog,
+    );
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let scan = exec_common::first_scan(&pattern.join_tree).expect("scan");
+    assert!(matches!(
+        scan.access,
+        ScanAccess::TypedIndexRange {
+            kind: IndexKind::String,
+            ..
+        }
+    ));
+
+    let ctx = fixture.context_caps(&plan);
+    let table = execute_pattern(pattern, &ctx);
+
+    assert_eq!(node_ids(&table), vec![2, 3]);
+}
+
+#[test]
 fn typed_index_fallback_equality_preserves_integer_precision() {
     let fixture = ExecFixture::build();
     let mut plan = planned("MATCH (n:Counter) RETURN n");

@@ -185,3 +185,19 @@ fn prefix_scan_matches_string_keys_only() {
             .is_none()
     );
 }
+
+#[test]
+fn string_range_returns_none_for_runtime_fallback() {
+    let alpha = intern("typed-index.range.alpha").unwrap();
+    let charlie = intern("typed-index.range.charlie").unwrap();
+    let mut index = TypedIndex::new(TypedIndexKind::String);
+    index.insert(&Value::String(alpha), 0).unwrap();
+    index.insert(&Value::String(charlie), 1).unwrap();
+
+    assert!(
+        index
+            .lookup_range(Value::String(alpha)..Value::String(charlie))
+            .is_none(),
+        "String ranges cannot use IStr-handle BTreeMap order"
+    );
+}
