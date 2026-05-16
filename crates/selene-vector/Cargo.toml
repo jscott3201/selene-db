@@ -31,6 +31,7 @@ simsimd = { version = "5", optional = true }
 
 [dev-dependencies]
 selene-pack = { path = "../selene-pack", version = "0.0.0" }
+selene-persist = { path = "../selene-persist", version = "0.0.0" }
 selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
 blake3.workspace = true
 criterion.workspace = true

@@ -12,6 +12,9 @@ use selene_persist::{
 
 use crate::{CORE_PROVIDER_TAG, GraphError, GraphTypeDef, ProviderTag, SharedGraph};
 
+#[path = "recover_tests/variant_tests.rs"]
+mod variant_tests;
+
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -146,6 +149,13 @@ fn node_created(id: u64) -> Change {
     }
 }
 
+fn expect_prop<'a>(map: &'a PropertyMap, key: &str, expected: &Value) -> &'a Value {
+    let key = intern(key).unwrap();
+    let actual = map.get(&key).expect("expected property present");
+    assert_eq!(actual, expected);
+    actual
+}
+
 fn empty_closed_graph_type() -> GraphTypeDef {
     GraphTypeDef {
         name: intern("recover.closed.graph").unwrap(),
@@ -186,15 +196,16 @@ fn recover_from_snapshot_only_round_trips_nodes_and_edges() {
 #[test]
 fn recover_from_wal_only_replays_changes_to_state() {
     let dir = temp_dir("wal-only");
+    let edge_label = intern("recover.wal.edge").unwrap();
     let changes = vec![
         node_created(1),
         node_created(2),
         Change::EdgeCreated {
             id: EdgeId::new(1),
-            label: intern("recover.wal.edge").unwrap(),
+            label: edge_label,
             source: NodeId::new(1),
             target: NodeId::new(2),
-            properties: PropertyMap::new(),
+            properties: prop("recover.wal.weight", Value::Int(5)),
         },
     ];
     append_wal(&dir, 0, &changes);
@@ -204,6 +215,29 @@ fn recover_from_wal_only_replays_changes_to_state() {
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 1);
     assert!(snapshot.outgoing_edges(NodeId::new(1)).is_some());
+    let expected_labels = LabelSet::single(intern("recover.wal.node").unwrap());
+    assert_eq!(snapshot.node_labels(NodeId::new(1)), Some(&expected_labels));
+    assert_eq!(snapshot.node_labels(NodeId::new(2)), Some(&expected_labels));
+    expect_prop(
+        snapshot.node_properties(NodeId::new(1)).unwrap(),
+        "recover.id",
+        &Value::Int(1),
+    );
+    expect_prop(
+        snapshot.node_properties(NodeId::new(2)).unwrap(),
+        "recover.id",
+        &Value::Int(2),
+    );
+    assert_eq!(snapshot.edge_label(EdgeId::new(1)), Some(&edge_label));
+    assert_eq!(
+        snapshot.edge_endpoints(EdgeId::new(1)),
+        Some((NodeId::new(1), NodeId::new(2)))
+    );
+    expect_prop(
+        snapshot.edge_properties(EdgeId::new(1)).unwrap(),
+        "recover.wal.weight",
+        &Value::Int(5),
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
