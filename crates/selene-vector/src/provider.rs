@@ -238,8 +238,16 @@ impl IndexProvider for HnswProvider {
                 reason: "incomplete provider snapshot: GRPH section staged without VECS".into(),
             });
         }
-        let Change::IndexExtensionEvent { provider, payload } = change else {
-            return Ok(());
+        let (provider, payload) = match change {
+            Change::IndexExtensionEvent { provider, payload } => (provider, payload),
+            // No-op: the HNSW provider only replays extension-owned WAL events.
+            Change::NodeCreated { .. }
+            | Change::NodeUpdated { .. }
+            | Change::NodeDeleted { .. }
+            | Change::EdgeCreated { .. }
+            | Change::EdgeUpdated { .. }
+            | Change::EdgeDeleted { .. }
+            | Change::SchemaChanged { .. } => return Ok(()),
         };
         if provider.as_str() != PROVIDER_NAME {
             return Ok(());
