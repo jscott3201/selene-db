@@ -4,6 +4,15 @@ All notable changes to selene-db are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Named vector indexes for `selene-vector-pack`, including
+  `vector.create_index`, `vector.drop_index`, and `vector.list_indexes`.
+  The default HNSW and IVF indexes remain compatibility anchors for v1.0
+  WAL payloads and snapshot sections.
+
 ## [1.0.0] — 2026-05-16
 
 First stable release. selene-db is now usable as a Rust dependency for

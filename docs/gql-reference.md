@@ -630,14 +630,15 @@ result columns.
 
 ### Vector pack (`vector.*`)
 
-Registered by `selene-vector-pack`. The 9 procedure names are listed in
+Registered by `selene-vector-pack`. The 12 procedure names are listed in
 `VECTOR_PROCEDURE_NAMES`:
 
 ```text
 vector.search, vector.upsert, vector.delete,
 vector.bulk_upsert, vector.bulk_delete,
 vector.ivf_search, vector.ivf_bulk_upsert, vector.ivf_bulk_delete,
-vector.ivf_stats
+vector.ivf_stats,
+vector.create_index, vector.drop_index, vector.list_indexes
 ```
 
 See [`vector-search.md`](vector-search.md) for argument shapes and

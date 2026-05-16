@@ -429,23 +429,28 @@ This pack exposes the nineteen graph algorithms in `selene-algorithms` through n
 
 Path: `crates/selene-vector-pack/`.
 
-This pack exposes nine `vector.*` procedures, split across both tiers:
+This pack exposes twelve `vector.*` procedures, split across both tiers:
 
-- Read tier: `vector.search`, `vector.ivf_search`, `vector.ivf_stats`.
-- Mutation tier: `vector.upsert`, `vector.delete`, `vector.bulk_upsert`, `vector.bulk_delete`, `vector.ivf_bulk_upsert`, `vector.ivf_bulk_delete`.
+- Read tier: `vector.search`, `vector.ivf_search`, `vector.ivf_stats`, `vector.list_indexes`.
+- Mutation tier: `vector.upsert`, `vector.delete`, `vector.bulk_upsert`, `vector.bulk_delete`, `vector.ivf_bulk_upsert`, `vector.ivf_bulk_delete`, `vector.create_index`, `vector.drop_index`.
 
-The mutation procedures emit `extension_event` records through the mutator. The `HnswProvider` (and the IVF provider) consume those events through `on_change`, decode the payload, and apply the change to in-memory index state. The pack and the provider are wired together at `SharedGraph::builder` time:
+The mutation procedures emit `extension_event` records through the mutator. The HNSW and IVF registries consume those events through `on_change`, decode the payload, and apply the change to in-memory index state. The pack and the providers are wired together at `SharedGraph::builder` time:
 
 ```rust
 use std::sync::Arc;
 use selene_core::GraphId;
 use selene_graph::SharedGraph;
-use selene_vector::{HnswConfig, HnswProvider};
+use selene_graph::IndexProvider;
+use selene_vector::{HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry};
 use selene_vector_pack::VectorPack;
 
-let provider = Arc::new(HnswProvider::new(HnswConfig::default())?);
+let hnsw: Arc<dyn IndexProvider> =
+    Arc::new(HnswIndexRegistry::new(HnswConfig::new(384)?)?);
+let ivf: Arc<dyn IndexProvider> =
+    Arc::new(IvfIndexRegistry::new(IvfConfig::new(384)?)?);
 let graph = SharedGraph::builder(GraphId::new(1))
-    .with_provider(Arc::clone(&provider))
+    .with_provider(hnsw)
+    .with_provider(ivf)
     .build()?;
 
 let pack = VectorPack::new();
