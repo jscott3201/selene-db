@@ -75,6 +75,13 @@ impl CoarseQuantizer {
         self.centroids.get(start..start.checked_add(dim)?)
     }
 
+    /// Return coarse centroids ordered by the L2 assignment frame.
+    ///
+    /// Posting lists are populated by [`Self::assign`], which uses the L2
+    /// coarse partition. Probe traversal must use that same frame for every
+    /// final scoring metric; switching Dot/Cosine probe ranking without also
+    /// changing assignment can skip the only list containing the best-scoring
+    /// candidates.
     pub(crate) fn nearest_probes(&self, query: &[f32], n_probe: u32) -> Vec<u32> {
         let dim = usize::from(self.dim);
         let mut scored = (0..self.k_coarse)
@@ -126,5 +133,30 @@ mod tests {
 
         assert_eq!(quantizer.assign(&[9.0, 0.0]).unwrap(), 1);
         assert_eq!(quantizer.assign(&[1.0, 0.0]).unwrap(), 0);
+    }
+
+    #[test]
+    fn nearest_probes_stays_aligned_with_l2_assignment_frame() {
+        let cfg = IvfConfig::with_params(
+            2,
+            3,
+            1,
+            DistanceMetric::Dot,
+            PqParams {
+                m_subspaces: 1,
+                k_centroids: 256,
+                train_min_vectors: 256,
+                use_opq: false,
+                use_polysemous: false,
+                hamming_threshold_ratio: 0.5,
+            },
+            256,
+        )
+        .unwrap();
+        let quantizer = CoarseQuantizer::new(vec![0.9, 0.0, 100.0, 0.0, 0.0, 1.0], &cfg).unwrap();
+
+        let probes = quantizer.nearest_probes(&[1.0, 0.0], 1);
+
+        assert_eq!(probes, vec![0]);
     }
 }

@@ -10,6 +10,15 @@ const OPQ_OUTER_ITERS: usize = 25;
 const ROTATION_DRIFT_TOL: f32 = 1.0e-5;
 const ERROR_DELTA_TOL: f32 = 1.0e-6;
 
+type PlainTrainer = fn(
+    usize,
+    PqParams,
+    &[&[f32]],
+    u64,
+    &'static str,
+    Option<Vec<f32>>,
+) -> Result<PqCodebook, VectorError>;
+
 pub(crate) fn train(
     dim: usize,
     params: PqParams,
@@ -20,17 +29,27 @@ pub(crate) fn train(
     if params.m_subspaces == 1 {
         return PqCodebook::train_plain(dim, params, rows, seed, context, None);
     }
+    train_with_plain_trainer(dim, params, rows, seed, context, PqCodebook::train_plain)
+}
 
+fn train_with_plain_trainer(
+    dim: usize,
+    params: PqParams,
+    rows: &[&[f32]],
+    seed: u64,
+    context: &'static str,
+    train_plain: PlainTrainer,
+) -> Result<PqCodebook, VectorError> {
     let plain_params = PqParams {
         use_opq: false,
         use_polysemous: false,
         hamming_threshold_ratio: 0.5,
         ..params
     };
-    let plain = PqCodebook::train_plain(dim, plain_params, rows, seed, context, None)?;
+    let plain = train_plain(dim, plain_params, rows, seed, context, None)?;
     let mut best = plain.clone();
     let mut best_error = reconstruction_mse(&plain, rows, dim);
-    let identity = PqCodebook::train_plain(
+    let identity = train_plain(
         dim,
         plain_params,
         rows,
@@ -49,14 +68,13 @@ pub(crate) fn train(
     for _ in 0..OPQ_OUTER_ITERS {
         let rotated = rotate_rows(rows, &rotation, dim);
         let rotated_refs = rotated.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        let current =
-            PqCodebook::train_plain(dim, plain_params, &rotated_refs, seed, context, None)?;
+        let current = train_plain(dim, plain_params, &rotated_refs, seed, context, None)?;
         let decoded = reconstruct_rows(&current, &rotated_refs, dim);
         let cross = cross_covariance(rows, &decoded, dim);
         let next_rotation = linalg::procrustes_rotation(&cross, dim, context)?;
         let next_rotated = rotate_rows(rows, &next_rotation, dim);
         let next_refs = next_rotated.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        let candidate = PqCodebook::train_plain(
+        let candidate = train_plain(
             dim,
             plain_params,
             &next_refs,
@@ -179,5 +197,68 @@ mod tests {
             (reconstruction_mse(&trained, &refs, 4) - reconstruction_mse(&plain, &refs, 4)).abs()
                 <= 1.0e-6
         );
+    }
+
+    #[test]
+    fn opq_train_recovers_proper_rotation_with_mse_improvement() {
+        let angle = std::f32::consts::FRAC_PI_6;
+        let (s, c) = angle.sin_cos();
+        let rotation = vec![
+            c, 0.0, -s, 0.0, //
+            0.0, 1.0, 0.0, 0.0, //
+            s, 0.0, c, 0.0, //
+            0.0, 0.0, 0.0, 1.0,
+        ];
+        let mut rows = Vec::new();
+        for a in 0..12 {
+            for b in 0..12 {
+                let left = (a as f32 - 5.5) / 5.5;
+                let right = (b as f32 - 5.5) / 5.5;
+                let left_minor = ((a % 5) as f32 - 2.0) * 0.03;
+                let right_minor = ((b % 5) as f32 - 2.0) * 0.03;
+                let latent = [left, left_minor, right, right_minor];
+                rows.push(linalg::mat_vec(&rotation, &latent, 4));
+            }
+        }
+        let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let params = PqParams {
+            m_subspaces: 2,
+            k_centroids: 8,
+            train_min_vectors: 16,
+            use_opq: true,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
+        };
+        let plain_params = PqParams {
+            use_opq: false,
+            use_polysemous: false,
+            hamming_threshold_ratio: 0.5,
+            ..params
+        };
+        let plain = PqCodebook::train_plain_relaxed_for_tests(
+            4,
+            plain_params,
+            &refs,
+            0xB66E_9501,
+            "test",
+            None,
+        )
+        .unwrap();
+        let trained = train_with_plain_trainer(
+            4,
+            params,
+            &refs,
+            0xB66E_9501,
+            "test",
+            PqCodebook::train_plain_relaxed_for_tests,
+        )
+        .unwrap();
+
+        let trained_rotation = trained
+            .rotation
+            .as_deref()
+            .expect("OPQ should improve this cross-subspace corpus");
+        assert!(linalg::is_proper_rotation(trained_rotation, 4, 1.0e-4));
+        assert!(reconstruction_mse(&trained, &refs, 4) < reconstruction_mse(&plain, &refs, 4));
     }
 }
