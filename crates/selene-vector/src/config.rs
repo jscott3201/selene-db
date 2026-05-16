@@ -1,9 +1,11 @@
 //! HNSW provider configuration.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{PqParams, QuantMethod, QuantizationConfig, VectorError};
 
 /// Distance function used by the vector index.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[non_exhaustive]
 pub enum DistanceMetric {
     /// Cosine similarity over dense f32 vectors.
@@ -20,7 +22,7 @@ pub enum DistanceMetric {
 /// `extend_candidates` widens the candidate pool by one layer-local hop
 /// before applying the diversity filter. `keep_pruned_connections` fills
 /// remaining neighbor slots from the rejected pile after diversity pruning.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NeighborSelectionConfig {
     /// Widen the candidate pool by one hop before diversity filtering.
     pub extend_candidates: bool,
@@ -40,7 +42,7 @@ impl Default for NeighborSelectionConfig {
 /// Configuration for [`crate::HnswProvider`].
 // Eq dropped because `QuantizationConfig` transitively carries the f32
 // `hamming_threshold_ratio`.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct HnswConfig {
     /// Vector dimensionality. Required; no default exists.
     pub dim: usize,
@@ -215,7 +217,7 @@ impl HnswConfig {
 /// Configuration for [`crate::IvfProvider`].
 // Eq dropped because `PqParams` now carries the f32 `hamming_threshold_ratio`
 // `hamming_threshold_ratio`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 pub struct IvfConfig {
     /// Vector dimensionality. Required; no default exists.
     pub dim: usize,

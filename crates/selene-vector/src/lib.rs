@@ -51,9 +51,11 @@ pub use hnsw::{HnswGraph, HnswNode, HnswParams, insert_node, random_layer, rando
 pub use ivf::{IvfIndex, IvfProvider, IvfStats};
 pub use payload::{
     BulkInsertRow, IvfBulkInsertRow, PAYLOAD_MAGIC, PAYLOAD_MAGIC_BULK, PAYLOAD_MAGIC_BULK_DELETE,
-    PAYLOAD_MAGIC_IVF, PAYLOAD_MAGIC_IVF_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_INSERT,
-    VectorBulkDeletePayloadV1, VectorBulkInsertPayloadV1, VectorIvfBulkDeleteV1,
+    PAYLOAD_MAGIC_CREATE_INDEX, PAYLOAD_MAGIC_DROP_INDEX, PAYLOAD_MAGIC_IVF,
+    PAYLOAD_MAGIC_IVF_BULK_DELETE, PAYLOAD_MAGIC_IVF_BULK_INSERT, VectorBulkDeletePayloadV1,
+    VectorBulkInsertPayloadV1, VectorCreateIndexV1, VectorDropIndexV1, VectorIvfBulkDeleteV1,
     VectorIvfBulkInsertV1, VectorIvfUpsertV1, VectorOp, VectorUpsertPayloadV1,
+    encode_named_payload, split_named_payload,
 };
 pub use procedures::pack_manifest;
 pub use provider::HnswProvider;
@@ -61,6 +63,10 @@ pub use quantize::{
     PqParams, QuantMethod, QuantizationConfig, QuantizationStats, QuantizationStatsKind,
     opq_max_dim,
 };
-pub use registry::{Catalog, HnswIndexRegistry, IvfIndexRegistry};
+pub use registry::{
+    Catalog, CreateIndexOutcome, DropIndexOutcome, HnswIndexRegistry, IndexListEntry,
+    IvfIndexRegistry, VectorIndexKind, decode_hnsw_config, decode_ivf_config, encode_hnsw_config,
+    encode_ivf_config,
+};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{VectorInvocationResult, VectorSnapshot, VectorSnapshotInput};

@@ -8,8 +8,8 @@ use selene_pack::{
 };
 
 use crate::{
-    bulk_delete, bulk_upsert, delete, ivf_bulk_delete, ivf_bulk_upsert, ivf_search, ivf_stats,
-    search,
+    bulk_delete, bulk_upsert, create_index, delete, drop_index, ivf_bulk_delete, ivf_bulk_upsert,
+    ivf_search, ivf_stats, list_indexes, search,
     state::{VectorPackConfig, VectorPackState},
     upsert,
 };
@@ -18,12 +18,15 @@ use crate::{
 pub const VECTOR_PACK_NAME: &str = "vector";
 
 /// Canonical procedure names registered by the vector pack.
-pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 9] = [
+pub const VECTOR_PROCEDURE_NAMES: [&[&str]; 12] = [
     &["vector", "search"],
     &["vector", "upsert"],
     &["vector", "delete"],
     &["vector", "bulk_upsert"],
     &["vector", "bulk_delete"],
+    &["vector", "create_index"],
+    &["vector", "drop_index"],
+    &["vector", "list_indexes"],
     &["vector", "ivf_bulk_upsert"],
     &["vector", "ivf_bulk_delete"],
     &["vector", "ivf_search"],
@@ -80,6 +83,7 @@ impl VectorPack {
     fn procedures(&self) -> Vec<Arc<dyn ExternalGraphProcedure>> {
         vec![
             search::procedure(Arc::clone(&self.state)),
+            list_indexes::procedure(Arc::clone(&self.state)),
             ivf_search::procedure(Arc::clone(&self.state)),
             ivf_stats::procedure(Arc::clone(&self.state)),
         ]
@@ -91,6 +95,8 @@ impl VectorPack {
             delete::procedure(Arc::clone(&self.state)),
             bulk_upsert::procedure(Arc::clone(&self.state)),
             bulk_delete::procedure(Arc::clone(&self.state)),
+            create_index::procedure(Arc::clone(&self.state)),
+            drop_index::procedure(Arc::clone(&self.state)),
             ivf_bulk_upsert::procedure(Arc::clone(&self.state)),
             ivf_bulk_delete::procedure(Arc::clone(&self.state)),
         ]

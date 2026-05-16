@@ -22,9 +22,11 @@ arc-swap.workspace = true
 blake3 = { workspace = true, optional = true }
 fastrand.workspace = true
 parking_lot.workspace = true
+postcard = { workspace = true, features = ["alloc"] }
 rkyv.workspace = true
 roaring.workspace = true
 rustc-hash.workspace = true
+serde.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 miette.workspace = true

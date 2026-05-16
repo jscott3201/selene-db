@@ -1,6 +1,7 @@
 //! Quantized vector stores used by the QUNT snapshot overlay.
 
 use rkyv::{Archive, Deserialize, Serialize};
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 use crate::{DistanceMetric, VectorError, snapshot};
 
@@ -25,7 +26,19 @@ pub const fn opq_max_dim() -> usize {
 }
 
 /// Quantization method tag for persisted quantized vector stores.
-#[derive(Archive, Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(
+    Archive,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Serialize,
+    SerdeDeserialize,
+    SerdeSerialize,
+)]
 #[repr(u8)]
 pub enum QuantMethod {
     /// Per-coordinate 8-bit scalar quantization.
@@ -60,7 +73,7 @@ impl QuantMethod {
 // non-Eq semantics through QuantizationConfig, HnswConfig, and IvfConfig
 // NaN is rejected by `validate_for_dim`, so `PartialEq` is the contract
 // callers should use.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, SerdeDeserialize, SerdeSerialize)]
 pub struct PqParams {
     /// Number of equal-width vector subspaces.
     pub m_subspaces: usize,
@@ -206,7 +219,7 @@ impl PqParams {
 /// User-facing quantization configuration for [`crate::HnswConfig`].
 // Eq dropped because `PqParams` now carries an f32 `hamming_threshold_ratio`
 // Callers should compare via `PartialEq`.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, SerdeDeserialize, SerdeSerialize)]
 pub struct QuantizationConfig {
     /// Enable asymmetric quantized search when a QUNT store is loaded.
     pub enabled: bool,

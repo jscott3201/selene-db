@@ -16,6 +16,7 @@ use super::validate::{
     deferred_rows_to_raw, inconsistent, validate_posting_lists, validate_trained_codebook,
 };
 use super::{IVF_PROVIDER_NAME, IvfIndex, IvfStats, TrainedIvf, search};
+use crate::payload::split_named_payload;
 use crate::quantize::PqCodebook;
 use crate::snapshot::cqnt::{CqntBodyV1, decode_cqnt, encode_cqnt};
 use crate::snapshot::ipqb::{IpqbBodyV1, decode_ipqb, encode_ipqb};
@@ -164,10 +165,21 @@ impl IndexProvider for IvfProvider {
         if provider.as_str() != IVF_PROVIDER_NAME {
             return Ok(());
         }
-        let event =
-            decode_ivf_event(payload.as_ref()).map_err(|err| ProviderError::InvalidPayload {
-                reason: format!("selene-vector-ivf payload decode: {err:?}: {err}"),
+        let named =
+            split_named_payload(payload.as_ref()).map_err(|err| ProviderError::InvalidPayload {
+                reason: format!("selene-vector-ivf payload decode: prefix {err:?}: {err}"),
             })?;
+        if named.index_name != "default" {
+            return Err(ProviderError::Inconsistent {
+                reason: format!(
+                    "selene-vector-ivf singleton provider cannot apply vector index '{}'",
+                    named.index_name
+                ),
+            });
+        }
+        let event = decode_ivf_event(&named.body).map_err(|err| ProviderError::InvalidPayload {
+            reason: format!("selene-vector-ivf payload decode: {err:?}: {err}"),
+        })?;
         let prev = self.state.load_full();
         let mut next = (*prev).clone();
         match event {

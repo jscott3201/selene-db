@@ -11,7 +11,7 @@ use selene_vector::{VectorOp, VectorUpsertPayloadV1};
 
 use crate::{
     args::{expect_arity, required_node_ref, required_string},
-    provider::{reject_non_default_index, with_hnsw_provider_mut},
+    provider::with_hnsw_provider_mut,
     state::VectorPackState,
     upsert::emit_payload,
 };
@@ -53,13 +53,13 @@ impl ExternalMutationProcedure for DeleteProcedure {
         let _state = &self.state;
         expect_arity(DELETE_PROC, args, 2)?;
         let index_name = required_string(DELETE_PROC, args, 0, "index_name")?;
-        reject_non_default_index(DELETE_PROC, &index_name)?;
         let node_id = required_node_ref(DELETE_PROC, args, 1, "node_id")?;
 
         with_hnsw_provider_mut(ctx, DELETE_PROC, &index_name, |_provider| Ok(()))?;
         emit_payload(
             ctx,
             DELETE_PROC,
+            &index_name,
             VectorUpsertPayloadV1 {
                 op: VectorOp::Delete,
                 node_id,

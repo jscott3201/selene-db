@@ -15,7 +15,7 @@ use crate::{
         required_string, required_usize, try_filter_from_node_refs,
     },
     error::vector_error,
-    provider::{reject_non_default_index, with_hnsw_provider},
+    provider::with_hnsw_provider,
     state::VectorPackState,
 };
 
@@ -95,7 +95,6 @@ struct SearchArgs {
 fn parse_search_args(args: &[Value]) -> Result<SearchArgs, ProcedureError> {
     expect_arity(SEARCH_PROC, args, 5)?;
     let index_name = required_string(SEARCH_PROC, args, 0, "index_name")?;
-    reject_non_default_index(SEARCH_PROC, &index_name)?;
     let query = required_f32_list(SEARCH_PROC, args, 1, "query")?;
     let k = required_usize(SEARCH_PROC, args, 2, "k")?;
     let ef_search = nullable_option_usize(SEARCH_PROC, args, 3, "ef_search")?;

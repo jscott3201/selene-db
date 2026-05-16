@@ -87,6 +87,24 @@ fn procedure_name_returns_static_slice_for_bulk_variants() {
             },
             &["vector", "ivf_stats"][..],
         ),
+        (
+            VectorPackInvocation::CreateIndex {
+                name: "episodes_hnsw",
+                kind: "hnsw",
+                config: "{dim: 4}",
+            },
+            &["vector", "create_index"][..],
+        ),
+        (
+            VectorPackInvocation::DropIndex {
+                name: "episodes_hnsw",
+            },
+            &["vector", "drop_index"][..],
+        ),
+        (
+            VectorPackInvocation::ListIndexes,
+            &["vector", "list_indexes"][..],
+        ),
     ];
 
     for (invocation, expected) in invocations {
@@ -141,6 +159,15 @@ fn procedure_name_covers_all_variants() {
         VectorPackInvocation::IvfStats {
             index_name: "default",
         },
+        VectorPackInvocation::CreateIndex {
+            name: "episodes_hnsw",
+            kind: "hnsw",
+            config: "{dim: 4}",
+        },
+        VectorPackInvocation::DropIndex {
+            name: "episodes_hnsw",
+        },
+        VectorPackInvocation::ListIndexes,
     ];
 
     let mut names = BTreeSet::new();
@@ -150,7 +177,7 @@ fn procedure_name_covers_all_variants() {
         assert_eq!(name[0], "vector");
         assert!(names.insert(name));
     }
-    assert_eq!(names.len(), 9);
+    assert_eq!(names.len(), 12);
 }
 
 #[test]
@@ -168,6 +195,9 @@ fn category_all_matches_exhaustive_anchor() {
             "Delete",
             "BulkUpsert",
             "BulkDelete",
+            "CreateIndex",
+            "DropIndex",
+            "ListIndexes",
             "IvfBulkUpsert",
             "IvfBulkDelete",
             "IvfSearch",
@@ -242,6 +272,9 @@ fn corpus_b3_seed_covers_all_declared_procedures() {
             &["vector", "delete"][..],
             &["vector", "bulk_upsert"][..],
             &["vector", "bulk_delete"][..],
+            &["vector", "create_index"][..],
+            &["vector", "drop_index"][..],
+            &["vector", "list_indexes"][..],
             &["vector", "ivf_bulk_upsert"][..],
             &["vector", "ivf_bulk_delete"][..],
         ]
@@ -274,6 +307,9 @@ fn corpus_b4_seed_covers_all_declared_procedures() {
             &["vector", "delete"][..],
             &["vector", "bulk_upsert"][..],
             &["vector", "bulk_delete"][..],
+            &["vector", "create_index"][..],
+            &["vector", "drop_index"][..],
+            &["vector", "list_indexes"][..],
             &["vector", "ivf_bulk_upsert"][..],
             &["vector", "ivf_bulk_delete"][..],
             &["vector", "ivf_search"][..],

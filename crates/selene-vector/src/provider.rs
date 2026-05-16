@@ -9,7 +9,7 @@ use selene_core::{Change, NodeId};
 use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use crate::builder::{apply_bulk_delete, apply_bulk_upsert, apply_upsert};
-use crate::payload::{EventKind, decode_event};
+use crate::payload::{EventKind, decode_event, split_named_payload};
 use crate::snapshot::grph::{GrphBody, decode_grph, encode_grph};
 use crate::snapshot::qunt::{decode_qunt, encode_qunt, validate_qunt_for_graph};
 use crate::snapshot::vecs::{VecsBodyV1, decode_vecs, encode_vecs};
@@ -251,10 +251,21 @@ impl IndexProvider for HnswProvider {
         if provider.as_str() != PROVIDER_NAME {
             return Ok(());
         }
-        let event =
-            decode_event(payload.as_ref()).map_err(|err| ProviderError::InvalidPayload {
-                reason: format!("selene-vector payload decode: {err:?}: {err}"),
+        let named =
+            split_named_payload(payload.as_ref()).map_err(|err| ProviderError::InvalidPayload {
+                reason: format!("selene-vector payload decode: prefix {err:?}: {err}"),
             })?;
+        if named.index_name != "default" {
+            return Err(ProviderError::Inconsistent {
+                reason: format!(
+                    "selene-vector singleton provider cannot apply vector index '{}'",
+                    named.index_name
+                ),
+            });
+        }
+        let event = decode_event(&named.body).map_err(|err| ProviderError::InvalidPayload {
+            reason: format!("selene-vector payload decode: {err:?}: {err}"),
+        })?;
         let prev = self.state.load_full();
         let next = match event {
             EventKind::Upsert(payload) => {

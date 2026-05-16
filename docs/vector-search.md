@@ -2,7 +2,7 @@
 
 This guide is for engineers adding vector similarity search to an application that
 already embeds the `selene-db` graph engine. It covers the two index providers
-shipped today (HNSW and IVF-PQ), the configuration knobs, the nine `vector.*`
+shipped today (HNSW and IVF-PQ), the configuration knobs, the twelve `vector.*`
 GQL procedures, the snapshot/recovery story, and the gotchas that show up in
 production.
 
@@ -21,11 +21,11 @@ in an opt-in extension crate. Vector search is provided by:
 | Crate | Role |
 |---|---|
 | [`selene-vector`](../crates/selene-vector) | HNSW and IVF-PQ index providers, snapshot bodies, mutation replay, quantization overlays. Implements the `selene_graph::IndexProvider` trait. |
-| [`selene-vector-pack`](../crates/selene-vector-pack) | The nine `vector.*` procedure-pack adapters that expose those providers through `CALL` in GQL queries. |
+| [`selene-vector-pack`](../crates/selene-vector-pack) | The twelve `vector.*` procedure-pack adapters that expose those providers through `CALL` in GQL queries. |
 
-You attach a vector index by registering an `HnswProvider` or `IvfProvider`
-with the graph at builder time, and you query and mutate it by calling the
-`vector.*` procedures from GQL. The graph core only sees opaque
+You attach vector search by registering an `HnswIndexRegistry` and/or
+`IvfIndexRegistry` with the graph at builder time, and you query and mutate it
+by calling the `vector.*` procedures from GQL. The graph core only sees opaque
 `Change::IndexExtensionEvent` payloads; it never deserializes vector bodies and
 never knows what HNSW or IVF means.
 
@@ -61,8 +61,9 @@ inserts are bursty rather than continuous. Pick IVF-PQ when the corpus is
 large enough that even SQ8 compression of HNSW would be tight, when inserts
 are frequent, and when you can tolerate a training step. The two providers can
 coexist on the same graph — IVF lives under provider tag `IVFP`, HNSW under
-`VECT` — but each procedure adapter currently targets the single
-`'default'` index slot (see the procedure table below).
+`VECT`. Register the registry providers when you need named indexes; they
+preserve the compatibility `'default'` slot and add lifecycle procedures for
+additional HNSW or IVF indexes.
 
 ## Setup
 
@@ -95,14 +96,17 @@ use std::sync::Arc;
 
 use selene_core::GraphId;
 use selene_graph::{IndexProvider, SharedGraph};
-use selene_vector::{HnswConfig, HnswProvider};
+use selene_vector::{HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry};
 use selene_vector_pack::VectorPack;
 
-let provider = Arc::new(HnswProvider::new(HnswConfig::new(384)?)?);
-let dyn_provider: Arc<dyn IndexProvider> = provider.clone();
+let hnsw: Arc<dyn IndexProvider> =
+    Arc::new(HnswIndexRegistry::new(HnswConfig::new(384)?)?);
+let ivf: Arc<dyn IndexProvider> =
+    Arc::new(IvfIndexRegistry::new(IvfConfig::new(384)?)?);
 
 let graph = SharedGraph::builder(GraphId::new(1))
-    .with_provider(dyn_provider)
+    .with_provider(hnsw)
+    .with_provider(ivf)
     .build()?;
 
 let pack = VectorPack::new();
@@ -347,13 +351,14 @@ For the precise LUT path see
 [`crates/selene-vector/src/quantize/mod.rs`](../crates/selene-vector/src/quantize/mod.rs)
 (method `build_query_lut_into`).
 
-## The 9 vector.* procedures
+## The 12 vector.* procedures
 
 All vector procedures register under the static `VECTOR_PROCEDURE_NAMES` list
 in [`crates/selene-vector-pack/src/registry.rs`](../crates/selene-vector-pack/src/registry.rs).
-Every procedure takes `index_name` as its first argument; in v1.0 only the
-literal `'default'` is accepted (`reject_non_default_index`). Multi-index
-support is reserved for a future version.
+Search and mutation procedures take `index_name` as their first argument. The
+compatibility `'default'` HNSW and IVF indexes are created when the registries
+are constructed. Additional names are created and dropped through the lifecycle
+procedures below.
 
 | Procedure | Tier | Signature | Output columns | Purpose |
 |---|---|---|---|---|
@@ -366,6 +371,9 @@ support is reserved for a future version.
 | `vector.ivf_bulk_upsert` | mutation | `(index_name: STRING, node_ids: LIST<NODEREF>, vectors: LIST<LIST<FLOAT>>)` | none | Batched IVF insert. Pre-training the rows buffer; post-training they are encoded into posting lists. |
 | `vector.ivf_bulk_delete` | mutation | `(index_name: STRING, node_ids: LIST<NODEREF>)` | none | Batched IVF tombstone delete. |
 | `vector.ivf_stats` | read | `(index_name: STRING)` | 14-column row covering `state` ∈ {`trained`, `deferred`}, `k_coarse`, `n_probe_default`, `posting_list_lengths`, `unassigned_count`, `bytes_coarse_centroids`, `bytes_residual_codebook`, `bytes_rotation`, `bytes_posting_lists`, `bytes_reconstructed_norms`, `compression_ratio`, `polysemous`, `observed_vectors`, `required` | Introspect an IVF index. In the `deferred` (pre-training) state only `observed_vectors` and `required` are populated; in `trained` state the byte-accounting fields are populated and the deferred fields are NULL. |
+| `vector.create_index` | mutation | `(name: STRING, kind: STRING, config: RECORD)` | none | Create a named HNSW or IVF index. `kind` is `'hnsw'` or `'ivf'`; `config` is an open record whose omitted fields inherit from the corresponding default index config. |
+| `vector.drop_index` | mutation | `(name: STRING)` | none | Drop a named non-default vector index. The compatibility `'default'` indexes cannot be dropped. |
+| `vector.list_indexes` | read | `()` | `(name: STRING, kind: STRING, dim: INT, metric: STRING, vector_count: INT)` | List the HNSW and IVF indexes currently registered in the vector catalog. |
 
 The `vector.upsert` procedure pack carries a `VectorPackConfig` —
 specifically the optional `deterministic_seed: Option<u64>`. When set, every
@@ -378,6 +386,10 @@ seed, so snapshot bytes are reproducible across processes. Construct with
 The procedures plug into the standard `CALL ... YIELD ...` form. Examples:
 
 ```gql
+-- Create named HNSW and IVF indexes. Omitted config fields inherit defaults.
+CALL vector.create_index('episodes_hnsw', 'hnsw', {dim: 384, metric: 'cosine'});
+CALL vector.create_index('episodes_ivf', 'ivf', {dim: 384, k_coarse: 64, n_probe: 8});
+
 -- Top-10 over the default HNSW index, with a parameter-bound query vector.
 CALL vector.search('default', $query_vec, 10, NULL, NULL)
 YIELD node_id, score
@@ -405,8 +417,17 @@ RETURN node_id, score;
 
 -- Mutations from GQL.
 CALL vector.upsert('default', $node_id, $vec);
+CALL vector.upsert('episodes_hnsw', $node_id, $vec);
 CALL vector.bulk_upsert('default', $node_ids, $vectors);
 CALL vector.delete('default', $node_id);
+
+-- Catalog lifecycle.
+CALL vector.list_indexes()
+YIELD name, kind, dim, metric, vector_count
+RETURN name, kind, dim, metric, vector_count
+ORDER BY name;
+
+CALL vector.drop_index('episodes_hnsw');
 
 -- Introspect an IVF index.
 CALL vector.ivf_stats('default')
@@ -456,6 +477,13 @@ participates in the engine's two-step snapshot/replay recovery pipeline:
 - On startup, the WAL is replayed, then the snapshot is loaded; the provider
   decodes its sections in the same declared order and resumes from the
   recovered state. Post-snapshot WAL events replay through `on_change`.
+- Registry providers wrap each sub-tag body in a named-index v1 envelope.
+  Legacy v1.0 single-provider section bodies still read as the `'default'`
+  entry, including missing/empty `QUNT` sections.
+- WAL payloads use a named-index prefix before the provider-specific body.
+  Legacy unprefixed vector payloads still replay into `'default'`. The
+  lifecycle provider `selene-vector-lifecycle` carries `VECC` create-index and
+  `VECX` drop-index records.
 
 The HNSW snapshot wire bodies live under
 [`crates/selene-vector/src/snapshot/`](../crates/selene-vector/src/snapshot/):
@@ -494,9 +522,10 @@ QUNT section. The provider tag constants live in
   `vector.upsert` rejects re-inserting an existing `node_id` with
   `VectorError::DuplicateNodeId`. The `VectorOp::Update` opcode is reserved
   for a future brief and currently returns `OperationNotSupportedYet`.
-- **Only the `'default'` index is wired in v1.0.** All nine procedures call
-  `reject_non_default_index` on argument 0. Multi-index support is reserved
-  for a future minor.
+- **The `'default'` indexes are compatibility anchors.** The HNSW and IVF
+  registries each seed a `'default'` index so v1.0 payloads and snapshots keep
+  loading. Named indexes are globally unique across HNSW and IVF; the default
+  indexes cannot be dropped.
 - **IVF is deferred until trained.** Until `training_min_vectors` are
   buffered, `vector.ivf_search` returns no rows and `vector.ivf_stats` reports
   `state = 'deferred'` with `observed_vectors` and `required` populated.
@@ -505,10 +534,10 @@ QUNT section. The provider tag constants live in
   `opq_polysemous` at ~1.17 s per cycle vs `plain_pq` at ~25 ms — favor
   `plain_pq` unless polysemous OPQ recall is required.
 - **The graph core never sees vector internals.** Every mutation crossing
-  the provider boundary is a `Change::IndexExtensionEvent { provider: "selene-vector", payload: Arc<[u8]> }`
-  (or `provider: "selene-vector-ivf"` for IVF). If you observe `on_change`
-  receiving a payload tagged for a different provider, the provider correctly
-  ignores it.
+  the provider boundary is a `Change::IndexExtensionEvent` for
+  `selene-vector`, `selene-vector-ivf`, or `selene-vector-lifecycle` with an
+  opaque payload. If you observe `on_change` receiving a payload tagged for a
+  different provider, the provider correctly ignores it.
 
 ## See also
 

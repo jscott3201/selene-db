@@ -12,7 +12,7 @@ use selene_vector::IvfStats;
 use crate::{
     args::{expect_arity, required_string},
     error::vector_error,
-    provider::{reject_non_default_index, with_ivf_provider},
+    provider::with_ivf_provider,
     state::VectorPackState,
 };
 
@@ -83,7 +83,6 @@ impl ExternalGraphProcedure for IvfStatsProcedure {
 fn parse_ivf_stats_args(args: &[Value]) -> Result<String, ProcedureError> {
     expect_arity(IVF_STATS_PROC, args, 1)?;
     let index_name = required_string(IVF_STATS_PROC, args, 0, "index_name")?;
-    reject_non_default_index(IVF_STATS_PROC, &index_name)?;
     Ok(index_name)
 }
 
@@ -180,13 +179,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_args_rejects_non_default_index() {
-        let err = parse_ivf_stats_args(&[Value::String(
+    fn parse_args_preserves_index_name() {
+        let parsed = parse_ivf_stats_args(&[Value::String(
             intern("embedding_idx").expect("test string interns"),
         )])
-        .expect_err("non-default index rejected");
+        .expect("args parse");
 
-        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+        assert_eq!(parsed, "embedding_idx");
     }
 
     #[test]
