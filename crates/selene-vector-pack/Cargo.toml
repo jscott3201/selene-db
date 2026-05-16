@@ -16,19 +16,19 @@ test-harness = ["selene-gql/test-harness"]
 [dependencies]
 fastrand.workspace = true
 roaring.workspace = true
-selene-core = { path = "../selene-core", version = "0.0.0" }
-selene-gql = { path = "../selene-gql", version = "0.0.0" }
-selene-graph = { path = "../selene-graph", version = "0.0.0" }
-selene-pack = { path = "../selene-pack", version = "0.0.0" }
-selene-vector = { path = "../selene-vector", version = "0.0.0" }
+selene-core = { path = "../selene-core", version = "1.0.0" }
+selene-gql = { path = "../selene-gql", version = "1.0.0" }
+selene-graph = { path = "../selene-graph", version = "1.0.0" }
+selene-pack = { path = "../selene-pack", version = "1.0.0" }
+selene-vector = { path = "../selene-vector", version = "1.0.0" }
 xxhash-rust = { workspace = true, features = ["xxh3"] }
 
 [dev-dependencies]
 criterion.workspace = true
 insta.workspace = true
-selene-gql = { path = "../selene-gql", version = "0.0.0", features = ["test-harness"] }
+selene-gql = { path = "../selene-gql", version = "1.0.0", features = ["test-harness"] }
 mimalloc.workspace = true
-selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
+selene-testing = { path = "../selene-testing", version = "1.0.0", features = ["vector"] }
 
 [[test]]
 name = "search"

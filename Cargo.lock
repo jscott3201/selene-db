@@ -2105,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "selene-algorithms"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "insta",
@@ -2124,7 +2124,7 @@ dependencies = [
 
 [[package]]
 name = "selene-algorithms-pack"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "insta",
@@ -2140,7 +2140,7 @@ dependencies = [
 
 [[package]]
 name = "selene-core"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "insta",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "selene-gql"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "iai-callgrind",
@@ -2186,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "selene-graph"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "arc-swap",
  "criterion",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "selene-pack"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "insta",
@@ -2237,7 +2237,7 @@ dependencies = [
 
 [[package]]
 name = "selene-persist"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "criterion",
@@ -2258,7 +2258,7 @@ dependencies = [
 
 [[package]]
 name = "selene-testing"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "proptest",
  "selene-core",
@@ -2269,7 +2269,7 @@ dependencies = [
 
 [[package]]
 name = "selene-vector"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "arc-swap",
  "blake3",
@@ -2295,7 +2295,7 @@ dependencies = [
 
 [[package]]
 name = "selene-vector-pack"
-version = "0.0.0"
+version = "1.0.0"
 dependencies = [
  "criterion",
  "fastrand",

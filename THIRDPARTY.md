@@ -4011,16 +4011,16 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- selene-algorithms v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-algorithms-pack v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-core v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-gql v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-graph v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-pack v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-persist v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-testing v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-vector v0.0.0 — https://github.com/jscott3201/selene-db
-- selene-vector-pack v0.0.0 — https://github.com/jscott3201/selene-db
+- selene-algorithms v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-algorithms-pack v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-core v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-gql v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-graph v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-pack v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-persist v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-testing v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-vector v1.0.0 — https://github.com/jscott3201/selene-db
+- selene-vector-pack v1.0.0 — https://github.com/jscott3201/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - num-cmp v0.1.0 — https://github.com/lifthrasiir/num-cmp
 - plotters-backend v0.3.7 — https://github.com/plotters-rs/plotters
