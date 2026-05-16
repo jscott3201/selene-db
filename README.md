@@ -8,50 +8,44 @@ The engine is library-only: no transport, no auth, no server. Embedders take the
 
 ## At a glance
 
-- **ISO/IEC 39075:2024 GQL** parser, semantic analyzer, planner, optimizer, and executor.
+- **ISO/IEC 39075:2024 GQL** parser, semantic analyzer, planner, optimizer, and row-at-a-time executor.
 - **In-memory property graph** with copy-on-write isolation: `ArcSwap` + `parking_lot::RwLock` + `imbl` persistent collections + `RoaringBitmap` label indexes + typed secondary indexes.
 - **Strict-serializable** transaction isolation; single graph write-lock with lock-free reads.
 - **Write-ahead log** (`SLDB` magic) and **rkyv-archived snapshots** (`SLSN` magic) with two-step recovery; the persistence crate never sees the graph types directly.
 - **Procedure-pack registry**: JSON-manifest-validated, typestate-sealed activation; one mutation funnel for both graph writes and lifecycle audit, atomic via the WAL.
-- **Graph algorithm library**: 15 public functions across structural (WCC / SCC / topological sort / articulation points / bridges), pathfinding (Dijkstra / SSSP / APSP), centrality (PageRank / Brandes betweenness), and community (label propagation / Louvain / triangle count). Each runs over a frozen `GraphProjection` with cached CSR adjacency; the algorithms pack exposes 19 `algo.*` procedures.
+- **Graph algorithm library**: 15 functions across structural (WCC / SCC / topological sort / articulation points / bridges), pathfinding (Dijkstra / SSSP / APSP), centrality (PageRank / Brandes betweenness), and community (label propagation / Louvain / triangle count). Exposed as 19 `algo.*` procedures.
 - **Vector index extension**: HNSW and IVF providers with SQ8/PQ/OPQ quantization and 9 `vector.*` procedure-pack adapters.
-- **Snapshot-protected** runtime surfaces: planner, executor, procedure-pack, and algorithm outputs are pinned by golden snapshots for drift detection.
 - **Forbids unsafe Rust** workspace-wide; `missing_docs = "deny"`; per-file LOC cap; `rustls`-only TLS posture in transitive dependencies.
 
 ## Capabilities
 
-| Capability | Backing crate | How it is exposed |
-|---|---|---|
-| ISO/IEC 39075:2024 GQL | [`selene-gql`](crates/selene-gql) | Parser, semantic analyzer, planner, optimizer, and row-at-a-time executor. |
-| In-memory property graph | [`selene-graph`](crates/selene-graph) | Copy-on-write snapshots, label indexes, typed property indexes, composite indexes, and the mutation funnel. |
-| Strict-serializable transactions | [`selene-graph`](crates/selene-graph) | Single write lock for mutation; lock-free read snapshots through `ArcSwap`. |
-| Persistence | [`selene-persist`](crates/selene-persist) | Graph-blind WAL (`SLDB`) and snapshot (`SLSN`) formats with two-step recovery. |
-| Procedure packs | [`selene-pack`](crates/selene-pack) | JSON-manifest activation, frozen procedure registry, and graph/mutation-tier external pack adapters. |
-| Graph algorithms | [`selene-algorithms`](crates/selene-algorithms) + [`selene-algorithms-pack`](crates/selene-algorithms-pack) | Pure `GraphProjection` algorithms plus `CALL algo.*` adapters. |
-| Vector indexes | [`selene-vector`](crates/selene-vector) + [`selene-vector-pack`](crates/selene-vector-pack) | `IndexProvider` implementations for HNSW/IVF plus `CALL vector.*` adapters. |
-| Test corpus mirrors | [`selene-testing`](crates/selene-testing) | Shared fixtures and pure-mirror snapshot DSLs consumed by crate integration tests. |
+| Capability                       | Backing crate                                                                                              | How it is exposed                                                                                          |
+| :------------------------------- | :--------------------------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------- |
+| ISO/IEC 39075:2024 GQL           | [`selene-gql`](crates/selene-gql)                                                                          | Parser, semantic analyzer, planner, optimizer, row-at-a-time executor.                                     |
+| In-memory property graph         | [`selene-graph`](crates/selene-graph)                                                                      | Copy-on-write snapshots, label indexes, typed property indexes, composite indexes, and the mutation funnel. |
+| Strict-serializable transactions | [`selene-graph`](crates/selene-graph)                                                                      | Single write lock for mutation; lock-free read snapshots through `ArcSwap`.                                |
+| Persistence                      | [`selene-persist`](crates/selene-persist)                                                                  | Graph-blind WAL (`SLDB`) and snapshot (`SLSN`) formats with two-step recovery.                             |
+| Procedure packs                  | [`selene-pack`](crates/selene-pack)                                                                        | JSON-manifest activation, frozen procedure registry, and graph/mutation-tier external pack adapters.       |
+| Graph algorithms                 | [`selene-algorithms`](crates/selene-algorithms) + [`selene-algorithms-pack`](crates/selene-algorithms-pack) | Pure `GraphProjection` algorithms plus `CALL algo.*` adapters.                                             |
+| Vector indexes                   | [`selene-vector`](crates/selene-vector) + [`selene-vector-pack`](crates/selene-vector-pack)                | `IndexProvider` implementations for HNSW/IVF plus `CALL vector.*` adapters.                                |
+| Test corpus mirrors              | [`selene-testing`](crates/selene-testing)                                                                  | Shared fixtures and pure-mirror snapshot DSLs consumed by crate integration tests.                         |
 
 ## Workspace layout
 
-| Crate | Purpose |
-|---|---|
-| [`selene-core`](crates/selene-core) | Foundation types: `Value`, `IStr` interner, `PropertyMap`, `LabelSet`, schema types, `Codec`, `Origin`, `Changeset`. |
-| [`selene-graph`](crates/selene-graph) | In-memory property graph: storage primitives, `Mutator` write funnel, label/typed/composite indexes, `IndexProvider` extension hook, `GraphTypeDef` runtime binding. |
-| [`selene-persist`](crates/selene-persist) | WAL format, snapshot format with TLV-tagged sections, recovery pipeline. Graph-blind: takes `&[Change]`, returns `RecoveryResult`. |
-| [`selene-gql`](crates/selene-gql) | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, `ProcedureRegistry` trait. |
-| [`selene-pack`](crates/selene-pack) | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate activation state machine, atomic mutation-funnel audit, canonical blake3 content hashing, and platform built-ins (`selene.health`, `selene.create_index`, `selene.drop_index`, `selene.pack.history`). |
-| [`selene-algorithms`](crates/selene-algorithms) | `GraphProjection` + `ProjectionCatalog` foundation, four algorithm families (structural / pathfinding / centrality / community), D21 snapshot harness. Independent of the GQL crate. |
-| [`selene-algorithms-pack`](crates/selene-algorithms-pack) | Procedure-pack adapters that expose `selene-algorithms` through GQL `CALL` by registering an external pack with `selene-pack`. |
-| [`selene-vector`](crates/selene-vector) | Opt-in HNSW and IVF vector index extension with search, mutation replay, snapshots, quantization, and `IndexProvider` registration. |
-| [`selene-vector-pack`](crates/selene-vector-pack) | Procedure-pack adapters that expose vector search, mutation, bulk mutation, IVF search, and IVF stats through GQL `CALL`. |
-| [`selene-testing`](crates/selene-testing) | Shared test fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / procedure-pack / algorithm corpora. Consumed via `[dev-dependencies]`. |
+| Crate                                                              | Purpose                                                                                                                            |
+| :----------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------- |
+| [`selene-core`](crates/selene-core)                                | Foundation types: `Value`, `IStr` interner, `PropertyMap`, `LabelSet`, schema types, `Codec`, `Origin`, `Changeset`.               |
+| [`selene-graph`](crates/selene-graph)                              | In-memory property graph: storage, `Mutator` write funnel, label/typed/composite indexes, `IndexProvider` hook, `GraphTypeDef`.    |
+| [`selene-persist`](crates/selene-persist)                          | WAL format, snapshot format with TLV-tagged sections, recovery pipeline. Graph-blind: takes `&[Change]`, returns `RecoveryResult`. |
+| [`selene-gql`](crates/selene-gql)                                  | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, executor, `ProcedureRegistry` trait.                      |
+| [`selene-pack`](crates/selene-pack)                                | Procedure-pack registry, manifest validator, typestate activation, atomic mutation-funnel audit, platform built-ins.               |
+| [`selene-algorithms`](crates/selene-algorithms)                    | `GraphProjection` + `ProjectionCatalog` foundation; structural / pathfinding / centrality / community families.                    |
+| [`selene-algorithms-pack`](crates/selene-algorithms-pack)          | Procedure-pack adapters exposing `selene-algorithms` through GQL `CALL`.                                                           |
+| [`selene-vector`](crates/selene-vector)                            | Opt-in HNSW and IVF vector index extension with search, mutation replay, snapshots, quantization, and `IndexProvider` registration. |
+| [`selene-vector-pack`](crates/selene-vector-pack)                  | Procedure-pack adapters exposing vector search, mutation, bulk mutation, IVF search, and IVF stats through GQL `CALL`.             |
+| [`selene-testing`](crates/selene-testing)                          | Shared test fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs. Consumed via `[dev-dependencies]`.            |
 
 Opt-in extension crates plug in through the procedure-pack and `IndexProvider` hooks. This workspace currently ships graph algorithms and vector indexes as extension crates.
-
-## Performance
-
-- Benchmark execution is local and script-driven: use `scripts/run-benches.sh`, not raw `cargo bench --workspace`, so criterion benches run sequentially and iai-callgrind gates run only where supported.
-- [`BENCHMARKS.md`](BENCHMARKS.md) is the committed, dated measurement record. `_design/perf-baselines.md` is a developer-local donor-comparison target file and is intentionally gitignored.
 
 ## Quickstart
 
@@ -110,65 +104,54 @@ assert_eq!(
 );
 ```
 
+See [docs/getting-started.md](docs/getting-started.md) for a complete walk-through.
+
 ## ISO/IEC 39075:2024 conformance posture
 
-`selene-db` targets **minimum conformance** plus a curated subset of optional features. The full feature register (in `selene-core`) declares which Implication-table optional features the engine claims; the **GQL Flagger** (ISO 39075 clause 24.6) rejects non-standard or unclaimed constructs at parse time.
+`selene-db` targets **minimum conformance** plus a curated subset of optional features. The full feature register (in `selene-core`) declares which Implication-table optional features the engine claims; the **GQL Flagger** (ISO 39075 Clause 24.6) rejects non-standard or unclaimed constructs at parse time.
 
 - Mandatory data types: `STRING`, `BOOLEAN`, `INT`, `FLOAT`. Optional types (date/time, decimal, list, record, path, references) ship under their ISO feature gates.
 - Both **GG01** (open graph) and **GG02** (closed graph) are supported; per-graph choice.
-- Default transaction isolation is **serializable** (clause 4.6); the engine uses strict-serializable under a single write lock with lock-free reads.
+- Default transaction isolation is **serializable** (Clause 4.6); the engine uses strict-serializable under a single write lock with lock-free reads.
 - Implementation-defined hooks claimed: `IW010` (external procedures via `CALL`), `IV011` (dynamic property value type), `ID001` / `IW002` / `ID003` (principals / authzn / privileges as embedder responsibilities), `IE002` / `IE004` (transaction isolation).
-- No wire format is in scope (clause 4.2.3 is explicit). Embedders pick their own transport.
+- No wire format is in scope (Clause 4.2.3 is explicit). Embedders pick their own transport.
 
-## Architecture decisions
+## Performance
 
-Twenty-one numbered decisions (`D1`–`D21`) define the workspace shape. They are referenced from the spec files and milestone log:
+Recent measurements on Apple M5 (sequential criterion via `scripts/run-benches.sh`):
 
-- D1 — v1.0 is an embeddable library (no server, transport, or auth).
-- D5 — Vectors and other non-graph capabilities live in their own extension crates, never in `selene-graph`.
-- D7 — Concurrency primitives: `ArcSwap` + `parking_lot::RwLock` + `imbl` copy-on-write.
-- D8 — Multi-crate workspace, no umbrella crate. `selene-core` is the leaf; `selene-persist` depends only on `selene-core`; `selene-graph` builds on both; `selene-gql` and `selene-algorithms` depend on `selene-core` + `selene-graph`; `selene-pack` is the widest, depending on `selene-core` + `selene-persist` + `selene-graph` + `selene-gql`. `selene-testing` is a dev-only crate consumed via `[dev-dependencies]`.
-- D14 — Snapshots use rkyv archives over sorted-vec intermediates.
-- D17 — Procedure tiers: per-tier concrete `Context` structs + per-tier dyn-compatible `Procedure` traits.
-- D18 — Procedure-pack lifecycle audit routes through the same mutation funnel as graph writes; no parallel ledger.
-- D21 — Snapshot harness pattern: pure-mirror DSL in `selene-testing`, renderer + integration test + golden `.snap` files in the target crate.
+- `graph_node_fetch`: **2.10 ns** — flat O(1) columnar fetch.
+- `graph_typed_index_point`: **4.53 ns** — flat across scales via tri-state `Cow<RoaringBitmap>` lookup.
+- `gql_analyze_corpus/m5c`: **5.32 µs** semantic analysis on the representative corpus.
+- `betweenness` @ 100k nodes: 264.7 ms sequential, **110.2 ms** parallel (2.40× speedup).
+- `vector_pack/ivf_search_default` (k=10, dim=256, 256 vectors): **2.88 µs**.
 
-## Engineering posture
+See [BENCHMARKS.md](BENCHMARKS.md) for the full table and [docs/performance.md](docs/performance.md) for tuning knobs.
 
-- **`#![forbid(unsafe_code)]`** workspace-wide.
-- **`missing_docs = "deny"`** workspace-wide.
-- **700 LOC per-file cap**, enforced by CI.
-- **rustls-only TLS** in transitive dependencies, enforced by `cargo-deny`.
-- **No hand-rolled crypto, TLS, async runtime, or serialization primitives.**
-- **Conventional commits** with crate-or-component scope.
-- **Marathon mindset**: correctness, performance, and a stable extension contract over near-term shortcuts.
+## Documentation
 
-## CI gates
+- [Getting started](docs/getting-started.md) — install, first query, common patterns.
+- [Embedding selene-db](docs/embedding-guide.md) — using selene-db as a library in your application.
+- [GQL reference](docs/gql-reference.md) — the ISO GQL surface selene-db supports.
+- [Architecture](docs/architecture.md) — crate layout, threading model, design decisions.
+- [Extension guide](docs/extension-guide.md) — writing procedure packs and index providers.
+- [Vector search](docs/vector-search.md) — HNSW and IVF indexes via `vector.*` procedures.
+- [Graph algorithms](docs/graph-algorithms.md) — the 15 algorithms exposed through `algo.*` procedures.
+- [Persistence and recovery](docs/persistence-and-recovery.md) — WAL, snapshots, recovery flow.
+- [Performance](docs/performance.md) — benchmarks, tuning knobs.
+- [Contributing](docs/contributing.md) — dev setup, CI gates, code style.
 
-Every PR exercises the full gate set:
+## Engineering
 
-| Gate | What it checks |
-|---|---|
-| `fmt` | `cargo fmt --all --check`. |
-| `clippy (ubuntu, macos)` | `cargo clippy --workspace --all-targets --locked -- -D warnings` on both Linux and macOS. |
-| `test (ubuntu, macos)` | `cargo test --workspace --locked --all-features` on both Linux and macOS. |
-| `parse-fuzz` | `cargo +nightly fuzz run parse_gql -- -max_total_time=60`. Linux-only (cargo-fuzz requires `x86_64-unknown-linux-gnu`). |
-| `cargo-deny` | License allow-list, ban list, source allow-list. |
-| `cargo-audit` | Vulnerability advisories against the locked dependency graph. |
-| `file-size cap (700 LOC)` | Per-file line-count gate. |
-| `no-secret scan` | Baseline secret-pattern grep against tracked source. |
-| `bench invocation lint` | Static checks that benches use the sanctioned runner script, bench tests stay pinned, mimalloc dev-deps are present where required, and `scripts/run-benches.sh` has smoke coverage. |
-| `third-party attribution current` | `THIRDPARTY.md` is in sync with `Cargo.lock` (regenerated via `cargo-about`). |
-
-Benchmarks are local-only and run via `scripts/run-benches.sh` — never `cargo bench --workspace`, which can dispatch bench binaries concurrently. iai-callgrind requires Linux + valgrind; the runner degrades to criterion-only on macOS without error.
+`selene-db` is built marathon-style: correctness, performance, and a stable extension contract over near-term shortcuts. The workspace forbids `unsafe_code`, denies `missing_docs`, caps source files at 700 LOC, pins TLS to `rustls`-only in transitive dependencies, and disallows hand-rolled crypto / TLS / async runtime / serialization primitives. Conventional commits with crate-or-component scopes are required. See [docs/contributing.md](docs/contributing.md) for the full posture, CI gates, and review workflow.
 
 ## Platform support
 
-| Platform | Status |
-|---|---|
-| Linux (x86_64, aarch64) | Primary deployment target. |
-| macOS (Apple Silicon, Intel) | Primary development target; CI parity for `fmt`, `clippy`, `test`. |
-| Windows | Out of scope. |
+| Platform                       | Status                                                                |
+| :----------------------------- | :-------------------------------------------------------------------- |
+| Linux (x86_64, aarch64)        | Primary deployment target.                                            |
+| macOS (Apple Silicon, Intel)   | Primary development target; CI parity for `fmt`, `clippy`, `test`.    |
+| Windows                        | Out of scope.                                                         |
 
 ## Licensing and attribution
 
