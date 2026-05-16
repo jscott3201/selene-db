@@ -180,11 +180,17 @@ OPQ rotation on insert is ~48× slower than plain PQ. Significant for insert-hea
 
 ### §7e `vector_hnsw_build` (cold direct HNSW construction)
 
+BRIEF-103 remeasured this row on 2026-05-16 with
+`scripts/run-benches.sh --profile full --layer criterion --filter vector_hnsw_build`;
+other benchmark sections are unchanged from the header run.
+
 | Bench | n=100 | n=1000 | n=5000 | Notes |
 |---|---:|---:|---:|---|
-| `vector_hnsw_build` | 2.09 ms | **71.04 ms** | 578.2 ms | Direct `insert_node` build; dim=16, M=8, ef_construction=64, L2; deterministic `BUILD_SEED = 0x9100_0001`. |
+| `vector_hnsw_build` | 2.791 ms | **53.25 ms** | 340.09 ms | Direct `insert_node` build; dim=16, M=8, ef_construction=64, L2; deterministic `BUILD_SEED = 0x9100_0001`; BRIEF-103 BinaryHeap beam + diversity cache. |
 
-Directional donor note: `_design/perf-baselines.md:92` reports 1.31 s @ n=1k under unspecified dim/M; nearby text suggests dim=384, M=16. This bench is dim=16, M=8, so 71.04 ms @ n=1k is a non-parity signal (~18.4× lower wall-clock), not an apples-to-apples claim. Scaling is super-linear: 5× rows from 1k to 5k costs ~8.1×.
+Directional donor note: `_design/perf-baselines.md:92` reports 1.31 s @ n=1k under unspecified dim/M; nearby text suggests dim=384, M=16. This bench is dim=16, M=8, so 53.25 ms @ n=1k is a non-parity signal (~24.6× lower wall-clock), not an apples-to-apples claim.
+BRIEF-103 improves the local n=5000 baseline from 578.2 ms to 340.09 ms
+(~41% lower wall-clock); 5× rows from 1k to 5k now costs ~6.4×.
 
 ## §iai-callgrind (deferred; instruction-count baselines pending)
 

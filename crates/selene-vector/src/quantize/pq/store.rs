@@ -119,8 +119,18 @@ impl QuantizedStorePq {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
         self.codebook.build_query_lut(query, metric)
+    }
+
+    pub(crate) fn build_query_lut_into(
+        &self,
+        query: &[f32],
+        metric: DistanceMetric,
+        out: &mut Vec<f32>,
+    ) {
+        self.codebook.build_query_lut_into(query, metric, out);
     }
 
     pub(crate) fn lut_sum(&self, lut: &[f32], node_idx: usize) -> Option<f32> {
@@ -180,16 +190,20 @@ impl QuantizedStorePq {
 
 fn decoded_norms(codebook: &PqCodebook, codes: &[u8]) -> Vec<f32> {
     let dim = codebook.dim();
-    codes
-        .chunks_exact(codebook.m_subspaces as usize)
-        .map(|row| {
-            let mut decoded = vec![0.0; dim];
-            codebook
-                .decode_codes(row, &mut decoded)
-                .expect("codes chunk length matches PQ subspaces");
-            dot_product(&decoded, &decoded).sqrt()
-        })
-        .collect()
+    let mut decoded = vec![0.0; dim];
+    let mut norms = Vec::with_capacity(
+        codes
+            .len()
+            .checked_div(codebook.m_subspaces as usize)
+            .unwrap_or(0),
+    );
+    for row in codes.chunks_exact(codebook.m_subspaces as usize) {
+        codebook
+            .decode_codes(row, &mut decoded)
+            .expect("codes chunk length matches PQ subspaces");
+        norms.push(dot_product(&decoded, &decoded).sqrt());
+    }
+    norms
 }
 
 #[cfg(test)]

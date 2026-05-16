@@ -275,15 +275,26 @@ impl PqCodebook {
     }
 
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
+        let mut lut = Vec::new();
+        self.build_query_lut_into(query, metric, &mut lut);
+        lut
+    }
+
+    pub(crate) fn build_query_lut_into(
+        &self,
+        query: &[f32],
+        metric: DistanceMetric,
+        out: &mut Vec<f32>,
+    ) {
         debug_assert_eq!(query.len(), self.dim(), "PQ query LUT dimension mismatch");
         let m = self.m_subspaces as usize;
         let k = self.k_centroids as usize;
         let subdim = self.subspace_dim as usize;
         if let Some(rotation) = self.rotation.as_deref() {
             let rotated = linalg::mat_vec(rotation, query, self.dim());
-            encode::build_query_lut(&rotated, &self.centroids, m, k, subdim, metric)
+            encode::build_query_lut_into(&rotated, &self.centroids, m, k, subdim, metric, out);
         } else {
-            encode::build_query_lut(query, &self.centroids, m, k, subdim, metric)
+            encode::build_query_lut_into(query, &self.centroids, m, k, subdim, metric, out);
         }
     }
 

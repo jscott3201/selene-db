@@ -1,8 +1,8 @@
 //! HNSW insertion with metric-aware heuristic neighbor selection.
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
+use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::NodeId;
 
 use super::search::{Candidate, Scorer, beam_search_layer, greedy_search_layer, score};
@@ -170,11 +170,18 @@ pub(crate) fn select_neighbors_heuristic(
     opts: NeighborSelectionOpts,
 ) -> Vec<InternalIndex> {
     candidates.sort_by(Candidate::cmp);
-    let mut selected = Vec::with_capacity(m);
-    let mut rejected = Vec::new();
-    let mut seen = HashSet::new();
+    let pairwise = pairwise_scores(graph, &candidates, params);
+    let mut position_of = FxHashMap::default();
+    for (position, candidate) in candidates.iter().enumerate() {
+        position_of.entry(candidate.idx).or_insert(position);
+    }
 
-    for candidate in &candidates {
+    let mut selected = Vec::with_capacity(m);
+    let mut selected_set = FxHashSet::default();
+    let mut rejected = Vec::new();
+    let mut seen = FxHashSet::default();
+
+    for (candidate_pos, candidate) in candidates.iter().enumerate() {
         if selected.len() >= m {
             break;
         }
@@ -184,15 +191,16 @@ pub(crate) fn select_neighbors_heuristic(
         if !graph.is_alive_idx(candidate.idx) {
             continue;
         }
-        let Some(candidate_node) = graph.node_by_idx(candidate.idx) else {
+        if graph.node_by_idx(candidate.idx).is_none() {
             continue;
-        };
+        }
         let too_close_to_existing = selected.iter().copied().any(|selected_idx| {
-            let selected_vec = &graph.nodes[selected_idx as usize].vector;
-            score(&candidate_node.vector, selected_vec, params) > candidate.score
+            let selected_pos = position_of[&selected_idx];
+            pairwise[pair_index(candidates.len(), candidate_pos, selected_pos)] > candidate.score
         });
         if !too_close_to_existing {
             selected.push(candidate.idx);
+            selected_set.insert(candidate.idx);
         } else {
             rejected.push(*candidate);
         }
@@ -203,13 +211,44 @@ pub(crate) fn select_neighbors_heuristic(
             if selected.len() >= m {
                 break;
             }
-            if graph.is_alive_idx(candidate.idx) && !selected.contains(&candidate.idx) {
+            if graph.is_alive_idx(candidate.idx) && !selected_set.contains(&candidate.idx) {
                 selected.push(candidate.idx);
+                selected_set.insert(candidate.idx);
             }
         }
     }
 
     selected
+}
+
+fn pairwise_scores(graph: &HnswGraph, candidates: &[Candidate], params: &HnswParams) -> Vec<f32> {
+    let n = candidates.len();
+    let mut pairwise = Vec::with_capacity(n.saturating_mul(n.saturating_sub(1)) / 2);
+    for left in 0..n {
+        for right in (left + 1)..n {
+            let score = match (
+                graph.node_by_idx(candidates[left].idx),
+                graph.node_by_idx(candidates[right].idx),
+            ) {
+                (Some(left_node), Some(right_node)) => {
+                    score(&left_node.vector, &right_node.vector, params)
+                }
+                _ => f32::NEG_INFINITY,
+            };
+            pairwise.push(score);
+        }
+    }
+    pairwise
+}
+
+fn pair_index(n: usize, left: usize, right: usize) -> usize {
+    debug_assert_ne!(left, right, "pairwise cache has no diagonal entries");
+    let (lo, hi) = if left < right {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    lo * (2 * n - lo - 1) / 2 + (hi - lo - 1)
 }
 
 /// Expand a candidate pool by one layer-local hop before diversity pruning.
@@ -225,7 +264,7 @@ pub(crate) fn extend_candidate_pool(
         return Vec::new();
     }
 
-    let mut seen = HashSet::new();
+    let mut seen = FxHashSet::default();
     let mut expanded = Vec::with_capacity(seeds.len().min(cap));
 
     for seed in seeds {
@@ -540,6 +579,26 @@ mod tests {
         assert_eq!(selected, vec![0, 1]);
     }
 
+    #[test]
+    fn diversity_cache_does_not_change_rejection_order() {
+        let graph = graph(&[
+            (1, &[1.0, 0.0], 0),
+            (2, &[1.1, 0.0], 0),
+            (3, &[4.0, 0.0], 0),
+            (4, &[4.1, 0.0], 0),
+            (5, &[8.0, 0.0], 0),
+        ]);
+        let mut candidates = candidates(&graph, &[0.0, 0.0]);
+        candidates.push(Candidate::admissible(1, -1.1));
+        let cached =
+            select_neighbors_heuristic(&graph, candidates.clone(), 3, &params(), opts(true));
+        let uncached =
+            select_neighbors_heuristic_uncached(&graph, candidates, 3, &params(), opts(true));
+
+        assert_eq!(cached, uncached);
+        assert_eq!(cached, vec![0, 1, 2]);
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -621,5 +680,55 @@ mod tests {
             &HnswConfig::with_params(2, 4, 16, 8, DistanceMetric::L2)
                 .expect("test config is valid"),
         )
+    }
+
+    fn select_neighbors_heuristic_uncached(
+        graph: &HnswGraph,
+        mut candidates: Vec<Candidate>,
+        m: usize,
+        params: &HnswParams,
+        opts: NeighborSelectionOpts,
+    ) -> Vec<InternalIndex> {
+        candidates.sort_by(Candidate::cmp);
+        let mut selected = Vec::with_capacity(m);
+        let mut rejected = Vec::new();
+        let mut seen = FxHashSet::default();
+
+        for candidate in &candidates {
+            if selected.len() >= m {
+                break;
+            }
+            if !seen.insert(candidate.idx) {
+                continue;
+            }
+            if !graph.is_alive_idx(candidate.idx) {
+                continue;
+            }
+            let Some(candidate_node) = graph.node_by_idx(candidate.idx) else {
+                continue;
+            };
+            let too_close_to_existing = selected.iter().copied().any(|selected_idx| {
+                let selected_vec = &graph.nodes[selected_idx as usize].vector;
+                score(&candidate_node.vector, selected_vec, params) > candidate.score
+            });
+            if !too_close_to_existing {
+                selected.push(candidate.idx);
+            } else {
+                rejected.push(*candidate);
+            }
+        }
+
+        if opts.keep_pruned_connections && selected.len() < m {
+            for candidate in rejected {
+                if selected.len() >= m {
+                    break;
+                }
+                if graph.is_alive_idx(candidate.idx) && !selected.contains(&candidate.idx) {
+                    selected.push(candidate.idx);
+                }
+            }
+        }
+
+        selected
     }
 }

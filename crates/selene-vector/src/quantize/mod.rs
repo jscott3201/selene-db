@@ -314,10 +314,22 @@ impl QuantizedStore {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
+        let mut lut = Vec::new();
+        self.build_query_lut_into(query, metric, &mut lut);
+        lut
+    }
+
+    pub(crate) fn build_query_lut_into(
+        &self,
+        query: &[f32],
+        metric: DistanceMetric,
+        out: &mut Vec<f32>,
+    ) {
         match self {
-            Self::Sq8(store) => store.build_query_lut(query, metric),
-            Self::Pq(store) => store.build_query_lut(query, metric),
+            Self::Sq8(store) => store.build_query_lut_into(query, metric, out),
+            Self::Pq(store) => store.build_query_lut_into(query, metric, out),
         }
     }
 
