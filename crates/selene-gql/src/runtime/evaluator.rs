@@ -92,7 +92,10 @@ fn lookup_variable(
         .iter()
         .position(|column| column.name == Some(name))
     else {
-        return Ok(Value::Null);
+        return Err(ExecutorError::InvalidReference {
+            name: name.as_str().to_owned(),
+            span,
+        });
     };
     binding
         .get(index)
@@ -218,7 +221,9 @@ fn eval_equality(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, Executor
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    let equal = value_compare::equal_non_null(&lhs, &rhs);
+    let Some(equal) = value_compare::gql_equal_non_null(&lhs, &rhs) else {
+        return Ok(Value::Null);
+    };
     Ok(Value::Bool(match op {
         BinaryOp::Eq => equal,
         BinaryOp::Ne => !equal,
@@ -258,6 +263,13 @@ fn eval_arithmetic(
     }
     match (lhs, rhs) {
         (Value::Int(lhs), Value::Int(rhs)) => eval_int_arithmetic(op, lhs, rhs, span),
+        (Value::Uint(lhs), Value::Uint(rhs)) => eval_uint_arithmetic(op, lhs, rhs, span),
+        (Value::Int(lhs), Value::Uint(rhs)) => {
+            eval_i128_arithmetic(op, i128::from(lhs), i128::from(rhs), span)
+        }
+        (Value::Uint(lhs), Value::Int(rhs)) => {
+            eval_i128_arithmetic(op, i128::from(lhs), i128::from(rhs), span)
+        }
         (lhs, rhs) => {
             let (Some(lhs), Some(rhs)) = (as_f64(&lhs), as_f64(&rhs)) else {
                 return data_exception("arithmetic operands are not numeric", span);
@@ -282,6 +294,45 @@ fn eval_int_arithmetic(
         _ => None,
     };
     value.map(Value::Int).ok_or_else(|| {
+        data_exception_value("integer arithmetic overflow or division by zero", span)
+    })
+}
+
+fn eval_uint_arithmetic(
+    op: BinaryOp,
+    lhs: u64,
+    rhs: u64,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let value = match op {
+        BinaryOp::Add => lhs.checked_add(rhs),
+        BinaryOp::Sub => lhs.checked_sub(rhs),
+        BinaryOp::Mul => lhs.checked_mul(rhs),
+        BinaryOp::Div => (rhs != 0).then(|| lhs.checked_div(rhs)).flatten(),
+        BinaryOp::Mod => (rhs != 0).then(|| lhs.checked_rem(rhs)).flatten(),
+        _ => None,
+    };
+    if let Some(value) = value {
+        return Ok(Value::Uint(value));
+    }
+    eval_i128_arithmetic(op, i128::from(lhs), i128::from(rhs), span)
+}
+
+fn eval_i128_arithmetic(
+    op: BinaryOp,
+    lhs: i128,
+    rhs: i128,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let value = match op {
+        BinaryOp::Add => lhs.checked_add(rhs),
+        BinaryOp::Sub => lhs.checked_sub(rhs),
+        BinaryOp::Mul => lhs.checked_mul(rhs),
+        BinaryOp::Div => (rhs != 0).then(|| lhs.checked_div(rhs)).flatten(),
+        BinaryOp::Mod => (rhs != 0).then(|| lhs.checked_rem(rhs)).flatten(),
+        _ => None,
+    };
+    value.map(Value::Int128).ok_or_else(|| {
         data_exception_value("integer arithmetic overflow or division by zero", span)
     })
 }

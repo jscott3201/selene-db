@@ -7,8 +7,8 @@ mod exec_common;
 use exec_common::empty_graph_context;
 use selene_core::{Value, intern};
 use selene_gql::{
-    BinaryOp, Binding, BindingTableSchema, ExecutorError, ImplDefinedCaps, Literal, SourceSpan,
-    UnaryOp, ValueExpr,
+    AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
+    ImplDefinedCaps, Literal, SourceSpan, UnaryOp, ValueExpr,
 };
 
 fn span() -> SourceSpan {
@@ -35,6 +35,10 @@ fn float_lit(value: f64) -> ValueExpr {
     lit(Literal::Float(value, span()))
 }
 
+fn var(name: selene_core::IStr) -> ValueExpr {
+    ValueExpr::Variable { name, span: span() }
+}
+
 fn eval_result(expr: &ValueExpr) -> Result<Value, ExecutorError> {
     let caps = ImplDefinedCaps::default();
     let ctx = empty_graph_context(&caps);
@@ -50,12 +54,58 @@ fn eval(expr: &ValueExpr) -> Value {
     eval_result(expr).expect("expression evaluates")
 }
 
+fn eval_with_binding(
+    expr: &ValueExpr,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+) -> Result<Value, ExecutorError> {
+    let caps = ImplDefinedCaps::default();
+    let ctx = empty_graph_context(&caps);
+    selene_gql::runtime::evaluate_for_test(expr, binding, schema, &ctx)
+}
+
+fn named_column(name: selene_core::IStr) -> BindingTableColumn {
+    BindingTableColumn {
+        name: Some(name),
+        hidden: None,
+        ty: AnalyzedType::Dynamic,
+    }
+}
+
+fn eval_binary_values(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, ExecutorError> {
+    let lhs_name = intern("lhs").unwrap();
+    let rhs_name = intern("rhs").unwrap();
+    let expr = ValueExpr::BinaryOp {
+        op,
+        lhs: Box::new(var(lhs_name)),
+        rhs: Box::new(var(rhs_name)),
+        span: span(),
+    };
+    let binding = Binding::new([lhs, rhs]);
+    let schema = BindingTableSchema {
+        columns: vec![named_column(lhs_name), named_column(rhs_name)],
+    };
+    eval_with_binding(&expr, &binding, &schema)
+}
+
 #[test]
 fn null_equality_propagates_unknown() {
     let expr = ValueExpr::BinaryOp {
         op: BinaryOp::Eq,
         lhs: Box::new(null_lit()),
         rhs: Box::new(null_lit()),
+        span: span(),
+    };
+
+    assert_eq!(eval(&expr), Value::Null);
+}
+
+#[test]
+fn numeric_equal_top_level_float_nan_returns_null() {
+    let expr = ValueExpr::BinaryOp {
+        op: BinaryOp::Eq,
+        lhs: Box::new(float_lit(f64::NAN)),
+        rhs: Box::new(float_lit(f64::NAN)),
         span: span(),
     };
 
@@ -114,6 +164,69 @@ fn arithmetic_overflow_is_data_exception() {
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
     assert_eq!(err.gqlstatus().as_str(), "22000");
+}
+
+#[test]
+fn eval_arithmetic_uint_uint_no_overflow_returns_uint() {
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, Value::Uint(10), Value::Uint(20))
+            .expect("uint arithmetic succeeds"),
+        Value::Uint(30)
+    );
+}
+
+#[test]
+fn eval_arithmetic_uint_uint_overflow_widens_to_int128() {
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, Value::Uint(u64::MAX), Value::Uint(1))
+            .expect("uint overflow widens"),
+        Value::Int128(i128::from(u64::MAX) + 1)
+    );
+}
+
+#[test]
+fn eval_arithmetic_int_uint_returns_int128() {
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, Value::Int(-1), Value::Uint(2))
+            .expect("mixed arithmetic widens"),
+        Value::Int128(1)
+    );
+}
+
+#[test]
+fn eval_arithmetic_uint_int_returns_int128() {
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, Value::Uint(2), Value::Int(-1))
+            .expect("mixed arithmetic widens"),
+        Value::Int128(1)
+    );
+}
+
+#[test]
+fn eval_arithmetic_int128_overflow_returns_data_exception() {
+    let err = eval_binary_values(BinaryOp::Mul, Value::Uint(u64::MAX), Value::Uint(u64::MAX))
+        .expect_err("i128 widening can still overflow");
+
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22000");
+}
+
+#[test]
+fn lookup_variable_missing_column_returns_invalid_reference() {
+    let missing = intern("missing").unwrap();
+    let expr = var(missing);
+    let binding = Binding::new([Value::Int(1)]);
+    let schema = BindingTableSchema {
+        columns: vec![named_column(intern("present").unwrap())],
+    };
+    let err = eval_with_binding(&expr, &binding, &schema)
+        .expect_err("missing schema column is an invalid reference");
+
+    assert!(matches!(
+        &err,
+        ExecutorError::InvalidReference { name, .. } if name == "missing"
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "42002");
 }
 
 #[test]

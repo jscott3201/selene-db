@@ -27,6 +27,21 @@ fn top_k_with_offset_zero_count_n_returns_top_n() {
 }
 
 #[test]
+fn top_k_orders_by_pre_projection_binding_before_project() {
+    let table = execute_optimized_read(
+        "MATCH (n:Person) FILTER n.age >= 21 RETURN n.name AS name ORDER BY n.age DESC LIMIT 2",
+    );
+
+    assert_eq!(
+        column_values(&table, "name"),
+        vec![
+            Value::String(exec_common::istr("Cara")),
+            Value::String(exec_common::istr("Bob")),
+        ]
+    );
+}
+
+#[test]
 fn top_k_with_offset_n_count_m_returns_n_to_n_plus_m_in_order() {
     let table =
         execute_optimized_read("UNWIND [5, 1, 4, 2, 3] AS x RETURN x ORDER BY x LIMIT 2 OFFSET 2");
