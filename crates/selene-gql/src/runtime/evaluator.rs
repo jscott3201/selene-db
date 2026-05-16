@@ -158,7 +158,7 @@ fn eval_binary(
     match op {
         BinaryOp::And => eval_and(lhs, rhs, span),
         BinaryOp::Or => eval_or(lhs, rhs, span),
-        BinaryOp::Eq | BinaryOp::Ne => eval_equality(op, lhs, rhs),
+        BinaryOp::Eq | BinaryOp::Ne => eval_equality(op, &lhs, &rhs),
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
             eval_ordering(op, lhs, rhs, span)
         }
@@ -219,11 +219,11 @@ fn truth(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> 
     }
 }
 
-fn eval_equality(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, ExecutorError> {
+fn eval_equality(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value, ExecutorError> {
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    let Some(equal) = value_compare::gql_equal_non_null(&lhs, &rhs) else {
+    let Some(equal) = value_compare::gql_equal_non_null(lhs, rhs) else {
         return Ok(Value::Null);
     };
     Ok(Value::Bool(match op {
@@ -412,7 +412,7 @@ fn eval_in_list(
             saw_unknown = true;
             continue;
         }
-        let comparison = eval_equality(BinaryOp::Eq, value.clone(), item)?;
+        let comparison = eval_equality(BinaryOp::Eq, &value, &item)?;
         match comparison {
             Value::Bool(true) => return Ok(Value::Bool(!negated)),
             Value::Bool(false) => {}
