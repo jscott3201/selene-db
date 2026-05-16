@@ -10,6 +10,15 @@ use crate::plan::{
 use super::index_helpers::single_label;
 
 /// Rewrite multi-property equality predicates to composite index access.
+///
+/// # Duplicate property-key handling
+///
+/// When multiple equality predicates share the same property key, the first
+/// candidate per key is chosen for the index lookup and every other predicate
+/// on the same key remains in the residual filter regardless of literal value.
+/// Conflicting duplicates therefore produce an empty result via residual
+/// rejection, while exact duplicates leave a redundant residual predicate for a
+/// future cleanup rule.
 pub struct CompositeIndexLookup;
 
 const MAX_COMPOSITE_CANDIDATES: usize = 16;
@@ -156,31 +165,43 @@ fn equality_candidates(
     predicates: &[FilterPredicate],
     bindings: &[BindingDef],
 ) -> Vec<EqualityCandidate> {
-    predicates
-        .iter()
-        .enumerate()
-        .filter_map(|(index, pred)| {
-            let matched = binding_refs::match_property_predicate(pred, bindings)?;
-            let binding_id = matched.binding;
-            let binding_def = bindings
-                .iter()
-                .find(|binding| binding.binding == binding_id)?;
-            if binding_def.element != crate::BindingElement::Node {
-                return None;
+    let mut candidates = Vec::new();
+    for (index, pred) in predicates.iter().enumerate() {
+        let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
+            continue;
+        };
+        let binding_id = matched.binding;
+        let Some(binding_def) = bindings
+            .iter()
+            .find(|binding| binding.binding == binding_id)
+        else {
+            continue;
+        };
+        if binding_def.element != crate::BindingElement::Node {
+            continue;
+        }
+        if candidates
+            .iter()
+            .any(|candidate: &EqualityCandidate| candidate.key == matched.key)
+        {
+            continue;
+        }
+        let binding_literal = match matched.shape {
+            binding_refs::PropertyPredicateShape::Equality(value) => {
+                let Some(literal) = binding_refs::literal(value) else {
+                    continue;
+                };
+                literal
             }
-            let binding_literal = match matched.shape {
-                binding_refs::PropertyPredicateShape::Equality(value) => {
-                    binding_refs::literal(value)?
-                }
-                _ => return None,
-            };
-            Some(EqualityCandidate {
-                index,
-                key: matched.key,
-                literal: binding_literal.clone(),
-            })
-        })
-        .collect()
+            _ => continue,
+        };
+        candidates.push(EqualityCandidate {
+            index,
+            key: matched.key,
+            literal: binding_literal.clone(),
+        });
+    }
+    candidates
 }
 
 fn remove_indices(predicates: &mut Vec<FilterPredicate>, indices: &[usize]) {

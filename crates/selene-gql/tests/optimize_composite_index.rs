@@ -2,7 +2,8 @@
 
 use selene_core::{IStr, intern};
 use selene_gql::{
-    EmptyProcedureRegistry, JoinTree, NodeOrEdgeScan, ScanAccess, analyze, optimize, parse, plan,
+    BinaryOp, EmptyProcedureRegistry, FilterPredicate, FilterPredicateKind, JoinTree, Literal,
+    NodeOrEdgeScan, ScanAccess, ValueExpr, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
@@ -48,6 +49,64 @@ fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
     }
 }
 
+fn integer_literal(expr: &ValueExpr) -> Option<i64> {
+    match expr {
+        ValueExpr::Literal(Literal::Integer(value, _)) => Some(*value),
+        _ => None,
+    }
+}
+
+fn property_access_key(expr: &ValueExpr) -> Option<IStr> {
+    let ValueExpr::PropertyAccess { key, .. } = expr else {
+        return None;
+    };
+    Some(*key)
+}
+
+fn expression_property_integer(predicate: &FilterPredicate, expected_key: IStr) -> Option<i64> {
+    let ValueExpr::BinaryOp {
+        op: BinaryOp::Eq,
+        lhs,
+        rhs,
+        ..
+    } = &predicate.expr
+    else {
+        return None;
+    };
+    if property_access_key(lhs.as_ref()) == Some(expected_key) {
+        return integer_literal(rhs.as_ref());
+    }
+    if property_access_key(rhs.as_ref()) == Some(expected_key) {
+        return integer_literal(lhs.as_ref());
+    }
+    None
+}
+
+fn property_integer(predicate: &FilterPredicate, expected_key: IStr) -> Option<i64> {
+    match &predicate.kind {
+        FilterPredicateKind::PropertyEquals { key, .. } if *key == expected_key => {
+            integer_literal(&predicate.expr)
+        }
+        FilterPredicateKind::Expression => expression_property_integer(predicate, expected_key),
+        _ => None,
+    }
+}
+
+fn residual_integers(scan: &NodeOrEdgeScan, key: IStr) -> Vec<i64> {
+    scan.property_predicates
+        .iter()
+        .filter_map(|predicate| property_integer(predicate, key))
+        .collect()
+}
+
+fn composite_key_integer(keys: &[(IStr, Literal)], key: IStr) -> Option<i64> {
+    keys.iter()
+        .find_map(|(candidate_key, literal)| match literal {
+            Literal::Integer(value, _) if *candidate_key == key => Some(*value),
+            _ => None,
+        })
+}
+
 #[test]
 fn composite_lookup_uses_declaration_order() {
     let catalog = MockIndexCatalog::new()
@@ -70,6 +129,59 @@ fn composite_lookup_uses_declaration_order() {
     assert_eq!(keys[0].0, istr("tenant"));
     assert_eq!(keys[1].0, istr("kind"));
     assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn composite_index_lookup_dedupes_duplicate_property_keys() {
+    let catalog = MockIndexCatalog::new()
+        .with_node_composite_index(istr("Doc"), vec![istr("tenant"), istr("year")]);
+    let plan = optimized_one(
+        "MATCH (n:Doc) WHERE n.tenant = 1 AND n.tenant = 1 AND n.year = 2024 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::CompositeLookup {
+        ref properties,
+        ref keys,
+        ..
+    } = scan.access
+    else {
+        panic!("expected composite lookup, got {:?}", scan.access);
+    };
+    assert_eq!(properties, &vec![istr("tenant"), istr("year")]);
+    assert_eq!(composite_key_integer(keys, istr("tenant")), Some(1));
+    assert_eq!(composite_key_integer(keys, istr("year")), Some(2024));
+
+    let tenant_residuals = residual_integers(scan, istr("tenant"));
+    assert!(
+        tenant_residuals.is_empty() || tenant_residuals == vec![1],
+        "exact duplicate residual should be absent or a redundant tenant=1 predicate, got {tenant_residuals:?}"
+    );
+}
+
+#[test]
+fn composite_index_lookup_keeps_conflicting_duplicates_in_residual() {
+    let catalog = MockIndexCatalog::new()
+        .with_node_composite_index(istr("Doc"), vec![istr("tenant"), istr("year")]);
+    let plan = optimized_one(
+        "MATCH (n:Doc) WHERE n.tenant = 1 AND n.tenant = 2 AND n.year = 2024 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::CompositeLookup {
+        ref properties,
+        ref keys,
+        ..
+    } = scan.access
+    else {
+        panic!("expected composite lookup, got {:?}", scan.access);
+    };
+    assert_eq!(properties, &vec![istr("tenant"), istr("year")]);
+    assert_eq!(composite_key_integer(keys, istr("tenant")), Some(1));
+    assert_eq!(composite_key_integer(keys, istr("year")), Some(2024));
+    assert_eq!(residual_integers(scan, istr("tenant")), vec![2]);
 }
 
 #[test]
