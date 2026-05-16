@@ -3,12 +3,20 @@
 //! Per spec 02 section 3.2, extension-owned value types use `Value::Extended` with an
 //! opaque `Arc<[u8]>` payload. Typed behavior is contributed by extension
 //! crates via [`ValueTypeAdapter`] registrations at process start.
+//!
+//! Locking policy: this module uses `parking_lot::RwLock` with no poison
+//! semantics, so a panic inside any adapter callback executed under the guard
+//! cannot brick all subsequent `Value::Extended` evaluations. selene-core uses
+//! parking_lot for `Mutex`/`RwLock` and std for `OnceLock`/atomics. See brief
+//! BRIEF-98 §O.
 
 use std::any::Any;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, OnceLock};
+
+use parking_lot::RwLock;
 
 use crate::error::{CoreError, CoreResult};
 use crate::extension_type_ids::ExtensionTypeId;
@@ -52,11 +60,7 @@ impl ValueTypeRegistry {
     /// Look up the adapter registered for the given extension type ID.
     #[must_use]
     pub fn lookup(&self, type_id: ExtensionTypeId) -> Option<Arc<dyn ValueTypeAdapter>> {
-        self.inner
-            .read()
-            .expect("value type registry lock poisoned")
-            .get(&type_id)
-            .cloned()
+        self.inner.read().get(&type_id).cloned()
     }
 }
 
@@ -78,10 +82,7 @@ pub fn register_value_type(
     adapter: Arc<dyn ValueTypeAdapter>,
 ) -> CoreResult<()> {
     let registry = value_type_registry();
-    let mut guard = registry
-        .inner
-        .write()
-        .expect("value type registry lock poisoned");
+    let mut guard = registry.inner.write();
     if let Some(existing) = guard.get(&type_id) {
         if Arc::ptr_eq(existing, &adapter) {
             return Ok(());
@@ -94,6 +95,7 @@ pub fn register_value_type(
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::thread;
 
     use super::*;
@@ -152,6 +154,18 @@ mod tests {
         register_value_type(type_id, first).unwrap();
         let error = register_value_type(type_id, second).unwrap_err();
         assert!(matches!(error, CoreError::ExtensionTypeIdConflict { .. }));
+    }
+
+    #[test]
+    fn registry_survives_panic_under_guard() {
+        let registry = ValueTypeRegistry::new();
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = registry.inner.write();
+            panic!("simulated adapter panic");
+        }));
+
+        assert!(result.is_err());
+        assert!(registry.lookup(ExtensionTypeId(0x0001_1100)).is_none());
     }
 
     #[test]
