@@ -1,7 +1,8 @@
 //! HNSW two-phase search with optional RoaringBitmap result pre-filter.
 
+use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashSet};
 
 use roaring::RoaringBitmap;
 use selene_core::NodeId;
@@ -11,6 +12,10 @@ use super::{HnswGraph, HnswParams, InternalIndex};
 use crate::DistanceMetric;
 use crate::VectorError;
 use crate::quantize::{PqParams, QuantizedStore};
+
+thread_local! {
+    static LUT_SCRATCH: RefCell<Vec<f32>> = const { RefCell::new(Vec::new()) };
+}
 
 /// A scored HNSW candidate shared by build and search paths.
 #[derive(Clone, Copy, Debug)]
@@ -45,6 +50,54 @@ impl Candidate {
             .then_with(|| left.idx.cmp(&right.idx))
     }
 }
+
+/// Heap wrapper whose `pop()` returns the best unexpanded candidate.
+#[derive(Clone, Copy, Debug)]
+struct FrontierCandidate(Candidate);
+
+impl Ord for FrontierCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        Candidate::cmp(&other.0, &self.0)
+    }
+}
+
+impl PartialOrd for FrontierCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for FrontierCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for FrontierCandidate {}
+
+/// Heap wrapper whose `peek()` returns the worst kept result.
+#[derive(Clone, Copy, Debug)]
+struct ResultCandidate(Candidate);
+
+impl Ord for ResultCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        Candidate::cmp(&self.0, &other.0)
+    }
+}
+
+impl PartialOrd for ResultCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for ResultCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for ResultCandidate {}
 
 /// Search an immutable HNSW graph snapshot for the top-`k` nearest neighbors.
 ///
@@ -137,14 +190,13 @@ pub(crate) fn beam_search_layer(
     }
 
     let mut visited = HashSet::new();
-    let mut frontier = Vec::new();
-    let mut result = Vec::new();
-    push_candidate(graph, entry, exclude, scorer, &mut visited, &mut frontier);
+    let mut frontier = BinaryHeap::new();
+    let mut result = BinaryHeap::new();
+    if let Some(candidate) = make_candidate(graph, entry, exclude, scorer, &mut visited) {
+        frontier.push(FrontierCandidate(candidate));
+    }
 
-    while !frontier.is_empty() {
-        frontier.sort_by(Candidate::cmp);
-        let candidate = frontier.remove(0);
-
+    while let Some(FrontierCandidate(candidate)) = frontier.pop() {
         // Early termination: once result holds ef entries and the best
         // remaining frontier candidate is worse than the worst result, further
         // expansion cannot improve top-ef. This preserves the BRIEF-59
@@ -162,7 +214,7 @@ pub(crate) fn beam_search_layer(
         // admissible (i.e. carries a real score the cmp can reason about).
         if result.len() >= ef
             && candidate.admissible
-            && let Some(worst) = result.last()
+            && let Some(ResultCandidate(worst)) = result.peek()
             && Candidate::cmp(&candidate, worst).is_gt()
         {
             break;
@@ -173,27 +225,27 @@ pub(crate) fn beam_search_layer(
         // frontier below, but must never enter `result` — otherwise they
         // leak into top-k whenever fewer than `ef` candidates are admissible.
         if candidate.admissible && candidate_passes_filter(graph, candidate.idx, filter) {
-            result.push(candidate);
-            result.sort_by(Candidate::cmp);
+            result.push(ResultCandidate(candidate));
             if result.len() > ef {
-                result.truncate(ef);
+                result.pop();
             }
         }
 
         if let Some(neighbors) = graph.iter_layer_neighbors(candidate.idx, layer) {
             for neighbor_idx in neighbors {
-                push_candidate(
-                    graph,
-                    *neighbor_idx,
-                    exclude,
-                    scorer,
-                    &mut visited,
-                    &mut frontier,
-                );
+                if let Some(candidate) =
+                    make_candidate(graph, *neighbor_idx, exclude, scorer, &mut visited)
+                {
+                    frontier.push(FrontierCandidate(candidate));
+                }
             }
         }
     }
 
+    let mut result = result
+        .into_iter()
+        .map(|candidate| candidate.0)
+        .collect::<Vec<_>>();
     result.sort_by(Candidate::cmp);
     result
 }
@@ -252,7 +304,8 @@ pub(crate) enum Scorer<'a> {
         query: &'a [f32],
         metric: DistanceMetric,
         query_norm: f32,
-        lut: Vec<f32>,
+        /// Thread-local scratch leased for this scorer and returned on drop.
+        lut: LutScratchLease,
         quantized: &'a QuantizedStore,
         /// Pre-computed polysemous query codes (BRIEF-69 §C.3). Populated
         /// when `params.quantization.pq.use_polysemous && quantized.polysemous_trained()`;
@@ -266,6 +319,45 @@ pub(crate) enum Scorer<'a> {
         /// they may still expand the frontier.
         polysemous_threshold: u32,
     },
+}
+
+pub(crate) struct LutScratchLease {
+    lut: Vec<f32>,
+}
+
+impl LutScratchLease {
+    fn build(quantized: &QuantizedStore, query: &[f32], metric: DistanceMetric) -> LutScratchLease {
+        let mut lut = LUT_SCRATCH.with(RefCell::take);
+        quantized.build_query_lut_into(query, metric, &mut lut);
+        Self { lut }
+    }
+
+    fn as_slice(&self) -> &[f32] {
+        &self.lut
+    }
+}
+
+impl Drop for LutScratchLease {
+    fn drop(&mut self) {
+        let mut returned = std::mem::take(&mut self.lut);
+        returned.clear();
+        let _ = LUT_SCRATCH.try_with(|cell| {
+            let mut scratch = cell.borrow_mut();
+            if returned.capacity() > scratch.capacity() {
+                *scratch = returned;
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+fn clear_lut_scratch_for_test() {
+    LUT_SCRATCH.with(|cell| cell.borrow_mut().clear());
+}
+
+#[cfg(test)]
+fn lut_scratch_capacity_for_test() -> usize {
+    LUT_SCRATCH.with(|cell| cell.borrow().capacity())
 }
 
 impl<'a> Scorer<'a> {
@@ -302,7 +394,7 @@ impl<'a> Scorer<'a> {
                 query,
                 metric: params.metric,
                 query_norm: dot_product(query, query).sqrt(),
-                lut: quantized.build_query_lut(query, params.metric),
+                lut: LutScratchLease::build(quantized, query, params.metric),
                 quantized,
                 polysemous_query_codes,
                 polysemous_threshold,
@@ -336,7 +428,7 @@ impl<'a> Scorer<'a> {
                 // are available AND the stored bytes are also polysemous,
                 // skip ADC LUT lookup for candidates whose Hamming distance
                 // from the query exceeds the threshold. Returning `None`
-                // routes through `push_candidate` to a non-admissible
+                // routes through candidate construction to a non-admissible
                 // Candidate (BRIEF-69 Stage 1 delta 2 / V110) — the
                 // candidate may still expand the frontier but cannot enter
                 // the result set or be resurrected by rescore.
@@ -352,7 +444,7 @@ impl<'a> Scorer<'a> {
                         return None;
                     }
                 }
-                let lut_sum = quantized.lut_sum(lut, node_idx)?;
+                let lut_sum = quantized.lut_sum(lut.as_slice(), node_idx)?;
                 // §O.New-2: keep quantized and f32 scores on the same scale.
                 Some(match metric {
                     DistanceMetric::L2 => -lut_sum.sqrt(),
@@ -386,16 +478,15 @@ fn validate_query(query: &[f32]) -> Result<(), VectorError> {
     Ok(())
 }
 
-fn push_candidate(
+fn make_candidate(
     graph: &HnswGraph,
     idx: InternalIndex,
     exclude: Option<InternalIndex>,
     scorer: &Scorer<'_>,
     visited: &mut HashSet<InternalIndex>,
-    out: &mut Vec<Candidate>,
-) {
+) -> Option<Candidate> {
     if Some(idx) == exclude || !visited.insert(idx) {
-        return;
+        return None;
     }
     if graph.node_by_idx(idx).is_some() {
         let scored = scorer.score(graph, idx);
@@ -404,12 +495,70 @@ fn push_candidate(
         // this bit, a polysemous Hamming-filter fail (or any future
         // `None`-returning scorer) would leak into top-k via the score
         // ordering path even though the scorer explicitly excluded it.
-        out.push(Candidate {
+        return Some(Candidate {
             idx,
             score: scored.unwrap_or(f32::NEG_INFINITY),
             admissible: scored.is_some() && graph.is_alive_idx(idx),
         });
     }
+    None
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+fn beam_search_layer_sorted_vec(
+    graph: &HnswGraph,
+    entry: InternalIndex,
+    ef: usize,
+    layer: u8,
+    filter: Option<&RoaringBitmap>,
+    exclude: Option<InternalIndex>,
+    scorer: &Scorer<'_>,
+) -> Vec<Candidate> {
+    if ef == 0 {
+        return Vec::new();
+    }
+
+    let mut visited = HashSet::new();
+    let mut frontier = Vec::new();
+    let mut result = Vec::new();
+    if let Some(candidate) = make_candidate(graph, entry, exclude, scorer, &mut visited) {
+        frontier.push(candidate);
+    }
+
+    while !frontier.is_empty() {
+        frontier.sort_by(Candidate::cmp);
+        let candidate = frontier.remove(0);
+
+        if result.len() >= ef
+            && candidate.admissible
+            && let Some(worst) = result.last()
+            && Candidate::cmp(&candidate, worst).is_gt()
+        {
+            break;
+        }
+
+        if candidate.admissible && candidate_passes_filter(graph, candidate.idx, filter) {
+            result.push(candidate);
+            result.sort_by(Candidate::cmp);
+            if result.len() > ef {
+                result.truncate(ef);
+            }
+        }
+
+        if let Some(neighbors) = graph.iter_layer_neighbors(candidate.idx, layer) {
+            for neighbor_idx in neighbors {
+                if let Some(candidate) =
+                    make_candidate(graph, *neighbor_idx, exclude, scorer, &mut visited)
+                {
+                    frontier.push(candidate);
+                }
+            }
+        }
+    }
+
+    result.sort_by(Candidate::cmp);
+    result
 }
 
 fn candidate_passes_filter(
@@ -435,6 +584,7 @@ fn passes_filter(node_id: NodeId, filter: Option<&RoaringBitmap>) -> bool {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::thread;
 
     use selene_core::NodeId;
 
@@ -515,6 +665,93 @@ mod tests {
         );
     }
 
+    #[test]
+    fn beam_search_heap_matches_sorted_vec_on_scalar_build() {
+        let graph = beam_fixture_graph();
+        let scorer = Scorer::f32(&[0.0, 0.0], DistanceMetric::L2);
+
+        let heap = beam_search_layer(&graph, 0, 3, 0, None, None, &scorer);
+        let sorted_vec = beam_search_layer_sorted_vec(&graph, 0, 3, 0, None, None, &scorer);
+
+        assert_eq!(
+            candidate_fingerprint(&heap),
+            candidate_fingerprint(&sorted_vec)
+        );
+        for candidate in heap {
+            assert!(graph.is_alive_idx(candidate.idx));
+        }
+    }
+
+    #[test]
+    fn beam_search_preserves_admissible_only_results() {
+        let mut graph = graph_from_rows(&[
+            (1, &[0.0, 0.0], 0),
+            (2, &[100.0, 0.0], 0),
+            (3, &[2.0, 0.0], 0),
+        ]);
+        graph.nodes[0].neighbors[0] = vec![1];
+        graph.nodes[1].neighbors[0] = vec![2];
+        tombstone_node(&mut graph, NodeId::new(2)).expect("bridge tombstone succeeds");
+        let scorer = Scorer::f32(&[2.0, 0.0], DistanceMetric::L2);
+
+        let results = beam_search_layer(&graph, 0, 1, 0, None, None, &scorer);
+
+        assert_eq!(
+            results
+                .iter()
+                .map(|candidate| candidate.idx)
+                .collect::<Vec<_>>(),
+            vec![2]
+        );
+        assert!(!results.iter().any(|candidate| candidate.idx == 1));
+    }
+
+    #[test]
+    fn lut_scratch_reuse_does_not_leak_state_between_searches() {
+        clear_lut_scratch_for_test();
+        let rows = &[&[0.0, 0.0][..], &[8.0, 0.0][..], &[0.0, 8.0][..]];
+        let (graph, params) = graph_with_quantized(
+            DistanceMetric::L2,
+            rows,
+            QuantizationConfig {
+                enabled: true,
+                rescore: false,
+                ..Default::default()
+            },
+        );
+
+        let first = search(&graph, &[0.1, 0.0], 1, 4, &params, None).expect("search succeeds");
+        assert_eq!(
+            first.first().map(|(node_id, _)| *node_id),
+            Some(NodeId::new(1))
+        );
+        let scratch_capacity = lut_scratch_capacity_for_test();
+        assert!(scratch_capacity >= graph.dimensions() * 256);
+
+        let second = search(&graph, &[7.9, 0.0], 1, 4, &params, None).expect("search succeeds");
+        assert_eq!(
+            second.first().map(|(node_id, _)| *node_id),
+            Some(NodeId::new(2))
+        );
+        assert_eq!(lut_scratch_capacity_for_test(), scratch_capacity);
+
+        let graph = Arc::new(graph);
+        let params = Arc::new(params);
+        let left_graph = Arc::clone(&graph);
+        let left_params = Arc::clone(&params);
+        let left = thread::spawn(move || {
+            search(&left_graph, &[0.1, 0.0], 1, 4, &left_params, None).expect("search succeeds")
+        });
+        let right_graph = Arc::clone(&graph);
+        let right_params = Arc::clone(&params);
+        let right = thread::spawn(move || {
+            search(&right_graph, &[7.9, 0.0], 1, 4, &right_params, None).expect("search succeeds")
+        });
+
+        assert_eq!(left.join().expect("thread joins"), first);
+        assert_eq!(right.join().expect("thread joins"), second);
+    }
+
     fn graph_with_quantized(
         metric: DistanceMetric,
         rows: &[&[f32]],
@@ -541,5 +778,49 @@ mod tests {
                 .unwrap(),
         ));
         (graph.clone_with_quantized(Some(store)), params)
+    }
+
+    fn beam_fixture_graph() -> HnswGraph {
+        let mut graph = graph_from_rows(&[
+            (1, &[0.0, 0.0], 0),
+            (2, &[1.0, 0.0], 0),
+            (3, &[0.0, 2.0], 0),
+            (4, &[0.5, 0.0], 0),
+            (5, &[3.0, 0.0], 0),
+        ]);
+        graph.nodes[0].neighbors[0] = vec![1, 2];
+        graph.nodes[1].neighbors[0] = vec![3, 4];
+        graph.nodes[2].neighbors[0] = vec![4];
+        graph.nodes[3].neighbors[0] = vec![4];
+        graph
+    }
+
+    fn graph_from_rows(rows: &[(u64, &[f32], u8)]) -> HnswGraph {
+        let dimensions = rows.first().map_or(2, |(_, vector, _)| vector.len()) as u16;
+        let mut graph = HnswGraph::empty(dimensions);
+        for (idx, (raw, vector, layer)) in rows.iter().enumerate() {
+            let node_id = NodeId::new(*raw);
+            graph.nodes.push(
+                HnswNode::new(node_id, Arc::from(*vector), *layer).expect("test node is valid"),
+            );
+            graph.mark_alive_idx(idx as InternalIndex);
+            graph.node_id_to_idx.insert(node_id, idx as InternalIndex);
+        }
+        graph.entry_point = (!graph.nodes.is_empty()).then_some(0);
+        graph.max_layer = rows.iter().map(|(_, _, layer)| *layer).max().unwrap_or(0);
+        graph
+    }
+
+    fn candidate_fingerprint(candidates: &[Candidate]) -> Vec<(InternalIndex, u32, bool)> {
+        candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    candidate.idx,
+                    candidate.score.to_bits(),
+                    candidate.admissible,
+                )
+            })
+            .collect()
     }
 }

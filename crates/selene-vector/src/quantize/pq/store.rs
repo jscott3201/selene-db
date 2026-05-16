@@ -119,8 +119,18 @@ impl QuantizedStorePq {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
         self.codebook.build_query_lut(query, metric)
+    }
+
+    pub(crate) fn build_query_lut_into(
+        &self,
+        query: &[f32],
+        metric: DistanceMetric,
+        out: &mut Vec<f32>,
+    ) {
+        self.codebook.build_query_lut_into(query, metric, out);
     }
 
     pub(crate) fn lut_sum(&self, lut: &[f32], node_idx: usize) -> Option<f32> {

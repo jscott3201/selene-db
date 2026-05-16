@@ -139,10 +139,22 @@ impl QuantizedStoreSq8 {
         dequantize_row(&self.range, &self.codes, self.dim(), node_idx, out);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn build_query_lut(&self, query: &[f32], metric: DistanceMetric) -> Vec<f32> {
+        let mut lut = Vec::new();
+        self.build_query_lut_into(query, metric, &mut lut);
+        lut
+    }
+
+    pub(crate) fn build_query_lut_into(
+        &self,
+        query: &[f32],
+        metric: DistanceMetric,
+        out: &mut Vec<f32>,
+    ) {
         debug_assert_eq!(query.len(), self.dim(), "query LUT dimension mismatch");
         let dim = self.dim();
-        let mut lut = vec![0.0; dim * 256];
+        out.resize(dim * 256, 0.0);
         for coord in 0..dim {
             for code in 0..=u8::MAX {
                 let dequantized =
@@ -154,10 +166,9 @@ impl QuantizedStoreSq8 {
                         delta * delta
                     }
                 };
-                lut[(coord * 256) + usize::from(code)] = contribution;
+                out[(coord * 256) + usize::from(code)] = contribution;
             }
         }
-        lut
     }
 
     pub(crate) fn lut_sum(&self, lut: &[f32], node_idx: usize) -> Option<f32> {

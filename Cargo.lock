@@ -2279,6 +2279,7 @@ dependencies = [
  "proptest",
  "rkyv 0.8.16",
  "roaring",
+ "rustc-hash",
  "selene-core",
  "selene-graph",
  "selene-pack",

@@ -25,28 +25,28 @@ pub(super) fn encode_row(
     }
 }
 
-pub(super) fn build_query_lut(
+pub(super) fn build_query_lut_into(
     query: &[f32],
     codebook: &[f32],
     m: usize,
     k: usize,
     subdim: usize,
     metric: DistanceMetric,
-) -> Vec<f32> {
-    let mut lut = vec![0.0; m * k];
+    out: &mut Vec<f32>,
+) {
+    out.resize(m * k, 0.0);
     for subspace in 0..m {
         let query_start = subspace * subdim;
         let query_slice = &query[query_start..query_start + subdim];
         for centroid in 0..k {
             let center_start = ((subspace * k) + centroid) * subdim;
             let center = &codebook[center_start..center_start + subdim];
-            lut[(subspace * k) + centroid] = match metric {
+            out[(subspace * k) + centroid] = match metric {
                 DistanceMetric::Cosine | DistanceMetric::Dot => dot_product(query_slice, center),
                 DistanceMetric::L2 => squared_l2(query_slice, center),
             };
         }
     }
-    lut
 }
 
 pub(super) fn lut_sum_for_codes(lut: &[f32], codes: &[u8], m: usize, k: usize) -> Option<f32> {

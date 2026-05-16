@@ -24,6 +24,7 @@ fastrand.workspace = true
 parking_lot.workspace = true
 rkyv.workspace = true
 roaring.workspace = true
+rustc-hash.workspace = true
 smallvec.workspace = true
 thiserror.workspace = true
 miette.workspace = true
