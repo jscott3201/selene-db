@@ -266,6 +266,39 @@ fn eval_arithmetic(
     match (lhs, rhs) {
         (Value::Int(lhs), Value::Int(rhs)) => eval_int_arithmetic(op, lhs, rhs, span),
         (Value::Uint(lhs), Value::Uint(rhs)) => eval_uint_arithmetic(op, lhs, rhs, span),
+        (Value::Int128(lhs), Value::Int128(rhs)) => eval_i128_arithmetic(op, lhs, rhs, span),
+        (Value::Int128(lhs), Value::Int(rhs)) => {
+            eval_i128_arithmetic(op, lhs, i128::from(rhs), span)
+        }
+        (Value::Int(lhs), Value::Int128(rhs)) => {
+            eval_i128_arithmetic(op, i128::from(lhs), rhs, span)
+        }
+        (Value::Int128(lhs), Value::Uint(rhs)) => {
+            eval_i128_arithmetic(op, lhs, i128::from(rhs), span)
+        }
+        (Value::Uint(lhs), Value::Int128(rhs)) => {
+            eval_i128_arithmetic(op, i128::from(lhs), rhs, span)
+        }
+        (Value::Int128(lhs), Value::Float(rhs)) => eval_float_arithmetic(op, lhs as f64, rhs, span),
+        (Value::Float(lhs), Value::Int128(rhs)) => eval_float_arithmetic(op, lhs, rhs as f64, span),
+        (Value::Int128(lhs), Value::Float32(rhs)) => {
+            eval_float_arithmetic(op, lhs as f64, f64::from(rhs), span)
+        }
+        (Value::Float32(lhs), Value::Int128(rhs)) => {
+            eval_float_arithmetic(op, f64::from(lhs), rhs as f64, span)
+        }
+        (Value::Uint128(lhs), Value::Float(rhs)) => {
+            eval_float_arithmetic(op, lhs as f64, rhs, span)
+        }
+        (Value::Float(lhs), Value::Uint128(rhs)) => {
+            eval_float_arithmetic(op, lhs, rhs as f64, span)
+        }
+        (Value::Uint128(lhs), Value::Float32(rhs)) => {
+            eval_float_arithmetic(op, lhs as f64, f64::from(rhs), span)
+        }
+        (Value::Float32(lhs), Value::Uint128(rhs)) => {
+            eval_float_arithmetic(op, f64::from(lhs), rhs as f64, span)
+        }
         (Value::Int(lhs), Value::Uint(rhs)) => {
             eval_i128_arithmetic(op, i128::from(lhs), i128::from(rhs), span)
         }

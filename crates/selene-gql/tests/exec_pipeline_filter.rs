@@ -91,6 +91,33 @@ fn where_date_a_lt_date_b_filters_rows() {
 }
 
 #[test]
+fn where_uint_plus_one_gt_int_works() {
+    let fixture = ExecFixture::build();
+    let metric = istr("Metric");
+    let u = istr("u");
+    let matching;
+    {
+        let mut txn = fixture.graph.begin_write();
+        let mut mutator = txn.mutator();
+        matching = mutator
+            .create_node(LabelSet::single(metric), props([(u, Value::Uint(10))]))
+            .expect("matching metric inserts");
+        mutator
+            .create_node(LabelSet::single(metric), props([(u, Value::Uint(9))]))
+            .expect("non-matching metric inserts");
+        txn.commit().expect("metrics commit");
+    }
+
+    let plan = planned("MATCH (n:Metric) WHERE n.u + 1 > 10 RETURN n");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let mut ctx = fixture.context_caps(&plan);
+    let table = execute_pattern(pattern, &ctx);
+    let filtered = execute_pipeline(&plan.pipeline, table, &mut ctx).expect("filter executes");
+
+    assert_eq!(node_ids_for(&filtered, "n"), vec![Some(matching.get())]);
+}
+
+#[test]
 fn filter_drops_rows_where_expr_is_non_bool() {
     let fixture = ExecFixture::build();
     let plan = planned("MATCH (n:Person) FILTER n.age = 30 RETURN n");

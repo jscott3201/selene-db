@@ -84,7 +84,27 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Bytes(lhs), Value::Bytes(rhs)) => lhs.as_ref().cmp(rhs.as_ref()),
         (Value::Decimal(lhs), Value::Decimal(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int128(rhs)) => lhs.cmp(rhs),
+        (Value::Int128(lhs), Value::Int(rhs)) => lhs.cmp(&i128::from(*rhs)),
+        (Value::Int(lhs), Value::Int128(rhs)) => i128::from(*lhs).cmp(rhs),
+        (Value::Int128(lhs), Value::Uint(rhs)) => lhs.cmp(&i128::from(*rhs)),
+        (Value::Uint(lhs), Value::Int128(rhs)) => i128::from(*lhs).cmp(rhs),
         (Value::Uint128(lhs), Value::Uint128(rhs)) => lhs.cmp(rhs),
+        (Value::Uint128(lhs), Value::Uint(rhs)) => lhs.cmp(&u128::from(*rhs)),
+        (Value::Uint(lhs), Value::Uint128(rhs)) => u128::from(*lhs).cmp(rhs),
+        (Value::Uint128(lhs), Value::Int(rhs)) => {
+            if *rhs < 0 {
+                Ordering::Greater
+            } else {
+                lhs.cmp(&u128::from(*rhs as u64))
+            }
+        }
+        (Value::Int(lhs), Value::Uint128(rhs)) => {
+            if *lhs < 0 {
+                Ordering::Less
+            } else {
+                u128::from(*lhs as u64).cmp(rhs)
+            }
+        }
         (Value::Int128(lhs), Value::Uint128(rhs)) => i128_cmp_u128(*lhs, *rhs),
         (Value::Uint128(lhs), Value::Int128(rhs)) => i128_cmp_u128(*rhs, *lhs).reverse(),
         _ => return numeric_compare(lhs, rhs),
@@ -213,10 +233,18 @@ fn numeric_compare(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Float(lhs), Value::Int(rhs)) => lhs.partial_cmp(&i64_to_f64_exact(*rhs)?),
         (Value::Uint(lhs), Value::Float(rhs)) => u64_to_f64_exact(*lhs)?.partial_cmp(rhs),
         (Value::Float(lhs), Value::Uint(rhs)) => lhs.partial_cmp(&u64_to_f64_exact(*rhs)?),
+        (Value::Int128(lhs), Value::Float(rhs)) => i128_to_f64_exact(*lhs)?.partial_cmp(rhs),
+        (Value::Float(lhs), Value::Int128(rhs)) => lhs.partial_cmp(&i128_to_f64_exact(*rhs)?),
+        (Value::Uint128(lhs), Value::Float(rhs)) => u128_to_f64_exact(*lhs)?.partial_cmp(rhs),
+        (Value::Float(lhs), Value::Uint128(rhs)) => lhs.partial_cmp(&u128_to_f64_exact(*rhs)?),
         (Value::Int(lhs), Value::Float32(rhs)) => i64_to_f32_exact(*lhs)?.partial_cmp(rhs),
         (Value::Float32(lhs), Value::Int(rhs)) => lhs.partial_cmp(&i64_to_f32_exact(*rhs)?),
         (Value::Uint(lhs), Value::Float32(rhs)) => u64_to_f32_exact(*lhs)?.partial_cmp(rhs),
         (Value::Float32(lhs), Value::Uint(rhs)) => lhs.partial_cmp(&u64_to_f32_exact(*rhs)?),
+        (Value::Int128(lhs), Value::Float32(rhs)) => i128_to_f32_exact(*lhs)?.partial_cmp(rhs),
+        (Value::Float32(lhs), Value::Int128(rhs)) => lhs.partial_cmp(&i128_to_f32_exact(*rhs)?),
+        (Value::Uint128(lhs), Value::Float32(rhs)) => u128_to_f32_exact(*lhs)?.partial_cmp(rhs),
+        (Value::Float32(lhs), Value::Uint128(rhs)) => lhs.partial_cmp(&u128_to_f32_exact(*rhs)?),
         _ => None,
     }
 }
@@ -242,33 +270,53 @@ fn i128_cmp_u128(lhs: i128, rhs: u128) -> Ordering {
 }
 
 fn i64_to_f64_exact(value: i64) -> Option<f64> {
-    u64_representable_by_binary_float(value.unsigned_abs(), F64_SIGNIFICAND_BITS)
+    u128_representable_by_binary_float(u128::from(value.unsigned_abs()), F64_SIGNIFICAND_BITS)
         .then_some(value as f64)
 }
 
 fn u64_to_f64_exact(value: u64) -> Option<f64> {
-    u64_representable_by_binary_float(value, F64_SIGNIFICAND_BITS).then_some(value as f64)
+    u128_representable_by_binary_float(u128::from(value), F64_SIGNIFICAND_BITS)
+        .then_some(value as f64)
+}
+
+fn i128_to_f64_exact(value: i128) -> Option<f64> {
+    u128_representable_by_binary_float(value.unsigned_abs(), F64_SIGNIFICAND_BITS)
+        .then_some(value as f64)
+}
+
+fn u128_to_f64_exact(value: u128) -> Option<f64> {
+    u128_representable_by_binary_float(value, F64_SIGNIFICAND_BITS).then_some(value as f64)
 }
 
 fn i64_to_f32_exact(value: i64) -> Option<f32> {
-    u64_representable_by_binary_float(value.unsigned_abs(), F32_SIGNIFICAND_BITS)
+    u128_representable_by_binary_float(u128::from(value.unsigned_abs()), F32_SIGNIFICAND_BITS)
         .then_some(value as f32)
 }
 
 fn u64_to_f32_exact(value: u64) -> Option<f32> {
-    u64_representable_by_binary_float(value, F32_SIGNIFICAND_BITS).then_some(value as f32)
+    u128_representable_by_binary_float(u128::from(value), F32_SIGNIFICAND_BITS)
+        .then_some(value as f32)
 }
 
-fn u64_representable_by_binary_float(value: u64, significand_bits: u32) -> bool {
+fn i128_to_f32_exact(value: i128) -> Option<f32> {
+    u128_representable_by_binary_float(value.unsigned_abs(), F32_SIGNIFICAND_BITS)
+        .then_some(value as f32)
+}
+
+fn u128_to_f32_exact(value: u128) -> Option<f32> {
+    u128_representable_by_binary_float(value, F32_SIGNIFICAND_BITS).then_some(value as f32)
+}
+
+fn u128_representable_by_binary_float(value: u128, significand_bits: u32) -> bool {
     if value == 0 {
         return true;
     }
-    let exponent = u64::BITS - 1 - value.leading_zeros();
+    let exponent = u128::BITS - 1 - value.leading_zeros();
     if exponent < significand_bits {
         return true;
     }
     let low_bits = exponent + 1 - significand_bits;
-    let mask = (1_u64 << low_bits) - 1;
+    let mask = (1_u128 << low_bits) - 1;
     value & mask == 0
 }
 
@@ -440,6 +488,44 @@ mod tests {
         );
         assert_eq!(
             compare_non_null(&Value::Uint128(2), &Value::Int128(1)),
+            Some(Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn compare_non_null_int128_vs_int() {
+        assert_eq!(
+            compare_non_null(
+                &Value::Int128(1_000_000_000_000_000_000_000),
+                &Value::Int(1)
+            ),
+            Some(Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn compare_non_null_int_vs_int128() {
+        assert_eq!(
+            compare_non_null(
+                &Value::Int(1),
+                &Value::Int128(1_000_000_000_000_000_000_000)
+            ),
+            Some(Ordering::Less)
+        );
+    }
+
+    #[test]
+    fn compare_non_null_uint128_vs_uint() {
+        assert_eq!(
+            compare_non_null(&Value::Uint128(u128::MAX), &Value::Uint(1)),
+            Some(Ordering::Greater)
+        );
+    }
+
+    #[test]
+    fn compare_non_null_uint128_negative_int() {
+        assert_eq!(
+            compare_non_null(&Value::Uint128(0), &Value::Int(-1)),
             Some(Ordering::Greater)
         );
     }

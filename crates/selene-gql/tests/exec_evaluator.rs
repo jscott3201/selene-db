@@ -203,6 +203,38 @@ fn eval_arithmetic_uint_int_returns_int128() {
 }
 
 #[test]
+fn eval_arithmetic_int128_int_chains_exactly() {
+    let widened = eval_binary_values(BinaryOp::Add, Value::Uint(u64::MAX), Value::Uint(1))
+        .expect("uint overflow widens");
+
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, widened, Value::Int(1))
+            .expect("chained Int128 arithmetic succeeds"),
+        Value::Int128(i128::from(u64::MAX) + 2)
+    );
+}
+
+#[test]
+fn eval_arithmetic_int128_int128_succeeds() {
+    let half = i128::MAX / 2;
+
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, Value::Int128(half), Value::Int128(half))
+            .expect("Int128 arithmetic succeeds"),
+        Value::Int128(half + half)
+    );
+}
+
+#[test]
+fn eval_arithmetic_int_int128_returns_int128() {
+    assert_eq!(
+        eval_binary_values(BinaryOp::Add, Value::Int(5), Value::Int128(7))
+            .expect("Int + Int128 arithmetic succeeds"),
+        Value::Int128(12)
+    );
+}
+
+#[test]
 fn eval_arithmetic_int128_overflow_returns_data_exception() {
     let err = eval_binary_values(BinaryOp::Mul, Value::Uint(u64::MAX), Value::Uint(u64::MAX))
         .expect_err("i128 widening can still overflow");
