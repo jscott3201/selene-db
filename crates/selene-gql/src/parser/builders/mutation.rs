@@ -6,7 +6,7 @@ use crate::{
     ast::{
         DeleteMode, DeleteStatement, EdgeDirection, EdgePattern, GraphPattern, InsertStatement,
         MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
-        RemoveItem, SetItem,
+        RemoveItem, SetItem, util::NonEmpty,
     },
     error::ParserError,
     parser::budget::InternerBudget,
@@ -48,7 +48,8 @@ pub(super) fn build_mutation_pipeline(
     }
 
     Ok(MutationPipeline {
-        statements,
+        statements: NonEmpty::try_from_vec(statements)
+            .expect("grammar guarantees mutation_op+ >= 1"),
         terminator,
         span: source_span,
     })

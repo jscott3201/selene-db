@@ -4,7 +4,7 @@ use pest::iterators::Pair;
 use selene_core::IStr;
 
 use crate::{
-    ast::{BinaryOp, SourceSpan, ValueExpr},
+    ast::{BinaryOp, SourceSpan, ValueExpr, util::NonEmpty},
     error::ParserError,
     parser::budget::InternerBudget,
 };
@@ -41,7 +41,7 @@ pub(super) fn build_function_call(
         }
     }
     Ok(ValueExpr::FunctionCall {
-        name,
+        name: NonEmpty::try_from_vec(name).expect("grammar guarantees >= 1: qualified_name"),
         args,
         star: false,
         distinct: false,
@@ -73,7 +73,7 @@ pub(super) fn build_aggregate_expr(
         ParserError::syntax("aggregate expression is missing name", source_span, None)
     })?;
     Ok(ValueExpr::FunctionCall {
-        name: vec![segment],
+        name: NonEmpty::try_from_vec(vec![segment]).expect("grammar guarantees >= 1: aggregate_op"),
         args,
         star,
         distinct,

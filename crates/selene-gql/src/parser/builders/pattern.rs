@@ -5,7 +5,7 @@ use pest::iterators::Pair;
 use crate::{
     ast::{
         EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern,
-        PathMode, PathSelector, PatternElement, Quantifier, SourceSpan, ValueExpr,
+        PathMode, PathSelector, PatternElement, Quantifier, SourceSpan, ValueExpr, Vec2OrMore,
     },
     error::ParserError,
 };
@@ -298,7 +298,7 @@ pub(super) fn build_label_expr(
 
 fn collapse_label_parts(
     mut parts: Vec<LabelExpr>,
-    wrap: fn(Vec<LabelExpr>) -> LabelExpr,
+    wrap: fn(Vec2OrMore<LabelExpr>) -> LabelExpr,
 ) -> Result<LabelExpr, ParserError> {
     match parts.len() {
         0 => Err(ParserError::syntax(
@@ -307,7 +307,9 @@ fn collapse_label_parts(
             None,
         )),
         1 => Ok(parts.remove(0)),
-        _ => Ok(wrap(parts)),
+        _ => Ok(wrap(
+            Vec2OrMore::try_from_vec(parts).expect("collapse_label_parts only wraps at len >= 2"),
+        )),
     }
 }
 

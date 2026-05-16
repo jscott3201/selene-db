@@ -3,7 +3,7 @@
 use pest::iterators::Pair;
 
 use crate::{
-    ast::{ProcedureCall, YieldColumn, YieldItem},
+    ast::{ProcedureCall, YieldColumn, YieldItem, util::NonEmpty},
     error::ParserError,
     parser::budget::InternerBudget,
 };
@@ -75,9 +75,10 @@ fn build_procedure_call(
     }
 
     Ok(ProcedureCall {
-        name: name.ok_or_else(|| {
+        name: NonEmpty::try_from_vec(name.ok_or_else(|| {
             ParserError::syntax("procedure call is missing name", source_span, None)
-        })?,
+        })?)
+        .expect("grammar guarantees >= 1: qualified_name"),
         args,
         yield_items,
         span: source_span,

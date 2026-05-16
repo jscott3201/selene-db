@@ -1,23 +1,33 @@
 //! Read-side AST pretty-printer.
 
+mod keywords;
+mod preflight;
+mod type_name;
+
 use std::fmt::{self, Write as _};
 
 use selene_core::IStr;
 
 use super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
 use crate::ast::{
-    BinaryOp, EdgeDirection, EdgePattern, GraphPattern, IsCheckKind, LabelExpr, LimitValue,
-    MatchClause, MatchMode, NodePattern, NormalForm, NullsPolicy, OrderDirection, OrderTerm,
-    PathMode, PathSelector, PatternElement, ProcedureCall, QueryPipeline, ReturnClause, ReturnItem,
-    SetOp, Statement, TruthValue, UnaryOp, ValueExpr, WithClause,
+    EdgeDirection, EdgePattern, GraphPattern, IsCheckKind, LabelExpr, LimitValue, MatchClause,
+    NodePattern, NormalForm, NullsPolicy, OrderDirection, OrderTerm, PathMode, PatternElement,
+    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, Statement, TruthValue, UnaryOp,
+    ValueExpr, WithClause,
 };
+
+use keywords::{fmt_binary, fmt_match_mode, fmt_path_mode, fmt_path_selector, fmt_set_op};
+pub use preflight::validate_formattable;
+use type_name::fmt_type;
 
 /// Format a read-side statement as GQL source.
 ///
 /// # Errors
 ///
 /// Returns [`FormatError::Unsupported`] for write-side AST surfaces.
-pub fn format_statement(stmt: &Statement) -> Result<String, FormatError> {
+pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
+    validate_formattable(stmt)?;
+
     let mut out = String::new();
     match stmt {
         Statement::Query(pipeline) => fmt_pipeline(&mut out, pipeline)?,
@@ -36,16 +46,42 @@ pub fn format_statement(stmt: &Statement) -> Result<String, FormatError> {
                 fmt_pipeline(&mut out, block)?;
             }
         }
-        Statement::Mutate(_) => return Err(FormatError::Unsupported("mutation pipeline")),
-        Statement::Ddl(_) => return Err(FormatError::Unsupported("DDL statement")),
-        Statement::Call(_) => return Err(FormatError::Unsupported("top-level CALL")),
+        Statement::Mutate(_) => {
+            return Err(FormatError::Unsupported {
+                variant: "MutateStatement",
+            });
+        }
+        Statement::Ddl(_) => {
+            return Err(FormatError::Unsupported {
+                variant: "DdlStatement",
+            });
+        }
+        Statement::Call(_) => {
+            return Err(FormatError::Unsupported {
+                variant: "ProcedureCall",
+            });
+        }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => {
-            return Err(FormatError::Unsupported("transaction control"));
+            return Err(FormatError::Unsupported {
+                variant: "TransactionControl",
+            });
         }
     }
     Ok(out)
+}
+
+/// Reserved mutation-formatter entry point.
+///
+/// # Errors
+///
+/// Always returns [`FormatError::Unsupported`] until mutation formatting is
+/// implemented.
+pub fn format_mutate_statement(_stmt: &Statement) -> Result<String, FormatError> {
+    Err(FormatError::Unsupported {
+        variant: "MutateStatement",
+    })
 }
 
 /// Errors raised by the pretty-printer.
@@ -53,8 +89,11 @@ pub fn format_statement(stmt: &Statement) -> Result<String, FormatError> {
 #[non_exhaustive]
 pub enum FormatError {
     /// AST surface is not formattable by this read-side pretty-printer.
-    #[error("AST surface {0} is not yet formattable by the read-side pretty-printer")]
-    Unsupported(&'static str),
+    #[error("AST surface {variant} is not yet formattable by the read-side pretty-printer")]
+    Unsupported {
+        /// Stable AST variant name.
+        variant: &'static str,
+    },
     /// Formatting failed.
     #[error("formatting failed")]
     Fmt(#[from] fmt::Error),
@@ -608,116 +647,4 @@ fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Resul
     }
     out.push(')');
     Ok(())
-}
-
-fn fmt_set_op(op: SetOp) -> &'static str {
-    match op {
-        SetOp::Union => "UNION",
-        SetOp::UnionAll => "UNION ALL",
-        SetOp::Intersect => "INTERSECT",
-        SetOp::IntersectAll => "INTERSECT ALL",
-        SetOp::Except => "EXCEPT",
-        SetOp::ExceptAll => "EXCEPT ALL",
-        SetOp::Otherwise => "OTHERWISE",
-    }
-}
-
-fn fmt_binary(op: BinaryOp) -> &'static str {
-    match op {
-        BinaryOp::Add => "+",
-        BinaryOp::Sub => "-",
-        BinaryOp::Mul => "*",
-        BinaryOp::Div => "/",
-        BinaryOp::Mod => "%",
-        BinaryOp::Power => "^",
-        BinaryOp::Eq => "=",
-        BinaryOp::Ne => "<>",
-        BinaryOp::Lt => "<",
-        BinaryOp::Le => "<=",
-        BinaryOp::Gt => ">",
-        BinaryOp::Ge => ">=",
-        BinaryOp::And => "AND",
-        BinaryOp::Or => "OR",
-        BinaryOp::Xor => "XOR",
-        BinaryOp::Concat => "||",
-        BinaryOp::Contains => "CONTAINS",
-        BinaryOp::StartsWith => "STARTS WITH",
-        BinaryOp::EndsWith => "ENDS WITH",
-    }
-}
-
-fn fmt_path_selector(selector: PathSelector) -> &'static str {
-    match selector {
-        PathSelector::Any => "ANY",
-        PathSelector::All => "ALL",
-        PathSelector::AnyShortest => "ANY SHORTEST",
-        PathSelector::AllShortest => "ALL SHORTEST",
-    }
-}
-
-fn fmt_match_mode(mode: MatchMode) -> &'static str {
-    match mode {
-        MatchMode::DifferentEdges => "DIFFERENT EDGES",
-        MatchMode::RepeatableElements => "REPEATABLE ELEMENTS",
-    }
-}
-
-fn fmt_path_mode(mode: PathMode) -> &'static str {
-    match mode {
-        PathMode::Walk => "WALK",
-        PathMode::Trail => "TRAIL",
-        PathMode::Acyclic => "ACYCLIC",
-        PathMode::Simple => "SIMPLE",
-    }
-}
-
-fn fmt_type(ty: &crate::GqlType) -> String {
-    match ty {
-        crate::GqlType::String => "STRING".to_owned(),
-        crate::GqlType::Boolean => "BOOLEAN".to_owned(),
-        crate::GqlType::Integer => "INTEGER".to_owned(),
-        crate::GqlType::Float => "FLOAT".to_owned(),
-        crate::GqlType::Int8 => "INT8".to_owned(),
-        crate::GqlType::Int16 => "INT16".to_owned(),
-        crate::GqlType::Int32 => "INT32".to_owned(),
-        crate::GqlType::Int64 => "INT64".to_owned(),
-        crate::GqlType::Int128 => "INT128".to_owned(),
-        crate::GqlType::Uint8 => "UINT8".to_owned(),
-        crate::GqlType::Uint16 => "UINT16".to_owned(),
-        crate::GqlType::Uint32 => "UINT32".to_owned(),
-        crate::GqlType::Uint64 => "UINT64".to_owned(),
-        crate::GqlType::Uint128 => "UINT128".to_owned(),
-        crate::GqlType::SmallInt => "SMALLINT".to_owned(),
-        crate::GqlType::BigInt => "BIGINT".to_owned(),
-        crate::GqlType::Decimal => "DECIMAL".to_owned(),
-        crate::GqlType::Float32 => "FLOAT32".to_owned(),
-        crate::GqlType::Float64 => "FLOAT64".to_owned(),
-        crate::GqlType::Bytes => "BYTES".to_owned(),
-        crate::GqlType::Binary => "BYTES".to_owned(),
-        crate::GqlType::VarBinary => "BYTES".to_owned(),
-        crate::GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),
-        crate::GqlType::LocalDateTime => "LOCAL DATETIME".to_owned(),
-        crate::GqlType::Date => "DATE".to_owned(),
-        crate::GqlType::ZonedTime => "ZONED TIME".to_owned(),
-        crate::GqlType::LocalTime => "LOCAL TIME".to_owned(),
-        crate::GqlType::Duration => "DURATION".to_owned(),
-        // Recurse into the element type so `LIST<INT8>` round-trips
-        // through parse-format-parse without rewriting the element type
-        // (Codex P2 on PR #24: a hard-coded "LIST<STRING>" silently broke
-        // the §D3 round-trip property for typed-list predicates).
-        crate::GqlType::List(inner) => format!("LIST<{}>", fmt_type(inner)),
-        crate::GqlType::Path => "PATH".to_owned(),
-        crate::GqlType::Null => "NULL".to_owned(),
-        crate::GqlType::Nothing => "NOTHING".to_owned(),
-        // Variants below are AST-only today because the parser cannot
-        // construct them. The fallback never runs through the round-trip property
-        // because no parser path produces these shapes; it survives so
-        // synthesised AST shapes that reach the formatter still get a
-        // string instead of a panic.
-        crate::GqlType::Record(_)
-        | crate::GqlType::GraphRef
-        | crate::GqlType::NodeRef
-        | crate::GqlType::EdgeRef
-        | crate::GqlType::TableRef => "STRING".to_owned(),
-    }
 }

@@ -7,13 +7,15 @@ use crate::ast::{
     pattern::{GraphPattern, MatchClause},
     span::SourceSpan,
     statement::ReturnClause,
+    util::NonEmpty,
 };
 
 /// Write-side mutation pipeline.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct MutationPipeline {
-    /// Ordered read and mutation statements.
-    pub statements: Vec<MutationStatement>,
+    /// Ordered read and mutation statements; type-enforced non-empty because
+    /// the grammar requires at least one mutation operation.
+    pub statements: NonEmpty<MutationStatement>,
     /// Optional `RETURN` or `FINISH` terminator.
     pub terminator: Option<MutationTerminator>,
     /// Source span.

@@ -33,6 +33,7 @@ proptest.workspace = true
 rstest.workspace = true
 selene-persist = { path = "../selene-persist", version = "0.0.0" }
 selene-testing = { path = "../selene-testing", version = "0.0.0" }
+serde_json.workspace = true
 
 [[test]]
 name = "plan_snapshot_corpus"

@@ -11,6 +11,7 @@ pub mod pattern;
 pub mod span;
 pub mod statement;
 pub mod types;
+pub mod util;
 
 pub use call::{ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{
@@ -18,7 +19,9 @@ pub use ddl::{
 };
 pub use eq::structurally_eq;
 pub use expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr};
-pub use format::{FormatError, format_statement};
+pub use format::{
+    FormatError, format_mutate_statement, format_read_statement, validate_formattable,
+};
 pub use mutation::{
     DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
     MutationTerminator, RemoveItem, SetItem,
@@ -33,4 +36,5 @@ pub use statement::{
     QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, TypedBinding, UnwindStatement,
     WithClause,
 };
-pub use types::{GqlType, RecordType, ValueType};
+pub use types::{GqlType, RecordType};
+pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};

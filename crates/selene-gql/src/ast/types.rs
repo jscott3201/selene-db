@@ -91,6 +91,3 @@ pub enum RecordType {
     /// Closed record with named fields.
     Closed(Vec<(IStr, GqlType)>),
 }
-
-/// Backward-compatible alias for older callers.
-pub type ValueType = GqlType;

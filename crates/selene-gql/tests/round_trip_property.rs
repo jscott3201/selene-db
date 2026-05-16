@@ -1,7 +1,7 @@
 //! Read-side AST pretty-printer round-trip property tests.
 
 use proptest::test_runner::TestRunner;
-use selene_gql::{Statement, ast::format_statement, ast::structurally_eq, parse};
+use selene_gql::{Statement, ast::format_read_statement, ast::structurally_eq, parse};
 use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
 
 #[test]
@@ -79,7 +79,7 @@ fn positive_read_corpus_round_trips_under_proptest() {
 
 fn assert_round_trip(source: &str) {
     let parsed = parse(source).expect("source parses");
-    let formatted = format_statement(&parsed).expect("read-side AST formats");
+    let formatted = format_read_statement(&parsed).expect("read-side AST formats");
     let reparsed = parse(&formatted).expect("formatted source parses");
     assert!(
         structurally_eq(&parsed, &reparsed),

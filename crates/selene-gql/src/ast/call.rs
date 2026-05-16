@@ -2,13 +2,13 @@
 
 use selene_core::IStr;
 
-use crate::ast::{expr::ValueExpr, span::SourceSpan};
+use crate::ast::{expr::ValueExpr, span::SourceSpan, util::NonEmpty};
 
 /// Top-level or in-pipeline procedure call.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct ProcedureCall {
     /// Qualified procedure name as interned path segments.
-    pub name: Vec<IStr>,
+    pub name: NonEmpty<IStr>,
     /// Positional arguments.
     pub args: Vec<ValueExpr>,
     /// Requested yield columns. Empty means the call discards return columns.
