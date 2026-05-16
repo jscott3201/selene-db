@@ -12,7 +12,7 @@ fn istr(value: &str) -> IStr {
 }
 
 #[test]
-fn registry_exposes_three_graph_tier_vector_procedures() {
+fn registry_exposes_four_graph_tier_vector_procedures() {
     let pack = VectorPack::new();
     let registry = pack
         .registry_with_builtins()
@@ -28,7 +28,7 @@ fn registry_exposes_three_graph_tier_vector_procedures() {
         }
     }
 
-    assert_eq!(graph_tier_count, 3);
+    assert_eq!(graph_tier_count, 4);
 }
 
 #[test]

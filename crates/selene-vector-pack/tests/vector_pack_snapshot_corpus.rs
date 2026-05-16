@@ -23,7 +23,7 @@ fn corpus_slugs_are_unique() {
     for entry in corpus.entries() {
         assert!(seen.insert(entry.name), "duplicate slug: {}", entry.name);
     }
-    assert_eq!(seen.len(), 12);
+    assert_eq!(seen.len(), 15);
 }
 
 #[test]

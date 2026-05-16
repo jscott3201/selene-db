@@ -148,7 +148,7 @@ fn default_path_via_registry_matches_singleton_for_upsert_search() {
 }
 
 #[test]
-fn non_default_name_still_rejected_by_guard() {
+fn non_default_name_without_lifecycle_create_errors_cleanly() {
     let pack = deterministic_pack();
     let procedures = registry(&pack);
     let (graph, _registry_provider, nodes) = registry_graph(109_303);
@@ -163,17 +163,17 @@ fn non_default_name_still_rejected_by_guard() {
             vector_value(&[1.0, 0.0, 0.0, 0.0]),
         ],
     )
-    .expect_err("non-default index rejected");
+    .expect_err("unknown non-default index rejected");
 
     assert!(matches!(
         err,
         ProcedureError::InvalidArgument { detail }
-            if detail.contains("v1.0 accepts only 'default'")
+            if detail.contains("VECT registry has no vector index 'episodes'")
     ));
 }
 
 #[test]
-fn snapshot_round_trip_via_registry_byte_identical_to_singleton() {
+fn snapshot_round_trip_via_registry_uses_v1_wrapper_and_recovers_default() {
     let pack = deterministic_pack();
     let procedures = registry(&pack);
     let (singleton_graph, singleton_provider, singleton_nodes) = singleton_graph(109_304);
@@ -194,9 +194,21 @@ fn snapshot_round_trip_via_registry_byte_identical_to_singleton() {
     )
     .expect("registry upsert succeeds");
 
+    let sections = hnsw_sections(registry_provider.as_ref());
+    assert_v1_wrapped(&sections);
+
+    let recovered = HnswIndexRegistry::new(hnsw_config()).expect("recovery registry builds");
+    read_hnsw_sections(&recovered, &sections);
+
     assert_eq!(
-        hnsw_sections(singleton_provider.as_ref()),
-        hnsw_sections(registry_provider.as_ref())
+        singleton_provider
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .expect("singleton search succeeds"),
+        recovered
+            .get("default")
+            .expect("default provider exists")
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .expect("recovered search succeeds")
     );
 }
 
@@ -295,6 +307,23 @@ fn hnsw_sections(provider: &dyn IndexProvider) -> Vec<Vec<u8>> {
                 .expect("HNSW section writes")
         })
         .collect()
+}
+
+fn read_hnsw_sections(provider: &dyn IndexProvider, sections: &[Vec<u8>]) {
+    for (sub_tag, bytes) in [SubTag(*b"GRPH"), SubTag(*b"VECS"), SubTag(*b"QUNT")]
+        .into_iter()
+        .zip(sections)
+    {
+        provider
+            .read_section(sub_tag, bytes)
+            .expect("HNSW section reads");
+    }
+}
+
+fn assert_v1_wrapped(sections: &[Vec<u8>]) {
+    for section in sections {
+        assert!(section.starts_with(&[1, 0]));
+    }
 }
 
 fn extension_payloads(changes: &[Change], provider_name: &str) -> Vec<Vec<u8>> {

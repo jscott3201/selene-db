@@ -1,4 +1,4 @@
-//! Default-index transparency tests for BRIEF-109 PR1 registries.
+//! Default-index transparency tests for BRIEF-109 registries.
 
 use std::sync::Arc;
 
@@ -45,7 +45,20 @@ fn hnsw_registry_snapshot_and_wal_replay_match_singleton() {
             .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
             .expect("registry search succeeds")
     );
-    assert_eq!(hnsw_sections(&direct), hnsw_sections(&registry));
+    let registry_sections = hnsw_sections(&registry);
+    assert_v1_wrapped(&registry_sections);
+    let recovered = HnswIndexRegistry::new(hnsw_config()).expect("recovery registry builds");
+    read_hnsw_sections(&recovered, &registry_sections);
+    assert_eq!(
+        direct
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .expect("direct search succeeds"),
+        recovered
+            .get("default")
+            .expect("default provider exists")
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .expect("recovered search succeeds")
+    );
 }
 
 #[test]
@@ -69,7 +82,18 @@ fn ivf_registry_snapshot_and_wal_replay_match_singleton() {
             .ivf_stats()
             .expect("registry stats succeed")
     );
-    assert_eq!(ivf_sections(&direct), ivf_sections(&registry));
+    let registry_sections = ivf_sections(&registry);
+    assert_v1_wrapped(&registry_sections);
+    let recovered = IvfIndexRegistry::new(ivf_config()).expect("recovery registry builds");
+    read_ivf_sections(&recovered, &registry_sections);
+    assert_eq!(
+        direct.ivf_stats().expect("direct stats succeed"),
+        recovered
+            .get("default")
+            .expect("default provider exists")
+            .ivf_stats()
+            .expect("recovered stats succeed")
+    );
 }
 
 fn hnsw_config() -> HnswConfig {
@@ -140,4 +164,32 @@ fn ivf_sections(provider: &dyn IndexProvider) -> Vec<Vec<u8>> {
         .into_iter()
         .map(|sub_tag| provider.write_section(sub_tag).expect("IVF section writes"))
         .collect()
+}
+
+fn read_hnsw_sections(provider: &dyn IndexProvider, sections: &[Vec<u8>]) {
+    for (sub_tag, bytes) in [SubTag(*b"GRPH"), SubTag(*b"VECS"), SubTag(*b"QUNT")]
+        .into_iter()
+        .zip(sections)
+    {
+        provider
+            .read_section(sub_tag, bytes)
+            .expect("HNSW section reads");
+    }
+}
+
+fn read_ivf_sections(provider: &dyn IndexProvider, sections: &[Vec<u8>]) {
+    for (sub_tag, bytes) in [SubTag(*b"CQNT"), SubTag(*b"IPQB"), SubTag(*b"POST")]
+        .into_iter()
+        .zip(sections)
+    {
+        provider
+            .read_section(sub_tag, bytes)
+            .expect("IVF section reads");
+    }
+}
+
+fn assert_v1_wrapped(sections: &[Vec<u8>]) {
+    for section in sections {
+        assert!(section.starts_with(&[1, 0]));
+    }
 }

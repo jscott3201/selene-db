@@ -242,8 +242,18 @@ fn vector_search_registers_metadata_and_capability_free_name() {
     assert_eq!(metadata[4].output_schema.columns.len(), 0);
     assert_eq!(metadata[5].signature.parameters.len(), 3);
     assert_eq!(metadata[5].output_schema.columns.len(), 0);
-    assert_eq!(metadata[6].signature.parameters.len(), 2);
+    assert_eq!(metadata[6].signature.parameters.len(), 1);
     assert_eq!(metadata[6].output_schema.columns.len(), 0);
+    assert_eq!(metadata[7].signature.parameters.len(), 0);
+    assert_eq!(metadata[7].output_schema.columns.len(), 5);
+    assert_eq!(metadata[8].signature.parameters.len(), 3);
+    assert_eq!(metadata[8].output_schema.columns.len(), 0);
+    assert_eq!(metadata[9].signature.parameters.len(), 2);
+    assert_eq!(metadata[9].output_schema.columns.len(), 0);
+    assert_eq!(metadata[10].signature.parameters.len(), 5);
+    assert_eq!(metadata[10].output_schema.columns.len(), 2);
+    assert_eq!(metadata[11].signature.parameters.len(), 1);
+    assert_eq!(metadata[11].output_schema.columns.len(), 14);
     assert!(
         metadata
             .iter()

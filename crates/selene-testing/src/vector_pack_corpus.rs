@@ -13,6 +13,12 @@ pub enum VectorPackCorpusCategory {
     BulkUpsert,
     /// HNSW mutation-tier bulk-delete procedure coverage.
     BulkDelete,
+    /// Vector catalog lifecycle create procedure coverage.
+    CreateIndex,
+    /// Vector catalog lifecycle drop procedure coverage.
+    DropIndex,
+    /// Vector catalog read-tier listing procedure coverage.
+    ListIndexes,
     /// IVF mutation-tier bulk-upsert procedure coverage.
     IvfBulkUpsert,
     /// IVF mutation-tier bulk-delete procedure coverage.
@@ -31,6 +37,9 @@ impl VectorPackCorpusCategory {
         Self::Delete,
         Self::BulkUpsert,
         Self::BulkDelete,
+        Self::CreateIndex,
+        Self::DropIndex,
+        Self::ListIndexes,
         Self::IvfBulkUpsert,
         Self::IvfBulkDelete,
         Self::IvfSearch,
@@ -46,6 +55,9 @@ impl VectorPackCorpusCategory {
             Self::Delete => "Delete",
             Self::BulkUpsert => "BulkUpsert",
             Self::BulkDelete => "BulkDelete",
+            Self::CreateIndex => "CreateIndex",
+            Self::DropIndex => "DropIndex",
+            Self::ListIndexes => "ListIndexes",
             Self::IvfBulkUpsert => "IvfBulkUpsert",
             Self::IvfBulkDelete => "IvfBulkDelete",
             Self::IvfSearch => "IvfSearch",
@@ -55,7 +67,7 @@ impl VectorPackCorpusCategory {
 }
 
 const _ASSERT_CATEGORY_ALL_MATCHES_VARIANT_COUNT: () = {
-    assert!(VectorPackCorpusCategory::ALL.len() == 9);
+    assert!(VectorPackCorpusCategory::ALL.len() == 12);
 };
 
 /// Procedure invocation mirrored by the vector-pack corpus.
@@ -106,6 +118,22 @@ pub enum VectorPackInvocation {
         /// Source graph node IDs.
         node_ids: &'static [u64],
     },
+    /// `vector.create_index`.
+    CreateIndex {
+        /// Vector index name.
+        name: &'static str,
+        /// Vector index kind (`hnsw` or `ivf`).
+        kind: &'static str,
+        /// Open-record config literal.
+        config: &'static str,
+    },
+    /// `vector.drop_index`.
+    DropIndex {
+        /// Vector index name.
+        name: &'static str,
+    },
+    /// `vector.list_indexes`.
+    ListIndexes,
     /// `vector.ivf_bulk_upsert`.
     IvfBulkUpsert {
         /// v1.0 sentinel index name.
@@ -152,6 +180,9 @@ impl VectorPackInvocation {
             Self::Delete { .. } => &["vector", "delete"],
             Self::BulkUpsert { .. } => &["vector", "bulk_upsert"],
             Self::BulkDelete { .. } => &["vector", "bulk_delete"],
+            Self::CreateIndex { .. } => &["vector", "create_index"],
+            Self::DropIndex { .. } => &["vector", "drop_index"],
+            Self::ListIndexes => &["vector", "list_indexes"],
             Self::IvfBulkUpsert { .. } => &["vector", "ivf_bulk_upsert"],
             Self::IvfBulkDelete { .. } => &["vector", "ivf_bulk_delete"],
             Self::IvfSearch { .. } => &["vector", "ivf_search"],
@@ -207,6 +238,13 @@ impl VectorPackInvocation {
                 quoted(index_name),
                 u64_list(node_ids)
             ),
+            Self::CreateIndex { name, kind, config } => format!(
+                "CALL vector.create_index({}, {}, {config})",
+                quoted(name),
+                quoted(kind)
+            ),
+            Self::DropIndex { name } => format!("CALL vector.drop_index({})", quoted(name)),
+            Self::ListIndexes => "CALL vector.list_indexes()".to_string(),
             Self::IvfBulkUpsert {
                 index_name,
                 node_ids,
@@ -341,6 +379,27 @@ impl VectorPackCorpus {
                     index_name: "default",
                     node_ids: &[42, 43],
                 },
+            },
+            VectorPackCorpusEntry {
+                name: "create_index_hnsw",
+                category: VectorPackCorpusCategory::CreateIndex,
+                invocation: VectorPackInvocation::CreateIndex {
+                    name: "episodes_hnsw",
+                    kind: "hnsw",
+                    config: "{dim: 4, metric: 'cosine'}",
+                },
+            },
+            VectorPackCorpusEntry {
+                name: "drop_index_hnsw",
+                category: VectorPackCorpusCategory::DropIndex,
+                invocation: VectorPackInvocation::DropIndex {
+                    name: "episodes_hnsw",
+                },
+            },
+            VectorPackCorpusEntry {
+                name: "list_indexes",
+                category: VectorPackCorpusCategory::ListIndexes,
+                invocation: VectorPackInvocation::ListIndexes,
             },
             VectorPackCorpusEntry {
                 name: "ivf_bulk_upsert_default",
