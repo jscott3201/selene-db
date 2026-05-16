@@ -457,37 +457,7 @@ fn typed_key(value: &Value) -> Result<TypedKey, TypedIndexValueError> {
 }
 
 pub(crate) fn observed_value_kind(value: &Value) -> &'static str {
-    match value {
-        Value::Bool(_) => "Bool",
-        Value::Int(_) => "Int",
-        Value::Uint(_) => "Uint",
-        Value::Int128(_) => "Int128",
-        Value::Uint128(_) => "Uint128",
-        Value::Float(value) if value.is_nan() => "NaN",
-        Value::Float(_) => "Float",
-        Value::Float32(_) => "Float32",
-        Value::Decimal(_) => "Decimal",
-        Value::String(_) => "String",
-        Value::Bytes(_) => "Bytes",
-        Value::List(_) => "List",
-        Value::Record(_) => "Record",
-        Value::RecordTyped(_) => "RecordTyped",
-        Value::Path(_) => "Path",
-        Value::NodeRef(_) => "NodeRef",
-        Value::EdgeRef(_) => "EdgeRef",
-        Value::GraphRef(_) => "GraphRef",
-        Value::TableRef(_) => "TableRef",
-        Value::ZonedDateTime(_) => "ZonedDateTime",
-        Value::LocalDateTime(_) => "LocalDateTime",
-        Value::Date(_) => "Date",
-        Value::ZonedTime(_) => "ZonedTime",
-        Value::LocalTime(_) => "LocalTime",
-        Value::Duration(_) => "Duration",
-        Value::Extended { .. } => "Extended",
-        Value::Null => "Null",
-        Value::Uuid(_) => "Uuid",
-        _ => "Unknown",
-    }
+    value.variant_name()
 }
 
 fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {

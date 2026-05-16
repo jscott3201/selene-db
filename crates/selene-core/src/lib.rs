@@ -16,6 +16,7 @@
 #![deny(missing_docs)]
 
 pub mod changeset;
+mod changeset_variants;
 pub mod codec;
 pub mod error;
 pub mod extension_type_ids;

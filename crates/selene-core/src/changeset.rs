@@ -470,10 +470,7 @@ mod tests {
     use smallvec::smallvec;
 
     use super::*;
-    use crate::{
-        GraphTypeId, KeyLabelSetPolicy, NodeTypeRef, PredefinedValueType, PropertyDef,
-        RecordTypeId, ValueType, intern,
-    };
+    use crate::{GraphTypeId, intern};
 
     fn istr(name: &str) -> IStr {
         intern(name).unwrap()
@@ -542,6 +539,26 @@ mod tests {
             payload: Arc::from([1_u8, 2, 3]),
         };
         assert_eq!(change.clone(), change);
+    }
+
+    #[test]
+    fn change_all_covers_every_variant() {
+        assert_eq!(Change::VARIANT_COUNT, 8);
+        let mut discriminants = std::collections::HashSet::new();
+        let mut names = std::collections::HashSet::new();
+        for factory in Change::ALL {
+            let change = factory();
+            assert!(
+                discriminants.insert(std::mem::discriminant(&change)),
+                "Change::ALL has duplicate variant: {}",
+                change.variant_name()
+            );
+            let name = change.variant_name();
+            assert!(!name.is_empty(), "Change::variant_name must not be empty");
+            assert!(names.insert(name), "Change::variant_name collision: {name}");
+        }
+        assert_eq!(discriminants.len(), Change::ALL.len());
+        assert_eq!(names.len(), Change::ALL.len());
     }
 
     #[test]
@@ -728,68 +745,35 @@ mod tests {
 
     #[test]
     fn schema_change_variants_construct() {
-        let graph_type_id = GraphTypeId::new(1).unwrap();
-        let node_label = istr("change.schema.node");
-        let edge_label = istr("change.schema.edge");
-        let node = NodeTypeDef::new(LabelSet::single(node_label));
-        let edge = EdgeTypeDef::new(edge_label, NodeTypeRef(node_label), NodeTypeRef(node_label));
-        let record = RecordTypeDef {
-            id: RecordTypeId::new(1),
-            name: istr("change.schema.record"),
-            fields: smallvec![PropertyDef {
-                name: istr("change.schema.field"),
-                value_type: ValueType::predefined(PredefinedValueType::String),
-                nullable: false,
-                default: None,
-            }],
-        };
-        let mut graph_type = GraphType::new(graph_type_id, istr("change.schema.graph_type"));
-        graph_type.key_label_set_policy = KeyLabelSetPolicy::NoOverlap;
+        let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
+        assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 15);
+    }
 
-        let variants = [
-            SchemaChange::GraphTypeCreated { graph_type },
-            SchemaChange::GraphTypeDropped { id: graph_type_id },
-            SchemaChange::NodeTypeAdded {
-                graph_type: graph_type_id,
-                label: node_label,
-                def: node,
-            },
-            SchemaChange::EdgeTypeAdded {
-                graph_type: graph_type_id,
-                label: edge_label,
-                def: edge,
-            },
-            SchemaChange::NodeTypeDropped {
-                graph_type: graph_type_id,
-                name: node_label,
-            },
-            SchemaChange::EdgeTypeDropped {
-                graph_type: graph_type_id,
-                name: edge_label,
-            },
-            SchemaChange::RecordTypeAdded {
-                graph_type: graph_type_id,
-                def: record,
-            },
-            SchemaChange::ProcedurePackLifecycle {
-                event: PackLifecycleEvent::ValidationFailed {
-                    pack_name: Some(istr("change.schema.pack")),
-                    principal: istr("change.schema.principal"),
-                    error: "change.schema.error".to_owned(),
-                    at: jiff::Timestamp::new(1, 0).unwrap(),
-                },
-            },
-            SchemaChange::PropertyIndexCreated {
-                label: node_label,
-                property: istr("change.schema.indexed"),
-                kind: SchemaPropertyIndexKind::I64,
-            },
-            SchemaChange::PropertyIndexDropped {
-                label: node_label,
-                property: istr("change.schema.indexed"),
-            },
-        ];
-        assert_eq!(variants.len(), 10);
+    #[test]
+    fn schema_change_all_covers_every_variant() {
+        assert_eq!(SchemaChange::VARIANT_COUNT, 15);
+        let mut discriminants = std::collections::HashSet::new();
+        let mut names = std::collections::HashSet::new();
+        for factory in SchemaChange::ALL {
+            let change = factory();
+            assert!(
+                discriminants.insert(std::mem::discriminant(&change)),
+                "SchemaChange::ALL has duplicate variant: {}",
+                change.variant_name()
+            );
+            let name = change.variant_name();
+            assert!(
+                !name.is_empty(),
+                "SchemaChange::variant_name must not be empty"
+            );
+            assert!(
+                names.insert(name),
+                "SchemaChange::variant_name collision: {name}"
+            );
+        }
+        assert_eq!(discriminants.len(), SchemaChange::ALL.len());
+        assert_eq!(names.len(), SchemaChange::ALL.len());
     }
 
     proptest! {

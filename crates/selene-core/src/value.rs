@@ -105,6 +105,109 @@ pub enum Value {
     Uuid(uuid::Uuid),
 }
 
+impl Value {
+    /// Factory table with one sample value for each [`Value`] variant.
+    ///
+    /// The table is used by tests as an append-only ANCHOR: adding a new
+    /// variant requires adding one factory here so the source-of-truth crate
+    /// owns the variant census.
+    pub const ALL: &[fn() -> Self] = &[
+        || Self::Bool(false),
+        || Self::Int(0),
+        || Self::Uint(0),
+        || Self::Int128(0),
+        || Self::Uint128(0),
+        || Self::Float(0.0),
+        || Self::Float32(0.0),
+        || Self::Decimal(rust_decimal::Decimal::ZERO),
+        || Self::String(value_variant_istr("value.all.string")),
+        || Self::ExternalString(Arc::from("value.all.external")),
+        || Self::Bytes(Arc::from([0_u8])),
+        || Self::List(Vec::new()),
+        || Self::Record(Box::new(Record::Open(SmallVec::new()))),
+        || {
+            Self::RecordTyped(Box::new(RecordTyped {
+                type_id: RecordTypeId::new(1),
+                values: SmallVec::new(),
+            }))
+        },
+        || {
+            Self::Path(Path {
+                graph: GraphId::new(1),
+                start: NodeId::new(1),
+                segments: SmallVec::new(),
+            })
+        },
+        || Self::NodeRef(NodeId::new(1)),
+        || Self::EdgeRef(EdgeId::new(1)),
+        || Self::GraphRef(GraphId::new(1)),
+        || Self::TableRef(BindingTableId::new(1)),
+        || Self::ZonedDateTime(value_variant_zoned()),
+        || Self::LocalDateTime("2024-01-01T00:00:00".parse().unwrap()),
+        || Self::Date("2024-01-01".parse().unwrap()),
+        || Self::ZonedTime(value_variant_zoned()),
+        || Self::LocalTime("00:00:00".parse().unwrap()),
+        || Self::Duration("PT1S".parse().unwrap()),
+        || Self::Extended {
+            type_id: ExtensionTypeId::THIRD_PARTY_MIN,
+            payload: Arc::from([0_u8]),
+        },
+        || Self::Null,
+        || Self::Uuid(uuid::Uuid::nil()),
+    ];
+
+    /// Number of known [`Value`] variants in this build.
+    pub const VARIANT_COUNT: usize = Self::ALL.len();
+
+    /// Stable telemetry name for this value variant.
+    ///
+    /// This match is exhaustive in `selene-core`, so a future variant addition
+    /// forces the defining crate to choose the new public name once.
+    #[must_use]
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            Self::Bool(_) => "Bool",
+            Self::Int(_) => "Int",
+            Self::Uint(_) => "Uint",
+            Self::Int128(_) => "Int128",
+            Self::Uint128(_) => "Uint128",
+            Self::Float(_) => "Float",
+            Self::Float32(_) => "Float32",
+            Self::Decimal(_) => "Decimal",
+            Self::String(_) => "String",
+            Self::ExternalString(_) => "ExternalString",
+            Self::Bytes(_) => "Bytes",
+            Self::List(_) => "List",
+            Self::Record(_) => "Record",
+            Self::RecordTyped(_) => "RecordTyped",
+            Self::Path(_) => "Path",
+            Self::NodeRef(_) => "NodeRef",
+            Self::EdgeRef(_) => "EdgeRef",
+            Self::GraphRef(_) => "GraphRef",
+            Self::TableRef(_) => "TableRef",
+            Self::ZonedDateTime(_) => "ZonedDateTime",
+            Self::LocalDateTime(_) => "LocalDateTime",
+            Self::Date(_) => "Date",
+            Self::ZonedTime(_) => "ZonedTime",
+            Self::LocalTime(_) => "LocalTime",
+            Self::Duration(_) => "Duration",
+            Self::Extended { .. } => "Extended",
+            Self::Null => "Null",
+            Self::Uuid(_) => "Uuid",
+        }
+    }
+}
+
+fn value_variant_istr(name: &str) -> IStr {
+    crate::intern(name).expect("Value::ALL fixture strings fit the process interner cap")
+}
+
+fn value_variant_zoned() -> jiff::Zoned {
+    jiff::Timestamp::new(0, 0)
+        .expect("Value::ALL timestamp fixture is in range")
+        .to_zoned(jiff::tz::TimeZone::UTC)
+}
+
 impl PartialEq for Value {
     fn eq(&self, rhs: &Self) -> bool {
         // Value::Hash deferred to BRIEF-104; ensure NaN bit-patterns hash equal there.
@@ -341,6 +444,26 @@ mod tests {
     #[test]
     fn value_discriminant_size_is_stable_on_this_target() {
         assert!(std::mem::size_of::<Value>() >= std::mem::size_of::<usize>());
+    }
+
+    #[test]
+    fn value_all_covers_every_variant() {
+        assert_eq!(Value::VARIANT_COUNT, 28);
+        let mut discriminants = std::collections::HashSet::new();
+        let mut names = std::collections::HashSet::new();
+        for factory in Value::ALL {
+            let value = factory();
+            assert!(
+                discriminants.insert(std::mem::discriminant(&value)),
+                "Value::ALL has duplicate variant: {}",
+                value.variant_name()
+            );
+            let name = value.variant_name();
+            assert!(!name.is_empty(), "Value::variant_name must not be empty");
+            assert!(names.insert(name), "Value::variant_name collision: {name}");
+        }
+        assert_eq!(discriminants.len(), Value::ALL.len());
+        assert_eq!(names.len(), Value::ALL.len());
     }
 
     #[test]

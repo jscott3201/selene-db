@@ -465,7 +465,7 @@ fn render_value(value: &Value) -> String {
         Value::ExternalString(value) => quoted(value.as_ref()),
         Value::ZonedDateTime(value) => timestamp(value.timestamp()),
         Value::Null => "NULL".to_owned(),
-        other => format!("{other:?}"),
+        other => other.variant_name().to_owned(),
     }
 }
 

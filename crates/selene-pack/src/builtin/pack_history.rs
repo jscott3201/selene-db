@@ -10,7 +10,6 @@ use selene_persist::PersistError;
 
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
 use crate::history::PackHistorySource;
-use crate::manifest::hex_lower;
 
 // Static output schema. Nullability is implicit (per ProcedureOutputColumn contract):
 //   - kind         : always populated
@@ -139,108 +138,9 @@ fn event_to_row(event: &PackLifecycleEvent) -> Result<Vec<Value>, ProcedureError
 
 pub(crate) fn event_to_row_with(
     event: &PackLifecycleEvent,
-    mut intern_value: impl FnMut(&str) -> Result<IStr, ProcedureError>,
+    intern_value: impl FnMut(&str) -> Result<IStr, ProcedureError>,
 ) -> Result<Vec<Value>, ProcedureError> {
-    match event {
-        PackLifecycleEvent::ValidationFailed {
-            pack_name,
-            principal,
-            error,
-            at,
-        } => Ok(vec![
-            string_value("validation_failed", &mut intern_value)?,
-            optional_string_value(*pack_name),
-            Value::Null,
-            Value::String(*principal),
-            Value::Null,
-            external_string_value(error),
-            timestamp_value(*at),
-        ]),
-        PackLifecycleEvent::Staged {
-            pack_name,
-            content_hash,
-            principal,
-            at,
-        } => Ok(vec![
-            string_value("staged", &mut intern_value)?,
-            Value::String(*pack_name),
-            external_string_value(&content_hash_string(content_hash)),
-            Value::String(*principal),
-            Value::Null,
-            Value::Null,
-            timestamp_value(*at),
-        ]),
-        PackLifecycleEvent::Activated {
-            pack_name,
-            content_hash,
-            principal,
-            at,
-        } => Ok(vec![
-            string_value("activated", &mut intern_value)?,
-            Value::String(*pack_name),
-            external_string_value(&content_hash_string(content_hash)),
-            Value::String(*principal),
-            Value::Null,
-            Value::Null,
-            timestamp_value(*at),
-        ]),
-        PackLifecycleEvent::Deprecated {
-            pack_name,
-            reason,
-            principal,
-            at,
-        } => Ok(vec![
-            string_value("deprecated", &mut intern_value)?,
-            Value::String(*pack_name),
-            Value::Null,
-            Value::String(*principal),
-            Value::String(*reason),
-            Value::Null,
-            timestamp_value(*at),
-        ]),
-        PackLifecycleEvent::Disabled {
-            pack_name,
-            principal,
-            at,
-        } => Ok(vec![
-            string_value("disabled", &mut intern_value)?,
-            Value::String(*pack_name),
-            Value::Null,
-            Value::String(*principal),
-            Value::Null,
-            Value::Null,
-            timestamp_value(*at),
-        ]),
-        _ => Err(ProcedureError::Internal {
-            detail: "unknown pack lifecycle event".to_owned(),
-        }),
-    }
-}
-
-fn optional_string_value(value: Option<IStr>) -> Value {
-    value.map_or(Value::Null, Value::String)
-}
-
-fn string_value(
-    value: &str,
-    intern_value: &mut impl FnMut(&str) -> Result<IStr, ProcedureError>,
-) -> Result<Value, ProcedureError> {
-    intern_value(value).map(Value::String)
-}
-
-fn external_string_value(value: &str) -> Value {
-    Value::ExternalString(Arc::from(value))
-}
-
-fn timestamp_value(at: jiff::Timestamp) -> Value {
-    Value::ZonedDateTime(at.to_zoned(jiff::tz::TimeZone::UTC))
-}
-
-fn content_hash_string(hash: &[u8; 32]) -> String {
-    let mut out = String::with_capacity("blake3:".len() + hash.len() * 2);
-    out.push_str("blake3:");
-    out.push_str(&hex_lower(hash));
-    out
+    event.to_history_row_with(intern_value)
 }
 
 fn intern_row_value(value: &str) -> Result<IStr, ProcedureError> {

@@ -150,8 +150,16 @@ impl IndexProvider for IvfProvider {
                 reason: "incomplete IVF snapshot recovery in progress".into(),
             });
         }
-        let Change::IndexExtensionEvent { provider, payload } = change else {
-            return Ok(());
+        let (provider, payload) = match change {
+            Change::IndexExtensionEvent { provider, payload } => (provider, payload),
+            // No-op: the IVF provider only replays extension-owned WAL events.
+            Change::NodeCreated { .. }
+            | Change::NodeUpdated { .. }
+            | Change::NodeDeleted { .. }
+            | Change::EdgeCreated { .. }
+            | Change::EdgeUpdated { .. }
+            | Change::EdgeDeleted { .. }
+            | Change::SchemaChanged { .. } => return Ok(()),
         };
         if provider.as_str() != IVF_PROVIDER_NAME {
             return Ok(());
