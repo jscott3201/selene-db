@@ -23,7 +23,7 @@ members = [
 exclude = ["_spec", "crates/selene-gql/fuzz"]
 
 [workspace.package]
-version = "0.0.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.95.0"
 authors = ["selene-db contributors"]
@@ -80,7 +80,7 @@ schemars = "1.2"
 jsonschema = { version = "0.46", default-features = false }
 semver = "1"
 serde_json = "1"
-selene-persist = { path = "crates/selene-persist", version = "0.0.0" }
+selene-persist = { path = "crates/selene-persist", version = "1.0.0" }
 
 # Dev dependencies.
 criterion = "0.8"

@@ -16,8 +16,8 @@ simd-simsimd = ["dep:simsimd"]
 test-harness = ["dep:blake3"]
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "0.0.0" }
-selene-graph = { path = "../selene-graph", version = "0.0.0" }
+selene-core = { path = "../selene-core", version = "1.0.0" }
+selene-graph = { path = "../selene-graph", version = "1.0.0" }
 arc-swap.workspace = true
 blake3 = { workspace = true, optional = true }
 fastrand.workspace = true
@@ -31,9 +31,9 @@ miette.workspace = true
 simsimd = { version = "5", optional = true }
 
 [dev-dependencies]
-selene-pack = { path = "../selene-pack", version = "0.0.0" }
-selene-persist = { path = "../selene-persist", version = "0.0.0" }
-selene-testing = { path = "../selene-testing", version = "0.0.0", features = ["vector"] }
+selene-pack = { path = "../selene-pack", version = "1.0.0" }
+selene-persist = { path = "../selene-persist", version = "1.0.0" }
+selene-testing = { path = "../selene-testing", version = "1.0.0", features = ["vector"] }
 blake3.workspace = true
 criterion.workspace = true
 insta.workspace = true
