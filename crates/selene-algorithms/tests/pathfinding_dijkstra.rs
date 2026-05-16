@@ -134,6 +134,15 @@ fn dijkstra_two_node_single_edge() {
 }
 
 #[test]
+fn dijkstra_parallel_edges_picks_lightest() {
+    let (shared, nodes) = build_weighted_graph(2, &[(0, 1, 5.0), (0, 1, 1.0)]);
+    let proj = build_proj_weighted(&shared);
+    let result = dijkstra(&proj, nodes[0], nodes[1]).unwrap().unwrap();
+    assert_eq!(result.nodes, vec![nodes[0], nodes[1]]);
+    assert_eq!(result.cost, 1.0);
+}
+
+#[test]
 fn dijkstra_chooses_shorter_of_two_routes() {
     // n0 --10--> n1 --5--> n2 (cost 15); n0 --20--> n2 (cost 20). Pick 15.
     let (shared, nodes) = build_weighted_graph(3, &[(0, 1, 10.0), (1, 2, 5.0), (0, 2, 20.0)]);

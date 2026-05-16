@@ -19,3 +19,10 @@ path = "fuzz_targets/parse_gql.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "round_trip"
+path = "fuzz_targets/round_trip.rs"
+test = false
+doc = false
+bench = false
