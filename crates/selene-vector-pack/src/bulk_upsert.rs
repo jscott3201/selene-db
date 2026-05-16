@@ -8,7 +8,7 @@ use selene_gql::{GqlType, MutationContext, ProcedureError, ProcedureResult};
 use selene_pack::{
     ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
 };
-use selene_vector::{BulkInsertRow, HnswParams, VectorBulkInsertPayloadV1, random_layer};
+use selene_vector::{BulkInsertRow, HnswParams, VectorBulkInsertPayloadV1, random_layer_default};
 
 use crate::{
     args::{expect_arity, required_f32_matrix, required_node_ref_list, required_string},
@@ -58,22 +58,35 @@ impl ExternalMutationProcedure for BulkUpsertProcedure {
         ctx: &mut MutationContext<'_, '_>,
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
-        let _state = &self.state;
         expect_arity(BULK_UPSERT_PROC, args, 3)?;
         let index_name = required_string(BULK_UPSERT_PROC, args, 0, "index_name")?;
         reject_non_default_index(BULK_UPSERT_PROC, &index_name)?;
         let node_ids = required_node_ref_list(BULK_UPSERT_PROC, args, 1, "node_ids")?;
         let vectors = required_f32_matrix(BULK_UPSERT_PROC, args, 2, "vectors", node_ids.len())?;
         reject_empty_batch(BULK_UPSERT_PROC, &node_ids)?;
+        let state = Arc::clone(&self.state);
 
         let max_layers = with_hnsw_provider_mut(ctx, BULK_UPSERT_PROC, |provider| {
             validate_vectors(BULK_UPSERT_PROC, &vectors, provider.config().dim)?;
             validate_node_ids(BULK_UPSERT_PROC, &node_ids)?;
             let params = HnswParams::from_config(provider.config());
-            let mut rng = fastrand::Rng::new();
-            Ok((0..node_ids.len())
-                .map(|_| random_layer(&mut rng, params.level_factor))
-                .collect::<Vec<_>>())
+            if state.config().deterministic_seed.is_some() {
+                Ok(node_ids
+                    .iter()
+                    .copied()
+                    .map(|node_id| {
+                        let mut rng = state
+                            .layer_rng_for_node(node_id)
+                            .expect("deterministic seed is present");
+                        random_layer_default(&mut rng, params.level_factor)
+                    })
+                    .collect::<Vec<_>>())
+            } else {
+                let mut rng = fastrand::Rng::new();
+                Ok((0..node_ids.len())
+                    .map(|_| random_layer_default(&mut rng, params.level_factor))
+                    .collect::<Vec<_>>())
+            }
         })?;
 
         let payload = VectorBulkInsertPayloadV1 {

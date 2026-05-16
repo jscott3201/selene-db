@@ -53,12 +53,12 @@ impl ExternalMutationProcedure for UpsertProcedure {
         ctx: &mut MutationContext<'_, '_>,
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
-        let _state = &self.state;
         expect_arity(UPSERT_PROC, args, 3)?;
         let index_name = required_string(UPSERT_PROC, args, 0, "index_name")?;
         reject_non_default_index(UPSERT_PROC, &index_name)?;
         let node_id = required_node_ref(UPSERT_PROC, args, 1, "node_id")?;
         let vector = required_f32_list(UPSERT_PROC, args, 2, "vector")?;
+        let state = Arc::clone(&self.state);
 
         let max_layer = with_hnsw_provider_mut(ctx, UPSERT_PROC, |provider| {
             let dim = provider.config().dim;
@@ -76,7 +76,8 @@ impl ExternalMutationProcedure for UpsertProcedure {
                 }
             }
             let params = HnswParams::from_config(provider.config());
-            Ok(random_layer_default(params.level_factor))
+            let mut rng = state.layer_rng_for_node(node_id).unwrap_or_default();
+            Ok(random_layer_default(&mut rng, params.level_factor))
         })?;
 
         let payload = VectorUpsertPayloadV1 {
