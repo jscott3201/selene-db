@@ -10,12 +10,15 @@
 mod args;
 mod bulk_delete;
 mod bulk_upsert;
+mod create_index;
 mod delete;
+mod drop_index;
 mod error;
 mod ivf_bulk_delete;
 mod ivf_bulk_upsert;
 mod ivf_search;
 mod ivf_stats;
+mod list_indexes;
 mod provider;
 mod registry;
 mod search;
