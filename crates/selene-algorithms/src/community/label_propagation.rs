@@ -11,8 +11,8 @@
 //! State arrays sized by live-node count via `RowIndex` (§E26). Unit weights
 //! only — donor pattern; weighted variants deferred to v1.x per §E25 / §J Q5.
 
-use std::collections::HashMap;
-
+// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
+use rustc_hash::FxHashMap as HashMap;
 use selene_core::NodeId;
 
 use crate::projection::GraphProjection;
@@ -44,7 +44,7 @@ pub fn label_propagation(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId
 
     // Reused per-node scratch; cleared at the top of each node iteration to
     // avoid reallocation in the hot loop.
-    let mut label_counts: HashMap<u64, usize> = HashMap::new();
+    let mut label_counts: HashMap<u64, usize> = HashMap::default();
 
     for _ in 0..max_iter {
         let mut changed = false;

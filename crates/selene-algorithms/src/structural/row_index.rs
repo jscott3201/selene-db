@@ -12,8 +12,8 @@
 //! `row_index.len()` and use dense indices internally; emit-time conversion
 //! recovers the `NodeId` via `row_index.node_id_of(dense_idx)`.
 
-use std::collections::HashMap;
-
+// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
+use rustc_hash::FxHashMap as HashMap;
 use selene_core::NodeId;
 
 use crate::projection::GraphProjection;

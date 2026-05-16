@@ -11,8 +11,8 @@
 //! memory to the largest historical NodeId and risk OOM on small live
 //! subgraphs (spec 16 §E11 amendment from PR #58 Codex review).
 
-use std::collections::HashMap;
-
+// Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
+use rustc_hash::FxHashMap as HashMap;
 use selene_core::NodeId;
 
 use crate::projection::GraphProjection;
@@ -47,7 +47,7 @@ pub fn wcc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
 
     // Compute the minimum NodeId per current root to canonicalize component IDs
     // (donor `aether-db-algorithms/src/structural.rs:107-115`).
-    let mut min_per_root: HashMap<u32, u64> = HashMap::new();
+    let mut min_per_root: HashMap<u32, u64> = HashMap::default();
     for &(nid, root) in &pairs {
         min_per_root
             .entry(root)
@@ -246,7 +246,7 @@ fn tarjan_strongconnect(
     // Filled lazily on first visit so we don't re-walk `proj.out_neighbors` on
     // every resume-from-child iteration. Neighbors outside the projection
     // scope are dropped at build time.
-    let mut neighbors_cache: HashMap<u32, Vec<u32>> = HashMap::new();
+    let mut neighbors_cache: HashMap<u32, Vec<u32>> = HashMap::default();
 
     state.indices[start as usize] = state.index;
     state.lowlinks[start as usize] = state.index;

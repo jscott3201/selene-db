@@ -2114,6 +2114,7 @@ dependencies = [
  "proptest",
  "rayon",
  "roaring",
+ "rustc-hash",
  "selene-core",
  "selene-graph",
  "selene-testing",
