@@ -20,6 +20,12 @@ use crate::istr::IStr;
 /// remains distinct for schema storage. Rust equality preserves GQL's
 /// `+0.0 == -0.0` behavior, while NaN ordering is handled by query-engine
 /// `ORDER BY` logic outside this crate.
+///
+/// Value equality matches IEEE 754 for non-NaN AND treats all NaN bit-patterns
+/// as equal for round-trip integrity. This is the internal Rust-level equality
+/// used by `PropertyMap` serde round-trip and snapshot diffs. The GQL `=`
+/// operator is intercepted at the runtime layer (`runtime::value_compare`)
+/// and preserves ISO 3VL semantics — `NaN = NaN` returns NULL there.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[non_exhaustive]
 pub enum Value {
@@ -101,14 +107,17 @@ pub enum Value {
 
 impl PartialEq for Value {
     fn eq(&self, rhs: &Self) -> bool {
+        // Value::Hash deferred to BRIEF-104; ensure NaN bit-patterns hash equal there.
         match (self, rhs) {
             (Self::Bool(lhs), Self::Bool(rhs)) => lhs == rhs,
             (Self::Int(lhs), Self::Int(rhs)) => lhs == rhs,
             (Self::Uint(lhs), Self::Uint(rhs)) => lhs == rhs,
             (Self::Int128(lhs), Self::Int128(rhs)) => lhs == rhs,
             (Self::Uint128(lhs), Self::Uint128(rhs)) => lhs == rhs,
-            (Self::Float(lhs), Self::Float(rhs)) => lhs == rhs,
-            (Self::Float32(lhs), Self::Float32(rhs)) => lhs == rhs,
+            (Self::Float(lhs), Self::Float(rhs)) => lhs == rhs || (lhs.is_nan() && rhs.is_nan()),
+            (Self::Float32(lhs), Self::Float32(rhs)) => {
+                lhs == rhs || (lhs.is_nan() && rhs.is_nan())
+            }
             (Self::Decimal(lhs), Self::Decimal(rhs)) => lhs == rhs,
             (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
             (Self::ExternalString(lhs), Self::ExternalString(rhs)) => lhs == rhs,
@@ -280,7 +289,7 @@ mod tests {
     use proptest::prelude::*;
 
     use super::*;
-    use crate::intern;
+    use crate::{PropertyMap, intern};
 
     fn assert_send_sync<T: Send + Sync>() {}
 
@@ -344,6 +353,31 @@ mod tests {
             Value::ExternalString(Arc::from("same text"))
         );
         assert_ne!(interned, external);
+    }
+
+    #[test]
+    fn value_float_nan_eq_bit_exact() {
+        assert_eq!(Value::Float(f64::NAN), Value::Float(f64::NAN));
+    }
+
+    #[test]
+    fn value_float32_nan_eq_bit_exact() {
+        assert_eq!(Value::Float32(f32::NAN), Value::Float32(f32::NAN));
+    }
+
+    #[test]
+    fn value_float_signed_zero_eq_preserved() {
+        assert_eq!(Value::Float(0.0), Value::Float(-0.0));
+    }
+
+    #[test]
+    fn value_property_map_round_trip_nan() {
+        let original = PropertyMap::from_pairs([(intern("x").unwrap(), Value::Float(f64::NAN))])
+            .expect("property map builds");
+        let bytes = postcard::to_allocvec(&original).expect("property map serializes");
+        let decoded: PropertyMap = postcard::from_bytes(&bytes).expect("property map deserializes");
+
+        assert_eq!(original, decoded);
     }
 
     proptest! {
