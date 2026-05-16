@@ -6,9 +6,10 @@
 //! GQLSTATUS `54000`.
 
 use std::fmt;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 use lasso::{Spur, ThreadedRodeo};
+use parking_lot::Mutex;
 use rkyv::{
     Archive, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize, SerializeUnsized,
     rancor::{Fallible, Source},
@@ -41,6 +42,10 @@ static INTERNER: OnceLock<ThreadedRodeo<Spur>> = OnceLock::new();
 /// Already-interned strings hit the lock-free fast path via `rodeo.get(s)`.
 /// Without this lock, concurrent callers could both observe capacity and insert
 /// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 54000 contract.
+///
+/// Uses `parking_lot::Mutex` with no poison semantics so a panic in the
+/// admission predicate path cannot brick all future intern calls. See brief
+/// BRIEF-98 §O.
 static ADMISSION_LOCK: Mutex<()> = Mutex::new(());
 
 fn interner() -> &'static ThreadedRodeo<Spur> {
@@ -86,7 +91,7 @@ pub fn intern_with_admission(s: &str) -> CoreResult<(IStr, bool)> {
     }
 
     // Slow path: serialize admission so cap-check + insert are atomic.
-    let _admission = ADMISSION_LOCK.lock().expect("admission lock poisoned");
+    let _admission = ADMISSION_LOCK.lock();
 
     // Re-check inside the lock; another thread may have interned `s` between
     // the fast-path miss and lock acquisition.
@@ -183,7 +188,7 @@ where
 
     // Slow path: serialize admission with the cap check and the predicate
     // so callers see a single atomic accept-or-reject.
-    let _admission = ADMISSION_LOCK.lock().expect("admission lock poisoned");
+    let _admission = ADMISSION_LOCK.lock();
 
     // Re-check inside the lock: another thread may have interned `s`
     // between the fast-path miss and the lock acquisition. If so, the
@@ -286,6 +291,7 @@ impl<'de> Deserialize<'de> for IStr {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
     use std::thread;
 
     use super::*;
@@ -324,6 +330,18 @@ mod tests {
         assert!(!cap_exceeded(MAX_INTERNED_STRINGS - 1));
         assert!(cap_exceeded(MAX_INTERNED_STRINGS));
         assert_eq!(MAX_INTERNED_STRINGS, 1_000_000);
+    }
+
+    #[test]
+    fn admission_lock_survives_panic() {
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _admission = ADMISSION_LOCK.lock();
+            panic!("simulated admission panic");
+        }));
+
+        assert!(result.is_err());
+        let key = format!("brief-98-post-panic-string-{}", std::process::id());
+        let _ = intern(&key).expect("intern after panic");
     }
 
     #[test]
