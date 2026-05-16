@@ -121,6 +121,57 @@ fn pagerank_three_cycle_all_equal_scores() {
 }
 
 #[test]
+fn pagerank_chain_convergence_is_not_initial_uniform() {
+    let (shared, nodes) = build_graph(4, &[(0, 1), (1, 2), (2, 3)]);
+    let proj = build_proj(&shared);
+    let initial = pagerank(
+        &proj,
+        PageRankConfig {
+            max_iter: 0,
+            ..default_config()
+        },
+    );
+    let converged = pagerank(
+        &proj,
+        PageRankConfig {
+            max_iter: 100,
+            tolerance: 1e-9,
+            ..default_config()
+        },
+    );
+
+    assert!(initial.iter().all(|&(_, score)| {
+        let expected = 1.0 / 4.0;
+        (score - expected).abs() <= 1e-12
+    }));
+    let sink_score = converged
+        .iter()
+        .find(|&&(node, _)| node == nodes[3])
+        .unwrap()
+        .1;
+    let source_score = converged
+        .iter()
+        .find(|&&(node, _)| node == nodes[0])
+        .unwrap()
+        .1;
+    assert!(
+        sink_score > source_score,
+        "multi-iteration PageRank should move mass along the chain"
+    );
+    assert_ne!(
+        converged
+            .iter()
+            .map(|&(node, score)| (node, score.to_bits()))
+            .collect::<Vec<_>>(),
+        initial
+            .iter()
+            .map(|&(node, score)| (node, score.to_bits()))
+            .collect::<Vec<_>>(),
+        "converged chain result must differ from the 1/N initial vector"
+    );
+}
+
+#[test]
 fn pagerank_mass_conservation() {
     // §O.W.2 — Σ score should converge to 1.0 (probability distribution).
     let (shared, _) = build_graph(5, &[(0, 1), (1, 2), (2, 0), (3, 4), (4, 3)]);

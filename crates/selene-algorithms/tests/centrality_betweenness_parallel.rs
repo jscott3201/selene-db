@@ -31,6 +31,10 @@ fn build_proj(shared: &SharedGraph) -> GraphProjection {
 }
 
 fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
+    build_graph_with_nodes(count, edges).0
+}
+
+fn build_graph_with_nodes(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<NodeId>) {
     let shared = SharedGraph::new(GraphId::new(84_001));
     let label = istr("N");
     let rel = istr("R");
@@ -49,7 +53,7 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
             .unwrap();
     }
     txn.commit().unwrap();
-    shared
+    (shared, nodes)
 }
 
 fn betweenness_config(sample_size: Option<usize>, parallelism: Parallelism) -> BetweennessConfig {
@@ -131,4 +135,22 @@ fn betweenness_parallel_with_sample_size_matches_sequential() {
     let threaded = betweenness(&proj, betweenness_config(Some(4), threads4()));
 
     assert_outputs_close(&sequential, &threaded);
+}
+
+#[test]
+fn betweenness_parallel_directed_triangle_has_unnormalized_unit_scores() {
+    let (shared, nodes) = build_graph_with_nodes(3, &[(0, 1), (1, 2), (2, 0)]);
+    let proj = build_proj(&shared);
+    let result = betweenness(&proj, betweenness_config(None, threads4()));
+
+    assert_eq!(
+        result.iter().map(|&(node, _)| node).collect::<Vec<_>>(),
+        nodes
+    );
+    for &(node, score) in &result {
+        assert_eq!(
+            score, 1.0,
+            "parallel directed 3-cycle score for {node:?} must stay unnormalized"
+        );
+    }
 }

@@ -21,6 +21,7 @@ selene-gql = { path = "../selene-gql", version = "0.0.0" }
 selene-graph = { path = "../selene-graph", version = "0.0.0" }
 selene-pack = { path = "../selene-pack", version = "0.0.0" }
 selene-vector = { path = "../selene-vector", version = "0.0.0" }
+xxhash-rust = { workspace = true, features = ["xxh3"] }
 
 [dev-dependencies]
 criterion.workspace = true
@@ -43,6 +44,10 @@ required-features = ["test-harness"]
 
 [[test]]
 name = "vector_pack_snapshot_corpus"
+required-features = ["test-harness"]
+
+[[test]]
+name = "deterministic_upsert"
 required-features = ["test-harness"]
 
 [[bench]]

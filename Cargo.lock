@@ -2302,6 +2302,7 @@ dependencies = [
  "selene-pack",
  "selene-testing",
  "selene-vector",
+ "xxhash-rust",
 ]
 
 [[package]]

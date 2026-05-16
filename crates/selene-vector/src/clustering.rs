@@ -187,4 +187,36 @@ mod tests {
 
         assert_eq!(left, right);
     }
+
+    #[test]
+    fn kmeans_two_separated_clusters_assigns_rows_by_cluster() {
+        let rows = [
+            vec![0.0, 0.0],
+            vec![0.2, -0.1],
+            vec![-0.2, 0.1],
+            vec![10.0, 10.0],
+            vec![10.2, 9.9],
+            vec![9.8, 10.1],
+        ];
+        let refs = rows.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let mut rng = fastrand::Rng::with_seed(0xB95E_0002_u64);
+
+        let centroids = kmeans_train_subspace(&refs, 0, 2, 2, &mut rng);
+        let assignments = refs
+            .iter()
+            .map(|row| nearest_centroid(row, &centroids, 2, 2))
+            .collect::<Vec<_>>();
+
+        let left = assignments[0];
+        let right = assignments[3];
+        assert_ne!(left, right, "separated clusters must not collapse");
+        assert!(
+            assignments[..3].iter().all(|&cluster| cluster == left),
+            "left cluster rows should share one assignment: {assignments:?}"
+        );
+        assert!(
+            assignments[3..].iter().all(|&cluster| cluster == right),
+            "right cluster rows should share one assignment: {assignments:?}"
+        );
+    }
 }

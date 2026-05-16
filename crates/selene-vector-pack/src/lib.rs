@@ -23,4 +23,4 @@ mod state;
 mod upsert;
 
 pub use registry::{VECTOR_PACK_NAME, VECTOR_PROCEDURE_NAMES, VectorPack};
-pub use state::VectorPackState;
+pub use state::{VectorPackConfig, VectorPackState};

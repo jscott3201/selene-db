@@ -9,7 +9,9 @@ use selene_pack::{
 
 use crate::{
     bulk_delete, bulk_upsert, delete, ivf_bulk_delete, ivf_bulk_upsert, ivf_search, ivf_stats,
-    search, state::VectorPackState, upsert,
+    search,
+    state::{VectorPackConfig, VectorPackState},
+    upsert,
 };
 
 /// Static external pack name registered with `selene-pack`.
@@ -39,6 +41,20 @@ impl VectorPack {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Construct a vector pack with explicit procedure configuration.
+    #[must_use]
+    pub fn with_config(config: VectorPackConfig) -> Self {
+        Self {
+            state: Arc::new(VectorPackState::new(config)),
+        }
+    }
+
+    /// Return this pack's shared configuration.
+    #[must_use]
+    pub fn config(&self) -> &VectorPackConfig {
+        self.state.config()
     }
 
     /// Return the external-pack description for registry-builder admission.

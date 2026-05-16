@@ -28,10 +28,14 @@ pub fn random_layer(rng: &mut fastrand::Rng, level_factor: f64) -> u8 {
     level.min(u32::from(MAX_LAYER)) as u8
 }
 
-/// Sample a layer from a freshly forked fastrand generator.
+/// Sample a layer from the caller-supplied default layer RNG.
+///
+/// Procedure packs that need reproducible HNSW snapshots can seed the RNG from
+/// stable row identity before calling this helper; entropy-seeded callers pass
+/// their normal `fastrand::Rng`.
 #[must_use]
-pub fn random_layer_default(level_factor: f64) -> u8 {
-    random_layer(&mut fastrand::Rng::new(), level_factor)
+pub fn random_layer_default(rng: &mut fastrand::Rng, level_factor: f64) -> u8 {
+    random_layer(rng, level_factor)
 }
 
 /// Insert one fresh node into `graph`.
