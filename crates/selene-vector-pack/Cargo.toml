@@ -50,6 +50,10 @@ required-features = ["test-harness"]
 name = "deterministic_upsert"
 required-features = ["test-harness"]
 
+[[test]]
+name = "registry_default_transparency"
+required-features = ["test-harness"]
+
 [[bench]]
 name = "vector_pack"
 harness = false
