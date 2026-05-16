@@ -537,10 +537,13 @@ bin_lit = @{ ("+" | "-")? ~ "0" ~ ("b" | "B") ~ ("0" | "1") ~ ("0" | "1" | "_")*
 // Strings: SINGLE-QUOTE ONLY (spec-aligned)
 // Double-quotes are delimited identifiers (see ident rule).
 // Supports '' escape (two single-quotes = literal single-quote) and backslash escapes.
+// Escape validation is intentionally left to the AST builder so malformed
+// escapes produce the precise decode_escape diagnostic instead of a generic
+// tokenization failure.
 string_lit        = ${ "'" ~ single_inner ~ "'" }
-single_inner      = @{ (escape_seq | "''" | !("'" | "\\") ~ ANY)* }
-escape_seq        = @{ "\\" ~ ("n" | "r" | "t" | "\\" | "'" | "\"" | "`" | "b" | "f" | unicode_escape) }
-unicode_escape    = @{ "u" ~ ASCII_HEX_DIGIT{4} | "U" ~ ASCII_HEX_DIGIT{8} }
+single_inner      = @{ (escape_seq | dangling_escape | "''" | !("'" | "\\") ~ ANY)* }
+escape_seq        = @{ "\\" ~ (("'" ~ &"'") | (!"'" ~ ANY)) }
+dangling_escape   = @{ "\\" ~ &"'" }
 
 // List literal
 list_lit = { "[" ~ (expr ~ ("," ~ expr)*)? ~ "]" }
