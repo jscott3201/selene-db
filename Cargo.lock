@@ -2146,6 +2146,7 @@ dependencies = [
  "jiff",
  "lasso",
  "miette",
+ "parking_lot",
  "postcard",
  "proptest",
  "rkyv 0.8.16",

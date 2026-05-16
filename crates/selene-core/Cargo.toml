@@ -10,6 +10,7 @@ description = "Foundation types for the selene-db ISO/IEC 39075:2024 GQL propert
 
 [dependencies]
 thiserror.workspace = true
+parking_lot.workspace = true
 miette.workspace = true
 lasso.workspace = true
 jiff.workspace = true
