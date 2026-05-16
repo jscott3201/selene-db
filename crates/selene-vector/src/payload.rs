@@ -1,6 +1,7 @@
 //! Wire format for selene-vector mutation events.
 
 use std::collections::HashSet;
+use std::str;
 
 use rkyv::{Archive, Deserialize, Serialize};
 use selene_core::NodeId;
@@ -24,6 +25,17 @@ pub const PAYLOAD_MAGIC_BULK: [u8; 4] = *b"VECB";
 
 /// Magic prefix for every selene-vector IVF-PQ insert payload.
 pub const PAYLOAD_MAGIC_IVF: [u8; 4] = *b"VIVF";
+
+/// Leading byte for BRIEF-109 named-index WAL payloads.
+pub const NAMED_PAYLOAD_VERSION: u8 = 0x01;
+
+/// Magic prefix for vector index lifecycle create events.
+pub const PAYLOAD_MAGIC_CREATE_INDEX: [u8; 4] = *b"VECC";
+
+/// Magic prefix for vector index lifecycle drop events.
+pub const PAYLOAD_MAGIC_DROP_INDEX: [u8; 4] = *b"VECX";
+
+const LEGACY_PAYLOAD_PREFIX: u8 = b'V';
 
 /// Vector mutation operation stored in version-1 vector mutation payloads.
 #[derive(Archive, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -138,6 +150,274 @@ pub struct VectorIvfUpsertV1 {
     pub node_id: NodeId,
     /// Dense f32 vector payload.
     pub vector: Vec<f32>,
+}
+
+/// Named-index payload split after BRIEF-109 prefix decoding.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NamedVectorPayload {
+    /// Target vector index name. Legacy unprefixed payloads use `"default"`.
+    pub index_name: String,
+    /// Inner legacy-compatible vector payload bytes, beginning with a `V...`
+    /// four-byte magic.
+    pub body: Vec<u8>,
+}
+
+/// Version-1 vector lifecycle create-index payload.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VectorCreateIndexV1 {
+    /// Canonical index kind (`"hnsw"` or `"ivf"`).
+    pub kind: String,
+    /// Serialized normalized provider config for `kind`.
+    pub config: Vec<u8>,
+}
+
+/// Version-1 vector lifecycle drop-index payload.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VectorDropIndexV1;
+
+/// Decoded lifecycle event body.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LifecycleEventKind {
+    /// Create the named index using the embedded kind/config payload.
+    Create(VectorCreateIndexV1),
+    /// Drop the named index. The target name is carried by the named payload
+    /// prefix.
+    Drop(VectorDropIndexV1),
+}
+
+/// Encode `body` under the BRIEF-109 named-index WAL prefix.
+///
+/// # Errors
+///
+/// Returns [`VectorError::InvalidPayload`] when the index name is empty or too
+/// long for the wire field.
+pub fn encode_named_payload(index_name: &str, body: Vec<u8>) -> Result<Vec<u8>, VectorError> {
+    if index_name.is_empty() {
+        return Err(invalid_payload(
+            "named payload index name must be non-empty",
+        ));
+    }
+    let name_len = u16::try_from(index_name.len())
+        .map_err(|_| invalid_payload("named payload index name exceeds u16 length"))?;
+    let mut out = Vec::with_capacity(1 + 2 + index_name.len() + body.len());
+    out.push(NAMED_PAYLOAD_VERSION);
+    out.extend_from_slice(&name_len.to_le_bytes());
+    out.extend_from_slice(index_name.as_bytes());
+    out.extend_from_slice(&body);
+    Ok(out)
+}
+
+/// Decode the BRIEF-109 named-index WAL prefix, falling back to v1.0
+/// unprefixed payloads as `"default"`.
+///
+/// # Errors
+///
+/// Returns [`VectorError::InvalidPayload`] when the prefix, name, or inner
+/// payload shape is malformed.
+pub fn split_named_payload(bytes: &[u8]) -> Result<NamedVectorPayload, VectorError> {
+    let Some(first) = bytes.first().copied() else {
+        return Err(invalid_payload("vector event payload is empty"));
+    };
+    match first {
+        NAMED_PAYLOAD_VERSION => split_v1_named_payload(bytes),
+        LEGACY_PAYLOAD_PREFIX => Ok(NamedVectorPayload {
+            index_name: "default".to_owned(),
+            body: bytes.to_vec(),
+        }),
+        other => Err(invalid_payload(format!(
+            "unknown vector event prefix 0x{other:02X}"
+        ))),
+    }
+}
+
+fn split_v1_named_payload(bytes: &[u8]) -> Result<NamedVectorPayload, VectorError> {
+    let Some(name_len_bytes) = bytes.get(1..3) else {
+        return Err(invalid_payload(
+            "named payload truncated before name length",
+        ));
+    };
+    let name_len = u16::from_le_bytes(
+        name_len_bytes
+            .try_into()
+            .expect("slice length checked for u16"),
+    ) as usize;
+    let name_start = 3_usize;
+    let name_end = name_start
+        .checked_add(name_len)
+        .ok_or_else(|| invalid_payload("named payload name length overflow"))?;
+    let Some(name_bytes) = bytes.get(name_start..name_end) else {
+        return Err(invalid_payload("named payload truncated in name"));
+    };
+    if name_bytes.is_empty() {
+        return Err(invalid_payload(
+            "named payload index name must be non-empty",
+        ));
+    }
+    let index_name = str::from_utf8(name_bytes)
+        .map_err(|error| {
+            invalid_payload(format!("named payload index name is not UTF-8: {error}"))
+        })?
+        .to_owned();
+    let body = bytes
+        .get(name_end..)
+        .ok_or_else(|| invalid_payload("named payload truncated before body"))?;
+    if body.len() < 4 {
+        return Err(invalid_payload(
+            "named payload body truncated: less than 4 magic bytes",
+        ));
+    }
+    if body.first().copied() != Some(LEGACY_PAYLOAD_PREFIX) {
+        return Err(invalid_payload(
+            "named payload body does not start with vector magic",
+        ));
+    }
+    Ok(NamedVectorPayload {
+        index_name,
+        body: body.to_vec(),
+    })
+}
+
+impl VectorCreateIndexV1 {
+    /// Encode this lifecycle payload to `VECC || kind || config`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] if the kind/config fields cannot
+    /// be represented on the wire.
+    pub fn encode(&self) -> Result<Vec<u8>, VectorError> {
+        if self.kind.is_empty() {
+            return Err(invalid_payload("create-index kind must be non-empty"));
+        }
+        if self.config.is_empty() {
+            return Err(invalid_payload("create-index config must be non-empty"));
+        }
+        let kind_len = u16::try_from(self.kind.len())
+            .map_err(|_| invalid_payload("create-index kind exceeds u16 length"))?;
+        let config_len = u32::try_from(self.config.len())
+            .map_err(|_| invalid_payload("create-index config exceeds u32 length"))?;
+        let mut out = Vec::with_capacity(4 + 2 + self.kind.len() + 4 + self.config.len());
+        out.extend_from_slice(&PAYLOAD_MAGIC_CREATE_INDEX);
+        out.extend_from_slice(&kind_len.to_le_bytes());
+        out.extend_from_slice(self.kind.as_bytes());
+        out.extend_from_slice(&config_len.to_le_bytes());
+        out.extend_from_slice(&self.config);
+        Ok(out)
+    }
+
+    /// Decode a `VECC` lifecycle payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] when the payload is malformed.
+    pub fn decode(bytes: &[u8]) -> Result<Self, VectorError> {
+        let Some((magic, mut body)) = bytes.split_at_checked(4) else {
+            return Err(invalid_payload("create-index payload shorter than magic"));
+        };
+        if magic != PAYLOAD_MAGIC_CREATE_INDEX {
+            return Err(invalid_payload("payload magic is not VECC"));
+        }
+        let kind_len = read_u16(&mut body, "create-index kind length")? as usize;
+        let kind = read_str(&mut body, kind_len, "create-index kind")?.to_owned();
+        let config_len = read_u32(&mut body, "create-index config length")? as usize;
+        let config = read_bytes(&mut body, config_len, "create-index config")?.to_vec();
+        if !body.is_empty() {
+            return Err(invalid_payload("create-index payload has trailing bytes"));
+        }
+        if config.is_empty() {
+            return Err(invalid_payload("create-index config must be non-empty"));
+        }
+        Ok(Self { kind, config })
+    }
+}
+
+impl VectorDropIndexV1 {
+    /// Encode this lifecycle payload to `VECX`.
+    #[must_use]
+    pub fn encode(self) -> Vec<u8> {
+        PAYLOAD_MAGIC_DROP_INDEX.to_vec()
+    }
+
+    /// Decode a `VECX` lifecycle payload.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError::InvalidPayload`] when the payload is malformed.
+    pub fn decode(bytes: &[u8]) -> Result<Self, VectorError> {
+        if bytes == PAYLOAD_MAGIC_DROP_INDEX {
+            return Ok(Self);
+        }
+        Err(invalid_payload("payload magic is not VECX"))
+    }
+}
+
+/// Decode a lifecycle event body beginning with `VECC` or `VECX`.
+///
+/// # Errors
+///
+/// Returns [`VectorError::InvalidPayload`] when the magic or body is invalid.
+pub fn decode_lifecycle_event(bytes: &[u8]) -> Result<LifecycleEventKind, VectorError> {
+    let Some((magic, _body)) = bytes.split_at_checked(4) else {
+        return Err(invalid_payload(
+            "lifecycle event truncated: less than 4 magic bytes",
+        ));
+    };
+    let magic: [u8; 4] = magic
+        .try_into()
+        .expect("split_at_checked guarantees four magic bytes");
+    match magic {
+        PAYLOAD_MAGIC_CREATE_INDEX => {
+            VectorCreateIndexV1::decode(bytes).map(LifecycleEventKind::Create)
+        }
+        PAYLOAD_MAGIC_DROP_INDEX => VectorDropIndexV1::decode(bytes).map(LifecycleEventKind::Drop),
+        other => Err(invalid_payload(format!(
+            "unknown lifecycle event magic {}",
+            String::from_utf8_lossy(&other)
+        ))),
+    }
+}
+
+fn read_u16(bytes: &mut &[u8], label: &'static str) -> Result<u16, VectorError> {
+    let Some((raw, rest)) = bytes.split_at_checked(2) else {
+        return Err(invalid_payload(format!("{label} truncated")));
+    };
+    *bytes = rest;
+    Ok(u16::from_le_bytes(
+        raw.try_into().expect("slice length checked for u16"),
+    ))
+}
+
+fn read_u32(bytes: &mut &[u8], label: &'static str) -> Result<u32, VectorError> {
+    let Some((raw, rest)) = bytes.split_at_checked(4) else {
+        return Err(invalid_payload(format!("{label} truncated")));
+    };
+    *bytes = rest;
+    Ok(u32::from_le_bytes(
+        raw.try_into().expect("slice length checked for u32"),
+    ))
+}
+
+fn read_bytes<'a>(
+    bytes: &mut &'a [u8],
+    len: usize,
+    label: &'static str,
+) -> Result<&'a [u8], VectorError> {
+    let Some((raw, rest)) = bytes.split_at_checked(len) else {
+        return Err(invalid_payload(format!("{label} truncated")));
+    };
+    *bytes = rest;
+    Ok(raw)
+}
+
+fn read_str<'a>(
+    bytes: &mut &'a [u8],
+    len: usize,
+    label: &'static str,
+) -> Result<&'a str, VectorError> {
+    let raw = read_bytes(bytes, len, label)?;
+    if raw.is_empty() {
+        return Err(invalid_payload(format!("{label} must be non-empty")));
+    }
+    str::from_utf8(raw).map_err(|error| invalid_payload(format!("{label} is not UTF-8: {error}")))
 }
 
 impl VectorIvfUpsertV1 {
@@ -319,6 +599,9 @@ fn invalid_payload(reason: impl Into<String>) -> VectorError {
         reason: reason.into(),
     }
 }
+
+#[cfg(test)]
+mod named_tests;
 
 #[cfg(test)]
 mod tests {
