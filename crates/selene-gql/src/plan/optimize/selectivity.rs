@@ -67,7 +67,10 @@ fn estimate_expr(expr: &ValueExpr) -> f64 {
             rhs,
             ..
         } => estimate_expr(lhs) * estimate_expr(rhs),
-        ValueExpr::InList { list, .. } => HEURISTIC_EQUALS * (list.len() as f64).max(1.0),
+        ValueExpr::InList { list, .. } => {
+            let k = list.len().max(1) as i32;
+            1.0 - (1.0 - HEURISTIC_EQUALS).powi(k)
+        }
         ValueExpr::Exists { .. } | ValueExpr::PropertyExists { .. } => HEURISTIC_EXISTS,
         _ => HEURISTIC_DEFAULT,
     }
@@ -81,4 +84,61 @@ fn label_for_binding(bindings: &[BindingDef], binding_id: crate::BindingId) -> O
             Some(LabelExpr::Single(label)) => Some(*label),
             _ => None,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ExprId, FilterPredicateKind, Literal, SourceSpan, analyze::AnalyzedType,
+        plan::FilterPredicate,
+    };
+
+    fn in_list_predicate(len: usize) -> FilterPredicate {
+        let span = SourceSpan::new(0, 1);
+        FilterPredicate {
+            expr: ValueExpr::InList {
+                operand: Box::new(ValueExpr::Literal(Literal::Integer(1, span))),
+                list: (0..len)
+                    .map(|index| ValueExpr::Literal(Literal::Integer(index as i64, span)))
+                    .collect(),
+                negated: false,
+                span,
+            },
+            expr_id: ExprId::new(0),
+            ty: AnalyzedType::DYNAMIC,
+            binding_refs: Vec::new(),
+            kind: FilterPredicateKind::Expression,
+            index_consumed: false,
+            span,
+        }
+    }
+
+    #[test]
+    fn selectivity_in_list_caps_at_one() {
+        let ctx = OptimizeContext::default();
+        let scan_ctx = ScanContext {
+            bindings: &[],
+            statistics: None,
+        };
+
+        let estimate = estimate(&in_list_predicate(100), &ctx, &scan_ctx);
+
+        assert!(estimate <= 1.0);
+    }
+
+    #[test]
+    fn selectivity_in_list_ranks_between_eq_and_neq_for_small_k() {
+        let ctx = OptimizeContext::default();
+        let scan_ctx = ScanContext {
+            bindings: &[],
+            statistics: None,
+        };
+
+        let estimate = estimate(&in_list_predicate(10), &ctx, &scan_ctx);
+
+        assert!((estimate - 0.401_263_060_761_621).abs() < 1e-12);
+        assert!(estimate > HEURISTIC_EQUALS);
+        assert!(estimate < HEURISTIC_NEQ);
+    }
 }
