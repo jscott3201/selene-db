@@ -2,7 +2,7 @@
 //!
 //! Both surfaces operate on the directed view of a [`crate::GraphProjection`]
 //! (only `out_neighbors`) per spec 16 §E19. State arrays are sized by
-//! live-node count via [`crate::structural::RowIndex`] per §E20 — never by
+//! live-node count via the structural row-index helper per §E20 — never by
 //! `max_row + 1` (donor pattern that breaks on filtered projections).
 //!
 //! ## Result shape (spec 16 §E21)

@@ -4,6 +4,8 @@
 
 - Baseline command used local ripgrep form: `rg -n -e 'BRIEF-[0-9]+|M[0-9][a-z]?|M1[0-9]\.B[0-9]+' crates/*/src/ --glob '!_briefs/' --glob '!tests/corpus*/' --glob '!_audit/'`.
 - Baseline cross-check from the branch base: `git grep -nE 'BRIEF-[0-9]+|M[0-9][a-z]?|M1[0-9]\.B[0-9]+' main -- crates/*/src` -> 162 hits across 75 files.
+- Final command result: 3 hits across 1 file, all in §D keep-load-bearing entries.
+- Final `_spec/` command result: 0 hits in `crates/*/src/`.
 - Local note: this checkout's `rg -E` means `--encoding`, so validation uses ripgrep's `-e` spelling for the same regex.
 
 ## §B — Drop list  (redundant historical noise; remove)

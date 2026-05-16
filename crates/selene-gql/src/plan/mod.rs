@@ -1,11 +1,11 @@
 //! Query planner entry points and execution-plan IR.
 //!
-//! The planner lowers an [`AnalyzedStatement`] into a literal
+//! The planner lowers a [`crate::AnalyzedStatement`] into a literal
 //! [`ExecutionPlan`] covering reads, mutations, DDL, CALL, and transaction
 //! control, with binding-table schemas attached wherever row shape changes.
 //! Optimizer rewrites are explicit: callers that want canonicalization or
-//! access-path selection call [`optimize`] after [`plan`]. This layer relies on
-//! analyzer binding/type/write-set invariants and defers provider fanout,
+//! access-path selection call [`optimize()`] after [`plan()`]. This layer relies
+//! on analyzer binding/type/write-set invariants and defers provider fanout,
 //! three-valued logic evaluation, and transaction effects to the runtime. See
 //! Spec 08 §6-§8 and Spec 13.
 

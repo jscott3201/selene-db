@@ -3,8 +3,8 @@
 //!
 //! All algorithms operate on the directed view of a [`crate::GraphProjection`]
 //! (only `out_neighbors`) per spec 16 §E13. State arrays are sized by live-node
-//! count via [`crate::structural::RowIndex`] (cross-imported) per §E14 — never
-//! by `max_row + 1` (donor pattern that breaks on filtered projections).
+//! count via the structural row-index helper per §E14 — never by `max_row + 1`
+//! (donor pattern that breaks on filtered projections).
 //!
 //! ## Weight contract (spec 16 §E15)
 //!

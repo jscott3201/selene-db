@@ -7,7 +7,7 @@
 //! planner and executor are the upstream consumers of procedure metadata and
 //! dispatch. `selene-pack` implements this trait for its concrete registry, and
 //! the embedder injects `&dyn ProcedureRegistry` into plan and execute calls.
-//! See `_spec/08-iso-gql-planner-and-executor.md` §7.
+//! See Spec 08 §7.
 
 pub use selene_core::Value;
 

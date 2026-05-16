@@ -15,7 +15,7 @@ pub type CoreResult<T> = Result<T, CoreError>;
 pub enum CoreError {
     /// The process-global string interner reached its distinct-string cap.
     #[error("interner cap exceeded: {count} distinct strings (max {max})")]
-    #[diagnostic(code(SLENE_C_001), help("see _spec/02-data-model.md section 5.1"))]
+    #[diagnostic(code(SLENE_C_001), help("see Spec 02 §5.1"))]
     IStrCapExceeded {
         /// Number of distinct strings currently interned.
         count: usize,

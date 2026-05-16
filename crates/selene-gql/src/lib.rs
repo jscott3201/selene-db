@@ -1,6 +1,6 @@
 //! ISO/IEC 39075:2024 GQL parser, AST, and Flagger for selene-db.
 //!
-//! See `_spec/07-iso-gql-parser-and-flagger.md` for the design contract.
+//! See Spec 07 for the parser and Flagger design contract.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

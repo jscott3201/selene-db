@@ -2,8 +2,7 @@
 //!
 //! See spec 02 section 5.1. The cap of 1,000,000 distinct strings protects against
 //! unbounded interner growth; exceeding the cap raises
-//! [`CoreError::IStrCapExceeded`](crate::CoreError::IStrCapExceeded), mapped to
-//! GQLSTATUS `54000`.
+//! [`CoreError::IStrCapExceeded`], mapped to GQLSTATUS `54000`.
 
 use std::fmt;
 use std::sync::OnceLock;
