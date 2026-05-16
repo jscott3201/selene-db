@@ -170,6 +170,16 @@ fn exists_subquery_does_not_refine_outer_label_expr() {
 }
 
 #[test]
+fn analyzer_rejects_let_alias_reused_as_node_pattern() {
+    let err = analyze_one("LET x = 1 MATCH (x) RETURN x")
+        .expect_err("value alias cannot be reused as a node pattern");
+    assert!(matches!(
+        err,
+        AnalysisError::AliasReusedAsPatternBinding { .. }
+    ));
+}
+
+#[test]
 fn with_projection_boundary_hides_pre_with_bindings() {
     let err = analyze_one("MATCH (n) WITH 1 AS x RETURN n").expect_err("n is hidden");
     assert!(matches!(err, AnalysisError::UndefinedReference { .. }));

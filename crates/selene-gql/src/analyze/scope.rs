@@ -177,6 +177,16 @@ impl BindingScopeTree {
                 .expect("resolved binding has decl");
             let new_element = PatternElementKind::from_decl_kind(kind);
             let prior_element = PatternElementKind::from_decl_kind(prior_decl.kind());
+            if let (Some(new_kind), None) = (new_element, prior_element)
+                && is_alias_decl_kind(prior_decl.kind())
+            {
+                return Err(AnalysisError::AliasReusedAsPatternBinding {
+                    name,
+                    prior_kind: prior_decl.kind(),
+                    new_kind,
+                    span,
+                });
+            }
             if let (Some(new_kind), Some(prior_kind)) = (new_element, prior_element)
                 && new_kind != prior_kind
             {
@@ -269,4 +279,14 @@ impl BindingScopeTree {
                 .is_some_and(|decl| decl.name() == name)
         })
     }
+}
+
+const fn is_alias_decl_kind(kind: BindingDeclKind) -> bool {
+    matches!(
+        kind,
+        BindingDeclKind::LetAlias
+            | BindingDeclKind::UnwindAlias
+            | BindingDeclKind::ProjectionAlias
+            | BindingDeclKind::YieldColumn
+    )
 }
