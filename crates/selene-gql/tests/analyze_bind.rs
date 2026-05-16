@@ -158,9 +158,7 @@ fn exists_subquery_does_not_refine_outer_label_expr() {
         .scopes
         .declarations()
         .iter()
-        .find(|decl| {
-            decl.kind() == BindingDeclKind::NodePattern && decl.name().as_str() == "n"
-        })
+        .find(|decl| decl.kind() == BindingDeclKind::NodePattern && decl.name().as_str() == "n")
         .expect("outer n declaration exists");
 
     assert!(

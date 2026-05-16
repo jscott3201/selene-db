@@ -5,6 +5,7 @@ use crate::{
     analyze::{
         binding::BindingUseKind,
         error::{AnalysisError, ConditionClause},
+        write_set::WriteKind,
     },
 };
 
@@ -14,8 +15,8 @@ pub(crate) fn bind_mutation_pipeline(
     ctx: &mut BindContext,
     pipeline: &MutationPipeline,
 ) -> Result<(), AnalysisError> {
-    for statement in &pipeline.statements {
-        bind_mutation_statement(ctx, statement)?;
+    for (statement_index, statement) in pipeline.statements.iter().enumerate() {
+        bind_mutation_statement(ctx, statement_index, statement)?;
     }
     if let Some(terminator) = &pipeline.terminator {
         match terminator {
@@ -28,6 +29,7 @@ pub(crate) fn bind_mutation_pipeline(
 
 fn bind_mutation_statement(
     ctx: &mut BindContext,
+    statement_index: usize,
     statement: &MutationStatement,
 ) -> Result<(), AnalysisError> {
     match statement {
@@ -38,60 +40,147 @@ fn bind_mutation_statement(
         }
         MutationStatement::Insert(insert) => {
             for graph_pattern in &insert.patterns {
-                pattern::bind_insert_graph_pattern(ctx, graph_pattern)?;
+                pattern::bind_insert_graph_pattern(ctx, statement_index, graph_pattern)?;
             }
             Ok(())
         }
-        MutationStatement::Set(items) => bind_set_items(ctx, items),
-        MutationStatement::Remove(items) => bind_remove_items(ctx, items),
-        MutationStatement::Delete(statement) => bind_delete(ctx, statement),
+        MutationStatement::Set(items) => bind_set_items(ctx, statement_index, items),
+        MutationStatement::Remove(items) => bind_remove_items(ctx, statement_index, items),
+        MutationStatement::Delete(statement) => bind_delete(ctx, statement_index, statement),
     }
 }
 
-fn bind_set_items(ctx: &mut BindContext, items: &[SetItem]) -> Result<(), AnalysisError> {
+fn bind_set_items(
+    ctx: &mut BindContext,
+    statement_index: usize,
+    items: &[SetItem],
+) -> Result<(), AnalysisError> {
     for item in items {
         match item {
             SetItem::Property {
                 target,
+                key,
                 value,
                 span,
-                ..
             } => {
-                ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let target = ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
                 expr::bind_value_expr(ctx, value)?;
+                let element = ctx.element_kind(target);
+                ctx.record_write(
+                    statement_index,
+                    *span,
+                    WriteKind::SetProperty {
+                        target,
+                        element,
+                        key: *key,
+                        value_span: value.span(),
+                    },
+                );
             }
             SetItem::PropertyMerge {
                 target,
                 properties,
                 span,
             } => {
-                ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let target = ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let element = ctx.element_kind(target);
                 for (_, value) in properties {
                     expr::bind_value_expr(ctx, value)?;
                 }
+                for (key, value) in properties {
+                    ctx.record_write(
+                        statement_index,
+                        *span,
+                        WriteKind::SetProperty {
+                            target,
+                            element,
+                            key: *key,
+                            value_span: value.span(),
+                        },
+                    );
+                }
             }
-            SetItem::Label { target, span, .. } => {
-                ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+            SetItem::Label {
+                target,
+                label,
+                span,
+            } => {
+                let target = ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let element = ctx.element_kind(target);
+                ctx.record_write(
+                    statement_index,
+                    *span,
+                    WriteKind::SetLabel {
+                        target,
+                        element,
+                        label: *label,
+                    },
+                );
             }
         }
     }
     Ok(())
 }
 
-fn bind_remove_items(ctx: &mut BindContext, items: &[RemoveItem]) -> Result<(), AnalysisError> {
+fn bind_remove_items(
+    ctx: &mut BindContext,
+    statement_index: usize,
+    items: &[RemoveItem],
+) -> Result<(), AnalysisError> {
     for item in items {
         match item {
-            RemoveItem::Property { target, span, .. } | RemoveItem::Label { target, span, .. } => {
-                ctx.resolve(*target, *span, BindingUseKind::RemoveTarget)?;
+            RemoveItem::Property { target, key, span } => {
+                let target = ctx.resolve(*target, *span, BindingUseKind::RemoveTarget)?;
+                let element = ctx.element_kind(target);
+                ctx.record_write(
+                    statement_index,
+                    *span,
+                    WriteKind::RemoveProperty {
+                        target,
+                        element,
+                        key: *key,
+                    },
+                );
+            }
+            RemoveItem::Label {
+                target,
+                label,
+                span,
+            } => {
+                let target = ctx.resolve(*target, *span, BindingUseKind::RemoveTarget)?;
+                let element = ctx.element_kind(target);
+                ctx.record_write(
+                    statement_index,
+                    *span,
+                    WriteKind::RemoveLabel {
+                        target,
+                        element,
+                        label: *label,
+                    },
+                );
             }
         }
     }
     Ok(())
 }
 
-fn bind_delete(ctx: &mut BindContext, statement: &DeleteStatement) -> Result<(), AnalysisError> {
+fn bind_delete(
+    ctx: &mut BindContext,
+    statement_index: usize,
+    statement: &DeleteStatement,
+) -> Result<(), AnalysisError> {
     for item in &statement.items {
-        ctx.resolve(*item, statement.span, BindingUseKind::DeleteTarget)?;
+        let target = ctx.resolve(*item, statement.span, BindingUseKind::DeleteTarget)?;
+        let element = ctx.element_kind(target);
+        ctx.record_write(
+            statement_index,
+            statement.span,
+            WriteKind::DeleteTarget {
+                target,
+                element,
+                mode: statement.mode,
+            },
+        );
     }
     Ok(())
 }

@@ -253,6 +253,24 @@ fn set_property_writeset_records_target_and_key() {
 }
 
 #[test]
+fn analyzer_resolves_set_target_by_binding_id_not_name() {
+    let analyzed = analyze_one("MATCH (m), (a) SET m.age = 18, a.age = 21").expect("analyzes");
+    let targets = write_set(&analyzed)
+        .entries
+        .iter()
+        .map(|entry| match entry.kind {
+            WriteKind::SetProperty { target, .. } => target,
+            _ => panic!("expected SetProperty"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(targets.len(), 2);
+    assert_ne!(targets[0], targets[1]);
+    assert_eq!(binding_name(&analyzed, targets[0]), "m");
+    assert_eq!(binding_name(&analyzed, targets[1]), "a");
+}
+
+#[test]
 fn set_property_map_writeset_emits_one_entry_per_key() {
     let analyzed = analyze_one("MATCH (n) SET n = { a: 1, b: 2 }").expect("analyzes");
     let entries = &write_set(&analyzed).entries;
@@ -289,6 +307,24 @@ fn remove_property_writeset_records_target_and_key() {
     };
     assert_eq!(element, ElementKind::Node);
     assert_eq!(key.as_str(), "age");
+}
+
+#[test]
+fn analyzer_resolves_remove_target_by_binding_id_not_name() {
+    let analyzed = analyze_one("MATCH (m), (a) REMOVE m.age, a.age").expect("analyzes");
+    let targets = write_set(&analyzed)
+        .entries
+        .iter()
+        .map(|entry| match entry.kind {
+            WriteKind::RemoveProperty { target, .. } => target,
+            _ => panic!("expected RemoveProperty"),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(targets.len(), 2);
+    assert_ne!(targets[0], targets[1]);
+    assert_eq!(binding_name(&analyzed, targets[0]), "m");
+    assert_eq!(binding_name(&analyzed, targets[1]), "a");
 }
 
 #[test]

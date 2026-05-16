@@ -2,12 +2,13 @@ use selene_core::{IStr, LabelSet, PropertyValueType};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
 use crate::{
-    GqlType, MutationPipeline, MutationStatement, RecordType, SetItem, SourceSpan, ValueExpr,
+    GqlType, MutationStatement, RecordType, SetItem, SourceSpan, ValueExpr,
     analyze::{
         ast::{AnalyzedStatement, AnalyzedStatementKind},
-        binding::{BindingId, BindingUseKind},
+        binding::BindingId,
         error::AnalysisError,
         types::AnalyzedType,
+        write_set::WriteKind,
     },
 };
 
@@ -71,7 +72,6 @@ pub(super) struct RequiredPropertyCheck<'a> {
     pub(super) declared_in: IStr,
     pub(super) declarations: &'a [PropertyTypeDef],
     pub(super) properties: &'a [(IStr, ValueExpr)],
-    pub(super) pipeline: &'a MutationPipeline,
     pub(super) stmt_index: usize,
     pub(super) binding: Option<BindingId>,
     pub(super) span: SourceSpan,
@@ -90,13 +90,7 @@ pub(super) fn validate_required_properties(
             continue;
         }
         if check.binding.is_some_and(|binding| {
-            required_property_supplied(
-                check.pipeline,
-                check.stmt_index,
-                binding,
-                declaration.name,
-                check.analyzed,
-            )
+            required_property_supplied(check.stmt_index, binding, declaration.name, check.analyzed)
         }) {
             continue;
         }
@@ -110,50 +104,20 @@ pub(super) fn validate_required_properties(
 }
 
 fn required_property_supplied(
-    pipeline: &MutationPipeline,
     stmt_index: usize,
     binding: BindingId,
     property: IStr,
     analyzed: &AnalyzedStatement,
 ) -> bool {
-    for statement in &pipeline.statements[stmt_index + 1..] {
-        let MutationStatement::Set(items) = statement else {
-            continue;
-        };
-        for item in items {
-            match item {
-                SetItem::Property {
-                    target, key, span, ..
-                } if *key == property && resolves_to(analyzed, *target, *span, binding) => {
-                    return true;
-                }
-                SetItem::PropertyMerge {
-                    target,
-                    properties,
-                    span,
-                } if resolves_to(analyzed, *target, *span, binding)
-                    && properties.iter().any(|(key, _)| *key == property) =>
-                {
-                    return true;
-                }
-                _ => {}
-            }
-        }
-    }
-    false
-}
-
-fn resolves_to(
-    analyzed: &AnalyzedStatement,
-    target: IStr,
-    span: SourceSpan,
-    binding: BindingId,
-) -> bool {
-    analyzed.references.iter().any(|reference| {
-        reference.name == target
-            && reference.span == span
-            && reference.binding == binding
-            && reference.kind == BindingUseKind::SetTarget
+    analyzed.write_set.as_ref().is_some_and(|write_set| {
+        write_set.entries.iter().any(|entry| {
+            entry.statement_index > stmt_index
+                && matches!(
+                    &entry.kind,
+                    WriteKind::SetProperty { target, key, .. }
+                        if *target == binding && *key == property
+                )
+        })
     })
 }
 
