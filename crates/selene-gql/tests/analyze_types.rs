@@ -210,6 +210,33 @@ fn analyzed_statement_clone_preserves_expr_id_lookup() {
 }
 
 #[test]
+fn expr_id_lookup_survives_simple_case_base_clone() {
+    let analyzed = analyze_one(
+        "MATCH (n) RETURN CASE n.age WHEN 1 THEN 'a' WHEN 2 THEN 'b' ELSE 'c' END AS label",
+    )
+    .expect("analyzes");
+    let items = return_items(&analyzed);
+    let ValueExpr::Case { branches, .. } = &items[0].expr else {
+        panic!("expected CASE expression, got {:?}", items[0].expr);
+    };
+
+    let mut ids = Vec::new();
+    for (condition, _) in branches {
+        let ValueExpr::BinaryOp { lhs, .. } = condition else {
+            panic!("expected BinaryOp condition, got {condition:?}");
+        };
+        let id = analyzed
+            .expr_ids
+            .get(lhs)
+            .expect("cloned CASE base resolves to an ExprId");
+        ids.push(id);
+    }
+
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], ids[1]);
+}
+
+#[test]
 fn add_string_and_integer_errors() {
     let err = analyze_one("RETURN 'a' + 1 AS x").unwrap_err();
     assert!(matches!(

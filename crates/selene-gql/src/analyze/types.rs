@@ -1,7 +1,7 @@
 //! Analyzer type cells.
 
 use std::{
-    collections::{HashMap, hash_map::Entry},
+    collections::HashMap,
     hash::{Hash, Hasher},
 };
 
@@ -105,30 +105,18 @@ impl ExprTypeTable {
 /// Lookup table from expression shape to allocated [`ExprId`].
 #[derive(Clone, Debug, Default)]
 pub struct ExprIdLookup {
-    ids: HashMap<ExprKey, ExprIdSlot>,
+    ids: HashMap<ExprKey, ExprId>,
 }
 
 impl ExprIdLookup {
     pub(crate) fn insert(&mut self, expr: &ValueExpr, id: ExprId) {
-        match self.ids.entry(ExprKey::for_expr(expr)) {
-            Entry::Vacant(entry) => {
-                entry.insert(ExprIdSlot::Single(id));
-            }
-            Entry::Occupied(mut entry) => {
-                if *entry.get() != ExprIdSlot::Single(id) {
-                    entry.insert(ExprIdSlot::Ambiguous);
-                }
-            }
-        }
+        self.ids.entry(ExprKey::for_expr(expr)).or_insert(id);
     }
 
     /// Return the expression ID allocated for `expr`.
     #[must_use]
     pub fn get(&self, expr: &ValueExpr) -> Option<ExprId> {
-        match self.ids.get(&ExprKey::for_expr(expr)).copied() {
-            Some(ExprIdSlot::Single(id)) => Some(id),
-            Some(ExprIdSlot::Ambiguous) | None => None,
-        }
+        self.ids.get(&ExprKey::for_expr(expr)).copied()
     }
 
     /// Number of mapped expression nodes.
@@ -157,12 +145,6 @@ impl ExprKey {
             fingerprint: fingerprint_expr(expr),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExprIdSlot {
-    Single(ExprId),
-    Ambiguous,
 }
 
 fn fingerprint_expr(expr: &ValueExpr) -> u64 {
