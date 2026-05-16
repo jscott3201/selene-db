@@ -1,8 +1,14 @@
 //! Analyzer type cells.
 
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    hash::{Hash, Hasher},
+};
 
-use crate::{GqlType, ValueExpr};
+use crate::{
+    GqlType, IsCheckKind, LabelExpr, Literal, MatchClause, NormalForm, PatternElement, RecordType,
+    SourceSpan, TruthValue, ValueExpr,
+};
 
 /// Stable, opaque identifier for a `ValueExpr` cell within one analyzer call.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -96,25 +102,21 @@ impl ExprTypeTable {
     }
 }
 
-/// Lookup table from parser AST expression nodes to their allocated [`ExprId`].
-#[derive(Debug, Default)]
-pub struct ExprIdMap {
-    // Why: the parser AST is moved into `AnalyzedStatement` without relocating
-    // its heap-backed expression nodes (`Vec` buffers and `Box` payloads stay
-    // put). The map is only valid for the owning `AnalyzedStatement`, so it is
-    // intentionally not Clone.
-    ids: HashMap<*const ValueExpr, ExprId>,
+/// Lookup table from expression shape to allocated [`ExprId`].
+#[derive(Clone, Debug, Default)]
+pub struct ExprIdLookup {
+    ids: HashMap<ExprKey, ExprId>,
 }
 
-impl ExprIdMap {
+impl ExprIdLookup {
     pub(crate) fn insert(&mut self, expr: &ValueExpr, id: ExprId) {
-        self.ids.insert(std::ptr::from_ref(expr), id);
+        self.ids.entry(ExprKey::for_expr(expr)).or_insert(id);
     }
 
     /// Return the expression ID allocated for `expr`.
     #[must_use]
     pub fn get(&self, expr: &ValueExpr) -> Option<ExprId> {
-        self.ids.get(&std::ptr::from_ref(expr)).copied()
+        self.ids.get(&ExprKey::for_expr(expr)).copied()
     }
 
     /// Number of mapped expression nodes.
@@ -127,5 +129,434 @@ impl ExprIdMap {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct ExprKey {
+    span: SourceSpan,
+    fingerprint: u64,
+}
+
+impl ExprKey {
+    fn for_expr(expr: &ValueExpr) -> Self {
+        Self {
+            span: expr.span(),
+            fingerprint: fingerprint_expr(expr),
+        }
+    }
+}
+
+fn fingerprint_expr(expr: &ValueExpr) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    hash_value_expr(expr, &mut hasher);
+    hasher.finish()
+}
+
+fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
+    match expr {
+        ValueExpr::Literal(literal) => {
+            0u8.hash(state);
+            hash_literal(literal, state);
+        }
+        ValueExpr::Variable { name, span } => {
+            1u8.hash(state);
+            name.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::Parameter { name, span } => {
+            2u8.hash(state);
+            name.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::PropertyAccess { target, key, span } => {
+            3u8.hash(state);
+            hash_value_expr(target, state);
+            key.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::ListAccess {
+            target,
+            index,
+            span,
+        } => {
+            4u8.hash(state);
+            hash_value_expr(target, state);
+            hash_value_expr(index, state);
+            span.hash(state);
+        }
+        ValueExpr::ListLiteral { items, span } => {
+            5u8.hash(state);
+            hash_exprs(items, state);
+            span.hash(state);
+        }
+        ValueExpr::RecordLiteral { fields, span } => {
+            6u8.hash(state);
+            fields.len().hash(state);
+            for (key, value) in fields {
+                key.hash(state);
+                hash_value_expr(value, state);
+            }
+            span.hash(state);
+        }
+        ValueExpr::BinaryOp { op, lhs, rhs, span } => {
+            7u8.hash(state);
+            op.hash(state);
+            hash_value_expr(lhs, state);
+            hash_value_expr(rhs, state);
+            span.hash(state);
+        }
+        ValueExpr::UnaryOp { op, operand, span } => {
+            8u8.hash(state);
+            op.hash(state);
+            hash_value_expr(operand, state);
+            span.hash(state);
+        }
+        ValueExpr::FunctionCall {
+            name,
+            args,
+            star,
+            distinct,
+            span,
+        } => {
+            9u8.hash(state);
+            name.hash(state);
+            hash_exprs(args, state);
+            star.hash(state);
+            distinct.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::IsCheck {
+            operand,
+            kind,
+            negated,
+            span,
+        } => {
+            10u8.hash(state);
+            hash_value_expr(operand, state);
+            hash_is_check(kind, state);
+            negated.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::InList {
+            operand,
+            list,
+            negated,
+            span,
+        } => {
+            11u8.hash(state);
+            hash_value_expr(operand, state);
+            hash_exprs(list, state);
+            negated.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::Like {
+            operand,
+            pattern,
+            negated,
+            span,
+        } => {
+            12u8.hash(state);
+            hash_value_expr(operand, state);
+            hash_value_expr(pattern, state);
+            negated.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::Between {
+            operand,
+            low,
+            high,
+            negated,
+            span,
+        } => {
+            13u8.hash(state);
+            hash_value_expr(operand, state);
+            hash_value_expr(low, state);
+            hash_value_expr(high, state);
+            negated.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::AllDifferent { items, span } => {
+            14u8.hash(state);
+            hash_exprs(items, state);
+            span.hash(state);
+        }
+        ValueExpr::Same { items, span } => {
+            15u8.hash(state);
+            hash_exprs(items, state);
+            span.hash(state);
+        }
+        ValueExpr::PropertyExists { target, key, span } => {
+            16u8.hash(state);
+            hash_value_expr(target, state);
+            key.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::Case {
+            branches,
+            else_branch,
+            span,
+        } => {
+            17u8.hash(state);
+            branches.len().hash(state);
+            for (condition, value) in branches {
+                hash_value_expr(condition, state);
+                hash_value_expr(value, state);
+            }
+            if let Some(value) = else_branch {
+                true.hash(state);
+                hash_value_expr(value, state);
+            } else {
+                false.hash(state);
+            }
+            span.hash(state);
+        }
+        ValueExpr::Exists {
+            pattern,
+            negated,
+            span,
+        } => {
+            18u8.hash(state);
+            hash_match_clause(pattern, state);
+            negated.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::CountSubquery { pattern, span } => {
+            19u8.hash(state);
+            hash_match_clause(pattern, state);
+            span.hash(state);
+        }
+    }
+}
+
+fn hash_exprs<H: Hasher>(values: &[ValueExpr], state: &mut H) {
+    values.len().hash(state);
+    for value in values {
+        hash_value_expr(value, state);
+    }
+}
+
+fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
+    match literal {
+        Literal::Bool(value, span) => {
+            0u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Integer(value, span) => {
+            1u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Float(value, span) => {
+            2u8.hash(state);
+            value.to_bits().hash(state);
+            span.hash(state);
+        }
+        Literal::String(value, span) => {
+            3u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
+        Literal::Null(span) => {
+            4u8.hash(state);
+            span.hash(state);
+        }
+    }
+}
+
+fn hash_is_check<H: Hasher>(kind: &IsCheckKind, state: &mut H) {
+    match kind {
+        IsCheckKind::Null => 0u8.hash(state),
+        IsCheckKind::Directed => 1u8.hash(state),
+        IsCheckKind::Labeled(label) => {
+            2u8.hash(state);
+            hash_label_expr(label, state);
+        }
+        IsCheckKind::TruthValue(value) => {
+            3u8.hash(state);
+            hash_truth_value(*value, state);
+        }
+        IsCheckKind::Typed(ty) => {
+            4u8.hash(state);
+            hash_gql_type(ty, state);
+        }
+        IsCheckKind::Normalized(form) => {
+            5u8.hash(state);
+            hash_normal_form(*form, state);
+        }
+        IsCheckKind::SourceOf(value) => {
+            6u8.hash(state);
+            hash_value_expr(value, state);
+        }
+        IsCheckKind::DestinationOf(value) => {
+            7u8.hash(state);
+            hash_value_expr(value, state);
+        }
+    }
+}
+
+fn hash_label_expr<H: Hasher>(expr: &LabelExpr, state: &mut H) {
+    match expr {
+        LabelExpr::Single(label) => {
+            0u8.hash(state);
+            label.hash(state);
+        }
+        LabelExpr::Conjunction(parts) => {
+            1u8.hash(state);
+            hash_label_exprs(parts, state);
+        }
+        LabelExpr::Disjunction(parts) => {
+            2u8.hash(state);
+            hash_label_exprs(parts, state);
+        }
+        LabelExpr::Negation(inner) => {
+            3u8.hash(state);
+            hash_label_expr(inner, state);
+        }
+        LabelExpr::Wildcard => {
+            4u8.hash(state);
+        }
+    }
+}
+
+fn hash_label_exprs<H: Hasher>(values: &[LabelExpr], state: &mut H) {
+    values.len().hash(state);
+    for value in values {
+        hash_label_expr(value, state);
+    }
+}
+
+fn hash_match_clause<H: Hasher>(clause: &MatchClause, state: &mut H) {
+    clause.optional.hash(state);
+    clause.selector.hash(state);
+    clause.match_mode.hash(state);
+    clause.path_mode.hash(state);
+    clause.patterns.len().hash(state);
+    for pattern in &clause.patterns {
+        pattern.path_binding.hash(state);
+        pattern.elements.len().hash(state);
+        for element in &pattern.elements {
+            match element {
+                PatternElement::Node(node) => {
+                    0u8.hash(state);
+                    node.binding.hash(state);
+                    if let Some(expr) = &node.label_expr {
+                        hash_label_expr(expr, state);
+                    }
+                    node.properties.len().hash(state);
+                    for (key, value) in &node.properties {
+                        key.hash(state);
+                        hash_value_expr(value, state);
+                    }
+                    if let Some(expr) = &node.inline_where {
+                        hash_value_expr(expr, state);
+                    }
+                    node.span.hash(state);
+                }
+                PatternElement::Edge(edge) => {
+                    1u8.hash(state);
+                    edge.binding.hash(state);
+                    edge.direction.hash(state);
+                    if let Some(expr) = &edge.label_expr {
+                        hash_label_expr(expr, state);
+                    }
+                    edge.properties.len().hash(state);
+                    for (key, value) in &edge.properties {
+                        key.hash(state);
+                        hash_value_expr(value, state);
+                    }
+                    edge.quantifier.hash(state);
+                    if let Some(expr) = &edge.inline_where {
+                        hash_value_expr(expr, state);
+                    }
+                    edge.span.hash(state);
+                }
+            }
+        }
+        pattern.span.hash(state);
+    }
+    if let Some(expr) = &clause.where_clause {
+        hash_value_expr(expr, state);
+    }
+    clause.span.hash(state);
+}
+
+fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
+    match ty {
+        GqlType::String => 0u8.hash(state),
+        GqlType::Boolean => 1u8.hash(state),
+        GqlType::Integer => 2u8.hash(state),
+        GqlType::Float => 3u8.hash(state),
+        GqlType::Int8 => 4u8.hash(state),
+        GqlType::Int16 => 5u8.hash(state),
+        GqlType::Int32 => 6u8.hash(state),
+        GqlType::Int64 => 7u8.hash(state),
+        GqlType::Int128 => 8u8.hash(state),
+        GqlType::Uint8 => 9u8.hash(state),
+        GqlType::Uint16 => 10u8.hash(state),
+        GqlType::Uint32 => 11u8.hash(state),
+        GqlType::Uint64 => 12u8.hash(state),
+        GqlType::Uint128 => 13u8.hash(state),
+        GqlType::SmallInt => 14u8.hash(state),
+        GqlType::BigInt => 15u8.hash(state),
+        GqlType::Decimal => 16u8.hash(state),
+        GqlType::Float32 => 17u8.hash(state),
+        GqlType::Float64 => 18u8.hash(state),
+        GqlType::Bytes => 19u8.hash(state),
+        GqlType::Binary => 20u8.hash(state),
+        GqlType::VarBinary => 21u8.hash(state),
+        GqlType::ZonedDateTime => 22u8.hash(state),
+        GqlType::LocalDateTime => 23u8.hash(state),
+        GqlType::Date => 24u8.hash(state),
+        GqlType::ZonedTime => 25u8.hash(state),
+        GqlType::LocalTime => 26u8.hash(state),
+        GqlType::Duration => 27u8.hash(state),
+        GqlType::Record(record) => {
+            28u8.hash(state);
+            hash_record_type(record, state);
+        }
+        GqlType::List(inner) => {
+            29u8.hash(state);
+            hash_gql_type(inner, state);
+        }
+        GqlType::Path => 30u8.hash(state),
+        GqlType::GraphRef => 31u8.hash(state),
+        GqlType::NodeRef => 32u8.hash(state),
+        GqlType::EdgeRef => 33u8.hash(state),
+        GqlType::TableRef => 34u8.hash(state),
+        GqlType::Null => 35u8.hash(state),
+        GqlType::Nothing => 36u8.hash(state),
+    }
+}
+
+fn hash_record_type<H: Hasher>(record: &RecordType, state: &mut H) {
+    match record {
+        RecordType::Open => 0u8.hash(state),
+        RecordType::Closed(fields) => {
+            1u8.hash(state);
+            fields.len().hash(state);
+            for (name, ty) in fields {
+                name.hash(state);
+                hash_gql_type(ty, state);
+            }
+        }
+    }
+}
+
+fn hash_truth_value<H: Hasher>(value: TruthValue, state: &mut H) {
+    match value {
+        TruthValue::True => 0u8.hash(state),
+        TruthValue::False => 1u8.hash(state),
+        TruthValue::Unknown => 2u8.hash(state),
+    }
+}
+
+fn hash_normal_form<H: Hasher>(form: NormalForm, state: &mut H) {
+    match form {
+        NormalForm::Nfc => 0u8.hash(state),
+        NormalForm::Nfd => 1u8.hash(state),
+        NormalForm::Nfkc => 2u8.hash(state),
+        NormalForm::Nfkd => 3u8.hash(state),
     }
 }

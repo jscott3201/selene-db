@@ -63,11 +63,11 @@ fn validate_inserts(
             for (index, element) in pattern.elements.iter().enumerate() {
                 match element {
                     PatternElement::Node(node) if is_fresh_node(node, analyzed) => {
-                        validate_insert_node(node, pipeline, stmt_index, analyzed, graph_type)?;
+                        validate_insert_node(node, stmt_index, analyzed, graph_type)?;
                     }
                     PatternElement::Edge(edge) if is_fresh_edge(edge, analyzed) => {
                         validate_insert_edge(
-                            edge, pattern, index, pipeline, stmt_index, analyzed, graph_type,
+                            edge, pattern, index, stmt_index, analyzed, graph_type,
                         )?;
                     }
                     PatternElement::Node(_) | PatternElement::Edge(_) => {}
@@ -80,7 +80,6 @@ fn validate_inserts(
 
 fn validate_insert_node(
     node: &NodePattern,
-    pipeline: &MutationPipeline,
     stmt_index: usize,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
@@ -110,7 +109,6 @@ fn validate_insert_node(
         declared_in: node_type.name,
         declarations: &node_type.properties,
         properties: &node.properties,
-        pipeline,
         stmt_index,
         binding: binding.flatten(),
         span: node.span,
@@ -122,7 +120,6 @@ fn validate_insert_edge(
     edge: &EdgePattern,
     pattern: &GraphPattern,
     index: usize,
-    pipeline: &MutationPipeline,
     stmt_index: usize,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
@@ -138,9 +135,7 @@ fn validate_insert_edge(
 
     if edge.direction == EdgeDirection::Undirected {
         if let Some(edge_type) = unique_edge_type(graph_type, label) {
-            validate_insert_edge_properties(
-                edge, edge_type, graph_type, pipeline, stmt_index, analyzed,
-            )?;
+            validate_insert_edge_properties(edge, edge_type, graph_type, stmt_index, analyzed)?;
         }
         return Ok(());
     }
@@ -175,14 +170,13 @@ fn validate_insert_edge(
             span: edge.span,
         });
     };
-    validate_insert_edge_properties(edge, edge_type, graph_type, pipeline, stmt_index, analyzed)
+    validate_insert_edge_properties(edge, edge_type, graph_type, stmt_index, analyzed)
 }
 
 fn validate_insert_edge_properties(
     edge: &EdgePattern,
     edge_type: &EdgeTypeDef,
     graph_type: &GraphTypeDef,
-    pipeline: &MutationPipeline,
     stmt_index: usize,
     analyzed: &AnalyzedStatement,
 ) -> Result<(), AnalysisError> {
@@ -203,7 +197,6 @@ fn validate_insert_edge_properties(
         declared_in: edge_type.name,
         declarations: &edge_type.properties,
         properties: &edge.properties,
-        pipeline,
         stmt_index,
         binding: binding.flatten(),
         span: edge.span,

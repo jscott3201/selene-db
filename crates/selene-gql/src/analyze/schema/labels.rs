@@ -200,15 +200,26 @@ pub(super) fn fresh_binding(
     kind: BindingDeclKind,
     analyzed: &AnalyzedStatement,
 ) -> Option<Option<BindingId>> {
-    let Some(name) = name else {
+    if name.is_none() {
         return Some(None);
-    };
-    analyzed
-        .scopes
-        .declarations()
-        .iter()
-        .find(|decl| decl.name() == name && decl.span() == span && decl.kind() == kind)
-        .map(|decl| Some(decl.id()))
+    }
+    let write_set = analyzed.write_set.as_ref()?;
+    write_set.entries.iter().find_map(|entry| {
+        if entry.span != span {
+            return None;
+        }
+        match (kind, &entry.kind) {
+            (
+                BindingDeclKind::InsertNode,
+                crate::analyze::WriteKind::InsertNode { binding, .. },
+            )
+            | (
+                BindingDeclKind::InsertEdge,
+                crate::analyze::WriteKind::InsertEdge { binding, .. },
+            ) => Some(*binding),
+            _ => None,
+        }
+    })
 }
 
 pub(super) fn reused_binding(

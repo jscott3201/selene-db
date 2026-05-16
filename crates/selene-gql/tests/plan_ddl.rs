@@ -130,7 +130,7 @@ fn ddl_ast_or_replace_path_still_lowers_for_forward_compat() {
         scopes: selene_gql::BindingScopeTree::new(selene_gql::SourceSpan::new(0, 1)),
         references: Vec::new(),
         expr_types: selene_gql::ExprTypeTable::default(),
-        expr_ids: selene_gql::ExprIdMap::default(),
+        expr_ids: selene_gql::ExprIdLookup::default(),
         span: selene_gql::SourceSpan::new(0, 1),
         category: selene_gql::StatementCategory::CatalogModifying,
         write_set: None,

@@ -18,8 +18,8 @@ use crate::{
         category::{self, StatementCategory},
         error::AnalysisError,
         scope::{BindingScopeTree, ScopeId, ScopeKind},
-        types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable},
-        write_set::{self, MutationWriteSet},
+        types::{AnalyzedType, ExprId, ExprIdLookup, ExprTypeTable},
+        write_set::{ElementKind, MutationWriteSet, WriteKind, WriteSetEntry},
     },
 };
 
@@ -69,14 +69,7 @@ pub(crate) fn bind_statement(
         | Statement::Rollback { span } => transaction::bind_transaction_control(&mut ctx, *span),
     }
     let category = category::classify(&stmt, registry);
-    let write_set = match &stmt {
-        Statement::Mutate(pipeline) => Some(write_set::compute_write_set(
-            pipeline,
-            &ctx.scopes,
-            &ctx.references,
-        )),
-        _ => None,
-    };
+    let write_set = matches!(&stmt, Statement::Mutate(_)).then(|| ctx.write_set.clone());
     Ok(ctx.finish(stmt, category, write_set))
 }
 
@@ -85,7 +78,8 @@ pub(crate) struct BindContext<'ctx> {
     current: ScopeId,
     references: Vec<BindingUse>,
     expr_types: ExprTypeTable,
-    expr_ids: ExprIdMap,
+    expr_ids: ExprIdLookup,
+    write_set: MutationWriteSet,
     registry: &'ctx dyn ProcedureRegistry,
 }
 
@@ -98,7 +92,8 @@ impl<'ctx> BindContext<'ctx> {
             current,
             references: Vec::new(),
             expr_types: ExprTypeTable::default(),
-            expr_ids: ExprIdMap::default(),
+            expr_ids: ExprIdLookup::default(),
+            write_set: MutationWriteSet::default(),
             registry,
         }
     }
@@ -147,6 +142,17 @@ impl<'ctx> BindContext<'ctx> {
         span: SourceSpan,
         labels: Option<crate::LabelExpr>,
     ) -> Result<BindingId, AnalysisError> {
+        self.declare_or_reuse_with_labels_info(kind, name, span, labels)
+            .map(|(binding, _)| binding)
+    }
+
+    pub(crate) fn declare_or_reuse_with_labels_info(
+        &mut self,
+        kind: BindingDeclKind,
+        name: IStr,
+        span: SourceSpan,
+        labels: Option<crate::LabelExpr>,
+    ) -> Result<(BindingId, bool), AnalysisError> {
         let (binding, reused) =
             self.scopes
                 .declare_or_reuse_with_labels(self.current, kind, name, span, labels)?;
@@ -158,7 +164,7 @@ impl<'ctx> BindContext<'ctx> {
                 kind: BindingUseKind::PatternReuse,
             });
         }
-        Ok(binding)
+        Ok((binding, reused))
     }
 
     pub(crate) fn resolve(
@@ -177,6 +183,27 @@ impl<'ctx> BindContext<'ctx> {
             kind,
         });
         Ok(binding)
+    }
+
+    pub(crate) fn element_kind(&self, binding: BindingId) -> ElementKind {
+        let declaration = self
+            .scopes
+            .declaration(binding)
+            .expect("resolved binding has declaration");
+        ElementKind::from_decl_kind(declaration.kind())
+    }
+
+    pub(crate) fn record_write(
+        &mut self,
+        statement_index: usize,
+        span: SourceSpan,
+        kind: WriteKind,
+    ) {
+        self.write_set.push(WriteSetEntry {
+            statement_index,
+            span,
+            kind,
+        });
     }
 
     pub(crate) fn with_child_scope<T>(

@@ -61,6 +61,23 @@ pub enum AnalysisError {
         prior_span: SourceSpan,
     },
 
+    /// A value alias was reused where GQL requires a graph pattern binding.
+    #[error(
+        "binding {name} is already bound as {prior_kind:?} and cannot be reused as a {new_kind}"
+    )]
+    #[diagnostic(code(SLENE_GQL_42710))]
+    AliasReusedAsPatternBinding {
+        /// Reused binding name.
+        name: IStr,
+        /// Prior non-pattern declaration kind.
+        prior_kind: BindingDeclKind,
+        /// New graph-pattern occurrence kind.
+        new_kind: PatternElementKind,
+        /// Source span of the new occurrence.
+        #[label("alias cannot be reused as a pattern binding")]
+        span: SourceSpan,
+    },
+
     /// The analyzer encountered an AST surface it does not route yet.
     #[error("not implemented: {message}")]
     #[diagnostic(code(SLENE_GQL_0A000))]
@@ -575,7 +592,9 @@ impl AnalysisError {
     pub const fn gqlstatus(&self) -> GqlStatus {
         match self {
             Self::UndefinedReference { .. } => GqlStatus::UNDEFINED_REFERENCE,
-            Self::Shadow { .. } | Self::PatternKindMismatch { .. } => GqlStatus::DUPLICATE_OBJECT,
+            Self::Shadow { .. }
+            | Self::PatternKindMismatch { .. }
+            | Self::AliasReusedAsPatternBinding { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownProcedure { .. } => GqlStatus::INVALID_REFERENCE,

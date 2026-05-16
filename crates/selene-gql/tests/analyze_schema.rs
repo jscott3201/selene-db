@@ -369,6 +369,26 @@ fn required_insert_property_can_be_supplied_by_later_set() {
 }
 
 #[test]
+fn analyzer_resolves_schema_properties_by_binding_id() {
+    let graph_type = person_only_graph_type();
+    analyze_with_schema("INSERT (n:Person) SET n.name = 'Alice'", &graph_type)
+        .expect("later SET target satisfies required property through its BindingId");
+}
+
+#[test]
+fn analyzer_resolves_schema_labels_by_binding_id() {
+    let graph_type = person_company_graph_type();
+    analyze_with_schema(
+        concat!(
+            "INSERT (n:Person { name: 'A' }) ",
+            "INSERT (n)-[:WORKS_AT]->(b:Company { name: 'B' })"
+        ),
+        &graph_type,
+    )
+    .expect("reused INSERT endpoint resolves through the original BindingId");
+}
+
+#[test]
 fn validates_static_candidate_sets_when_candidates_agree() {
     let graph_type = person_company_graph_type();
     analyze_with_schema("MATCH (n:Person) SET n.name = 'Alice'", &graph_type)

@@ -389,7 +389,7 @@ mod defensive_tests {
     use super::*;
     use crate::{
         EmptyProcedureRegistry, Literal, ReturnItem, SourceSpan, Statement, ValueExpr,
-        analyze::{BindingId, BindingScopeTree, ExprIdMap, ExprTypeTable, StatementCategory},
+        analyze::{BindingId, BindingScopeTree, ExprIdLookup, ExprTypeTable, StatementCategory},
         parse,
     };
 
@@ -415,7 +415,7 @@ mod defensive_tests {
             scopes: BindingScopeTree::new(SourceSpan::new(0, 8)),
             references: Vec::new(),
             expr_types: ExprTypeTable::default(),
-            expr_ids: ExprIdMap::default(),
+            expr_ids: ExprIdLookup::default(),
             span: SourceSpan::new(0, 8),
             category: StatementCategory::ReadOnly,
             write_set: None,
@@ -451,7 +451,7 @@ mod defensive_tests {
                 kind: crate::BindingUseKind::Variable,
             }],
             expr_types,
-            expr_ids: ExprIdMap::default(),
+            expr_ids: ExprIdLookup::default(),
             span: SourceSpan::new(0, 8),
             category: StatementCategory::ReadOnly,
             write_set: None,
@@ -462,7 +462,7 @@ mod defensive_tests {
         let PipelineStatement::Return(return_clause) = &query.statements[0] else {
             unreachable!("test builds return");
         };
-        let mut expr_ids = ExprIdMap::default();
+        let mut expr_ids = ExprIdLookup::default();
         expr_ids.insert(&return_clause.items[0].expr, expr_id);
         statement.expr_ids = expr_ids;
         let err = plan(&statement, &EmptyProcedureRegistry).expect_err("lost binding");
