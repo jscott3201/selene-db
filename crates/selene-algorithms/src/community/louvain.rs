@@ -64,9 +64,6 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
         // possible anyway; the value is observationally irrelevant.
         total_weight = 1.0;
     }
-    let m2 = 2.0 * total_weight;
-    let m2_sq_half = m2 * m2 / 2.0;
-
     // community[d] = current community ID (encoded as a dense index initially).
     let mut community: Vec<u32> = (0..n as u32).collect();
 
@@ -153,12 +150,9 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
                 }
                 let sigma_candidate = comm_degree_sum.get(&candidate_comm).copied().unwrap_or(0.0);
 
-                // Standard Louvain modularity delta (matches donor):
-                //   Δ = (k_{i,in_cand} - k_{i,in_current}) / m
-                //     + k_i · (Σ_current - Σ_candidate) / (2m²)
-                // where m = total_weight, m2 = 2m, m2_sq_half = 2m².
-                let delta = (ki_in_candidate - ki_in_current) / total_weight
-                    + ki * (sigma_current - sigma_candidate) / m2_sq_half;
+                let delta =
+                    compute_modularity_delta(total_weight, ki_in_candidate, ki, sigma_candidate)
+                        - compute_modularity_delta(total_weight, ki_in_current, ki, sigma_current);
 
                 if delta > best_delta {
                     best_delta = delta;
@@ -201,4 +195,36 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
 #[inline]
 fn node_sparse_row(nid: NodeId) -> u32 {
     (nid.get() - 1) as u32
+}
+
+/// Compute the scalar Louvain gain term for moving a node into one community.
+///
+/// This pins the formula used by the movement loop:
+/// `k_i,in / m - k_i * sigma_tot / (2m^2)`, where `m` is the projection's
+/// total directed edge weight, `k_i,in` is the node's incident weight into the
+/// candidate community, `k_i` is the node's weighted degree, and `sigma_tot`
+/// is the target community's weighted-degree sum. The movement delta is the
+/// candidate term minus the current-community term.
+pub(crate) fn compute_modularity_delta(
+    total_weight: f64,
+    ki_in: f64,
+    ki: f64,
+    sigma_tot: f64,
+) -> f64 {
+    ki_in / total_weight - (ki * sigma_tot) / (2.0 * total_weight * total_weight)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_modularity_delta_known_answer() {
+        let delta = compute_modularity_delta(5.0, 1.0, 2.0, 4.0);
+
+        assert!(
+            (delta - 0.04).abs() <= 1.0e-12,
+            "expected 0.04, observed {delta}"
+        );
+    }
 }
