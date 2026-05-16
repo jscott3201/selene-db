@@ -18,6 +18,7 @@ pub(crate) mod post;
 pub(crate) mod qunt;
 mod tags;
 pub(crate) mod vecs;
+pub(crate) mod wrapper;
 
 pub(crate) use tags::{
     CQNT, DECLARED_SUB_TAGS, DECLARED_SUB_TAGS_IVF, GRPH, IPQB, IVFP, POST, QUNT, VECS, VECT,
