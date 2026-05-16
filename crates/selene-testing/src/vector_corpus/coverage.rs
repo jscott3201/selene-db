@@ -2,7 +2,7 @@
 
 #![allow(missing_docs)]
 
-/// Public vector surfaces the BRIEF-64 corpus must exercise.
+/// Public vector surfaces the corpus must exercise.
 pub const SURFACE_COVERAGE: &[VectorSurface] = VectorSurface::ALL;
 
 /// Distance metric variants the corpus mirrors from `selene-vector`.

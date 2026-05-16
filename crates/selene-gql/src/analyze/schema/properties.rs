@@ -465,7 +465,7 @@ mod tests {
             (
                 PropertyValueType::Duration,
                 GqlType::Duration,
-                Value::Duration("PT1H2M3S".parse().unwrap()),
+                Value::Duration("PT1H2S".parse().unwrap()),
             ),
             (PropertyValueType::Null, GqlType::Null, Value::Null),
         ];

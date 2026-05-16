@@ -10,7 +10,7 @@ use crate::ast::{pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, typ
 pub enum ValueExpr {
     /// Literal value expression.
     Literal(Literal),
-    /// Variable reference. Populated by BRIEF-17 from identifier rules.
+    /// Variable reference parsed from an identifier token.
     Variable {
         /// Interned variable name.
         name: IStr,

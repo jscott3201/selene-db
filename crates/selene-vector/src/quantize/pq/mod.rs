@@ -30,7 +30,7 @@ pub(crate) struct PqCodebook {
     pub(crate) polysemous_trained: bool,
 }
 
-/// Decode-only pre-OPQ PQ codebook archive shape (BRIEF-66 era).
+/// Decode-only pre-OPQ PQ codebook archive shape.
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PqCodebookV1Legacy {
     pub(crate) m_subspaces: u32,
@@ -39,10 +39,10 @@ pub(crate) struct PqCodebookV1Legacy {
     pub(crate) centroids: Vec<f32>,
 }
 
-/// Decode-only post-OPQ pre-polysemous PQ codebook archive shape
-/// (BRIEF-68 era). Used as the encode shape whenever `polysemous_trained`
-/// is `false`, so BRIEF-68 snapshot goldens stay byte-identical after this
-/// brief lands. V2 is the v1 shape extended with the OPQ rotation field.
+/// Decode-only post-OPQ pre-polysemous PQ codebook archive shape. Used as the
+/// encode shape whenever `polysemous_trained` is `false`, so snapshot goldens
+/// stay byte-identical. V2 is the v1 shape extended with the OPQ rotation
+/// field.
 #[derive(Archive, Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct PqCodebookV2Legacy {
     pub(crate) m_subspaces: u32,
@@ -232,9 +232,9 @@ impl PqCodebook {
         }
     }
 
-    /// Render the codebook in the BRIEF-68 (post-OPQ, pre-polysemous) wire
-    /// shape. Returns `None` when `polysemous_trained=true`; callers must
-    /// emit the new flag-bearing archive in that case.
+    /// Render the codebook in the post-OPQ, pre-polysemous wire shape. Returns
+    /// `None` when `polysemous_trained=true`; callers must emit the new
+    /// flag-bearing archive in that case.
     pub(crate) fn as_v2_legacy(&self) -> Option<PqCodebookV2Legacy> {
         if self.polysemous_trained {
             return None;

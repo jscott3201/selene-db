@@ -5,12 +5,12 @@
 //! depends on it. Per D8, `selene-core` has zero dependencies on other selene
 //! crates. The mandatory data types of ISO GQL minimum conformance live here
 //! (`STRING`, `BOOLEAN`, `INT`, `FLOAT`); composite, temporal, and reference
-//! value types are also normatively defined in `_spec/02-data-model.md` and
-//! implemented here. The crate now also carries the composite containers,
+//! value types are also normatively defined in Spec 02 and implemented here.
+//! The crate now also carries the composite containers,
 //! schema model, transient codec hooks, origin metadata, and WAL change payload
 //! types needed by downstream crates.
 //!
-//! See `_spec/02-data-model.md` for the full data model specification.
+//! See Spec 02 for the full data model specification.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

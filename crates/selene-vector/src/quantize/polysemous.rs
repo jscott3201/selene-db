@@ -1,4 +1,4 @@
-//! Polysemous-codes simulated-annealing permutation solver (BRIEF-69, M9.B5).
+//! Polysemous-codes simulated-annealing permutation solver.
 //!
 //! Polysemous codes are PQ codes re-indexed so that `popcount(σ(i) XOR σ(j))`
 //! correlates with `||c_i − c_j||`. After training, the same PQ encoding path
@@ -11,8 +11,7 @@
 //! parameters; an archive flag declares whether σ was applied so recovery can
 //! reject config drift.
 //!
-//! See `_briefs/69-polysemous-codes.md` §C.1 for the algorithm specification
-//! and `_spec/17-selene-vector-extension.md` V105–V117 for invariants.
+//! See Spec 17 V105–V117 for persisted invariants.
 
 use crate::VectorError;
 

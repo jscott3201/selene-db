@@ -1,5 +1,5 @@
-//! Deterministic rendering for algorithm snapshot fixtures (M5f closure;
-//! D21 pattern; spec 16 §E31–§E36).
+//! Deterministic rendering for algorithm snapshot fixtures (pure-mirror
+//! pattern; Spec 16 §E31–§E36).
 //!
 //! Gated `#[cfg(any(test, feature = "test-harness"))]` so production builds
 //! ship zero rendering overhead (§E34). The renderer takes

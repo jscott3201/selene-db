@@ -8,9 +8,8 @@ use crate::plan::{ExecutionPlan, ImplDefinedCaps, optimize::IndexCatalog};
 
 /// Context shared by all optimizer rules.
 ///
-/// Marked `#[non_exhaustive]` so later optimizer briefs (e.g., BRIEF-29's
-/// `IndexCatalog` and selectivity hooks) can add fields without a breaking
-/// change.
+/// Marked `#[non_exhaustive]` so future optimizer work can add fields without
+/// a breaking change.
 #[non_exhaustive]
 pub struct OptimizeContext<'a> {
     /// Implementation-defined planner limits.
@@ -71,8 +70,8 @@ impl Default for OptimizeContext<'static> {
 
 /// Skeleton statistics surface reserved for cost-aware optimizer rules.
 ///
-/// Marked `#[non_exhaustive]` so cost-aware briefs (BRIEF-29) can extend
-/// the statistics surface without a breaking change.
+/// Marked `#[non_exhaustive]` so cost-aware optimizer work can extend the
+/// statistics surface without a breaking change.
 #[derive(Clone, Debug, Default)]
 #[non_exhaustive]
 pub struct EdgeStatistics {

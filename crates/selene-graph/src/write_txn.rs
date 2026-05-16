@@ -81,8 +81,8 @@ impl<'g> WriteTxn<'g> {
     /// Registered index providers are notified after the new graph snapshot is
     /// published, **with the write lock and allocator mutex still held**, so
     /// that two concurrent commits cannot interleave their `on_change`
-    /// callbacks (the per-graph serialization contract from
-    /// `_spec/06-index-provider-protocol.md`). Same-thread re-entrant
+    /// callbacks (the per-graph serialization contract from Spec 06).
+    /// Same-thread re-entrant
     /// provider calls into `SharedGraph::begin_write()` are detected via a
     /// thread-local fanout counter and panic with a clear message; the
     /// outer `std::panic::catch_unwind` in `notify_providers` catches those

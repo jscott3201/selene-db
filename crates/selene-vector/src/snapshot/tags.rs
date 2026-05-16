@@ -14,7 +14,7 @@ pub(crate) const GRPH: SubTag = SubTag(*b"GRPH");
 /// Raw f32 vector payload section.
 pub(crate) const VECS: SubTag = SubTag(*b"VECS");
 
-/// Quantized vector payload section. Filled in BRIEF-63.
+/// Quantized vector payload section.
 pub(crate) const QUNT: SubTag = SubTag(*b"QUNT");
 
 /// Coarse-quantizer section tag for the `IVFP` provider.

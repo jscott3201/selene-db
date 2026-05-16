@@ -24,11 +24,10 @@ pub(crate) const PROVIDER_NAME: &str = "selene-vector";
 ///
 /// This type validates configuration, declares the provider's snapshot
 /// footprint, publishes immutable graph snapshots through ArcSwap, and replays
-/// BRIEF-59 vector upsert events. BRIEF-60 adds HNSW search over published
-/// snapshots. BRIEF-61 adds deterministic GRPH/VECS section codecs, BRIEF-62
-/// adds the VECB bulk-insert event path, and BRIEF-63 adds the optional QUNT
-/// SQ8 overlay. Procedure registration moves to future selene-vector-pack
-/// work.
+/// vector upsert events. It exposes HNSW search over published snapshots,
+/// deterministic GRPH/VECS section codecs, the VECB bulk-insert event path,
+/// and the optional QUNT SQ8 overlay. Procedure registration moves to future
+/// selene-vector-pack work.
 pub struct HnswProvider {
     config: HnswConfig,
     state: ArcSwap<HnswGraph>,
@@ -346,13 +345,12 @@ impl HnswProvider {
     }
 
     fn read_qunt(&self, bytes: &[u8]) -> Result<(), ProviderError> {
-        // Codex review fix (P1): preserve the BRIEF-61 incomplete-recovery
-        // marker. Resetting staging on entry would let an empty QUNT clear a
-        // staged-without-VECS Reading state, bypassing the on_change guard.
-        // It would also let a non-empty QUNT validate against the previously
-        // published graph (self.state.load_full()) rather than the staged
-        // recovery target, potentially attaching the overlay to the wrong
-        // graph when dimensions and counts coincide.
+        // Preserve the incomplete-recovery marker. Resetting staging on entry
+        // would let an empty QUNT clear a staged-without-VECS Reading state,
+        // bypassing the on_change guard. It would also let a non-empty QUNT
+        // validate against the previously published graph rather than the
+        // staged recovery target, potentially attaching the overlay to the
+        // wrong graph when dimensions and counts coincide.
         match &*self.staging.lock() {
             SectionStaging::Reading {
                 grph: Some(_),

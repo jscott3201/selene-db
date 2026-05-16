@@ -7,7 +7,7 @@
 //! planner and executor are the upstream consumers of procedure metadata and
 //! dispatch. `selene-pack` implements this trait for its concrete registry, and
 //! the embedder injects `&dyn ProcedureRegistry` into plan and execute calls.
-//! See `_spec/08-iso-gql-planner-and-executor.md` §7.
+//! See Spec 08 §7.
 
 pub use selene_core::Value;
 
@@ -35,9 +35,8 @@ pub trait ProcedureRegistry: Send + Sync {
 
 /// Planner-visible metadata for a registered procedure.
 ///
-/// M2 will define the exact signature, tier, mutability, and capability fields.
-/// The important D16 boundary is that this type is owned by `selene-gql` and
-/// carries only data the planner can consume without importing `selene-pack`.
+/// Owned by `selene-gql` so the planner can consume procedure metadata without
+/// importing `selene-pack`.
 #[derive(Clone, Debug)]
 pub struct ProcedureMetadata {
     /// Opaque handle returned to the executor after successful planning.
@@ -57,7 +56,7 @@ pub struct ProcedureMetadata {
 /// Opaque procedure handle.
 ///
 /// The planner treats this as an uninterpreted token. `selene-pack` defines the
-/// internal handle encoding in M2.
+/// internal handle encoding.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProcedureHandle(u64);
 
@@ -200,8 +199,8 @@ impl ProcedureError {
 /// Registry with no registered procedures.
 ///
 /// Use this for analyzer call sites that do not exercise CALL. Any procedure
-/// lookup returns `None`, and runtime execution remains out of scope until
-/// M5c defines the concrete execution value flow.
+/// lookup returns `None`, and runtime execution is unreachable because no
+/// handle can be planned from this registry.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EmptyProcedureRegistry;
 

@@ -386,8 +386,8 @@ pub enum SchemaChange {
     /// Procedure-pack lifecycle audit event.
     ///
     /// Declared after [`SchemaChange::PropertyIndexDropped`] so the
-    /// `postcard` discriminants of all earlier variants remain stable across
-    /// BRIEF-46. The legacy `ProcedurePack*` variants above this entry are
+    /// `postcard` discriminants of all earlier variants remain stable. The
+    /// legacy `ProcedurePack*` variants above this entry are
     /// retained but never emitted; new code emits `ProcedurePackLifecycle`.
     ProcedurePackLifecycle {
         /// Pack lifecycle event payload.

@@ -67,7 +67,7 @@ fn full_value_property_map(prefix: &str) -> PropertyMap {
         ),
         (
             intern(&format!("{prefix}.duration")).unwrap(),
-            Value::Duration("PT1H2M3S".parse().unwrap()),
+            Value::Duration("PT1H2S".parse().unwrap()),
         ),
     ])
     .unwrap()

@@ -199,19 +199,18 @@ pub(crate) fn beam_search_layer(
     while let Some(FrontierCandidate(candidate)) = frontier.pop() {
         // Early termination: once result holds ef entries and the best
         // remaining frontier candidate is worse than the worst result, further
-        // expansion cannot improve top-ef. This preserves the BRIEF-59
-        // bounded-beam fix while allowing filtered nodes to route until the
+        // expansion cannot improve top-ef. This preserves the bounded-beam
+        // search contract while allowing filtered nodes to route until the
         // admission set is full.
         //
-        // BRIEF-69 cloud-Codex P1: non-admissible candidates carry a
-        // `NEG_INFINITY` placeholder score (the scorer returned `None`),
-        // which makes `Candidate::cmp` always say they're worse than every
-        // admissible result entry. Without the admissibility gate below,
-        // the loop would short-circuit before expanding a non-admissible
-        // candidate's neighbors — and those neighbors are exactly where
-        // the next admissible result entry might live. We only treat the
-        // current candidate as a termination signal when it is itself
-        // admissible (i.e. carries a real score the cmp can reason about).
+        // Non-admissible candidates carry a `NEG_INFINITY` placeholder score
+        // (the scorer returned `None`), which makes `Candidate::cmp` always say
+        // they're worse than every admissible result entry. Without the
+        // admissibility gate below, the loop would short-circuit before
+        // expanding a non-admissible candidate's neighbors — and those
+        // neighbors are exactly where the next admissible result entry might
+        // live. We only treat the current candidate as a termination signal
+        // when it is itself admissible.
         if result.len() >= ef
             && candidate.admissible
             && let Some(ResultCandidate(worst)) = result.peek()
@@ -307,10 +306,10 @@ pub(crate) enum Scorer<'a> {
         /// Thread-local scratch leased for this scorer and returned on drop.
         lut: LutScratchLease,
         quantized: &'a QuantizedStore,
-        /// Pre-computed polysemous query codes (BRIEF-69 §C.3). Populated
+        /// Pre-computed polysemous query codes. Populated
         /// when `params.quantization.pq.use_polysemous && quantized.polysemous_trained()`;
         /// `None` disables the Hamming pre-filter so non-polysemous stores
-        /// behave exactly as they did before BRIEF-69.
+        /// behave exactly as they do without polysemous filtering.
         polysemous_query_codes: Option<Box<[u8]>>,
         /// Hamming distance cutoff (V112). When `polysemous_query_codes` is
         /// `Some`, candidates whose stored-vs-query Hamming exceeds this
@@ -424,14 +423,13 @@ impl<'a> Scorer<'a> {
                 if node_idx >= quantized.node_count() {
                     return Some(score_for_metric(*metric, query, &node.vector));
                 }
-                // BRIEF-69 §C.3 Hamming pre-filter: when polysemous codes
-                // are available AND the stored bytes are also polysemous,
-                // skip ADC LUT lookup for candidates whose Hamming distance
-                // from the query exceeds the threshold. Returning `None`
-                // routes through candidate construction to a non-admissible
-                // Candidate (BRIEF-69 Stage 1 delta 2 / V110) — the
-                // candidate may still expand the frontier but cannot enter
-                // the result set or be resurrected by rescore.
+                // Hamming pre-filter: when polysemous codes are available AND
+                // the stored bytes are also polysemous, skip ADC LUT lookup for
+                // candidates whose Hamming distance from the query exceeds the
+                // threshold. Returning `None` routes through candidate
+                // construction to a non-admissible candidate: it may still
+                // expand the frontier but cannot enter the result set or be
+                // resurrected by rescore.
                 if let Some(query_codes) = polysemous_query_codes
                     && let Some(stored_codes) = quantized.pq_codes_for(node_idx)
                 {

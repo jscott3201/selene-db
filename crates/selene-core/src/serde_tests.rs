@@ -115,7 +115,7 @@ fn all_values() -> Vec<Value> {
                 .unwrap(),
         ),
         Value::LocalTime("12:34:56".parse().unwrap()),
-        Value::Duration("PT1H2M3S".parse().unwrap()),
+        Value::Duration("PT1H2S".parse().unwrap()),
         Value::Extended {
             type_id: ExtensionTypeId(0x100),
             payload: Arc::from([1_u8, 2, 3, 4]),

@@ -280,10 +280,9 @@ impl TypedIndex {
                 })?;
                 Some(range_union(index, &start, &end))
             }
-            // Why: `IStr` ordering is admission-order, not lexicographic.
-            // BRIEF-92 makes the v1.0 correctness cut by forcing runtime scan
-            // fallback for string ranges until a string-bytes secondary index
-            // exists.
+            // Why: `IStr` ordering is admission-order, not lexicographic, so
+            // string ranges fall back to runtime scans until a string-bytes
+            // secondary index exists.
             Self::String(_) => None,
             Self::Date(index) => {
                 let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
@@ -329,10 +328,9 @@ impl TypedIndex {
     /// order), not lexicographic — see `selene_core::IStr` rustdoc. So a
     /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval is
     /// not possible; lex-equivalent keys can be scattered throughout the
-    /// map. BRIEF-92 applies the same v1.0 correctness cut to string range
-    /// lookups by returning `None` from [`Self::lookup_range`], letting
-    /// runtime scan fallback preserve query semantics until a string-bytes
-    /// secondary index lands in a future brief.
+    /// map. String range lookups return `None` from [`Self::lookup_range`],
+    /// letting runtime scan fallback preserve query semantics until a
+    /// string-bytes secondary index exists.
     #[must_use]
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {

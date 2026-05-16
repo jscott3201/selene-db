@@ -1,8 +1,7 @@
-//! Parallel execution policy shared by future algorithm implementations.
+//! Parallel execution policy shared by algorithm implementations.
 //!
-//! BRIEF-82 introduces the public surface before any algorithm consumes it so
-//! M12 follow-up briefs can add parallel execution without reshaping caller
-//! configuration repeatedly.
+//! The public surface is stable before every algorithm consumes it so parallel
+//! execution can expand without reshaping caller configuration repeatedly.
 
 use std::num::NonZeroUsize;
 

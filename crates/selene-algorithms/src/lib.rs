@@ -8,16 +8,15 @@
 //!
 //! # Crate organization
 //!
-//! BRIEF-50 landed the projection foundation; BRIEF-51 adds the
-//! [`ProjectionCatalog`] named cache with generation-based staleness
-//! detection. Subsequent briefs add modules for structural (WCC, SCC, …),
-//! pathfinding (Dijkstra, SSSP, APSP), centrality (PageRank, betweenness),
-//! and community (label propagation, Louvain, triangle count) algorithms.
-//! See spec 16 §3 for the brief sequence.
+//! [`GraphProjection`] is the foundation. [`ProjectionCatalog`] adds a named
+//! cache with generation-based staleness detection. Algorithm modules cover
+//! structural (WCC, SCC, …), pathfinding (Dijkstra, SSSP, APSP), centrality
+//! (PageRank, betweenness), and community (label propagation, Louvain,
+//! triangle count) algorithms. See Spec 16 §3 for the package shape.
 //!
 //! # Dependency boundary
 //!
-//! Per spec 16 §E01, this crate depends on [`selene_core`] and
+//! Per Spec 16 §E01, this crate depends on [`selene_core`] and
 //! [`selene_graph`] only — never on `selene-gql`, `selene-pack`, or
 //! `selene-persist`. A future `selene-algorithms-pack` (out-of-tree v1.x)
 //! adapts these algorithms to procedure-pack tiers; the algorithms crate

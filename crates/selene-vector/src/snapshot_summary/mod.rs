@@ -1,4 +1,4 @@
-//! Deterministic renderer for the BRIEF-64 vector snapshot corpus.
+//! Deterministic renderer for the vector snapshot corpus.
 
 use std::fmt;
 

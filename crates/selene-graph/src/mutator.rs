@@ -276,8 +276,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     /// Append a schema-change WAL payload.
     ///
-    /// This is a pass-through accumulator in BRIEF-07. Catalog graph mutation
-    /// and closed-graph validation are intentionally deferred.
+    /// This is a pass-through accumulator. Catalog graph mutation and
+    /// closed-graph validation are handled by higher-level validation layers.
     pub fn schema_change(&mut self, graph: GraphId, change: SchemaChange) {
         self.txn
             .changes
@@ -286,8 +286,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     /// Append an opaque extension-provider event.
     ///
-    /// Providers are not registered in BRIEF-07; replay is owned by future
-    /// index-provider work.
+    /// Replay is owned by registered index providers.
     pub fn extension_event(&mut self, provider: IStr, payload: Arc<[u8]>) {
         self.txn
             .changes

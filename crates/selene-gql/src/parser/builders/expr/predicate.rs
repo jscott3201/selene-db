@@ -340,6 +340,9 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
         "PATH" => Ok(GqlType::Path),
         "NULL" => Ok(GqlType::Null),
         "NOTHING" => Ok(GqlType::Nothing),
-        _ => Err(not_implemented(&pair, "this GQL type builder lands in M5b")),
+        _ => Err(not_implemented(
+            &pair,
+            "this GQL type constructor is not yet supported in v1.0",
+        )),
     }
 }

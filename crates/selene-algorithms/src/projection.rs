@@ -9,9 +9,9 @@
 //! - Cached out-direction and in-direction CSR adjacency.
 //!
 //! Projections are immutable once built. When the underlying graph mutates and
-//! its `meta.generation` advances, the projection is logically stale —
-//! BRIEF-51 lands a `ProjectionCatalog` that rebuilds projections from stored
-//! configs when staleness is detected.
+//! its `meta.generation` advances, the projection is logically stale. The
+//! `ProjectionCatalog` rebuilds projections from stored configs when staleness
+//! is detected.
 
 mod csr;
 
@@ -31,9 +31,9 @@ use crate::error::AlgorithmsError;
 /// land via a future builder pattern rather than via `#[non_exhaustive]`.
 #[derive(Debug, Clone)]
 pub struct ProjectionConfig {
-    /// Stable name used by the projection catalog (BRIEF-51). Projection names
-    /// are user-facing and arbitrary; `String` keeps them out of the global
-    /// `IStr` interner per the spec 16 §E04 high-cardinality discipline.
+    /// Stable name used by the projection catalog. Projection names are
+    /// user-facing and arbitrary; `String` keeps them out of the global
+    /// `IStr` interner per the Spec 16 §E04 high-cardinality discipline.
     pub name: String,
     /// Node labels to include. Empty = all alive nodes (intersected with
     /// `scope` at build time).
@@ -54,8 +54,8 @@ pub struct ProjectionConfig {
 /// traversal.
 ///
 /// The projection is immutable once created. When the underlying graph mutates
-/// (generation changes), the projection is logically stale; BRIEF-51's catalog
-/// invalidates and rebuilds on staleness detection.
+/// (generation changes), the projection is logically stale; the projection
+/// catalog invalidates and rebuilds on staleness detection.
 #[derive(Debug)]
 pub struct GraphProjection {
     name: String,
@@ -152,8 +152,8 @@ impl GraphProjection {
         self.out_csr.total_neighbors()
     }
 
-    /// Graph generation pinned at build time. BRIEF-51's catalog compares this
-    /// against `snapshot.meta.generation` for staleness detection.
+    /// Graph generation pinned at build time. The projection catalog compares
+    /// this against `snapshot.meta.generation` for staleness detection.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation

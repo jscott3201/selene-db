@@ -2,17 +2,16 @@
 //!
 //! Section payload format: rkyv 0.8 archives over sorted `Vec<(K, Row)>`
 //! intermediates per spec 04 §4.3 / decision D14. Per-row property bags
-//! are postcard-encoded inside an `Arc<[u8]>` field on each archived row;
-//! BRIEF-14B+ lifts that inner serde layer cluster-by-cluster as
-//! `Value` variants gain rkyv archivability.
+//! are postcard-encoded inside an `Arc<[u8]>` field on each archived row until
+//! every stored `Value` variant has rkyv archivability.
 //!
-//! Compatibility note: BRIEF-13 (the prior commit) wrote these same
+//! Compatibility note: older in-tree snapshots wrote these same
 //! `CORE/META|NODE|EDGE|SCMA` sub-tags as postcard payloads. The snapshot
 //! envelope version stays `1` because selene-db has never shipped — see
-//! spec 04 §4.6 ("never shipped") — and there are no real on-disk graph
+//! Spec 04 §4.6 ("never shipped") — and there are no real on-disk graph
 //! instances pre-dating this change. When v1.0 ships, any further format
-//! change to a CORE section bumps the envelope version so old snapshots
-//! fail with `PersistError::UnsupportedVersion` instead of garbled bytes.
+//! change to a CORE section bumps the envelope version so old snapshots fail
+//! with `PersistError::UnsupportedVersion` instead of garbled bytes.
 //!
 //! `CORE/SCMA` schema rows are stored in memory by [`IStr`] handle order via
 //! [`SchemaKey::Ord`]. Their wire order is canonical lexicographic order by
@@ -183,10 +182,9 @@ impl EdgeArchiveRow {
 /// Identity for an entry in the core schema section.
 ///
 /// In v1.0, schema entries map one-to-one with built-in property index
-/// registrations. BRIEF-15 (closed-graph types) extends the [`SchemaEntry`]
-/// payload but keeps the section sub-tag stable. In-memory order follows
-/// local [`IStr`] handles; the `CORE/SCMA` wire order is lexicographic by
-/// `label.as_str()` and `property.as_str()` for cross-process stability.
+/// registrations. In-memory order follows local [`IStr`] handles; the
+/// `CORE/SCMA` wire order is lexicographic by `label.as_str()` and
+/// `property.as_str()` for cross-process stability.
 #[derive(
     Clone,
     Copy,

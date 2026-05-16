@@ -1,8 +1,8 @@
 //! ISO/IEC 39075:2024 feature and implementation-defined registers.
 //!
 //! This file is the canonical source for selene-db's v1.0 language claim.
-//! The markdown tables in `_spec/01`, `_spec/07`, and `_spec/09` are rendered
-//! or checked from these constants by `build/regen_feature_docs.sh`.
+//! The markdown tables for Spec 01, Spec 07, and Spec 09 are rendered or
+//! checked from these constants by `build/regen_feature_docs.sh`.
 
 use std::fmt;
 
@@ -31,7 +31,7 @@ macro_rules! feature_ids {
     ($($name:ident = $id:literal => $display:literal;)*) => {
         impl FeatureId {
             $(
-                #[doc = $display]
+                #[doc = concat!("`", $display, "`")]
                 pub const $name: FeatureId = FeatureId($id);
             )*
         }
@@ -207,47 +207,47 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (FeatureId::GP03, "inline procedures are out of v1.0 scope"),
     (
         FeatureId::GP05,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP06,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP07,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP08,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP09,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP10,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP11,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP12,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP13,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP14,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP15,
-        "procedure-local definitions require the procedure body parser; reclaim with the procedure-stage M5c brief",
+        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
     ),
     (
         FeatureId::GP18,

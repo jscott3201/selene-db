@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-/// Analyze one statement with the BRIEF-21 binding pass.
+/// Analyze one statement with the binding pass.
 pub(crate) fn bind_statement(
     stmt: Statement,
     registry: &dyn ProcedureRegistry,

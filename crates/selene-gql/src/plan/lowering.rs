@@ -66,12 +66,10 @@ fn lower_chained(
         return Ok(empty_plan());
     };
     let mut plan = lower_query_pipeline(first, registry, analyzed)?;
-    // Per BRIEF-26 §O.C6, NEXT establishes a fresh binding scope. The chained
-    // plan's output_schema must reflect the final block's projection because
+    // NEXT's output_schema must reflect the final block's projection because
     // each NEXT discards the prior block's columns. Correlated NEXT (rhs
-    // references prior-block bindings) is a Phase A scope reduction per
-    // BRIEF-35 §O — surface as `PlannerError::NotImplemented` rather than
-    // silently lose the carried bindings at runtime.
+    // references prior-block bindings) is rejected here rather than silently
+    // losing carried bindings at runtime.
     for block in rest {
         assert_no_correlated_next(block.span, analyzed)?;
         let inner = lower_query_pipeline(block, registry, analyzed)?;

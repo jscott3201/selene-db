@@ -241,7 +241,7 @@ fn validate_tier(
     // Mirror selene_gql::runtime::pipeline::call::context::tier_for_mutability:
     // a read-mutability builtin must declare Graph (or Persist, rejected above)
     // tier; any write mutability must declare Mutation. Catching this drift at
-    // construction prevents BRIEF-39 E21 from surfacing it as a runtime error.
+    // construction prevents a tier mismatch from surfacing as a runtime error.
     let expected_for_mutability = match mutability {
         ProcedureMutability::Read => ProcedureTier::Graph,
         ProcedureMutability::GraphWrite

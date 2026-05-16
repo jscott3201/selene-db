@@ -58,13 +58,13 @@ impl QuantMethod {
 /// Product-quantization training and encoding parameters.
 // Eq is intentionally NOT derived: `hamming_threshold_ratio: f32` cascades
 // non-Eq semantics through QuantizationConfig, HnswConfig, and IvfConfig
-// per BRIEF-69 §C.6 F7. NaN is rejected by `validate_for_dim`, so
-// `PartialEq` is the contract callers should use.
+// NaN is rejected by `validate_for_dim`, so `PartialEq` is the contract
+// callers should use.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PqParams {
     /// Number of equal-width vector subspaces.
     pub m_subspaces: usize,
-    /// Number of centroids per subspace. BRIEF-66 fixes this to 256.
+    /// Number of centroids per subspace. Version-1 PQ code bytes require 256.
     pub k_centroids: u32,
     /// Minimum vector count required before PQ training may run.
     pub train_min_vectors: usize,
@@ -116,7 +116,7 @@ impl PqParams {
         }
     }
 
-    /// Resolve an optional override against the BRIEF-66 defaults.
+    /// Resolve an optional override against the version-1 PQ defaults.
     #[must_use]
     pub fn resolve(dim: usize, override_params: Option<Self>) -> Self {
         override_params.unwrap_or_else(|| Self::default_for_dim(dim))
@@ -205,7 +205,7 @@ impl PqParams {
 
 /// User-facing quantization configuration for [`crate::HnswConfig`].
 // Eq dropped because `PqParams` now carries an f32 `hamming_threshold_ratio`
-// (BRIEF-69 §C.6 F7). Callers should compare via `PartialEq`.
+// Callers should compare via `PartialEq`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct QuantizationConfig {
     /// Enable asymmetric quantized search when a QUNT store is loaded.

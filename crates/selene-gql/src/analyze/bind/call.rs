@@ -62,7 +62,8 @@ pub(crate) fn bind_procedure_call_with_metadata(
         .iter()
         .zip(metadata.signature.parameters.iter().enumerate())
     {
-        // Dynamic operand defers per BRIEF-22.
+        // Dynamic operands have no static type to compare; runtime validation
+        // remains responsible for those values.
         if let AnalyzedType::Resolved(found) = arg_ty
             && !infer::argument_assignable(found, &parameter.ty, parameter.nullable)
         {

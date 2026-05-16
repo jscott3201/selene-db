@@ -1,6 +1,5 @@
-//! Decode/encode-compatible QUNT archive shape from after OPQ (BRIEF-68)
-//! but before polysemous (BRIEF-69). Used to preserve BRIEF-68 byte
-//! goldens when `polysemous_trained=false`.
+//! Decode/encode-compatible QUNT archive shape from after OPQ but before
+//! polysemous. Used to preserve byte goldens when `polysemous_trained=false`.
 
 use rkyv::{Archive, Deserialize, Serialize};
 
@@ -33,10 +32,10 @@ struct QuantizedStorePqV2Legacy {
     approx_norms: Option<Vec<f32>>,
 }
 
-/// Emit the body in the BRIEF-68 archive shape when `polysemous_trained`
-/// is false; otherwise return `None` and let the caller emit the
-/// flag-bearing V3 archive. Sq8 stores always render through V2 because
-/// SQ8 has no polysemous concept.
+/// Emit the body in the post-OPQ archive shape when `polysemous_trained` is
+/// false; otherwise return `None` and let the caller emit the flag-bearing V3
+/// archive. Sq8 stores always render through V2 because SQ8 has no polysemous
+/// concept.
 pub(super) fn encode_if_legacy_compatible(
     body: &QuntBodyV1,
 ) -> Result<Option<Vec<u8>>, VectorError> {

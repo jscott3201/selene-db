@@ -21,7 +21,7 @@ pub(super) fn encode_row(
             k,
             subdim,
         );
-        out.push(u8::try_from(code).expect("BRIEF-66 fixes PQ K to 256"));
+        out.push(u8::try_from(code).expect("version-1 PQ uses 256 centroids"));
     }
 }
 

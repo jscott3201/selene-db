@@ -9,7 +9,7 @@ use selene_core::IStr;
 
 /// Aggregate-op keywords reserved by the `aggregate_expr` grammar rule.
 ///
-/// Per `parser/grammar.pest` line 454, these tokens MUST appear bare in
+/// Tokens accepted by the `aggregate_expr` grammar rule MUST appear bare in
 /// function-call position so the parser can route the call through the
 /// aggregate path (which accepts `*` and `DISTINCT`). Quoting any of them
 /// rewrites the parse from aggregate to a generic function call and the

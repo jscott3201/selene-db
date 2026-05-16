@@ -15,7 +15,7 @@ use crate::history::PackHistorySource;
 //   - kind         : always populated
 //   - pack_name    : NULL on ValidationFailed when manifest parse failed
 //   - content_hash : "blake3:<64-hex>" on Staged/Activated, NULL on
-//                    Deprecated/Disabled (no hash in payload per BRIEF-46 E63)
+//                    Deprecated/Disabled (no hash in payload)
 //                    and on ValidationFailed (no hash before validation succeeds)
 //   - principal    : always populated
 //   - reason       : NULL except on Deprecated

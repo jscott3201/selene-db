@@ -1,9 +1,12 @@
 //! Semantic analyzer entry points.
 //!
-//! BRIEF-21 landed name binding, BRIEF-22 added expression type inference, and
-//! BRIEF-23 wires procedure signature metadata into CALL/YIELD analysis.
-//! Mutation write-set checks and closed-graph schema validation layer on top of
-//! the binding and type passes.
+//! The analyzer turns parsed statements into a closed semantic model: every
+//! reference resolves to a `BindingDecl`, every `ValueExpr` has an expression
+//! type cell, closed-graph mutations are statically validated when a schema is
+//! supplied, and CALL arguments/YIELD bindings are checked against registry
+//! metadata. It defers physical access selection and row-shape execution to the
+//! planner/runtime boundary, and it treats dynamic expression cells as explicit
+//! unknowns rather than implicit success. See Spec 08 §5.
 
 pub mod ast;
 pub mod binding;

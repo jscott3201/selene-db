@@ -1,10 +1,12 @@
-//! In-memory property graph runtime per spec 03.
+//! In-memory property graph runtime.
 //!
-//! Storage, concurrency, built-in label/property indexes, the typed mutation
-//! funnel, and the auto-registered CORE persistence provider live here.
-//! Composite indexes, edge property indexes, schema validation for closed
-//! graphs, catalog bootstrap, and the procedure-pack `selene.create_index`
-//! wrapper land in subsequent briefs.
+//! The graph crate owns node/edge storage, label sets, property maps, directed
+//! adjacency, built-in label/property indexes, typed mutation validation, and
+//! the CORE persistence provider. `SharedGraph` serializes writes through a
+//! transaction boundary while readers observe immutable snapshots. Higher
+//! layers own GQL binding/planning, procedure-pack entry points, and extension
+//! provider semantics; edge property indexes remain outside the v1.0 storage
+//! contract. See Spec 03 and Spec 06.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]

@@ -25,15 +25,15 @@ pub const PAYLOAD_MAGIC_BULK: [u8; 4] = *b"VECB";
 /// Magic prefix for every selene-vector IVF-PQ insert payload.
 pub const PAYLOAD_MAGIC_IVF: [u8; 4] = *b"VIVF";
 
-/// Vector mutation operation reserved in the BRIEF-59 wire format.
+/// Vector mutation operation stored in version-1 vector mutation payloads.
 #[derive(Archive, Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(u8)]
 pub enum VectorOp {
     /// Insert a fresh vector for a source graph node.
     Insert = 0,
-    /// Replace an existing vector. Reserved; implemented after BRIEF-59.
+    /// Replace an existing vector. Reserved for a future mutation API.
     Update = 1,
-    /// Delete an indexed vector. Reserved; implemented after BRIEF-59.
+    /// Delete an indexed vector.
     Delete = 2,
 }
 

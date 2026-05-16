@@ -39,7 +39,7 @@ impl Default for NeighborSelectionConfig {
 
 /// Configuration for [`crate::HnswProvider`].
 // Eq dropped because `QuantizationConfig` transitively carries the f32
-// `hamming_threshold_ratio` introduced in BRIEF-69 §C.6 F7.
+// `hamming_threshold_ratio`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HnswConfig {
     /// Vector dimensionality. Required; no default exists.
@@ -88,8 +88,7 @@ impl HnswConfig {
     /// # Errors
     ///
     /// Returns [`VectorError::InvalidConfig`] when `dim` is zero or exceeds
-    /// `u16::MAX`, the dimensionality ceiling inherited from the donor graph
-    /// body that later M8 briefs port.
+    /// `u16::MAX`, the dimensionality ceiling inherited from the graph body.
     pub fn new(dim: usize) -> Result<Self, VectorError> {
         Self::with_params(
             dim,
@@ -105,7 +104,7 @@ impl HnswConfig {
     /// # Errors
     ///
     /// Returns [`VectorError::InvalidConfig`] when any parameter violates the
-    /// BRIEF-57 acceptance contract.
+    /// HNSW configuration bounds.
     pub fn with_params(
         dim: usize,
         m: usize,
@@ -179,7 +178,7 @@ impl HnswConfig {
     /// # Errors
     ///
     /// Returns [`VectorError::InvalidConfig`] when any field is outside the
-    /// supported BRIEF-57 skeleton bounds.
+    /// supported HNSW configuration bounds.
     pub fn validate(&self) -> Result<(), VectorError> {
         if self.dim == 0 {
             return Err(invalid_config("dim must be greater than zero"));
@@ -215,7 +214,7 @@ impl HnswConfig {
 
 /// Configuration for [`crate::IvfProvider`].
 // Eq dropped because `PqParams` now carries the f32 `hamming_threshold_ratio`
-// introduced in BRIEF-69 §C.6 F7.
+// `hamming_threshold_ratio`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct IvfConfig {
     /// Vector dimensionality. Required; no default exists.
@@ -260,8 +259,8 @@ impl IvfConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`VectorError::InvalidConfig`] when any field violates the
-    /// BRIEF-67 bounds.
+    /// Returns [`VectorError::InvalidConfig`] when any field violates the IVF
+    /// configuration bounds.
     pub fn with_params(
         dim: usize,
         k_coarse: u32,

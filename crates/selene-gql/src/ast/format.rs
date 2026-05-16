@@ -52,8 +52,8 @@ pub fn format_statement(stmt: &Statement) -> Result<String, FormatError> {
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FormatError {
-    /// AST surface is not formattable in M5a.
-    #[error("AST surface {0} is not yet formattable; M5a covers read-side only")]
+    /// AST surface is not formattable by this read-side pretty-printer.
+    #[error("AST surface {0} is not yet formattable by the read-side pretty-printer")]
     Unsupported(&'static str),
     /// Formatting failed.
     #[error("formatting failed")]
@@ -709,9 +709,8 @@ fn fmt_type(ty: &crate::GqlType) -> String {
         crate::GqlType::Path => "PATH".to_owned(),
         crate::GqlType::Null => "NULL".to_owned(),
         crate::GqlType::Nothing => "NOTHING".to_owned(),
-        // Variants below are AST-only today (BRIEF-20 §K1 demoted them
-        // from SUPPORTED_FEATURES because the parser cannot construct
-        // them). The fallback never runs through the round-trip property
+        // Variants below are AST-only today because the parser cannot
+        // construct them. The fallback never runs through the round-trip property
         // because no parser path produces these shapes; it survives so
         // synthesised AST shapes that reach the formatter still get a
         // string instead of a panic.

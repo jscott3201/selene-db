@@ -84,7 +84,7 @@ impl VectorCorpusCategory {
 }
 
 impl VectorCorpus {
-    /// The curated M8 closure corpus.
+    /// The curated vector closure corpus.
     #[must_use]
     pub fn m8() -> Self {
         Self { entries: entries() }

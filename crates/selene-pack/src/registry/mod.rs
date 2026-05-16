@@ -553,7 +553,6 @@ mod tests {
         assert!(matches!(err, RegistryError::TierMismatch { .. }));
     }
 
-    /// Regression: BRIEF-41 round-1 Codex F1.
     /// Built-ins without stable manifest-derived hashes use the local
     /// `[0u8; 32]` unstable sentinel; duplicate registrations with that
     /// sentinel MUST conflict so a silently-dropped second implementation is
@@ -577,11 +576,9 @@ mod tests {
         assert!(matches!(err, RegistryError::Conflict { .. }));
     }
 
-    /// Regression: BRIEF-41 round-1 Codex F3.
-    /// A built-in declaring `Graph` tier with a write mutability surfaces
-    /// at build time rather than slipping through to a runtime
-    /// `ProcedureError::TierMismatch` from BRIEF-39's executor-side
-    /// `validate_call_tier`.
+    /// A built-in declaring `Graph` tier with a write mutability surfaces at
+    /// build time rather than slipping through to a runtime
+    /// `ProcedureError::TierMismatch`.
     #[test]
     fn mutability_inconsistent_with_declared_tier_returns_mutability_tier_mismatch() {
         #[derive(Clone, Copy)]
@@ -631,7 +628,6 @@ mod tests {
         ));
     }
 
-    /// Regression: BRIEF-41 round-1 Codex F5.
     /// `with_builtins()` returns `Result` so an `InternerCapExhausted`
     /// surface is recoverable. The happy path returns the platform
     /// registry; embedders that want infallible-or-panic semantics call

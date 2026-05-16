@@ -524,8 +524,9 @@ mod tests {
         }
         let valid_len = fs::metadata(&path).unwrap().len();
         // Fixed-prefix with valid payload_len = 0 but principal_len_p1 large
-        // enough that principal_len > MAX_PRINCIPAL_BYTES. read_entry_header
-        // returns PrincipalTooLarge; scan_existing must treat as torn-tail.
+        // enough that principal_len > MAX_PRINCIPAL_BYTES. The header decoder
+        // reports PrincipalTooLarge, and scan_existing must treat that as a
+        // torn tail rather than a durable corruption.
         let mut garbage = [0_u8; 32];
         let oversized_p1 = (MAX_PRINCIPAL_BYTES as u16).saturating_add(2);
         garbage[30..32].copy_from_slice(&oversized_p1.to_le_bytes());
