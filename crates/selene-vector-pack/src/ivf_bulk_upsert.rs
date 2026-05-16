@@ -66,7 +66,7 @@ impl ExternalMutationProcedure for IvfBulkUpsertProcedure {
             required_f32_matrix(IVF_BULK_UPSERT_PROC, args, 2, "vectors", node_ids.len())?;
         reject_empty_batch(IVF_BULK_UPSERT_PROC, &node_ids)?;
 
-        with_ivf_provider_mut(ctx, IVF_BULK_UPSERT_PROC, |provider| {
+        with_ivf_provider_mut(ctx, IVF_BULK_UPSERT_PROC, &index_name, |provider| {
             validate_vectors(IVF_BULK_UPSERT_PROC, &vectors, provider.config().dim)?;
             validate_node_ids(IVF_BULK_UPSERT_PROC, &node_ids)
         })?;
