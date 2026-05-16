@@ -217,7 +217,7 @@ pub(super) fn fresh_binding(
                 BindingDeclKind::InsertEdge,
                 crate::analyze::WriteKind::InsertEdge { binding, .. },
             ) => Some(*binding),
-            _ => return None,
+            _ => None,
         }
     })
 }

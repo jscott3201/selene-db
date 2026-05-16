@@ -6,13 +6,13 @@ use crate::{
         binding::BindingUse,
         category::StatementCategory,
         scope::{BindingScopeTree, ScopeId},
-        types::{ExprIdMap, ExprTypeTable},
+        types::{ExprIdLookup, ExprTypeTable},
         write_set::MutationWriteSet,
     },
 };
 
 /// A parsed and bind-pass-validated GQL statement.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AnalyzedStatement {
     /// Original statement shape, preserved for planner input.
     pub statement: AnalyzedStatementKind,
@@ -23,7 +23,7 @@ pub struct AnalyzedStatement {
     /// Inferred expression type cells.
     pub expr_types: ExprTypeTable,
     /// Expression-node to type-cell lookup for the owned statement AST.
-    pub expr_ids: ExprIdMap,
+    pub expr_ids: ExprIdLookup,
     /// Span of the root statement.
     pub span: SourceSpan,
     /// Per-statement classification for transaction-state enforcement.
@@ -38,7 +38,7 @@ impl AnalyzedStatement {
         scopes: BindingScopeTree,
         references: Vec<BindingUse>,
         expr_types: ExprTypeTable,
-        expr_ids: ExprIdMap,
+        expr_ids: ExprIdLookup,
         category: StatementCategory,
         write_set: Option<MutationWriteSet>,
     ) -> Self {

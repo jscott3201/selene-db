@@ -46,6 +46,20 @@ fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
     analyzed.expr_types.get(id).clone()
 }
 
+fn return_items(analyzed: &AnalyzedStatement) -> &[ReturnItem] {
+    let AnalyzedStatementKind::Query(query) = &analyzed.statement else {
+        panic!("expected query statement");
+    };
+    query
+        .statements
+        .iter()
+        .find_map(|statement| match statement {
+            PipelineStatement::Return(clause) => Some(clause.items.as_slice()),
+            _ => None,
+        })
+        .expect("RETURN clause exists")
+}
+
 #[test]
 fn integer_arithmetic_promotes_to_integer() {
     let analyzed = analyze_one("RETURN 1 + 2 AS sum").unwrap();
@@ -153,6 +167,46 @@ fn expr_type_table_is_deterministic_for_same_source() {
 
     assert_eq!(left.expr_types.len(), 3);
     assert_eq!(left_types, right_types);
+}
+
+#[test]
+fn expr_id_lookup_distinguishes_repeated_structural_occurrences() {
+    let analyzed = analyze_one("RETURN 1 + 1 AS a, 1 + 1 AS b").unwrap();
+    let items = return_items(&analyzed);
+    let first = analyzed
+        .expr_ids
+        .get(&items[0].expr)
+        .expect("first expression has ExprId");
+    let second = analyzed
+        .expr_ids
+        .get(&items[1].expr)
+        .expect("second expression has ExprId");
+
+    assert_ne!(first, second);
+    assert_eq!(
+        analyzed.expr_types.get(first),
+        &AnalyzedType::Resolved(GqlType::Integer)
+    );
+    assert_eq!(
+        analyzed.expr_types.get(second),
+        &AnalyzedType::Resolved(GqlType::Integer)
+    );
+}
+
+#[test]
+fn analyzed_statement_clone_preserves_expr_id_lookup() {
+    let analyzed = analyze_one("RETURN 1 + 2 AS sum").unwrap();
+    let cloned = analyzed.clone();
+    let item = &return_items(&cloned)[0];
+    let id = cloned
+        .expr_ids
+        .get(&item.expr)
+        .expect("cloned expression lookup preserves ExprId");
+
+    assert_eq!(
+        cloned.expr_types.get(id),
+        &AnalyzedType::Resolved(GqlType::Integer)
+    );
 }
 
 #[test]

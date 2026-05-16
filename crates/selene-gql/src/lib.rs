@@ -18,9 +18,9 @@ pub mod runtime;
 pub use crate::analyze::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl,
     BindingDeclKind, BindingId, BindingScope, BindingScopeTree, BindingUse, BindingUseKind,
-    ConditionClause, ElementKind, ExpectedType, ExprId, ExprIdMap, ExprTypeTable, InvalidLabelForm,
-    MutationWriteSet, ScopeId, ScopeKind, Side, StatementCategory, TypeMismatchContext, WriteKind,
-    WriteSetEntry, analyze,
+    ConditionClause, ElementKind, ExpectedType, ExprId, ExprIdLookup, ExprTypeTable,
+    InvalidLabelForm, MutationWriteSet, ScopeId, ScopeKind, Side, StatementCategory,
+    TypeMismatchContext, WriteKind, WriteSetEntry, analyze,
 };
 pub use crate::ast::{
     call::{ProcedureCall, YieldColumn, YieldItem},

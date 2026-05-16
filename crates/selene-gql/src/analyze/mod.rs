@@ -29,7 +29,7 @@ pub use error::{
     TypeMismatchContext,
 };
 pub use scope::{BindingScope, BindingScopeTree, ScopeId, ScopeKind};
-pub use types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable};
+pub use types::{AnalyzedType, ExprId, ExprIdLookup, ExprTypeTable};
 pub use write_set::{ElementKind, MutationWriteSet, WriteKind, WriteSetEntry};
 
 /// Analyze a parsed GQL statement.

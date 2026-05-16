@@ -18,7 +18,7 @@ use crate::{
         category::{self, StatementCategory},
         error::AnalysisError,
         scope::{BindingScopeTree, ScopeId, ScopeKind},
-        types::{AnalyzedType, ExprId, ExprIdMap, ExprTypeTable},
+        types::{AnalyzedType, ExprId, ExprIdLookup, ExprTypeTable},
         write_set::{ElementKind, MutationWriteSet, WriteKind, WriteSetEntry},
     },
 };
@@ -78,7 +78,7 @@ pub(crate) struct BindContext<'ctx> {
     current: ScopeId,
     references: Vec<BindingUse>,
     expr_types: ExprTypeTable,
-    expr_ids: ExprIdMap,
+    expr_ids: ExprIdLookup,
     write_set: MutationWriteSet,
     registry: &'ctx dyn ProcedureRegistry,
 }
@@ -92,7 +92,7 @@ impl<'ctx> BindContext<'ctx> {
             current,
             references: Vec::new(),
             expr_types: ExprTypeTable::default(),
-            expr_ids: ExprIdMap::default(),
+            expr_ids: ExprIdLookup::default(),
             write_set: MutationWriteSet::default(),
             registry,
         }
