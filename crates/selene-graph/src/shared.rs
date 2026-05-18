@@ -1,12 +1,15 @@
 //! Shared graph wrapper implementing lock-free reads and serialized writes.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::{GraphId, IStr};
+use selene_core::{Change, GraphId, IStr, SchemaChange, SchemaPropertyIndexKind};
 use selene_persist::{WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
@@ -25,6 +28,7 @@ use crate::write_txn::WriteTxn;
 pub struct SharedGraph {
     shared: Arc<RwLock<Arc<SeleneGraph>>>,
     snapshot: Arc<ArcSwap<SeleneGraph>>,
+    schema_version: Arc<AtomicU64>,
     allocator: Arc<Mutex<IdAllocator>>,
     providers: Vec<Arc<dyn IndexProvider>>,
     durable_providers: Vec<Arc<dyn DurableProvider>>,
@@ -162,6 +166,7 @@ impl SharedGraph {
         Ok(Self {
             shared: Arc::new(RwLock::new(graph)),
             snapshot,
+            schema_version: Arc::new(AtomicU64::new(0)),
             allocator: Arc::new(Mutex::new(allocator)),
             providers,
             durable_providers,
@@ -172,6 +177,16 @@ impl SharedGraph {
     #[must_use]
     pub fn read(&self) -> Arc<SeleneGraph> {
         self.snapshot.load_full()
+    }
+
+    /// Return the runtime schema-version epoch used for plan-cache invalidation.
+    ///
+    /// The epoch starts at zero for each [`SharedGraph`] instance and advances
+    /// only after a successful commit whose change set contains
+    /// [`Change::SchemaChanged`].
+    #[must_use]
+    pub fn schema_version(&self) -> u64 {
+        self.schema_version.load(Ordering::Acquire)
     }
 
     /// Return the bound graph type, if this is a closed graph.
@@ -232,6 +247,15 @@ impl SharedGraph {
         txn.guard_mut()
             .property_index
             .insert((label, property), Arc::new(index));
+        let graph = txn.read().graph_id();
+        txn.changes.push(Change::SchemaChanged {
+            graph,
+            change: SchemaChange::PropertyIndexCreated {
+                label,
+                property,
+                kind: schema_kind_from(kind),
+            },
+        });
         txn.commit()?;
         Ok(())
     }
@@ -246,6 +270,11 @@ impl SharedGraph {
             return Ok(());
         }
         txn.guard_mut().property_index.remove(&(label, property));
+        let graph = txn.read().graph_id();
+        txn.changes.push(Change::SchemaChanged {
+            graph,
+            change: SchemaChange::PropertyIndexDropped { label, property },
+        });
         txn.commit()?;
         Ok(())
     }
@@ -286,6 +315,7 @@ impl SharedGraph {
         WriteTxn::new(
             self.shared.write(),
             Arc::clone(&self.snapshot),
+            Arc::clone(&self.schema_version),
             self.allocator.lock(),
             self.providers.clone(),
             self.durable_providers.clone(),
@@ -352,6 +382,17 @@ impl SharedGraphBuilder {
             Vec::new(),
             self.wal_writer,
         )
+    }
+}
+
+const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
+    match kind {
+        TypedIndexKind::I64 => SchemaPropertyIndexKind::I64,
+        TypedIndexKind::F64 => SchemaPropertyIndexKind::F64,
+        TypedIndexKind::String => SchemaPropertyIndexKind::String,
+        TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
+        TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
+        TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
     }
 }
 

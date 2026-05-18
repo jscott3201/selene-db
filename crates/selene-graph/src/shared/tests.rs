@@ -1,6 +1,8 @@
 use super::*;
 use parking_lot::Mutex;
-use selene_core::{Change, HlcTimestamp, LabelSet, PropertyMap, PropertyValueType, intern};
+use selene_core::{
+    Change, HlcTimestamp, LabelSet, PropertyMap, PropertyValueType, SchemaChange, intern,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -91,6 +93,132 @@ fn new_initial_state_is_empty() {
             .index_provider_by_tag(ProviderTag(CORE_PROVIDER_TAG))
             .is_some()
     );
+}
+
+#[test]
+fn shared_graph_schema_version_initial_zero() {
+    let shared = SharedGraph::new(GraphId::new(101));
+    assert_eq!(shared.schema_version(), 0);
+}
+
+#[test]
+fn schema_changed_commit_bumps_version() {
+    let graph_type = GraphTypeDef {
+        name: intern("schema.version.type").unwrap(),
+        node_types: Vec::new(),
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(102))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let label = intern("SchemaVersioned").unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node_type(label, LabelSet::single(label), Vec::new())
+        .expect("schema mutation succeeds");
+
+    txn.commit().expect("schema commit succeeds");
+
+    assert_eq!(shared.schema_version(), 1);
+}
+
+#[test]
+fn data_changed_commit_does_not_bump_version() {
+    let shared = SharedGraph::new(GraphId::new(103));
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(
+            LabelSet::single(intern("schema.version.data").unwrap()),
+            PropertyMap::new(),
+        )
+        .expect("data mutation succeeds");
+
+    txn.commit().expect("data commit succeeds");
+
+    assert_eq!(shared.schema_version(), 0);
+}
+
+#[test]
+fn index_extension_event_does_not_bump_version() {
+    let shared = SharedGraph::new(GraphId::new(104));
+    let mut txn = shared.begin_write();
+    txn.mutator().extension_event(
+        intern("schema.version.vector").unwrap(),
+        Arc::from([1_u8, 2, 3]),
+    );
+
+    txn.commit().expect("extension event commit succeeds");
+
+    assert_eq!(shared.schema_version(), 0);
+}
+
+#[test]
+fn direct_create_property_index_bumps_schema_version() {
+    let shared = SharedGraph::new(GraphId::new(105));
+    shared
+        .create_property_index(
+            intern("Person").unwrap(),
+            intern("age").unwrap(),
+            TypedIndexKind::I64,
+        )
+        .expect("create index succeeds");
+
+    assert_eq!(shared.schema_version(), 1);
+}
+
+#[test]
+fn direct_drop_property_index_bumps_schema_version_when_present() {
+    let shared = SharedGraph::new(GraphId::new(106));
+    let label = intern("Person").unwrap();
+    let property = intern("age").unwrap();
+    shared
+        .create_property_index(label, property, TypedIndexKind::I64)
+        .expect("create index succeeds");
+
+    shared
+        .drop_property_index(label, property)
+        .expect("drop index succeeds");
+
+    assert_eq!(shared.schema_version(), 2);
+}
+
+#[test]
+fn direct_drop_property_index_idempotent_does_not_bump() {
+    let shared = SharedGraph::new(GraphId::new(107));
+    shared
+        .drop_property_index(intern("Person").unwrap(), intern("age").unwrap())
+        .expect("absent drop succeeds");
+
+    assert_eq!(shared.schema_version(), 0);
+}
+
+#[test]
+fn failed_commit_does_not_bump_schema_version() {
+    let durable: Arc<dyn DurableProvider> = Arc::new(FailingDurableProvider);
+    let shared = SharedGraph::from_graph_with_core_and_durables(
+        SeleneGraph::new(GraphId::new(108)),
+        Vec::new(),
+        vec![durable],
+        None,
+    )
+    .unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator().schema_change(
+        GraphId::new(108),
+        SchemaChange::GraphCreated {
+            id: GraphId::new(109),
+            name: intern("failed.schema.commit").unwrap(),
+            graph_type: None,
+        },
+    );
+
+    assert!(matches!(
+        txn.commit(),
+        Err(GraphError::Durable { reason }) if reason.contains("synthetic durable failure")
+    ));
+    assert_eq!(shared.schema_version(), 0);
 }
 
 #[test]
