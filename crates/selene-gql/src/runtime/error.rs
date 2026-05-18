@@ -1,11 +1,38 @@
 //! Executor diagnostics and GQLSTATUS mapping.
 
-use crate::{GqlStatus, ProcedureError, SourceSpan};
+use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
 
 /// Query execution failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum ExecutorError {
+    /// Source text failed to parse before execution.
+    #[error("parse failed: {source}")]
+    #[diagnostic(code(SLENE_X_PARSE))]
+    Parse {
+        /// Underlying parser error.
+        #[source]
+        source: ParserError,
+    },
+
+    /// Semantic analysis failed before execution.
+    #[error("analysis failed: {source}")]
+    #[diagnostic(code(SLENE_X_ANALYZE))]
+    Analysis {
+        /// Underlying analyzer error.
+        #[source]
+        source: AnalysisError,
+    },
+
+    /// Planning failed before execution.
+    #[error("planning failed: {source}")]
+    #[diagnostic(code(SLENE_X_PLAN))]
+    Plan {
+        /// Underlying planner error.
+        #[source]
+        source: PlannerError,
+    },
+
     /// Runtime data exception such as arithmetic overflow or division by zero.
     #[error("execution data exception: {message}")]
     #[diagnostic(code(SLENE_X_22000))]
@@ -114,6 +141,9 @@ impl ExecutorError {
     #[must_use]
     pub const fn gqlstatus(&self) -> GqlStatus {
         match self {
+            Self::Parse { source } => source.gqlstatus(),
+            Self::Analysis { source } => source.gqlstatus(),
+            Self::Plan { source } => source.gqlstatus(),
             Self::DataException { .. } => GqlStatus::DATA_EXCEPTION,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::InvalidTransactionState { .. }

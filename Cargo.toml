@@ -72,6 +72,7 @@ rustc-hash = "2.1"
 roaring = "0.11"
 triomphe = "0.1"
 tracing = "0.1"
+lru = "0.16"
 blake3 = "1.8"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = "0.13"

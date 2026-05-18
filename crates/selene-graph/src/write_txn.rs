@@ -1,6 +1,9 @@
 //! Write transaction RAII handle per spec 03 sections 4 and 6.
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
@@ -34,6 +37,7 @@ pub struct CommitOutcome {
 pub struct WriteTxn<'g> {
     pub(crate) guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
     pub(crate) snapshot: Arc<ArcSwap<SeleneGraph>>,
+    pub(crate) schema_version: Arc<AtomicU64>,
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
@@ -45,6 +49,7 @@ impl<'g> WriteTxn<'g> {
     pub(crate) fn new(
         guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
         snapshot: Arc<ArcSwap<SeleneGraph>>,
+        schema_version: Arc<AtomicU64>,
         allocator: MutexGuard<'g, IdAllocator>,
         providers: Vec<Arc<dyn IndexProvider>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
@@ -53,6 +58,7 @@ impl<'g> WriteTxn<'g> {
         Self {
             guard,
             snapshot,
+            schema_version,
             pre_txn,
             allocator,
             providers,
@@ -106,6 +112,10 @@ impl<'g> WriteTxn<'g> {
             "pre_txn must be present at commit entry"
         );
 
+        let schema_changed = self
+            .changes
+            .iter()
+            .any(|change| matches!(change, Change::SchemaChanged { .. }));
         let next_node_id = self.allocator.peek_next_node();
         let next_edge_id = self.allocator.peek_next_edge();
         {
@@ -122,10 +132,6 @@ impl<'g> WriteTxn<'g> {
         let generation = self.read().meta.generation;
 
         if let Some(type_def) = self.read().meta.bound_type.as_deref() {
-            let schema_changed = self
-                .changes
-                .iter()
-                .any(|change| matches!(change, Change::SchemaChanged { .. }));
             for change in &self.changes {
                 crate::type_validator::validate_change(change, self.read(), type_def)?;
             }
@@ -147,6 +153,14 @@ impl<'g> WriteTxn<'g> {
 
         self.pre_txn = None;
         self.snapshot.store(Arc::clone(&*self.guard));
+        // Publish the schema-version bump AFTER snapshot.store so any reader
+        // observing the new epoch is guaranteed to also observe the new
+        // snapshot. Reverse ordering would let a reader read `epoch=N` and
+        // then load the prior snapshot, planning against stale schema and
+        // caching the plan under the new epoch (Codex PR #127 auto-review P1).
+        if schema_changed {
+            self.schema_version.fetch_add(1, Ordering::AcqRel);
+        }
 
         let changes = std::mem::take(&mut self.changes);
 
@@ -178,6 +192,14 @@ impl<'g> WriteTxn<'g> {
     #[must_use]
     pub fn change_count(&self) -> usize {
         self.changes.len()
+    }
+
+    /// Whether this transaction has accumulated schema-changing work.
+    #[must_use]
+    pub fn has_schema_changes(&self) -> bool {
+        self.changes
+            .iter()
+            .any(|change| matches!(change, Change::SchemaChanged { .. }))
     }
 }
 

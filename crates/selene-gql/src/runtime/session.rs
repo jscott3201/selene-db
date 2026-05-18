@@ -1,16 +1,20 @@
 //! Statement-session state for explicit transaction control.
 
-use std::{sync::Arc, time::Instant};
+use std::{num::NonZeroUsize, sync::Arc, time::Instant};
 
 use selene_core::Change;
 use selene_graph::{SharedGraph, WriteTxn};
 
-use crate::{SourceSpan, runtime::ExecutorError, runtime::WriteOutcome};
+use crate::{
+    SourceSpan,
+    runtime::{ExecutorError, PlanCache, PlanCacheStats, WriteOutcome},
+};
 
 /// Caller-owned executor session bound to one shared graph.
 pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
+    pub(crate) plan_cache: Option<PlanCache>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
     pub(crate) aborted: bool,
     pub(crate) tx_started_at: Option<Instant>,
@@ -69,6 +73,7 @@ impl<'g> Session<'g> {
         Self {
             graph,
             principal: None,
+            plan_cache: None,
             active_txn: None,
             aborted: false,
             tx_started_at: None,
@@ -82,10 +87,34 @@ impl<'g> Session<'g> {
         Self {
             graph,
             principal: Some(principal),
+            plan_cache: None,
             active_txn: None,
             aborted: false,
             tx_started_at: None,
             tx_statement_count: 0,
+        }
+    }
+
+    /// Enable this session's source-string plan cache with the given capacity.
+    ///
+    /// The cache is Session-local and invalidates entries when the backing
+    /// graph's schema-version epoch changes.
+    #[must_use]
+    pub fn with_plan_cache(mut self, capacity: NonZeroUsize) -> Self {
+        self.plan_cache = Some(PlanCache::new(capacity));
+        self
+    }
+
+    /// Return this session's plan-cache counters, if caching is enabled.
+    #[must_use]
+    pub fn plan_cache_stats(&self) -> Option<PlanCacheStats> {
+        self.plan_cache.as_ref().map(PlanCache::stats)
+    }
+
+    /// Clear this session's cached plans without resetting counters.
+    pub fn clear_plan_cache(&mut self) {
+        if let Some(cache) = self.plan_cache.as_mut() {
+            cache.clear();
         }
     }
 
@@ -249,10 +278,10 @@ impl<'g> Session<'g> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{num::NonZeroUsize, time::Instant};
 
-    use selene_core::GraphId;
-    use selene_graph::SharedGraph;
+    use selene_core::{GraphId, IStr, intern_with_admission};
+    use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
     use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
     use super::*;
@@ -275,6 +304,183 @@ mod tests {
     fn execute(source: &str, session: &mut Session<'_>) -> Result<StatementOutput, ExecutorError> {
         let plan = planned(source);
         execute_statement(&plan, session, &EmptyProcedureRegistry)
+    }
+
+    fn admitted(value: &str) -> IStr {
+        intern_with_admission(value).expect("test name admits").0
+    }
+
+    fn empty_closed_graph(id: u64) -> SharedGraph {
+        SharedGraph::builder(GraphId::new(id))
+            .bound_to(GraphTypeDef {
+                name: admitted("Empty"),
+                node_types: Vec::new(),
+                edge_types: Vec::new(),
+            })
+            .expect("empty type validates")
+            .build()
+            .expect("closed graph builds")
+    }
+
+    #[test]
+    fn session_without_cache_executes_source_normally() {
+        let graph = SharedGraph::new(GraphId::new(3897));
+        let mut session = Session::new(&graph);
+
+        let output = session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect("source executes");
+
+        let StatementOutput::Rows(table) = output else {
+            panic!("RETURN should produce rows");
+        };
+        assert_eq!(table.row_count(), 1);
+        assert!(session.plan_cache_stats().is_none());
+    }
+
+    #[test]
+    fn session_with_cache_hits_on_second_source_execute() {
+        let graph = SharedGraph::new(GraphId::new(3898));
+        let mut session =
+            Session::new(&graph).with_plan_cache(NonZeroUsize::new(4).expect("nonzero"));
+
+        session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect("first source execute succeeds");
+        session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect("second source execute succeeds");
+
+        let stats = session.plan_cache_stats().expect("cache enabled");
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.stale_invalidations, 0);
+    }
+
+    #[test]
+    fn session_schema_change_invalidates_cached_source_plan() {
+        let graph = SharedGraph::new(GraphId::new(3899));
+        let mut session =
+            Session::new(&graph).with_plan_cache(NonZeroUsize::new(4).expect("nonzero"));
+
+        session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect("first source execute succeeds");
+        graph
+            .create_property_index(admitted("Person"), admitted("age"), TypedIndexKind::I64)
+            .expect("index creation bumps schema");
+        session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect("second source execute succeeds");
+
+        let stats = session.plan_cache_stats().expect("cache enabled");
+        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.hits, 0);
+        assert_eq!(stats.stale_invalidations, 1);
+    }
+
+    #[test]
+    fn execute_source_aborted_session_returns_in_failed_transaction_without_compiling() {
+        // Codex PR #127 auto-review P2 #1: an aborted session must short-circuit
+        // non-control source statements before analyze/plan/cache-insert work.
+        let graph = SharedGraph::new(GraphId::new(3970));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+        session
+            .execute_source(
+                "INSERT (n:Person) SET n.age = 1 / 0 FINISH",
+                &EmptyProcedureRegistry,
+            )
+            .expect_err("division-by-zero aborts the transaction");
+        assert!(session.is_aborted());
+
+        let err = session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect_err("aborted session rejects non-control");
+        assert!(matches!(err, ExecutorError::InFailedTransaction { .. }));
+        session.abort();
+    }
+
+    #[test]
+    fn execute_source_rollback_works_on_aborted_session() {
+        // Aborted session must still accept TX-control statements (ROLLBACK
+        // is the recovery path). Codex PR #127 auto-review P2 #1 contract.
+        let graph = SharedGraph::new(GraphId::new(3971));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+        session
+            .execute_source(
+                "INSERT (n:Person) SET n.age = 1 / 0 FINISH",
+                &EmptyProcedureRegistry,
+            )
+            .expect_err("division-by-zero aborts the transaction");
+        assert!(session.is_aborted());
+
+        session
+            .execute_source("ROLLBACK", &EmptyProcedureRegistry)
+            .expect("rollback succeeds on aborted session");
+        assert!(!session.is_aborted());
+        assert!(!session.has_active_txn());
+    }
+
+    #[test]
+    fn execute_source_parse_failure_aborts_active_tx() {
+        // Codex PR #127 auto-review P2 #2: parse errors inside an explicit
+        // transaction must abort the transaction (PostgreSQL-style "any error
+        // → rollback" contract). Parallel for analyze/plan failures.
+        let graph = SharedGraph::new(GraphId::new(3972));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        let err = session
+            .execute_source("NOT A VALID GQL STATEMENT", &EmptyProcedureRegistry)
+            .expect_err("malformed source errors");
+        assert!(matches!(err, ExecutorError::Parse { .. }));
+        assert!(session.is_aborted());
+        session.abort();
+    }
+
+    #[test]
+    fn execute_source_parse_failure_outside_tx_does_not_abort() {
+        // Outside an explicit TX, the parse error returns as-is. Session has
+        // no `aborted` semantics outside a TX (aborted flag is meaningless).
+        let graph = SharedGraph::new(GraphId::new(3973));
+        let mut session = Session::new(&graph);
+
+        let err = session
+            .execute_source("NOT A VALID GQL STATEMENT", &EmptyProcedureRegistry)
+            .expect_err("malformed source errors");
+        assert!(matches!(err, ExecutorError::Parse { .. }));
+        assert!(!session.has_active_txn());
+        assert!(!session.is_aborted());
+    }
+
+    #[test]
+    fn execute_source_uses_transaction_local_schema_after_catalog_change() {
+        let graph = empty_closed_graph(3901);
+        let mut session =
+            Session::new(&graph).with_plan_cache(NonZeroUsize::new(4).expect("nonzero"));
+
+        session
+            .execute_source("START TRANSACTION", &EmptyProcedureRegistry)
+            .expect("start succeeds");
+        session
+            .execute_source("CREATE NODE TYPE :Person ()", &EmptyProcedureRegistry)
+            .expect("catalog source succeeds");
+        session
+            .execute_source("INSERT (:Person)", &EmptyProcedureRegistry)
+            .expect("insert sees transaction-local schema");
+        session
+            .execute_source("COMMIT", &EmptyProcedureRegistry)
+            .expect("commit succeeds");
+
+        assert_eq!(graph.read().node_count(), 1);
+        assert_eq!(
+            graph.graph_type().expect("closed graph").node_types[0]
+                .name
+                .as_str(),
+            "Person"
+        );
     }
 
     #[test]
