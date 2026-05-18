@@ -18,6 +18,7 @@ use self::{
     predicates::{
         eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
     },
+    scalar_fns::eval_function_call,
 };
 
 /// Evaluate a value expression against one binding-table row.
@@ -72,9 +73,13 @@ pub fn evaluate(
                     span: *span,
                 })
         }
-        ValueExpr::FunctionCall { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "function call evaluation not implemented",
-        }),
+        ValueExpr::FunctionCall {
+            name,
+            args,
+            star,
+            distinct,
+            span,
+        } => eval_function_call(name, args, *star, *distinct, *span, binding, schema, ctx),
         ValueExpr::Case { .. } => Err(ExecutorError::ImplementationDefined {
             detail: "CASE evaluation not implemented",
         }),

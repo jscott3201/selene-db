@@ -87,6 +87,45 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Scalar function name was not registered in the v1.1 closed set.
+    #[error("unknown function: {name}")]
+    #[diagnostic(code(SLENE_X_42883))]
+    UnknownFunction {
+        /// Function name as written by the caller.
+        name: String,
+        /// Source span for the function call.
+        #[label("unknown function")]
+        span: SourceSpan,
+    },
+
+    /// Scalar function received the wrong number of arguments.
+    #[error("function {name} expected {expected} argument(s), got {actual}")]
+    #[diagnostic(code(SLENE_X_42883))]
+    FunctionArityMismatch {
+        /// Function name as written by the caller.
+        name: String,
+        /// Human-readable arity contract.
+        expected: &'static str,
+        /// Actual argument count.
+        actual: usize,
+        /// Source span for the function call.
+        #[label("wrong arity")]
+        span: SourceSpan,
+    },
+
+    /// Scalar function call used an aggregate-only modifier.
+    #[error("function {name} does not allow {modifier}")]
+    #[diagnostic(code(SLENE_X_42883))]
+    InvalidFunctionModifier {
+        /// Function name as written by the caller.
+        name: String,
+        /// Rejected modifier.
+        modifier: &'static str,
+        /// Source span for the function call.
+        #[label("invalid function modifier")]
+        span: SourceSpan,
+    },
+
     /// Expression feature is intentionally outside the v1.1 evaluator surface.
     #[error("feature not supported in v1.1: {feature}")]
     #[diagnostic(code(SLENE_X_0A000))]
@@ -192,6 +231,9 @@ impl ExecutorError {
             Self::UnboundParameter { .. } | Self::InvalidParameterType { .. } => {
                 GqlStatus::INVALID_PROCEDURE_ARGUMENT
             }
+            Self::UnknownFunction { .. }
+            | Self::FunctionArityMismatch { .. }
+            | Self::InvalidFunctionModifier { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::InvalidTransactionState { .. }
             | Self::TransactionAlreadyActive { .. }

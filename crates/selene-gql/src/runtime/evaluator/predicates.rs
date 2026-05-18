@@ -116,7 +116,10 @@ pub(super) fn eval_all_different(
                 Value::Bool(false) => {}
                 Value::Null => saw_unknown = true,
                 _ => {
-                    return data_exception("ALL_DIFFERENT comparison did not produce boolean", span);
+                    return data_exception(
+                        "ALL_DIFFERENT comparison did not produce boolean",
+                        span,
+                    );
                 }
             }
         }
