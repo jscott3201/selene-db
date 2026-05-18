@@ -46,6 +46,8 @@ fn bench_write_e2e(c: &mut Criterion) {
             WriteCorpus::match_delete(),
         );
         bench_gql_multi_statement(&mut group, scale);
+        bench_explicit_txn_3_inserts_rust_api(&mut group, scale);
+        bench_explicit_txn_3_inserts_rollback(&mut group, scale);
         bench_direct_flush(&mut group, scale);
         bench_direct_flush_every10(&mut group, scale);
     }
@@ -142,6 +144,68 @@ fn bench_gql_multi_statement(
                         .sum::<usize>();
                     drop(session);
                     std::hint::black_box((state, rows))
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
+fn bench_explicit_txn_3_inserts_rust_api(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+) {
+    group.throughput(Throughput::Elements(3));
+    let plans = WriteCorpus::multi_statement_txn()[1..4]
+        .iter()
+        .map(|source| common::plan_write(source))
+        .collect::<Vec<_>>();
+    group.bench_function(
+        BenchmarkId::new("explicit_txn_3_inserts_rust_api", scale),
+        |b| {
+            b.iter_batched(
+                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                |state| {
+                    let mut session = Session::new(&state.graph);
+                    session.start_transaction().expect("start succeeds");
+                    let rows = plans
+                        .iter()
+                        .map(|plan| common::execute_preplanned(plan, &mut session))
+                        .sum::<usize>();
+                    let outcome = session.commit_transaction().expect("commit succeeds");
+                    drop(session);
+                    std::hint::black_box((state, rows + outcome.changes.len()))
+                },
+                BatchSize::LargeInput,
+            );
+        },
+    );
+}
+
+fn bench_explicit_txn_3_inserts_rollback(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+) {
+    group.throughput(Throughput::Elements(3));
+    let plans = WriteCorpus::multi_statement_txn()[1..4]
+        .iter()
+        .map(|source| common::plan_write(source))
+        .collect::<Vec<_>>();
+    group.bench_function(
+        BenchmarkId::new("explicit_txn_3_inserts_rollback", scale),
+        |b| {
+            b.iter_batched(
+                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                |state| {
+                    let mut session = Session::new(&state.graph);
+                    session.start_transaction().expect("start succeeds");
+                    let rows = plans
+                        .iter()
+                        .map(|plan| common::execute_preplanned(plan, &mut session))
+                        .sum::<usize>();
+                    let outcome = session.rollback_transaction().expect("rollback succeeds");
+                    drop(session);
+                    std::hint::black_box((state, rows + outcome.discarded_changes))
                 },
                 BatchSize::LargeInput,
             );
