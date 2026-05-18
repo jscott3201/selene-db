@@ -6,8 +6,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
 
+use std::num::NonZeroUsize;
+
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_gql::Session;
+use selene_core::intern;
+use selene_gql::{EmptyProcedureRegistry, Session, StatementOutput};
+use selene_graph::TypedIndexKind;
 use selene_persist::SyncPolicy;
 use selene_testing::{BenchProfile, WriteCorpus};
 
@@ -21,6 +25,8 @@ fn bench_write_e2e(c: &mut Criterion) {
             scale,
             WriteCorpus::insert_single_node(),
         );
+        bench_gql_insert_single_node_cached(&mut group, scale);
+        bench_gql_insert_single_node_cached_with_schema_churn(&mut group, scale);
         bench_gql_fresh_preplanned_with_flush(
             &mut group,
             "gql_insert_single_node_preplanned_with_flush",
@@ -52,6 +58,90 @@ fn bench_write_e2e(c: &mut Criterion) {
         bench_direct_flush_every10(&mut group, scale);
     }
     group.finish();
+}
+
+fn bench_gql_insert_single_node_cached(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+) {
+    group.throughput(Throughput::Elements(1));
+    let state = common::gql_write_state(scale, SyncPolicy::EveryN(1_000));
+    let registry = EmptyProcedureRegistry;
+    let source = WriteCorpus::insert_single_node();
+    let mut session =
+        Session::new(&state.graph).with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
+    execute_cached_source(&mut session, source, &registry);
+    group.bench_function(
+        BenchmarkId::new("gql_insert_single_node_cached", scale),
+        |b| {
+            b.iter(|| {
+                let rows = execute_cached_source(&mut session, source, &registry);
+                std::hint::black_box(rows)
+            });
+        },
+    );
+    std::hint::black_box(&state);
+}
+
+fn bench_gql_insert_single_node_cached_with_schema_churn(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    scale: usize,
+) {
+    group.throughput(Throughput::Elements(1));
+    let state = common::gql_write_state(scale, SyncPolicy::EveryN(1_000));
+    let registry = EmptyProcedureRegistry;
+    let source = WriteCorpus::insert_single_node();
+    let label = intern("Person").expect("Person label interns");
+    let property = intern("plan_cache_churn").expect("churn property interns");
+    let mut session =
+        Session::new(&state.graph).with_plan_cache(NonZeroUsize::new(64).expect("nonzero"));
+    execute_cached_source(&mut session, source, &registry);
+    let mut iteration = 0_u64;
+    let mut index_exists = false;
+    group.bench_function(
+        BenchmarkId::new("gql_insert_single_node_cached_with_schema_churn", scale),
+        |b| {
+            b.iter(|| {
+                if iteration.is_multiple_of(10) {
+                    if index_exists {
+                        state
+                            .graph
+                            .drop_property_index(label, property)
+                            .expect("churn index drops");
+                    } else {
+                        state
+                            .graph
+                            .create_property_index(label, property, TypedIndexKind::I64)
+                            .expect("churn index creates");
+                    }
+                    index_exists = !index_exists;
+                }
+                iteration = iteration.saturating_add(1);
+                let rows = execute_cached_source(&mut session, source, &registry);
+                std::hint::black_box(rows)
+            });
+        },
+    );
+    std::hint::black_box(&state);
+}
+
+fn execute_cached_source(
+    session: &mut Session<'_>,
+    source: &str,
+    registry: &EmptyProcedureRegistry,
+) -> usize {
+    match session
+        .execute_source(source, registry)
+        .expect("cached write statement executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        StatementOutput::Written(outcome) => {
+            let rows = outcome.rows.as_ref().map_or(0, |table| table.row_count());
+            rows + outcome.changes.len()
+        }
+        StatementOutput::Empty => 0,
+        _ => panic!("unexpected statement output"),
+    }
 }
 
 fn bench_gql_per_iter_plan(
