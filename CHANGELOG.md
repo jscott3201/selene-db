@@ -19,6 +19,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Live `CoreProvider` WAL writes through `SharedGraphBuilder::with_wal(...)`
   and `SharedGraph::from_graph_with_wal(...)`.
 - `parse_many(...)` for semicolon-separated multi-statement GQL scripts.
+- `Session::start_transaction`, `Session::commit_transaction`, and
+  `Session::rollback_transaction` for explicit transaction control without
+  parser round-trips. Returns `TransactionOutcome` / `RollbackOutcome` with
+  changes, durable_at, statement_count, and duration metadata.
+- `write_e2e` benches for explicit-transaction Rust API commit and rollback
+  paths.
 
 ## [1.0.0] — 2026-05-16
 

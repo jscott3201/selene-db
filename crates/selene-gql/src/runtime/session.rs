@@ -1,10 +1,11 @@
 //! Statement-session state for explicit transaction control.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
+use selene_core::Change;
 use selene_graph::{SharedGraph, WriteTxn};
 
-use crate::runtime::ExecutorError;
+use crate::{SourceSpan, runtime::ExecutorError, runtime::WriteOutcome};
 
 /// Caller-owned executor session bound to one shared graph.
 pub struct Session<'g> {
@@ -12,6 +13,53 @@ pub struct Session<'g> {
     principal: Option<Arc<[u8]>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
     pub(crate) aborted: bool,
+    pub(crate) tx_started_at: Option<Instant>,
+    pub(crate) tx_statement_count: u32,
+}
+
+/// Metadata returned after committing an explicit transaction through a [`Session`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct TransactionOutcome {
+    /// Total changes aggregated across all statements in the transaction.
+    pub changes: Vec<Change>,
+    /// Graph generation published by the commit.
+    pub generation: u64,
+    /// Next node ID after the commit.
+    pub next_node_id: u64,
+    /// Next edge ID after the commit.
+    pub next_edge_id: u64,
+    /// Highest sequence reported by commit-critical durable providers.
+    pub durable_at: Option<u64>,
+    /// Wall-clock duration from `start_transaction` to commit completion.
+    pub duration_micros: u64,
+    /// Number of accepted non-control statements in the transaction window.
+    pub statement_count: u32,
+}
+
+impl TransactionOutcome {
+    pub(crate) fn into_write_outcome(self) -> WriteOutcome {
+        WriteOutcome {
+            rows: None,
+            changes: self.changes,
+            generation: self.generation,
+            next_node_id: self.next_node_id,
+            next_edge_id: self.next_edge_id,
+            durable_at: self.durable_at,
+        }
+    }
+}
+
+/// Metadata returned after rolling back an explicit transaction through a [`Session`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RollbackOutcome {
+    /// Count of changes discarded by the rollback.
+    pub discarded_changes: usize,
+    /// Number of accepted non-control statements in the transaction window.
+    pub statement_count: u32,
+    /// Wall-clock duration from `start_transaction` to rollback completion.
+    pub duration_micros: u64,
 }
 
 impl<'g> Session<'g> {
@@ -23,6 +71,8 @@ impl<'g> Session<'g> {
             principal: None,
             active_txn: None,
             aborted: false,
+            tx_started_at: None,
+            tx_statement_count: 0,
         }
     }
 
@@ -34,6 +84,8 @@ impl<'g> Session<'g> {
             principal: Some(principal),
             active_txn: None,
             aborted: false,
+            tx_started_at: None,
+            tx_statement_count: 0,
         }
     }
 
@@ -59,6 +111,97 @@ impl<'g> Session<'g> {
     #[must_use]
     pub const fn is_aborted(&self) -> bool {
         self.aborted
+    }
+
+    /// Open an explicit write transaction.
+    ///
+    /// Subsequent non-control statements executed through this session run
+    /// inside the transaction until [`Self::commit_transaction`] or
+    /// [`Self::rollback_transaction`] closes it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::TransactionAlreadyActive`] when this session
+    /// already owns an explicit transaction.
+    pub fn start_transaction(&mut self) -> Result<(), ExecutorError> {
+        if self.active_txn.is_some() {
+            return Err(ExecutorError::TransactionAlreadyActive {
+                span: SourceSpan::default(),
+            });
+        }
+        self.active_txn = Some(self.graph.begin_write());
+        self.tx_started_at = Some(Instant::now());
+        self.tx_statement_count = 0;
+        self.aborted = false;
+        Ok(())
+    }
+
+    /// Commit the open explicit transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::NoActiveTransaction`] when no explicit
+    /// transaction is open, [`ExecutorError::InFailedTransaction`] when the
+    /// transaction has been aborted by a failed statement, or
+    /// [`ExecutorError::GraphMutation`] when the graph commit is rejected.
+    pub fn commit_transaction(&mut self) -> Result<TransactionOutcome, ExecutorError> {
+        if self.aborted {
+            if let Some(txn) = self.active_txn.take() {
+                txn.rollback();
+            }
+            self.clear_tx_state();
+            return Err(ExecutorError::InFailedTransaction {
+                span: SourceSpan::default(),
+            });
+        }
+        let txn = self
+            .active_txn
+            .take()
+            .ok_or(ExecutorError::NoActiveTransaction {
+                span: SourceSpan::default(),
+            })?;
+        let statement_count = self.tx_statement_count;
+        let outcome = txn.commit_with_principal(self.principal.clone());
+        let duration_micros = self.tx_duration_micros();
+        self.clear_tx_state();
+        let outcome = outcome.map_err(|source| ExecutorError::GraphMutation {
+            source,
+            span: SourceSpan::default(),
+        })?;
+        Ok(TransactionOutcome {
+            changes: outcome.changes,
+            generation: outcome.generation,
+            next_node_id: outcome.next_node_id,
+            next_edge_id: outcome.next_edge_id,
+            durable_at: outcome.durable_at,
+            duration_micros,
+            statement_count,
+        })
+    }
+
+    /// Roll back the open explicit transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::NoActiveTransaction`] when no explicit
+    /// transaction is open.
+    pub fn rollback_transaction(&mut self) -> Result<RollbackOutcome, ExecutorError> {
+        let txn = self
+            .active_txn
+            .take()
+            .ok_or(ExecutorError::NoActiveTransaction {
+                span: SourceSpan::default(),
+            })?;
+        let discarded_changes = txn.change_count();
+        let statement_count = self.tx_statement_count;
+        let duration_micros = self.tx_duration_micros();
+        txn.rollback();
+        self.clear_tx_state();
+        Ok(RollbackOutcome {
+            discarded_changes,
+            statement_count,
+            duration_micros,
+        })
     }
 
     /// Flush every commit-critical durable provider registered on this graph.
@@ -89,6 +232,238 @@ impl<'g> Session<'g> {
         if let Some(txn) = self.active_txn.take() {
             txn.rollback();
         }
+        self.clear_tx_state();
+    }
+
+    fn tx_duration_micros(&self) -> u64 {
+        self.tx_started_at
+            .map_or(0, |started| started.elapsed().as_micros() as u64)
+    }
+
+    fn clear_tx_state(&mut self) {
         self.aborted = false;
+        self.tx_started_at = None;
+        self.tx_statement_count = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use selene_core::GraphId;
+    use selene_graph::SharedGraph;
+    use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
+
+    use super::*;
+    use crate::{
+        analyze::analyze,
+        parser::parse,
+        plan::ExecutionPlan,
+        plan::plan,
+        procedure_registry::EmptyProcedureRegistry,
+        runtime::statement::{StatementOutput, execute_statement},
+    };
+
+    fn planned(source: &str) -> ExecutionPlan {
+        let statement = parse(source).expect("test input parses");
+        let analyzed =
+            analyze(statement, &EmptyProcedureRegistry, None).expect("test input analyzes");
+        plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans")
+    }
+
+    fn execute(source: &str, session: &mut Session<'_>) -> Result<StatementOutput, ExecutorError> {
+        let plan = planned(source);
+        execute_statement(&plan, session, &EmptyProcedureRegistry)
+    }
+
+    #[test]
+    fn start_transaction_opens_active_txn() {
+        let graph = SharedGraph::new(GraphId::new(3900));
+        let mut session = Session::new(&graph);
+
+        session.start_transaction().expect("start succeeds");
+
+        assert!(session.has_active_txn());
+        assert!(session.tx_started_at.is_some());
+        assert_eq!(session.tx_statement_count, 0);
+        session.abort();
+    }
+
+    #[test]
+    fn start_transaction_nested_errors() {
+        let graph = SharedGraph::new(GraphId::new(3901));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        let err = session
+            .start_transaction()
+            .expect_err("nested start errors");
+
+        assert!(matches!(
+            err,
+            ExecutorError::TransactionAlreadyActive { .. }
+        ));
+        session.abort();
+    }
+
+    #[test]
+    fn commit_transaction_no_active_errors() {
+        let graph = SharedGraph::new(GraphId::new(3902));
+        let mut session = Session::new(&graph);
+
+        let err = session
+            .commit_transaction()
+            .expect_err("commit without transaction errors");
+
+        assert!(matches!(err, ExecutorError::NoActiveTransaction { .. }));
+    }
+
+    #[test]
+    fn rollback_transaction_no_active_errors() {
+        let graph = SharedGraph::new(GraphId::new(3903));
+        let mut session = Session::new(&graph);
+
+        let err = session
+            .rollback_transaction()
+            .expect_err("rollback without transaction errors");
+
+        assert!(matches!(err, ExecutorError::NoActiveTransaction { .. }));
+    }
+
+    #[test]
+    fn commit_aggregates_changes_across_statements() {
+        let graph = SharedGraph::new(GraphId::new(3904));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("first insert succeeds");
+        execute("INSERT (:Person { name: 'b' })", &mut session).expect("second insert succeeds");
+        execute("INSERT (:Person { name: 'c' })", &mut session).expect("third insert succeeds");
+        let outcome = session.commit_transaction().expect("commit succeeds");
+
+        assert_eq!(outcome.changes.len(), 3);
+        assert_eq!(outcome.statement_count, 3);
+        assert_eq!(graph.read().node_count(), 3);
+    }
+
+    #[test]
+    fn commit_counts_read_only_statement_inside_transaction() {
+        let graph = SharedGraph::new(GraphId::new(3905));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("insert succeeds");
+        execute("MATCH (n:Person) RETURN n", &mut session).expect("read succeeds");
+        let outcome = session.commit_transaction().expect("commit succeeds");
+
+        assert_eq!(outcome.changes.len(), 1);
+        assert_eq!(outcome.statement_count, 2);
+    }
+
+    #[test]
+    fn commit_returns_durable_at_with_core_provider() {
+        let dir = tempfile::tempdir().expect("tempdir is created");
+        let graph = SharedGraph::builder(GraphId::new(3906))
+            .with_wal(dir.path().join(DEFAULT_WAL_FILE_NAME), WalConfig::default())
+            .expect("wal config opens")
+            .build()
+            .expect("graph builds");
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("insert succeeds");
+        let outcome = session.commit_transaction().expect("commit succeeds");
+
+        assert_eq!(outcome.durable_at, Some(1));
+    }
+
+    #[test]
+    fn commit_returns_no_durable_at_without_provider() {
+        let graph = SharedGraph::new(GraphId::new(3907));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("insert succeeds");
+        let outcome = session.commit_transaction().expect("commit succeeds");
+
+        assert_eq!(outcome.durable_at, None);
+    }
+
+    #[test]
+    fn rollback_discards_changes() {
+        let graph = SharedGraph::new(GraphId::new(3908));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("insert succeeds");
+        session.rollback_transaction().expect("rollback succeeds");
+
+        assert_eq!(graph.read().node_count(), 0);
+        assert!(!session.has_active_txn());
+    }
+
+    #[test]
+    fn rollback_outcome_reports_count() {
+        let graph = SharedGraph::new(GraphId::new(3909));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("first insert succeeds");
+        execute("INSERT (:Person { name: 'b' })", &mut session).expect("second insert succeeds");
+        let outcome = session.rollback_transaction().expect("rollback succeeds");
+
+        assert_eq!(outcome.discarded_changes, 2);
+        assert_eq!(outcome.statement_count, 2);
+        assert_eq!(graph.read().node_count(), 0);
+    }
+
+    #[test]
+    fn duration_micros_is_populated() {
+        let graph = SharedGraph::new(GraphId::new(3910));
+        let mut session = Session::new(&graph);
+        let started = Instant::now();
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("insert succeeds");
+        let outcome = session.commit_transaction().expect("commit succeeds");
+
+        assert!(outcome.duration_micros <= started.elapsed().as_micros() as u64);
+    }
+
+    #[test]
+    fn failed_statement_does_not_increment_statement_count() {
+        // Codex auto-review P2: tx_statement_count only counts ACCEPTED
+        // non-control statements. A statement that errors inside the
+        // transaction window must not bump the counter — rollback's
+        // RollbackOutcome.statement_count must match docs.
+        let graph = SharedGraph::new(GraphId::new(3912));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("first insert succeeds");
+        execute("INSERT (n:Person) SET n.age = 1 / 0 FINISH", &mut session)
+            .expect_err("division by zero aborts statement");
+        let outcome = session.rollback_transaction().expect("rollback succeeds");
+
+        // The first INSERT counts (1); the failed second statement does not.
+        assert_eq!(outcome.statement_count, 1);
+    }
+
+    #[test]
+    fn abort_clears_tx_state_fields() {
+        let graph = SharedGraph::new(GraphId::new(3911));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("insert succeeds");
+
+        assert!(session.tx_started_at.is_some());
+        assert_eq!(session.tx_statement_count, 1);
+        session.abort();
+
+        assert!(!session.has_active_txn());
+        assert!(session.tx_started_at.is_none());
+        assert_eq!(session.tx_statement_count, 0);
+        assert_eq!(graph.read().node_count(), 0);
     }
 }

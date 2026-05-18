@@ -65,13 +65,19 @@ pub fn execute_statement(
             span: SourceSpan::default(),
         });
     }
-    match plan.category {
+    let counts_toward_tx =
+        plan.category != StatementCategory::TransactionControl && session.active_txn.is_some();
+    let result = match plan.category {
         StatementCategory::ReadOnly => execute_read_only(plan, session, registry),
         StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
             execute_write(plan, session, registry)
         }
         StatementCategory::TransactionControl => execute_transaction_control(plan, session),
+    };
+    if counts_toward_tx && result.is_ok() {
+        session.tx_statement_count = session.tx_statement_count.saturating_add(1);
     }
+    result
 }
 
 fn execute_read_only(
