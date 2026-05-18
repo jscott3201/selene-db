@@ -20,9 +20,11 @@ smallvec.workspace = true
 rustc-hash.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+lru.workspace = true
 
 [features]
 test-harness = []
+plan-cache-source-tracing = []
 
 [dev-dependencies]
 criterion.workspace = true

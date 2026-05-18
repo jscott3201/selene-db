@@ -19,6 +19,7 @@ mod hash_join;
 mod outer;
 mod pattern;
 mod pipeline;
+mod plan_cache;
 mod plan_runner;
 mod scan;
 mod session;
@@ -36,6 +37,7 @@ pub use context_tiers::{GraphContext, MutationContext, ProcedureContext};
 pub use error::ExecutorError;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
+pub use plan_cache::{PlanCache, PlanCacheStats};
 pub(crate) use plan_runner::execute_plan;
 pub use session::{RollbackOutcome, Session, TransactionOutcome};
 #[cfg(any(test, feature = "test-harness"))]

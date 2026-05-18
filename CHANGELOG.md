@@ -25,6 +25,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   changes, durable_at, statement_count, and duration metadata.
 - `write_e2e` benches for explicit-transaction Rust API commit and rollback
   paths.
+- `selene-graph` runtime schema-version epoch for committed schema changes,
+  exposed through `SharedGraph::schema_version()`.
+- `selene-gql` opt-in Session plan caching through
+  `Session::with_plan_cache(...)` and `Session::execute_source(...)`. The
+  cache invalidates on schema-version bumps and skips CALL plans until
+  procedure registries expose an epoch.
+- `write_e2e/gql_insert_single_node_cached` and
+  `write_e2e/gql_insert_single_node_cached_with_schema_churn` benches for the
+  Session plan-cache hot path.
 
 ## [1.0.0] — 2026-05-16
 

@@ -66,8 +66,9 @@ pub use crate::procedure_registry::{
 };
 pub use crate::runtime::{
     AdaptiveOptimizer, Binding, BindingTable, ExecutorError, GraphContext, MutationContext,
-    ProcedureContext, RollbackOutcome, Session, StatementOutput, TransactionOutcome, TxContext,
-    WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
+    PlanCache, PlanCacheStats, ProcedureContext, RollbackOutcome, Session, StatementOutput,
+    TransactionOutcome, TxContext, WriteOutcome, execute_pattern, execute_pipeline,
+    execute_statement,
 };
 
 #[cfg(any(test, feature = "test-harness"))]
