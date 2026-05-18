@@ -432,6 +432,25 @@ mod tests {
     }
 
     #[test]
+    fn failed_statement_does_not_increment_statement_count() {
+        // Codex auto-review P2: tx_statement_count only counts ACCEPTED
+        // non-control statements. A statement that errors inside the
+        // transaction window must not bump the counter — rollback's
+        // RollbackOutcome.statement_count must match docs.
+        let graph = SharedGraph::new(GraphId::new(3912));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        execute("INSERT (:Person { name: 'a' })", &mut session).expect("first insert succeeds");
+        execute("INSERT (n:Person) SET n.age = 1 / 0 FINISH", &mut session)
+            .expect_err("division by zero aborts statement");
+        let outcome = session.rollback_transaction().expect("rollback succeeds");
+
+        // The first INSERT counts (1); the failed second statement does not.
+        assert_eq!(outcome.statement_count, 1);
+    }
+
+    #[test]
     fn abort_clears_tx_state_fields() {
         let graph = SharedGraph::new(GraphId::new(3911));
         let mut session = Session::new(&graph);
