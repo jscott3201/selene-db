@@ -29,11 +29,13 @@ criterion.workspace = true
 iai-callgrind.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
+parking_lot.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 selene-persist = { path = "../selene-persist", version = "1.0.0" }
 selene-testing = { path = "../selene-testing", version = "1.0.0" }
 serde_json.workspace = true
+tempfile.workspace = true
 
 [[test]]
 name = "plan_snapshot_corpus"
@@ -55,6 +57,11 @@ required-features = ["test-harness"]
 
 [[bench]]
 name = "plan_optimize"
+harness = false
+required-features = ["test-harness"]
+
+[[bench]]
+name = "write_e2e"
 harness = false
 required-features = ["test-harness"]
 

@@ -49,6 +49,22 @@ name = "concurrent_read"
 harness = false
 
 [[bench]]
+name = "write_txn_lifecycle"
+harness = false
+
+[[bench]]
+name = "provider_fanout"
+harness = false
+
+[[bench]]
+name = "bound_type_validation"
+harness = false
+
+[[bench]]
+name = "concurrent_writers"
+harness = false
+
+[[bench]]
 name = "bfs"
 harness = false
 

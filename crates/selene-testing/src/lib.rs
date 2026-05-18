@@ -30,7 +30,7 @@ pub use algo_corpus::{
 pub use algo_pack_corpus::{
     AlgoPackCorpus, AlgoPackCorpusCategory, AlgoPackCorpusEntry, AlgoPackInvocation,
 };
-pub use bench_fixtures::BenchFixture;
+pub use bench_fixtures::{BenchFixture, WriteCorpus};
 pub use bench_profiles::BenchProfile;
 pub use closed_graph_fixtures::{person_company_graph_type, person_only_graph_type};
 pub use executor_corpus::{

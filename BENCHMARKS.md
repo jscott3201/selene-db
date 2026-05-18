@@ -26,7 +26,10 @@ _Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.
 
 Registered tokens: `selene-graph:single_graph:criterion`,
 `selene-graph:bulk_mutation:criterion`, `selene-graph:concurrent_read:criterion`,
-`selene-graph:bfs:criterion`.
+`selene-graph:bfs:criterion`, `selene-graph:write_txn_lifecycle:criterion`,
+`selene-graph:provider_fanout:criterion`,
+`selene-graph:bound_type_validation:criterion`,
+`selene-graph:concurrent_writers:criterion`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
@@ -44,6 +47,43 @@ Registered tokens: `selene-graph:single_graph:criterion`,
 | `graph_bfs` (depth=10) | 10.90 µs | 11.09 µs | 11.28 µs | Mostly traversal cost. |
 | `graph_bfs` (depth=50) | 94.45 µs | 106.6 µs | 108.3 µs | Saturates around 100 µs. |
 
+### §1a Write pipeline microbenches
+
+Rows added by BRIEF-111 are compile-registered but not measured yet. They isolate lifecycle, provider fanout, bound-type validation, and writer queueing costs before the GQL write e2e layer.
+
+| Bench | Variant | Median | Notes |
+|---|---|---:|---|
+| `write_txn_lifecycle/empty_commit` | n/a | TBD | Empty transaction commit floor. |
+| `write_txn_lifecycle/create_only` | batch=1 | TBD | Isolated node create + commit. |
+| `write_txn_lifecycle/create_only` | batch=10 | TBD | Isolated node create + commit. |
+| `write_txn_lifecycle/create_only` | batch=100 | TBD | Isolated node create + commit. |
+| `write_txn_lifecycle/create_only` | batch=1000 | TBD | Isolated node create + commit. |
+| `write_txn_lifecycle/delete_only` | batch=1 | TBD | Fixture seed excluded from timed body. |
+| `write_txn_lifecycle/delete_only` | batch=10 | TBD | Fixture seed excluded from timed body. |
+| `write_txn_lifecycle/delete_only` | batch=100 | TBD | Fixture seed excluded from timed body. |
+| `write_txn_lifecycle/delete_only` | batch=1000 | TBD | Fixture seed excluded from timed body. |
+| `provider_fanout/core_only` | providers=core | TBD | Commit notification baseline. |
+| `provider_fanout/extra_k1` | extra=1 | TBD | Additional no-op provider fanout. |
+| `provider_fanout/extra_k4` | extra=4 | TBD | Additional no-op provider fanout. |
+| `provider_fanout/extra_k16` | extra=16 | TBD | Additional no-op provider fanout. |
+| `provider_fanout/extra_k4_with_error_one` | extra=4 + error | TBD | Error-path notification scaling. |
+| `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | TBD | Opt-in via `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
+| `bound_type_validation/unbound_commit` | unbound | TBD | Commit without graph type validation. |
+| `bound_type_validation/bound_commit_simple` | simple type graph | TBD | Typed commit validation delta. |
+| `bound_type_validation/bound_commit_rich` | rich type graph | TBD | Wider type graph validation delta. |
+| `bound_type_validation/bound_schema_change` | schema change | TBD | Full graph state validation path. |
+
+| Bench | Threads | Median | Notes |
+|---|---:|---:|---|
+| `concurrent_writers/threads1` | 1 | TBD | 1000 total commits, 10 property updates per commit. |
+| `concurrent_writers/threads2` | 2 | TBD | 1000 total commits, 10 property updates per commit. |
+| `concurrent_writers/threads4` | 4 | TBD | 1000 total commits, 10 property updates per commit. |
+| `concurrent_writers/threads8` | 8 | TBD | 1000 total commits, 10 property updates per commit. |
+| `concurrent_writers/threads1_with_readers8` | 1 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/threads2_with_readers8` | 2 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/threads4_with_readers8` | 4 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/threads8_with_readers8` | 8 | TBD | Same writer load with 8 snapshot readers. |
+
 ## §2 selene-persist
 
 Registered tokens: `selene-persist:wal:criterion`,
@@ -51,7 +91,7 @@ Registered tokens: `selene-persist:wal:criterion`,
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `persist_wal_append_single` | 59.51 ms | 293.7 ms | 588.9 ms | Per-entry fsync; scale = WAL entries, not graph nodes. |
+| `persist_wal_append_single` | 59.51 ms | 293.7 ms | 588.9 ms | Single-entry append loop with `EveryN(1000)` group commit; scale = WAL entries, not graph nodes. |
 | `persist_wal_append_single_no_fsync` | **11.16 ms** | 54.49 ms | 108.6 ms | `SyncPolicy::OnFlushOnly`; donor-parity diagnostic with append/threshold/drop fsync suppressed. |
 | `persist_wal_append_batch_1000` | 6.31 ms | 8.02 ms | 10.95 ms | **54× faster than per-entry at 100k** — batching wins. |
 | `persist_wal_append_batch_1000_no_fsync` | **1.46 ms** | 3.79 ms | 6.37 ms | Batched donor-parity diagnostic; timed body does not call `flush()`. |
@@ -59,6 +99,18 @@ Registered tokens: `selene-persist:wal:criterion`,
 | `persist_snapshot_write` | 719.3 µs | 2.12 ms | 4.58 ms | Snapshot capture; sub-linear at 100k. |
 | `persist_snapshot_read` | 549.6 µs | 2.35 ms | 4.68 ms | Snapshot read-and-apply. |
 | `persist_full_recovery` | 2.93 ms | 12.91 ms | 24.75 ms | Snapshot reconciliation + WAL v2 replay. |
+
+### §2a WAL sync policy sweep
+
+`persist_wal_sync_sweep/*` measures append + explicit `flush()` across sync policies. Full/stress profiles use 1k, 10k, and 100k WAL entries, except `every1`, which is capped at 10k to keep benchmark time bounded. Existing append rows above use `EveryN(1000)` unless marked `_no_fsync`; `_no_fsync` rows omit explicit flush.
+
+| Bench | 1k | 10k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `persist_wal_sync_sweep/every1` | TBD | TBD | n/a | `SyncPolicy::EveryN(1)`. |
+| `persist_wal_sync_sweep/every10` | TBD | TBD | TBD | `SyncPolicy::EveryN(10)`. |
+| `persist_wal_sync_sweep/every100` | TBD | TBD | TBD | `SyncPolicy::EveryN(100)`. |
+| `persist_wal_sync_sweep/every1000` | TBD | TBD | TBD | `SyncPolicy::EveryN(1000)`. |
+| `persist_wal_sync_sweep/on_flush_only` | TBD | TBD | TBD | `SyncPolicy::OnFlushOnly` with caller flush. |
 
 BRIEF-90: fixed-layout header (no postcard varint) + xxh3 checksum + BufReader on iterate path; WAL v1→v2.
 
@@ -75,6 +127,23 @@ Registered tokens: `selene-gql:parse:criterion`, `selene-gql:analyze:criterion`,
 | `gql_analyze_corpus/m5c` | **5.32 µs** | Semantic analysis; well below donor floor (<1 ms). |
 | `gql_plan_optimize_corpus/m5c` | 19.11 µs | Planner/optimizer end-to-end. |
 | `gql_plan_ir_clone/representative` | 94.95 ns | IR-clone hot path. |
+
+## §3a selene-gql write_e2e
+
+Registered token: `selene-gql:write_e2e:criterion`.
+
+The GQL rows use prebuilt `BenchFixture` graphs plus a bench-local WAL append provider so `execute_statement` includes commit fanout and WAL append. Direct rows bypass GQL and call explicit WAL flush to isolate durable mutation cost.
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `write_e2e/gql_insert_single_node_per_iter_plan` | TBD | TBD | TBD | Parse/plan/execute per iteration. |
+| `write_e2e/gql_insert_single_node_preplanned` | TBD | TBD | TBD | Preplanned single-node insert. |
+| `write_e2e/gql_insert_node_with_edge_preplanned` | TBD | TBD | TBD | Preplanned insert with matched source node and edge. |
+| `write_e2e/gql_match_set_preplanned` | TBD | TBD | TBD | Preplanned indexed match + property update. |
+| `write_e2e/gql_match_delete_preplanned` | TBD | TBD | TBD | Fresh fixture per timed iteration because target node is deleted. |
+| `write_e2e/gql_multi_statement_txn_preplanned` | TBD | TBD | TBD | START, three INSERTs, COMMIT. |
+| `write_e2e/direct_insert_single_node_with_wal_flush` | TBD | TBD | TBD | Direct graph mutation + one WAL flush. |
+| `write_e2e/direct_insert_single_node_with_wal_flush_every10` | TBD | TBD | TBD | Ten direct inserts amortized over one WAL flush. |
 
 ## §4 selene-algorithms (Sequential vs Auto)
 

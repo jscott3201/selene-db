@@ -4,6 +4,8 @@
 use std::time::Duration;
 
 use criterion::Criterion;
+use selene_core::Change;
+use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
 use selene_testing::{BenchFixture, BenchProfile};
 
 pub(crate) fn criterion_config() -> Criterion {
@@ -25,4 +27,74 @@ pub(crate) fn fixtures() -> Vec<BenchFixture> {
         .copied()
         .map(BenchFixture::build)
         .collect()
+}
+
+#[derive(Clone, Copy)]
+enum ProviderBehavior {
+    Noop,
+    Error,
+    Panic,
+}
+
+struct BenchProvider {
+    tag: ProviderTag,
+    behavior: ProviderBehavior,
+}
+
+impl BenchProvider {
+    const fn new(tag: ProviderTag, behavior: ProviderBehavior) -> Self {
+        Self { tag, behavior }
+    }
+}
+
+impl IndexProvider for BenchProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn provider_tag(&self) -> ProviderTag {
+        self.tag
+    }
+
+    fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+        Ok(Vec::new())
+    }
+
+    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+        match self.behavior {
+            ProviderBehavior::Noop => Ok(()),
+            ProviderBehavior::Error => Err(ProviderError::Inconsistent {
+                reason: "synthetic provider fanout failure".to_owned(),
+            }),
+            ProviderBehavior::Panic => panic!("synthetic provider fanout panic"),
+        }
+    }
+
+    fn declared_sub_tags(&self) -> &[SubTag] {
+        &[]
+    }
+}
+
+pub(crate) fn noop_provider(tag: ProviderTag) -> impl IndexProvider {
+    BenchProvider::new(tag, ProviderBehavior::Noop)
+}
+
+pub(crate) fn error_provider(tag: ProviderTag) -> impl IndexProvider {
+    BenchProvider::new(tag, ProviderBehavior::Error)
+}
+
+pub(crate) fn panicking_provider(tag: ProviderTag) -> impl IndexProvider {
+    BenchProvider::new(tag, ProviderBehavior::Panic)
+}
+
+pub(crate) fn provider_tag(idx: usize) -> ProviderTag {
+    let mut bytes = *b"P000";
+    bytes[1] = b'0' + ((idx / 100) % 10) as u8;
+    bytes[2] = b'0' + ((idx / 10) % 10) as u8;
+    bytes[3] = b'0' + (idx % 10) as u8;
+    ProviderTag(bytes)
 }

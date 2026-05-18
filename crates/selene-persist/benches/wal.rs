@@ -9,6 +9,7 @@ mod common;
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{HlcTimestamp, Origin};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalReader, WalWriter};
+use selene_testing::BenchProfile;
 
 fn bench_wal_append_single(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_wal_append_single");
@@ -166,6 +167,65 @@ fn bench_wal_append_batch_1000_no_fsync(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_wal_sync_policy_sweep(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_wal_sync_sweep");
+    for (name, sync_policy) in [
+        ("every1", SyncPolicy::EveryN(1)),
+        ("every10", SyncPolicy::EveryN(10)),
+        ("every100", SyncPolicy::EveryN(100)),
+        ("every1000", SyncPolicy::EveryN(1_000)),
+        ("on_flush_only", SyncPolicy::OnFlushOnly),
+    ] {
+        for scale in sync_sweep_scales(sync_policy) {
+            group.throughput(Throughput::Elements(scale as u64));
+            group.bench_function(BenchmarkId::new(name, scale), |b| {
+                b.iter_batched(
+                    || {
+                        let dir = common::TempDir::new("wal-sync-sweep");
+                        let writer = WalWriter::open(
+                            &dir.path().join(DEFAULT_WAL_FILE_NAME),
+                            WalConfig {
+                                sync_policy,
+                                snapshot_seq: 0,
+                            },
+                        )
+                        .expect("wal opens");
+                        (dir, writer, common::changes(1))
+                    },
+                    |(_dir, mut writer, changes)| {
+                        for idx in 0..scale {
+                            writer
+                                .append(
+                                    HlcTimestamp::new(idx as u64 + 1, 0),
+                                    Origin::Local,
+                                    None,
+                                    &changes,
+                                )
+                                .expect("append succeeds");
+                        }
+                        writer.flush().expect("flush succeeds");
+                        std::hint::black_box(writer.last_sequence());
+                    },
+                    BatchSize::SmallInput,
+                );
+            });
+        }
+    }
+    group.finish();
+}
+
+fn sync_sweep_scales(sync_policy: SyncPolicy) -> Vec<usize> {
+    let mut scales = match BenchProfile::from_env() {
+        BenchProfile::Quick => vec![1_000],
+        BenchProfile::Full | BenchProfile::Stress => vec![1_000, 10_000, 100_000],
+        _ => vec![1_000],
+    };
+    if sync_policy == SyncPolicy::EveryN(1) {
+        scales.retain(|scale| *scale <= 10_000);
+    }
+    scales
+}
+
 fn bench_wal_replay(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_wal_replay");
     for &scale in common::scales() {
@@ -204,6 +264,6 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_wal_append_single, bench_wal_append_batch_1000,
         bench_wal_append_single_no_fsync, bench_wal_append_batch_1000_no_fsync,
-        bench_wal_replay
+        bench_wal_sync_policy_sweep, bench_wal_replay
 }
 criterion_main!(wal_group);
