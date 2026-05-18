@@ -4,11 +4,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use selene_core::GraphId;
-use selene_persist::{ProviderRegistry, RecoveryProvider};
+use selene_persist::{DEFAULT_WAL_FILE_NAME, ProviderRegistry, RecoveryProvider, WalConfig};
 
 use crate::core_provider::CoreProvider;
 use crate::graph_types::GraphTypeDef;
-use crate::{GraphResult, SeleneGraph, SharedGraph};
+use crate::{GraphResult, SharedGraph};
 
 impl SharedGraph {
     /// Recover an open (GG01) shared graph from a persistence directory.
@@ -69,15 +69,12 @@ impl SharedGraph {
         // increment from a stale snapshot generation, regressing or
         // duplicating sequencing relative to the recovered tip.
         graph.meta.generation = graph.meta.generation.max(outcome.last_wal_seq);
-        Self::from_recovered(graph)
-    }
-
-    /// Build shared graph state from recovered primary columns.
-    ///
-    /// Derived adjacency and secondary indexes are rebuilt from the canonical
-    /// node/edge stores before publication.
-    pub(crate) fn from_recovered(graph: SeleneGraph) -> GraphResult<Self> {
-        Self::try_from_graph(graph)
+        // Reopen the WAL file as a live writer so post-recovery commits
+        // continue to append durably. Without this, recover() returns a
+        // graph whose commits go to memory only — a crash after recovery
+        // would lose every post-recovery change even though the feature
+        // advertises live WAL durability.
+        Self::from_graph_with_wal(graph, dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())
     }
 }
 

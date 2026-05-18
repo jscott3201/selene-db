@@ -35,7 +35,17 @@ fn execute_ok(
 ) {
     let plan = planned(source, registry);
     let output = execute_statement(&plan, session, registry).expect("statement executes");
-    assert!(matches!(output, StatementOutput::Empty));
+    match output {
+        StatementOutput::Empty => {}
+        StatementOutput::Written(outcome) => assert!(
+            outcome.rows.is_none(),
+            "execute_ok received Written with rows; CALL site under test should not have RETURN",
+        ),
+        StatementOutput::Rows(_) => {
+            panic!("execute_ok received Rows; CALL site under test should not produce rows")
+        }
+        other => panic!("execute_ok received unexpected StatementOutput variant: {other:?}"),
+    }
 }
 
 fn execute_err(

@@ -5,9 +5,10 @@ use std::sync::Arc;
 use selene_core::{GraphId, LabelSet, Value, intern};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, Session, StatementOutput,
-    analyze, execute_statement, parse, plan,
+    WriteOutcome, analyze, execute_statement, parse, plan,
 };
 use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph};
+use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
 fn istr(value: &str) -> selene_core::IStr {
     intern(value).expect("test string interns")
@@ -28,6 +29,13 @@ fn rows(output: StatementOutput) -> selene_gql::BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
         other => panic!("expected rows, got {other:?}"),
+    }
+}
+
+fn written(output: StatementOutput) -> WriteOutcome {
+    match output {
+        StatementOutput::Written(outcome) => outcome,
+        other => panic!("expected written output, got {other:?}"),
     }
 }
 
@@ -91,23 +99,29 @@ fn read_only_returns_rows_from_pattern_plan() {
 }
 
 #[test]
-fn data_modifying_auto_commits_insert_and_returns_empty_for_finish() {
+fn write_statement_produces_written() {
     let graph = SharedGraph::new(GraphId::new(3802));
     let mut session = Session::new(&graph);
 
     let output = execute("INSERT (n:Person) FINISH", &mut session).expect("insert executes");
+    let outcome = written(output);
 
-    assert!(matches!(output, StatementOutput::Empty));
+    assert!(outcome.rows.is_none());
+    assert_eq!(outcome.changes.len(), 1);
+    assert_eq!(outcome.durable_at, None);
     assert_eq!(graph.read().node_count(), 1);
 }
 
 #[test]
-fn mutation_with_return_yields_rows() {
+fn mutation_with_return_carries_rows() {
     let graph = SharedGraph::new(GraphId::new(3803));
     let mut session = Session::new(&graph);
 
-    let table = rows(execute("INSERT (n:Person) RETURN n", &mut session).expect("insert executes"));
+    let outcome =
+        written(execute("INSERT (n:Person) RETURN n", &mut session).expect("insert executes"));
+    let table = outcome.rows.expect("write with RETURN carries rows");
 
+    assert_eq!(outcome.changes.len(), 1);
     assert_eq!(table.row_count(), 1);
     assert!(matches!(table.rows()[0].values(), [Value::NodeRef(_)]));
     assert_eq!(graph.read().node_count(), 1);
@@ -131,8 +145,10 @@ fn catalog_modifying_auto_commits_create_type() {
     let mut session = Session::new(&graph);
 
     let output = execute("CREATE NODE TYPE :Foo ()", &mut session).expect("catalog executes");
+    let outcome = written(output);
 
-    assert!(matches!(output, StatementOutput::Empty));
+    assert!(outcome.rows.is_none());
+    assert_eq!(outcome.changes.len(), 1);
     let graph_type = graph.graph_type().expect("closed graph type");
     assert_eq!(graph_type.node_types[0].name.as_str(), "Foo");
 }
@@ -172,10 +188,42 @@ fn explicit_tx_commit_persists_changes() {
     assert!(session.has_active_txn());
     execute("INSERT (n:Person) FINISH", &mut session).expect("insert succeeds");
     assert_eq!(graph.read().node_count(), 0);
-    execute("COMMIT", &mut session).expect("commit succeeds");
+    let outcome = written(execute("COMMIT", &mut session).expect("commit succeeds"));
 
+    assert_eq!(outcome.changes.len(), 1);
     assert!(!session.has_active_txn());
     assert_eq!(graph.read().node_count(), 1);
+}
+
+#[test]
+fn commit_with_zero_changes_returns_written() {
+    let graph = SharedGraph::new(GraphId::new(3819));
+    let mut session = Session::new(&graph);
+
+    execute("START TRANSACTION", &mut session).expect("start succeeds");
+    let outcome = written(execute("COMMIT", &mut session).expect("commit succeeds"));
+
+    assert!(outcome.rows.is_none());
+    assert!(outcome.changes.is_empty());
+    assert_eq!(outcome.generation, 1);
+    assert!(!session.has_active_txn());
+}
+
+#[test]
+fn write_outcome_durable_at_some_for_with_wal_and_flush_returns_sequence() {
+    let dir = tempfile::tempdir().unwrap();
+    let graph = SharedGraph::builder(GraphId::new(3820))
+        .with_wal(dir.path().join(DEFAULT_WAL_FILE_NAME), WalConfig::default())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut session = Session::new(&graph);
+
+    let outcome =
+        written(execute("INSERT (n:Person) FINISH", &mut session).expect("insert executes"));
+
+    assert_eq!(outcome.durable_at, Some(1));
+    assert_eq!(session.flush().expect("flush succeeds"), Some(1));
 }
 
 #[test]

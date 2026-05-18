@@ -28,6 +28,10 @@ fn assert_empty(output: StatementOutput) {
     assert!(matches!(output, StatementOutput::Empty));
 }
 
+fn assert_written(output: StatementOutput) {
+    assert!(matches!(output, StatementOutput::Written(_)));
+}
+
 #[test]
 fn tx_op_start_with_no_active_txn_acquires_write_lock() {
     let graph = SharedGraph::new(GraphId::new(3821));
@@ -60,7 +64,7 @@ fn tx_op_commit_with_active_txn_commits_and_clears() {
     let mut session = Session::new(&graph);
     execute("START TRANSACTION", &mut session).expect("start succeeds");
 
-    assert_empty(execute("COMMIT", &mut session).expect("commit succeeds"));
+    assert_written(execute("COMMIT", &mut session).expect("commit succeeds"));
 
     assert!(!session.has_active_txn());
 }
@@ -103,7 +107,7 @@ fn tx_op_commit_accepts_session_principal() {
     let mut session = Session::with_principal(&graph, principal);
     execute("START TRANSACTION", &mut session).expect("start succeeds");
 
-    assert_empty(execute("COMMIT", &mut session).expect("commit succeeds"));
+    assert_written(execute("COMMIT", &mut session).expect("commit succeeds"));
 
     assert!(!session.has_active_txn());
 }

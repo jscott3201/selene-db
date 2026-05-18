@@ -21,6 +21,12 @@ fn bench_write_e2e(c: &mut Criterion) {
             scale,
             WriteCorpus::insert_single_node(),
         );
+        bench_gql_fresh_preplanned_with_flush(
+            &mut group,
+            "gql_insert_single_node_preplanned_with_flush",
+            scale,
+            WriteCorpus::insert_single_node(),
+        );
         bench_gql_fresh_preplanned(
             &mut group,
             "gql_insert_node_with_edge_preplanned",
@@ -85,6 +91,29 @@ fn bench_gql_fresh_preplanned(
                 let rows = common::execute_preplanned(&plan, &mut session);
                 drop(session);
                 std::hint::black_box((state, rows))
+            },
+            BatchSize::LargeInput,
+        );
+    });
+}
+
+fn bench_gql_fresh_preplanned_with_flush(
+    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
+    name: &'static str,
+    scale: usize,
+    source: &str,
+) {
+    group.throughput(Throughput::Elements(1));
+    let plan = common::plan_write(source);
+    group.bench_function(BenchmarkId::new(name, scale), |b| {
+        b.iter_batched(
+            || common::gql_write_state(scale, SyncPolicy::OnFlushOnly),
+            |state| {
+                let mut session = Session::new(&state.graph);
+                let rows = common::execute_preplanned(&plan, &mut session);
+                let durable_at = session.flush().expect("flush succeeds");
+                drop(session);
+                std::hint::black_box((state, rows, durable_at))
             },
             BatchSize::LargeInput,
         );

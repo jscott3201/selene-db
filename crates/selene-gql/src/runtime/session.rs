@@ -4,6 +4,8 @@ use std::sync::Arc;
 
 use selene_graph::{SharedGraph, WriteTxn};
 
+use crate::runtime::ExecutorError;
+
 /// Caller-owned executor session bound to one shared graph.
 pub struct Session<'g> {
     graph: &'g SharedGraph,
@@ -57,6 +59,29 @@ impl<'g> Session<'g> {
     #[must_use]
     pub const fn is_aborted(&self) -> bool {
         self.aborted
+    }
+
+    /// Flush every commit-critical durable provider registered on this graph.
+    ///
+    /// Returns the highest durable sequence reported by providers, or `None`
+    /// when the graph has no durable providers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::Flush`] when any provider-owned flush fails.
+    pub fn flush(&self) -> Result<Option<u64>, ExecutorError> {
+        let mut highest = None;
+        for provider in self.graph.durable_providers() {
+            let tag = provider.provider_tag();
+            let seq = provider.flush().map_err(|error| ExecutorError::Flush {
+                provider_tag: tag,
+                reason: error.to_string(),
+            })?;
+            if let Some(seq) = seq {
+                highest = Some(highest.map_or(seq, |current: u64| current.max(seq)));
+            }
+        }
+        Ok(highest)
     }
 
     /// Roll back and clear the explicit transaction, when one is active.

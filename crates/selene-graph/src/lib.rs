@@ -14,6 +14,7 @@
 pub mod adjacency;
 pub mod chunked_vec;
 pub mod core_provider;
+pub mod durable_provider;
 pub mod error;
 pub mod graph;
 pub mod graph_types;
@@ -33,8 +34,9 @@ pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
 pub use chunked_vec::ChunkedVec;
 pub use core_provider::{
     CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_PROVIDER_TAG, CORE_SCMA_SUB,
-    CoreProvider,
+    CoreProvider, DurableState,
 };
+pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{GraphMeta, SeleneGraph};
 pub use graph_types::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};

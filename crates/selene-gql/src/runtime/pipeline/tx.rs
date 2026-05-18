@@ -2,7 +2,7 @@
 
 use crate::{
     SourceSpan, TxOp,
-    runtime::{ExecutorError, Session, StatementOutput},
+    runtime::{ExecutorError, Session, StatementOutput, WriteOutcome},
 };
 
 /// Execute one top-level transaction-control operation.
@@ -38,9 +38,12 @@ fn commit(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput
         .active_txn
         .take()
         .ok_or(ExecutorError::NoActiveTransaction { span })?;
-    txn.commit_with_principal(session.principal())
+    let outcome = txn
+        .commit_with_principal(session.principal())
         .map_err(|source| ExecutorError::GraphMutation { source, span })?;
-    Ok(StatementOutput::Empty)
+    Ok(StatementOutput::Written(WriteOutcome::from_commit(
+        outcome, None,
+    )))
 }
 
 fn rollback(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput, ExecutorError> {

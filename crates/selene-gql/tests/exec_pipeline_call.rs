@@ -437,7 +437,10 @@ fn mutation_tier_procedure_in_auto_commit_commits_on_success() {
 
     let output = execute("CALL pkg.create()", &graph, &registry).unwrap();
 
-    assert!(matches!(output, StatementOutput::Empty));
+    assert!(matches!(
+        output,
+        StatementOutput::Written(outcome) if outcome.changes.len() == 1
+    ));
     assert_eq!(graph.read().node_count(), 1);
     assert_eq!(registry.records()[0].tier, ProcedureTier::Mutation);
 }

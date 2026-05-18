@@ -12,6 +12,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `vector.create_index`, `vector.drop_index`, and `vector.list_indexes`.
   The default HNSW and IVF indexes remain compatibility anchors for v1.0
   WAL payloads and snapshot sections.
+- `StatementOutput::Written` write metadata for committed GQL catalog and
+  data mutations, including optional rows for write statements with `RETURN`.
+- `Session::flush()` and `DurableProvider::flush()` for explicit durability
+  barriers over commit-critical providers.
+- Live `CoreProvider` WAL writes through `SharedGraphBuilder::with_wal(...)`
+  and `SharedGraph::from_graph_with_wal(...)`.
+- `parse_many(...)` for semicolon-separated multi-statement GQL scripts.
 
 ## [1.0.0] — 2026-05-16
 

@@ -78,6 +78,16 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Commit-critical durability provider flush failed.
+    #[error("durability flush failed for provider {provider_tag}: {reason}")]
+    #[diagnostic(code(SLENE_X_XX502))]
+    Flush {
+        /// Durable provider tag.
+        provider_tag: selene_graph::ProviderTag,
+        /// Human-readable provider failure reason.
+        reason: String,
+    },
+
     /// Procedure registry execution failed.
     #[error("procedure execution failed: {source}")]
     #[diagnostic(code(SLENE_X_PROC))]
@@ -110,7 +120,9 @@ impl ExecutorError {
             | Self::TransactionAlreadyActive { .. }
             | Self::NoActiveTransaction { .. }
             | Self::InFailedTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
-            Self::GraphMutation { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+            Self::GraphMutation { .. } | Self::Flush { .. } => {
+                GqlStatus::IMPLEMENTATION_DEFINED_ERROR
+            }
             Self::Procedure { source, .. } => source.gqlstatus(),
             Self::ImplementationDefined { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
         }
