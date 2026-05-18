@@ -210,9 +210,8 @@ fn function_call_with_let_shadow_does_not_misread_column() {
         .expect_err("function call should not resolve to same-named column");
 
     assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "function call evaluation not implemented"
-        }
+        &err,
+        ExecutorError::UnknownFunction { name, .. } if name == "sum"
     ));
+    assert_eq!(err.gqlstatus().as_str(), "42883");
 }

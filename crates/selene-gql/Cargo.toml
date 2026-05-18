@@ -47,6 +47,10 @@ required-features = ["test-harness"]
 name = "executor_snapshot_corpus"
 required-features = ["test-harness"]
 
+[[test]]
+name = "evaluator_completeness"
+required-features = ["test-harness"]
+
 [[bench]]
 name = "parse"
 harness = false

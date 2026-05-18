@@ -282,7 +282,7 @@ fn lossy_integer_float_ordering_is_data_exception() {
 }
 
 #[test]
-fn function_call_is_explicitly_unsupported() {
+fn unknown_scalar_function_returns_42883() {
     let expr = ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![intern("unsupported").unwrap()]).expect("non-empty"),
         args: Vec::new(),
@@ -298,12 +298,8 @@ fn function_call_is_explicitly_unsupported() {
         &BindingTableSchema { columns: vec![] },
         &ctx,
     )
-    .expect_err("function call unsupported");
+    .expect_err("unknown function errors");
 
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "function call evaluation not implemented"
-        }
-    ));
+    assert!(matches!(err, ExecutorError::UnknownFunction { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "42883");
 }
