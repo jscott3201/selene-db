@@ -171,7 +171,10 @@ fn limit_parameter_survives_to_plan() {
     let Some(PipelineOp::Limit { count, .. }) = plan.pipeline.last() else {
         panic!("expected limit");
     };
-    assert!(matches!(count, LimitAmount::Parameter(name) if name.as_str() == "rows"));
+    assert!(matches!(
+        count,
+        LimitAmount::Parameter { name, .. } if name.as_str() == "rows"
+    ));
 }
 
 #[test]

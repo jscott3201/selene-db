@@ -1,7 +1,8 @@
 //! Executor transaction context.
 
-use std::{fmt, sync::Arc};
+use std::{collections::BTreeMap, fmt, sync::Arc};
 
+use selene_core::{IStr, Value};
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
@@ -16,6 +17,8 @@ pub trait AdaptiveOptimizer: Send + Sync {
     fn observe_cardinality(&self, _op: PipelineOpId, _rows: u64) {}
 }
 
+static EMPTY_PARAMETERS: BTreeMap<IStr, Value> = BTreeMap::new();
+
 /// Executor context for one statement.
 ///
 /// Read-only contexts own an immutable graph snapshot so every scan in a
@@ -28,6 +31,7 @@ pub struct TxContext<'a, 'g> {
     impl_defined_caps: &'a ImplDefinedCaps,
     registry: &'a dyn ProcedureRegistry,
     providers: &'a [Arc<dyn IndexProvider>],
+    parameters: &'a BTreeMap<IStr, Value>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
@@ -41,11 +45,28 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
     ) -> Self {
+        Self::read_only_with_parameters(
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            &EMPTY_PARAMETERS,
+        )
+    }
+
+    pub(crate) fn read_only_with_parameters(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: &'a BTreeMap<IStr, Value>,
+    ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
             registry,
             providers,
+            parameters,
             reopt_hook: None,
             write_txn: None,
         }
@@ -60,11 +81,30 @@ impl<'a, 'g> TxContext<'a, 'g> {
         providers: &'a [Arc<dyn IndexProvider>],
         reopt_hook: &'a dyn AdaptiveOptimizer,
     ) -> Self {
+        Self::read_only_with_parameters_and_reopt(
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            reopt_hook,
+            &EMPTY_PARAMETERS,
+        )
+    }
+
+    pub(crate) fn read_only_with_parameters_and_reopt(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        providers: &'a [Arc<dyn IndexProvider>],
+        reopt_hook: &'a dyn AdaptiveOptimizer,
+        parameters: &'a BTreeMap<IStr, Value>,
+    ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
             registry,
             providers,
+            parameters,
             reopt_hook: Some(reopt_hook),
             write_txn: None,
         }
@@ -79,11 +119,30 @@ impl<'a, 'g> TxContext<'a, 'g> {
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
     ) -> Self {
+        Self::write_with_parameters(
+            snapshot,
+            impl_defined_caps,
+            registry,
+            txn,
+            providers,
+            &EMPTY_PARAMETERS,
+        )
+    }
+
+    pub(crate) fn write_with_parameters(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        txn: &'a mut WriteTxn<'g>,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: &'a BTreeMap<IStr, Value>,
+    ) -> Self {
         Self {
             snapshot,
             impl_defined_caps,
             registry,
             providers,
+            parameters,
             reopt_hook: None,
             write_txn: Some(txn),
         }
@@ -167,6 +226,12 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.providers
     }
 
+    /// Borrow the session-local query parameters visible to this statement.
+    #[must_use]
+    pub const fn parameters(&self) -> &'a BTreeMap<IStr, Value> {
+        self.parameters
+    }
+
     /// Borrow the adaptive optimizer hook, when one was supplied.
     #[must_use]
     pub const fn reopt_hook(&self) -> Option<&dyn AdaptiveOptimizer> {
@@ -181,6 +246,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("snapshot", &self.snapshot)
             .field("impl_defined_caps", self.impl_defined_caps)
             .field("providers", &self.providers.len())
+            .field("parameters", &self.parameters.len())
             .field("reopt_hook", &self.reopt_hook.is_some())
             .field("write_txn", &self.write_txn.is_some())
             .finish()

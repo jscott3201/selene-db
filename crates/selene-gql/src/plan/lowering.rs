@@ -339,7 +339,10 @@ fn leading_matches(statements: &[PipelineStatement]) -> (Vec<&crate::MatchClause
 fn limit_amount(value: &LimitValue) -> LimitAmount {
     match value {
         LimitValue::Count(value, _) => LimitAmount::Literal(*value),
-        LimitValue::Parameter(name, _) => LimitAmount::Parameter(*name),
+        LimitValue::Parameter(name, span) => LimitAmount::Parameter {
+            name: *name,
+            span: *span,
+        },
     }
 }
 

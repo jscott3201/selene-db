@@ -55,6 +55,15 @@ pub fn evaluate(
             .map(|item| evaluate(item, binding, schema, ctx))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::List),
+        ValueExpr::Parameter { name, span } => {
+            ctx.parameters()
+                .get(name)
+                .cloned()
+                .ok_or(ExecutorError::UnboundParameter {
+                    name: *name,
+                    span: *span,
+                })
+        }
         ValueExpr::FunctionCall { .. } => Err(ExecutorError::ImplementationDefined {
             detail: "function call evaluation not implemented",
         }),
@@ -67,8 +76,7 @@ pub fn evaluate(
         ValueExpr::CountSubquery { .. } => Err(ExecutorError::ImplementationDefined {
             detail: "COUNT subquery evaluation not implemented",
         }),
-        ValueExpr::Parameter { .. }
-        | ValueExpr::ListAccess { .. }
+        ValueExpr::ListAccess { .. }
         | ValueExpr::RecordLiteral { .. }
         | ValueExpr::IsCheck { .. }
         | ValueExpr::Like { .. }
