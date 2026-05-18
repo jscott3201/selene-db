@@ -34,6 +34,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `write_e2e/gql_insert_single_node_cached` and
   `write_e2e/gql_insert_single_node_cached_with_schema_churn` benches for the
   Session plan-cache hot path.
+- **Parameter binding** through `Session::bind_parameter(name, value)`,
+  `Session::clear_parameter(name)`, and `Session::clear_parameters()`.
+  `$name` references are resolved from the session parameter map end-to-end;
+  unreferenced parameters are ignored, runtime type mismatches are strict
+  `ExecutorError::InvalidParameterType` errors with SQLSTATE 22023, and typed
+  declarations such as `$id :: INTEGER` remain a v1.2 follow-up.
 
 ## [1.0.0] — 2026-05-16
 
