@@ -1,4 +1,8 @@
 //! Collection and record expression evaluation.
+//!
+//! List access is 0-indexed and returns `NULL` for negative or out-of-bounds
+//! integer indexes. Record literals build open records and reject duplicate
+//! field keys with a data exception.
 
 use std::collections::BTreeSet;
 

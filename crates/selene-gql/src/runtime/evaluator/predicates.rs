@@ -1,4 +1,8 @@
 //! Predicate expression evaluation.
+//!
+//! Implements residual predicate forms that are not lowered into scan access:
+//! `LIKE`, `BETWEEN`, `IS` sub-kinds, graph predicate functions, and
+//! `PROPERTY_EXISTS`. Predicate negation preserves `NULL` as unknown.
 
 use selene_core::{IStr, Value};
 

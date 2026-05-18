@@ -1,4 +1,8 @@
 //! CASE-expression evaluation.
+//!
+//! Searched `CASE` evaluates branch conditions in source order. `TRUE` returns
+//! the branch value, `FALSE` and `NULL` continue, and non-boolean conditions are
+//! runtime data exceptions.
 
 use selene_core::Value;
 

@@ -88,6 +88,8 @@ pub enum ExecutorError {
     },
 
     /// Scalar function name was not registered in the v1.1 closed set.
+    ///
+    /// Maps to SQLSTATE 42883.
     #[error("unknown function: {name}")]
     #[diagnostic(code(SLENE_X_42883))]
     UnknownFunction {
@@ -99,6 +101,8 @@ pub enum ExecutorError {
     },
 
     /// Scalar function received the wrong number of arguments.
+    ///
+    /// Maps to SQLSTATE 42883.
     #[error("function {name} expected {expected} argument(s), got {actual}")]
     #[diagnostic(code(SLENE_X_42883))]
     FunctionArityMismatch {
@@ -114,6 +118,8 @@ pub enum ExecutorError {
     },
 
     /// Scalar function call used an aggregate-only modifier.
+    ///
+    /// Maps to SQLSTATE 42883.
     #[error("function {name} does not allow {modifier}")]
     #[diagnostic(code(SLENE_X_42883))]
     InvalidFunctionModifier {
@@ -127,6 +133,8 @@ pub enum ExecutorError {
     },
 
     /// Expression feature is intentionally outside the v1.1 evaluator surface.
+    ///
+    /// Maps to SQLSTATE 0A000.
     #[error("feature not supported in v1.1: {feature}")]
     #[diagnostic(code(SLENE_X_0A000))]
     FeatureNotInV1_1 {

@@ -40,6 +40,19 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   unreferenced parameters are ignored, runtime type mismatches are strict
   `ExecutorError::InvalidParameterType` errors with SQLSTATE 22023, and typed
   declarations such as `$id :: INTEGER` remain a v1.2 follow-up.
+- **Evaluator completeness (16/18)**: `runtime/evaluator/` now executes `LIKE`,
+  `BETWEEN`, `IS` checks (7 sub-kinds), `CASE`, 0-indexed list access, record
+  literals, `PROPERTY_EXISTS`, `ALL_DIFFERENT`, `SAME`, a closed
+  case-insensitive scalar function list of 15 functions, and binary `POWER`,
+  `XOR`, concat, `CONTAINS`, `STARTS WITH`, and `ENDS WITH`. `IS NORMALIZED`
+  returns `ExecutorError::FeatureNotInV1_1` with SQLSTATE 0A000 pending v1.2
+  Unicode normalization work; `Exists` and `CountSubquery` are deferred to
+  BRIEF-116b.
+- `ExecutorError::{UnknownFunction, FunctionArityMismatch,
+  InvalidFunctionModifier, FeatureNotInV1_1}` for scalar dispatch and scoped
+  v1.1 evaluator feature errors.
+- `runtime/evaluator/` submodule layout split into `mod.rs`, `binary_ops.rs`,
+  `predicates.rs`, `scalar_fns.rs`, `case.rs`, and `collections.rs`.
 
 ## [1.0.0] — 2026-05-16
 

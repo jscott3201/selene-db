@@ -1,4 +1,10 @@
 //! Residual-filter expression evaluator.
+//!
+//! BRIEF-116 factors evaluator behavior by expression family:
+//! [`binary_ops`] owns operators, [`predicates`] owns GQL predicate forms,
+//! [`scalar_fns`] owns the v1.1 closed scalar-function set, [`case`] owns
+//! searched `CASE`, and [`collections`] owns list/record expressions. Expression
+//! subqueries remain explicit BRIEF-116b planned-IR work.
 
 mod binary_ops;
 mod case;

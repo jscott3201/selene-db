@@ -72,6 +72,10 @@ harness = false
 required-features = ["test-harness"]
 
 [[bench]]
+name = "expression_eval"
+harness = false
+
+[[bench]]
 name = "iai_gates"
 harness = false
 required-features = ["test-harness"]

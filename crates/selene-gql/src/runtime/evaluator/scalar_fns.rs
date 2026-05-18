@@ -1,4 +1,10 @@
 //! Scalar function evaluation.
+//!
+//! Dispatches the v1.1 closed scalar-function set case-insensitively:
+//! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, `length`,
+//! `substring`, `upper`, `lower`, `trim`, `coalesce`, `nullif`, and `size`.
+//! Each function owns arity checking; `NULL` propagates except where
+//! short-circuit functions (`coalesce`, `nullif`) define different behavior.
 
 use std::sync::Arc;
 
