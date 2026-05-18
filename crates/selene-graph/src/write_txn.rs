@@ -173,6 +173,12 @@ impl<'g> WriteTxn<'g> {
 
     /// Roll back graph changes via `Drop` and release the write lock.
     pub fn rollback(self) {}
+
+    /// Number of changes accumulated since this transaction opened.
+    #[must_use]
+    pub fn change_count(&self) -> usize {
+        self.changes.len()
+    }
 }
 
 impl Drop for WriteTxn<'_> {

@@ -2,7 +2,7 @@
 
 use crate::{
     SourceSpan, TxOp,
-    runtime::{ExecutorError, Session, StatementOutput, WriteOutcome},
+    runtime::{ExecutorError, Session, StatementOutput},
 };
 
 /// Execute one top-level transaction-control operation.
@@ -18,40 +18,35 @@ pub(crate) fn execute(
 }
 
 fn start(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput, ExecutorError> {
-    if session.active_txn.is_some() {
-        return Err(ExecutorError::TransactionAlreadyActive { span });
-    }
-    session.active_txn = Some(session.graph().begin_write());
-    session.aborted = false;
-    Ok(StatementOutput::Empty)
+    session
+        .start_transaction()
+        .map(|()| StatementOutput::Empty)
+        .map_err(|err| rewrite_span(err, span))
 }
 
 fn commit(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput, ExecutorError> {
-    if session.aborted {
-        if let Some(txn) = session.active_txn.take() {
-            txn.rollback();
-        }
-        session.aborted = false;
-        return Err(ExecutorError::InFailedTransaction { span });
-    }
-    let txn = session
-        .active_txn
-        .take()
-        .ok_or(ExecutorError::NoActiveTransaction { span })?;
-    let outcome = txn
-        .commit_with_principal(session.principal())
-        .map_err(|source| ExecutorError::GraphMutation { source, span })?;
-    Ok(StatementOutput::Written(WriteOutcome::from_commit(
-        outcome, None,
-    )))
+    session
+        .commit_transaction()
+        .map(|outcome| StatementOutput::Written(outcome.into_write_outcome()))
+        .map_err(|err| rewrite_span(err, span))
 }
 
 fn rollback(session: &mut Session<'_>, span: SourceSpan) -> Result<StatementOutput, ExecutorError> {
-    let txn = session
-        .active_txn
-        .take()
-        .ok_or(ExecutorError::NoActiveTransaction { span })?;
-    txn.rollback();
-    session.aborted = false;
-    Ok(StatementOutput::Empty)
+    session
+        .rollback_transaction()
+        .map(|_outcome| StatementOutput::Empty)
+        .map_err(|err| rewrite_span(err, span))
+}
+
+fn rewrite_span(err: ExecutorError, span: SourceSpan) -> ExecutorError {
+    use ExecutorError::{
+        GraphMutation, InFailedTransaction, NoActiveTransaction, TransactionAlreadyActive,
+    };
+    match err {
+        TransactionAlreadyActive { .. } => TransactionAlreadyActive { span },
+        NoActiveTransaction { .. } => NoActiveTransaction { span },
+        InFailedTransaction { .. } => InFailedTransaction { span },
+        GraphMutation { source, .. } => GraphMutation { source, span },
+        other => other,
+    }
 }

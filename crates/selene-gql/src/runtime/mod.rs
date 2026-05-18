@@ -37,7 +37,7 @@ pub use error::ExecutorError;
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;
 pub(crate) use plan_runner::execute_plan;
-pub use session::Session;
+pub use session::{RollbackOutcome, Session, TransactionOutcome};
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{
     ExecutorSnapshot, ExecutorSummaryInput, NetGraphDelta, RowOrderPolicy, SnapshotColumn,

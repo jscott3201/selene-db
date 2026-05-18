@@ -65,6 +65,9 @@ pub fn execute_statement(
             span: SourceSpan::default(),
         });
     }
+    if plan.category != StatementCategory::TransactionControl && session.active_txn.is_some() {
+        session.tx_statement_count = session.tx_statement_count.saturating_add(1);
+    }
     match plan.category {
         StatementCategory::ReadOnly => execute_read_only(plan, session, registry),
         StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
