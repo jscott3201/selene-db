@@ -1,5 +1,8 @@
 //! Top-level statement executor.
 
+use selene_core::Change;
+use selene_graph::CommitOutcome;
+
 use crate::{
     ExecutionPlan, ProcedureRegistry, SourceSpan, StatementCategory,
     runtime::{BindingTable, ExecutorError, Session, TxContext, execute_plan, pipeline},
@@ -11,8 +14,41 @@ use crate::{
 pub enum StatementOutput {
     /// Statement completed without a row-bearing result.
     Empty,
+    /// Statement published a graph generation.
+    Written(WriteOutcome),
     /// Statement produced a binding table.
     Rows(BindingTable),
+}
+
+/// Metadata returned for a statement that committed graph changes.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct WriteOutcome {
+    /// Optional row result for write statements with `RETURN`.
+    pub rows: Option<BindingTable>,
+    /// Changes produced by the committed write transaction.
+    pub changes: Vec<Change>,
+    /// Published graph generation.
+    pub generation: u64,
+    /// Next node ID after the commit.
+    pub next_node_id: u64,
+    /// Next edge ID after the commit.
+    pub next_edge_id: u64,
+    /// Highest sequence reported by commit-critical durable providers.
+    pub durable_at: Option<u64>,
+}
+
+impl WriteOutcome {
+    pub(crate) fn from_commit(outcome: CommitOutcome, rows: Option<BindingTable>) -> Self {
+        Self {
+            rows,
+            changes: outcome.changes,
+            generation: outcome.generation,
+            next_node_id: outcome.next_node_id,
+            next_edge_id: outcome.next_edge_id,
+            durable_at: outcome.durable_at,
+        }
+    }
 }
 
 /// Execute one planned statement against a caller-owned session.
@@ -108,13 +144,13 @@ fn execute_auto_commit(
     };
     match result {
         Ok(table) => {
-            txn.commit_with_principal(principal).map_err(|source| {
+            let outcome = txn.commit_with_principal(principal).map_err(|source| {
                 ExecutorError::GraphMutation {
                     source,
                     span: SourceSpan::default(),
                 }
             })?;
-            Ok(output_from_table(plan, table))
+            Ok(write_output_from_commit(plan, table, outcome))
         }
         Err(error) => {
             txn.rollback();
@@ -141,4 +177,17 @@ fn output_from_table(plan: &ExecutionPlan, table: BindingTable) -> StatementOutp
     } else {
         StatementOutput::Rows(table)
     }
+}
+
+fn write_output_from_commit(
+    plan: &ExecutionPlan,
+    table: BindingTable,
+    outcome: CommitOutcome,
+) -> StatementOutput {
+    let rows = if plan.output_schema.columns.is_empty() {
+        None
+    } else {
+        Some(table)
+    };
+    StatementOutput::Written(WriteOutcome::from_commit(outcome, rows))
 }

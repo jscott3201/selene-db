@@ -1,10 +1,13 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwap;
 use selene_core::{
-    Change, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+    Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
     PropertyValueType, SchemaChange, Value, intern,
 };
+use selene_persist::{WalConfig, WalReader, WalWriter};
 
 use super::sections::{
     SchemaEntry, SchemaKey, decode_edges, decode_graph_types, decode_meta, decode_nodes,
@@ -12,10 +15,33 @@ use super::sections::{
     ensure_section_within_cap,
 };
 use super::*;
-use crate::{GraphError, SharedGraph, TypedIndexKind};
+use crate::{DurableProvider, GraphError, SharedGraph, TypedIndexKind};
 
 fn prop(name: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
+}
+
+fn temp_wal_path(name: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "selene-core-provider-{name}-{}-{nanos}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir(&dir).unwrap();
+    dir.join(selene_persist::DEFAULT_WAL_FILE_NAME)
+}
+
+fn wal_entries(path: &Path) -> Vec<selene_persist::WalEntry> {
+    let reader = WalReader::open(path).unwrap();
+    reader
+        .iterate(|_| true)
+        .unwrap()
+        .map(|entry| entry.unwrap().into_entry().unwrap())
+        .collect()
 }
 
 fn full_value_property_map(prefix: &str) -> PropertyMap {
@@ -151,7 +177,9 @@ fn new_for_live_holds_snapshot_pointer() {
     let provider = CoreProvider::new_for_live(Arc::clone(&snapshot));
     let inner = provider.inner.lock();
     match &*inner {
-        CoreInner::Live { snapshot: observed } => assert!(Arc::ptr_eq(observed, &snapshot)),
+        CoreInner::Live {
+            snapshot: observed, ..
+        } => assert!(Arc::ptr_eq(observed, &snapshot)),
         CoreInner::Recovery { .. } => panic!("expected live provider"),
     }
 }
@@ -445,6 +473,67 @@ fn live_mode_read_section_returns_inconsistent_error() {
         Err(ProviderError::Inconsistent { reason })
             if reason.contains("read_section called on live-mode")
     ));
+}
+
+#[test]
+fn core_provider_writes_one_wal_entry_per_commit() {
+    let path = temp_wal_path("one-entry");
+    let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+    let snapshot = Arc::new(ArcSwap::from_pointee(SeleneGraph::new(GraphId::new(1))));
+    let provider = CoreProvider::new_for_live_with_wal(snapshot, Some(DurableState::new(writer)));
+    let changes = vec![
+        Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(intern("core.wal.a").unwrap()),
+            properties: PropertyMap::new(),
+        },
+        Change::NodeCreated {
+            id: NodeId::new(2),
+            labels: LabelSet::single(intern("core.wal.b").unwrap()),
+            properties: PropertyMap::new(),
+        },
+        Change::EdgeCreated {
+            id: EdgeId::new(1),
+            label: intern("core.wal.edge").unwrap(),
+            source: NodeId::new(1),
+            target: NodeId::new(2),
+            properties: PropertyMap::new(),
+        },
+    ];
+
+    let timestamp = DurableProvider::next_timestamp(provider.as_ref());
+    let seq = DurableProvider::write_commit(provider.as_ref(), None, &changes, timestamp).unwrap();
+    assert_eq!(seq, 1);
+    DurableProvider::flush(provider.as_ref()).unwrap();
+    drop(provider);
+
+    let entries = wal_entries(&path);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].changes.len(), 3);
+    assert_eq!(entries[0].header.sequence, 1);
+    assert_eq!(entries[0].header.hlc(), HlcTimestamp::new(1, 0));
+}
+
+#[test]
+fn core_provider_threads_principal_through_wal() {
+    let path = temp_wal_path("principal");
+    let writer = WalWriter::open(&path, WalConfig::default()).unwrap();
+    let snapshot = Arc::new(ArcSwap::from_pointee(SeleneGraph::new(GraphId::new(1))));
+    let provider = CoreProvider::new_for_live_with_wal(snapshot, Some(DurableState::new(writer)));
+    let changes = vec![Change::NodeCreated {
+        id: NodeId::new(1),
+        labels: LabelSet::single(intern("core.wal.principal").unwrap()),
+        properties: PropertyMap::new(),
+    }];
+
+    let timestamp = DurableProvider::next_timestamp(provider.as_ref());
+    DurableProvider::write_commit(provider.as_ref(), Some(b"alice"), &changes, timestamp).unwrap();
+    DurableProvider::flush(provider.as_ref()).unwrap();
+    drop(provider);
+
+    let entries = wal_entries(&path);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].header.principal.as_deref(), Some(&b"alice"[..]));
 }
 
 #[test]

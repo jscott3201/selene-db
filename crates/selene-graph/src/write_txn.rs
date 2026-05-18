@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
-use selene_core::{Change, Origin};
+use selene_core::{Change, HlcTimestamp, Origin};
 
-use crate::error::GraphResult;
+use crate::durable_provider::DurableProvider;
+use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::IndexProvider;
@@ -21,6 +22,8 @@ pub struct CommitOutcome {
     pub changes: Vec<Change>,
     /// Opaque caller-supplied principal bytes for future WAL headers.
     pub principal: Option<Arc<[u8]>>,
+    /// Highest durable sequence assigned by commit-critical providers.
+    pub durable_at: Option<u64>,
     /// Next node ID after commit.
     pub next_node_id: u64,
     /// Next edge ID after commit.
@@ -34,6 +37,7 @@ pub struct WriteTxn<'g> {
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
+    pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
     pub(crate) changes: Vec<Change>,
 }
 
@@ -43,6 +47,7 @@ impl<'g> WriteTxn<'g> {
         snapshot: Arc<ArcSwap<SeleneGraph>>,
         allocator: MutexGuard<'g, IdAllocator>,
         providers: Vec<Arc<dyn IndexProvider>>,
+        durable_providers: Vec<Arc<dyn DurableProvider>>,
     ) -> Self {
         let pre_txn = Some(Arc::clone(&*guard));
         Self {
@@ -51,6 +56,7 @@ impl<'g> WriteTxn<'g> {
             pre_txn,
             allocator,
             providers,
+            durable_providers,
             changes: Vec::new(),
         }
     }
@@ -128,6 +134,17 @@ impl<'g> WriteTxn<'g> {
             }
         }
 
+        let timestamp = commit_timestamp(&self.durable_providers);
+        let mut durable_at: Option<u64> = None;
+        for durable in &self.durable_providers {
+            let seq = durable
+                .write_commit(principal.as_deref(), &self.changes, timestamp)
+                .map_err(|error| GraphError::Durable {
+                    reason: format!("{}: {error}", durable.provider_tag()),
+                })?;
+            durable_at = Some(durable_at.map_or(seq, |highest| highest.max(seq)));
+        }
+
         self.pre_txn = None;
         self.snapshot.store(Arc::clone(&*self.guard));
 
@@ -148,6 +165,7 @@ impl<'g> WriteTxn<'g> {
             generation,
             changes,
             principal,
+            durable_at,
             next_node_id,
             next_edge_id,
         })
@@ -163,6 +181,12 @@ impl Drop for WriteTxn<'_> {
             *self.guard = prior;
         }
     }
+}
+
+fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimestamp {
+    durable_providers
+        .first()
+        .map_or_else(HlcTimestamp::zero, |provider| provider.next_timestamp())
 }
 
 /// Fan out committed changes to every registered provider, swallowing

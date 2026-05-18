@@ -108,6 +108,14 @@ pub enum GraphError {
     #[diagnostic(transparent)]
     TypeViolation(#[from] TypeViolation),
 
+    /// A commit-critical durable provider rejected or failed a write.
+    #[error("durable provider failed: {reason}")]
+    #[diagnostic(code(SLENE_G_015))]
+    Durable {
+        /// Human-readable durable provider failure reason.
+        reason: String,
+    },
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -140,6 +148,7 @@ impl GraphError {
             | Self::IndexValueRejected { .. } => "22023",
             Self::TypeViolation(_) => "22000",
             Self::Core(_) => "22000",
+            Self::Durable { .. } => "XX500",
             Self::Provider(_) | Self::Persist(_) => "XX500",
         }
     }
@@ -197,6 +206,7 @@ mod tests {
         "22000"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
+    #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "XX500")]
     #[case(
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag VECT".to_owned() }),
         "XX500"

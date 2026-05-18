@@ -192,8 +192,10 @@ fn optimize_with_catalog(plan: ExecutionPlan, uses_index_catalog: bool) -> Execu
 fn table_for_output(output: StatementOutput) -> BindingTable {
     match output {
         StatementOutput::Rows(table) => table,
-        StatementOutput::Empty => BindingTable::empty(BindingTableSchema {
-            columns: Vec::new(),
+        StatementOutput::Written(outcome) => outcome.rows.unwrap_or_else(|| {
+            BindingTable::empty(BindingTableSchema {
+                columns: Vec::new(),
+            })
         }),
         _ => BindingTable::empty(BindingTableSchema {
             columns: Vec::new(),

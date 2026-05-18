@@ -10,6 +10,7 @@
 mod budget;
 mod builders;
 mod guard;
+mod many;
 
 use std::sync::Arc;
 
@@ -63,6 +64,8 @@ pub fn parse_with_source(
 ) -> Result<Statement, DiagnosticReport> {
     parse(&source).map_err(|error| DiagnosticReport::new(error, source, label))
 }
+
+pub use many::parse_many;
 
 fn pest_error(source: &str, error: pest::error::Error<Rule>) -> ParserError {
     let span = match error.location {
@@ -602,5 +605,62 @@ mod tests {
             panic!("expected FunctionCall");
         };
         assert_eq!(name_one.len(), 1);
+    }
+
+    #[test]
+    fn parse_many_single_statement() {
+        let statements = parse_many("MATCH (n) RETURN n;").expect("parse_many succeeds");
+        assert_eq!(statements.len(), 1);
+        assert!(matches!(statements[0], Statement::Query(_)));
+    }
+
+    #[test]
+    fn parse_many_three_statements_rebases_spans() {
+        let source = "INSERT (:A) FINISH;  INSERT (:B) FINISH; INSERT (:C) FINISH";
+        let statements = parse_many(source).expect("parse_many succeeds");
+        assert_eq!(statements.len(), 3);
+        assert!(matches!(statements[0], Statement::Mutate(_)));
+        assert_eq!(
+            statements[1].span().byte_offset,
+            u32::try_from(source.find("INSERT (:B)").unwrap()).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_many_skips_empty_statements() {
+        let statements = parse_many(";;INSERT (:A) FINISH;;").expect("parse_many succeeds");
+        assert_eq!(statements.len(), 1);
+        assert!(matches!(statements[0], Statement::Mutate(_)));
+    }
+
+    #[test]
+    fn parse_many_handles_semicolon_in_single_quote() {
+        let statements =
+            parse_many("RETURN 'a;b' AS value; RETURN 1 AS n").expect("parse_many succeeds");
+        assert_eq!(statements.len(), 2);
+    }
+
+    #[test]
+    fn parse_many_handles_semicolon_in_block_comment() {
+        let statements =
+            parse_many("/* a;b */ RETURN 1 AS n; RETURN 2 AS n").expect("parse_many succeeds");
+        assert_eq!(statements.len(), 2);
+        assert_eq!(
+            statements[0].span().byte_offset,
+            u32::try_from("/* a;b */ ".len()).unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_many_propagates_error_with_rebased_span() {
+        let source = "RETURN 1 AS ok; MATCH (n RETURN n";
+        let error = parse_many(source).expect_err("second statement should fail");
+        let ParserError::SyntaxError { span, .. } = error else {
+            panic!("expected syntax error");
+        };
+        assert!(
+            span.byte_offset >= u32::try_from(source.find("MATCH").unwrap()).unwrap(),
+            "error span {span:?} should point into the second statement"
+        );
     }
 }

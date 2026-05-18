@@ -43,7 +43,7 @@ pub use snapshot_summary::{
     ExecutorSnapshot, ExecutorSummaryInput, NetGraphDelta, RowOrderPolicy, SnapshotColumn,
     executor_summary,
 };
-pub use statement::{StatementOutput, execute_statement};
+pub use statement::{StatementOutput, WriteOutcome, execute_statement};
 
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};
 

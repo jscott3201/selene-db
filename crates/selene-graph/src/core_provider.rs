@@ -3,17 +3,21 @@
 mod recovery_state;
 mod sections;
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
-use selene_core::Change;
-use selene_persist::{RecoveryError, RecoveryProvider, RecoveryResult};
+use selene_core::{Change, HlcTimestamp, Origin};
+use selene_persist::{RecoveryError, RecoveryProvider, RecoveryResult, WalWriter};
 
 use crate::core_provider::recovery_state::RecoveryState;
 use crate::core_provider::sections::{
     encode_edges, encode_graph_types, encode_meta, encode_nodes, encode_schemas,
 };
+use crate::durable_provider::DurableProvider;
 use crate::error::GraphResult;
 use crate::graph::SeleneGraph;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
@@ -49,16 +53,52 @@ pub struct CoreProvider {
 }
 
 enum CoreInner {
-    Live { snapshot: Arc<ArcSwap<SeleneGraph>> },
-    Recovery { state: RecoveryState },
+    Live {
+        snapshot: Arc<ArcSwap<SeleneGraph>>,
+        durable: Option<DurableState>,
+    },
+    Recovery {
+        state: RecoveryState,
+    },
+}
+
+/// Durable WAL state owned by a live [`CoreProvider`].
+///
+/// The HLC counter is seeded from [`WalWriter::last_sequence`]. On a fresh WAL
+/// this is zero and the first commit receives `HlcTimestamp::new(1, 0)`; after
+/// reopening, the next timestamp advances past the recovered WAL sequence.
+pub struct DurableState {
+    writer: Mutex<WalWriter>,
+    next_hlc: AtomicU64,
+}
+
+impl DurableState {
+    /// Construct durable state from an already-open WAL writer.
+    #[must_use]
+    pub fn new(writer: WalWriter) -> Self {
+        let last_sequence = writer.last_sequence();
+        Self {
+            writer: Mutex::new(writer),
+            next_hlc: AtomicU64::new(last_sequence),
+        }
+    }
 }
 
 impl CoreProvider {
     /// Construct a live provider bound to a shared graph snapshot pointer.
     #[must_use]
     pub fn new_for_live(snapshot: Arc<ArcSwap<SeleneGraph>>) -> Arc<Self> {
+        Self::new_for_live_with_wal(snapshot, None)
+    }
+
+    /// Construct a live provider with optional commit-critical WAL state.
+    #[must_use]
+    pub fn new_for_live_with_wal(
+        snapshot: Arc<ArcSwap<SeleneGraph>>,
+        durable: Option<DurableState>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            inner: Mutex::new(CoreInner::Live { snapshot }),
+            inner: Mutex::new(CoreInner::Live { snapshot, durable }),
         })
     }
 
@@ -116,7 +156,7 @@ impl CoreProvider {
     fn write_section_inner(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
         let inner = self.inner.lock();
         match &*inner {
-            CoreInner::Live { snapshot } => {
+            CoreInner::Live { snapshot, .. } => {
                 let graph = snapshot.load_full();
                 match sub_tag.0 {
                     CORE_GTYP_SUB => encode_graph_types(&graph),
@@ -168,6 +208,71 @@ impl IndexProvider for CoreProvider {
     }
 }
 
+impl DurableProvider for CoreProvider {
+    fn provider_tag(&self) -> ProviderTag {
+        ProviderTag(CORE_PROVIDER_TAG)
+    }
+
+    fn next_timestamp(&self) -> HlcTimestamp {
+        let inner = self.inner.lock();
+        match &*inner {
+            CoreInner::Live {
+                durable: Some(durable),
+                ..
+            } => {
+                let seconds = durable
+                    .next_hlc
+                    .fetch_add(1, Ordering::Relaxed)
+                    .saturating_add(1);
+                HlcTimestamp::new(seconds, 0)
+            }
+            CoreInner::Live { durable: None, .. } | CoreInner::Recovery { .. } => {
+                HlcTimestamp::zero()
+            }
+        }
+    }
+
+    fn write_commit(
+        &self,
+        principal: Option<&[u8]>,
+        changes: &[Change],
+        timestamp: HlcTimestamp,
+    ) -> Result<u64, ProviderError> {
+        let mut inner = self.inner.lock();
+        match &mut *inner {
+            CoreInner::Live {
+                durable: Some(durable),
+                ..
+            } => {
+                let principal = principal.map(Arc::<[u8]>::from);
+                let mut writer = durable.writer.lock();
+                writer
+                    .append(timestamp, Origin::Local, principal, changes)
+                    .map_err(durable_error)
+            }
+            CoreInner::Live { durable: None, .. } => Ok(0),
+            CoreInner::Recovery { .. } => Err(inconsistent(
+                "write_commit called on recovery-mode CoreProvider",
+            )),
+        }
+    }
+
+    fn flush(&self) -> Result<Option<u64>, ProviderError> {
+        let mut inner = self.inner.lock();
+        match &mut *inner {
+            CoreInner::Live {
+                durable: Some(durable),
+                ..
+            } => {
+                let mut writer = durable.writer.lock();
+                writer.flush().map_err(durable_error)?;
+                Ok(Some(writer.last_sequence()))
+            }
+            CoreInner::Live { durable: None, .. } | CoreInner::Recovery { .. } => Ok(None),
+        }
+    }
+}
+
 impl RecoveryProvider for CoreProvider {
     fn provider_tag(&self) -> [u8; 4] {
         CORE_PROVIDER_TAG
@@ -186,6 +291,12 @@ impl RecoveryProvider for CoreProvider {
 pub(crate) fn invalid_payload(reason: impl Into<String>) -> ProviderError {
     ProviderError::InvalidPayload {
         reason: reason.into(),
+    }
+}
+
+fn durable_error(error: impl std::error::Error) -> ProviderError {
+    ProviderError::SerializationFailed {
+        reason: error.to_string(),
     }
 }
 

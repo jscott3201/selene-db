@@ -47,7 +47,7 @@ pub use crate::ast::{
 pub use crate::diagnostic::DiagnosticReport;
 pub use crate::error::{GqlStatus, ParserError};
 pub use crate::flagger::{FeatureUse, feature_walk};
-pub use crate::parser::{parse, parse_with_source};
+pub use crate::parser::{parse, parse_many, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, CompositeIndexHandle, EdgeMatch, EdgeStatistics, EmptyIndexCatalog,
@@ -66,8 +66,8 @@ pub use crate::procedure_registry::{
 };
 pub use crate::runtime::{
     AdaptiveOptimizer, Binding, BindingTable, ExecutorError, GraphContext, MutationContext,
-    ProcedureContext, Session, StatementOutput, TxContext, execute_pattern, execute_pipeline,
-    execute_statement,
+    ProcedureContext, Session, StatementOutput, TxContext, WriteOutcome, execute_pattern,
+    execute_pipeline, execute_statement,
 };
 
 #[cfg(any(test, feature = "test-harness"))]
