@@ -15,6 +15,8 @@ use crate::{
 
 use self::{
     binary_ops::{eval_binary, eval_in_list, eval_unary},
+    case::eval_case,
+    collections::{eval_list_access, eval_record_literal},
     predicates::{
         eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
     },
@@ -80,9 +82,18 @@ pub fn evaluate(
             distinct,
             span,
         } => eval_function_call(name, args, *star, *distinct, *span, binding, schema, ctx),
-        ValueExpr::Case { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "CASE evaluation not implemented",
-        }),
+        ValueExpr::Case {
+            branches,
+            else_branch,
+            span,
+        } => eval_case(
+            branches,
+            else_branch.as_deref(),
+            *span,
+            binding,
+            schema,
+            ctx,
+        ),
         ValueExpr::Exists { .. } => Err(ExecutorError::ImplementationDefined {
             // BRIEF-116b owns planned-IR support for expression subqueries.
             detail: "EXISTS subquery evaluation not implemented",
@@ -111,10 +122,13 @@ pub fn evaluate(
         ValueExpr::PropertyExists { target, key, span } => {
             eval_property_exists(target, *key, *span, binding, schema, ctx)
         }
-        ValueExpr::ListAccess { .. } | ValueExpr::RecordLiteral { .. } => {
-            Err(ExecutorError::ImplementationDefined {
-                detail: "expression kind not implemented",
-            })
+        ValueExpr::ListAccess {
+            target,
+            index,
+            span,
+        } => eval_list_access(target, index, *span, binding, schema, ctx),
+        ValueExpr::RecordLiteral { fields, span } => {
+            eval_record_literal(fields, *span, binding, schema, ctx)
         }
     }
 }
