@@ -87,6 +87,17 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Expression feature is intentionally outside the v1.1 evaluator surface.
+    #[error("feature not supported in v1.1: {feature}")]
+    #[diagnostic(code(SLENE_X_0A000))]
+    FeatureNotInV1_1 {
+        /// Stable feature tag.
+        feature: &'static str,
+        /// Source span requiring the feature.
+        #[label("feature not supported")]
+        span: SourceSpan,
+    },
+
     /// Transaction state does not permit the requested executor operation.
     #[error("invalid transaction state: {detail}")]
     #[diagnostic(code(SLENE_X_25000))]
@@ -181,6 +192,7 @@ impl ExecutorError {
             Self::UnboundParameter { .. } | Self::InvalidParameterType { .. } => {
                 GqlStatus::INVALID_PROCEDURE_ARGUMENT
             }
+            Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::InvalidTransactionState { .. }
             | Self::TransactionAlreadyActive { .. }
             | Self::NoActiveTransaction { .. }

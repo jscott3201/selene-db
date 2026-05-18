@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::{cmp::Ordering, sync::Arc};
 
 use selene_core::Value;
 
@@ -23,14 +23,14 @@ pub(super) fn eval_binary(
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
             eval_arithmetic(op, lhs, rhs, span)
         }
-        BinaryOp::Power
-        | BinaryOp::Xor
-        | BinaryOp::Concat
-        | BinaryOp::Contains
-        | BinaryOp::StartsWith
-        | BinaryOp::EndsWith => Err(ExecutorError::ImplementationDefined {
-            detail: "binary operator not implemented",
-        }),
+        BinaryOp::Power => eval_power(lhs, rhs, span),
+        BinaryOp::Xor => eval_xor(lhs, rhs, span),
+        BinaryOp::Concat => eval_concat(lhs, rhs, span),
+        BinaryOp::Contains => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.contains(rhs)),
+        BinaryOp::StartsWith => {
+            eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.starts_with(rhs))
+        }
+        BinaryOp::EndsWith => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.ends_with(rhs)),
     }
 }
 
@@ -78,6 +78,13 @@ fn truth(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> 
         Value::Bool(value) => Ok(Some(value)),
         Value::Null => Ok(None),
         _ => data_exception("boolean operator operand is not boolean", span),
+    }
+}
+
+fn eval_xor(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match (truth(lhs, span)?, truth(rhs, span)?) {
+        (Some(lhs), Some(rhs)) => Ok(Value::Bool(lhs ^ rhs)),
+        _ => Ok(Value::Null),
     }
 }
 
@@ -178,6 +185,76 @@ fn eval_arithmetic(
             eval_float_arithmetic(op, lhs, rhs, span)
         }
     }
+}
+
+fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
+        return Ok(Value::Null);
+    }
+    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs) {
+        let Ok(exponent) = u32::try_from(*rhs) else {
+            return data_exception("integer exponent is negative or too large", span);
+        };
+        return lhs
+            .checked_pow(exponent)
+            .map(Value::Int)
+            .ok_or_else(|| data_exception_value("integer exponentiation overflow", span));
+    }
+    let (Some(lhs), Some(rhs)) = (as_f64(&lhs), as_f64(&rhs)) else {
+        return data_exception("power operands are not numeric", span);
+    };
+    let value = lhs.powf(rhs);
+    if value.is_finite() {
+        Ok(Value::Float(value))
+    } else {
+        data_exception(
+            "floating-point exponentiation produced non-finite value",
+            span,
+        )
+    }
+}
+
+fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
+        return Ok(Value::Null);
+    }
+    match (lhs, rhs) {
+        (Value::String(lhs), Value::String(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::String(lhs), Value::ExternalString(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::ExternalString(lhs), Value::String(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::List(mut lhs), Value::List(rhs)) => {
+            lhs.extend(rhs);
+            Ok(Value::List(lhs))
+        }
+        _ => data_exception(
+            "concatenation operands must both be strings or both be lists",
+            span,
+        ),
+    }
+}
+
+fn eval_string_predicate(
+    lhs: Value,
+    rhs: Value,
+    span: SourceSpan,
+    predicate: impl Fn(&str, &str) -> bool,
+) -> Result<Value, ExecutorError> {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let (Some(lhs), Some(rhs)) = (string_slice(&lhs), string_slice(&rhs)) else {
+        return data_exception("string predicate operands are not both strings", span);
+    };
+    Ok(Value::Bool(predicate(lhs, rhs)))
 }
 
 fn eval_int_arithmetic(
@@ -293,12 +370,20 @@ pub(super) fn eval_in_list(
     }
 }
 
-fn as_f64(value: &Value) -> Option<f64> {
+pub(super) fn as_f64(value: &Value) -> Option<f64> {
     match value {
         Value::Int(value) => Some(*value as f64),
         Value::Uint(value) => Some(*value as f64),
         Value::Float(value) => Some(*value),
         Value::Float32(value) => Some(f64::from(*value)),
+        _ => None,
+    }
+}
+
+pub(super) fn string_slice(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(value) => Some(value.as_str()),
+        Value::ExternalString(value) => Some(value.as_ref()),
         _ => None,
     }
 }

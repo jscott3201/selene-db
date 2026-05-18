@@ -9,11 +9,16 @@ mod scalar_fns;
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
-    IsCheckKind, Literal, SourceSpan, ValueExpr,
+    Literal, SourceSpan, ValueExpr,
     runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
 };
 
-use self::binary_ops::{eval_binary, eval_in_list, eval_unary};
+use self::{
+    binary_ops::{eval_binary, eval_in_list, eval_unary},
+    predicates::{
+        eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
+    },
+};
 
 /// Evaluate a value expression against one binding-table row.
 pub fn evaluate(
@@ -40,13 +45,10 @@ pub fn evaluate(
         }
         ValueExpr::IsCheck {
             operand,
-            kind: IsCheckKind::Null,
+            kind,
             negated,
-            ..
-        } => {
-            let is_null = matches!(evaluate(operand, binding, schema, ctx)?, Value::Null);
-            Ok(Value::Bool(if *negated { !is_null } else { is_null }))
-        }
+            span,
+        } => eval_is_check(operand, kind, *negated, *span, binding, schema, ctx),
         ValueExpr::InList {
             operand,
             list,
@@ -77,21 +79,38 @@ pub fn evaluate(
             detail: "CASE evaluation not implemented",
         }),
         ValueExpr::Exists { .. } => Err(ExecutorError::ImplementationDefined {
+            // BRIEF-116b owns planned-IR support for expression subqueries.
             detail: "EXISTS subquery evaluation not implemented",
         }),
         ValueExpr::CountSubquery { .. } => Err(ExecutorError::ImplementationDefined {
+            // BRIEF-116b owns planned-IR support for expression subqueries.
             detail: "COUNT subquery evaluation not implemented",
         }),
-        ValueExpr::ListAccess { .. }
-        | ValueExpr::RecordLiteral { .. }
-        | ValueExpr::IsCheck { .. }
-        | ValueExpr::Like { .. }
-        | ValueExpr::Between { .. }
-        | ValueExpr::AllDifferent { .. }
-        | ValueExpr::Same { .. }
-        | ValueExpr::PropertyExists { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "expression kind not implemented",
-        }),
+        ValueExpr::Like {
+            operand,
+            pattern,
+            negated,
+            span,
+        } => eval_like(operand, pattern, *negated, *span, binding, schema, ctx),
+        ValueExpr::Between {
+            operand,
+            low,
+            high,
+            negated,
+            span,
+        } => eval_between(operand, low, high, *negated, *span, binding, schema, ctx),
+        ValueExpr::AllDifferent { items, span } => {
+            eval_all_different(items, *span, binding, schema, ctx)
+        }
+        ValueExpr::Same { items, span } => eval_same(items, *span, binding, schema, ctx),
+        ValueExpr::PropertyExists { target, key, span } => {
+            eval_property_exists(target, *key, *span, binding, schema, ctx)
+        }
+        ValueExpr::ListAccess { .. } | ValueExpr::RecordLiteral { .. } => {
+            Err(ExecutorError::ImplementationDefined {
+                detail: "expression kind not implemented",
+            })
+        }
     }
 }
 
@@ -122,7 +141,7 @@ fn lookup_variable(
         })
 }
 
-fn property_access(
+pub(super) fn property_access(
     target: &Value,
     key: selene_core::IStr,
     ctx: &TxContext<'_, '_>,
