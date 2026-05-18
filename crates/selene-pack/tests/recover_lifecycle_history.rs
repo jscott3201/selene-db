@@ -186,6 +186,15 @@ fn selene_pack_history_round_trips_through_recover() {
     .activate(&sink, &mut activation_registry, ts(4))
     .expect("pack activates");
     wal.flush();
+    // Release the test fixture's WalAppendingProvider before recover — the
+    // core durable provider now reopens the WAL under an exclusive writer
+    // lock and would otherwise observe WriterLockHeld. `sink` and `_active`
+    // hold Arc clones of the graph (and therefore of the provider), so each
+    // must be dropped before the standalone `wal` clone.
+    drop(_active);
+    drop(sink);
+    drop(graph);
+    drop(wal);
 
     let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
     let registry = ProcedurePackRegistry::with_builtins_and_history(Arc::new(

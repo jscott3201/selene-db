@@ -68,3 +68,43 @@ fn durable_round_trip_recovery() {
         Some(&Value::String(value))
     );
 }
+
+#[test]
+fn post_recovery_commits_remain_durable() {
+    let dir = temp_dir("post-recovery");
+    let graph_id = GraphId::new(78);
+    let label = intern("durable.recover.node").unwrap();
+
+    {
+        let shared = SharedGraph::builder(graph_id)
+            .with_wal(dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(label), PropertyMap::new())
+            .unwrap();
+        let outcome = txn.commit().unwrap();
+        assert_eq!(outcome.durable_at, Some(1));
+    }
+
+    let after_first_recover = SharedGraph::recover(&dir, graph_id).unwrap();
+    assert_eq!(after_first_recover.read().node_count(), 1);
+
+    {
+        let mut txn = after_first_recover.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(label), PropertyMap::new())
+            .unwrap();
+        let outcome = txn.commit().unwrap();
+        // Post-recovery durability proof: the recovered graph reopened the
+        // WAL and the second commit advanced the durable sequence past the
+        // recovered tip.
+        assert_eq!(outcome.durable_at, Some(2));
+    }
+    drop(after_first_recover);
+
+    let after_second_recover = SharedGraph::recover(&dir, graph_id).unwrap();
+    assert_eq!(after_second_recover.read().node_count(), 2);
+}

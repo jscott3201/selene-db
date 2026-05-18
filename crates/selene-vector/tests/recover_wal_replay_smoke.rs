@@ -180,6 +180,11 @@ fn recover_replays_index_extension_event_to_hnsw_provider() {
         hnsw_payload(NodeId::new(2), vec![0.0, 1.0, 0.0, 0.0], 0),
     );
     wal.flush();
+    // Release the test fixture's WalAppendingProvider before recover — the
+    // core durable provider now reopens the WAL file under an exclusive
+    // writer lock and would otherwise observe WriterLockHeld.
+    drop(graph);
+    drop(wal);
 
     let recovered_core = SharedGraph::recover(&dir, graph_id).unwrap();
     assert_eq!(recovered_core.read().node_count(), 0);
@@ -224,6 +229,9 @@ fn recover_replays_index_extension_event_to_ivf_provider() {
         ivf_payload(NodeId::new(2), vec![0.0, 1.0]),
     );
     wal.flush();
+    // See HNSW twin: release the test WalAppendingProvider before recover.
+    drop(graph);
+    drop(wal);
 
     let recovered_core = SharedGraph::recover(&dir, graph_id).unwrap();
     assert_eq!(recovered_core.read().node_count(), 0);

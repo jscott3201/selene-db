@@ -140,6 +140,9 @@ impl BenchState {
         {
             StatementOutput::Rows(table) => table.row_count(),
             StatementOutput::Empty => 0,
+            StatementOutput::Written(outcome) => {
+                outcome.rows.as_ref().map_or(0, |table| table.row_count())
+            }
             _ => panic!("unexpected statement output for bench query"),
         }
     }
