@@ -1,5 +1,7 @@
 //! Executor diagnostics and GQLSTATUS mapping.
 
+use selene_core::IStr;
+
 use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
 
 /// Query execution failure.
@@ -52,6 +54,36 @@ pub enum ExecutorError {
         name: String,
         /// Source span requiring the reference.
         #[label("invalid reference")]
+        span: SourceSpan,
+    },
+
+    /// A `$name` parameter was referenced but not bound on the session.
+    ///
+    /// Maps to SQLSTATE 22023, invalid parameter value.
+    #[error("unbound parameter: ${name}")]
+    #[diagnostic(code(SLENE_X_22023))]
+    UnboundParameter {
+        /// Parameter name without the leading `$`.
+        name: IStr,
+        /// Source span requiring the parameter.
+        #[label("unbound parameter")]
+        span: SourceSpan,
+    },
+
+    /// A bound `$name` parameter had the wrong type for its runtime position.
+    ///
+    /// Maps to SQLSTATE 22023, invalid parameter value.
+    #[error("invalid parameter type for ${name}: expected {expected}, got {actual}")]
+    #[diagnostic(code(SLENE_X_22023))]
+    InvalidParameterType {
+        /// Parameter name without the leading `$`.
+        name: IStr,
+        /// Human-readable expected type.
+        expected: &'static str,
+        /// Human-readable actual type.
+        actual: &'static str,
+        /// Source span requiring the parameter.
+        #[label("invalid parameter type")]
         span: SourceSpan,
     },
 
@@ -146,6 +178,9 @@ impl ExecutorError {
             Self::Plan { source } => source.gqlstatus(),
             Self::DataException { .. } => GqlStatus::DATA_EXCEPTION,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
+            Self::UnboundParameter { .. } | Self::InvalidParameterType { .. } => {
+                GqlStatus::INVALID_PROCEDURE_ARGUMENT
+            }
             Self::InvalidTransactionState { .. }
             | Self::TransactionAlreadyActive { .. }
             | Self::NoActiveTransaction { .. }

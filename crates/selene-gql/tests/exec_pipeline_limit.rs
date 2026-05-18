@@ -71,13 +71,16 @@ fn limit_with_count_beyond_input_saturates() {
 }
 
 #[test]
-fn limit_parameter_is_implementation_defined_until_parameter_binding_lands() {
+fn limit_parameter_without_binding_is_unbound() {
     let caps = ImplDefinedCaps::default();
     let mut ctx = ctx(&caps);
 
     let err = execute_pipeline(
         &[PipelineOp::Limit {
-            offset: LimitAmount::Parameter(intern("rows").expect("interns")),
+            offset: LimitAmount::Parameter {
+                name: intern("rows").expect("interns"),
+                span: Default::default(),
+            },
             count: LimitAmount::Literal(1),
         }],
         table(),
@@ -85,5 +88,5 @@ fn limit_parameter_is_implementation_defined_until_parameter_binding_lands() {
     )
     .expect_err("parameter limit errors");
 
-    assert!(matches!(err, ExecutorError::ImplementationDefined { .. }));
+    assert!(matches!(err, ExecutorError::UnboundParameter { .. }));
 }

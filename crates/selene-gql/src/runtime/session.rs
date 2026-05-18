@@ -1,8 +1,8 @@
 //! Statement-session state for explicit transaction control.
 
-use std::{num::NonZeroUsize, sync::Arc, time::Instant};
+use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
 
-use selene_core::Change;
+use selene_core::{Change, IStr, Value};
 use selene_graph::{SharedGraph, WriteTxn};
 
 use crate::{
@@ -14,6 +14,7 @@ use crate::{
 pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
+    pub(crate) parameters: BTreeMap<IStr, Value>,
     pub(crate) plan_cache: Option<PlanCache>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
     pub(crate) aborted: bool,
@@ -73,6 +74,7 @@ impl<'g> Session<'g> {
         Self {
             graph,
             principal: None,
+            parameters: BTreeMap::new(),
             plan_cache: None,
             active_txn: None,
             aborted: false,
@@ -87,12 +89,47 @@ impl<'g> Session<'g> {
         Self {
             graph,
             principal: Some(principal),
+            parameters: BTreeMap::new(),
             plan_cache: None,
             active_txn: None,
             aborted: false,
             tx_started_at: None,
             tx_statement_count: 0,
         }
+    }
+
+    /// Bind or replace a session-local query parameter.
+    ///
+    /// Parameters are named without the leading `$` and are resolved by
+    /// `$name` references during statement execution. Binding is an upsert:
+    /// rebinding a name replaces the prior value and affects subsequent
+    /// statements only. Parameters are session-level metadata, so transaction
+    /// boundaries and [`Self::abort`] preserve the map. Parameters not
+    /// referenced by a statement are ignored. Session plan-cache keys remain
+    /// source-only; parameter values and runtime types are checked during each
+    /// execution.
+    ///
+    /// Runtime positions that require a specific type validate strictly; for
+    /// example, `LIMIT $n` accepts only non-negative integer values and returns
+    /// [`ExecutorError::InvalidParameterType`] for mismatches.
+    pub fn bind_parameter(&mut self, name: IStr, value: Value) -> Option<Value> {
+        self.parameters.insert(name, value)
+    }
+
+    /// Remove one session-local query parameter and return its prior value.
+    pub fn clear_parameter(&mut self, name: &IStr) -> Option<Value> {
+        self.parameters.remove(name)
+    }
+
+    /// Remove all session-local query parameters.
+    pub fn clear_parameters(&mut self) {
+        self.parameters.clear();
+    }
+
+    /// Borrow the session-local query-parameter map used for statement execution.
+    #[must_use]
+    pub(crate) fn parameters(&self) -> &BTreeMap<IStr, Value> {
+        &self.parameters
     }
 
     /// Enable this session's source-string plan cache with the given capacity.

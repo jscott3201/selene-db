@@ -15,7 +15,12 @@ pub enum LimitAmount {
     /// Literal row count.
     Literal(u64),
     /// Parameter resolved by the executor.
-    Parameter(IStr),
+    Parameter {
+        /// Interned parameter name without the leading `$`.
+        name: IStr,
+        /// Source span of the parameter reference.
+        span: SourceSpan,
+    },
 }
 
 /// Planned predicate.

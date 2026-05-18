@@ -39,7 +39,7 @@ pub fn execute_pipeline(
                 span,
             } => unwind::execute(source, *alias, *span, table, ctx)?,
             PipelineOp::OrderBy(keys) => order_by::execute(keys, table, ctx)?,
-            PipelineOp::Limit { offset, count } => limit::execute(offset, count, table)?,
+            PipelineOp::Limit { offset, count } => limit::execute(offset, count, table, ctx)?,
             PipelineOp::TopK {
                 keys,
                 offset,

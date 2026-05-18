@@ -16,8 +16,8 @@ pub(super) fn execute(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let offset = limit::literal_amount(offset)?;
-    let count = limit::literal_amount(count)?;
+    let offset = limit::resolve_amount(offset, ctx)?;
+    let count = limit::resolve_amount(count, ctx)?;
     let (schema, rows) = table.into_parts();
     let retained = limit::u64_to_bounded_usize(offset.saturating_add(count), rows.len());
     if retained == 0 {

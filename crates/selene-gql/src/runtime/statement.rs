@@ -80,8 +80,12 @@ pub fn execute_statement(
         }
         StatementCategory::TransactionControl => execute_transaction_control(plan, session),
     };
-    if counts_toward_tx && result.is_ok() {
-        session.tx_statement_count = session.tx_statement_count.saturating_add(1);
+    if counts_toward_tx {
+        if result.is_ok() {
+            session.tx_statement_count = session.tx_statement_count.saturating_add(1);
+        } else {
+            session.aborted = true;
+        }
     }
     result
 }
@@ -175,11 +179,25 @@ fn execute_read_only(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
+    let parameters = &session.parameters;
     let table = if let Some(txn) = session.active_txn.as_mut() {
-        let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn, providers);
+        let mut ctx = TxContext::write_with_parameters(
+            snapshot,
+            &plan.impl_defined_caps,
+            registry,
+            txn,
+            providers,
+            parameters,
+        );
         execute_plan(plan, &mut ctx)?
     } else {
-        let mut ctx = TxContext::read_only(snapshot, &plan.impl_defined_caps, registry, providers);
+        let mut ctx = TxContext::read_only_with_parameters(
+            snapshot,
+            &plan.impl_defined_caps,
+            registry,
+            providers,
+            parameters,
+        );
         execute_plan(plan, &mut ctx)?
     };
     Ok(output_from_table(plan, table))
@@ -203,13 +221,21 @@ fn execute_inside_explicit_tx(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
+    let parameters = &session.parameters;
     let txn = session
         .active_txn
         .as_mut()
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "explicit-TX path entered without active transaction",
         })?;
-    let mut ctx = TxContext::write(snapshot, &plan.impl_defined_caps, registry, txn, providers);
+    let mut ctx = TxContext::write_with_parameters(
+        snapshot,
+        &plan.impl_defined_caps,
+        registry,
+        txn,
+        providers,
+        parameters,
+    );
     let result = execute_plan(plan, &mut ctx);
     if result.is_err() {
         session.aborted = true;
@@ -226,13 +252,15 @@ fn execute_auto_commit(
     let snapshot = session.graph().read();
     let principal = session.principal();
     let mut txn = session.graph().begin_write();
+    let parameters = session.parameters();
     let result = {
-        let mut ctx = TxContext::write(
+        let mut ctx = TxContext::write_with_parameters(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             &mut txn,
             providers,
+            parameters,
         );
         execute_plan(plan, &mut ctx)
     };
