@@ -88,6 +88,10 @@ selene-graph:single_graph:criterion
 selene-graph:bulk_mutation:criterion
 selene-graph:concurrent_read:criterion
 selene-graph:bfs:criterion
+selene-graph:write_txn_lifecycle:criterion
+selene-graph:provider_fanout:criterion
+selene-graph:bound_type_validation:criterion
+selene-graph:concurrent_writers:criterion
 selene-graph:iai_gates:iai
 selene-persist:wal:criterion
 selene-persist:snapshot:criterion
@@ -95,6 +99,7 @@ selene-persist:iai_gates:iai
 selene-gql:parse:criterion
 selene-gql:analyze:criterion
 selene-gql:plan_optimize:criterion
+selene-gql:write_e2e:criterion
 selene-gql:iai_gates:iai
 selene-algorithms:algo_bench:criterion
 selene-algorithms-pack:algo_pack:criterion

@@ -21,6 +21,7 @@ pub struct BenchFixture {
     sensor_label: IStr,
     edge_label: IStr,
     age_key: IStr,
+    bench_id_key: IStr,
     name_key: IStr,
     score_key: IStr,
     sample_age: i64,
@@ -37,6 +38,7 @@ impl BenchFixture {
         let device_label = istr("Device");
         let edge_label = istr("KNOWS");
         let age_key = istr("age");
+        let bench_id_key = istr("bench_id");
         let name_key = istr("name");
         let score_key = istr("score");
         let shared = SharedGraph::new(GraphId::new(1));
@@ -51,6 +53,7 @@ impl BenchFixture {
                 };
                 let props = PropertyMap::from_pairs([
                     (age_key, Value::Int(sample_age(idx))),
+                    (bench_id_key, Value::Int(idx as i64)),
                     (name_key, Value::String(sample_name(idx))),
                     (score_key, Value::Int((idx % 1_024) as i64)),
                 ])
@@ -76,6 +79,9 @@ impl BenchFixture {
         shared
             .create_property_index(person_label, name_key, TypedIndexKind::String)
             .expect("name index builds");
+        shared
+            .create_property_index(person_label, bench_id_key, TypedIndexKind::I64)
+            .expect("bench_id index builds");
         let graph = shared.read().as_ref().clone();
         Self {
             scale,
@@ -85,6 +91,7 @@ impl BenchFixture {
             sensor_label,
             edge_label,
             age_key,
+            bench_id_key,
             name_key,
             score_key,
             sample_age: sample_age(0),
@@ -134,6 +141,12 @@ impl BenchFixture {
         self.age_key
     }
 
+    /// Return the unique integer lookup key used by write benchmarks.
+    #[must_use]
+    pub const fn bench_id_key(&self) -> IStr {
+        self.bench_id_key
+    }
+
     /// Return the indexed string property key.
     #[must_use]
     pub const fn name_key(&self) -> IStr {
@@ -165,6 +178,47 @@ impl BenchFixture {
     }
 }
 
+/// Canonical write-side GQL corpus used by benchmark binaries.
+pub struct WriteCorpus;
+
+impl WriteCorpus {
+    /// Single-node insert with scalar properties.
+    #[must_use]
+    pub const fn insert_single_node() -> &'static str {
+        "INSERT (:Person { name: 'x', score: 42 })"
+    }
+
+    /// Indexed lookup plus node/edge insert.
+    #[must_use]
+    pub const fn insert_node_with_edge() -> &'static str {
+        "MATCH (a:Person) FILTER a.bench_id = 42 INSERT (a)-[:KNOWS]->(:Person { name: 'x' })"
+    }
+
+    /// Indexed lookup plus scalar property update.
+    #[must_use]
+    pub const fn match_set() -> &'static str {
+        "MATCH (n:Person) FILTER n.bench_id = 42 SET n.score = 17"
+    }
+
+    /// Indexed lookup plus detach-delete.
+    #[must_use]
+    pub const fn match_delete() -> &'static str {
+        "MATCH (n:Person) FILTER n.bench_id = 42 DETACH DELETE n"
+    }
+
+    /// Explicit transaction statement sequence for multi-statement benches.
+    #[must_use]
+    pub const fn multi_statement_txn() -> &'static [&'static str] {
+        &[
+            "START TRANSACTION",
+            "INSERT (:Person { name: 'a' })",
+            "INSERT (:Person { name: 'b' })",
+            "INSERT (:Person { name: 'c' })",
+            "COMMIT",
+        ]
+    }
+}
+
 fn sample_age(idx: usize) -> i64 {
     20 + (idx % 80) as i64
 }
@@ -180,6 +234,9 @@ fn istr(value: &str) -> IStr {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    use selene_gql::{EmptyProcedureRegistry, StatementCategory, analyze, parse};
 
     #[test]
     fn benchmark_scales_constant_is_pinned() {
@@ -222,5 +279,59 @@ mod tests {
             assert_eq!(fixture.graph().node_count(), scale);
             assert_eq!(fixture.graph().edge_count(), scale * 3);
         }
+    }
+
+    #[test]
+    fn bench_fixture_assigns_unique_bench_id() {
+        let fixture = BenchFixture::build(100);
+        let mut ids = BTreeSet::new();
+        for raw in 1..=100 {
+            let node = NodeId::new(raw);
+            let value = fixture
+                .graph()
+                .node_properties(node)
+                .and_then(|properties| properties.get(&fixture.bench_id_key()))
+                .expect("bench_id property exists");
+            let Value::Int(bench_id) = value else {
+                panic!("bench_id should be an integer, got {value:?}");
+            };
+            assert!(ids.insert(*bench_id));
+        }
+        assert_eq!(ids.len(), 100);
+    }
+
+    #[test]
+    fn write_corpus_statements_parse() {
+        for source in write_corpus_sources() {
+            parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error}"));
+        }
+    }
+
+    #[test]
+    fn write_corpus_categories_are_writes() {
+        for source in write_corpus_sources() {
+            let statement =
+                parse(source).unwrap_or_else(|error| panic!("{source} should parse: {error}"));
+            let analyzed = analyze(statement, &EmptyProcedureRegistry, None)
+                .unwrap_or_else(|error| panic!("{source} should analyze: {error}"));
+            assert!(
+                matches!(
+                    analyzed.category,
+                    StatementCategory::DataModifying | StatementCategory::TransactionControl
+                ),
+                "{source} should be data-modifying or transaction-control"
+            );
+        }
+    }
+
+    fn write_corpus_sources() -> Vec<&'static str> {
+        let mut sources = vec![
+            WriteCorpus::insert_single_node(),
+            WriteCorpus::insert_node_with_edge(),
+            WriteCorpus::match_set(),
+            WriteCorpus::match_delete(),
+        ];
+        sources.extend_from_slice(WriteCorpus::multi_statement_txn());
+        sources
     }
 }
