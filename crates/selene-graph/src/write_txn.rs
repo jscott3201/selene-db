@@ -151,11 +151,16 @@ impl<'g> WriteTxn<'g> {
             durable_at = Some(durable_at.map_or(seq, |highest| highest.max(seq)));
         }
 
+        self.pre_txn = None;
+        self.snapshot.store(Arc::clone(&*self.guard));
+        // Publish the schema-version bump AFTER snapshot.store so any reader
+        // observing the new epoch is guaranteed to also observe the new
+        // snapshot. Reverse ordering would let a reader read `epoch=N` and
+        // then load the prior snapshot, planning against stale schema and
+        // caching the plan under the new epoch (Codex PR #127 auto-review P1).
         if schema_changed {
             self.schema_version.fetch_add(1, Ordering::AcqRel);
         }
-        self.pre_txn = None;
-        self.snapshot.store(Arc::clone(&*self.guard));
 
         let changes = std::mem::take(&mut self.changes);
 

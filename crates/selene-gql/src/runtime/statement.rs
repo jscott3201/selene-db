@@ -8,6 +8,7 @@ use selene_graph::CommitOutcome;
 use crate::{
     ExecutionPlan, ProcedureRegistry, SourceSpan, StatementCategory,
     analyze::analyze,
+    ast::Statement,
     parser::parse,
     plan::plan as build_plan,
     runtime::{BindingTable, ExecutorError, Session, TxContext, execute_plan, pipeline},
@@ -113,22 +114,58 @@ impl Session<'_> {
             return execute_statement(&cached, self, registry);
         }
 
-        let statement = parse(source).map_err(|source| ExecutorError::Parse { source })?;
+        // Codex PR #127 auto-review P2 #2 + P2 #3: compile failures inside an
+        // explicit transaction must abort the transaction (PostgreSQL-style
+        // contract: any error → rollback). Without this, parse/analyze/plan
+        // errors would leave the explicit-tx in a usable state, diverging
+        // from `execute_inside_explicit_tx` which marks `aborted = true` on
+        // execution-time errors.
+        let statement = parse(source).map_err(|source| {
+            if self.active_txn.is_some() {
+                self.aborted = true;
+            }
+            ExecutorError::Parse { source }
+        })?;
+
+        // Codex PR #127 auto-review P2 #1: short-circuit aborted-session
+        // non-control statements before analyze/plan/cache-insert work.
+        // TX-control statements (START/COMMIT/ROLLBACK) must remain reachable
+        // on an aborted session so the caller can recover via ROLLBACK.
+        if self.aborted && !is_tx_control_statement(&statement) {
+            return Err(ExecutorError::InFailedTransaction {
+                span: SourceSpan::default(),
+            });
+        }
+
         let graph_type = self
             .active_txn
             .as_ref()
             .and_then(|txn| txn.read().meta.bound_type.as_ref().map(Arc::clone))
             .or_else(|| self.graph().graph_type());
-        let analyzed = analyze(statement, registry, graph_type.as_deref())
-            .map_err(|source| ExecutorError::Analysis { source })?;
-        let plan = Arc::new(
-            build_plan(&analyzed, registry).map_err(|source| ExecutorError::Plan { source })?,
-        );
+        let analyzed = analyze(statement, registry, graph_type.as_deref()).map_err(|source| {
+            if self.active_txn.is_some() {
+                self.aborted = true;
+            }
+            ExecutorError::Analysis { source }
+        })?;
+        let plan = Arc::new(build_plan(&analyzed, registry).map_err(|source| {
+            if self.active_txn.is_some() {
+                self.aborted = true;
+            }
+            ExecutorError::Plan { source }
+        })?);
         if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
             cache.insert(Arc::from(source), Arc::clone(&plan), schema_version);
         }
         execute_statement(&plan, self, registry)
     }
+}
+
+fn is_tx_control_statement(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::StartTransaction { .. } | Statement::Commit { .. } | Statement::Rollback { .. }
+    )
 }
 
 fn execute_read_only(

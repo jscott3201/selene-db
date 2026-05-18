@@ -380,6 +380,82 @@ mod tests {
     }
 
     #[test]
+    fn execute_source_aborted_session_returns_in_failed_transaction_without_compiling() {
+        // Codex PR #127 auto-review P2 #1: an aborted session must short-circuit
+        // non-control source statements before analyze/plan/cache-insert work.
+        let graph = SharedGraph::new(GraphId::new(3970));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+        session
+            .execute_source(
+                "INSERT (n:Person) SET n.age = 1 / 0 FINISH",
+                &EmptyProcedureRegistry,
+            )
+            .expect_err("division-by-zero aborts the transaction");
+        assert!(session.is_aborted());
+
+        let err = session
+            .execute_source("RETURN 1", &EmptyProcedureRegistry)
+            .expect_err("aborted session rejects non-control");
+        assert!(matches!(err, ExecutorError::InFailedTransaction { .. }));
+        session.abort();
+    }
+
+    #[test]
+    fn execute_source_rollback_works_on_aborted_session() {
+        // Aborted session must still accept TX-control statements (ROLLBACK
+        // is the recovery path). Codex PR #127 auto-review P2 #1 contract.
+        let graph = SharedGraph::new(GraphId::new(3971));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+        session
+            .execute_source(
+                "INSERT (n:Person) SET n.age = 1 / 0 FINISH",
+                &EmptyProcedureRegistry,
+            )
+            .expect_err("division-by-zero aborts the transaction");
+        assert!(session.is_aborted());
+
+        session
+            .execute_source("ROLLBACK", &EmptyProcedureRegistry)
+            .expect("rollback succeeds on aborted session");
+        assert!(!session.is_aborted());
+        assert!(!session.has_active_txn());
+    }
+
+    #[test]
+    fn execute_source_parse_failure_aborts_active_tx() {
+        // Codex PR #127 auto-review P2 #2: parse errors inside an explicit
+        // transaction must abort the transaction (PostgreSQL-style "any error
+        // → rollback" contract). Parallel for analyze/plan failures.
+        let graph = SharedGraph::new(GraphId::new(3972));
+        let mut session = Session::new(&graph);
+        session.start_transaction().expect("start succeeds");
+
+        let err = session
+            .execute_source("NOT A VALID GQL STATEMENT", &EmptyProcedureRegistry)
+            .expect_err("malformed source errors");
+        assert!(matches!(err, ExecutorError::Parse { .. }));
+        assert!(session.is_aborted());
+        session.abort();
+    }
+
+    #[test]
+    fn execute_source_parse_failure_outside_tx_does_not_abort() {
+        // Outside an explicit TX, the parse error returns as-is. Session has
+        // no `aborted` semantics outside a TX (aborted flag is meaningless).
+        let graph = SharedGraph::new(GraphId::new(3973));
+        let mut session = Session::new(&graph);
+
+        let err = session
+            .execute_source("NOT A VALID GQL STATEMENT", &EmptyProcedureRegistry)
+            .expect_err("malformed source errors");
+        assert!(matches!(err, ExecutorError::Parse { .. }));
+        assert!(!session.has_active_txn());
+        assert!(!session.is_aborted());
+    }
+
+    #[test]
     fn execute_source_uses_transaction_local_schema_after_catalog_change() {
         let graph = empty_closed_graph(3901);
         let mut session =
