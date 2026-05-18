@@ -15,19 +15,19 @@ fn bench_write_e2e(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_e2e");
     for &scale in BenchProfile::from_env().scales() {
         bench_gql_per_iter_plan(&mut group, scale);
-        bench_gql_reused_preplanned(
+        bench_gql_fresh_preplanned(
             &mut group,
             "gql_insert_single_node_preplanned",
             scale,
             WriteCorpus::insert_single_node(),
         );
-        bench_gql_reused_preplanned(
+        bench_gql_fresh_preplanned(
             &mut group,
             "gql_insert_node_with_edge_preplanned",
             scale,
             WriteCorpus::insert_node_with_edge(),
         );
-        bench_gql_reused_preplanned(
+        bench_gql_fresh_preplanned(
             &mut group,
             "gql_match_set_preplanned",
             scale,
@@ -69,21 +69,6 @@ fn bench_gql_per_iter_plan(
     );
 }
 
-fn bench_gql_reused_preplanned(
-    group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
-    name: &'static str,
-    scale: usize,
-    source: &str,
-) {
-    group.throughput(Throughput::Elements(1));
-    let state = common::gql_write_state(scale, SyncPolicy::EveryN(1_000));
-    let plan = common::plan_write(source);
-    let mut session = Session::new(&state.graph);
-    group.bench_function(BenchmarkId::new(name, scale), |b| {
-        b.iter(|| std::hint::black_box(common::execute_preplanned(&plan, &mut session)));
-    });
-}
-
 fn bench_gql_fresh_preplanned(
     group: &mut criterion::BenchmarkGroup<'_, criterion::measurement::WallTime>,
     name: &'static str,
@@ -111,22 +96,26 @@ fn bench_gql_multi_statement(
     scale: usize,
 ) {
     group.throughput(Throughput::Elements(3));
-    let state = common::gql_write_state(scale, SyncPolicy::EveryN(1_000));
     let plans = WriteCorpus::multi_statement_txn()
         .iter()
         .map(|source| common::plan_write(source))
         .collect::<Vec<_>>();
-    let mut session = Session::new(&state.graph);
     group.bench_function(
         BenchmarkId::new("gql_multi_statement_txn_preplanned", scale),
         |b| {
-            b.iter(|| {
-                let rows = plans
-                    .iter()
-                    .map(|plan| common::execute_preplanned(plan, &mut session))
-                    .sum::<usize>();
-                std::hint::black_box(rows)
-            });
+            b.iter_batched(
+                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                |state| {
+                    let mut session = Session::new(&state.graph);
+                    let rows = plans
+                        .iter()
+                        .map(|plan| common::execute_preplanned(plan, &mut session))
+                        .sum::<usize>();
+                    drop(session);
+                    std::hint::black_box((state, rows))
+                },
+                BatchSize::LargeInput,
+            );
         },
     );
 }
