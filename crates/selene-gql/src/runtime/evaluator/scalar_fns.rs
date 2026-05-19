@@ -25,8 +25,7 @@ use super::{
 pub(super) fn eval_function_call(
     name: &NonEmpty<IStr>,
     args: &[ValueExpr],
-    star: bool,
-    distinct: bool,
+    (star, distinct): (bool, bool),
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
@@ -94,7 +93,7 @@ pub(super) fn eval_function_call(
             span,
         ),
         "substring" => eval_substring(
-            eval_range_args(&display_name, args, 2, 3, span, binding, schema, ctx)?,
+            eval_range_args(&display_name, args, 2..=3, span, binding, schema, ctx)?,
             span,
         ),
         "upper" => eval_string_transform(
@@ -326,19 +325,20 @@ fn eval_fixed_args(
     schema: &BindingTableSchema,
     ctx: &TxContext<'_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
-    eval_range_args(name, args, expected, expected, span, binding, schema, ctx)
+    eval_range_args(name, args, expected..=expected, span, binding, schema, ctx)
 }
 
 fn eval_range_args(
     name: &str,
     args: &[ValueExpr],
-    min: usize,
-    max: usize,
+    arity: std::ops::RangeInclusive<usize>,
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &TxContext<'_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
+    let min = *arity.start();
+    let max = *arity.end();
     if args.len() < min || args.len() > max {
         return Err(ExecutorError::FunctionArityMismatch {
             name: name.to_owned(),
@@ -375,7 +375,7 @@ fn non_negative_usize(
 }
 
 fn numeric_to_f64(value: &Value) -> Option<f64> {
-    as_f64(value).or_else(|| match value {
+    as_f64(value).or(match value {
         Value::Int128(value) => Some(*value as f64),
         Value::Uint128(value) => Some(*value as f64),
         _ => None,

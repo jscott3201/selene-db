@@ -87,7 +87,7 @@ pub fn evaluate(
             star,
             distinct,
             span,
-        } => eval_function_call(name, args, *star, *distinct, *span, binding, schema, ctx),
+        } => eval_function_call(name, args, (*star, *distinct), *span, binding, schema, ctx),
         ValueExpr::Case {
             branches,
             else_branch,
@@ -120,7 +120,7 @@ pub fn evaluate(
             high,
             negated,
             span,
-        } => eval_between(operand, low, high, *negated, *span, binding, schema, ctx),
+        } => eval_between(operand, (low, high), *negated, *span, binding, schema, ctx),
         ValueExpr::AllDifferent { items, span } => {
             eval_all_different(items, *span, binding, schema, ctx)
         }

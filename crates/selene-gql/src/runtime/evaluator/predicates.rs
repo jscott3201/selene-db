@@ -39,8 +39,7 @@ pub(super) fn eval_like(
 
 pub(super) fn eval_between(
     operand: &ValueExpr,
-    low: &ValueExpr,
-    high: &ValueExpr,
+    bounds: (&ValueExpr, &ValueExpr),
     negated: bool,
     span: SourceSpan,
     binding: &Binding,
@@ -48,8 +47,8 @@ pub(super) fn eval_between(
     ctx: &TxContext<'_, '_>,
 ) -> Result<Value, ExecutorError> {
     let operand = evaluate(operand, binding, schema, ctx)?;
-    let low = evaluate(low, binding, schema, ctx)?;
-    let high = evaluate(high, binding, schema, ctx)?;
+    let low = evaluate(bounds.0, binding, schema, ctx)?;
+    let high = evaluate(bounds.1, binding, schema, ctx)?;
     if matches!(operand, Value::Null) || matches!(low, Value::Null) || matches!(high, Value::Null) {
         return Ok(Value::Null);
     }
