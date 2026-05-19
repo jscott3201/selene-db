@@ -202,7 +202,7 @@ fn unknown_procedure_errors() {
     let err = analyze_with("CALL ns.proc()", &EmptyProcedureRegistry).expect_err("unknown");
 
     assert!(matches!(err, AnalysisError::UnknownProcedure { .. }));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_REFERENCE);
+    assert_eq!(err.gqlstatus(), GqlStatus::UNKNOWN_PROCEDURE);
 }
 
 #[test]

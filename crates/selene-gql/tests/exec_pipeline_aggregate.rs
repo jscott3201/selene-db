@@ -213,5 +213,5 @@ fn function_call_with_let_shadow_does_not_misread_column() {
         &err,
         ExecutorError::UnknownFunction { name, .. } if name == "sum"
     ));
-    assert_eq!(err.gqlstatus().as_str(), "42883");
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 }

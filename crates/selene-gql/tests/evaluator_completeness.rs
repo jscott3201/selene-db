@@ -158,7 +158,7 @@ fn scalar_function_errors_have_typed_statuses() {
     };
     let err = eval(&unknown).expect_err("unknown function errors");
     assert!(matches!(err, ExecutorError::UnknownFunction { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "42883");
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 
     let bad_arity = ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![intern("abs").unwrap()]).expect("non-empty"),
@@ -169,7 +169,7 @@ fn scalar_function_errors_have_typed_statuses() {
     };
     let err = eval(&bad_arity).expect_err("wrong arity errors");
     assert!(matches!(err, ExecutorError::FunctionArityMismatch { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "42883");
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 
     let bad_modifier = ValueExpr::FunctionCall {
         name: NonEmpty::try_from_vec(vec![intern("abs").unwrap()]).expect("non-empty"),
@@ -180,7 +180,7 @@ fn scalar_function_errors_have_typed_statuses() {
     };
     let err = eval(&bad_modifier).expect_err("DISTINCT is aggregate-only");
     assert!(matches!(err, ExecutorError::InvalidFunctionModifier { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "42883");
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 }
 
 #[test]
@@ -366,7 +366,7 @@ fn is_typed_and_is_normalized_scope_cut_are_explicit() {
     };
     let err = eval(&normalized).expect_err("normalization is v1.2");
     assert!(matches!(err, ExecutorError::FeatureNotInV1_1 { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "0A000");
+    assert_eq!(err.gqlstatus().as_str(), "42N01");
 }
 
 #[test]

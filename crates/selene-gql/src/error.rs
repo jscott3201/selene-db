@@ -201,3 +201,34 @@ impl ParserError {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::GqlStatus;
+
+    #[test]
+    fn gqlstatus_codes_match_iso_table_8_remap() {
+        let cases = [
+            (GqlStatus::SYNTAX_ERROR, "42001", *b"42"),
+            (GqlStatus::FEATURE_NOT_SUPPORTED, "42N01", *b"42"),
+            (GqlStatus::PROGRAM_LIMIT_EXCEEDED, "5GQL1", *b"5G"),
+            (GqlStatus::UNDEFINED_REFERENCE, "42N03", *b"42"),
+            (GqlStatus::INVALID_REFERENCE, "42002", *b"42"),
+            (GqlStatus::DUPLICATE_OBJECT, "42N10", *b"42"),
+            (GqlStatus::DATATYPE_MISMATCH, "22G03", *b"22"),
+            (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
+            (GqlStatus::INVALID_TRANSACTION_STATE, "25000", *b"25"),
+            (GqlStatus::INVALID_TRANSACTION_STATE_MIXING, "25G02", *b"25"),
+            (GqlStatus::IN_FAILED_TRANSACTION, "25N02", *b"25"),
+            (GqlStatus::UNKNOWN_PROCEDURE, "42N04", *b"42"),
+            (GqlStatus::INVALID_PROCEDURE_ARGUMENT, "22G03", *b"22"),
+            (GqlStatus::CAPABILITY_VIOLATION, "42N28", *b"42"),
+            (GqlStatus::IMPLEMENTATION_DEFINED_ERROR, "XX500", *b"XX"),
+        ];
+
+        for (status, code, class) in cases {
+            assert_eq!(status.as_str(), code);
+            assert_eq!(status.class(), class);
+        }
+    }
+}

@@ -39,7 +39,7 @@ fn diagnostic_report_wraps_interner_budget_exceeded() {
     let report = DiagnosticReport::new(error, Arc::<str>::from("RETURN over_budget"), "query.gql");
 
     let rendered = render(&report);
-    assert!(rendered.contains("54000"));
+    assert!(rendered.contains("5GQL1"));
     assert!(rendered.contains("interner-admission budget exceeded"));
     assert!(rendered.contains("8192 distinct new interner admissions"));
 }
