@@ -6,7 +6,7 @@ mod exec_common;
 
 use std::sync::Arc;
 
-use exec_common::{ExecFixture, column_values, execute_read, istr, planned};
+use exec_common::{ExecFixture, column_values, execute_read, execute_read_result, istr, planned};
 use selene_core::{EdgeId, NodeId, Value, intern};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
@@ -94,6 +94,53 @@ fn single_value(source: &str, column: &str) -> Value {
     values.pop().expect("one row")
 }
 
+fn function_call(name: &str, args: Vec<ValueExpr>) -> ValueExpr {
+    ValueExpr::FunctionCall {
+        name: NonEmpty::try_from_vec(vec![intern(name).unwrap()]).expect("non-empty"),
+        args,
+        star: false,
+        distinct: false,
+        span: span(),
+    }
+}
+
+fn list_lit(items: Vec<ValueExpr>) -> ValueExpr {
+    ValueExpr::ListLiteral {
+        items,
+        span: span(),
+    }
+}
+
+fn list_access(target: ValueExpr, index: ValueExpr) -> ValueExpr {
+    ValueExpr::ListAccess {
+        target: Box::new(target),
+        index: Box::new(index),
+        span: span(),
+    }
+}
+
+fn assert_float_near(value: Value, expected: f64) {
+    match value {
+        Value::Float(actual) => assert!(
+            (actual - expected).abs() < 1e-12,
+            "expected {expected}, got {actual}"
+        ),
+        other => panic!("expected float {expected}, got {other:?}"),
+    }
+}
+
+fn assert_data_exception_contains(err: ExecutorError, expected: &str) {
+    match err {
+        ExecutorError::DataException { message, .. } => {
+            assert!(
+                message.contains(expected),
+                "expected data exception containing {expected:?}, got {message:?}"
+            );
+        }
+        other => panic!("expected data exception, got {other:?}"),
+    }
+}
+
 #[test]
 fn scalar_numeric_functions_dispatch() {
     let table = execute_read(
@@ -145,6 +192,26 @@ fn scalar_string_and_collection_functions_dispatch() {
     assert_eq!(column_values(&table, "co"), vec![Value::String(istr("x"))]);
     assert_eq!(column_values(&table, "nf"), vec![Value::Null]);
     assert_eq!(column_values(&table, "sz"), vec![Value::Int(3)]);
+}
+
+#[test]
+fn substring_null_propagates_index_arguments() {
+    assert_eq!(
+        single_value("RETURN substring('abc', null, 1) AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN substring('abc', 0, null) AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN substring(null, 0, 1) AS value", "value"),
+        Value::Null
+    );
+
+    let err = execute_read_result("RETURN substring('abc', -1, 1) AS value")
+        .expect_err("negative substring start still errors");
+    assert_data_exception_contains(err, "substring start is not a non-negative integer");
 }
 
 #[test]
@@ -222,6 +289,49 @@ fn binary_operator_completion_covers_power_xor_concat_and_string_predicates() {
         vec![Value::Bool(true)]
     );
     assert_eq!(column_values(&table, "ends_value"), vec![Value::Bool(true)]);
+}
+
+#[test]
+fn power_negative_integer_exponent_uses_float_path() {
+    assert_float_near(single_value("RETURN power(2, -1) AS value", "value"), 0.5);
+    assert_float_near(single_value("RETURN power(10, -2) AS value", "value"), 0.01);
+    assert_eq!(
+        single_value("RETURN power(2, 3) AS value", "value"),
+        Value::Int(8)
+    );
+
+    let err = execute_read_result("RETURN power(0, -1) AS value")
+        .expect_err("zero raised to a negative exponent is non-finite");
+    assert_data_exception_contains(
+        err,
+        "floating-point exponentiation produced non-finite value",
+    );
+}
+
+#[test]
+fn power_treats_128_bit_integers_as_numeric_for_float_path() {
+    let lhs = intern("lhs").unwrap();
+    let rhs = intern("rhs").unwrap();
+    let power = function_call("power", vec![var(lhs), var(rhs)]);
+
+    assert_float_near(
+        eval_with_binding(
+            &power,
+            Binding::new([Value::Int128(2), Value::Int(3)]),
+            vec![lhs, rhs],
+        )
+        .expect("Int128 power evaluates"),
+        8.0,
+    );
+    assert_float_near(
+        eval_with_binding(
+            &power,
+            Binding::new([Value::Uint128(10), Value::Int(-2)]),
+            vec![lhs, rhs],
+        )
+        .expect("Uint128 negative power evaluates"),
+        0.01,
+    );
 }
 
 #[test]
@@ -386,6 +496,33 @@ fn case_list_access_and_record_literal_evaluate() {
         single_value("RETURN [10][-1] AS value", "value"),
         Value::Null
     );
+
+    assert_eq!(
+        eval(&list_access(null_lit(), int_lit(0))).unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        eval(&list_access(
+            list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
+            null_lit()
+        ))
+        .unwrap(),
+        Value::Null
+    );
+    assert_eq!(
+        eval(&list_access(null_lit(), null_lit())).unwrap(),
+        Value::Null
+    );
+
+    let err = eval(&list_access(string_lit("string"), int_lit(0)))
+        .expect_err("non-list target still errors");
+    assert_data_exception_contains(err, "list access target is not a list");
+    let err = eval(&list_access(
+        list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
+        string_lit("x"),
+    ))
+    .expect_err("non-integer index still errors");
+    assert_data_exception_contains(err, "list access index is not an integer");
 
     let record = ValueExpr::RecordLiteral {
         fields: vec![(istr("a"), int_lit(1)), (istr("b"), bool_lit(true))],

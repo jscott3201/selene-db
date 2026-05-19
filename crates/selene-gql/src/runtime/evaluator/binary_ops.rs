@@ -191,16 +191,17 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
-    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs) {
-        let Ok(exponent) = u32::try_from(*rhs) else {
-            return data_exception("integer exponent is negative or too large", span);
-        };
+    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs)
+        && *rhs >= 0
+    {
+        let exponent = u32::try_from(*rhs)
+            .map_err(|_| data_exception_value("integer exponent is negative or too large", span))?;
         return lhs
             .checked_pow(exponent)
             .map(Value::Int)
             .ok_or_else(|| data_exception_value("integer exponentiation overflow", span));
     }
-    let (Some(lhs), Some(rhs)) = (as_f64(&lhs), as_f64(&rhs)) else {
+    let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
         return data_exception("power operands are not numeric", span);
     };
     let value = lhs.powf(rhs);
@@ -378,6 +379,14 @@ pub(super) fn as_f64(value: &Value) -> Option<f64> {
         Value::Float32(value) => Some(f64::from(*value)),
         _ => None,
     }
+}
+
+pub(super) fn numeric_to_f64(value: &Value) -> Option<f64> {
+    as_f64(value).or(match value {
+        Value::Int128(value) => Some(*value as f64),
+        Value::Uint128(value) => Some(*value as f64),
+        _ => None,
+    })
 }
 
 pub(super) fn string_slice(value: &Value) -> Option<&str> {

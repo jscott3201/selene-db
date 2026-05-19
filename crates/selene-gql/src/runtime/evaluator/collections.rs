@@ -26,6 +26,9 @@ pub(super) fn eval_list_access(
 ) -> Result<Value, ExecutorError> {
     let target = evaluate(target, binding, schema, ctx)?;
     let index = evaluate(index, binding, schema, ctx)?;
+    if matches!(target, Value::Null) || matches!(index, Value::Null) {
+        return Ok(Value::Null);
+    }
     let Value::List(values) = target else {
         return data_exception("list access target is not a list", span);
     };

@@ -17,7 +17,8 @@ use crate::{
 
 use super::{
     binary_ops::{
-        as_f64, data_exception, data_exception_value, eval_binary, eval_equality, string_slice,
+        data_exception, data_exception_value, eval_binary, eval_equality, numeric_to_f64,
+        string_slice,
     },
     evaluate,
 };
@@ -206,6 +207,15 @@ fn eval_substring(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorE
     if matches!(source, Value::Null) {
         return Ok(Value::Null);
     }
+    if matches!(&args[1], Value::Null) {
+        return Ok(Value::Null);
+    }
+    if args
+        .get(2)
+        .is_some_and(|length| matches!(length, Value::Null))
+    {
+        return Ok(Value::Null);
+    }
     let Some(source) = string_slice(source) else {
         return data_exception("substring source is not a string", span);
     };
@@ -372,14 +382,6 @@ fn non_negative_usize(
         Value::Null => Err(data_exception_value(message, span)),
         _ => data_exception(message, span),
     }
-}
-
-fn numeric_to_f64(value: &Value) -> Option<f64> {
-    as_f64(value).or(match value {
-        Value::Int128(value) => Some(*value as f64),
-        Value::Uint128(value) => Some(*value as f64),
-        _ => None,
-    })
 }
 
 fn single_segment_name(name: &NonEmpty<IStr>) -> Option<String> {
