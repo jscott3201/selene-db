@@ -47,6 +47,10 @@ required-features = ["test-harness"]
 name = "executor_snapshot_corpus"
 required-features = ["test-harness"]
 
+[[test]]
+name = "evaluator_completeness"
+required-features = ["test-harness"]
+
 [[bench]]
 name = "parse"
 harness = false
@@ -66,6 +70,10 @@ required-features = ["test-harness"]
 name = "write_e2e"
 harness = false
 required-features = ["test-harness"]
+
+[[bench]]
+name = "expression_eval"
+harness = false
 
 [[bench]]
 name = "iai_gates"

@@ -13,7 +13,7 @@ use crate::{
 pub enum AnalysisError {
     /// A reference does not resolve to any binding in the enclosing scopes.
     #[error("undefined reference: {name}")]
-    #[diagnostic(code(SLENE_GQL_42703))]
+    #[diagnostic(code(SLENE_GQL_42N03))]
     UndefinedReference {
         /// Unresolved binding name.
         name: IStr,
@@ -27,7 +27,7 @@ pub enum AnalysisError {
 
     /// A strict declaration site redeclared a binding already present in its scope.
     #[error("binding {name} is already declared in this scope")]
-    #[diagnostic(code(SLENE_GQL_42710))]
+    #[diagnostic(code(SLENE_GQL_42N10))]
     Shadow {
         /// Redeclared binding name.
         name: IStr,
@@ -45,7 +45,7 @@ pub enum AnalysisError {
     #[error(
         "pattern variable {name} is already bound as a {prior} and cannot be reused as a {current}"
     )]
-    #[diagnostic(code(SLENE_GQL_42710))]
+    #[diagnostic(code(SLENE_GQL_42N10))]
     PatternKindMismatch {
         /// Reused binding name.
         name: IStr,
@@ -65,7 +65,7 @@ pub enum AnalysisError {
     #[error(
         "binding {name} is already bound as {prior_kind:?} and cannot be reused as a {new_kind}"
     )]
-    #[diagnostic(code(SLENE_GQL_42710))]
+    #[diagnostic(code(SLENE_GQL_42N10))]
     AliasReusedAsPatternBinding {
         /// Reused binding name.
         name: IStr,
@@ -80,7 +80,7 @@ pub enum AnalysisError {
 
     /// The analyzer encountered an AST surface it does not route yet.
     #[error("not implemented: {message}")]
-    #[diagnostic(code(SLENE_GQL_0A000))]
+    #[diagnostic(code(SLENE_GQL_42N01))]
     NotImplemented {
         /// Human-readable missing capability.
         message: String,
@@ -94,7 +94,7 @@ pub enum AnalysisError {
 
     /// A statically-decidable type mismatch.
     #[error("{context}: expected {expected}, found {found:?}")]
-    #[diagnostic(code(SLENE_GQL_42883))]
+    #[diagnostic(code(SLENE_GQL_22G03))]
     TypeMismatch {
         /// Operation or clause that required a different type.
         context: TypeMismatchContext,
@@ -109,7 +109,7 @@ pub enum AnalysisError {
 
     /// Procedure name was not registered.
     #[error("unknown procedure: {}", display_qualified_name(name))]
-    #[diagnostic(code(SLENE_GQL_42002))]
+    #[diagnostic(code(SLENE_GQL_42N04))]
     UnknownProcedure {
         /// Qualified procedure name.
         name: Box<[IStr]>,
@@ -123,7 +123,7 @@ pub enum AnalysisError {
         "wrong argument count for {}: expected {expected}, found {actual}",
         display_qualified_name(procedure)
     )]
-    #[diagnostic(code(SLENE_GQL_42883))]
+    #[diagnostic(code(SLENE_GQL_22G03))]
     WrongArgumentCount {
         /// Qualified procedure name.
         procedure: Box<[IStr]>,
@@ -141,7 +141,7 @@ pub enum AnalysisError {
         "unknown YIELD column {column} for procedure {}",
         display_qualified_name(procedure)
     )]
-    #[diagnostic(code(SLENE_GQL_42703))]
+    #[diagnostic(code(SLENE_GQL_42N03))]
     UnknownYieldColumn {
         /// Qualified procedure name.
         procedure: Box<[IStr]>,
@@ -597,7 +597,7 @@ impl AnalysisError {
             | Self::AliasReusedAsPatternBinding { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
-            Self::UnknownProcedure { .. } => GqlStatus::INVALID_REFERENCE,
+            Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,
             Self::WrongArgumentCount { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownYieldColumn { .. } => GqlStatus::UNDEFINED_REFERENCE,
             Self::MutatingProcedureInReadPipeline { .. } => {

@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn non_decimal_literal_reports_not_implemented() {
         // Hex/oct/bin/uint/temporal literals parse at the grammar level but
-        // their builders land later. Surface them as NotImplemented (0A000),
+        // their builders land later. Surface them as NotImplemented (42N01),
         // not SyntaxError, so callers can distinguish capability gaps from
         // typos.
         let err = parse("RETURN 0x10").expect_err("hex literal should report not implemented");

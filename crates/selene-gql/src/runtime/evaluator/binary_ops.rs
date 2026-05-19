@@ -1,163 +1,13 @@
-//! Residual-filter expression evaluator.
+use std::{cmp::Ordering, sync::Arc};
 
-use std::cmp::Ordering;
-
-use selene_core::{EdgeId, NodeId, Value};
+use selene_core::Value;
 
 use crate::{
-    BinaryOp, IsCheckKind, Literal, SourceSpan, UnaryOp, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext, value_compare},
+    BinaryOp, SourceSpan, UnaryOp, ValueExpr,
+    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext, evaluator, value_compare},
 };
 
-/// Evaluate a value expression against one binding-table row.
-pub fn evaluate(
-    expr: &ValueExpr,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
-) -> Result<Value, ExecutorError> {
-    match expr {
-        ValueExpr::Literal(literal) => Ok(literal_value(literal)),
-        ValueExpr::Variable { name, span } => lookup_variable(*name, *span, binding, schema),
-        ValueExpr::PropertyAccess { target, key, .. } => {
-            let target = evaluate(target, binding, schema, ctx)?;
-            property_access(&target, *key, ctx)
-        }
-        ValueExpr::BinaryOp { op, lhs, rhs, span } => {
-            let lhs = evaluate(lhs, binding, schema, ctx)?;
-            let rhs = evaluate(rhs, binding, schema, ctx)?;
-            eval_binary(*op, lhs, rhs, *span)
-        }
-        ValueExpr::UnaryOp { op, operand, span } => {
-            let value = evaluate(operand, binding, schema, ctx)?;
-            eval_unary(*op, value, *span)
-        }
-        ValueExpr::IsCheck {
-            operand,
-            kind: IsCheckKind::Null,
-            negated,
-            ..
-        } => {
-            let is_null = matches!(evaluate(operand, binding, schema, ctx)?, Value::Null);
-            Ok(Value::Bool(if *negated { !is_null } else { is_null }))
-        }
-        ValueExpr::InList {
-            operand,
-            list,
-            negated,
-            span,
-        } => {
-            let value = evaluate(operand, binding, schema, ctx)?;
-            eval_in_list(value, list, *negated, *span, binding, schema, ctx)
-        }
-        ValueExpr::ListLiteral { items, .. } => items
-            .iter()
-            .map(|item| evaluate(item, binding, schema, ctx))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Value::List),
-        ValueExpr::Parameter { name, span } => {
-            ctx.parameters()
-                .get(name)
-                .cloned()
-                .ok_or(ExecutorError::UnboundParameter {
-                    name: *name,
-                    span: *span,
-                })
-        }
-        ValueExpr::FunctionCall { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "function call evaluation not implemented",
-        }),
-        ValueExpr::Case { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "CASE evaluation not implemented",
-        }),
-        ValueExpr::Exists { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "EXISTS subquery evaluation not implemented",
-        }),
-        ValueExpr::CountSubquery { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "COUNT subquery evaluation not implemented",
-        }),
-        ValueExpr::ListAccess { .. }
-        | ValueExpr::RecordLiteral { .. }
-        | ValueExpr::IsCheck { .. }
-        | ValueExpr::Like { .. }
-        | ValueExpr::Between { .. }
-        | ValueExpr::AllDifferent { .. }
-        | ValueExpr::Same { .. }
-        | ValueExpr::PropertyExists { .. } => Err(ExecutorError::ImplementationDefined {
-            detail: "expression kind not implemented",
-        }),
-    }
-}
-
-fn lookup_variable(
-    name: selene_core::IStr,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-) -> Result<Value, ExecutorError> {
-    let Some(index) = schema
-        .columns
-        .iter()
-        .position(|column| column.name == Some(name))
-    else {
-        // GA07 binder keeps pre-projection bindings visible after RETURN.
-        // OrderBy evaluates against the projected schema when the TopK
-        // rewrite does not apply (unbounded ORDER BY); a strict
-        // InvalidReference here would break those plans. Surface
-        // analyzer-fault unbound vars at bind-time instead.
-        return Ok(Value::Null);
-    };
-    binding
-        .get(index)
-        .cloned()
-        .ok_or_else(|| ExecutorError::InvalidReference {
-            name: name.as_str().to_owned(),
-            span,
-        })
-}
-
-fn property_access(
-    target: &Value,
-    key: selene_core::IStr,
-    ctx: &TxContext<'_, '_>,
-) -> Result<Value, ExecutorError> {
-    match target {
-        Value::Null => Ok(Value::Null),
-        Value::NodeRef(id) => Ok(property_from_node(*id, key, ctx)),
-        Value::EdgeRef(id) => Ok(property_from_edge(*id, key, ctx)),
-        _ => Err(ExecutorError::ImplementationDefined {
-            detail: "property access target is not graph element",
-        }),
-    }
-}
-
-fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &TxContext<'_, '_>) -> Value {
-    ctx.snapshot()
-        .node_properties(id)
-        .and_then(|properties| properties.get(&key))
-        .cloned()
-        .unwrap_or(Value::Null)
-}
-
-fn property_from_edge(id: EdgeId, key: selene_core::IStr, ctx: &TxContext<'_, '_>) -> Value {
-    ctx.snapshot()
-        .edge_properties(id)
-        .and_then(|properties| properties.get(&key))
-        .cloned()
-        .unwrap_or(Value::Null)
-}
-
-fn literal_value(literal: &Literal) -> Value {
-    match literal {
-        Literal::Bool(value, _) => Value::Bool(*value),
-        Literal::Integer(value, _) => Value::Int(*value),
-        Literal::Float(value, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(*value),
-        Literal::Null(_) => Value::Null,
-    }
-}
-
-fn eval_binary(
+pub(super) fn eval_binary(
     op: BinaryOp,
     lhs: Value,
     rhs: Value,
@@ -173,18 +23,22 @@ fn eval_binary(
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
             eval_arithmetic(op, lhs, rhs, span)
         }
-        BinaryOp::Power
-        | BinaryOp::Xor
-        | BinaryOp::Concat
-        | BinaryOp::Contains
-        | BinaryOp::StartsWith
-        | BinaryOp::EndsWith => Err(ExecutorError::ImplementationDefined {
-            detail: "binary operator not implemented",
-        }),
+        BinaryOp::Power => eval_power(lhs, rhs, span),
+        BinaryOp::Xor => eval_xor(lhs, rhs, span),
+        BinaryOp::Concat => eval_concat(lhs, rhs, span),
+        BinaryOp::Contains => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.contains(rhs)),
+        BinaryOp::StartsWith => {
+            eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.starts_with(rhs))
+        }
+        BinaryOp::EndsWith => eval_string_predicate(lhs, rhs, span, |lhs, rhs| lhs.ends_with(rhs)),
     }
 }
 
-fn eval_unary(op: UnaryOp, value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+pub(super) fn eval_unary(
+    op: UnaryOp,
+    value: Value,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
     match op {
         UnaryOp::Not => match value {
             Value::Bool(value) => Ok(Value::Bool(!value)),
@@ -227,7 +81,18 @@ fn truth(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> 
     }
 }
 
-fn eval_equality(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value, ExecutorError> {
+fn eval_xor(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match (truth(lhs, span)?, truth(rhs, span)?) {
+        (Some(lhs), Some(rhs)) => Ok(Value::Bool(lhs ^ rhs)),
+        _ => Ok(Value::Null),
+    }
+}
+
+pub(super) fn eval_equality(
+    op: BinaryOp,
+    lhs: &Value,
+    rhs: &Value,
+) -> Result<Value, ExecutorError> {
     if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
         return Ok(Value::Null);
     }
@@ -241,7 +106,7 @@ fn eval_equality(op: BinaryOp, lhs: &Value, rhs: &Value) -> Result<Value, Execut
     }))
 }
 
-fn eval_ordering(
+pub(super) fn eval_ordering(
     op: BinaryOp,
     lhs: Value,
     rhs: Value,
@@ -320,6 +185,77 @@ fn eval_arithmetic(
             eval_float_arithmetic(op, lhs, rhs, span)
         }
     }
+}
+
+fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
+        return Ok(Value::Null);
+    }
+    if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs)
+        && *rhs >= 0
+    {
+        let exponent = u32::try_from(*rhs)
+            .map_err(|_| data_exception_value("integer exponent is negative or too large", span))?;
+        return lhs
+            .checked_pow(exponent)
+            .map(Value::Int)
+            .ok_or_else(|| data_exception_value("integer exponentiation overflow", span));
+    }
+    let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
+        return data_exception("power operands are not numeric", span);
+    };
+    let value = lhs.powf(rhs);
+    if value.is_finite() {
+        Ok(Value::Float(value))
+    } else {
+        data_exception(
+            "floating-point exponentiation produced non-finite value",
+            span,
+        )
+    }
+}
+
+fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
+        return Ok(Value::Null);
+    }
+    match (lhs, rhs) {
+        (Value::String(lhs), Value::String(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::String(lhs), Value::ExternalString(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::ExternalString(lhs), Value::String(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => {
+            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
+        }
+        (Value::List(mut lhs), Value::List(rhs)) => {
+            lhs.extend(rhs);
+            Ok(Value::List(lhs))
+        }
+        _ => data_exception(
+            "concatenation operands must both be strings or both be lists",
+            span,
+        ),
+    }
+}
+
+fn eval_string_predicate(
+    lhs: Value,
+    rhs: Value,
+    span: SourceSpan,
+    predicate: impl Fn(&str, &str) -> bool,
+) -> Result<Value, ExecutorError> {
+    if matches!(lhs, Value::Null) || matches!(rhs, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let (Some(lhs), Some(rhs)) = (string_slice(&lhs), string_slice(&rhs)) else {
+        return data_exception("string predicate operands are not both strings", span);
+    };
+    Ok(Value::Bool(predicate(lhs, rhs)))
 }
 
 fn eval_int_arithmetic(
@@ -401,7 +337,7 @@ fn eval_float_arithmetic(
     }
 }
 
-fn eval_in_list(
+pub(super) fn eval_in_list(
     value: Value,
     list: &[ValueExpr],
     negated: bool,
@@ -415,7 +351,7 @@ fn eval_in_list(
     }
     let mut saw_unknown = false;
     for item in list {
-        let item = evaluate(item, binding, schema, ctx)?;
+        let item = evaluator::evaluate(item, binding, schema, ctx)?;
         if matches!(item, Value::Null) {
             saw_unknown = true;
             continue;
@@ -435,7 +371,7 @@ fn eval_in_list(
     }
 }
 
-fn as_f64(value: &Value) -> Option<f64> {
+pub(super) fn as_f64(value: &Value) -> Option<f64> {
     match value {
         Value::Int(value) => Some(*value as f64),
         Value::Uint(value) => Some(*value as f64),
@@ -445,11 +381,30 @@ fn as_f64(value: &Value) -> Option<f64> {
     }
 }
 
-fn data_exception<T>(message: impl Into<String>, span: SourceSpan) -> Result<T, ExecutorError> {
+pub(super) fn numeric_to_f64(value: &Value) -> Option<f64> {
+    as_f64(value).or(match value {
+        Value::Int128(value) => Some(*value as f64),
+        Value::Uint128(value) => Some(*value as f64),
+        _ => None,
+    })
+}
+
+pub(super) fn string_slice(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(value) => Some(value.as_str()),
+        Value::ExternalString(value) => Some(value.as_ref()),
+        _ => None,
+    }
+}
+
+pub(super) fn data_exception<T>(
+    message: impl Into<String>,
+    span: SourceSpan,
+) -> Result<T, ExecutorError> {
     Err(data_exception_value(message, span))
 }
 
-fn data_exception_value(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
+pub(super) fn data_exception_value(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
     ExecutorError::DataException {
         message: message.into(),
         span,

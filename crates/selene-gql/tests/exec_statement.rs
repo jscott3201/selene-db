@@ -321,7 +321,7 @@ fn aborted_session_rejects_data_modifying_with_in_failed_transaction() {
     let err = execute("INSERT (n:Other) FINISH", &mut session).expect_err("aborted tx rejects");
 
     assert!(matches!(err, ExecutorError::InFailedTransaction { .. }));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_STATE);
+    assert_eq!(err.gqlstatus(), GqlStatus::IN_FAILED_TRANSACTION);
     assert!(session.is_aborted());
     session.abort();
 }

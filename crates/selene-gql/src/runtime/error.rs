@@ -59,9 +59,9 @@ pub enum ExecutorError {
 
     /// A `$name` parameter was referenced but not bound on the session.
     ///
-    /// Maps to SQLSTATE 22023, invalid parameter value.
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
     #[error("unbound parameter: ${name}")]
-    #[diagnostic(code(SLENE_X_22023))]
+    #[diagnostic(code(SLENE_X_22G03))]
     UnboundParameter {
         /// Parameter name without the leading `$`.
         name: IStr,
@@ -72,9 +72,9 @@ pub enum ExecutorError {
 
     /// A bound `$name` parameter had the wrong type for its runtime position.
     ///
-    /// Maps to SQLSTATE 22023, invalid parameter value.
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
     #[error("invalid parameter type for ${name}: expected {expected}, got {actual}")]
-    #[diagnostic(code(SLENE_X_22023))]
+    #[diagnostic(code(SLENE_X_22G03))]
     InvalidParameterType {
         /// Parameter name without the leading `$`.
         name: IStr,
@@ -84,6 +84,65 @@ pub enum ExecutorError {
         actual: &'static str,
         /// Source span requiring the parameter.
         #[label("invalid parameter type")]
+        span: SourceSpan,
+    },
+
+    /// Scalar function name was not registered in the v1.1 closed set.
+    ///
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    #[error("unknown function: {name}")]
+    #[diagnostic(code(SLENE_X_22G03))]
+    UnknownFunction {
+        /// Function name as written by the caller.
+        name: String,
+        /// Source span for the function call.
+        #[label("unknown function")]
+        span: SourceSpan,
+    },
+
+    /// Scalar function received the wrong number of arguments.
+    ///
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    #[error("function {name} expected {expected} argument(s), got {actual}")]
+    #[diagnostic(code(SLENE_X_22G03))]
+    FunctionArityMismatch {
+        /// Function name as written by the caller.
+        name: String,
+        /// Human-readable arity contract.
+        expected: &'static str,
+        /// Actual argument count.
+        actual: usize,
+        /// Source span for the function call.
+        #[label("wrong arity")]
+        span: SourceSpan,
+    },
+
+    /// Scalar function call used an aggregate-only modifier.
+    ///
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    #[error("function {name} does not allow {modifier}")]
+    #[diagnostic(code(SLENE_X_22G03))]
+    InvalidFunctionModifier {
+        /// Function name as written by the caller.
+        name: String,
+        /// Rejected modifier.
+        modifier: &'static str,
+        /// Source span for the function call.
+        #[label("invalid function modifier")]
+        span: SourceSpan,
+    },
+
+    /// Expression feature is intentionally outside the v1.1 evaluator surface.
+    ///
+    /// Maps to GQLSTATUS 42N01, a selene-db implementation-defined subclass
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
+    #[error("feature not supported in v1.1: {feature}")]
+    #[diagnostic(code(SLENE_X_42N01))]
+    FeatureNotInV1_1 {
+        /// Stable feature tag.
+        feature: &'static str,
+        /// Source span requiring the feature.
+        #[label("feature not supported")]
         span: SourceSpan,
     },
 
@@ -118,7 +177,7 @@ pub enum ExecutorError {
 
     /// Statement was issued while the explicit transaction is aborted.
     #[error("statement issued against aborted explicit transaction")]
-    #[diagnostic(code(SLENE_X_25P02))]
+    #[diagnostic(code(SLENE_X_25N02))]
     InFailedTransaction {
         /// Source span for the rejected statement.
         #[label("aborted transaction; issue ROLLBACK to recover")]
@@ -181,10 +240,14 @@ impl ExecutorError {
             Self::UnboundParameter { .. } | Self::InvalidParameterType { .. } => {
                 GqlStatus::INVALID_PROCEDURE_ARGUMENT
             }
+            Self::UnknownFunction { .. }
+            | Self::FunctionArityMismatch { .. }
+            | Self::InvalidFunctionModifier { .. } => GqlStatus::DATATYPE_MISMATCH,
+            Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::InvalidTransactionState { .. }
             | Self::TransactionAlreadyActive { .. }
-            | Self::NoActiveTransaction { .. }
-            | Self::InFailedTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
+            | Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
+            Self::InFailedTransaction { .. } => GqlStatus::IN_FAILED_TRANSACTION,
             Self::GraphMutation { .. } | Self::Flush { .. } => {
                 GqlStatus::IMPLEMENTATION_DEFINED_ERROR
             }

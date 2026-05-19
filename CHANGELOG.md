@@ -38,8 +38,32 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Session::clear_parameter(name)`, and `Session::clear_parameters()`.
   `$name` references are resolved from the session parameter map end-to-end;
   unreferenced parameters are ignored, runtime type mismatches are strict
-  `ExecutorError::InvalidParameterType` errors with SQLSTATE 22023, and typed
+  `ExecutorError::InvalidParameterType` errors with GQLSTATUS 22G03, and typed
   declarations such as `$id :: INTEGER` remain a v1.2 follow-up.
+- **Evaluator completeness (16/18)**: `runtime/evaluator/` now executes `LIKE`,
+  `BETWEEN`, `IS` checks (7 sub-kinds), `CASE`, 0-indexed list access, record
+  literals, `PROPERTY_EXISTS`, `ALL_DIFFERENT`, `SAME`, a closed
+  case-insensitive scalar function list of 15 functions, and binary `POWER`,
+  `XOR`, concat, `CONTAINS`, `STARTS WITH`, and `ENDS WITH`. `IS NORMALIZED`
+  returns `ExecutorError::FeatureNotInV1_1` with GQLSTATUS 42N01 pending v1.2
+  Unicode normalization work; `Exists` and `CountSubquery` are deferred to
+  BRIEF-116b.
+- `ExecutorError::{UnknownFunction, FunctionArityMismatch,
+  InvalidFunctionModifier, FeatureNotInV1_1}` for scalar dispatch and scoped
+  v1.1 evaluator feature errors.
+- `runtime/evaluator/` submodule layout split into `mod.rs`, `binary_ops.rs`,
+  `predicates.rs`, `scalar_fns.rs`, `case.rs`, and `collections.rs`.
+
+### Changed
+
+- ISO GQL error-code conformance: remapped `GqlStatus` constants and
+  `miette` diagnostic tags to GQLSTATUS values per ISO/IEC 39075:2024
+  section 23.1 Table 8. Public-facing `as_str()` output changes for 9
+  status constants (for example, `42601 -> 42001`, `42883 -> 22G03`,
+  `0A000 -> 42N01`). Added `GqlStatus::IN_FAILED_TRANSACTION` (`25N02`)
+  and `GqlStatus::class()`. No source changes are required for downstream
+  consumers using `GqlStatus::SYNTAX_ERROR` and related constants by name;
+  consumers comparing raw 5-character codes must update strings.
 
 ## [1.0.0] — 2026-05-16
 
