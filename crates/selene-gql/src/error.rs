@@ -11,39 +11,55 @@ use crate::ast::span::SourceSpan;
 pub struct GqlStatus([u8; 5]);
 
 impl GqlStatus {
-    /// Syntax error or access rule violation.
-    pub const SYNTAX_ERROR: Self = Self(*b"42601");
-    /// Feature not supported.
-    pub const FEATURE_NOT_SUPPORTED: Self = Self(*b"0A000");
-    /// Program limit exceeded.
-    pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"54000");
-    /// Undefined reference.
-    pub const UNDEFINED_REFERENCE: Self = Self(*b"42703");
-    /// Invalid reference.
+    /// Maps to GQLSTATUS 42001 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const SYNTAX_ERROR: Self = Self(*b"42001");
+    /// Maps to GQLSTATUS 42N01, a selene-db implementation-defined subclass
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
+    pub const FEATURE_NOT_SUPPORTED: Self = Self(*b"42N01");
+    /// Maps to GQLSTATUS 5GQL1, a selene-db implementation-defined class per
+    /// ISO/IEC 39075:2024 section 23.1.
+    pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"5GQL1");
+    /// Maps to GQLSTATUS 42N03, a selene-db implementation-defined subclass
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
+    pub const UNDEFINED_REFERENCE: Self = Self(*b"42N03");
+    /// Maps to GQLSTATUS 42002 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_REFERENCE: Self = Self(*b"42002");
-    /// Duplicate object or binding name.
-    pub const DUPLICATE_OBJECT: Self = Self(*b"42710");
-    /// Datatype mismatch.
-    pub const DATATYPE_MISMATCH: Self = Self(*b"42883");
-    /// Data exception.
+    /// Maps to GQLSTATUS 42N10, a selene-db implementation-defined subclass
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
+    pub const DUPLICATE_OBJECT: Self = Self(*b"42N10");
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const DATATYPE_MISMATCH: Self = Self(*b"22G03");
+    /// Maps to GQLSTATUS 22000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
-    /// Invalid transaction state.
+    /// Maps to GQLSTATUS 25000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_TRANSACTION_STATE: Self = Self(*b"25000");
-    /// Invalid transaction state: catalog/data statement mixing.
+    /// Maps to GQLSTATUS 25G02 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_TRANSACTION_STATE_MIXING: Self = Self(*b"25G02");
-    /// Unknown procedure name.
-    pub const UNKNOWN_PROCEDURE: Self = Self(*b"42704");
-    /// Invalid procedure argument.
-    pub const INVALID_PROCEDURE_ARGUMENT: Self = Self(*b"22023");
-    /// Procedure capability violation.
-    pub const CAPABILITY_VIOLATION: Self = Self(*b"28000");
-    /// Implementation-defined planner or executor failure.
+    /// Maps to GQLSTATUS 25N02, a selene-db implementation-defined subclass
+    /// under standard class 25 per ISO/IEC 39075:2024 section 23.1.
+    pub const IN_FAILED_TRANSACTION: Self = Self(*b"25N02");
+    /// Maps to GQLSTATUS 42N04, a selene-db implementation-defined subclass
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
+    pub const UNKNOWN_PROCEDURE: Self = Self(*b"42N04");
+    /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_PROCEDURE_ARGUMENT: Self = Self(*b"22G03");
+    /// Maps to GQLSTATUS 42N28, a selene-db implementation-defined subclass
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
+    pub const CAPABILITY_VIOLATION: Self = Self(*b"42N28");
+    /// Maps to GQLSTATUS XX500, a selene-db implementation-defined class per
+    /// ISO/IEC 39075:2024 section 23.1.
     pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"XX500");
 
     /// Return this status as its 5-character string form.
     #[must_use]
     pub fn as_str(&self) -> &str {
         std::str::from_utf8(&self.0).unwrap_or("XX500")
+    }
+
+    /// Return this status's two-character class code.
+    #[must_use]
+    pub const fn class(&self) -> [u8; 2] {
+        [self.0[0], self.0[1]]
     }
 }
 
@@ -59,7 +75,7 @@ impl fmt::Display for GqlStatus {
 pub enum ParserError {
     /// Source text did not parse as supported GQL syntax.
     #[error("{message}")]
-    #[diagnostic(code(SLENE_GQL_42601))]
+    #[diagnostic(code(SLENE_GQL_42001))]
     SyntaxError {
         /// ISO GQLSTATUS code.
         status: GqlStatus,
@@ -75,7 +91,7 @@ pub enum ParserError {
 
     /// Parsed syntax requires a feature outside the current support set.
     #[error("feature not supported: {} ({display_name})", feature_id.as_str())]
-    #[diagnostic(code(SLENE_GQL_0A000))]
+    #[diagnostic(code(SLENE_GQL_42N01))]
     UnsupportedFeature {
         /// ISO feature identifier.
         feature_id: FeatureId,
@@ -92,7 +108,7 @@ pub enum ParserError {
     /// Query introduced more distinct interner admissions than the parser cap allows.
     #[error("interner-admission budget exceeded ({limit})")]
     #[diagnostic(
-        code(SLENE_GQL_54000),
+        code(SLENE_GQL_5GQL1),
         help("queries are bounded to 8192 distinct new interner admissions per parse")
     )]
     InternerBudgetExceeded {
@@ -106,7 +122,7 @@ pub enum ParserError {
     /// Query nesting exceeded the parser's recursion cap.
     #[error("parser nesting limit exceeded ({limit})")]
     #[diagnostic(
-        code(SLENE_GQL_54000),
+        code(SLENE_GQL_5GQL1),
         help("queries are bounded to 64 nested grouping, list, and record delimiters")
     )]
     NestingLimitExceeded {
@@ -124,7 +140,7 @@ pub enum ParserError {
     /// This variant covers grammar surfaces selene-db will support but whose
     /// builders land in a later brief.
     #[error("not implemented: {message}")]
-    #[diagnostic(code(SLENE_GQL_0A000))]
+    #[diagnostic(code(SLENE_GQL_42N01))]
     NotImplemented {
         /// Human-readable description of the missing capability.
         message: String,

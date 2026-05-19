@@ -120,6 +120,9 @@ pub enum ValueExpr {
         span: SourceSpan,
     },
     /// `[NOT] LIKE` predicate.
+    ///
+    /// selene-db extension: not in ISO/IEC 39075:2024 section 19; modeled
+    /// after SQL `LIKE`.
     Like {
         /// Checked operand.
         operand: Box<ValueExpr>,
@@ -131,6 +134,9 @@ pub enum ValueExpr {
         span: SourceSpan,
     },
     /// `[NOT] BETWEEN` predicate.
+    ///
+    /// selene-db extension: not in ISO/IEC 39075:2024 section 19; modeled
+    /// after SQL `BETWEEN`.
     Between {
         /// Checked operand.
         operand: Box<ValueExpr>,
@@ -144,6 +150,9 @@ pub enum ValueExpr {
         span: SourceSpan,
     },
     /// `ALL_DIFFERENT(...)` predicate.
+    ///
+    /// selene-db extension: ISO/IEC 39075:2024 section 19.11 takes element
+    /// variable references; this AST keeps the broader expression shape.
     AllDifferent {
         /// Items to compare.
         items: Vec<ValueExpr>,
@@ -151,6 +160,9 @@ pub enum ValueExpr {
         span: SourceSpan,
     },
     /// `SAME(...)` predicate.
+    ///
+    /// selene-db extension: ISO/IEC 39075:2024 section 19.12 takes element
+    /// variable references; this AST keeps the broader expression shape.
     Same {
         /// Items to compare.
         items: Vec<ValueExpr>,
@@ -158,6 +170,9 @@ pub enum ValueExpr {
         span: SourceSpan,
     },
     /// `PROPERTY_EXISTS(target, 'key')` predicate.
+    ///
+    /// selene-db extension: ISO/IEC 39075:2024 section 19.13 takes an element
+    /// variable reference and property name; this AST accepts any target expression.
     PropertyExists {
         /// Target expression.
         target: Box<ValueExpr>,
@@ -236,6 +251,9 @@ pub enum BinaryOp {
     /// Remainder.
     Mod,
     /// Exponentiation.
+    ///
+    /// selene-db extension: ISO/IEC 39075:2024 section 20.22 uses `POWER(x, y)`;
+    /// the grammar does not emit `^` today.
     Power,
     /// Equality.
     Eq,
