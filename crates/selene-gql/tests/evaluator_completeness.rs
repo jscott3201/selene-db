@@ -6,8 +6,10 @@ mod exec_common;
 
 use std::sync::Arc;
 
-use exec_common::{ExecFixture, column_values, execute_read, execute_read_result, istr, planned};
-use selene_core::{EdgeId, NodeId, Value, intern};
+use exec_common::{
+    ExecFixture, column_values, execute_read, execute_read_result, istr, planned, props,
+};
+use selene_core::{EdgeId, LabelSet, NodeId, Value, intern};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
     GqlType, IsCheckKind, LabelExpr, Literal, NonEmpty, NormalForm, SourceSpan, ValueExpr,
@@ -459,6 +461,72 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
 }
 
 #[test]
+fn property_exists_target_null_propagates_but_property_null_is_false() {
+    let fixture = ExecFixture::build();
+    let node = intern("node").unwrap();
+
+    let property_exists = ValueExpr::PropertyExists {
+        target: Box::new(var(node)),
+        key: fixture.name,
+        span: span(),
+    };
+
+    assert_eq!(
+        eval_with_fixture(
+            &property_exists,
+            &fixture,
+            Binding::new([Value::Null]),
+            vec![node],
+        )
+        .expect("null target propagates"),
+        Value::Null
+    );
+    assert_eq!(
+        eval_with_fixture(
+            &property_exists,
+            &fixture,
+            Binding::new([Value::NodeRef(NodeId::new(1))]),
+            vec![node],
+        )
+        .expect("present property evaluates"),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval_with_fixture(
+            &property_exists,
+            &fixture,
+            Binding::new([Value::NodeRef(NodeId::new(4))]),
+            vec![node],
+        )
+        .expect("absent property evaluates"),
+        Value::Bool(false)
+    );
+
+    let null_property_node = {
+        let mut txn = fixture.graph.begin_write();
+        let mut mutator = txn.mutator();
+        let node = mutator
+            .create_node(
+                LabelSet::single(fixture.sensor),
+                props([(fixture.name, Value::Null)]),
+            )
+            .expect("null-property node inserts");
+        txn.commit().expect("fixture update commits");
+        node
+    };
+    assert_eq!(
+        eval_with_fixture(
+            &property_exists,
+            &fixture,
+            Binding::new([Value::NodeRef(null_property_node)]),
+            vec![node],
+        )
+        .expect("null property evaluates"),
+        Value::Bool(false)
+    );
+}
+
+#[test]
 fn is_typed_and_is_normalized_scope_cut_are_explicit() {
     let typed = ValueExpr::IsCheck {
         operand: Box::new(string_lit("abc")),
@@ -511,6 +579,39 @@ fn case_list_access_and_record_literal_evaluate() {
     );
     assert_eq!(
         eval(&list_access(null_lit(), null_lit())).unwrap(),
+        Value::Null
+    );
+    let index = intern("index").unwrap();
+    assert_eq!(
+        eval_with_binding(
+            &list_access(
+                list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
+                var(index),
+            ),
+            Binding::new([Value::Uint(1)]),
+            vec![index],
+        )
+        .unwrap(),
+        Value::Int(2)
+    );
+    assert_eq!(
+        eval_with_binding(
+            &list_access(
+                list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
+                var(index),
+            ),
+            Binding::new([Value::Uint(0)]),
+            vec![index],
+        )
+        .unwrap(),
+        Value::Int(1)
+    );
+    assert_eq!(
+        eval(&list_access(
+            list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
+            int_lit(-1),
+        ))
+        .unwrap(),
         Value::Null
     );
 

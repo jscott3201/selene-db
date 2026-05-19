@@ -14,7 +14,10 @@ use crate::{
     runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
 };
 
-use super::{binary_ops::data_exception, evaluate};
+use super::{
+    binary_ops::{data_exception, data_exception_value},
+    evaluate,
+};
 
 pub(super) fn eval_list_access(
     target: &ValueExpr,
@@ -32,11 +35,18 @@ pub(super) fn eval_list_access(
     let Value::List(values) = target else {
         return data_exception("list access target is not a list", span);
     };
-    let Value::Int(index) = index else {
-        return data_exception("list access index is not an integer", span);
-    };
-    let Ok(index) = usize::try_from(index) else {
-        return Ok(Value::Null);
+    let index = match index {
+        Value::Int(index) => {
+            let Ok(index) = usize::try_from(index) else {
+                return Ok(Value::Null);
+            };
+            index
+        }
+        Value::Uint(index) => usize::try_from(index)
+            .map_err(|_| data_exception_value("list access index is out of range", span))?,
+        _ => {
+            return data_exception("list access index is not an integer", span);
+        }
     };
     Ok(values.get(index).cloned().unwrap_or(Value::Null))
 }

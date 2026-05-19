@@ -183,6 +183,9 @@ pub(super) fn eval_property_exists(
     ctx: &TxContext<'_, '_>,
 ) -> Result<Value, ExecutorError> {
     let target = evaluate(target, binding, schema, ctx)?;
+    if matches!(target, Value::Null) {
+        return Ok(Value::Null);
+    }
     let value = property_access(&target, key, ctx)?;
     Ok(Value::Bool(!matches!(value, Value::Null)))
 }
