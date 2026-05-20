@@ -53,6 +53,7 @@ impl StaticParameter {
     }
 
     /// Attach documentation-only default value text.
+    #[allow(dead_code)]
     pub(crate) const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
         self.default_doc = Some(default_doc);
         self

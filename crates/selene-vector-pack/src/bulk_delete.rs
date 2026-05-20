@@ -33,6 +33,10 @@ impl ExternalProcedureMetadata for BulkDeleteProcedure {
         &BULK_DELETE_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Bulk delete vectors from an HNSW index."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("index_name", GqlType::String, false),

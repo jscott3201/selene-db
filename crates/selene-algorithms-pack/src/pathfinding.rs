@@ -44,6 +44,10 @@ impl ExternalProcedureMetadata for DijkstraProcedure {
         &DIJKSTRA_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Find the shortest path between two nodes."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("projection_name", GqlType::String, false),
@@ -97,6 +101,10 @@ impl ExternalProcedureMetadata for SsspProcedure {
         &SSSP_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Compute single-source shortest paths."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("projection_name", GqlType::String, false),
@@ -138,6 +146,10 @@ struct ApspProcedure {
 impl ExternalProcedureMetadata for ApspProcedure {
     fn name(&self) -> &'static [&'static str] {
         &APSP_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "Compute all-pairs shortest paths."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -214,11 +226,17 @@ fn parse_apsp_args(args: &[Value]) -> Result<(String, ApspConfig), ProcedureErro
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter::new(name, ty, nullable)
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn::new(name, ty)
+    ExternalOutputColumn::new(name, ty).with_description("Procedure output column.")
 }
 
 #[cfg(test)]

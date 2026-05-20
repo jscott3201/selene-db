@@ -37,6 +37,14 @@ impl ExternalProcedureMetadata for CreateIndexProcedure {
         &CREATE_INDEX_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Create a vector index."
+    }
+
+    fn since_version(&self) -> &'static str {
+        "1.1.0"
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("name", GqlType::String, false),
@@ -382,7 +390,13 @@ fn lifecycle_config_error(error: VectorError) -> ProcedureError {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter::new(name, ty, nullable)
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }
 
 const PQ_FIELDS: &[&str] = &[

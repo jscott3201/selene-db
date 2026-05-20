@@ -27,6 +27,14 @@ impl ExternalProcedureMetadata for ListIndexesProcedure {
         &LIST_INDEXES_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "List registered vector indexes."
+    }
+
+    fn since_version(&self) -> &'static str {
+        "1.1.0"
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         Vec::new()
     }
@@ -85,5 +93,5 @@ fn metric_name(metric: DistanceMetric) -> &'static str {
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn::new(name, ty)
+    ExternalOutputColumn::new(name, ty).with_description("Procedure output column.")
 }

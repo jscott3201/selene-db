@@ -51,6 +51,10 @@ impl ExternalProcedureMetadata for LabelPropagationProcedure {
         &LABEL_PROPAGATION_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Run label propagation community detection."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("projection_name", GqlType::String, false),
@@ -89,6 +93,10 @@ struct LouvainProcedure {
 impl ExternalProcedureMetadata for LouvainProcedure {
     fn name(&self) -> &'static [&'static str] {
         &LOUVAIN_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "Run Louvain community detection."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -139,6 +147,10 @@ struct TriangleCountProcedure {
 impl ExternalProcedureMetadata for TriangleCountProcedure {
     fn name(&self) -> &'static [&'static str] {
         &TRIANGLE_COUNT_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "Count triangles per node in a projection."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -219,11 +231,17 @@ fn node_community_row((node_id, community_id): (NodeId, u64)) -> Vec<Value> {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter::new(name, ty, nullable)
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn::new(name, ty)
+    ExternalOutputColumn::new(name, ty).with_description("Procedure output column.")
 }
 
 #[cfg(test)]

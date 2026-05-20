@@ -33,6 +33,10 @@ impl ExternalProcedureMetadata for IvfBulkDeleteProcedure {
         &IVF_BULK_DELETE_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Bulk delete vectors from an IVF index."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("index_name", GqlType::String, false),

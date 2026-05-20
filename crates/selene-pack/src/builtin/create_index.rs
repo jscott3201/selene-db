@@ -12,9 +12,9 @@ use crate::builtin::{
 };
 
 static CREATE_INDEX_PARAMS: [StaticParameter; 3] = [
-    StaticParameter::new("label", GqlType::String, false),
-    StaticParameter::new("property", GqlType::String, false),
-    StaticParameter::new("kind", GqlType::String, false),
+    StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+    StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
+    StaticParameter::new("kind", GqlType::String, false).with_description("Index value kind."),
 ];
 
 static CREATE_INDEX_OUTPUTS: [StaticOutputColumn; 0] = [];
@@ -26,6 +26,10 @@ pub(crate) struct SeleneCreateIndex;
 impl BuiltInMetadata for SeleneCreateIndex {
     fn name(&self) -> &'static [&'static str] {
         &["selene", "create_index"]
+    }
+
+    fn description(&self) -> &'static str {
+        "Create a property index."
     }
 
     fn tier(&self) -> ProcedureTier {

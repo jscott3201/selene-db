@@ -22,13 +22,14 @@ use crate::history::PackHistorySource;
 //   - error        : NULL except on ValidationFailed
 //   - at           : always populated
 static PACK_HISTORY_OUTPUTS: [StaticOutputColumn; 7] = [
-    StaticOutputColumn::new("kind", GqlType::String),
-    StaticOutputColumn::new("pack_name", GqlType::String),
-    StaticOutputColumn::new("content_hash", GqlType::String),
-    StaticOutputColumn::new("principal", GqlType::String),
-    StaticOutputColumn::new("reason", GqlType::String),
-    StaticOutputColumn::new("error", GqlType::String),
-    StaticOutputColumn::new("at", GqlType::ZonedDateTime),
+    StaticOutputColumn::new("kind", GqlType::String).with_description("Lifecycle event kind."),
+    StaticOutputColumn::new("pack_name", GqlType::String).with_description("Procedure pack name."),
+    StaticOutputColumn::new("content_hash", GqlType::String)
+        .with_description("Manifest content hash."),
+    StaticOutputColumn::new("principal", GqlType::String).with_description("Commit principal."),
+    StaticOutputColumn::new("reason", GqlType::String).with_description("Lifecycle reason."),
+    StaticOutputColumn::new("error", GqlType::String).with_description("Validation error."),
+    StaticOutputColumn::new("at", GqlType::ZonedDateTime).with_description("Event timestamp."),
 ];
 
 /// Built-in read-only pack-history procedure.
@@ -46,6 +47,10 @@ impl SelenePackHistory {
 impl BuiltInMetadata for SelenePackHistory {
     fn name(&self) -> &'static [&'static str] {
         &["selene", "pack", "history"]
+    }
+
+    fn description(&self) -> &'static str {
+        "List procedure-pack lifecycle history."
     }
 
     fn tier(&self) -> ProcedureTier {

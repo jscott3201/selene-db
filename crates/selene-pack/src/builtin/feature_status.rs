@@ -20,9 +20,11 @@ use selene_gql::{
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
 
 static FEATURE_STATUS_OUTPUTS: [StaticOutputColumn; 3] = [
-    StaticOutputColumn::new("feature_id", GqlType::String),
-    StaticOutputColumn::new("status", GqlType::String),
-    StaticOutputColumn::new("rationale", GqlType::String),
+    StaticOutputColumn::new("feature_id", GqlType::String)
+        .with_description("ISO GQL feature identifier."),
+    StaticOutputColumn::new("status", GqlType::String).with_description("Feature support state."),
+    StaticOutputColumn::new("rationale", GqlType::String)
+        .with_description("Support rationale or feature name."),
 ];
 
 /// Built-in read-only feature status procedure.
@@ -32,6 +34,14 @@ pub(crate) struct SeleneFeatureStatus;
 impl BuiltInMetadata for SeleneFeatureStatus {
     fn name(&self) -> &'static [&'static str] {
         &["selene", "feature_status"]
+    }
+
+    fn description(&self) -> &'static str {
+        "List ISO GQL feature support status."
+    }
+
+    fn since_version(&self) -> &'static str {
+        "1.1.0"
     }
 
     fn tier(&self) -> ProcedureTier {

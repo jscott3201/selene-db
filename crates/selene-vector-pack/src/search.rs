@@ -38,6 +38,10 @@ impl ExternalProcedureMetadata for SearchProcedure {
         &SEARCH_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Search an HNSW vector index."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("index_name", GqlType::String, false),
@@ -120,9 +124,15 @@ fn parse_search_args(args: &[Value]) -> Result<SearchArgs, ProcedureError> {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter::new(name, ty, nullable)
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn::new(name, ty)
+    ExternalOutputColumn::new(name, ty).with_description("Procedure output column.")
 }
