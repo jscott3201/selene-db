@@ -26,6 +26,14 @@ pub trait ProcedureRegistry: Send + Sync {
     /// Look up procedure metadata by canonical CALL-time name.
     fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata>;
 
+    /// Iterate registered procedure handles and metadata.
+    ///
+    /// Registries that cannot enumerate may keep the default empty iterator.
+    /// SHOW PROCEDURES uses this cold-path surface for introspection.
+    fn iter_handles(&self) -> Box<dyn Iterator<Item = (Vec<IStr>, ProcedureMetadata)> + '_> {
+        Box::new(std::iter::empty())
+    }
+
     /// Execute a previously planned procedure handle with evaluated arguments.
     fn execute(
         &self,

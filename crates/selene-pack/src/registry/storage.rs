@@ -211,6 +211,14 @@ impl RegistryStorage {
         self.by_name.pin().get(name).cloned()
     }
 
+    pub(crate) fn iter_handles(&self) -> Vec<(Vec<IStr>, ProcedureMetadata)> {
+        self.by_name
+            .pin()
+            .iter()
+            .map(|(name, metadata)| (name.to_vec(), metadata.clone()))
+            .collect()
+    }
+
     pub(crate) fn entry(&self, handle: ProcedureHandle) -> Option<TierEntry> {
         self.by_handle.pin().get(&handle).cloned()
     }
