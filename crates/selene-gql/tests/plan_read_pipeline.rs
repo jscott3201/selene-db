@@ -2,8 +2,8 @@
 
 use selene_gql::{
     AnalyzedStatement, BindingElement, EdgeDirection, EmptyProcedureRegistry, FilterPredicateKind,
-    JoinTree, LabelExpr, LimitAmount, PipelineOp, PlannerError, ScanKind, SetOp, analyze, parse,
-    plan,
+    JoinTree, LabelExpr, LimitAmount, PipelineOp, PlannerError, ScanKind, SetOp, SubqueryKind,
+    analyze, parse, plan,
 };
 
 fn analyze_one(source: &str) -> AnalyzedStatement {
@@ -336,6 +336,33 @@ fn plan_records_next_pipeline_op_id_high_water_mark() {
     let plan = plan_one("RETURN 1 AS n LIMIT 10");
 
     assert_eq!(plan.next_pipeline_op_id.get(), plan.pipeline.len() as u32);
+}
+
+#[test]
+fn expression_subqueries_populate_plan_registry() {
+    let plan = plan_one(
+        "MATCH (a) RETURN EXISTS { MATCH (a)-[]->(b) } AS e, COUNT { MATCH (a)-[]->(b) } AS c",
+    );
+    let Some(PipelineOp::Project(projects)) = plan.pipeline.first() else {
+        panic!("expected project op");
+    };
+
+    let exists = plan
+        .subqueries
+        .get(projects[0].expr_id)
+        .expect("exists subquery planned");
+    let count = plan
+        .subqueries
+        .get(projects[1].expr_id)
+        .expect("count subquery planned");
+
+    assert!(matches!(
+        exists.kind,
+        SubqueryKind::Exists { negated: false }
+    ));
+    assert_eq!(exists.outer_binding_refs.len(), 1);
+    assert_eq!(count.kind, SubqueryKind::Count);
+    assert_eq!(count.outer_binding_refs, exists.outer_binding_refs);
 }
 
 #[test]

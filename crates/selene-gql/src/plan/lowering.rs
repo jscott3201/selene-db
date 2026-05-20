@@ -54,6 +54,7 @@ pub fn plan(
     }?;
     plan.category = analyzed.category;
     plan.expr_ids = analyzed.expr_ids.clone();
+    expr::populate_plan_subqueries(&mut plan, analyzed)?;
     plan.refresh_pipeline_op_high_water();
     Ok(plan)
 }
