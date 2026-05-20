@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
 
-use selene_core::{Change, IStr, Value};
+use selene_core::{CancellationToken, Change, IStr, Value};
 use selene_graph::{SharedGraph, WriteTxn};
 
 use crate::{
@@ -20,6 +20,9 @@ pub struct Session<'g> {
     pub(crate) aborted: bool,
     pub(crate) tx_started_at: Option<Instant>,
     pub(crate) tx_statement_count: u32,
+    pub(crate) cancellation: Option<CancellationToken>,
+    pub(crate) deadline: Option<Instant>,
+    pub(crate) row_cap: Option<usize>,
 }
 
 /// Metadata returned after committing an explicit transaction through a [`Session`].
@@ -80,6 +83,9 @@ impl<'g> Session<'g> {
             aborted: false,
             tx_started_at: None,
             tx_statement_count: 0,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
         }
     }
 
@@ -95,7 +101,31 @@ impl<'g> Session<'g> {
             aborted: false,
             tx_started_at: None,
             tx_statement_count: 0,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
         }
+    }
+
+    /// Attach a cooperative cancellation token to subsequent statements.
+    #[must_use]
+    pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
+        self.cancellation = Some(token);
+        self
+    }
+
+    /// Attach a per-statement deadline to subsequent statements.
+    #[must_use]
+    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Attach an outermost result-row cap to subsequent statements.
+    #[must_use]
+    pub fn with_row_cap(mut self, max_rows: usize) -> Self {
+        self.row_cap = Some(max_rows);
+        self
     }
 
     /// Bind or replace a session-local query parameter.

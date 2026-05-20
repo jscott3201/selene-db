@@ -1,8 +1,8 @@
 //! Executor transaction context.
 
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{collections::BTreeMap, fmt, sync::Arc, time::Instant};
 
-use selene_core::{IStr, Value};
+use selene_core::{CancellationToken, IStr, Value};
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
@@ -37,6 +37,9 @@ pub struct TxContext<'a, 'g> {
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     plan_expr_ids: Option<&'a ExprIdLookup>,
     plan_subqueries: Option<&'a SubqueryRegistry>,
+    cancellation: Option<&'a CancellationToken>,
+    deadline: Option<Instant>,
+    row_cap: Option<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
 
@@ -105,6 +108,9 @@ impl<'a, 'g> TxContext<'a, 'g> {
             reopt_hook: None,
             plan_expr_ids: None,
             plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
             write_txn: None,
         }
     }
@@ -145,6 +151,9 @@ impl<'a, 'g> TxContext<'a, 'g> {
             reopt_hook: Some(reopt_hook),
             plan_expr_ids: None,
             plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
             write_txn: None,
         }
     }
@@ -185,8 +194,25 @@ impl<'a, 'g> TxContext<'a, 'g> {
             reopt_hook: None,
             plan_expr_ids: None,
             plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
             write_txn: Some(txn),
         }
+    }
+
+    /// Attach per-statement cooperative cancellation and output row-cap limits.
+    #[must_use]
+    pub fn with_resource_limits(
+        mut self,
+        cancellation: Option<&'a CancellationToken>,
+        deadline: Option<Instant>,
+        row_cap: Option<usize>,
+    ) -> Self {
+        self.cancellation = cancellation;
+        self.deadline = deadline;
+        self.row_cap = row_cap;
+        self
     }
 
     /// Attach plan-owned expression metadata for direct pipeline execution.
@@ -315,6 +341,9 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("reopt_hook", &self.reopt_hook.is_some())
             .field("plan_expr_ids", &self.plan_expr_ids.is_some())
             .field("plan_subqueries", &self.plan_subqueries.is_some())
+            .field("cancellation", &self.cancellation.is_some())
+            .field("deadline", &self.deadline.is_some())
+            .field("row_cap", &self.row_cap)
             .field("write_txn", &self.write_txn.is_some())
             .finish()
     }
