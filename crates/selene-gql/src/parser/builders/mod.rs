@@ -2,6 +2,7 @@
 
 pub(super) mod call;
 pub(super) mod ddl;
+pub(super) mod explain;
 pub(super) mod expr;
 pub(super) mod mutation;
 pub(super) mod pattern;
@@ -47,6 +48,7 @@ pub(crate) fn build_statement(
         }
         Rule::ddl_statement => ddl::build_ddl_statement(program_pair, budget).map(Statement::Ddl),
         Rule::call_stmt => call::build_top_level_call(program_pair, budget).map(Statement::Call),
+        Rule::explain_stmt => explain::build_explain_statement(program_pair, budget),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
     }
@@ -615,7 +617,7 @@ pub(super) fn not_implemented(pair: &Pair<'_, Rule>, message: &'static str) -> P
         message,
         span(pair),
         Some(
-            "this construct is not yet supported in v1.0; see `CALL selene.feature_status` for the current support matrix",
+            "this construct is not yet supported in v1.0; use `CALL selene.feature_status()` for feature status or `SHOW PROCEDURES` for registered procedures",
         ),
     )
 }

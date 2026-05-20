@@ -18,7 +18,10 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (ddl_statement | transaction_control | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+
+explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
+explainable_statement = { ddl_statement | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
 
 // -- DDL statements -----------------------------------------------
 
@@ -26,6 +29,7 @@ ddl_statement = { create_trigger | drop_trigger | show_triggers
               | create_materialized_view | drop_materialized_view | show_materialized_views
               | create_node_type | drop_node_type | show_node_types
               | create_edge_type | drop_edge_type | show_edge_types
+              | show_indexes | show_procedures
               | create_graph | drop_graph | create_procedure | drop_procedure | create_index | drop_index | create_user | drop_user | create_role | drop_role | grant_role | revoke_role }
 
 create_procedure = { ^"CREATE" ~ or_replace? ~ ^"PROCEDURE" ~ if_not_exists? ~ qualified_name ~ "(" ~ param_list? ~ ")" ~ "{" ~ query_pipeline ~ "}" }
@@ -67,6 +71,8 @@ drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
 drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
 show_node_types  = { ^"SHOW" ~ ^"NODE" ~ ^"TYPES" }
 show_edge_types  = { ^"SHOW" ~ ^"EDGE" ~ ^"TYPES" }
+show_indexes     = { ^"SHOW" ~ ^"INDEXES" }
+show_procedures  = { ^"SHOW" ~ ^"PROCEDURES" }
 
 type_prop_def_list = { type_prop_def ~ ("," ~ type_prop_def)* }
 type_prop_def      = { ident ~ "::" ~ type_name ~ type_prop_constraint* }
