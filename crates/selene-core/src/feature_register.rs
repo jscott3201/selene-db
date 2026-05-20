@@ -138,10 +138,6 @@ feature_ids! {
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
 pub const SUPPORTED_FEATURES: &[FeatureId] = &[
-    FeatureId::G015,
-    FeatureId::G016,
-    FeatureId::G017,
-    FeatureId::G018,
     FeatureId::G110,
     FeatureId::G111,
     FeatureId::G112,
@@ -151,8 +147,6 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GA01,
     FeatureId::GA07,
     FeatureId::GC03,
-    FeatureId::GC04,
-    FeatureId::GC05,
     FeatureId::GD01,
     FeatureId::GG01,
     FeatureId::GG02,
@@ -191,6 +185,22 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 
 /// Rationale for referenced optional features not claimed in v1.0.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
+    (
+        FeatureId::G015,
+        "explicit ALL path selector parses but is not lowered by the v1.0 path planner",
+    ),
+    (
+        FeatureId::G016,
+        "ANY path selector parses but is not lowered by the v1.0 path planner",
+    ),
+    (
+        FeatureId::G017,
+        "ALL SHORTEST path selector parses but is not lowered by the v1.0 path planner",
+    ),
+    (
+        FeatureId::G018,
+        "ANY SHORTEST path selector parses but is not lowered by the v1.0 path planner",
+    ),
     (
         FeatureId::G019,
         "counted shortest selectors require grammar + PathSelector AST work; reclaim with the path-selector extension brief",
@@ -256,6 +266,14 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GC02,
         "CREATE/DROP SCHEMA is outside the v1.0 catalog claim (graph-schema vs graph-type vs graph)",
+    ),
+    (
+        FeatureId::GC04,
+        "CREATE/DROP GRAPH parses but graph management DDL remains outside the v1.0 catalog claim",
+    ),
+    (
+        FeatureId::GC05,
+        "graph management IF [NOT] EXISTS modifiers remain outside the v1.0 catalog claim",
     ),
     (
         FeatureId::GQ04,
