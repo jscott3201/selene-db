@@ -24,7 +24,7 @@ mod dijkstra;
 mod error;
 mod sssp;
 
-pub use apsp::{ApspConfig, apsp};
-pub use dijkstra::{PathResult, dijkstra};
+pub use apsp::{ApspConfig, apsp, apsp_with_checker};
+pub use dijkstra::{PathResult, dijkstra, dijkstra_with_checker};
 pub use error::PathfindingError;
-pub use sssp::sssp;
+pub use sssp::{sssp, sssp_with_checker};

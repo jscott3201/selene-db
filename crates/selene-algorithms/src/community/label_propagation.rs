@@ -13,8 +13,9 @@
 
 // Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
 use rustc_hash::FxHashMap as HashMap;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
@@ -30,9 +31,20 @@ use crate::structural::RowIndex;
 /// their initial label (donor / Raghavan: empty-neighbor → skip).
 #[must_use]
 pub fn label_propagation(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64)> {
+    label_propagation_with_checker(proj, max_iter, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Compute label propagation with cooperative cancellation checkpoints.
+pub fn label_propagation_with_checker(
+    proj: &GraphProjection,
+    max_iter: usize,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, u64)>, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = idx.len();
 
@@ -47,9 +59,12 @@ pub fn label_propagation(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId
     let mut label_counts: HashMap<u64, usize> = HashMap::default();
 
     for _ in 0..max_iter {
+        check_algorithm(checker)?;
         let mut changed = false;
+        let mut rows_since_check = 0usize;
 
         for d in 0..n as u32 {
+            check_algorithm_stride(checker, &mut rows_since_check)?;
             let node = idx.node_id_of(d);
             label_counts.clear();
 
@@ -96,7 +111,7 @@ pub fn label_propagation(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId
         .map(|d| (idx.node_id_of(d), labels[d as usize]))
         .collect();
     result.sort_by_key(|&(nid, _)| nid.get());
-    result
+    Ok(result)
 }
 
 /// `NodeId` (1-based) → sparse row index (0-based) at the projection boundary.

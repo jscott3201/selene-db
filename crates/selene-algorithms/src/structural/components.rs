@@ -13,8 +13,9 @@
 
 // Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
 use rustc_hash::FxHashMap as HashMap;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
 use crate::structural::{RowIndex, SENTINEL};
 
@@ -32,12 +33,22 @@ use crate::structural::{RowIndex, SENTINEL};
 /// ordered ASC by `NodeId` (matches `iter_nodes()` per spec 16 §E03/§E12).
 #[must_use]
 pub fn wcc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
+    wcc_with_checker(proj, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Compute weakly connected components with cooperative cancellation checkpoints.
+pub fn wcc_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, u64)>, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let mut uf = UnionFind::new(idx.len());
-    union_all_edges(proj, &idx, &mut uf);
+    union_all_edges_with_checker(proj, &idx, &mut uf, checker)?;
 
     // First pass: collect (NodeId, current_root_dense) for every projection
     // node.
@@ -65,7 +76,7 @@ pub fn wcc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
         .map(|(nid, root)| (nid, min_per_root[&root]))
         .collect();
     result.sort_by_key(|&(nid, _)| nid.get());
-    result
+    Ok(result)
 }
 
 /// Count weakly connected components without materializing per-node IDs.
@@ -74,27 +85,46 @@ pub fn wcc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
 /// union-find roots, avoiding the result-Vec allocation.
 #[must_use]
 pub fn wcc_count(proj: &GraphProjection) -> usize {
+    wcc_count_with_checker(proj, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Count weakly connected components with cooperative cancellation checkpoints.
+pub fn wcc_count_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<usize, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return 0;
+        return Ok(0);
     }
     let mut uf = UnionFind::new(idx.len());
-    union_all_edges(proj, &idx, &mut uf);
+    union_all_edges_with_checker(proj, &idx, &mut uf, checker)?;
 
     let mut count = 0usize;
+    let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         if uf.find(d) == d {
             count += 1;
         }
     }
-    count
+    Ok(count)
 }
 
 /// Union every projection edge (directed → undirected) into `uf`. Edges whose
 /// endpoints land outside the projection scope are skipped — matches the
 /// in-degree counting guard in topological-sort.
-fn union_all_edges(proj: &GraphProjection, idx: &RowIndex, uf: &mut UnionFind) {
+fn union_all_edges_with_checker(
+    proj: &GraphProjection,
+    idx: &RowIndex,
+    uf: &mut UnionFind,
+    checker: CancellationChecker<'_>,
+) -> Result<(), AlgorithmAborted> {
+    let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let nid = idx.node_id_of(d);
         for nb in proj.out_neighbors(nid) {
             if let Some(other) = idx.dense_of(node_sparse_row(nb.node_id)) {
@@ -112,6 +142,7 @@ fn union_all_edges(proj: &GraphProjection, idx: &RowIndex, uf: &mut UnionFind) {
             }
         }
     }
+    Ok(())
 }
 
 /// Path-compressing union-find with union-by-rank. Sized by live-node count.
@@ -167,8 +198,18 @@ impl UnionFind {
 /// for an empty projection. Pairs are sorted ASC by `NodeId` per spec 16 §E12.
 #[must_use]
 pub fn scc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
+    scc_with_checker(proj, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Compute strongly connected components with cooperative cancellation checkpoints.
+pub fn scc_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, u64)>, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
-    let state = run_tarjan(proj, &idx);
+    let state = run_tarjan(proj, &idx, checker)?;
 
     let mut result: Vec<(NodeId, u64)> = Vec::with_capacity(idx.len());
     for component in &state.components {
@@ -182,15 +223,25 @@ pub fn scc(proj: &GraphProjection) -> Vec<(NodeId, u64)> {
         }
     }
     result.sort_by_key(|&(nid, _)| nid.get());
-    result
+    Ok(result)
 }
 
 /// Count strongly connected components.
 #[must_use]
 pub fn scc_count(proj: &GraphProjection) -> usize {
+    scc_count_with_checker(proj, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Count strongly connected components with cooperative cancellation checkpoints.
+pub fn scc_count_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<usize, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
-    let state = run_tarjan(proj, &idx);
-    state.components.len()
+    let state = run_tarjan(proj, &idx, checker)?;
+    Ok(state.components.len())
 }
 
 struct TarjanState {
@@ -222,14 +273,20 @@ impl TarjanState {
     }
 }
 
-fn run_tarjan(proj: &GraphProjection, idx: &RowIndex) -> TarjanState {
+fn run_tarjan(
+    proj: &GraphProjection,
+    idx: &RowIndex,
+    checker: CancellationChecker<'_>,
+) -> Result<TarjanState, AlgorithmAborted> {
     let mut state = TarjanState::with_capacity(idx.len());
+    let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         if state.indices[d as usize] == SENTINEL {
-            tarjan_strongconnect(&mut state, d, proj, idx);
+            tarjan_strongconnect(&mut state, d, proj, idx, checker)?;
         }
     }
-    state
+    Ok(state)
 }
 
 /// Iterative Tarjan strongconnect with an explicit call stack (donor pattern,
@@ -239,7 +296,8 @@ fn tarjan_strongconnect(
     start: u32,
     proj: &GraphProjection,
     idx: &RowIndex,
-) {
+    checker: CancellationChecker<'_>,
+) -> Result<(), AlgorithmAborted> {
     // Frame: (current_dense, next_neighbor_index_into_cached_list).
     let mut call_stack: Vec<(u32, usize)> = Vec::new();
     // Per-DFS neighbor cache: dense → list of out-neighbor dense indices.
@@ -255,7 +313,9 @@ fn tarjan_strongconnect(
     state.on_stack[start as usize] = true;
     call_stack.push((start, 0));
 
+    let mut rows_since_check = 0usize;
     while let Some(&mut (v, ref mut ni)) = call_stack.last_mut() {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let neighbors = neighbors_cache.entry(v).or_insert_with(|| {
             proj.out_neighbors(idx.node_id_of(v))
                 .iter()
@@ -305,6 +365,7 @@ fn tarjan_strongconnect(
             }
         }
     }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

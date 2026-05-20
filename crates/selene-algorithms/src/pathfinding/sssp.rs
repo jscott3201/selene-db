@@ -8,8 +8,9 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{check_algorithm, check_algorithm_stride};
 use crate::pathfinding::error::PathfindingError;
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
@@ -54,6 +55,16 @@ pub fn sssp(
     proj: &GraphProjection,
     source: NodeId,
 ) -> Result<Vec<(NodeId, f64)>, PathfindingError> {
+    sssp_with_checker(proj, source, CancellationChecker::disabled())
+}
+
+/// Single-source shortest path with cooperative cancellation checkpoints.
+pub fn sssp_with_checker(
+    proj: &GraphProjection,
+    source: NodeId,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, PathfindingError> {
+    check_algorithm(checker)?;
     if !proj.contains(source) {
         return Ok(Vec::new());
     }
@@ -76,7 +87,9 @@ pub fn sssp(
         cost: 0.0,
     });
 
+    let mut rows_since_check = 0usize;
     while let Some(SsspEntry { dense, cost }) = heap.pop() {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         if cost > dist[dense as usize] {
             continue;
         }

@@ -2,7 +2,10 @@
 
 use std::sync::Arc;
 
-use selene_algorithms::{TriangleCountConfig, label_propagation, louvain, triangle_count};
+use selene_algorithms::{
+    TriangleCountConfig, label_propagation_with_checker, louvain_with_checker,
+    triangle_count_with_checker,
+};
 use selene_core::{NodeId, Value};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult};
 use selene_pack::{
@@ -11,6 +14,7 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, nullable_usize, required_string},
+    error::algorithm_aborted,
     parallel::parse_parallelism,
     state::{AlgorithmsPackState, with_algorithm_projection},
 };
@@ -66,8 +70,10 @@ impl ExternalGraphProcedure for LabelPropagationProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, max_iter) = parse_label_propagation_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = label_propagation(projection, max_iter)
+            let rows = label_propagation_with_checker(projection, max_iter, checker)
+                .map_err(algorithm_aborted)?
                 .into_iter()
                 .map(node_community_row)
                 .collect();
@@ -108,8 +114,10 @@ impl ExternalGraphProcedure for LouvainProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, max_iter) = parse_louvain_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = louvain(projection, max_iter)
+            let rows = louvain_with_checker(projection, max_iter, checker)
+                .map_err(algorithm_aborted)?
                 .into_iter()
                 .map(|(node_id, community_id, level)| {
                     vec![
@@ -155,8 +163,10 @@ impl ExternalGraphProcedure for TriangleCountProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, config) = parse_triangle_count_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = triangle_count(projection, config)
+            let rows = triangle_count_with_checker(projection, config, checker)
+                .map_err(algorithm_aborted)?
                 .into_iter()
                 .map(|(node_id, count)| vec![Value::NodeRef(node_id), Value::Uint(count as u64)])
                 .collect();

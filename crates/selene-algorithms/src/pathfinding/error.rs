@@ -1,7 +1,9 @@
 //! Pathfinding error type. Lazy detection per spec 16 §E15.
 
-use selene_core::NodeId;
 use thiserror::Error;
+
+use crate::error::AlgorithmAborted;
+use selene_core::NodeId;
 
 /// Errors raised by pathfinding algorithms during traversal.
 ///
@@ -50,5 +52,13 @@ pub enum PathfindingError {
         nodes: usize,
         /// Caller-supplied upper bound for APSP.
         limit: usize,
+    },
+
+    /// Algorithm observed cooperative cancellation or deadline expiry.
+    #[error(transparent)]
+    Aborted {
+        /// Cancellation cause.
+        #[from]
+        source: AlgorithmAborted,
     },
 }

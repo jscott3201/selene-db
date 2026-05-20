@@ -17,5 +17,5 @@
 mod betweenness;
 mod pagerank;
 
-pub use betweenness::{BetweennessConfig, betweenness};
-pub use pagerank::{PageRankConfig, pagerank};
+pub use betweenness::{BetweennessConfig, betweenness, betweenness_with_checker};
+pub use pagerank::{PageRankConfig, pagerank, pagerank_with_checker};

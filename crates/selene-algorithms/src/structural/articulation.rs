@@ -28,8 +28,9 @@
 
 // Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
 use rustc_hash::FxHashMap as HashMap;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
 use crate::structural::{RowIndex, SENTINEL};
 
@@ -39,8 +40,18 @@ use crate::structural::{RowIndex, SENTINEL};
 /// §E09.
 #[must_use]
 pub fn articulation_points(proj: &GraphProjection) -> Vec<NodeId> {
-    let (ap, _) = lowlink_pass(proj);
+    let (ap, _) = lowlink_pass_with_checker(proj, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts");
     ap
+}
+
+/// Articulation points with cooperative cancellation checkpoints.
+pub fn articulation_points_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<NodeId>, AlgorithmAborted> {
+    let (ap, _) = lowlink_pass_with_checker(proj, checker)?;
+    Ok(ap)
 }
 
 /// Bridges (cut edges) under the projection's undirected view.
@@ -51,24 +62,40 @@ pub fn articulation_points(proj: &GraphProjection) -> Vec<NodeId> {
 /// empty `Vec` per spec 16 §E09.
 #[must_use]
 pub fn bridges(proj: &GraphProjection) -> Vec<(NodeId, NodeId)> {
-    let (_, bridges) = lowlink_pass(proj);
+    let (_, bridges) = lowlink_pass_with_checker(proj, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts");
     bridges
+}
+
+/// Bridges with cooperative cancellation checkpoints.
+pub fn bridges_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, NodeId)>, AlgorithmAborted> {
+    let (_, bridges) = lowlink_pass_with_checker(proj, checker)?;
+    Ok(bridges)
 }
 
 /// Shared DFS computing both articulation points and bridges in a single pass.
 ///
 /// Returns `(articulation_points_sorted_asc, bridges_sorted_asc)`. Both are
 /// canonicalized per E12 for deterministic output.
-fn lowlink_pass(proj: &GraphProjection) -> (Vec<NodeId>, Vec<(NodeId, NodeId)>) {
+fn lowlink_pass_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<(Vec<NodeId>, Vec<(NodeId, NodeId)>), AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return (Vec::new(), Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let mut state = BiconnState::with_capacity(idx.len());
 
+    let mut rows_since_check = 0usize;
     for d in 0..idx.len() as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         if state.disc[d as usize] == SENTINEL {
-            biconn_dfs(&mut state, d, proj, &idx);
+            biconn_dfs(&mut state, d, proj, &idx, checker)?;
         }
     }
 
@@ -83,7 +110,7 @@ fn lowlink_pass(proj: &GraphProjection) -> (Vec<NodeId>, Vec<(NodeId, NodeId)>) 
         .collect();
     bridges.sort_by_key(|&(s, t)| (s.get(), t.get()));
 
-    (ap, bridges)
+    Ok((ap, bridges))
 }
 
 /// DFS state for articulation + bridges (`disc` / `low` / `parent` / `ap` /
@@ -119,7 +146,13 @@ impl BiconnState {
 /// `parent_edge_consumed` tracks whether we've already skipped the one tree
 /// edge from this frame back to its parent — subsequent occurrences of the
 /// parent in the neighbor list are parallel back-edges and DO update `low`.
-fn biconn_dfs(state: &mut BiconnState, start: u32, proj: &GraphProjection, idx: &RowIndex) {
+fn biconn_dfs(
+    state: &mut BiconnState,
+    start: u32,
+    proj: &GraphProjection,
+    idx: &RowIndex,
+    checker: CancellationChecker<'_>,
+) -> Result<(), AlgorithmAborted> {
     let mut call_stack: Vec<(u32, usize, u32, bool)> = Vec::new();
     // Per-DFS undirected neighbor cache: dense → sorted-with-multiplicity
     // neighbor dense indices. Multiplicity is preserved (no HashSet dedupe)
@@ -131,9 +164,11 @@ fn biconn_dfs(state: &mut BiconnState, start: u32, proj: &GraphProjection, idx: 
     state.timer += 1;
     call_stack.push((start, 0, 0, false));
 
+    let mut rows_since_check = 0usize;
     while let Some(&mut (u, ref mut ni, ref mut children, ref mut parent_consumed)) =
         call_stack.last_mut()
     {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let neighbors = neighbors_cache.entry(u).or_insert_with(|| {
             // Build the undirected neighbor view: out + in, preserving
             // multiplicity, then sorted ASC by dense index for E03/E12
@@ -211,6 +246,7 @@ fn biconn_dfs(state: &mut BiconnState, start: u32, proj: &GraphProjection, idx: 
             }
         }
     }
+    Ok(())
 }
 
 /// Map a `NodeId` (1-based per selene-graph) to its sparse row index

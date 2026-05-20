@@ -8,8 +8,50 @@
 //! / community) extend with algorithm-specific variants without breaking the
 //! crate's public API.
 
-use selene_core::NodeId;
+use selene_core::{CancellationCause, CancellationChecker, NodeId};
 use thiserror::Error;
+
+/// Cancellation check stride for algorithm hot loops.
+pub(crate) const ALGORITHM_CANCEL_CHECK_STRIDE: usize = 1024;
+
+/// Cooperative cancellation outcome for long-running algorithms.
+#[derive(Clone, Copy, Debug, Error)]
+#[error("algorithm aborted: {cause:?}")]
+pub struct AlgorithmAborted {
+    /// Cause reported by the shared cancellation checker.
+    pub cause: CancellationCause,
+}
+
+impl From<CancellationCause> for AlgorithmAborted {
+    #[inline]
+    fn from(cause: CancellationCause) -> Self {
+        Self { cause }
+    }
+}
+
+#[inline(always)]
+pub(crate) fn check_algorithm(checker: CancellationChecker<'_>) -> Result<(), AlgorithmAborted> {
+    if checker.is_disabled() {
+        return Ok(());
+    }
+    checker.check().map_err(AlgorithmAborted::from)
+}
+
+#[inline(always)]
+pub(crate) fn check_algorithm_stride(
+    checker: CancellationChecker<'_>,
+    units_since_check: &mut usize,
+) -> Result<(), AlgorithmAborted> {
+    if checker.is_disabled() {
+        return Ok(());
+    }
+    *units_since_check = units_since_check.saturating_add(1);
+    if *units_since_check >= ALGORITHM_CANCEL_CHECK_STRIDE {
+        check_algorithm(checker)?;
+        *units_since_check = 0;
+    }
+    Ok(())
+}
 
 /// Errors raised by `selene-algorithms` surfaces.
 ///

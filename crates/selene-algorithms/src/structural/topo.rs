@@ -6,9 +6,10 @@
 
 // Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
 use rustc_hash::FxHashMap as HashMap;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 use thiserror::Error;
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
 
 /// Error returned by [`topological_sort`] when the projection is not a DAG.
@@ -26,6 +27,14 @@ pub enum TopoSortError {
         /// A node observed on (or reachable from) a cycle.
         cycle_hint: Option<NodeId>,
     },
+
+    /// Algorithm observed cooperative cancellation or deadline expiry.
+    #[error(transparent)]
+    Aborted {
+        /// Cancellation cause.
+        #[from]
+        source: AlgorithmAborted,
+    },
 }
 
 /// Topologically sort the projection in directed-acyclic order.
@@ -37,6 +46,15 @@ pub enum TopoSortError {
 /// Returns [`TopoSortError::NotADag`] when a directed cycle is present. An
 /// empty projection returns `Ok(vec![])` per spec 16 §E09.
 pub fn topological_sort(proj: &GraphProjection) -> Result<Vec<(NodeId, usize)>, TopoSortError> {
+    topological_sort_with_checker(proj, CancellationChecker::disabled())
+}
+
+/// Topologically sort the projection with cooperative cancellation checkpoints.
+pub fn topological_sort_with_checker(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, usize)>, TopoSortError> {
+    check_algorithm(checker)?;
     let total = proj.node_count();
     if total == 0 {
         return Ok(Vec::new());
@@ -46,7 +64,9 @@ pub fn topological_sort(proj: &GraphProjection) -> Result<Vec<(NodeId, usize)>, 
     // edges to nodes outside the projection don't inflate the count.
     let mut in_degree: HashMap<NodeId, u32> = HashMap::default();
     in_degree.reserve(total);
+    let mut rows_since_check = 0usize;
     for nid in proj.iter_nodes() {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         in_degree.entry(nid).or_insert(0);
         for nb in proj.out_neighbors(nid) {
             if proj.contains(nb.node_id) {
@@ -67,10 +87,13 @@ pub fn topological_sort(proj: &GraphProjection) -> Result<Vec<(NodeId, usize)>, 
     let mut position: usize = 0;
 
     while !ready.is_empty() {
+        check_algorithm(checker)?;
         // Process the current batch in deterministic order; collect newly-zero
         // nodes for the next batch, then re-sort them.
         let mut next_batch: Vec<NodeId> = Vec::new();
+        rows_since_check = 0;
         for nid in ready.drain(..) {
+            check_algorithm_stride(checker, &mut rows_since_check)?;
             result.push((nid, position));
             position += 1;
             for nb in proj.out_neighbors(nid) {

@@ -28,9 +28,14 @@ mod components;
 mod row_index;
 mod topo;
 
-pub use articulation::{articulation_points, bridges};
-pub use components::{scc, scc_count, wcc, wcc_count};
-pub use topo::{TopoSortError, topological_sort};
+pub use articulation::{
+    articulation_points, articulation_points_with_checker, bridges, bridges_with_checker,
+};
+pub use components::{
+    scc, scc_count, scc_count_with_checker, scc_with_checker, wcc, wcc_count,
+    wcc_count_with_checker, wcc_with_checker,
+};
+pub use topo::{TopoSortError, topological_sort, topological_sort_with_checker};
 
 pub(crate) use row_index::RowIndex;
 
