@@ -3,6 +3,7 @@
 use roaring::RoaringBitmap;
 use selene_core::{NodeId, Value};
 use selene_gql::ProcedureError;
+use selene_vector::DistanceMetric;
 
 use crate::error::invalid_argument;
 
@@ -225,6 +226,36 @@ pub(crate) fn nullable_node_ref_list(
     }
 }
 
+#[allow(dead_code)]
+pub(crate) fn nullable_distance_metric(
+    procedure: &'static str,
+    args: &[Value],
+    index: usize,
+    name: &'static str,
+) -> Result<Option<DistanceMetric>, ProcedureError> {
+    let value = match &args[index] {
+        Value::Null => return Ok(None),
+        Value::String(value) => value.as_str(),
+        Value::ExternalString(value) => value.as_ref(),
+        other => {
+            return Err(invalid_argument(format!(
+                "{procedure}: expected {name} to be STRING or NULL, got {other:?}"
+            )));
+        }
+    };
+    let metric = match value.to_ascii_lowercase().as_str() {
+        "cosine" => DistanceMetric::Cosine,
+        "l2" => DistanceMetric::L2,
+        "dot" => DistanceMetric::Dot,
+        _ => {
+            return Err(invalid_argument(format!(
+                "{procedure}: unknown {name} '{value}', expected cosine, l2, or dot"
+            )));
+        }
+    };
+    Ok(Some(metric))
+}
+
 pub(crate) fn try_filter_from_node_refs(nodes: &[NodeId]) -> Result<RoaringBitmap, ProcedureError> {
     let mut filter = RoaringBitmap::new();
     for node_id in nodes {
@@ -354,6 +385,46 @@ mod tests {
     fn filter_rejects_node_id_above_roaring_range() {
         let err = try_filter_from_node_refs(&[NodeId::new(u64::from(u32::MAX) + 1)])
             .expect_err("overflow rejected");
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn nullable_distance_metric_accepts_null() {
+        let args = [Value::Null];
+
+        assert_eq!(
+            nullable_distance_metric(PROC, &args, 0, "metric").expect("null accepted"),
+            None
+        );
+    }
+
+    #[test]
+    fn nullable_distance_metric_accepts_case_insensitive_strings() {
+        let cases = [
+            ("cosine", DistanceMetric::Cosine),
+            ("COSINE", DistanceMetric::Cosine),
+            ("l2", DistanceMetric::L2),
+            ("L2", DistanceMetric::L2),
+            ("dot", DistanceMetric::Dot),
+            ("Dot", DistanceMetric::Dot),
+        ];
+
+        for (input, expected) in cases {
+            let args = [Value::ExternalString(input.into())];
+            assert_eq!(
+                nullable_distance_metric(PROC, &args, 0, "metric").expect("metric accepted"),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn nullable_distance_metric_rejects_unknown_metric() {
+        let args = [Value::ExternalString("manhattan".into())];
+
+        let err = nullable_distance_metric(PROC, &args, 0, "metric")
+            .expect_err("unknown metric rejected");
 
         assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
     }
