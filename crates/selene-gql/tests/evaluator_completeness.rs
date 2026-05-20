@@ -548,6 +548,27 @@ fn is_typed_and_is_normalized_scope_cut_are_explicit() {
 }
 
 #[test]
+fn null_is_typed_matrix_is_two_valued() {
+    for (ty, negated, expected) in [
+        (GqlType::String, false, false),
+        (GqlType::String, true, true),
+        (GqlType::Null, false, true),
+        (GqlType::Null, true, false),
+    ] {
+        let expr = ValueExpr::IsCheck {
+            operand: Box::new(null_lit()),
+            kind: IsCheckKind::Typed(ty),
+            negated,
+            span: span(),
+        };
+        assert_eq!(
+            eval(&expr).expect("NULL IS TYPED evaluates"),
+            Value::Bool(expected)
+        );
+    }
+}
+
+#[test]
 fn case_list_access_and_record_literal_evaluate() {
     assert_eq!(
         single_value(
