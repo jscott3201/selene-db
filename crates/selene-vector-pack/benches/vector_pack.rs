@@ -29,7 +29,7 @@ const BULK_BATCH_SIZE: usize = 100;
 
 const SEARCH_DEFAULT: &str = "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, NULL, NULL) YIELD node_id, score";
 const IVF_SEARCH_DEFAULT: &str =
-    "CALL vector.ivf_search('default', [0.0, 0.0], 10, NULL, NULL) YIELD node_id, score";
+    "CALL vector.ivf_search('default', [0.0, 0.0], 10, NULL, NULL, NULL) YIELD node_id, score";
 const IVF_STATS_DEFAULT: &str = "CALL vector.ivf_stats('default') YIELD state";
 
 fn bench_search(c: &mut Criterion) {

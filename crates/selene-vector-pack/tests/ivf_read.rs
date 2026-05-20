@@ -229,7 +229,7 @@ fn ivf_search_returns_top_k_after_training() {
     let (graph, provider, _) = trained_fixture(88_001);
 
     let table = rows(execute_ok(
-        "CALL vector.ivf_search('default', [0.0, 0.0], 5, NULL, NULL) YIELD node_id, score",
+        "CALL vector.ivf_search('default', [0.0, 0.0], 5, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -260,7 +260,7 @@ fn ivf_search_below_threshold_untrained_returns_empty() {
     bulk_upsert_ivf(&graph, &registry, &nodes, &vectors);
 
     let table = rows(execute_ok(
-        "CALL vector.ivf_search('default', [0.0, 0.0], 5, NULL, NULL) YIELD node_id, score",
+        "CALL vector.ivf_search('default', [0.0, 0.0], 5, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -277,7 +277,7 @@ fn ivf_search_at_threshold_untrained_returns_empty_without_snapshot_writes() {
     bulk_upsert_ivf(&graph, &registry, &nodes, &vectors);
 
     let table = rows(execute_ok(
-        "CALL vector.ivf_search('default', [0.0, 0.0], 5, NULL, NULL) YIELD node_id, score",
+        "CALL vector.ivf_search('default', [0.0, 0.0], 5, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -292,12 +292,12 @@ fn ivf_search_accepts_n_probe_override() {
     let (graph, _, _) = trained_fixture(88_004);
 
     let one_probe = rows(execute_ok(
-        "CALL vector.ivf_search('default', [0.0, 0.0], 5, 1, NULL) YIELD node_id, score",
+        "CALL vector.ivf_search('default', [0.0, 0.0], 5, 1, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
     let all_probes = rows(execute_ok(
-        "CALL vector.ivf_search('default', [0.0, 0.0], 5, 4, NULL) YIELD node_id, score",
+        "CALL vector.ivf_search('default', [0.0, 0.0], 5, 4, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -313,7 +313,7 @@ fn ivf_search_rejects_out_of_range_n_probe_as_invalid_argument() {
     let (graph, _, _) = trained_fixture(88_005);
 
     let err = execute_result(
-        "CALL vector.ivf_search('default', [0.0, 0.0], 5, 0, NULL) YIELD node_id",
+        "CALL vector.ivf_search('default', [0.0, 0.0], 5, 0, NULL, NULL) YIELD node_id",
         &graph,
         &registry,
     )
@@ -336,7 +336,7 @@ fn ivf_search_filter_narrows_to_filtered_set() {
 
     let table = rows(execute_ok(
         "MATCH (n:Allowed) WITH collect(n) AS nodes \
-         CALL vector.ivf_search('default', [0.0, 0.0], 10, 4, nodes) YIELD node_id, score",
+         CALL vector.ivf_search('default', [0.0, 0.0], 10, 4, nodes, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -357,7 +357,7 @@ fn ivf_search_rejects_non_default_index() {
     let (graph, _, _) = trained_fixture(88_007);
 
     let err = execute_result(
-        "CALL vector.ivf_search('embedding_idx', [0.0, 0.0], 5, NULL, NULL) YIELD node_id",
+        "CALL vector.ivf_search('embedding_idx', [0.0, 0.0], 5, NULL, NULL, NULL) YIELD node_id",
         &graph,
         &registry,
     )

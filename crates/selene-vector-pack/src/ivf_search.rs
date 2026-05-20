@@ -11,8 +11,8 @@ use selene_pack::{
 
 use crate::{
     args::{
-        expect_arity, nullable_node_ref_list, nullable_option_u32, required_f32_list,
-        required_string, required_usize, try_filter_from_node_refs,
+        expect_arity, nullable_distance_metric, nullable_node_ref_list, nullable_option_u32,
+        required_f32_list, required_string, required_usize, try_filter_from_node_refs,
     },
     error::vector_error,
     provider::with_ivf_provider,
@@ -46,6 +46,7 @@ impl ExternalProcedureMetadata for IvfSearchProcedure {
                 GqlType::List(Box::new(GqlType::NodeRef)),
                 true,
             ),
+            parameter("metric", GqlType::String, true),
         ]
     }
 
@@ -72,7 +73,7 @@ impl ExternalGraphProcedure for IvfSearchProcedure {
                     parsed.k,
                     parsed.n_probe,
                     parsed.filter.as_ref(),
-                    None,
+                    parsed.metric,
                 )
                 .map_err(|err| vector_error(IVF_SEARCH_PROC, err))?
                 .into_iter()
@@ -92,10 +93,11 @@ struct IvfSearchArgs {
     k: usize,
     n_probe: Option<u32>,
     filter: Option<RoaringBitmap>,
+    metric: Option<selene_vector::DistanceMetric>,
 }
 
 fn parse_ivf_search_args(args: &[Value]) -> Result<IvfSearchArgs, ProcedureError> {
-    expect_arity(IVF_SEARCH_PROC, args, 5)?;
+    expect_arity(IVF_SEARCH_PROC, args, 6)?;
     let index_name = required_string(IVF_SEARCH_PROC, args, 0, "index_name")?;
     let query = required_f32_list(IVF_SEARCH_PROC, args, 1, "query")?;
     let k = required_usize(IVF_SEARCH_PROC, args, 2, "k")?;
@@ -104,12 +106,14 @@ fn parse_ivf_search_args(args: &[Value]) -> Result<IvfSearchArgs, ProcedureError
         .as_deref()
         .map(try_filter_from_node_refs)
         .transpose()?;
+    let metric = nullable_distance_metric(IVF_SEARCH_PROC, args, 5, "metric")?;
     Ok(IvfSearchArgs {
         index_name,
         query,
         k,
         n_probe,
         filter,
+        metric,
     })
 }
 
@@ -139,6 +143,7 @@ mod tests {
             Value::Int(10),
             Value::Int(2),
             Value::List(vec![Value::NodeRef(NodeId::new(1))]),
+            Value::Null,
         ])
         .expect("args parse");
 
@@ -159,6 +164,7 @@ mod tests {
             Value::String(intern("embedding_idx").expect("test string interns")),
             Value::List(vec![Value::Float(1.0)]),
             Value::Int(1),
+            Value::Null,
             Value::Null,
             Value::Null,
         ])

@@ -62,7 +62,7 @@ fn ivf_search_rejects_hnsw_only_graph() {
     let err = execute_err(
         &graph,
         &registry,
-        "CALL vector.ivf_search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id",
+        "CALL vector.ivf_search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id",
     );
 
     assert!(matches!(
@@ -111,7 +111,7 @@ fn ivf_search_rejects_non_ivf_ivfp_provider() {
     let err = execute_err(
         &graph,
         &registry,
-        "CALL vector.ivf_search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id",
+        "CALL vector.ivf_search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id",
     );
 
     assert!(matches!(
