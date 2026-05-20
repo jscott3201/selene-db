@@ -140,12 +140,12 @@ impl GraphError {
             Self::NodeNotFound { .. }
             | Self::EdgeNotFound { .. }
             | Self::NodeNotAlive { .. }
-            | Self::EdgeNotAlive { .. } => "22023",
+            | Self::EdgeNotAlive { .. } => "22G03",
             Self::IdOverflow { .. } => "53000",
             Self::Inconsistent { .. } => "5GQL0",
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
-            | Self::IndexValueRejected { .. } => "22023",
+            | Self::IndexValueRejected { .. } => "22G03",
             Self::TypeViolation(_) => "22000",
             Self::Core(_) => "22000",
             Self::Durable { .. } => "5GQL0",
@@ -163,10 +163,10 @@ mod tests {
     use crate::ProviderError;
 
     #[rstest]
-    #[case(GraphError::NodeNotFound { id: NodeId::new(1) }, "22023")]
-    #[case(GraphError::EdgeNotFound { id: EdgeId::new(1) }, "22023")]
-    #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22023")]
-    #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22023")]
+    #[case(GraphError::NodeNotFound { id: NodeId::new(1) }, "22G03")]
+    #[case(GraphError::EdgeNotFound { id: EdgeId::new(1) }, "22G03")]
+    #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22G03")]
+    #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22G03")]
     #[case(
         GraphError::IdOverflow { kind: "node", raw: 5_000_000_000, max: 4_294_967_296 },
         "53000"
@@ -180,14 +180,14 @@ mod tests {
             label: intern("err.label").unwrap(),
             property: intern("err.property").unwrap(),
         },
-        "22023"
+        "22G03"
     )]
     #[case(
         GraphError::PropertyIndexNotFound {
             label: intern("err.label.missing").unwrap(),
             property: intern("err.property.missing").unwrap(),
         },
-        "22023"
+        "22G03"
     )]
     #[case(
         GraphError::IndexValueRejected {
@@ -196,7 +196,7 @@ mod tests {
             expected_kind: TypedIndexKind::I64,
             observed: "String",
         },
-        "22023"
+        "22G03"
     )]
     #[case(
         GraphError::TypeViolation(TypeViolation::UnknownEdgeLabel {

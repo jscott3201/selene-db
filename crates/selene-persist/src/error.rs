@@ -245,11 +245,11 @@ impl PersistError {
     #[must_use]
     pub const fn gqlstatus(&self) -> &'static str {
         match self {
-            Self::PrincipalTooLarge { .. } => "22023",
+            Self::PrincipalTooLarge { .. } => "22G03",
             Self::PayloadTooLarge { .. }
             | Self::TooManySections { .. }
             | Self::SectionTooLarge { .. } => "5GQL1",
-            Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22023",
+            Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22G03",
             Self::UnsupportedVersion { .. } => "08000",
             Self::Io(_)
             | Self::HeaderCodec(_)
@@ -287,7 +287,7 @@ mod tests {
     #[case(PersistError::PayloadCodec("bad".to_owned()), "5GQL0")]
     #[case(PersistError::Compression("bad".to_owned()), "5GQL0")]
     #[case(PersistError::PayloadTooLarge { len: 1, max: 0 }, "5GQL1")]
-    #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22023")]
+    #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22G03")]
     #[case(PersistError::MagicMismatch { observed: *b"NOPE" }, "5GQL0")]
     #[case(PersistError::UnsupportedVersion { major: 2, minor: 0 }, "08000")]
     #[case(PersistError::ChecksumMismatch { sequence: 7 }, "5GQL0")]
@@ -299,14 +299,14 @@ mod tests {
     #[case(PersistError::TruncatedSectionTable { offset: 32 }, "5GQL0")]
     #[case(PersistError::TooManySections { count: 2, max: 1 }, "5GQL1")]
     #[case(PersistError::SectionTooLarge { len: 2, max: 1 }, "5GQL1")]
-    #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22023")]
+    #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22G03")]
     #[case(PersistError::BodyHashMismatch { expected: [1; 16], observed: [2; 16] }, "5GQL0")]
     #[case(PersistError::UnsupportedFlag { flag: 1 }, "5GQL0")]
     #[case(PersistError::ReservedBytesNonZero { offset: 12 }, "5GQL0")]
     #[case(PersistError::MalformedSnapshotFilename, "5GQL0")]
     #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "5GQL0")]
     #[case(PersistError::MalformedSectionLayout { reason: "test" }, "5GQL0")]
-    #[case(PersistError::DuplicateProviderTag { tag: *b"CORE" }, "22023")]
+    #[case(PersistError::DuplicateProviderTag { tag: *b"CORE" }, "22G03")]
     #[case(PersistError::UnknownProvider { provider: *b"CORE", sub: *b"META" }, "5GQL0")]
     #[case(PersistError::ProviderFailed {
         provider: *b"CORE",
