@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use selene_core::Value;
+use selene_core::{Record, RecordTyped, Value};
 
 const F32_SIGNIFICAND_BITS: u32 = 24;
 const F64_SIGNIFICAND_BITS: u32 = 53;
@@ -27,6 +27,13 @@ pub(crate) fn gql_equal_non_null(lhs: &Value, rhs: &Value) -> Option<bool> {
     debug_assert!(!matches!(rhs, Value::Null));
     if (float_is_nan(lhs) || float_is_nan(rhs)) && numeric_equal(lhs, rhs).is_some() {
         return None;
+    }
+    match (lhs, rhs) {
+        (Value::Record(lhs), Value::Record(rhs)) => return record_gql_equal(lhs, rhs),
+        (Value::RecordTyped(lhs), Value::RecordTyped(rhs)) => {
+            return typed_record_gql_equal(lhs, rhs);
+        }
+        _ => {}
     }
     Some(equal_non_null(lhs, rhs))
 }
@@ -82,6 +89,10 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::ZonedTime(lhs), Value::ZonedTime(rhs)) => lhs.cmp(rhs),
         (Value::Duration(_), Value::Duration(_)) => duration_key(lhs).cmp(&duration_key(rhs)),
         (Value::Bytes(lhs), Value::Bytes(rhs)) => lhs.as_ref().cmp(rhs.as_ref()),
+        (Value::Record(lhs), Value::Record(rhs)) => return record_compare(lhs, rhs),
+        (Value::RecordTyped(lhs), Value::RecordTyped(rhs)) => {
+            return typed_record_compare(lhs, rhs);
+        }
         (Value::Decimal(lhs), Value::Decimal(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int128(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int(rhs)) => lhs.cmp(&i128::from(*rhs)),
@@ -109,6 +120,97 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Uint128(lhs), Value::Int128(rhs)) => i128_cmp_u128(*rhs, *lhs).reverse(),
         _ => return numeric_compare(lhs, rhs),
     })
+}
+
+fn record_gql_equal(lhs: &Record, rhs: &Record) -> Option<bool> {
+    match (lhs, rhs) {
+        (Record::Open(lhs), Record::Open(rhs)) => {
+            if lhs.len() != rhs.len() {
+                return Some(false);
+            }
+            let mut saw_unknown = false;
+            for ((lhs_key, lhs_value), (rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
+                if lhs_key != rhs_key {
+                    return Some(false);
+                }
+                match gql_equal(lhs_value, rhs_value) {
+                    Some(true) => {}
+                    Some(false) => return Some(false),
+                    None => saw_unknown = true,
+                }
+            }
+            if saw_unknown { None } else { Some(true) }
+        }
+        _ => Some(false),
+    }
+}
+
+fn typed_record_gql_equal(lhs: &RecordTyped, rhs: &RecordTyped) -> Option<bool> {
+    if lhs.type_id != rhs.type_id || lhs.values.len() != rhs.values.len() {
+        return Some(false);
+    }
+    let mut saw_unknown = false;
+    for (lhs_value, rhs_value) in lhs.values.iter().zip(rhs.values.iter()) {
+        match (lhs_value, rhs_value) {
+            (Some(lhs_value), Some(rhs_value)) => match gql_equal(lhs_value, rhs_value) {
+                Some(true) => {}
+                Some(false) => return Some(false),
+                None => saw_unknown = true,
+            },
+            (None, _) | (_, None) => saw_unknown = true,
+        }
+    }
+    if saw_unknown { None } else { Some(true) }
+}
+
+fn gql_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
+    match (lhs, rhs) {
+        (Value::Null, _) | (_, Value::Null) => None,
+        _ => gql_equal_non_null(lhs, rhs),
+    }
+}
+
+fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
+    match (lhs, rhs) {
+        (Record::Open(lhs), Record::Open(rhs)) => {
+            for ((lhs_key, lhs_value), (rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
+                let key_ordering = lhs_key.cmp(rhs_key);
+                if !key_ordering.is_eq() {
+                    return Some(key_ordering);
+                }
+                let value_ordering = compare_values(lhs_value, rhs_value)?;
+                if !value_ordering.is_eq() {
+                    return Some(value_ordering);
+                }
+            }
+            Some(lhs.len().cmp(&rhs.len()))
+        }
+        _ => None,
+    }
+}
+
+fn typed_record_compare(lhs: &RecordTyped, rhs: &RecordTyped) -> Option<Ordering> {
+    let type_ordering = lhs.type_id.cmp(&rhs.type_id);
+    if !type_ordering.is_eq() {
+        return Some(type_ordering);
+    }
+    for (lhs_value, rhs_value) in lhs.values.iter().zip(rhs.values.iter()) {
+        let (Some(lhs_value), Some(rhs_value)) = (lhs_value, rhs_value) else {
+            return None;
+        };
+        let value_ordering = compare_values(lhs_value, rhs_value)?;
+        if !value_ordering.is_eq() {
+            return Some(value_ordering);
+        }
+    }
+    Some(lhs.values.len().cmp(&rhs.values.len()))
+}
+
+fn compare_values(lhs: &Value, rhs: &Value) -> Option<Ordering> {
+    match (lhs, rhs) {
+        (Value::Null, _) | (_, Value::Null) => None,
+        _ => compare_non_null(lhs, rhs),
+    }
 }
 
 fn duration_key(value: &selene_core::Value) -> (i16, i32, i32, i32, i32, i64, i64, i64, i64, i64) {
@@ -324,7 +426,9 @@ fn u128_representable_by_binary_float(value: u128, significand_bits: u32) -> boo
 mod tests {
     use std::{cmp::Ordering, sync::Arc};
 
-    use selene_core::{EdgeId, NodeId, Record, Value, intern_with_admission};
+    use selene_core::{
+        EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, intern_with_admission,
+    };
     use smallvec::smallvec;
 
     use super::{
@@ -377,6 +481,40 @@ mod tests {
             gql_equal_non_null(&Value::Float(f64::NAN), &Value::Float(f64::NAN)),
             None
         );
+    }
+
+    #[test]
+    fn gql_equal_record_null_field_returns_null() {
+        let key = intern_with_admission("x").unwrap().0;
+        let lhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+        let rhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+
+        assert!(equal_non_null(&lhs, &rhs));
+        assert_eq!(gql_equal_non_null(&lhs, &rhs), None);
+    }
+
+    #[test]
+    fn gql_equal_typed_record_null_slot_returns_null() {
+        let lhs = Value::RecordTyped(Box::new(RecordTyped {
+            type_id: RecordTypeId::new(7),
+            values: smallvec![None],
+        }));
+        let rhs = Value::RecordTyped(Box::new(RecordTyped {
+            type_id: RecordTypeId::new(7),
+            values: smallvec![None],
+        }));
+
+        assert!(equal_non_null(&lhs, &rhs));
+        assert_eq!(gql_equal_non_null(&lhs, &rhs), None);
+    }
+
+    #[test]
+    fn compare_record_with_null_field_returns_null() {
+        let key = intern_with_admission("x").unwrap().0;
+        let lhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+        let rhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Int(1))])));
+
+        assert_eq!(compare_non_null(&lhs, &rhs), None);
     }
 
     #[test]
