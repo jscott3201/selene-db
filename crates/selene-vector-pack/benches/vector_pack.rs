@@ -27,8 +27,7 @@ const HNSW_GRAPH_SCALE: usize = 1_000;
 const IVF_GRAPH_SCALE: usize = 256;
 const BULK_BATCH_SIZE: usize = 100;
 
-const SEARCH_DEFAULT: &str =
-    "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, NULL) YIELD node_id, score";
+const SEARCH_DEFAULT: &str = "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, NULL, NULL) YIELD node_id, score";
 const IVF_SEARCH_DEFAULT: &str =
     "CALL vector.ivf_search('default', [0.0, 0.0], 10, NULL, NULL) YIELD node_id, score";
 const IVF_STATS_DEFAULT: &str = "CALL vector.ivf_stats('default') YIELD state";

@@ -485,7 +485,7 @@ fn search_node(registry: &HnswIndexRegistry, index: &str, query: &[f32]) -> Node
     registry
         .get(index)
         .expect("index exists")
-        .search(query, 1, None, None)
+        .search(query, 1, None, None, None)
         .expect("search succeeds")
         .first()
         .map(|(node_id, _)| *node_id)

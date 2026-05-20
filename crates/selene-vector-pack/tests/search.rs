@@ -268,12 +268,12 @@ fn vector_search_returns_rows_matching_direct_provider_default_search() {
     let (graph, provider, _) = graph_with_vectors(8_701);
 
     let table = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 3, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 3, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
     let expected: Vec<_> = provider
-        .search(&[1.0, 0.0, 0.0, 0.0], 3, None, None)
+        .search(&[1.0, 0.0, 0.0, 0.0], 3, None, None, None)
         .expect("direct search succeeds")
         .into_iter()
         .map(|(node_id, score)| vec![Value::NodeRef(node_id), Value::Float(f64::from(score))])
@@ -296,12 +296,12 @@ fn vector_search_passes_zero_ef_search_through_to_provider() {
     let (graph, provider, _) = graph_with_vectors(8_702);
 
     let table = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 2, 0, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 2, 0, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
     let expected: Vec<_> = provider
-        .search(&[1.0, 0.0, 0.0, 0.0], 2, Some(0), None)
+        .search(&[1.0, 0.0, 0.0, 0.0], 2, Some(0), None, None)
         .expect("direct search succeeds")
         .into_iter()
         .map(|(node_id, score)| vec![Value::NodeRef(node_id), Value::Float(f64::from(score))])
@@ -332,7 +332,7 @@ fn vector_search_accepts_literal_node_ref_filter_list() {
 
     let table = rows(execute_ok(
         "MATCH (a:A), (b:B) \
-         CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, [a, b]) YIELD node_id, score",
+         CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, [a, b], NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -348,7 +348,7 @@ fn vector_search_accepts_dynamic_node_ref_filter_binding() {
 
     let table = rows(execute_ok(
         "MATCH (n:Allowed) WITH collect(n) AS nodes \
-         CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, nodes) YIELD node_id, score",
+         CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, nodes, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -363,7 +363,7 @@ fn vector_search_rejects_unknown_index_name_sentinel() {
     let (graph, _, _) = graph_with_vectors(8_705);
 
     let err = execute_result(
-        "CALL vector.search('embedding_idx', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id",
+        "CALL vector.search('embedding_idx', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id",
         &graph,
         &registry,
     )
@@ -385,7 +385,7 @@ fn vector_search_dimension_mismatch_maps_to_invalid_argument() {
     let (graph, _, _) = graph_with_vectors(8_706);
 
     let err = execute_result(
-        "CALL vector.search('default', [1.0, 0.0], 1, NULL, NULL) YIELD node_id",
+        "CALL vector.search('default', [1.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id",
         &graph,
         &registry,
     )
@@ -407,7 +407,7 @@ fn vector_search_requires_registered_vect_provider() {
     let graph = SharedGraph::new(GraphId::new(8_707));
 
     let err = execute_result(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id",
         &graph,
         &registry,
     )
@@ -444,7 +444,7 @@ fn vector_upsert_inserts_vector_and_search_returns_it() {
     )
     .expect("upsert succeeds");
     let table = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -567,7 +567,7 @@ fn vector_delete_then_upsert_same_tx_reuses_node_id() {
     )
     .expect("delete then upsert in one transaction succeeds");
     let table = rows(execute_ok(
-        "CALL vector.search('default', [0.0, 1.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [0.0, 1.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -605,7 +605,7 @@ fn vector_delete_removes_vector_from_search() {
     )
     .expect("delete succeeds");
     let table = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));

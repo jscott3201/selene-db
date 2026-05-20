@@ -11,8 +11,8 @@ use selene_pack::{
 
 use crate::{
     args::{
-        expect_arity, nullable_node_ref_list, nullable_option_usize, required_f32_list,
-        required_string, required_usize, try_filter_from_node_refs,
+        expect_arity, nullable_distance_metric, nullable_node_ref_list, nullable_option_usize,
+        required_f32_list, required_string, required_usize, try_filter_from_node_refs,
     },
     error::vector_error,
     provider::with_hnsw_provider,
@@ -46,6 +46,7 @@ impl ExternalProcedureMetadata for SearchProcedure {
                 GqlType::List(Box::new(GqlType::NodeRef)),
                 true,
             ),
+            parameter("metric", GqlType::String, true),
         ]
     }
 
@@ -72,7 +73,7 @@ impl ExternalGraphProcedure for SearchProcedure {
                     parsed.k,
                     parsed.ef_search,
                     parsed.filter.as_ref(),
-                    None,
+                    parsed.metric,
                 )
                 .map_err(|err| vector_error(SEARCH_PROC, err))?
                 .into_iter()
@@ -91,10 +92,11 @@ struct SearchArgs {
     k: usize,
     ef_search: Option<usize>,
     filter: Option<RoaringBitmap>,
+    metric: Option<selene_vector::DistanceMetric>,
 }
 
 fn parse_search_args(args: &[Value]) -> Result<SearchArgs, ProcedureError> {
-    expect_arity(SEARCH_PROC, args, 5)?;
+    expect_arity(SEARCH_PROC, args, 6)?;
     let index_name = required_string(SEARCH_PROC, args, 0, "index_name")?;
     let query = required_f32_list(SEARCH_PROC, args, 1, "query")?;
     let k = required_usize(SEARCH_PROC, args, 2, "k")?;
@@ -103,12 +105,14 @@ fn parse_search_args(args: &[Value]) -> Result<SearchArgs, ProcedureError> {
         .as_deref()
         .map(try_filter_from_node_refs)
         .transpose()?;
+    let metric = nullable_distance_metric(SEARCH_PROC, args, 5, "metric")?;
     Ok(SearchArgs {
         index_name,
         query,
         k,
         ef_search,
         filter,
+        metric,
     })
 }
 

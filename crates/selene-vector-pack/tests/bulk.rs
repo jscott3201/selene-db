@@ -232,7 +232,7 @@ fn vector_bulk_upsert_inserts_rows_and_search_returns_them() {
     )
     .expect("bulk upsert succeeds");
     let table = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 2, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 2, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));
@@ -276,7 +276,7 @@ fn vector_bulk_delete_removes_multiple_vectors() {
     )
     .expect("bulk delete succeeds");
     let table = rows(execute_ok(
-        "CALL vector.search('default', [0.0, 0.0, 1.0, 0.0], 3, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [0.0, 0.0, 1.0, 0.0], 3, NULL, NULL, NULL) YIELD node_id, score",
         &graph,
         &registry,
     ));

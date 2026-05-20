@@ -126,12 +126,12 @@ fn default_path_via_registry_matches_singleton_for_upsert_search() {
     .expect("registry upsert succeeds");
 
     let singleton_rows = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id, score",
         &singleton_graph,
         &procedures,
     ));
     let registry_rows = rows(execute_ok(
-        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL) YIELD node_id, score",
+        "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 1, NULL, NULL, NULL) YIELD node_id, score",
         &registry_graph,
         &procedures,
     ));
@@ -202,12 +202,12 @@ fn snapshot_round_trip_via_registry_uses_v1_wrapper_and_recovers_default() {
 
     assert_eq!(
         singleton_provider
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("singleton search succeeds"),
         recovered
             .get("default")
             .expect("default provider exists")
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("recovered search succeeds")
     );
 }

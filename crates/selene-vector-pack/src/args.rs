@@ -226,7 +226,6 @@ pub(crate) fn nullable_node_ref_list(
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn nullable_distance_metric(
     procedure: &'static str,
     args: &[Value],
