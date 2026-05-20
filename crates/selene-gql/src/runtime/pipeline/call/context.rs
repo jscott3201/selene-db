@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crate::{
     PlannedCall, ProcedureError, ProcedureMutability, ProcedureTier,
     runtime::{ExecutorError, GraphContext, MutationContext, ProcedureContext, TxContext},
@@ -17,6 +19,7 @@ pub(super) fn validate_call_tier(call: &PlannedCall) -> Result<(), ExecutorError
                 actual: call.tier,
             },
             call.span,
+            None,
         ));
     }
     Ok(())
@@ -64,13 +67,15 @@ pub(super) const fn tier_for_mutability(mutability: ProcedureMutability) -> Proc
     }
 }
 
-pub(super) fn procedure_error(source: ProcedureError, span: crate::SourceSpan) -> ExecutorError {
+pub(super) fn procedure_error(
+    source: ProcedureError,
+    span: crate::SourceSpan,
+    deadline: Option<Instant>,
+) -> ExecutorError {
     match source {
         ProcedureError::Cancelled => ExecutorError::Cancelled { span },
         ProcedureError::Timeout { elapsed } => ExecutorError::Timeout {
-            deadline: std::time::Instant::now()
-                .checked_sub(elapsed)
-                .unwrap_or_else(std::time::Instant::now),
+            deadline: deadline.unwrap_or_else(Instant::now),
             elapsed,
             span,
         },

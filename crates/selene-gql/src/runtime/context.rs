@@ -270,6 +270,12 @@ impl<'a, 'g> TxContext<'a, 'g> {
         CancellationChecker::new(self.cancellation, self.deadline)
     }
 
+    /// Return the configured absolute deadline for this statement, if any.
+    #[must_use]
+    pub(crate) const fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
     pub(crate) fn cancellation_error(
         &self,
         cause: CancellationCause,

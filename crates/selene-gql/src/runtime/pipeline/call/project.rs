@@ -32,6 +32,7 @@ pub(super) fn project_yield_row(
                     detail: "planned yield column not in procedure output schema".to_owned(),
                 },
                 item.span,
+                None,
             ));
         };
         projected.push(output_row[index].clone());
@@ -46,6 +47,7 @@ fn validate_output_row(call: &PlannedCall, row: &[Value]) -> Result<(), Executor
                 detail: "registry returned row with wrong column count".to_owned(),
             },
             call.span,
+            None,
         ));
     }
 
@@ -56,6 +58,7 @@ fn validate_output_row(call: &PlannedCall, row: &[Value]) -> Result<(), Executor
                     detail: format!("registry returned value with wrong type for column {index}"),
                 },
                 call.span,
+                None,
             ));
         }
     }

@@ -36,10 +36,11 @@ pub(super) fn execute(
             evaluate_args(&call.args, &row, &input_schema, &eval_ctx)?
         };
         let result = {
+            let deadline = ctx.deadline();
             let mut procedure_ctx = context::build(call, ctx)?;
             registry
                 .execute(call.handle, &args, &mut procedure_ctx)
-                .map_err(|source| context::procedure_error(source, call.span))?
+                .map_err(|source| context::procedure_error(source, call.span, deadline))?
         };
         for output_row in result.rows {
             ctx.check_cancellation_stride(&mut rows_since_check, 1)?;

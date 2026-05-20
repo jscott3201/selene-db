@@ -193,7 +193,7 @@ fn execute_read_only(
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
-        ctx.note_result_rows(table.row_count())?;
+        note_output_rows(plan, &ctx, table.row_count())?;
         table
     } else {
         let mut ctx = TxContext::read_only_with_parameters(
@@ -206,7 +206,7 @@ fn execute_read_only(
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
-        ctx.note_result_rows(table.row_count())?;
+        note_output_rows(plan, &ctx, table.row_count())?;
         table
     };
     Ok(output_from_table(plan, table))
@@ -251,7 +251,7 @@ fn execute_inside_explicit_tx(
         .check_cancellation()
         .and_then(|()| execute_plan(plan, &mut ctx))
         .and_then(|table| {
-            ctx.note_result_rows(table.row_count())?;
+            note_output_rows(plan, &ctx, table.row_count())?;
             Ok(table)
         });
     if result.is_err() {
@@ -284,7 +284,7 @@ fn execute_auto_commit(
         ctx.check_cancellation()
             .and_then(|()| execute_plan(plan, &mut ctx))
             .and_then(|table| {
-                ctx.note_result_rows(table.row_count())?;
+                note_output_rows(plan, &ctx, table.row_count())?;
                 Ok(table)
             })
     };
@@ -303,6 +303,17 @@ fn execute_auto_commit(
             Err(error)
         }
     }
+}
+
+fn note_output_rows(
+    plan: &ExecutionPlan,
+    ctx: &TxContext<'_, '_>,
+    row_count: usize,
+) -> Result<(), ExecutorError> {
+    if !plan.output_schema.columns.is_empty() {
+        ctx.note_result_rows(row_count)?;
+    }
+    Ok(())
 }
 
 fn resource_limits(

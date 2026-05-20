@@ -75,8 +75,23 @@ fn row_cap_counts_outermost_result_rows_only() {
 }
 
 #[test]
-fn cancellation_aborts_explicit_transaction_until_rollback() {
+fn row_cap_ignores_non_row_bearing_writes() {
     let graph = graph(4120);
+    let mut session = Session::new(&graph).with_row_cap(0);
+
+    let output = session
+        .execute_source("INSERT (:Person)", &EmptyProcedureRegistry)
+        .expect("write without RETURN does not count internal rows");
+
+    assert!(matches!(
+        output,
+        StatementOutput::Written(outcome) if outcome.rows.is_none()
+    ));
+}
+
+#[test]
+fn cancellation_aborts_explicit_transaction_until_rollback() {
+    let graph = graph(4121);
     let token = CancellationToken::new();
     let mut session = Session::new(&graph).with_cancellation_token(token.clone());
     session.start_transaction().expect("start succeeds");
@@ -102,7 +117,7 @@ fn cancellation_aborts_explicit_transaction_until_rollback() {
 
 #[test]
 fn cancelled_session_does_not_poison_concurrent_session() {
-    let graph = graph(4121);
+    let graph = graph(4122);
     let token = CancellationToken::new();
     token.cancel();
     let mut cancelled = Session::new(&graph).with_cancellation_token(token);
@@ -121,7 +136,7 @@ fn cancelled_session_does_not_poison_concurrent_session() {
 
 #[test]
 fn read_guard_releases_after_row_cap_error() {
-    let graph = graph(4122);
+    let graph = graph(4123);
     let mut capped = Session::new(&graph).with_row_cap(0);
 
     let err = capped

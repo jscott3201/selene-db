@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     sync::{Mutex, MutexGuard},
+    time::{Duration, Instant},
 };
 
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
@@ -596,6 +597,35 @@ fn procedure_returns_wrong_value_type_returns_internal_error() {
 }
 
 #[test]
+fn procedure_timeout_preserves_session_deadline() {
+    let elapsed = Duration::from_millis(7);
+    let registry = registry_one(
+        &["pkg", "timeout"],
+        ProcedureMutability::Read,
+        ProcedureTier::Graph,
+        Vec::new(),
+        Behavior::Error(ProcedureError::Timeout { elapsed }),
+    );
+    let graph = graph(3915);
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut session = Session::new(&graph).with_deadline(deadline);
+
+    let err = execute_with_session("CALL pkg.timeout()", &mut session, &registry)
+        .expect_err("procedure reports timeout");
+
+    let ExecutorError::Timeout {
+        deadline: observed,
+        elapsed: observed_elapsed,
+        ..
+    } = err
+    else {
+        panic!("expected timeout, got {err:?}");
+    };
+    assert_eq!(observed, deadline);
+    assert_eq!(observed_elapsed, elapsed);
+}
+
+#[test]
 fn persist_tier_procedure_returns_implementation_defined() {
     let registry = registry_one(
         &["pkg", "persist"],
@@ -605,7 +635,7 @@ fn persist_tier_procedure_returns_implementation_defined() {
         Behavior::Return(vec![vec![]]),
     );
 
-    let err = execute("CALL pkg.persist()", &graph(3915), &registry)
+    let err = execute("CALL pkg.persist()", &graph(3919), &registry)
         .expect_err("persist tier not implemented");
 
     assert!(matches!(

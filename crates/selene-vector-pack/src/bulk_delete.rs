@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::{CancellationChecker, Value};
+use selene_core::Value;
 use selene_gql::{GqlType, MutationContext, ProcedureError, ProcedureResult};
 use selene_pack::{
     ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -56,8 +56,9 @@ impl ExternalMutationProcedure for BulkDeleteProcedure {
         let index_name = required_string(BULK_DELETE_PROC, args, 0, "index_name")?;
         let node_ids = required_node_ref_list(BULK_DELETE_PROC, args, 1, "node_ids")?;
         reject_empty_batch(BULK_DELETE_PROC, &node_ids)?;
-        check_cancellation(ctx.cancellation_checker())?;
-        validate_node_ids(BULK_DELETE_PROC, &node_ids, CancellationChecker::disabled())?;
+        let checker = ctx.cancellation_checker();
+        check_cancellation(checker)?;
+        validate_node_ids(BULK_DELETE_PROC, &node_ids, checker)?;
         with_hnsw_provider_mut(ctx, BULK_DELETE_PROC, &index_name, |_provider| Ok(()))?;
 
         let payload = VectorBulkDeletePayloadV1 { node_ids };
