@@ -104,7 +104,15 @@ pub fn intern(s: &str) -> CoreResult<IStr> {
 /// Returns [`CoreError::IStrCapExceeded`] when the policy is
 /// [`IStrAdmissionPolicy::Reject`] and the string is not already admitted.
 pub fn intern_or_external(s: &str, policy: IStrAdmissionPolicy) -> CoreResult<Value> {
-    match intern(s) {
+    intern_or_external_from_result(s, policy, intern(s))
+}
+
+fn intern_or_external_from_result(
+    s: &str,
+    policy: IStrAdmissionPolicy,
+    result: CoreResult<IStr>,
+) -> CoreResult<Value> {
+    match result {
         Ok(value) => Ok(Value::String(value)),
         Err(CoreError::IStrCapExceeded { .. })
             if policy == IStrAdmissionPolicy::FallbackToExternal =>
@@ -362,6 +370,46 @@ mod tests {
     fn empty_and_unicode_strings_intern() {
         assert_eq!(intern("").unwrap().as_str(), "");
         assert_eq!(intern("\u{03bb} graph").unwrap().as_str(), "\u{03bb} graph");
+    }
+
+    #[test]
+    fn intern_or_external_reject_policy_propagates_cap_without_global_fill() {
+        let err = intern_or_external_from_result(
+            "overflow",
+            IStrAdmissionPolicy::Reject,
+            Err(CoreError::IStrCapExceeded {
+                count: MAX_INTERNED_STRINGS,
+                max: MAX_INTERNED_STRINGS,
+            }),
+        )
+        .expect_err("reject policy propagates cap");
+
+        assert!(matches!(err, CoreError::IStrCapExceeded { .. }));
+    }
+
+    #[test]
+    fn intern_or_external_fallback_policy_returns_external_on_cap() {
+        let value = intern_or_external_from_result(
+            "overflow",
+            IStrAdmissionPolicy::FallbackToExternal,
+            Err(CoreError::IStrCapExceeded {
+                count: MAX_INTERNED_STRINGS,
+                max: MAX_INTERNED_STRINGS,
+            }),
+        )
+        .expect("fallback policy converts cap");
+
+        assert!(matches!(value, Value::ExternalString(ref text) if text.as_ref() == "overflow"));
+    }
+
+    #[test]
+    fn intern_or_external_returns_interned_string_on_success() {
+        let key = intern("admitted").expect("test string interns");
+        let value =
+            intern_or_external_from_result("admitted", IStrAdmissionPolicy::Reject, Ok(key))
+                .expect("successful intern returns value");
+
+        assert_eq!(value, Value::String(key));
     }
 
     #[test]

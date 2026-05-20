@@ -371,6 +371,19 @@ mod tests {
         assert_eq!(key_hash(&int), key_hash(&float32));
     }
 
+    #[test]
+    fn runtime_eq_key_hashes_interned_and_external_strings_by_content() {
+        let interned = RuntimeEqKey::from_row(vec![Value::String(
+            intern_with_admission("same")
+                .expect("test string interns")
+                .0,
+        )]);
+        let external = RuntimeEqKey::from_row(vec![Value::ExternalString(Arc::from("same"))]);
+
+        assert_eq!(interned, external);
+        assert_eq!(key_hash(&interned), key_hash(&external));
+    }
+
     proptest! {
         #![proptest_config(Config::with_cases(256))]
 
