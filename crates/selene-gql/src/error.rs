@@ -53,7 +53,8 @@ impl GqlStatus {
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const CAPABILITY_VIOLATION: Self = Self(*b"42N28");
     /// Maps to GQLSTATUS 5GQL0, a selene-db implementation-defined class per
-    /// ISO/IEC 39075:2024 section 23.1.
+    /// ISO/IEC 39075:2024 section 23.1. Specific executor diagnostics carry
+    /// detail tags under this single public class.
     pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
 
     /// Return this status as its 5-character string form.

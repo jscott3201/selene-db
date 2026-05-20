@@ -1,4 +1,8 @@
 //! Runtime value comparison helpers.
+//!
+//! GQL predicate equality lives here instead of on `Value::PartialEq` so row
+//! keys and snapshot diffs can stay structurally stable while GQL `=` still
+//! propagates NULL and NaN through nested records.
 
 use std::cmp::Ordering;
 

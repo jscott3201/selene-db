@@ -22,14 +22,8 @@ fn path_selector_features_are_rejected_before_planning() {
     for (source, expected) in [
         ("MATCH ALL (n) RETURN n", FeatureId::G015),
         ("MATCH ANY (n) RETURN n", FeatureId::G016),
-        (
-            "MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m",
-            FeatureId::G017,
-        ),
-        (
-            "MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m",
-            FeatureId::G018,
-        ),
+        ("MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m", FeatureId::G017),
+        ("MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m", FeatureId::G018),
     ] {
         let error = parse(source).expect_err(source);
         assert_feature(error, expected);
@@ -73,8 +67,8 @@ fn graph_management_features_are_rejected_before_planning() {
         "DROP GRAPH IF EXISTS demo",
     ] {
         let error = parse(source).expect_err(source);
-        assert_feature(error, FeatureId::GC04);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
+        assert_feature(error, FeatureId::GC04);
     }
 }
 

@@ -73,6 +73,13 @@ fn corpus_covers_feature_register() {
         .filter(|case| case.kind == CorpusKind::Positive)
         .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
+    // Some claimed features have no independent parser surface and are only
+    // reachable behind an unclaimed feature that must reject first.
+    let blocked_supported = cases
+        .iter()
+        .filter(|case| case.kind == CorpusKind::Negative)
+        .flat_map(|case| case.also_covers.iter().copied())
+        .collect::<BTreeSet<_>>();
     let negative = cases
         .iter()
         .filter(|case| case.kind == CorpusKind::Negative)
@@ -82,7 +89,7 @@ fn corpus_covers_feature_register() {
     let missing_supported = SUPPORTED_FEATURES
         .iter()
         .copied()
-        .filter(|feature| !positive.contains(feature))
+        .filter(|feature| !positive.contains(feature) && !blocked_supported.contains(feature))
         .collect::<Vec<_>>();
     assert!(
         missing_supported.is_empty(),

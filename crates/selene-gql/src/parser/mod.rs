@@ -96,8 +96,7 @@ fn to_u32(value: usize) -> u32 {
 mod tests {
     use super::*;
     use crate::ast::{
-        BinaryOp, EdgeDirection, LabelExpr, Literal, PathSelector, PipelineStatement, SetOp,
-        ValueExpr,
+        BinaryOp, EdgeDirection, LabelExpr, Literal, PipelineStatement, SetOp, ValueExpr,
     };
     use crate::error::GqlStatus;
 
@@ -289,12 +288,12 @@ mod tests {
 
     #[test]
     fn parse_match_return_pipeline() {
-        let query = query("MATCH ANY (n:Person {age: 42}) WHERE n.active RETURN n.name AS name");
+        let query = query("MATCH (n:Person {age: 42}) WHERE n.active RETURN n.name AS name");
         assert_eq!(query.statements.len(), 2);
         let PipelineStatement::Match(match_clause) = &query.statements[0] else {
             panic!("expected MATCH");
         };
-        assert_eq!(match_clause.selector, Some(PathSelector::Any));
+        assert_eq!(match_clause.selector, None);
         assert!(match_clause.where_clause.is_some());
         let node = match &match_clause.patterns[0].elements[0] {
             crate::ast::PatternElement::Node(node) => node,
