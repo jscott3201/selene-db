@@ -25,7 +25,9 @@ pub(crate) fn bind_ddl_statement(
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::ShowNodeTypes(_)
-        | DdlStatement::ShowEdgeTypes(_) => {}
+        | DdlStatement::ShowEdgeTypes(_)
+        | DdlStatement::ShowIndexes(_)
+        | DdlStatement::ShowProcedures(_) => {}
     }
     Ok(())
 }

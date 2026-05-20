@@ -30,6 +30,7 @@ pub(crate) fn classify(
             .lookup(&call.name)
             .map(|metadata| classify_mutability(metadata.mutability))
             .unwrap_or(StatementCategory::ReadOnly),
+        Statement::Explain { .. } => StatementCategory::ReadOnly,
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => StatementCategory::TransactionControl,
@@ -38,9 +39,10 @@ pub(crate) fn classify(
 
 const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
     match statement {
-        DdlStatement::ShowNodeTypes(_) | DdlStatement::ShowEdgeTypes(_) => {
-            StatementCategory::ReadOnly
-        }
+        DdlStatement::ShowNodeTypes(_)
+        | DdlStatement::ShowEdgeTypes(_)
+        | DdlStatement::ShowIndexes(_)
+        | DdlStatement::ShowProcedures(_) => StatementCategory::ReadOnly,
         DdlStatement::CreateGraph { .. }
         | DdlStatement::DropGraph { .. }
         | DdlStatement::CreateNodeType { .. }

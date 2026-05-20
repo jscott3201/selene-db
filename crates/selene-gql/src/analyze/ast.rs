@@ -91,6 +91,13 @@ pub enum AnalyzedStatementKind {
     Ddl(DdlStatement),
     /// Top-level procedure call.
     Call(ProcedureCall),
+    /// `EXPLAIN <statement>`.
+    Explain {
+        /// Inner analyzed statement shape.
+        inner: Box<AnalyzedStatementKind>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `START TRANSACTION`.
     StartTransaction(SourceSpan),
     /// `COMMIT`.
@@ -108,6 +115,10 @@ impl AnalyzedStatementKind {
             Statement::Mutate(value) => Self::Mutate(value),
             Statement::Ddl(value) => Self::Ddl(value),
             Statement::Call(value) => Self::Call(value),
+            Statement::Explain { inner, span } => Self::Explain {
+                inner: Box::new(Self::from_statement(*inner)),
+                span,
+            },
             Statement::StartTransaction { span } => Self::StartTransaction(span),
             Statement::Commit { span } => Self::Commit(span),
             Statement::Rollback { span } => Self::Rollback(span),
