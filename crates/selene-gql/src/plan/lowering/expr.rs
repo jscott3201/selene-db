@@ -316,6 +316,7 @@ fn collect_subqueries_in_pipeline_op(
         PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
             populate_plan_subqueries(rhs, analyzed)?;
         }
+        PipelineOp::ExplainPlan { inner, .. } => populate_plan_subqueries(inner, analyzed)?,
         PipelineOp::Call(call) => {
             for arg in &call.args {
                 collect_subqueries_in_project(arg, analyzed, entries)?;
@@ -431,7 +432,9 @@ fn collect_subqueries_in_catalog(
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
         | CatalogOp::ShowNodeTypes(_)
-        | CatalogOp::ShowEdgeTypes(_) => {}
+        | CatalogOp::ShowEdgeTypes(_)
+        | CatalogOp::ShowIndexes(_)
+        | CatalogOp::ShowProcedures(_) => {}
     }
     Ok(())
 }

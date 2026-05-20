@@ -8,8 +8,8 @@ mod match_clause;
 mod mutation;
 
 use crate::{
-    LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause, SourceSpan,
-    WithClause,
+    GqlType, LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause,
+    SourceSpan, WithClause,
     analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId, StatementCategory},
     plan::{
         BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
@@ -30,7 +30,20 @@ pub fn plan(
     analyzed: &AnalyzedStatement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<ExecutionPlan, PlannerError> {
-    let mut plan = match &analyzed.statement {
+    let mut plan = lower_statement_kind(&analyzed.statement, registry, analyzed)?;
+    plan.category = analyzed.category;
+    plan.expr_ids = analyzed.expr_ids.clone();
+    expr::populate_plan_subqueries(&mut plan, analyzed)?;
+    plan.refresh_pipeline_op_high_water();
+    Ok(plan)
+}
+
+fn lower_statement_kind(
+    statement: &AnalyzedStatementKind,
+    registry: &dyn ProcedureRegistry,
+    analyzed: &AnalyzedStatement,
+) -> Result<ExecutionPlan, PlannerError> {
+    match statement {
         AnalyzedStatementKind::Query(pipeline) => {
             lower_query_pipeline(pipeline, registry, analyzed)
         }
@@ -48,15 +61,36 @@ pub fn plan(
         AnalyzedStatementKind::Mutate(pipeline) => mutation::lower_mutation(pipeline, analyzed),
         AnalyzedStatementKind::Ddl(statement) => catalog::lower_ddl(statement, analyzed),
         AnalyzedStatementKind::Call(call) => call::lower_top_level_call(call, registry, analyzed),
+        AnalyzedStatementKind::Explain { inner, span } => {
+            lower_explain(inner, *span, registry, analyzed)
+        }
         AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
-    }?;
-    plan.category = analyzed.category;
-    plan.expr_ids = analyzed.expr_ids.clone();
-    expr::populate_plan_subqueries(&mut plan, analyzed)?;
-    plan.refresh_pipeline_op_high_water();
-    Ok(plan)
+    }
+}
+
+fn lower_explain(
+    inner: &AnalyzedStatementKind,
+    span: SourceSpan,
+    registry: &dyn ProcedureRegistry,
+    analyzed: &AnalyzedStatement,
+) -> Result<ExecutionPlan, PlannerError> {
+    let inner = lower_statement_kind(inner, registry, analyzed)?;
+    Ok(ExecutionPlan {
+        category: StatementCategory::ReadOnly,
+        pattern_plan: None,
+        pipeline: vec![PipelineOp::ExplainPlan {
+            inner: Box::new(inner),
+            span,
+        }],
+        output_schema: explain_output_schema(span)?,
+        impl_defined_caps: ImplDefinedCaps::default(),
+        expr_ids: analyzed.expr_ids.clone(),
+        subqueries: Default::default(),
+        next_expr_id: next_expr_id(analyzed),
+        next_pipeline_op_id: crate::PipelineOpId::new(1),
+    })
 }
 
 fn lower_chained(
@@ -326,6 +360,22 @@ pub(super) fn visible_after_pattern(
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn explain_output_schema(span: SourceSpan) -> Result<BindingTableSchema, PlannerError> {
+    let (name, _was_new) = selene_core::intern_with_admission("plan").map_err(|_err| {
+        PlannerError::InternerCapExhausted {
+            detail: "static EXPLAIN column 'plan'",
+            span,
+        }
+    })?;
+    Ok(BindingTableSchema {
+        columns: vec![BindingTableColumn {
+            name: Some(name),
+            hidden: None,
+            ty: AnalyzedType::Resolved(GqlType::String),
+        }],
+    })
 }
 
 fn leading_matches(statements: &[PipelineStatement]) -> (Vec<&crate::MatchClause>, usize) {

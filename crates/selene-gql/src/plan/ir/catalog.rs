@@ -85,6 +85,10 @@ pub enum CatalogOp {
     ShowNodeTypes(SourceSpan),
     /// Show edge types.
     ShowEdgeTypes(SourceSpan),
+    /// Show built-in property indexes.
+    ShowIndexes(SourceSpan),
+    /// Show registered procedures.
+    ShowProcedures(SourceSpan),
 }
 
 /// Planner-side type property definition.

@@ -114,6 +114,7 @@ pub(crate) fn recurse_subplans(
             PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
                 changed |= recurse_plan_box(rhs, visit);
             }
+            PipelineOp::ExplainPlan { inner, .. } => changed |= recurse_plan_box(inner, visit),
             PipelineOp::Filter(_)
             | PipelineOp::Project(_)
             | PipelineOp::Let(_)
@@ -284,6 +285,7 @@ fn walk_pipeline_op_exprs(
         | PipelineOp::Distinct
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
+        | PipelineOp::ExplainPlan { .. }
         | PipelineOp::Tx(_) => false,
     }
 }
@@ -345,7 +347,9 @@ fn walk_catalog_exprs(
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
         | CatalogOp::ShowNodeTypes(_)
-        | CatalogOp::ShowEdgeTypes(_) => false,
+        | CatalogOp::ShowEdgeTypes(_)
+        | CatalogOp::ShowIndexes(_)
+        | CatalogOp::ShowProcedures(_) => false,
     }
 }
 

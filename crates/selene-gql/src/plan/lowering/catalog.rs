@@ -93,6 +93,8 @@ pub(crate) fn lower_ddl(
         },
         DdlStatement::ShowNodeTypes(span) => CatalogOp::ShowNodeTypes(*span),
         DdlStatement::ShowEdgeTypes(span) => CatalogOp::ShowEdgeTypes(*span),
+        DdlStatement::ShowIndexes(span) => CatalogOp::ShowIndexes(*span),
+        DdlStatement::ShowProcedures(span) => CatalogOp::ShowProcedures(*span),
     };
 
     let next_pipeline_op_id = crate::PipelineOpId::new(1);
@@ -185,10 +187,48 @@ where
             "static SHOW EDGE TYPES column 'definition'",
             intern,
         ),
+        DdlStatement::ShowIndexes(span) => named_output_schema(
+            *span,
+            &[
+                ("label", "static SHOW INDEXES column 'label'"),
+                ("property", "static SHOW INDEXES column 'property'"),
+                ("kind", "static SHOW INDEXES column 'kind'"),
+            ],
+            intern,
+        ),
+        DdlStatement::ShowProcedures(span) => named_output_schema(
+            *span,
+            &[
+                ("name", "static SHOW PROCEDURES column 'name'"),
+                ("tier", "static SHOW PROCEDURES column 'tier'"),
+                ("mutability", "static SHOW PROCEDURES column 'mutability'"),
+                ("signature", "static SHOW PROCEDURES column 'signature'"),
+            ],
+            intern,
+        ),
         _ => Ok(BindingTableSchema {
             columns: Vec::new(),
         }),
     }
+}
+
+fn named_output_schema<F, E>(
+    span: crate::SourceSpan,
+    names: &[(&'static str, &'static str)],
+    mut intern: F,
+) -> Result<BindingTableSchema, PlannerError>
+where
+    F: FnMut(&str) -> Result<(IStr, bool), E>,
+{
+    let mut columns = Vec::with_capacity(names.len());
+    for (name, detail) in names {
+        columns.push(BindingTableColumn {
+            name: Some(show_column_name(name, detail, span, &mut intern)?),
+            hidden: None,
+            ty: AnalyzedType::Resolved(GqlType::String),
+        });
+    }
+    Ok(BindingTableSchema { columns })
 }
 
 fn show_output_schema<F, E>(
