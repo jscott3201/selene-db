@@ -24,8 +24,9 @@
 
 // Integer-keyed hot-path maps use FxHashMap to avoid SipHash overhead.
 use rustc_hash::FxHashMap as HashMap;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
@@ -40,9 +41,20 @@ use crate::structural::RowIndex;
 /// (unit weights when the projection is unweighted).
 #[must_use]
 pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32)> {
+    louvain_with_checker(proj, max_iter, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Compute Louvain communities with cooperative cancellation checkpoints.
+pub fn louvain_with_checker(
+    proj: &GraphProjection,
+    max_iter: usize,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, u64, u32)>, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n = idx.len();
 
@@ -51,7 +63,9 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
     // weight scale; `weighted_degree[v]` is computed as the sum of out and in
     // weights, so the modularity invariant `Σ d_i = 2 · total_weight` holds.
     let mut total_weight: f64 = 0.0;
+    let mut rows_since_check = 0usize;
     for d in 0..n as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         for nb in proj.out_neighbors(node) {
             if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
@@ -76,7 +90,9 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
     // the projection scope are skipped (matches §E26 / dense-remap contract).
     // (Brief-back-reviewer-55 P1-rec: clarify undirected interpretation.)
     let mut weighted_degree: Vec<f64> = vec![0.0; n];
+    rows_since_check = 0;
     for d in 0..n as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         let mut deg = 0.0;
         for nb in proj.out_neighbors(node) {
@@ -110,10 +126,13 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
     let mut improved = true;
     let mut iter = 0usize;
     while improved && iter < max_iter {
+        check_algorithm(checker)?;
         improved = false;
         iter += 1;
 
+        rows_since_check = 0;
         for d in 0..n as u32 {
+            check_algorithm_stride(checker, &mut rows_since_check)?;
             let node = idx.node_id_of(d);
             let idx_d = d as usize;
             let current_comm = community[idx_d];
@@ -190,7 +209,7 @@ pub fn louvain(proj: &GraphProjection, max_iter: usize) -> Vec<(NodeId, u64, u32
         })
         .collect();
     result.sort_by_key(|&(nid, _, _)| nid.get());
-    result
+    Ok(result)
 }
 
 #[inline]

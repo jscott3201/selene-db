@@ -9,8 +9,9 @@
 //! DESC by score with NodeId ASC tie-break (§E21).
 
 use rayon::prelude::*;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
@@ -47,21 +48,36 @@ pub struct PageRankConfig {
 /// non-finite results would only occur on caller-supplied invalid configs).
 #[must_use]
 pub fn pagerank(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+    pagerank_with_checker(proj, config, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Compute PageRank with cooperative cancellation checkpoints.
+pub fn pagerank_with_checker(
+    proj: &GraphProjection,
+    config: PageRankConfig,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
     match config.parallelism {
-        Parallelism::Sequential => pagerank_sequential(proj, config),
-        Parallelism::Auto | Parallelism::Threads(_) => pagerank_parallel(proj, config),
+        Parallelism::Sequential => pagerank_sequential(proj, config, checker),
+        Parallelism::Auto | Parallelism::Threads(_) => pagerank_parallel(proj, config, checker),
     }
 }
 
-fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+fn pagerank_sequential(
+    proj: &GraphProjection,
+    config: PageRankConfig,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
     debug_assert!(
         config.damping.is_finite() && (0.0..1.0).contains(&config.damping),
         "damping must be finite and in [0.0, 1.0); got {}",
         config.damping
     );
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n_usize = idx.len();
     let n_f64 = n_usize as f64;
@@ -74,7 +90,9 @@ fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(N
     // Pre-cache out-neighbor dense lists once. PageRank touches every edge
     // every iteration; caching avoids re-walking the projection.
     let mut out_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n_usize);
+    let mut rows_since_check = 0usize;
     for d in 0..n_usize as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         let neighbors: Vec<u32> = proj
             .out_neighbors(node)
@@ -85,6 +103,7 @@ fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(N
     }
 
     for _ in 0..config.max_iter {
+        check_algorithm(checker)?;
         // Seed new_scores with the teleport contribution. Why: the
         // (1-damping)/N teleport is applied once per node (no contribution
         // from dangling-redistribution math needed in seed; dangling falls
@@ -142,18 +161,23 @@ fn pagerank_sequential(proj: &GraphProjection, config: PageRankConfig) -> Vec<(N
         .map(|d| (idx.node_id_of(d), scores[d as usize]))
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
-    result
+    Ok(result)
 }
 
-fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(NodeId, f64)> {
+fn pagerank_parallel(
+    proj: &GraphProjection,
+    config: PageRankConfig,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
     debug_assert!(
         config.damping.is_finite() && (0.0..1.0).contains(&config.damping),
         "damping must be finite and in [0.0, 1.0); got {}",
         config.damping
     );
+    check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
     let n_usize = idx.len();
     let n_f64 = n_usize as f64;
@@ -167,7 +191,9 @@ fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(Nod
     let mut out_degree_dense: Vec<usize> = vec![0; n_usize];
     let mut dangling_rows: Vec<u32> = Vec::new();
 
+    let mut rows_since_check = 0usize;
     for d in 0..n_usize as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         let out_degree = proj
             .out_neighbors(node)
@@ -189,8 +215,9 @@ fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(Nod
 
     let runner = ParallelRunner::new(config.parallelism)
         .expect("ParallelRunner builds for valid parallelism");
-    runner.install(|| {
+    runner.install(|| -> Result<(), AlgorithmAborted> {
         for _ in 0..config.max_iter {
+            check_algorithm(checker)?;
             let dangling_mass: f64 = dangling_rows.par_iter().map(|&u| scores[u as usize]).sum();
             let spread = if dangling_mass > 0.0 {
                 config.damping * dangling_mass / n_f64
@@ -220,7 +247,8 @@ fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(Nod
                 break;
             }
         }
-    });
+        Ok(())
+    })?;
 
     // Materialize result + sort DESC by score with NodeId ASC tie-break
     // (§E21 / §O.2). Uses total_cmp for NaN-soundness.
@@ -228,7 +256,7 @@ fn pagerank_parallel(proj: &GraphProjection, config: PageRankConfig) -> Vec<(Nod
         .map(|d| (idx.node_id_of(d), scores[d as usize]))
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
-    result
+    Ok(result)
 }
 
 /// Map a `NodeId` (1-based per selene-graph) to its sparse row index

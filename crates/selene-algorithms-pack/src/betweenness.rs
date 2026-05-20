@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_algorithms::{BetweennessConfig, betweenness};
+use selene_algorithms::{BetweennessConfig, betweenness_with_checker};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -10,6 +10,7 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, nullable_option_usize, required_string},
+    error::algorithm_aborted,
     parallel::parse_parallelism,
     state::{AlgorithmsPackState, with_algorithm_projection},
 };
@@ -53,8 +54,10 @@ impl ExternalGraphProcedure for BetweennessProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, config) = parse_betweenness_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = betweenness(projection, config)
+            let rows = betweenness_with_checker(projection, config, checker)
+                .map_err(algorithm_aborted)?
                 .into_iter()
                 .map(|(node_id, score)| vec![Value::NodeRef(node_id), Value::Float(score)])
                 .collect();

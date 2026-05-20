@@ -11,6 +11,8 @@
 
 pub use selene_core::Value;
 
+use std::time::Duration;
+
 use selene_core::IStr;
 
 use crate::{GqlStatus, GqlType, runtime::ProcedureContext};
@@ -179,6 +181,15 @@ pub enum ProcedureError {
         /// Stable diagnostic detail.
         detail: String,
     },
+    /// Procedure observed caller-requested cooperative cancellation.
+    #[error("procedure cancelled")]
+    Cancelled,
+    /// Procedure observed that the statement deadline elapsed.
+    #[error("procedure deadline exceeded")]
+    Timeout {
+        /// Duration since the deadline elapsed.
+        elapsed: Duration,
+    },
 }
 
 impl ProcedureError {
@@ -192,6 +203,8 @@ impl ProcedureError {
             Self::TierMismatch { .. } | Self::Internal { .. } => {
                 GqlStatus::IMPLEMENTATION_DEFINED_ERROR
             }
+            Self::Cancelled => GqlStatus::OPERATION_CANCELLED,
+            Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
         }
     }
 }

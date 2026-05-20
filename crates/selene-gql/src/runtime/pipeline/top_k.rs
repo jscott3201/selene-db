@@ -27,7 +27,9 @@ pub(super) fn execute(
 
     let keys = Arc::<[OrderKey]>::from(keys.to_vec());
     let mut heap = BinaryHeap::<Reverse<RankedRow>>::with_capacity(retained.saturating_add(1));
+    let mut rows_since_check = 0;
     for (sequence, row) in rows.into_iter().enumerate() {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let tuple = order_by::evaluate_key_tuple(&keys, &row, &schema, eval_ctx)?;
         heap.push(Reverse(RankedRow {
             tuple,

@@ -1,8 +1,8 @@
 //! Executor transaction context.
 
-use std::{collections::BTreeMap, fmt, sync::Arc};
+use std::{cell::Cell, collections::BTreeMap, fmt, sync::Arc, time::Instant};
 
-use selene_core::{IStr, Value};
+use selene_core::{CancellationCause, CancellationChecker, CancellationToken, IStr, Value};
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
@@ -21,6 +21,9 @@ pub trait AdaptiveOptimizer: Send + Sync {
 
 static EMPTY_PARAMETERS: BTreeMap<IStr, Value> = BTreeMap::new();
 
+/// Row cadence for cooperative cancellation checkpoints.
+pub(crate) const CANCEL_CHECK_STRIDE: usize = 1024;
+
 /// Executor context for one statement.
 ///
 /// Read-only contexts own an immutable graph snapshot so every scan in a
@@ -37,6 +40,10 @@ pub struct TxContext<'a, 'g> {
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     plan_expr_ids: Option<&'a ExprIdLookup>,
     plan_subqueries: Option<&'a SubqueryRegistry>,
+    cancellation: Option<&'a CancellationToken>,
+    deadline: Option<Instant>,
+    row_cap: Option<usize>,
+    result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
 
@@ -105,6 +112,10 @@ impl<'a, 'g> TxContext<'a, 'g> {
             reopt_hook: None,
             plan_expr_ids: None,
             plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
     }
@@ -145,6 +156,10 @@ impl<'a, 'g> TxContext<'a, 'g> {
             reopt_hook: Some(reopt_hook),
             plan_expr_ids: None,
             plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
     }
@@ -185,7 +200,94 @@ impl<'a, 'g> TxContext<'a, 'g> {
             reopt_hook: None,
             plan_expr_ids: None,
             plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+        }
+    }
+
+    /// Attach per-statement cooperative cancellation and output row-cap limits.
+    #[must_use]
+    pub fn with_resource_limits(
+        mut self,
+        cancellation: Option<&'a CancellationToken>,
+        deadline: Option<Instant>,
+        row_cap: Option<usize>,
+    ) -> Self {
+        self.cancellation = cancellation;
+        self.deadline = deadline;
+        self.row_cap = row_cap;
+        self
+    }
+
+    /// Check the token and deadline at a cooperative cancellation point.
+    pub(crate) fn check_cancellation(&self) -> Result<(), ExecutorError> {
+        self.cancellation_checker()
+            .check()
+            .map_err(|cause| self.cancellation_error(cause, SourceSpan::default()))
+    }
+
+    /// Accumulate processed rows and check cancellation when the stride is reached.
+    pub(crate) fn check_cancellation_stride(
+        &self,
+        rows_since_check: &mut usize,
+        rows: usize,
+    ) -> Result<(), ExecutorError> {
+        *rows_since_check = rows_since_check.saturating_add(rows);
+        if *rows_since_check >= CANCEL_CHECK_STRIDE {
+            self.check_cancellation()?;
+            *rows_since_check = 0;
+        }
+        Ok(())
+    }
+
+    /// Count outermost result rows and enforce the optional row cap.
+    pub(crate) fn note_result_rows(&self, n: usize) -> Result<(), ExecutorError> {
+        let Some(cap) = self.row_cap else {
+            return Ok(());
+        };
+        let Some(next) = self.result_rows_emitted.get().checked_add(n) else {
+            return Err(ExecutorError::RowCapExceeded {
+                cap,
+                span: SourceSpan::default(),
+            });
+        };
+        self.result_rows_emitted.set(next);
+        if next > cap {
+            return Err(ExecutorError::RowCapExceeded {
+                cap,
+                span: SourceSpan::default(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Build a checker that can cross into procedure packs and algorithm crates.
+    #[must_use]
+    pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'a> {
+        CancellationChecker::new(self.cancellation, self.deadline)
+    }
+
+    /// Return the configured absolute deadline for this statement, if any.
+    #[must_use]
+    pub(crate) const fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    pub(crate) fn cancellation_error(
+        &self,
+        cause: CancellationCause,
+        span: SourceSpan,
+    ) -> ExecutorError {
+        match cause {
+            CancellationCause::Cancelled => ExecutorError::Cancelled { span },
+            CancellationCause::Timeout { elapsed } => ExecutorError::Timeout {
+                deadline: self.deadline.unwrap_or_else(Instant::now),
+                elapsed,
+                span,
+            },
         }
     }
 
@@ -315,6 +417,10 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("reopt_hook", &self.reopt_hook.is_some())
             .field("plan_expr_ids", &self.plan_expr_ids.is_some())
             .field("plan_subqueries", &self.plan_subqueries.is_some())
+            .field("cancellation", &self.cancellation.is_some())
+            .field("deadline", &self.deadline.is_some())
+            .field("row_cap", &self.row_cap)
+            .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
             .finish()
     }

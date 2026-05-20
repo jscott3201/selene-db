@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_core::Change;
+use selene_core::{CancellationToken, Change};
 use selene_graph::CommitOutcome;
 
 use crate::{
@@ -180,6 +180,7 @@ fn execute_read_only(
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let parameters = &session.parameters;
+    let (cancellation, deadline, row_cap) = resource_limits(session);
     let table = if let Some(txn) = session.active_txn.as_mut() {
         let mut ctx = TxContext::write_with_parameters(
             snapshot,
@@ -188,8 +189,12 @@ fn execute_read_only(
             txn,
             providers,
             parameters,
-        );
-        execute_plan(plan, &mut ctx)?
+        )
+        .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+        ctx.check_cancellation()?;
+        let table = execute_plan(plan, &mut ctx)?;
+        note_output_rows(plan, &ctx, table.row_count())?;
+        table
     } else {
         let mut ctx = TxContext::read_only_with_parameters(
             snapshot,
@@ -197,8 +202,12 @@ fn execute_read_only(
             registry,
             providers,
             parameters,
-        );
-        execute_plan(plan, &mut ctx)?
+        )
+        .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+        ctx.check_cancellation()?;
+        let table = execute_plan(plan, &mut ctx)?;
+        note_output_rows(plan, &ctx, table.row_count())?;
+        table
     };
     Ok(output_from_table(plan, table))
 }
@@ -222,6 +231,7 @@ fn execute_inside_explicit_tx(
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let parameters = &session.parameters;
+    let (cancellation, deadline, row_cap) = resource_limits(session);
     let txn = session
         .active_txn
         .as_mut()
@@ -235,8 +245,15 @@ fn execute_inside_explicit_tx(
         txn,
         providers,
         parameters,
-    );
-    let result = execute_plan(plan, &mut ctx);
+    )
+    .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+    let result = ctx
+        .check_cancellation()
+        .and_then(|()| execute_plan(plan, &mut ctx))
+        .and_then(|table| {
+            note_output_rows(plan, &ctx, table.row_count())?;
+            Ok(table)
+        });
     if result.is_err() {
         session.aborted = true;
     }
@@ -253,6 +270,7 @@ fn execute_auto_commit(
     let principal = session.principal();
     let mut txn = session.graph().begin_write();
     let parameters = session.parameters();
+    let (cancellation, deadline, row_cap) = resource_limits(session);
     let result = {
         let mut ctx = TxContext::write_with_parameters(
             snapshot,
@@ -261,8 +279,14 @@ fn execute_auto_commit(
             &mut txn,
             providers,
             parameters,
-        );
-        execute_plan(plan, &mut ctx)
+        )
+        .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+        ctx.check_cancellation()
+            .and_then(|()| execute_plan(plan, &mut ctx))
+            .and_then(|table| {
+                note_output_rows(plan, &ctx, table.row_count())?;
+                Ok(table)
+            })
     };
     match result {
         Ok(table) => {
@@ -279,6 +303,31 @@ fn execute_auto_commit(
             Err(error)
         }
     }
+}
+
+fn note_output_rows(
+    plan: &ExecutionPlan,
+    ctx: &TxContext<'_, '_>,
+    row_count: usize,
+) -> Result<(), ExecutorError> {
+    if !plan.output_schema.columns.is_empty() {
+        ctx.note_result_rows(row_count)?;
+    }
+    Ok(())
+}
+
+fn resource_limits(
+    session: &Session<'_>,
+) -> (
+    Option<CancellationToken>,
+    Option<std::time::Instant>,
+    Option<usize>,
+) {
+    (
+        session.cancellation.clone(),
+        session.deadline,
+        session.row_cap,
+    )
 }
 
 fn execute_transaction_control(

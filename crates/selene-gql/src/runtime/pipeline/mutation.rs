@@ -136,7 +136,9 @@ fn execute_insert_node(
     let input_schema = schema.clone();
     extend_schema(&mut schema, output_column_index, output_column)?;
     let mut output = Vec::with_capacity(rows.len());
+    let mut rows_since_check = 0;
     for row in rows {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let props = {
             let eval_ctx = EvalCtx {
                 tx: ctx,
@@ -183,7 +185,9 @@ fn execute_insert_edge(
     let input_schema = schema.clone();
     extend_schema(&mut schema, output_column_index, output_column)?;
     let mut output = Vec::with_capacity(rows.len());
+    let mut rows_since_check = 0;
     for row in rows {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let left = endpoint_node(&row, left, span)?;
         let right = endpoint_node(&row, right, span)?;
         let (source, target) = edge_endpoints(left, right, direction, span)?;
@@ -227,7 +231,9 @@ fn execute_set_property(
     subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = table.into_parts();
+    let mut rows_since_check = 0;
     for row in &rows {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let value = {
             let eval_ctx = EvalCtx {
                 tx: ctx,
@@ -269,7 +275,9 @@ fn execute_set_label(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let diff = label_diff([label], [], span)?;
+    let mut rows_since_check = 0;
     for row in table.rows() {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         match element {
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
@@ -295,7 +303,9 @@ fn execute_remove_property(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let diff = property_diff([], [key], span)?;
+    let mut rows_since_check = 0;
     for row in table.rows() {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         match element {
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
@@ -328,7 +338,9 @@ fn execute_remove_label(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let diff = label_diff([], [label], span)?;
+    let mut rows_since_check = 0;
     for row in table.rows() {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         match element {
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
@@ -353,7 +365,9 @@ fn execute_delete_target(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    let mut rows_since_check = 0;
     for row in table.rows() {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         match element {
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
@@ -398,7 +412,9 @@ fn property_map(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<PropertyMap, ExecutorError> {
     let mut pairs = Vec::with_capacity(property_inits.len());
+    let mut rows_since_check = 0;
     for init in property_inits {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         pairs.push((
             init.key,
             evaluator::evaluate(&init.value.expr, row, schema, ctx)?,

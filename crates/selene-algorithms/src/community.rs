@@ -37,6 +37,6 @@ mod label_propagation;
 mod louvain;
 mod triangle_count;
 
-pub use label_propagation::label_propagation;
-pub use louvain::louvain;
-pub use triangle_count::{TriangleCountConfig, triangle_count};
+pub use label_propagation::{label_propagation, label_propagation_with_checker};
+pub use louvain::{louvain, louvain_with_checker};
+pub use triangle_count::{TriangleCountConfig, triangle_count, triangle_count_with_checker};

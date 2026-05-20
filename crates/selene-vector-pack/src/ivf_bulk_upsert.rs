@@ -12,6 +12,7 @@ use selene_vector::{IvfBulkInsertRow, VectorIvfBulkInsertV1};
 use crate::{
     args::{expect_arity, required_f32_matrix, required_node_ref_list, required_string},
     bulk_upsert::{parameter, reject_empty_batch, validate_node_ids, validate_vectors},
+    error::check_cancellation_stride,
     provider::{IVF_PROVIDER_NAME, emit_payload_bytes, with_ivf_provider_mut},
     state::VectorPackState,
 };
@@ -62,19 +63,25 @@ impl ExternalMutationProcedure for IvfBulkUpsertProcedure {
         let vectors =
             required_f32_matrix(IVF_BULK_UPSERT_PROC, args, 2, "vectors", node_ids.len())?;
         reject_empty_batch(IVF_BULK_UPSERT_PROC, &node_ids)?;
+        let checker = ctx.cancellation_checker();
 
         with_ivf_provider_mut(ctx, IVF_BULK_UPSERT_PROC, &index_name, |provider| {
-            validate_vectors(IVF_BULK_UPSERT_PROC, &vectors, provider.config().dim)?;
-            validate_node_ids(IVF_BULK_UPSERT_PROC, &node_ids)
+            validate_vectors(
+                IVF_BULK_UPSERT_PROC,
+                &vectors,
+                provider.config().dim,
+                checker,
+            )?;
+            validate_node_ids(IVF_BULK_UPSERT_PROC, &node_ids, checker)
         })?;
 
-        let payload = VectorIvfBulkInsertV1 {
-            rows: node_ids
-                .into_iter()
-                .zip(vectors)
-                .map(|(node_id, vector)| IvfBulkInsertRow { node_id, vector })
-                .collect(),
-        };
+        let mut rows = Vec::with_capacity(node_ids.len());
+        let mut rows_since_check = 0usize;
+        for (node_id, vector) in node_ids.into_iter().zip(vectors) {
+            check_cancellation_stride(checker, &mut rows_since_check)?;
+            rows.push(IvfBulkInsertRow { node_id, vector });
+        }
+        let payload = VectorIvfBulkInsertV1 { rows };
         let bytes = payload.encode().map_err(|error| ProcedureError::Internal {
             detail: format!("{IVF_BULK_UPSERT_PROC}: payload encode failed: {error}"),
         })?;

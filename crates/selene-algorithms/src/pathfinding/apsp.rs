@@ -6,13 +6,14 @@
 //! sequential pathfinding bounded by the caller-supplied `max_nodes` gate
 //! (spec 16 §E18).
 
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
 use rayon::prelude::*;
 
+use crate::error::{check_algorithm, check_algorithm_stride};
 use crate::parallel::{ParallelRunner, Parallelism};
 use crate::pathfinding::error::PathfindingError;
-use crate::pathfinding::sssp::sssp;
+use crate::pathfinding::sssp::sssp_with_checker;
 use crate::projection::GraphProjection;
 
 /// Configuration for all-pairs shortest path.
@@ -37,6 +38,15 @@ pub fn apsp(
     proj: &GraphProjection,
     config: ApspConfig,
 ) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
+    apsp_with_checker(proj, config, CancellationChecker::disabled())
+}
+
+/// All-pairs shortest path with cooperative cancellation checkpoints.
+pub fn apsp_with_checker(
+    proj: &GraphProjection,
+    config: ApspConfig,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
     let n = proj.node_count();
     if n > config.max_nodes {
         return Err(PathfindingError::TooLarge {
@@ -44,14 +54,20 @@ pub fn apsp(
             limit: config.max_nodes,
         });
     }
+    check_algorithm(checker)?;
 
     match config.parallelism {
-        Parallelism::Sequential => apsp_sequential(proj),
-        Parallelism::Auto | Parallelism::Threads(_) => apsp_parallel(proj, config.parallelism),
+        Parallelism::Sequential => apsp_sequential(proj, checker),
+        Parallelism::Auto | Parallelism::Threads(_) => {
+            apsp_parallel(proj, config.parallelism, checker)
+        }
     }
 }
 
-fn apsp_sequential(proj: &GraphProjection) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
+fn apsp_sequential(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
     // Why: `iter_nodes()` returns ASC by NodeId per spec 16 §E03, so
     // result.push() order is already ASC by source; we only need to ensure
     // each sssp call returns ASC by target (which it does per §E17), then
@@ -64,8 +80,10 @@ fn apsp_sequential(proj: &GraphProjection) -> Result<Vec<(NodeId, NodeId, f64)>,
     // result has only thousands of pairs. Let the Vec grow naturally; the
     // amortized cost is bounded by the actual result size.
     let mut result: Vec<(NodeId, NodeId, f64)> = Vec::new();
+    let mut rows_since_check = 0usize;
     for source in proj.iter_nodes() {
-        for (target, cost) in sssp(proj, source)? {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
+        for (target, cost) in sssp_with_checker(proj, source, checker)? {
             if source != target {
                 result.push((source, target, cost));
             }
@@ -78,6 +96,7 @@ fn apsp_sequential(proj: &GraphProjection) -> Result<Vec<(NodeId, NodeId, f64)>,
 fn apsp_parallel(
     proj: &GraphProjection,
     parallelism: Parallelism,
+    checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, NodeId, f64)>, PathfindingError> {
     let sources: Vec<NodeId> = proj.iter_nodes().collect();
     let runner =
@@ -87,8 +106,9 @@ fn apsp_parallel(
         sources
             .into_par_iter()
             .map(|source| {
+                check_algorithm(checker)?;
                 let mut rows = Vec::new();
-                for (target, cost) in sssp(proj, source)? {
+                for (target, cost) in sssp_with_checker(proj, source, checker)? {
                     if source != target {
                         rows.push((source, target, cost));
                     }

@@ -9,8 +9,9 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{check_algorithm, check_algorithm_stride};
 use crate::pathfinding::error::PathfindingError;
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
@@ -74,6 +75,17 @@ pub fn dijkstra(
     from: NodeId,
     to: NodeId,
 ) -> Result<Option<PathResult>, PathfindingError> {
+    dijkstra_with_checker(proj, from, to, CancellationChecker::disabled())
+}
+
+/// Dijkstra's shortest path with cooperative cancellation checkpoints.
+pub fn dijkstra_with_checker(
+    proj: &GraphProjection,
+    from: NodeId,
+    to: NodeId,
+    checker: CancellationChecker<'_>,
+) -> Result<Option<PathResult>, PathfindingError> {
+    check_algorithm(checker)?;
     if !proj.contains(from) || !proj.contains(to) {
         return Ok(None);
     }
@@ -104,7 +116,9 @@ pub fn dijkstra(
         cost: 0.0,
     });
 
+    let mut rows_since_check = 0usize;
     while let Some(DijkstraEntry { dense, cost }) = heap.pop() {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         // Lazy stale-entry pruning: stale heap copies are skipped here.
         if cost > dist[dense as usize] {
             continue;

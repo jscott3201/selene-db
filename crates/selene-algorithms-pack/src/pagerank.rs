@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_algorithms::{AlgorithmsError, PageRankConfig, pagerank};
+use selene_algorithms::{AlgorithmsError, PageRankConfig, pagerank_with_checker};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -10,7 +10,7 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, nullable_f64, nullable_usize, required_string},
-    error::{algorithm_error, invalid_argument},
+    error::{algorithm_aborted, algorithm_error, invalid_argument},
     parallel::parse_parallelism,
     state::AlgorithmsPackState,
 };
@@ -65,6 +65,7 @@ impl ExternalGraphProcedure for PageRankProcedure {
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, config) = parse_pagerank_args(args)?;
         let graph_id = ctx.snapshot().graph_id();
+        let checker = ctx.cancellation_checker();
         self.state.with_catalog(graph_id, |catalog| {
             catalog
                 .ensure_fresh(ctx.snapshot(), &projection_name)
@@ -74,7 +75,8 @@ impl ExternalGraphProcedure for PageRankProcedure {
                     name: projection_name.clone(),
                 })
             })?;
-            let rows = pagerank(projection.projection(), config)
+            let rows = pagerank_with_checker(projection.projection(), config, checker)
+                .map_err(algorithm_aborted)?
                 .into_iter()
                 .map(|(node_id, score)| vec![Value::NodeRef(node_id), Value::Float(score)])
                 .collect();

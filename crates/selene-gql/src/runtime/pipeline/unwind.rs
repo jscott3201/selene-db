@@ -21,10 +21,13 @@ pub(super) fn execute(
     });
 
     let mut rows = Vec::new();
+    let mut rows_since_check = 0;
     for row in input_rows {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         match evaluator::evaluate(&source.expr, &row, &input_schema, ctx)? {
             Value::List(values) => {
                 for value in values {
+                    ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
                     let mut output = row.values().to_vec();
                     output.push(value);
                     rows.push(Binding::new(output));

@@ -109,7 +109,7 @@ pub(crate) fn execute_pipeline_with_plan(
                 };
                 group_by::execute(keys, aggregates, table, &eval_ctx)?
             }
-            PipelineOp::Distinct => distinct::execute(table),
+            PipelineOp::Distinct => distinct::execute(table, ctx)?,
             PipelineOp::Union { op, rhs } => union::execute(*op, rhs, table, ctx)?,
             PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
             PipelineOp::Mutation(mutation) => {
@@ -123,6 +123,7 @@ pub(crate) fn execute_pipeline_with_plan(
                 });
             }
         };
+        ctx.check_cancellation()?;
     }
     Ok(table)
 }

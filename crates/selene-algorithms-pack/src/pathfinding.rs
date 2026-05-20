@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use selene_algorithms::{ApspConfig, apsp, dijkstra, sssp};
+use selene_algorithms::{ApspConfig, apsp_with_checker, dijkstra_with_checker, sssp_with_checker};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -68,8 +68,9 @@ impl ExternalGraphProcedure for DijkstraProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, from, to) = parse_dijkstra_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let Some(result) = dijkstra(projection, from, to)
+            let Some(result) = dijkstra_with_checker(projection, from, to, checker)
                 .map_err(|error| pathfinding_error(DIJKSTRA_PROC, error))?
             else {
                 return Ok(ProcedureResult { rows: Vec::new() });
@@ -118,8 +119,9 @@ impl ExternalGraphProcedure for SsspProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, source) = parse_sssp_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = sssp(projection, source)
+            let rows = sssp_with_checker(projection, source, checker)
                 .map_err(|error| pathfinding_error(SSSP_PROC, error))?
                 .into_iter()
                 .map(|(target_node, cost)| vec![Value::NodeRef(target_node), Value::Float(cost)])
@@ -162,8 +164,9 @@ impl ExternalGraphProcedure for ApspProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let (projection_name, config) = parse_apsp_args(args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = apsp(projection, config)
+            let rows = apsp_with_checker(projection, config, checker)
                 .map_err(|error| pathfinding_error(APSP_PROC, error))?
                 .into_iter()
                 .map(|(source_node, target_node, cost)| {

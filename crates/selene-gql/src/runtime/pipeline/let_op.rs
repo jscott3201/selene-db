@@ -21,19 +21,18 @@ pub(super) fn execute(
     let mut output_schema = input_schema.clone();
     output_schema.columns.extend(new_columns.iter().cloned());
 
-    let rows = input_rows
-        .into_iter()
-        .map(|row| {
-            let mut values = row.values().to_vec();
-            for (index, item) in items.iter().enumerate() {
-                let current_row = Binding::new(values.clone());
-                let value =
-                    evaluator::evaluate(&item.expr, &current_row, &prefix_schemas[index], ctx)?;
-                values.push(value);
-            }
-            Ok(Binding::new(values))
-        })
-        .collect::<Result<Vec<_>, ExecutorError>>()?;
+    let mut rows = Vec::with_capacity(input_rows.len());
+    let mut rows_since_check = 0;
+    for row in input_rows {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
+        let mut values = row.values().to_vec();
+        for (index, item) in items.iter().enumerate() {
+            let current_row = Binding::new(values.clone());
+            let value = evaluator::evaluate(&item.expr, &current_row, &prefix_schemas[index], ctx)?;
+            values.push(value);
+        }
+        rows.push(Binding::new(values));
+    }
     Ok(BindingTable::new(output_schema, rows))
 }
 

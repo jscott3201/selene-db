@@ -12,6 +12,7 @@ use selene_vector::VectorBulkDeletePayloadV1;
 use crate::{
     args::{expect_arity, required_node_ref_list, required_string},
     bulk_upsert::{parameter, reject_empty_batch, validate_node_ids},
+    error::check_cancellation,
     provider::{HNSW_PROVIDER_NAME, emit_payload_bytes, with_hnsw_provider_mut},
     state::VectorPackState,
 };
@@ -55,7 +56,9 @@ impl ExternalMutationProcedure for BulkDeleteProcedure {
         let index_name = required_string(BULK_DELETE_PROC, args, 0, "index_name")?;
         let node_ids = required_node_ref_list(BULK_DELETE_PROC, args, 1, "node_ids")?;
         reject_empty_batch(BULK_DELETE_PROC, &node_ids)?;
-        validate_node_ids(BULK_DELETE_PROC, &node_ids)?;
+        let checker = ctx.cancellation_checker();
+        check_cancellation(checker)?;
+        validate_node_ids(BULK_DELETE_PROC, &node_ids, checker)?;
         with_hnsw_provider_mut(ctx, BULK_DELETE_PROC, &index_name, |_provider| Ok(()))?;
 
         let payload = VectorBulkDeletePayloadV1 { node_ids };

@@ -21,8 +21,9 @@
 use std::collections::VecDeque;
 
 use rayon::prelude::*;
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::{RowIndex, SENTINEL};
@@ -49,10 +50,20 @@ pub struct BetweennessConfig {
 /// every node.
 #[must_use]
 pub fn betweenness(proj: &GraphProjection, config: BetweennessConfig) -> Vec<(NodeId, f64)> {
+    betweenness_with_checker(proj, config, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
+}
+
+/// Compute betweenness centrality with cooperative cancellation checkpoints.
+pub fn betweenness_with_checker(
+    proj: &GraphProjection,
+    config: BetweennessConfig,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
     match config.parallelism {
-        Parallelism::Sequential => betweenness_sequential(proj, config.sample_size),
+        Parallelism::Sequential => betweenness_sequential(proj, config.sample_size, checker),
         Parallelism::Auto | Parallelism::Threads(_) => {
-            betweenness_parallel(proj, config.sample_size, config.parallelism)
+            betweenness_parallel(proj, config.sample_size, config.parallelism, checker)
         }
     }
 }
@@ -60,31 +71,40 @@ pub fn betweenness(proj: &GraphProjection, config: BetweennessConfig) -> Vec<(No
 fn betweenness_sequential(
     proj: &GraphProjection,
     sample_size: Option<usize>,
-) -> Vec<(NodeId, f64)> {
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let adjacency = DenseAdjacency::new(proj);
     let n = adjacency.len();
     if n == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let (sources, scale) = compute_sample_sources(n, sample_size);
     let mut state = WorkerState::new(n);
+    let mut sources_since_check = 0usize;
     for source in sources {
-        accumulate_brandes_at_source(&adjacency, source, &mut state);
+        check_algorithm_stride(checker, &mut sources_since_check)?;
+        accumulate_brandes_at_source(&adjacency, source, &mut state, checker)?;
     }
     apply_sample_scaling(&mut state.centrality, scale);
-    project_and_sort_centrality_pairs(&adjacency, state.centrality)
+    Ok(project_and_sort_centrality_pairs(
+        &adjacency,
+        state.centrality,
+    ))
 }
 
 fn betweenness_parallel(
     proj: &GraphProjection,
     sample_size: Option<usize>,
     parallelism: Parallelism,
-) -> Vec<(NodeId, f64)> {
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, f64)>, AlgorithmAborted> {
+    check_algorithm(checker)?;
     let adjacency = DenseAdjacency::new(proj);
     let n = adjacency.len();
     if n == 0 {
-        return Vec::new();
+        return Ok(Vec::new());
     }
 
     let (sources, scale) = compute_sample_sources(n, sample_size);
@@ -94,17 +114,28 @@ fn betweenness_parallel(
         sources
             .into_par_iter()
             .fold(
-                || WorkerState::new(n),
-                |mut state, source| {
-                    accumulate_brandes_at_source(&adjacency, source, &mut state);
-                    state
+                || Ok::<WorkerState, AlgorithmAborted>(WorkerState::new(n)),
+                |state: Result<WorkerState, AlgorithmAborted>, source| {
+                    let mut state = state?;
+                    check_algorithm(checker)?;
+                    accumulate_brandes_at_source(&adjacency, source, &mut state, checker)?;
+                    Ok(state)
                 },
             )
-            .reduce(|| WorkerState::new(n), WorkerState::merge)
-    });
+            .reduce(
+                || Ok::<WorkerState, AlgorithmAborted>(WorkerState::new(n)),
+                |left, right| match (left, right) {
+                    (Ok(left), Ok(right)) => Ok(WorkerState::merge(left, right)),
+                    (Err(error), _) | (_, Err(error)) => Err(error),
+                },
+            )
+    })?;
 
     apply_sample_scaling(&mut state.centrality, scale);
-    project_and_sort_centrality_pairs(&adjacency, state.centrality)
+    Ok(project_and_sort_centrality_pairs(
+        &adjacency,
+        state.centrality,
+    ))
 }
 
 struct DenseAdjacency {
@@ -212,7 +243,12 @@ fn compute_sample_sources(n: usize, sample_size: Option<usize>) -> (Vec<u32>, f6
     }
 }
 
-fn accumulate_brandes_at_source(adjacency: &DenseAdjacency, source: u32, state: &mut WorkerState) {
+fn accumulate_brandes_at_source(
+    adjacency: &DenseAdjacency,
+    source: u32,
+    state: &mut WorkerState,
+    checker: CancellationChecker<'_>,
+) -> Result<(), AlgorithmAborted> {
     state.reset_for_source();
     let si = source as usize;
     state.sigma[si] = 1.0;
@@ -220,7 +256,9 @@ fn accumulate_brandes_at_source(adjacency: &DenseAdjacency, source: u32, state: 
     state.queue.push_back(source);
 
     // BFS phase: discover shortest paths.
+    let mut rows_since_check = 0usize;
     while let Some(v) = state.queue.pop_front() {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         state.stack.push(v);
         let vi = v as usize;
         let d_v = state.dist[vi];
@@ -239,6 +277,7 @@ fn accumulate_brandes_at_source(adjacency: &DenseAdjacency, source: u32, state: 
 
     // Dependency accumulation: walk back through the stack in reverse BFS order.
     while let Some(w) = state.stack.pop() {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
         let wi = w as usize;
         for &v in &state.pred[wi] {
             let vi = v as usize;
@@ -251,6 +290,7 @@ fn accumulate_brandes_at_source(adjacency: &DenseAdjacency, source: u32, state: 
             state.centrality[wi] += state.delta[wi];
         }
     }
+    Ok(())
 }
 
 fn apply_sample_scaling(centrality: &mut [f64], scale: f64) {

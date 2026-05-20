@@ -3,7 +3,7 @@
 /// `(code, human-readable name)` pairs for GQLSTATUS values selene-db emits.
 ///
 /// Standard codes use their ISO/IEC 39075:2024 section 23.1 Table 8
-/// condition names where available. `0Gxxx`, `42Nxx`, `25N02`, and `5GQL1`
+/// condition names where available. `0Gxxx`, `42Nxx`, `25N02`, and `5GQLx`
 /// rows are selene-db implementation-defined subclasses or classes per
 /// section 23.1's implementation-defined ranges.
 pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
@@ -35,6 +35,8 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     // cross-crate GQLSTATUS audit.
     ("54000", "program-limit-exceeded"),
     ("5GQL1", "program-limit-exceeded"),
+    ("5GQL2", "operation-cancelled"),
+    ("5GQL3", "deadline-exceeded"),
     ("XX500", "implementation-defined-error"),
     ("XX501", "graph-mutation-error"),
     ("XX502", "durability-flush-error"),

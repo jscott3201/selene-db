@@ -51,16 +51,14 @@ pub(crate) fn execute_pattern_with_seed_and_schema(
         seed,
         ctx,
     };
-    let rows = walk_join_tree(&pattern.join_tree, env)?
-        .into_iter()
-        .filter_map(
-            |row| match pattern_filters_pass(pattern, &row, &schema, ctx) {
-                Ok(true) => Some(Ok(row)),
-                Ok(false) => None,
-                Err(err) => Some(Err(err)),
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut rows = Vec::new();
+    let mut rows_since_check = 0;
+    for row in walk_join_tree(&pattern.join_tree, env)? {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
+        if pattern_filters_pass(pattern, &row, &schema, ctx)? {
+            rows.push(row);
+        }
+    }
     Ok(BindingTable::new(schema, rows))
 }
 

@@ -13,10 +13,11 @@
 //! accepted per spec 16 §J Q12. State arrays are sized by live count via
 //! `RowIndex` (§E26).
 
-use selene_core::NodeId;
+use selene_core::{CancellationChecker, NodeId};
 
 use rayon::prelude::*;
 
+use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
@@ -47,6 +48,24 @@ pub fn triangle_count(proj: &GraphProjection, config: TriangleCountConfig) -> Ve
     }
 }
 
+/// Count triangles per node with cooperative cancellation checkpoints.
+pub fn triangle_count_with_checker(
+    proj: &GraphProjection,
+    config: TriangleCountConfig,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
+    if checker.is_disabled() {
+        return Ok(triangle_count(proj, config));
+    }
+
+    match config.parallelism {
+        Parallelism::Sequential => triangle_count_sequential_checked(proj, checker),
+        Parallelism::Auto | Parallelism::Threads(_) => {
+            triangle_count_parallel_checked(proj, config.parallelism, checker)
+        }
+    }
+}
+
 fn triangle_count_sequential(proj: &GraphProjection) -> Vec<(NodeId, usize)> {
     let adjacency = build_dense_adjacency(proj);
     if adjacency.is_empty() {
@@ -62,6 +81,28 @@ fn triangle_count_sequential(proj: &GraphProjection) -> Vec<(NodeId, usize)> {
         })
         .collect();
     sort_triangle_count_results(result)
+}
+
+fn triangle_count_sequential_checked(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
+    let adjacency = build_dense_adjacency_checked(proj, checker)?;
+    if adjacency.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut rows_since_check = 0usize;
+    let result = (0..adjacency.row_count())
+        .map(|row| {
+            check_algorithm_stride(checker, &mut rows_since_check)?;
+            Ok((
+                adjacency.node_at_row(row),
+                count_triangles_at_row(row, &adjacency),
+            ))
+        })
+        .collect::<Result<Vec<_>, AlgorithmAborted>>()?;
+    Ok(sort_triangle_count_results(result))
 }
 
 fn triangle_count_parallel(
@@ -87,6 +128,33 @@ fn triangle_count_parallel(
             .collect()
     });
     sort_triangle_count_results(result)
+}
+
+fn triangle_count_parallel_checked(
+    proj: &GraphProjection,
+    parallelism: Parallelism,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
+    let adjacency = build_dense_adjacency_checked(proj, checker)?;
+    if adjacency.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let runner =
+        ParallelRunner::new(parallelism).expect("ParallelRunner builds for valid parallelism");
+    let result = runner.install(|| {
+        (0..adjacency.row_count())
+            .into_par_iter()
+            .map(|row| {
+                check_algorithm(checker)?;
+                Ok((
+                    adjacency.node_at_row(row),
+                    count_triangles_at_row(row, &adjacency),
+                ))
+            })
+            .collect::<Result<Vec<_>, AlgorithmAborted>>()
+    })?;
+    Ok(sort_triangle_count_results(result))
 }
 
 struct DenseAdjacency {
@@ -118,7 +186,7 @@ fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency {
 
     // Build sorted+deduped undirected adjacency per dense index. Self-loops
     // are filtered (a triangle requires 3 distinct vertices per §E29).
-    let mut adj: Vec<Vec<u32>> = vec![Vec::new(); n];
+    let mut adj = vec![Vec::new(); n];
     for d in 0..n as u32 {
         let node = idx.node_id_of(d);
         let neighbors = &mut adj[d as usize];
@@ -140,6 +208,42 @@ fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency {
         neighbors.dedup();
     }
     DenseAdjacency { idx, adj }
+}
+
+fn build_dense_adjacency_checked(
+    proj: &GraphProjection,
+    checker: CancellationChecker<'_>,
+) -> Result<DenseAdjacency, AlgorithmAborted> {
+    check_algorithm(checker)?;
+    let idx = RowIndex::new(proj);
+    let n = idx.len();
+
+    // Build sorted+deduped undirected adjacency per dense index. Self-loops
+    // are filtered (a triangle requires 3 distinct vertices per §E29).
+    let mut adj = vec![Vec::new(); n];
+    let mut rows_since_check = 0usize;
+    for d in 0..n as u32 {
+        check_algorithm_stride(checker, &mut rows_since_check)?;
+        let node = idx.node_id_of(d);
+        let neighbors = &mut adj[d as usize];
+        for nb in proj.out_neighbors(node) {
+            if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id))
+                && nd != d
+            {
+                neighbors.push(nd);
+            }
+        }
+        for nb in proj.in_neighbors(node) {
+            if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id))
+                && nd != d
+            {
+                neighbors.push(nd);
+            }
+        }
+        neighbors.sort_unstable();
+        neighbors.dedup();
+    }
+    Ok(DenseAdjacency { idx, adj })
 }
 
 fn count_triangles_at_row(row: usize, adjacency: &DenseAdjacency) -> usize {

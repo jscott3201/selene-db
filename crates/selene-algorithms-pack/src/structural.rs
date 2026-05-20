@@ -3,7 +3,8 @@
 use std::sync::Arc;
 
 use selene_algorithms::{
-    articulation_points, bridges, scc, scc_count, topological_sort, wcc, wcc_count,
+    articulation_points_with_checker, bridges_with_checker, scc_count_with_checker,
+    scc_with_checker, topological_sort_with_checker, wcc_count_with_checker, wcc_with_checker,
 };
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult, Value};
 use selene_pack::{
@@ -12,7 +13,7 @@ use selene_pack::{
 
 use crate::{
     args::{expect_arity, required_string},
-    error::topo_sort_error,
+    error::{algorithm_aborted, topo_sort_error},
     state::{AlgorithmsPackState, with_algorithm_projection},
 };
 
@@ -81,9 +82,11 @@ impl ExternalGraphProcedure for WccProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(WCC_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
-                rows: wcc(projection)
+                rows: wcc_with_checker(projection, checker)
+                    .map_err(algorithm_aborted)?
                     .into_iter()
                     .map(node_component_row)
                     .collect(),
@@ -117,9 +120,11 @@ impl ExternalGraphProcedure for SccProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(SCC_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
-                rows: scc(projection)
+                rows: scc_with_checker(projection, checker)
+                    .map_err(algorithm_aborted)?
                     .into_iter()
                     .map(node_component_row)
                     .collect(),
@@ -153,8 +158,11 @@ impl ExternalGraphProcedure for WccCountProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(WCC_COUNT_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            Ok(single_uint_result(wcc_count(projection) as u64))
+            Ok(single_uint_result(
+                wcc_count_with_checker(projection, checker).map_err(algorithm_aborted)? as u64,
+            ))
         })
     }
 }
@@ -184,8 +192,11 @@ impl ExternalGraphProcedure for SccCountProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(SCC_COUNT_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            Ok(single_uint_result(scc_count(projection) as u64))
+            Ok(single_uint_result(
+                scc_count_with_checker(projection, checker).map_err(algorithm_aborted)? as u64,
+            ))
         })
     }
 }
@@ -218,8 +229,9 @@ impl ExternalGraphProcedure for TopologicalSortProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(TOPO_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
-            let rows = topological_sort(projection)
+            let rows = topological_sort_with_checker(projection, checker)
                 .map_err(topo_sort_error)?
                 .into_iter()
                 .map(|(node_id, position)| {
@@ -256,9 +268,11 @@ impl ExternalGraphProcedure for ArticulationPointsProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(ARTICULATION_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
-                rows: articulation_points(projection)
+                rows: articulation_points_with_checker(projection, checker)
+                    .map_err(algorithm_aborted)?
                     .into_iter()
                     .map(|node_id| vec![Value::NodeRef(node_id)])
                     .collect(),
@@ -295,9 +309,11 @@ impl ExternalGraphProcedure for BridgesProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let projection_name = parse_projection_name(BRIDGES_PROC, args)?;
+        let checker = ctx.cancellation_checker();
         with_algorithm_projection(&self.state, ctx, &projection_name, |projection| {
             Ok(ProcedureResult {
-                rows: bridges(projection)
+                rows: bridges_with_checker(projection, checker)
+                    .map_err(algorithm_aborted)?
                     .into_iter()
                     .map(|(from_node, to_node)| {
                         vec![Value::NodeRef(from_node), Value::NodeRef(to_node)]

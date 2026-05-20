@@ -16,5 +16,6 @@ pub(super) fn execute(
     _input: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    ctx.check_cancellation()?;
     execute_plan(rhs, ctx)
 }

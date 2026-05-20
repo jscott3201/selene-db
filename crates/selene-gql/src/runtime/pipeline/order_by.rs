@@ -16,16 +16,18 @@ pub(super) fn execute(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = table.into_parts();
-    let mut keyed_rows = rows
-        .into_iter()
-        .map(|row| {
-            evaluate_key_tuple(keys, &row, &schema, ctx).map(|tuple| KeyedRow { tuple, row })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut keyed_rows = Vec::with_capacity(rows.len());
+    let mut rows_since_check = 0;
+    for row in rows {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
+        let tuple = evaluate_key_tuple(keys, &row, &schema, ctx)?;
+        keyed_rows.push(KeyedRow { tuple, row });
+    }
 
     // Phase A deliberately ignores OrderKey.access. That planner hint is
     // reserved for the Phase B scan-order shortcut; executor sorting remains
     // explicit and stable here.
+    ctx.tx.check_cancellation()?;
     keyed_rows.sort_by(|lhs, rhs| compare_key_tuples(&lhs.tuple, &rhs.tuple, keys));
 
     Ok(BindingTable::new(

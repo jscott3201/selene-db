@@ -23,8 +23,10 @@ pub(super) fn execute(
     let (input_schema, rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, call);
     let mut output = Vec::new();
+    let mut rows_since_check = 0;
 
     for row in rows {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let args = {
             let eval_ctx = EvalCtx {
                 tx: ctx,
@@ -34,12 +36,14 @@ pub(super) fn execute(
             evaluate_args(&call.args, &row, &input_schema, &eval_ctx)?
         };
         let result = {
+            let deadline = ctx.deadline();
             let mut procedure_ctx = context::build(call, ctx)?;
             registry
                 .execute(call.handle, &args, &mut procedure_ctx)
-                .map_err(|source| context::procedure_error(source, call.span))?
+                .map_err(|source| context::procedure_error(source, call.span, deadline))?
         };
         for output_row in result.rows {
+            ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
             let projected = project::project_yield_row(call, output_row)?;
             let mut values = row.values().to_vec();
             values.extend(projected);
