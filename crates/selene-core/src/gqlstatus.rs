@@ -31,9 +31,6 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("42N10", "duplicate-object"),
     ("42N28", "capability-violation"),
     ("53000", "insufficient-resources"),
-    // kept for selene-core and selene-persist compatibility - TODO migrate in a
-    // cross-crate GQLSTATUS audit.
-    ("54000", "program-limit-exceeded"),
     ("5GQL1", "program-limit-exceeded"),
     ("5GQL2", "operation-cancelled"),
     ("5GQL3", "deadline-exceeded"),

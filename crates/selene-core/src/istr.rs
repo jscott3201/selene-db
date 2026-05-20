@@ -59,7 +59,7 @@ static INTERNER: OnceLock<ThreadedRodeo<Spur>> = OnceLock::new();
 /// Held only on the slow path for strings that are not yet interned.
 /// Already-interned strings hit the lock-free fast path via `rodeo.get(s)`.
 /// Without this lock, concurrent callers could both observe capacity and insert
-/// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 54000 contract.
+/// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 5GQL1 contract.
 ///
 /// Uses `parking_lot::Mutex` with no poison semantics so a panic in the
 /// admission predicate path cannot brick all future intern calls.
@@ -451,7 +451,7 @@ mod tests {
             count: MAX_INTERNED_STRINGS,
             max: MAX_INTERNED_STRINGS,
         };
-        assert_eq!(err.gqlstatus(), "54000");
+        assert_eq!(err.gqlstatus(), "5GQL1");
         assert!(err.to_string().contains(&MAX_INTERNED_STRINGS.to_string()));
     }
 
