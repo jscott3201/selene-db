@@ -1,4 +1,7 @@
 //! `vector.search` procedure adapter.
+//!
+//! The final nullable `metric` argument accepts `cosine`, `l2`, or `dot` and
+//! changes query-time scoring on the existing HNSW topology.
 
 use std::sync::Arc;
 

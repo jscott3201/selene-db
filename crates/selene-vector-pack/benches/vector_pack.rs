@@ -30,6 +30,8 @@ const BULK_BATCH_SIZE: usize = 100;
 const SEARCH_DEFAULT: &str = "CALL vector.search('default', [1.0, 0.0, 0.0, 0.0], 10, NULL, NULL, NULL) YIELD node_id, score";
 const IVF_SEARCH_DEFAULT: &str =
     "CALL vector.ivf_search('default', [0.0, 0.0], 10, NULL, NULL, NULL) YIELD node_id, score";
+const IVF_SEARCH_HIGH_PROBE: &str =
+    "CALL vector.ivf_search('default', [0.0, 0.0], 10, 8, NULL, NULL) YIELD node_id, score";
 const IVF_STATS_DEFAULT: &str = "CALL vector.ivf_stats('default') YIELD state";
 
 fn bench_search(c: &mut Criterion) {
@@ -67,6 +69,14 @@ fn bench_ivf_search(c: &mut Criterion) {
     let state = BenchState::new_ivf_trained(IVF_GRAPH_SCALE, 81_004);
     let plan = state.plan(IVF_SEARCH_DEFAULT);
     c.bench_function("vector_pack/ivf_search_default", |b| {
+        b.iter(|| std::hint::black_box(state.execute_cached(&plan)));
+    });
+}
+
+fn bench_ivf_search_high_probe(c: &mut Criterion) {
+    let state = BenchState::new_ivf_trained_high_probe(IVF_GRAPH_SCALE, 81_007);
+    let plan = state.plan(IVF_SEARCH_HIGH_PROBE);
+    c.bench_function("vector_pack/ivf_search_high_probe", |b| {
         b.iter(|| std::hint::black_box(state.execute_cached(&plan)));
     });
 }
@@ -144,8 +154,16 @@ impl BenchState {
     }
 
     fn new_ivf_trained(scale: usize, graph_id: u64) -> Self {
+        Self::new_ivf_trained_with_config(scale, graph_id, ivf_config())
+    }
+
+    fn new_ivf_trained_high_probe(scale: usize, graph_id: u64) -> Self {
+        Self::new_ivf_trained_with_config(scale, graph_id, ivf_config_high_probe())
+    }
+
+    fn new_ivf_trained_with_config(scale: usize, graph_id: u64, config: IvfConfig) -> Self {
         let scale = scale.max(IVF_GRAPH_SCALE);
-        let provider = Arc::new(IvfProvider::new(ivf_config()).unwrap());
+        let provider = Arc::new(IvfProvider::new(config).unwrap());
         let state = Self::with_provider(scale, graph_id, Arc::clone(&provider));
         let source = ivf_bulk_upsert_source(&ivf_vectors(scale, graph_id));
         let plan = state.mutation_plan(&source);
@@ -329,9 +347,17 @@ fn matrix_literal<const N: usize>(rows: &[[f64; N]]) -> String {
 }
 
 fn ivf_config() -> IvfConfig {
+    ivf_config_with_k_coarse(4)
+}
+
+fn ivf_config_high_probe() -> IvfConfig {
+    ivf_config_with_k_coarse(8)
+}
+
+fn ivf_config_with_k_coarse(k_coarse: u32) -> IvfConfig {
     IvfConfig::with_params(
         IVF_DIM,
-        4,
+        k_coarse,
         2,
         DistanceMetric::L2,
         PqParams {
@@ -382,6 +408,7 @@ criterion_group! {
         bench_upsert,
         bench_bulk_upsert,
         bench_ivf_search,
+        bench_ivf_search_high_probe,
         bench_ivf_bulk_upsert,
         bench_ivf_stats
 }

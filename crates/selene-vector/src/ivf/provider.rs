@@ -78,7 +78,8 @@ impl IvfProvider {
     /// Search the currently published IVF-PQ index.
     ///
     /// `metric_override` changes the query-time scoring metric. Cosine
-    /// overrides require Cosine-built reconstructed-norm side data.
+    /// overrides require Cosine-built reconstructed-norm side data. Search
+    /// skips NaN scores before top-k ordering.
     ///
     /// # Errors
     ///

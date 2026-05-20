@@ -192,10 +192,11 @@ Registered token: `selene-vector-pack:vector_pack:criterion`.
 
 | Bench | Vector count | Dim | k | Median | Notes |
 |---|---:|---:|---:|---:|---|
-| `vector_pack/search_default` | 1k | 256 | 10 | **18.51 µs** | HNSW. |
+| `vector_pack/search_default` | 1k | 256 | 10 | **17.19 µs** | HNSW. |
 | `vector_pack/upsert_default` | 1 | 256 | n/a | 2.42 µs | HNSW single insert. |
 | `vector_pack/bulk_upsert_default` | 100 | 256 | n/a | 4.22 ms | HNSW bulk mutation. |
-| `vector_pack/ivf_search_default` | 256 | 256 | 10 | **2.88 µs** | Trained IVF; ~6× faster than HNSW at this corpus size. |
+| `vector_pack/ivf_search_default` | 256 | 256 | 10 | **1.79 µs** | Trained IVF; bounded heap + scratch reuse. |
+| `vector_pack/ivf_search_high_probe` | 256 | 256 | 10 | **2.30 µs** | Trained IVF; n_probe=8 sweep. |
 | `vector_pack/ivf_bulk_upsert_default` | 100 | 256 | n/a | 57.37 µs | IVF bulk mutation. |
 | `vector_pack/ivf_stats_default` | n/a | n/a | n/a | 358.9 ns | Stats read. |
 

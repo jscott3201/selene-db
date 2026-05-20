@@ -35,6 +35,10 @@ pub(super) fn build_query_lut_into(
     out: &mut Vec<f32>,
 ) {
     out.resize(m * k, 0.0);
+    if metric == DistanceMetric::L2 && subdim == 2 {
+        build_l2_subdim2_lut_into(query, codebook, m, k, out);
+        return;
+    }
     for subspace in 0..m {
         let query_start = subspace * subdim;
         let query_slice = &query[query_start..query_start + subdim];
@@ -45,6 +49,22 @@ pub(super) fn build_query_lut_into(
                 DistanceMetric::Cosine | DistanceMetric::Dot => dot_product(query_slice, center),
                 DistanceMetric::L2 => squared_l2(query_slice, center),
             };
+        }
+    }
+}
+
+fn build_l2_subdim2_lut_into(query: &[f32], codebook: &[f32], m: usize, k: usize, out: &mut [f32]) {
+    for subspace in 0..m {
+        let query_start = subspace * 2;
+        let q0 = query[query_start];
+        let q1 = query[query_start + 1];
+        let codebook_start = subspace * k * 2;
+        let out_start = subspace * k;
+        for centroid in 0..k {
+            let center_start = codebook_start + (centroid * 2);
+            let d0 = q0 - codebook[center_start];
+            let d1 = q1 - codebook[center_start + 1];
+            out[out_start + centroid] = (d0 * d0) + (d1 * d1);
         }
     }
 }

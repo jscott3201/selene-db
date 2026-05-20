@@ -5,6 +5,7 @@ use std::{cell::RefCell, cmp::Ordering, collections::BinaryHeap};
 use roaring::RoaringBitmap;
 use selene_core::NodeId;
 
+use crate::clustering::squared_l2;
 use crate::hnsw::distance::dot_product;
 use crate::{DistanceMetric, IvfConfig, VectorError};
 
@@ -13,7 +14,9 @@ use super::IvfIndex;
 thread_local! {
     static IVF_SCRATCH: RefCell<IvfScratch> = const {
         RefCell::new(IvfScratch {
+            probe_scores: Vec::new(),
             residual_query: Vec::new(),
+            query_lut: Vec::new(),
             probe_query_codes: Vec::new(),
         })
     };
@@ -56,9 +59,16 @@ pub fn search(
     let Some(codebook) = index.residual_codebook.as_deref() else {
         return Ok(Vec::new());
     };
-    let probes = coarse.nearest_probes(query, probe_count);
-    let query_norm = dot_product(query, query).sqrt();
+    let query_norm = if effective_metric == DistanceMetric::Cosine {
+        dot_product(query, query).sqrt()
+    } else {
+        0.0
+    };
     let mut scratch = IvfScratchLease::take();
+    {
+        let scratch = scratch.as_mut();
+        nearest_probes_into(coarse, query, probe_count, &mut scratch.probe_scores);
+    }
     // Polysemous setup. The filter activates only when the embedder requested
     // it AND the residual codebook self-identifies as polysemous-trained.
     // Drift between the two is rejected at recovery time by
@@ -78,7 +88,9 @@ pub fn search(
         0
     };
     let mut top = BinaryHeap::with_capacity(k.saturating_add(1));
-    for centroid_id in probes {
+    let probe_len = scratch.as_mut().probe_scores.len();
+    for probe_index in 0..probe_len {
+        let centroid_id = scratch.as_mut().probe_scores[probe_index].0;
         let Some(centroid) = coarse.centroid(centroid_id) else {
             continue;
         };
@@ -86,18 +98,22 @@ pub fn search(
             continue;
         };
         let scratch = scratch.as_mut();
-        scratch.residual_query.clear();
-        match effective_metric {
-            DistanceMetric::L2 => scratch
-                .residual_query
-                .extend(query.iter().zip(centroid).map(|(left, right)| left - right)),
-            DistanceMetric::Dot | DistanceMetric::Cosine => {
-                scratch.residual_query.extend_from_slice(query);
-            }
-        }
+        residual_query_into(
+            &mut scratch.residual_query,
+            query,
+            centroid,
+            effective_metric,
+        );
         let residual_query = scratch.residual_query.as_slice();
-        let lut = codebook.build_query_lut(residual_query, effective_metric);
-        let centroid_dot = dot_product(query, centroid);
+        scratch.query_lut.clear();
+        codebook.build_query_lut_into(residual_query, effective_metric, &mut scratch.query_lut);
+        let lut = scratch.query_lut.as_slice();
+        let codebook_m = codebook.m_subspaces as usize;
+        let codebook_k = codebook.k_centroids as usize;
+        let centroid_dot = match effective_metric {
+            DistanceMetric::L2 => 0.0,
+            DistanceMetric::Dot | DistanceMetric::Cosine => dot_product(query, centroid),
+        };
         // For L2 the per-probe residual changes, so we re-encode the query
         // codes against the possibly polysemous-permuted codebook for this
         // residual. Dot/Cosine disable this filter above because raw-query
@@ -114,7 +130,7 @@ pub fn search(
             // when the stored polysemous code is too far from the query
             // in bit space. `continue` here directly converts the
             // filter-pass rate to throughput.
-            if let Some(query_codes) = probe_query_codes.as_deref() {
+            if let Some(query_codes) = probe_query_codes {
                 let hamming = query_codes
                     .iter()
                     .zip(entry.codes.iter())
@@ -124,11 +140,13 @@ pub fn search(
                     continue;
                 }
             }
-            let Some(lut_sum) = codebook.lut_sum_for_codes(&lut, &entry.codes) else {
+            let Some(lut_sum) = lut_sum_for_codes(lut, &entry.codes, codebook_m, codebook_k) else {
                 continue;
             };
             let score = match effective_metric {
-                DistanceMetric::L2 => -lut_sum.sqrt(),
+                // Rank L2 by squared distance and convert the retained top-k
+                // scores back to distance after the heap is drained.
+                DistanceMetric::L2 => -lut_sum,
                 DistanceMetric::Dot => lut_sum + centroid_dot,
                 DistanceMetric::Cosine => {
                     let Some(reconstructed_norm) = entry.reconstructed_norm else {
@@ -148,7 +166,13 @@ pub fn search(
     }
     let mut out = top
         .into_iter()
-        .map(|entry| (entry.node_id, entry.score))
+        .map(|entry| {
+            let score = match effective_metric {
+                DistanceMetric::L2 => -(-entry.score).sqrt(),
+                DistanceMetric::Dot | DistanceMetric::Cosine => entry.score,
+            };
+            (entry.node_id, score)
+        })
         .collect::<Vec<_>>();
     sort_results(&mut out);
     Ok(out)
@@ -156,19 +180,25 @@ pub fn search(
 
 #[derive(Default)]
 struct IvfScratch {
+    probe_scores: Vec<(u32, f32)>,
     residual_query: Vec<f32>,
+    query_lut: Vec<f32>,
     probe_query_codes: Vec<u8>,
 }
 
 impl IvfScratch {
     fn clear(&mut self) {
+        self.probe_scores.clear();
         self.residual_query.clear();
+        self.query_lut.clear();
         self.probe_query_codes.clear();
     }
 
     fn retained_capacity(&self) -> usize {
         self.residual_query
             .capacity()
+            .saturating_add(self.probe_scores.capacity())
+            .saturating_add(self.query_lut.capacity())
             .saturating_add(self.probe_query_codes.capacity())
     }
 }
@@ -213,9 +243,96 @@ fn ivf_scratch_capacity_for_test() -> (usize, usize) {
         let scratch = cell.borrow();
         (
             scratch.residual_query.capacity(),
-            scratch.probe_query_codes.capacity(),
+            scratch
+                .probe_query_codes
+                .capacity()
+                .saturating_add(scratch.probe_scores.capacity())
+                .saturating_add(scratch.query_lut.capacity()),
         )
     })
+}
+
+fn nearest_probes_into(
+    coarse: &super::coarse::CoarseQuantizer,
+    query: &[f32],
+    n_probe: u32,
+    out: &mut Vec<(u32, f32)>,
+) {
+    out.clear();
+    let limit = n_probe as usize;
+    for centroid_id in 0..coarse.k_coarse {
+        let Some(centroid) = coarse.centroid(centroid_id) else {
+            continue;
+        };
+        push_probe(out, limit, centroid_id, squared_l2(query, centroid));
+    }
+}
+
+fn push_probe(out: &mut Vec<(u32, f32)>, limit: usize, centroid_id: u32, distance: f32) {
+    if limit == 0 {
+        return;
+    }
+    let candidate = (centroid_id, distance);
+    let insert_at = out
+        .iter()
+        .position(|existing| probe_cmp(candidate, *existing).is_lt());
+    match insert_at {
+        Some(index) => out.insert(index, candidate),
+        None if out.len() < limit => out.push(candidate),
+        None => return,
+    }
+    if out.len() > limit {
+        out.pop();
+    }
+}
+
+fn probe_cmp(left: (u32, f32), right: (u32, f32)) -> Ordering {
+    left.1
+        .total_cmp(&right.1)
+        .then_with(|| left.0.cmp(&right.0))
+}
+
+#[inline]
+fn residual_query_into(
+    out: &mut Vec<f32>,
+    query: &[f32],
+    centroid: &[f32],
+    metric: DistanceMetric,
+) {
+    match metric {
+        DistanceMetric::L2 => {
+            out.resize(query.len(), 0.0);
+            for index in 0..query.len() {
+                out[index] = query[index] - centroid[index];
+            }
+        }
+        DistanceMetric::Dot | DistanceMetric::Cosine => {
+            out.clear();
+            out.extend_from_slice(query);
+        }
+    }
+}
+
+#[inline]
+fn lut_sum_for_codes(lut: &[f32], codes: &[u8], m: usize, k: usize) -> Option<f32> {
+    if m == 1 {
+        if codes.len() != 1 || lut.len() < k {
+            return None;
+        }
+        let code = usize::from(codes[0]);
+        if code >= k {
+            return None;
+        }
+        return Some(lut[code]);
+    }
+    if codes.len() != m || lut.len() != m.checked_mul(k)? {
+        return None;
+    }
+    let mut sum = 0.0;
+    for (subspace, code) in codes.iter().copied().enumerate() {
+        sum += lut[(subspace * k) + usize::from(code)];
+    }
+    Some(sum)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -247,13 +364,32 @@ impl PartialEq for Worst {
 
 impl Eq for Worst {}
 
+impl Worst {
+    #[inline]
+    fn better_than(self, other: Self) -> bool {
+        match self.score.total_cmp(&other.score) {
+            Ordering::Greater => true,
+            Ordering::Equal => self.node_id < other.node_id,
+            Ordering::Less => false,
+        }
+    }
+}
+
+#[inline]
 fn push_top_k(top: &mut BinaryHeap<Worst>, k: usize, node_id: NodeId, score: f32) {
     if score.is_nan() {
         return;
     }
-    top.push(Worst { score, node_id });
-    if top.len() > k {
+
+    let candidate = Worst { score, node_id };
+    if top.len() < k {
+        top.push(candidate);
+    } else if top
+        .peek()
+        .is_some_and(|worst| candidate.better_than(*worst))
+    {
         top.pop();
+        top.push(candidate);
     }
 }
 
@@ -407,17 +543,19 @@ mod tests {
         {
             let mut outer = IvfScratchLease::take();
             outer.scratch.residual_query.reserve(16);
+            outer.scratch.query_lut.reserve(32);
             outer.scratch.probe_query_codes.reserve(8);
             {
                 let mut inner = IvfScratchLease::take();
                 inner.scratch.residual_query.reserve(4);
+                inner.scratch.query_lut.reserve(4);
                 inner.scratch.probe_query_codes.reserve(2);
             }
         }
 
-        let (residual_capacity, codes_capacity) = ivf_scratch_capacity_for_test();
+        let (residual_capacity, lookup_capacity) = ivf_scratch_capacity_for_test();
         assert!(residual_capacity >= 16);
-        assert!(codes_capacity >= 8);
+        assert!(lookup_capacity >= 40);
     }
 
     #[test]

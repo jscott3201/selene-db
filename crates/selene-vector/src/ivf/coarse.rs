@@ -2,7 +2,9 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-use crate::clustering::{nearest_centroid, squared_l2};
+use crate::clustering::nearest_centroid;
+#[cfg(test)]
+use crate::clustering::squared_l2;
 use crate::{IvfConfig, VectorError};
 
 /// Coarse IVF centroid table.
@@ -82,6 +84,7 @@ impl CoarseQuantizer {
     /// final scoring metric; switching Dot/Cosine probe ranking without also
     /// changing assignment can skip the only list containing the best-scoring
     /// candidates.
+    #[cfg(test)]
     pub(crate) fn nearest_probes(&self, query: &[f32], n_probe: u32) -> Vec<u32> {
         let dim = usize::from(self.dim);
         let mut scored = (0..self.k_coarse)

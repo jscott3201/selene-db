@@ -1,4 +1,8 @@
 //! `vector.ivf_search` procedure adapter.
+//!
+//! The final nullable `metric` argument accepts `cosine`, `l2`, or `dot`.
+//! Cosine overrides require IVF indexes built with Cosine so reconstructed
+//! norm side data is available.
 
 use std::sync::Arc;
 

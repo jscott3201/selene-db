@@ -79,8 +79,9 @@ impl HnswProvider {
     /// of `query`, optionally filtered by raw-NodeId bitmap membership.
     ///
     /// `ef_search` overrides the configured search width. `metric_override`
-    /// changes query-time scoring on the existing HNSW topology. Pass `None`
-    /// for either argument to use the value from [`HnswConfig`].
+    /// changes query-time scoring on the existing HNSW topology; it does not
+    /// rebuild the graph as if it had been inserted under that metric. Pass
+    /// `None` for either argument to use the value from [`HnswConfig`].
     ///
     /// # Errors
     ///
