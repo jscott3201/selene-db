@@ -1,7 +1,6 @@
 //! IVF-PQ search with residual ADC scoring.
 
-use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::{cell::RefCell, cmp::Ordering, collections::BinaryHeap};
 
 use roaring::RoaringBitmap;
 use selene_core::NodeId;
@@ -10,6 +9,15 @@ use crate::hnsw::distance::dot_product;
 use crate::{DistanceMetric, IvfConfig, VectorError};
 
 use super::IvfIndex;
+
+thread_local! {
+    static IVF_SCRATCH: RefCell<IvfScratch> = const {
+        RefCell::new(IvfScratch {
+            residual_query: Vec::new(),
+            probe_query_codes: Vec::new(),
+        })
+    };
+}
 
 /// Search an IVF-PQ index for the top-`k` nearest neighbors.
 ///
@@ -50,6 +58,7 @@ pub fn search(
     };
     let probes = coarse.nearest_probes(query, probe_count);
     let query_norm = dot_product(query, query).sqrt();
+    let mut scratch = IvfScratchLease::take();
     // Polysemous setup. The filter activates only when the embedder requested
     // it AND the residual codebook self-identifies as polysemous-trained.
     // Drift between the two is rejected at recovery time by
@@ -76,22 +85,27 @@ pub fn search(
         let Some(list) = index.posting_lists.get(centroid_id as usize) else {
             continue;
         };
-        let residual_query = match effective_metric {
-            DistanceMetric::L2 => query
-                .iter()
-                .zip(centroid)
-                .map(|(left, right)| left - right)
-                .collect::<Vec<_>>(),
-            DistanceMetric::Dot | DistanceMetric::Cosine => query.to_vec(),
-        };
-        let lut = codebook.build_query_lut(&residual_query, effective_metric);
+        let scratch = scratch.as_mut();
+        scratch.residual_query.clear();
+        match effective_metric {
+            DistanceMetric::L2 => scratch
+                .residual_query
+                .extend(query.iter().zip(centroid).map(|(left, right)| left - right)),
+            DistanceMetric::Dot | DistanceMetric::Cosine => {
+                scratch.residual_query.extend_from_slice(query);
+            }
+        }
+        let residual_query = scratch.residual_query.as_slice();
+        let lut = codebook.build_query_lut(residual_query, effective_metric);
         let centroid_dot = dot_product(query, centroid);
         // For L2 the per-probe residual changes, so we re-encode the query
         // codes against the possibly polysemous-permuted codebook for this
         // residual. Dot/Cosine disable this filter above because raw-query
         // codes and residual posting codes are different frames.
-        let probe_query_codes: Option<Box<[u8]>> = if hamming_filter_active {
-            Some(codebook_encode_row(codebook, &residual_query))
+        let probe_query_codes: Option<&[u8]> = if hamming_filter_active {
+            scratch.probe_query_codes.clear();
+            codebook.encode_row(residual_query, &mut scratch.probe_query_codes);
+            Some(scratch.probe_query_codes.as_slice())
         } else {
             None
         };
@@ -140,6 +154,54 @@ pub fn search(
     Ok(out)
 }
 
+#[derive(Default)]
+struct IvfScratch {
+    residual_query: Vec<f32>,
+    probe_query_codes: Vec<u8>,
+}
+
+impl IvfScratch {
+    fn clear(&mut self) {
+        self.residual_query.clear();
+        self.probe_query_codes.clear();
+    }
+
+    fn retained_capacity(&self) -> usize {
+        self.residual_query
+            .capacity()
+            .saturating_add(self.probe_query_codes.capacity())
+    }
+}
+
+struct IvfScratchLease {
+    scratch: IvfScratch,
+}
+
+impl IvfScratchLease {
+    fn take() -> Self {
+        Self {
+            scratch: IVF_SCRATCH.with(RefCell::take),
+        }
+    }
+
+    fn as_mut(&mut self) -> &mut IvfScratch {
+        &mut self.scratch
+    }
+}
+
+impl Drop for IvfScratchLease {
+    fn drop(&mut self) {
+        let mut returned = std::mem::take(&mut self.scratch);
+        returned.clear();
+        let _ = IVF_SCRATCH.try_with(|cell| {
+            let mut scratch = cell.borrow_mut();
+            if returned.retained_capacity() > scratch.retained_capacity() {
+                *scratch = returned;
+            }
+        });
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Worst {
     score: f32,
@@ -186,12 +248,6 @@ fn sort_results(out: &mut [(NodeId, f32)]) {
             .total_cmp(&left.1)
             .then_with(|| left.0.cmp(&right.0))
     });
-}
-
-fn codebook_encode_row(codebook: &crate::quantize::PqCodebook, row: &[f32]) -> Box<[u8]> {
-    let mut codes = Vec::with_capacity(codebook.m_subspaces as usize);
-    codebook.encode_row(row, &mut codes);
-    codes.into_boxed_slice()
 }
 
 fn validate_query(query: &[f32], dim: usize) -> Result<(), VectorError> {
