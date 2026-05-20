@@ -20,18 +20,9 @@ use selene_gql::{
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
 
 static FEATURE_STATUS_OUTPUTS: [StaticOutputColumn; 3] = [
-    StaticOutputColumn {
-        name: "feature_id",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "status",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "rationale",
-        ty: GqlType::String,
-    },
+    StaticOutputColumn::new("feature_id", GqlType::String),
+    StaticOutputColumn::new("status", GqlType::String),
+    StaticOutputColumn::new("rationale", GqlType::String),
 ];
 
 /// Built-in read-only feature status procedure.

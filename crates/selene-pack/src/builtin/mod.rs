@@ -28,6 +28,35 @@ pub(crate) struct StaticParameter {
     pub(crate) ty: GqlType,
     /// Whether NULL is accepted.
     pub(crate) nullable: bool,
+    /// Human-readable parameter description.
+    pub(crate) description: &'static str,
+    /// Documentation-only default value text.
+    pub(crate) default_doc: Option<&'static str>,
+}
+
+impl StaticParameter {
+    /// Construct static parameter metadata.
+    pub(crate) const fn new(name: &'static str, ty: GqlType, nullable: bool) -> Self {
+        Self {
+            name,
+            ty,
+            nullable,
+            description: "",
+            default_doc: None,
+        }
+    }
+
+    /// Attach a human-readable parameter description.
+    pub(crate) const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
+
+    /// Attach documentation-only default value text.
+    pub(crate) const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
+        self.default_doc = Some(default_doc);
+        self
+    }
 }
 
 /// Static output-column metadata exposed by a built-in.
@@ -37,6 +66,25 @@ pub(crate) struct StaticOutputColumn {
     pub(crate) name: &'static str,
     /// Output column type.
     pub(crate) ty: GqlType,
+    /// Human-readable output-column description.
+    pub(crate) description: &'static str,
+}
+
+impl StaticOutputColumn {
+    /// Construct static output-column metadata.
+    pub(crate) const fn new(name: &'static str, ty: GqlType) -> Self {
+        Self {
+            name,
+            ty,
+            description: "",
+        }
+    }
+
+    /// Attach a human-readable output-column description.
+    pub(crate) const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
 }
 
 /// Metadata shared by every built-in procedure.
@@ -49,6 +97,11 @@ pub(crate) trait BuiltInMetadata: Send + Sync + 'static {
 
     /// Declared mutability.
     fn mutability(&self) -> ProcedureMutability;
+
+    /// Human-readable procedure summary.
+    fn description(&self) -> &'static str {
+        ""
+    }
 
     /// Static parameter metadata.
     fn signature_static(&self) -> &'static [StaticParameter];

@@ -12,21 +12,9 @@ use crate::builtin::{
 };
 
 static CREATE_INDEX_PARAMS: [StaticParameter; 3] = [
-    StaticParameter {
-        name: "label",
-        ty: GqlType::String,
-        nullable: false,
-    },
-    StaticParameter {
-        name: "property",
-        ty: GqlType::String,
-        nullable: false,
-    },
-    StaticParameter {
-        name: "kind",
-        ty: GqlType::String,
-        nullable: false,
-    },
+    StaticParameter::new("label", GqlType::String, false),
+    StaticParameter::new("property", GqlType::String, false),
+    StaticParameter::new("kind", GqlType::String, false),
 ];
 
 static CREATE_INDEX_OUTPUTS: [StaticOutputColumn; 0] = [];

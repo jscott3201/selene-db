@@ -22,34 +22,13 @@ use crate::history::PackHistorySource;
 //   - error        : NULL except on ValidationFailed
 //   - at           : always populated
 static PACK_HISTORY_OUTPUTS: [StaticOutputColumn; 7] = [
-    StaticOutputColumn {
-        name: "kind",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "pack_name",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "content_hash",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "principal",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "reason",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "error",
-        ty: GqlType::String,
-    },
-    StaticOutputColumn {
-        name: "at",
-        ty: GqlType::ZonedDateTime,
-    },
+    StaticOutputColumn::new("kind", GqlType::String),
+    StaticOutputColumn::new("pack_name", GqlType::String),
+    StaticOutputColumn::new("content_hash", GqlType::String),
+    StaticOutputColumn::new("principal", GqlType::String),
+    StaticOutputColumn::new("reason", GqlType::String),
+    StaticOutputColumn::new("error", GqlType::String),
+    StaticOutputColumn::new("at", GqlType::ZonedDateTime),
 ];
 
 /// Built-in read-only pack-history procedure.

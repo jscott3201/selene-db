@@ -264,10 +264,8 @@ mod tests {
 
     use super::*;
 
-    static OUTPUTS: [StaticOutputColumn; 1] = [StaticOutputColumn {
-        name: "out",
-        ty: GqlType::Integer,
-    }];
+    static OUTPUTS: [StaticOutputColumn; 1] =
+        [StaticOutputColumn::new("out", GqlType::Integer)];
 
     #[derive(Clone, Copy)]
     struct TestGraphBuiltin {

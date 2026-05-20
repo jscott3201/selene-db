@@ -11,16 +11,8 @@ use crate::builtin::{
 };
 
 static DROP_INDEX_PARAMS: [StaticParameter; 2] = [
-    StaticParameter {
-        name: "label",
-        ty: GqlType::String,
-        nullable: false,
-    },
-    StaticParameter {
-        name: "property",
-        ty: GqlType::String,
-        nullable: false,
-    },
+    StaticParameter::new("label", GqlType::String, false),
+    StaticParameter::new("property", GqlType::String, false),
 ];
 
 static DROP_INDEX_OUTPUTS: [StaticOutputColumn; 0] = [];

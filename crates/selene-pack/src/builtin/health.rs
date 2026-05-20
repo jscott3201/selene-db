@@ -8,22 +8,10 @@ use selene_gql::{
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
 
 static HEALTH_OUTPUTS: [StaticOutputColumn; 4] = [
-    StaticOutputColumn {
-        name: "graph_id",
-        ty: GqlType::Uint64,
-    },
-    StaticOutputColumn {
-        name: "node_count",
-        ty: GqlType::Uint64,
-    },
-    StaticOutputColumn {
-        name: "edge_count",
-        ty: GqlType::Uint64,
-    },
-    StaticOutputColumn {
-        name: "schema_bound",
-        ty: GqlType::Boolean,
-    },
+    StaticOutputColumn::new("graph_id", GqlType::Uint64),
+    StaticOutputColumn::new("node_count", GqlType::Uint64),
+    StaticOutputColumn::new("edge_count", GqlType::Uint64),
+    StaticOutputColumn::new("schema_bound", GqlType::Boolean),
 ];
 
 /// Built-in read-only graph health procedure.
