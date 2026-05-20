@@ -333,7 +333,15 @@ fn show_procedures(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
         .map(|(name, metadata)| procedure_row(&name, &metadata))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(BindingTable::new(
-        string_schema(&["name", "tier", "mutability", "signature"])?,
+        string_schema(&[
+            "name",
+            "tier",
+            "mutability",
+            "signature",
+            "description",
+            "since_version",
+            "capability_required",
+        ])?,
         rows,
     ))
 }
@@ -405,6 +413,11 @@ fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding,
             &name,
             &metadata.signature,
         ))?),
+        Value::String(intern_runtime(metadata.description)?),
+        Value::String(intern_runtime(metadata.signature.since_version)?),
+        Value::String(intern_runtime(
+            metadata.capability_required.as_deref().unwrap_or(""),
+        )?),
     ]))
 }
 

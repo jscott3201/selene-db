@@ -203,6 +203,15 @@ where
                 ("tier", "static SHOW PROCEDURES column 'tier'"),
                 ("mutability", "static SHOW PROCEDURES column 'mutability'"),
                 ("signature", "static SHOW PROCEDURES column 'signature'"),
+                ("description", "static SHOW PROCEDURES column 'description'"),
+                (
+                    "since_version",
+                    "static SHOW PROCEDURES column 'since_version'",
+                ),
+                (
+                    "capability_required",
+                    "static SHOW PROCEDURES column 'capability_required'",
+                ),
             ],
             intern,
         ),
