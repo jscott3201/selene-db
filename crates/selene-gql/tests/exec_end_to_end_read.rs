@@ -94,6 +94,16 @@ fn read_executes_limit_with_offset() {
 }
 
 #[test]
+fn stored_edges_are_directed_for_is_directed() {
+    let table = execute_read("MATCH ()-[e:KNOWS]->() RETURN e IS DIRECTED AS directed");
+
+    assert_eq!(
+        column_values(&table, "directed"),
+        vec![Value::Bool(true), Value::Bool(true)]
+    );
+}
+
+#[test]
 fn read_executes_projection_without_pattern() {
     let table = execute_read("RETURN 1 AS n");
 

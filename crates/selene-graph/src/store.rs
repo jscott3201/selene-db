@@ -54,6 +54,10 @@ impl Default for NodeStore {
 }
 
 /// Edge columns plus liveness bitmap.
+///
+/// Stored edges are directed by construction: every live row has exactly one
+/// source node and one target node. Undirected query patterns are a matching
+/// convenience and do not add an undirected storage bit.
 #[derive(Clone, Debug)]
 pub struct EdgeStore {
     /// Per-row edge label.
