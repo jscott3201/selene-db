@@ -266,7 +266,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
 
     /// Build a checker that can cross into procedure packs and algorithm crates.
     #[must_use]
-    pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'_> {
+    pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'a> {
         CancellationChecker::new(self.cancellation, self.deadline)
     }
 

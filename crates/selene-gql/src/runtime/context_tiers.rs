@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use selene_core::CancellationChecker;
 use selene_graph::{IndexProvider, Mutator, ProviderTag, SeleneGraph};
 
 use crate::{ImplDefinedCaps, ProcedureTier};
@@ -11,6 +12,7 @@ pub struct GraphContext<'a> {
     snapshot: &'a SeleneGraph,
     caps: &'a ImplDefinedCaps,
     providers: &'a [Arc<dyn IndexProvider>],
+    cancellation: CancellationChecker<'a>,
 }
 
 impl<'a> GraphContext<'a> {
@@ -18,11 +20,13 @@ impl<'a> GraphContext<'a> {
         snapshot: &'a SeleneGraph,
         caps: &'a ImplDefinedCaps,
         providers: &'a [Arc<dyn IndexProvider>],
+        cancellation: CancellationChecker<'a>,
     ) -> Self {
         Self {
             snapshot,
             caps,
             providers,
+            cancellation,
         }
     }
 
@@ -46,24 +50,39 @@ impl<'a> GraphContext<'a> {
             .find(|provider| provider.provider_tag() == tag)
             .map(Arc::clone)
     }
+
+    /// Build the cancellation checker visible to this procedure call.
+    #[must_use]
+    pub const fn cancellation_checker(&self) -> CancellationChecker<'a> {
+        self.cancellation
+    }
 }
 
 /// Mutation-tier procedure context.
 pub struct MutationContext<'a, 'g> {
     mutator: Mutator<'a, 'g>,
     caps: &'a ImplDefinedCaps,
+    cancellation: CancellationChecker<'a>,
 }
 
 impl<'a, 'g> MutationContext<'a, 'g> {
-    pub(crate) const fn new(mutator: Mutator<'a, 'g>, caps: &'a ImplDefinedCaps) -> Self {
-        Self { mutator, caps }
+    pub(crate) const fn new(
+        mutator: Mutator<'a, 'g>,
+        caps: &'a ImplDefinedCaps,
+        cancellation: CancellationChecker<'a>,
+    ) -> Self {
+        Self {
+            mutator,
+            caps,
+            cancellation,
+        }
     }
 
     /// Construct a mutation context for external procedure test harnesses.
     #[cfg(any(test, feature = "test-harness"))]
     #[must_use]
     pub fn for_test(mutator: Mutator<'a, 'g>, caps: &'a ImplDefinedCaps) -> Self {
-        Self::new(mutator, caps)
+        Self::new(mutator, caps, CancellationChecker::disabled())
     }
 
     /// Borrow the transaction-local working graph.
@@ -87,6 +106,12 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     #[must_use]
     pub const fn impl_defined_caps(&self) -> &'a ImplDefinedCaps {
         self.caps
+    }
+
+    /// Build the cancellation checker visible to this procedure call.
+    #[must_use]
+    pub const fn cancellation_checker(&self) -> CancellationChecker<'a> {
+        self.cancellation
     }
 }
 

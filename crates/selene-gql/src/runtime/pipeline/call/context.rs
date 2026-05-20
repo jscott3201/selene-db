@@ -34,15 +34,19 @@ where
             ctx.snapshot(),
             ctx.impl_defined_caps(),
             ctx.providers(),
+            ctx.cancellation_checker(),
         ))),
         ProcedureTier::Mutation => {
             let caps = ctx.impl_defined_caps();
+            let cancellation = ctx.cancellation_checker();
             let mutator = ctx.mutator_with_span(
                 "GraphWrite procedure requires a write transaction",
                 call.span,
             )?;
             Ok(ProcedureContext::Mutation(MutationContext::new(
-                mutator, caps,
+                mutator,
+                caps,
+                cancellation,
             )))
         }
         ProcedureTier::Persist => Err(ExecutorError::ImplementationDefined {
@@ -61,5 +65,15 @@ pub(super) const fn tier_for_mutability(mutability: ProcedureMutability) -> Proc
 }
 
 pub(super) fn procedure_error(source: ProcedureError, span: crate::SourceSpan) -> ExecutorError {
-    ExecutorError::Procedure { source, span }
+    match source {
+        ProcedureError::Cancelled => ExecutorError::Cancelled { span },
+        ProcedureError::Timeout { elapsed } => ExecutorError::Timeout {
+            deadline: std::time::Instant::now()
+                .checked_sub(elapsed)
+                .unwrap_or_else(std::time::Instant::now),
+            elapsed,
+            span,
+        },
+        source => ExecutorError::Procedure { source, span },
+    }
 }
