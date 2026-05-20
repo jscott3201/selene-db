@@ -1,5 +1,8 @@
 //! IVF-PQ search with residual ADC scoring.
 
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
 use roaring::RoaringBitmap;
 use selene_core::NodeId;
 
@@ -11,7 +14,7 @@ use super::IvfIndex;
 /// Search an IVF-PQ index for the top-`k` nearest neighbors.
 ///
 /// Results are `(NodeId, score)` pairs sorted by score descending. The score
-/// matches the HNSW higher-is-better convention.
+/// matches the HNSW higher-is-better convention. NaN scores are skipped.
 pub fn search(
     index: &IvfIndex,
     query: &[f32],
@@ -65,7 +68,7 @@ pub fn search(
     } else {
         0
     };
-    let mut out = Vec::new();
+    let mut top = BinaryHeap::with_capacity(k.saturating_add(1));
     for centroid_id in probes {
         let Some(centroid) = coarse.centroid(centroid_id) else {
             continue;
@@ -125,18 +128,64 @@ pub fn search(
                 }
             };
             if passes_filter(entry.node_id, filter) {
-                out.push((entry.node_id, score));
+                push_top_k(&mut top, k, entry.node_id, score);
             }
         }
     }
+    let mut out = top
+        .into_iter()
+        .map(|entry| (entry.node_id, entry.score))
+        .collect::<Vec<_>>();
+    sort_results(&mut out);
+    Ok(out)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Worst {
+    score: f32,
+    node_id: NodeId,
+}
+
+impl Ord for Worst {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .score
+            .total_cmp(&self.score)
+            .then_with(|| self.node_id.cmp(&other.node_id))
+    }
+}
+
+impl PartialOrd for Worst {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Worst {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Worst {}
+
+fn push_top_k(top: &mut BinaryHeap<Worst>, k: usize, node_id: NodeId, score: f32) {
+    if score.is_nan() {
+        return;
+    }
+    top.push(Worst { score, node_id });
+    if top.len() > k {
+        top.pop();
+    }
+}
+
+fn sort_results(out: &mut [(NodeId, f32)]) {
     out.sort_by(|left, right| {
         right
             .1
             .total_cmp(&left.1)
             .then_with(|| left.0.cmp(&right.0))
     });
-    out.truncate(k);
-    Ok(out)
 }
 
 fn codebook_encode_row(codebook: &crate::quantize::PqCodebook, row: &[f32]) -> Box<[u8]> {
