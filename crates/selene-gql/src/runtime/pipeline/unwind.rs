@@ -2,7 +2,7 @@ use selene_core::{IStr, Value};
 
 use crate::{
     AnalyzedType, BindingTableColumn, GqlType, ProjectExpr, SourceSpan,
-    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator},
+    runtime::{Binding, BindingTable, DataExceptionSubclass, EvalCtx, ExecutorError, evaluator},
 };
 
 pub(super) fn execute(
@@ -35,10 +35,11 @@ pub(super) fn execute(
             }
             Value::Null => {}
             _ => {
-                return Err(ExecutorError::DataException {
-                    message: "UNWIND requires a list value".to_owned(),
+                return Err(ExecutorError::data_exception(
+                    DataExceptionSubclass::InvalidValueType,
+                    "UNWIND requires a list value",
                     span,
-                });
+                ));
             }
         }
     }

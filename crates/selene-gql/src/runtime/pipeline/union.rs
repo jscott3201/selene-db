@@ -2,7 +2,7 @@
 
 use crate::{
     ExecutionPlan, SetOp, SourceSpan,
-    runtime::{BindingTable, ExecutorError, TxContext, execute_plan},
+    runtime::{BindingTable, DataExceptionSubclass, ExecutorError, TxContext, execute_plan},
 };
 
 use super::distinct;
@@ -42,6 +42,7 @@ fn assert_compatible_schemas(lhs: &BindingTable, rhs: &BindingTable) -> Result<(
     let rhs_len = rhs.schema().columns.len();
     if lhs_len != rhs_len {
         return Err(ExecutorError::DataException {
+            subclass: DataExceptionSubclass::DataException,
             message: format!(
                 "UNION arms have differing column counts: lhs={lhs_len}, rhs={rhs_len}"
             ),

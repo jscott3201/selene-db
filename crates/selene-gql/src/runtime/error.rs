@@ -6,6 +6,81 @@ use selene_core::IStr;
 
 use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
 
+/// Table 8 data-exception subclasses used by runtime evaluation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DataExceptionSubclass {
+    /// Generic data exception fallback for genuinely unclassified runtime data failures.
+    DataException,
+    /// Numeric value out of range (`22003`).
+    NumericValueOutOfRange,
+    /// Division by zero (`22012`).
+    DivisionByZero,
+    /// Invalid argument for power function (`2201F`).
+    InvalidArgumentForPowerFunction,
+    /// Invalid value type (`22G03`).
+    InvalidValueType,
+    /// Values not comparable (`22G04`).
+    ValuesNotComparable,
+    /// List element error (`22G0C`).
+    ListElementError,
+    /// Multiple assignments to a graph element property (`22G0M`).
+    MultipleAssignmentsToGraphElementProperty,
+    /// Number of node properties exceeds supported maximum (`22G0S`).
+    NodePropertiesExceedSupportedMaximum,
+    /// Number of edge properties exceeds supported maximum (`22G0T`).
+    EdgePropertiesExceedSupportedMaximum,
+    /// Record data field unassignable (`22G0X`).
+    RecordDataFieldUnassignable,
+}
+
+impl DataExceptionSubclass {
+    /// Return this subclass's GQLSTATUS code.
+    #[must_use]
+    pub const fn gqlstatus(self) -> GqlStatus {
+        match self {
+            Self::DataException => GqlStatus::DATA_EXCEPTION,
+            Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
+            Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
+            Self::InvalidArgumentForPowerFunction => GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
+            Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
+            Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
+            Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
+            Self::MultipleAssignmentsToGraphElementProperty => {
+                GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY
+            }
+            Self::NodePropertiesExceedSupportedMaximum => {
+                GqlStatus::NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM
+            }
+            Self::EdgePropertiesExceedSupportedMaximum => {
+                GqlStatus::EDGE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM
+            }
+            Self::RecordDataFieldUnassignable => GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE,
+        }
+    }
+}
+
+/// Non-fatal executor diagnostic emitted through an opt-in warning sink.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutorWarning {
+    /// ISO GQLSTATUS warning code.
+    pub code: GqlStatus,
+    /// Human-readable diagnostic message.
+    pub message: String,
+    /// Source span associated with the warning.
+    pub span: SourceSpan,
+}
+
+/// Receiver for runtime warnings.
+///
+/// Sessions without an explicit sink silently discard warnings, preserving the
+/// v1.0 executor behavior. Embedders that need ISO warning visibility can pass
+/// a sink with [`crate::Session::with_warning_sink`].
+pub trait WarningSink: Send {
+    /// Receive one runtime warning.
+    fn emit(&mut self, warning: ExecutorWarning);
+}
+
 /// Query execution failure.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
@@ -41,10 +116,34 @@ pub enum ExecutorError {
     #[error("execution data exception: {message}")]
     #[diagnostic(code(SLENE_X_22000))]
     DataException {
+        /// ISO Table 8 subclass selected by the emitting runtime site.
+        subclass: DataExceptionSubclass,
         /// Human-readable diagnostic message.
         message: String,
         /// Source span for the failing expression.
         #[label("data exception")]
+        span: SourceSpan,
+    },
+
+    /// A graph mutation would leave a dependent object behind.
+    #[error("dependent object still exists: {message}")]
+    #[diagnostic(code(SLENE_X_G1001))]
+    DependentObjectStillExists {
+        /// Human-readable diagnostic message.
+        message: String,
+        /// Source span for the failing mutation.
+        #[label("dependent object still exists")]
+        span: SourceSpan,
+    },
+
+    /// A closed-graph operation violated the bound graph type.
+    #[error("graph type violation: {message}")]
+    #[diagnostic(code(SLENE_X_G2000))]
+    GraphTypeViolation {
+        /// Human-readable diagnostic message.
+        message: String,
+        /// Source span for the failing graph-type operation.
+        #[label("graph type violation")]
         span: SourceSpan,
     },
 
@@ -265,12 +364,14 @@ pub enum ExecutorError {
 impl ExecutorError {
     /// Map this executor failure to its GQLSTATUS code.
     #[must_use]
-    pub const fn gqlstatus(&self) -> GqlStatus {
+    pub fn gqlstatus(&self) -> GqlStatus {
         match self {
             Self::Parse { source } => source.gqlstatus(),
             Self::Analysis { source } => source.gqlstatus(),
             Self::Plan { source } => source.gqlstatus(),
-            Self::DataException { .. } => GqlStatus::DATA_EXCEPTION,
+            Self::DataException { subclass, .. } => subclass.gqlstatus(),
+            Self::DependentObjectStillExists { .. } => GqlStatus::DEPENDENT_OBJECT_STILL_EXISTS,
+            Self::GraphTypeViolation { .. } => GqlStatus::GRAPH_TYPE_VIOLATION,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::UnboundParameter { .. } | Self::InvalidParameterType { .. } => {
                 GqlStatus::INVALID_PROCEDURE_ARGUMENT
@@ -279,18 +380,30 @@ impl ExecutorError {
             | Self::FunctionArityMismatch { .. }
             | Self::InvalidFunctionModifier { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
-            Self::InvalidTransactionState { .. }
-            | Self::TransactionAlreadyActive { .. }
-            | Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
+            Self::InvalidTransactionState { .. } => GqlStatus::READ_ONLY_TRANSACTION_VIOLATION,
+            Self::TransactionAlreadyActive { .. } => GqlStatus::ACTIVE_TRANSACTION,
+            Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_TERMINATION,
             Self::InFailedTransaction { .. } => GqlStatus::IN_FAILED_TRANSACTION,
             Self::Cancelled { .. } => GqlStatus::OPERATION_CANCELLED,
             Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
             Self::RowCapExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
-            Self::GraphMutation { .. } | Self::Flush { .. } => {
-                GqlStatus::IMPLEMENTATION_DEFINED_ERROR
-            }
+            Self::GraphMutation { source, .. } => GqlStatus::from_code(source.gqlstatus())
+                .unwrap_or(GqlStatus::IMPLEMENTATION_DEFINED_ERROR),
+            Self::Flush { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
             Self::Procedure { source, .. } => source.gqlstatus(),
             Self::ImplementationDefined { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+        }
+    }
+
+    pub(crate) fn data_exception(
+        subclass: DataExceptionSubclass,
+        message: impl Into<String>,
+        span: SourceSpan,
+    ) -> Self {
+        Self::DataException {
+            subclass,
+            message: message.into(),
+            span,
         }
     }
 }

@@ -578,6 +578,6 @@ mod tests {
             id: EdgeId::new(1),
             label: istr("BAD"),
         });
-        assert_eq!(error.gqlstatus(), "22000");
+        assert_eq!(error.gqlstatus(), "G2000");
     }
 }

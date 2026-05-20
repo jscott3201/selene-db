@@ -1,18 +1,25 @@
 //! Executor transaction context.
 
-use std::{cell::Cell, collections::BTreeMap, fmt, sync::Arc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
+    fmt,
+    sync::Arc,
+    time::Instant,
+};
 
+use rustc_hash::FxHashSet;
 use selene_core::{
     CancellationCause, CancellationChecker, CancellationToken, IStr, IStrAdmissionPolicy, Value,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
-    ProcedureRegistry, SourceSpan,
+    GqlStatus, ProcedureRegistry, SourceSpan,
     analyze::ExprIdLookup,
     plan::SubqueryRegistry,
     plan::{ImplDefinedCaps, PipelineOpId},
-    runtime::ExecutorError,
+    runtime::{ExecutorError, ExecutorWarning, WarningSink},
 };
 
 /// Adaptive re-optimization hook reserved for future executor phases.
@@ -46,6 +53,8 @@ pub struct TxContext<'a, 'g> {
     deadline: Option<Instant>,
     row_cap: Option<usize>,
     istr_admission_policy: IStrAdmissionPolicy,
+    warning_sink: Option<&'a RefCell<Box<dyn WarningSink>>>,
+    emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
@@ -119,6 +128,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             deadline: None,
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
@@ -164,6 +175,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             deadline: None,
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
@@ -209,6 +222,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             deadline: None,
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
         }
@@ -233,6 +248,31 @@ impl<'a, 'g> TxContext<'a, 'g> {
     pub const fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
         self.istr_admission_policy = policy;
         self
+    }
+
+    /// Attach the session warning sink visible to runtime operators.
+    #[must_use]
+    pub const fn with_warning_sink(
+        mut self,
+        warning_sink: Option<&'a RefCell<Box<dyn WarningSink>>>,
+    ) -> Self {
+        self.warning_sink = warning_sink;
+        self
+    }
+
+    /// Emit one runtime warning if the session opted into warning collection.
+    pub(crate) fn emit_warning(&self, warning: ExecutorWarning) {
+        if let Some(sink) = self.warning_sink {
+            sink.borrow_mut().emit(warning);
+        }
+    }
+
+    /// Emit one warning once for a planned expression span within this statement.
+    pub(crate) fn emit_warning_once(&self, warning: ExecutorWarning) {
+        let key = (warning.code, warning.span);
+        if self.emitted_warnings.borrow_mut().insert(key) {
+            self.emit_warning(warning);
+        }
     }
 
     /// Check the token and deadline at a cooperative cancellation point.

@@ -620,7 +620,7 @@ impl AnalysisError {
             | Self::SchemaRequiredPropertyMissing { .. }
             | Self::SchemaRequiredPropertyRemoved { .. }
             | Self::SchemaInvalidInsertLabelExpr { .. }
-            | Self::SchemaRequiredEdgeLabelRemoved { .. } => GqlStatus::DATA_EXCEPTION,
+            | Self::SchemaRequiredEdgeLabelRemoved { .. } => GqlStatus::GRAPH_TYPE_VIOLATION,
         }
     }
 

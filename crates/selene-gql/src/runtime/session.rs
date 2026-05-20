@@ -1,13 +1,13 @@
 //! Statement-session state for explicit transaction control.
 
-use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
+use std::{cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
 
 use selene_core::{CancellationToken, Change, IStr, IStrAdmissionPolicy, Value};
 use selene_graph::{SharedGraph, WriteTxn};
 
 use crate::{
     SourceSpan,
-    runtime::{ExecutorError, PlanCache, PlanCacheStats, WriteOutcome},
+    runtime::{ExecutorError, PlanCache, PlanCacheStats, WarningSink, WriteOutcome},
 };
 
 /// Caller-owned executor session bound to one shared graph.
@@ -24,6 +24,7 @@ pub struct Session<'g> {
     pub(crate) deadline: Option<Instant>,
     pub(crate) row_cap: Option<usize>,
     pub(crate) istr_admission_policy: IStrAdmissionPolicy,
+    pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
 }
 
 /// Metadata returned after committing an explicit transaction through a [`Session`].
@@ -88,6 +89,7 @@ impl<'g> Session<'g> {
             deadline: None,
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
         }
     }
 
@@ -107,6 +109,7 @@ impl<'g> Session<'g> {
             deadline: None,
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
         }
     }
 
@@ -156,6 +159,16 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
         self.istr_admission_policy = policy;
+        self
+    }
+
+    /// Attach an opt-in runtime warning sink to subsequent statements.
+    ///
+    /// Sessions without a sink silently discard warnings. The sink currently
+    /// receives `01G11` when an aggregate eliminates NULL input values.
+    #[must_use]
+    pub fn with_warning_sink(mut self, sink: impl WarningSink + 'static) -> Self {
+        self.warning_sink = Some(RefCell::new(Box::new(sink)));
         self
     }
 

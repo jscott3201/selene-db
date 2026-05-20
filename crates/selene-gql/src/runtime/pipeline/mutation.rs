@@ -9,8 +9,16 @@ use crate::{
     InsertEndpointRef, LabelExpr, MutationOp, ProjectExpr, PropertyInit, SourceSpan,
     SubqueryRegistry,
     analyze::ExprIdLookup,
-    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, evaluator},
+    runtime::{
+        Binding, BindingTable, DataExceptionSubclass, EvalCtx, ExecutorError, TxContext, evaluator,
+    },
 };
+
+#[derive(Clone, Copy)]
+enum PropertyMapTarget {
+    Node,
+    Edge,
+}
 
 pub(super) fn execute(
     op: &MutationOp,
@@ -145,7 +153,13 @@ fn execute_insert_node(
                 expr_ids,
                 subqueries,
             };
-            property_map(property_inits, &row, &input_schema, &eval_ctx)?
+            property_map(
+                property_inits,
+                PropertyMapTarget::Node,
+                &row,
+                &input_schema,
+                &eval_ctx,
+            )?
         };
         let node_id = {
             let mut mutator = ctx.mutator()?;
@@ -197,7 +211,13 @@ fn execute_insert_edge(
                 expr_ids,
                 subqueries,
             };
-            property_map(property_inits, &row, &input_schema, &eval_ctx)?
+            property_map(
+                property_inits,
+                PropertyMapTarget::Edge,
+                &row,
+                &input_schema,
+                &eval_ctx,
+            )?
         };
         let edge_id = {
             let mut mutator = ctx.mutator()?;
@@ -374,7 +394,7 @@ fn execute_delete_target(
                     if matches!(mode, DeleteMode::Bare | DeleteMode::NoDetach)
                         && ctx.snapshot().node_has_incident_edges(id)
                     {
-                        return Err(ExecutorError::DataException {
+                        return Err(ExecutorError::DependentObjectStillExists {
                             message: "cannot delete node with incident edges (use DETACH DELETE)"
                                 .to_owned(),
                             span,
@@ -407,6 +427,7 @@ fn execute_delete_target(
 
 fn property_map(
     property_inits: &[PropertyInit],
+    target: PropertyMapTarget,
     row: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -420,12 +441,19 @@ fn property_map(
             evaluator::evaluate(&init.value.expr, row, schema, ctx)?,
         ));
     }
-    PropertyMap::from_pairs(pairs).map_err(|source| ExecutorError::DataException {
-        message: format!("property map construction failed: {source}"),
-        span: property_inits
-            .first()
-            .map(|init| init.span)
-            .unwrap_or_default(),
+    PropertyMap::from_pairs(pairs).map_err(|source| {
+        let subclass = match target {
+            PropertyMapTarget::Node => DataExceptionSubclass::NodePropertiesExceedSupportedMaximum,
+            PropertyMapTarget::Edge => DataExceptionSubclass::EdgePropertiesExceedSupportedMaximum,
+        };
+        ExecutorError::data_exception(
+            subclass,
+            format!("property map construction failed: {source}"),
+            property_inits
+                .first()
+                .map(|init| init.span)
+                .unwrap_or_default(),
+        )
     })
 }
 
@@ -588,9 +616,12 @@ fn label_diff(
     removed: impl IntoIterator<Item = IStr>,
     span: SourceSpan,
 ) -> Result<LabelDiff, ExecutorError> {
-    LabelDiff::new(added, removed).map_err(|source| ExecutorError::DataException {
-        message: format!("label diff construction failed: {source}"),
-        span,
+    LabelDiff::new(added, removed).map_err(|source| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            format!("label diff construction failed: {source}"),
+            span,
+        )
     })
 }
 
@@ -599,9 +630,12 @@ fn property_diff(
     removed: impl IntoIterator<Item = IStr>,
     span: SourceSpan,
 ) -> Result<PropertyDiff, ExecutorError> {
-    PropertyDiff::new(set, removed).map_err(|source| ExecutorError::DataException {
-        message: format!("property diff construction failed: {source}"),
-        span,
+    PropertyDiff::new(set, removed).map_err(|source| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::MultipleAssignmentsToGraphElementProperty,
+            format!("property diff construction failed: {source}"),
+            span,
+        )
     })
 }
 

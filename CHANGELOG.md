@@ -96,6 +96,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `GQ08`, `GQ12`, `GQ13`, `GQ20`, `GE04`, `GE05`, `GE07`, `GF13`, and
   `GH02` are now registered and covered by corpus cases, and
   `STDDEV_POP` / `STDDEV_SAMP` execute with an O(1) Welford accumulator.
+- `ExecutorWarning`, `WarningSink`, and
+  `Session::with_warning_sink(...)` for opt-in runtime warning collection.
+  Aggregate NULL elimination now emits ISO GQLSTATUS `01G11` once per
+  aggregate expression per statement; sessions without a sink silently discard
+  warnings.
 
 ### Changed
 
@@ -121,6 +126,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - GQL record equality now propagates NULL and NaN through nested record fields
   in the runtime `=` comparator while preserving `Value::PartialEq` and
   runtime row-key structural equality for deduplication.
+- Runtime data exceptions now carry a `DataExceptionSubclass` selected at the
+  emission site. Arithmetic overflow reports `22003`, division by zero
+  reports `22012`, invalid power arguments report `2201F`, invalid value-type
+  paths report `22G03`, incomparable ordering reports `22G04`, and record /
+  graph-property subclasses use `22G0X`, `22G0M`, `22G0S`, and `22G0T` where
+  live paths exist. GQLSTATUS is read from `gqlstatus()`; the stable miette
+  diagnostic tag remains broad for the parent data-exception variant.
+- Transaction and graph-type surfaces now emit live ISO Table 8 classes:
+  nested `START TRANSACTION` returns `25G01`, write attempts in read-only
+  transaction contexts return `25G03`, invalid transaction termination returns
+  `2D000`, bare node delete with incident edges returns `G1001`, and closed
+  graph schema/type violations return `G2000`.
 
 ## [1.0.0] — 2026-05-16
 

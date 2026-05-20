@@ -2,10 +2,10 @@ use rustc_hash::FxHashSet;
 use selene_core::Value;
 
 use crate::{
-    Aggregate, SourceSpan,
+    Aggregate, GqlStatus, SourceSpan,
     runtime::{
-        Binding, BindingTableSchema, EvalCtx, ExecutorError, evaluator, value_compare,
-        value_key::RuntimeEqKey,
+        Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
+        ExecutorWarning, evaluator, value_compare, value_key::RuntimeEqKey,
     },
 };
 
@@ -42,6 +42,11 @@ impl AggregateSlot {
             })?;
         let value = evaluator::evaluate(&arg.expr, row, schema, ctx)?;
         if self.state.skips_null() && matches!(value, Value::Null) {
+            ctx.tx.emit_warning_once(ExecutorWarning {
+                code: GqlStatus::NULL_VALUE_ELIMINATED_IN_SET_FUNCTION,
+                message: "null value eliminated in set function".to_owned(),
+                span: self.aggregate.span,
+            });
             return Ok(());
         }
         if self.aggregate.distinct {
@@ -194,10 +199,13 @@ struct Welford {
 impl Welford {
     fn observe(&mut self, value: Value, span: SourceSpan) -> Result<(), ExecutorError> {
         let value = numeric_sum_to_f64(numeric_value(value, span)?, span)?;
-        let count = self
-            .count
-            .checked_add(1)
-            .ok_or_else(|| data_exception_value("aggregate count is out of range", span))?;
+        let count = self.count.checked_add(1).ok_or_else(|| {
+            data_exception_value(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "aggregate count is out of range",
+                span,
+            )
+        })?;
         let delta = value - self.mean;
         self.count = count;
         self.mean += delta / count as f64;
@@ -251,8 +259,13 @@ fn update_min_max(
         *current = Some(next);
         return Ok(());
     };
-    let ordering = value_compare::compare_non_null(&next, current_value)
-        .ok_or_else(|| data_exception_value("aggregate value is not order-comparable", span))?;
+    let ordering = value_compare::compare_non_null(&next, current_value).ok_or_else(|| {
+        data_exception_value(
+            DataExceptionSubclass::ValuesNotComparable,
+            "aggregate value is not order-comparable",
+            span,
+        )
+    })?;
     if (keep_min && ordering.is_lt()) || (!keep_min && ordering.is_gt()) {
         *current_value = next;
     }
@@ -267,10 +280,15 @@ fn add_numeric(
     let next = numeric_value(value, span)?;
     match (current, next) {
         (None, next) => Ok(next),
-        (Some(NumericSum::Int(lhs)), NumericSum::Int(rhs)) => lhs
-            .checked_add(rhs)
-            .map(NumericSum::Int)
-            .ok_or_else(|| data_exception_value("integer aggregate overflow", span)),
+        (Some(NumericSum::Int(lhs)), NumericSum::Int(rhs)) => {
+            lhs.checked_add(rhs).map(NumericSum::Int).ok_or_else(|| {
+                data_exception_value(
+                    DataExceptionSubclass::NumericValueOutOfRange,
+                    "integer aggregate overflow",
+                    span,
+                )
+            })
+        }
         (Some(lhs), rhs) => {
             let lhs = numeric_sum_to_f64(lhs, span)?;
             let rhs = numeric_sum_to_f64(rhs, span)?;
@@ -282,12 +300,20 @@ fn add_numeric(
 fn numeric_value(value: Value, span: SourceSpan) -> Result<NumericSum, ExecutorError> {
     match value {
         Value::Int(value) => Ok(NumericSum::Int(value)),
-        Value::Uint(value) => i64::try_from(value)
-            .map(NumericSum::Int)
-            .map_err(|_| data_exception_value("unsigned aggregate value is out of range", span)),
+        Value::Uint(value) => i64::try_from(value).map(NumericSum::Int).map_err(|_| {
+            data_exception_value(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "unsigned aggregate value is out of range",
+                span,
+            )
+        }),
         Value::Float(value) => finite_float(value, span).map(NumericSum::Float),
         Value::Float32(value) => finite_float(f64::from(value), span).map(NumericSum::Float),
-        _ => Err(data_exception_value("aggregate value is not numeric", span)),
+        _ => Err(data_exception_value(
+            DataExceptionSubclass::InvalidValueType,
+            "aggregate value is not numeric",
+            span,
+        )),
     }
 }
 
@@ -295,6 +321,7 @@ fn numeric_sum_to_f64(value: NumericSum, span: SourceSpan) -> Result<f64, Execut
     match value {
         NumericSum::Int(value) => i64_to_f64_exact(value).ok_or_else(|| {
             data_exception_value(
+                DataExceptionSubclass::NumericValueOutOfRange,
                 "integer aggregate value is not exactly float-representable",
                 span,
             )
@@ -337,6 +364,7 @@ fn finite_float(value: f64, span: SourceSpan) -> Result<f64, ExecutorError> {
         Ok(value)
     } else {
         Err(data_exception_value(
+            DataExceptionSubclass::NumericValueOutOfRange,
             "floating-point aggregate produced non-finite value",
             span,
         ))
@@ -344,9 +372,13 @@ fn finite_float(value: f64, span: SourceSpan) -> Result<f64, ExecutorError> {
 }
 
 fn count_to_value(count: u64, span: SourceSpan) -> Result<Value, ExecutorError> {
-    i64::try_from(count)
-        .map(Value::Int)
-        .map_err(|_| data_exception_value("aggregate count is out of range", span))
+    i64::try_from(count).map(Value::Int).map_err(|_| {
+        data_exception_value(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "aggregate count is out of range",
+            span,
+        )
+    })
 }
 
 fn i64_to_f64_exact(value: i64) -> Option<f64> {
@@ -366,9 +398,10 @@ fn u64_representable_by_binary_float(value: u64, significand_bits: u32) -> bool 
     value & mask == 0
 }
 
-fn data_exception_value(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
-    ExecutorError::DataException {
-        message: message.into(),
-        span,
-    }
+fn data_exception_value(
+    subclass: DataExceptionSubclass,
+    message: impl Into<String>,
+    span: SourceSpan,
+) -> ExecutorError {
+    ExecutorError::data_exception(subclass, message, span)
 }
