@@ -38,12 +38,12 @@ fn hnsw_registry_snapshot_and_wal_replay_match_singleton() {
 
     assert_eq!(
         direct
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("direct search succeeds"),
         registry
             .get("default")
             .expect("default provider exists")
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("registry search succeeds")
     );
     let registry_sections = hnsw_sections(&registry);
@@ -52,12 +52,12 @@ fn hnsw_registry_snapshot_and_wal_replay_match_singleton() {
     read_hnsw_sections(&recovered, &registry_sections);
     assert_eq!(
         direct
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("direct search succeeds"),
         recovered
             .get("default")
             .expect("default provider exists")
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("recovered search succeeds")
     );
 }

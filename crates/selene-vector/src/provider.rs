@@ -14,8 +14,8 @@ use crate::snapshot::grph::{GrphBody, decode_grph, encode_grph};
 use crate::snapshot::qunt::{decode_qunt, encode_qunt, validate_qunt_for_graph};
 use crate::snapshot::vecs::{VecsBodyV1, decode_vecs, encode_vecs};
 use crate::{
-    HnswConfig, HnswGraph, HnswParams, PqParams, QuantMethod, QuantizationStats, VectorError, hnsw,
-    snapshot,
+    DistanceMetric, HnswConfig, HnswGraph, HnswParams, PqParams, QuantMethod, QuantizationStats,
+    VectorError, hnsw, snapshot,
 };
 
 pub(crate) const PROVIDER_NAME: &str = "selene-vector";
@@ -78,8 +78,9 @@ impl HnswProvider {
     /// Search the currently published HNSW snapshot for the top-`k` neighbors
     /// of `query`, optionally filtered by raw-NodeId bitmap membership.
     ///
-    /// `ef_search` overrides the configured search width. Pass `None` to use
-    /// the value from [`HnswConfig`].
+    /// `ef_search` overrides the configured search width. `metric_override`
+    /// changes query-time scoring on the existing HNSW topology. Pass `None`
+    /// for either argument to use the value from [`HnswConfig`].
     ///
     /// # Errors
     ///
@@ -93,9 +94,10 @@ impl HnswProvider {
         k: usize,
         ef_search: Option<usize>,
         filter: Option<&RoaringBitmap>,
+        metric_override: Option<DistanceMetric>,
     ) -> Result<Vec<(NodeId, f32)>, VectorError> {
         let snapshot = self.state.load_full();
-        let params = HnswParams::from_config(&self.config);
+        let params = HnswParams::from_config_with_metric_override(&self.config, metric_override);
         let ef = ef_search.unwrap_or(self.config.ef_search);
         hnsw::search::search(&snapshot, query, k, ef, &params, filter)
     }

@@ -198,7 +198,7 @@ fn recover_replays_index_extension_event_to_hnsw_provider() {
         graph_summary(&live_provider.snapshot())
     );
     let results = replay_provider
-        .search(&[0.0, 1.0, 0.0, 0.0], 1, Some(8), None)
+        .search(&[0.0, 1.0, 0.0, 0.0], 1, Some(8), None, None)
         .unwrap();
     assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(2)));
     let _ = fs::remove_dir_all(dir);

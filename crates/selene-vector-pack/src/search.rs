@@ -72,6 +72,7 @@ impl ExternalGraphProcedure for SearchProcedure {
                     parsed.k,
                     parsed.ef_search,
                     parsed.filter.as_ref(),
+                    None,
                 )
                 .map_err(|err| vector_error(SEARCH_PROC, err))?
                 .into_iter()

@@ -31,7 +31,7 @@ fn grph_vecs_alone_recovers_usable_f32_graph() {
     );
     assert!(
         !target
-            .search(&[1.0, 0.0, 0.0, 0.0], 5, Some(20), None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 5, Some(20), None, None)
             .unwrap()
             .is_empty()
     );
@@ -75,7 +75,7 @@ fn qunt_enabled_full_roundtrip() {
     assert_eq!(stats.code_count, 30);
     assert!(
         !target
-            .search(&[0.25, -0.5, 0.75, 0.125], 5, Some(30), None)
+            .search(&[0.25, -0.5, 0.75, 0.125], 5, Some(30), None, None)
             .unwrap()
             .is_empty()
     );
@@ -96,13 +96,13 @@ fn asymmetric_recall_at_10_at_least_095_dim16() {
     let mut total = 0usize;
     for query in events.iter().step_by(12).take(20) {
         let exact = source
-            .search(&query.vector, 10, Some(256), None)
+            .search(&query.vector, 10, Some(256), None, None)
             .unwrap()
             .into_iter()
             .map(|(id, _)| id)
             .collect::<HashSet<_>>();
         let approx = quantized
-            .search(&query.vector, 10, Some(256), None)
+            .search(&query.vector, 10, Some(256), None, None)
             .unwrap()
             .into_iter()
             .map(|(id, _)| id);
@@ -127,10 +127,10 @@ fn asymmetric_with_rescore_exact_top_k_constructed_fixture() {
     rescored.read_section(SubTag(*b"QUNT"), &qunt).unwrap();
 
     let exact = exact_source
-        .search(&events[10].vector, 10, Some(80), None)
+        .search(&events[10].vector, 10, Some(80), None, None)
         .unwrap();
     let reranked = rescored
-        .search(&events[10].vector, 10, Some(80), None)
+        .search(&events[10].vector, 10, Some(80), None, None)
         .unwrap();
 
     assert_eq!(ids(&exact), ids(&reranked));
@@ -152,10 +152,10 @@ fn disabled_read_enabled_snapshot_uses_f32() {
     assert!(target.quantization_stats().unwrap().is_some());
     assert_eq!(
         exact_source
-            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None, None)
             .unwrap(),
         target
-            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None, None)
             .unwrap()
     );
 }
@@ -173,10 +173,10 @@ fn enabled_read_disabled_snapshot_uses_f32() {
     assert!(target.quantization_stats().unwrap().is_none());
     assert_eq!(
         source
-            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None, None)
             .unwrap(),
         target
-            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 8, Some(30), None, None)
             .unwrap()
     );
 }
@@ -294,7 +294,7 @@ fn mixed_prefix_l2_score_scale_consistency() {
         .on_change(&upsert_change(insert_payload(2, vec![3.0, 4.0])))
         .unwrap();
 
-    let results = target.search(&[0.0, 0.0], 2, Some(4), None).unwrap();
+    let results = target.search(&[0.0, 0.0], 2, Some(4), None, None).unwrap();
 
     assert_eq!(results[0].0, NodeId::new(1));
     assert!((results[0].1 - 0.0).abs() <= 1e-6);
@@ -334,7 +334,7 @@ fn bulk_insert_after_snapshot_falls_back_to_f32() {
         .unwrap();
 
     let results = recovered
-        .search(&[0.0, 0.0, 0.0, 1.0], 1, Some(20), None)
+        .search(&[0.0, 0.0, 0.0, 1.0], 1, Some(20), None, None)
         .unwrap();
 
     assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(11)));
@@ -471,8 +471,8 @@ fn pq_search_falls_back_to_f32_when_training_deferred() {
         Err(VectorError::PqTrainingDeferred { .. })
     ));
     assert_eq!(
-        pq.search(&query, 8, Some(80), None).unwrap(),
-        f32.search(&query, 8, Some(80), None).unwrap()
+        pq.search(&query, 8, Some(80), None, None).unwrap(),
+        f32.search(&query, 8, Some(80), None, None).unwrap()
     );
 }
 
