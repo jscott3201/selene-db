@@ -83,6 +83,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reconstructed-norm side data is absent and the call returns GQLSTATUS
   `22G03`. IVF top-k search now uses a bounded heap and reusable per-thread
   scratch buffers.
+- `IStrAdmissionPolicy` and `Session::with_istr_admission_policy(...)` let
+  embedders opt into graceful interner-cap fallback at runtime string-admission
+  boundaries. The default remains `Reject`; `FallbackToExternal` carries
+  eligible over-cap text as `Value::ExternalString`.
+- Procedure metadata now includes procedure-scope descriptions, signature
+  `since_version`, parameter descriptions and `default_doc`, and output-column
+  descriptions. `SHOW PROCEDURES` now returns seven columns:
+  `name`, `tier`, `mutability`, `signature`, `description`, `since_version`,
+  and `capability_required`.
 
 ### Changed
 
@@ -94,6 +103,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `GqlStatus::class()`. No source changes are required for downstream
   consumers using `GqlStatus::SYNTAX_ERROR` and related constants by name;
   consumers comparing raw 5-character codes must update strings.
+- Program-limit errors from `IStrCapExceeded`, `PayloadTooLarge`,
+  `TooManySections`, and `SectionTooLarge` now report GQLSTATUS `5GQL1`
+  instead of the SQLSTATE-shaped `54000`.
 
 ## [1.0.0] — 2026-05-16
 
