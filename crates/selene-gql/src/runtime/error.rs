@@ -318,6 +318,17 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// An implementation-defined program limit was exceeded.
+    #[error("program limit exceeded: {detail}")]
+    #[diagnostic(code(SLENE_X_5GQL1))]
+    ProgramLimitExceeded {
+        /// Stable limit detail asserted by tests.
+        detail: &'static str,
+        /// Source span for the limit boundary.
+        #[label("program limit exceeded here")]
+        span: SourceSpan,
+    },
+
     /// The graph mutation funnel rejected a write.
     #[error("graph mutation failed: {source}")]
     #[diagnostic(code(SLENE_X_5GQL0_GRAPH_MUTATION))]
@@ -386,7 +397,9 @@ impl ExecutorError {
             Self::InFailedTransaction { .. } => GqlStatus::IN_FAILED_TRANSACTION,
             Self::Cancelled { .. } => GqlStatus::OPERATION_CANCELLED,
             Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
-            Self::RowCapExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            Self::RowCapExceeded { .. } | Self::ProgramLimitExceeded { .. } => {
+                GqlStatus::PROGRAM_LIMIT_EXCEEDED
+            }
             Self::GraphMutation { source, .. } => GqlStatus::from_code(source.gqlstatus())
                 .unwrap_or(GqlStatus::IMPLEMENTATION_DEFINED_ERROR),
             Self::Flush { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
