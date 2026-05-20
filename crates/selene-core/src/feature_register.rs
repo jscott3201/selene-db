@@ -63,6 +63,11 @@ feature_ids! {
     GC04 = "GC04" => "Graph management";
     GC05 = "GC05" => "Graph management: IF [ NOT ] EXISTS";
     GD01 = "GD01" => "Updatable graphs";
+    GE04 = "GE04" => "Parameters";
+    GE05 = "GE05" => "Named parameters";
+    GE07 = "GE07" => "XOR operator";
+    GF13 = "GF13" => "SIZE function";
+    GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
     GG20 = "GG20" => "Explicit element type names";
@@ -88,8 +93,12 @@ feature_ids! {
     GQ05 = "GQ05" => "Composite query: EXCEPT ALL";
     GQ06 = "GQ06" => "Composite query: INTERSECT DISTINCT";
     GQ07 = "GQ07" => "Composite query: INTERSECT ALL";
+    GQ08 = "GQ08" => "FILTER statement";
     GQ09 = "GQ09" => "Composite query: OTHERWISE";
+    GQ12 = "GQ12" => "OFFSET clause";
+    GQ13 = "GQ13" => "LIMIT clause";
     GQ15 = "GQ15" => "GROUP BY clause";
+    GQ20 = "GQ20" => "Linear query composition";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
     GV01 = "GV01" => "8 bit unsigned integer numbers";
