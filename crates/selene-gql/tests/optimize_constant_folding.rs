@@ -121,15 +121,15 @@ fn folds_pattern_property_and_where_expressions() {
 fn folds_call_mutation_and_catalog_expression_payloads() {
     let registry = MockProcedureRegistry::new().with_procedure(
         vec![istr("pkg"), istr("args")],
-        vec![selene_gql::ProcedureParameter {
-            name: istr("a"),
-            ty: selene_gql::GqlType::Integer,
-            nullable: false,
-        }],
-        vec![ProcedureOutputColumn {
-            name: istr("out"),
-            ty: selene_gql::GqlType::Integer,
-        }],
+        vec![selene_gql::ProcedureParameter::new(
+            istr("a"),
+            selene_gql::GqlType::Integer,
+            false,
+        )],
+        vec![ProcedureOutputColumn::new(
+            istr("out"),
+            selene_gql::GqlType::Integer,
+        )],
     );
     let plan = optimized_with_registry("CALL pkg.args(1 + 2)", &registry);
     let [PipelineOp::Call(call)] = plan.pipeline.as_slice() else {

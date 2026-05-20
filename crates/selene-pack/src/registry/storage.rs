@@ -318,46 +318,46 @@ fn procedure_metadata(pending: &PendingEntry) -> Result<ProcedureMetadata, Regis
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     };
-    Ok(ProcedureMetadata {
-        handle: pending.handle,
-        signature: ProcedureSignature { parameters },
-        output_schema: ProcedureOutputSchema { columns },
-        tier: pending.attempted_tier,
-        mutability: pending.entry.mutability(),
-        capability_required: None,
-    })
+    Ok(ProcedureMetadata::new(
+        pending.handle,
+        ProcedureSignature::new(parameters),
+        ProcedureOutputSchema { columns },
+        pending.attempted_tier,
+        pending.entry.mutability(),
+        None,
+    ))
 }
 
 fn parameter(parameter: &StaticParameter) -> Result<ProcedureParameter, RegistryError> {
-    Ok(ProcedureParameter {
-        name: intern_static(parameter.name, "parameter")?,
-        ty: parameter.ty.clone(),
-        nullable: parameter.nullable,
-    })
+    Ok(ProcedureParameter::new(
+        intern_static(parameter.name, "parameter")?,
+        parameter.ty.clone(),
+        parameter.nullable,
+    ))
 }
 
 fn output_column(column: &StaticOutputColumn) -> Result<ProcedureOutputColumn, RegistryError> {
-    Ok(ProcedureOutputColumn {
-        name: intern_static(column.name, "output column")?,
-        ty: column.ty.clone(),
-    })
+    Ok(ProcedureOutputColumn::new(
+        intern_static(column.name, "output column")?,
+        column.ty.clone(),
+    ))
 }
 
 fn external_parameter(parameter: &ExternalParameter) -> Result<ProcedureParameter, RegistryError> {
-    Ok(ProcedureParameter {
-        name: intern_static(parameter.name, "parameter")?,
-        ty: parameter.ty.clone(),
-        nullable: parameter.nullable,
-    })
+    Ok(ProcedureParameter::new(
+        intern_static(parameter.name, "parameter")?,
+        parameter.ty.clone(),
+        parameter.nullable,
+    ))
 }
 
 fn external_output_column(
     column: &ExternalOutputColumn,
 ) -> Result<ProcedureOutputColumn, RegistryError> {
-    Ok(ProcedureOutputColumn {
-        name: intern_static(column.name, "output column")?,
-        ty: column.ty.clone(),
-    })
+    Ok(ProcedureOutputColumn::new(
+        intern_static(column.name, "output column")?,
+        column.ty.clone(),
+    ))
 }
 
 fn intern_name(raw: &'static [&'static str]) -> Result<NameKey, RegistryError> {

@@ -590,16 +590,16 @@ impl PlanningRegistry {
         let mut metadata = HashMap::new();
         metadata.insert(
             vec![istr("selene"), istr(procedure)].into_boxed_slice(),
-            ProcedureMetadata {
+            ProcedureMetadata::new(
                 handle,
-                signature: ProcedureSignature { parameters },
-                output_schema: ProcedureOutputSchema {
+                ProcedureSignature::new(parameters),
+                ProcedureOutputSchema {
                     columns: Vec::new(),
                 },
                 tier,
                 mutability,
-                capability_required: None,
-            },
+                None,
+            ),
         );
         Self { metadata }
     }
@@ -621,11 +621,7 @@ impl ProcedureRegistry for PlanningRegistry {
 }
 
 fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-    ProcedureParameter {
-        name: istr(name),
-        ty,
-        nullable,
-    }
+    ProcedureParameter::new(istr(name), ty, nullable)
 }
 
 fn runtime_handle(registry: &ProcedurePackRegistry, procedure: &'static str) -> ProcedureHandle {

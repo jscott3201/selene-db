@@ -48,6 +48,7 @@ pub trait ProcedureRegistry: Send + Sync {
 /// Owned by `selene-gql` so the planner can consume procedure metadata without
 /// importing `selene-pack`.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureMetadata {
     /// Opaque handle returned to the executor after successful planning.
     pub handle: ProcedureHandle,
@@ -61,6 +62,28 @@ pub struct ProcedureMetadata {
     pub mutability: ProcedureMutability,
     /// Caller-owned capability string, if the manifest requires one.
     pub capability_required: Option<String>,
+}
+
+impl ProcedureMetadata {
+    /// Construct planner-visible metadata for a registered procedure.
+    #[must_use]
+    pub const fn new(
+        handle: ProcedureHandle,
+        signature: ProcedureSignature,
+        output_schema: ProcedureOutputSchema,
+        tier: ProcedureTier,
+        mutability: ProcedureMutability,
+        capability_required: Option<String>,
+    ) -> Self {
+        Self {
+            handle,
+            signature,
+            output_schema,
+            tier,
+            mutability,
+            capability_required,
+        }
+    }
 }
 
 /// Opaque procedure handle.
@@ -90,13 +113,23 @@ impl ProcedureHandle {
 
 /// Static signature used for plan-time argument validation.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct ProcedureSignature {
     /// Positional parameters in declaration order.
     pub parameters: Vec<ProcedureParameter>,
 }
 
+impl ProcedureSignature {
+    /// Construct a signature from positional parameters.
+    #[must_use]
+    pub const fn new(parameters: Vec<ProcedureParameter>) -> Self {
+        Self { parameters }
+    }
+}
+
 /// One declared procedure parameter.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureParameter {
     /// Parameter name. Diagnostic-only; arguments are positional in v1.0.
     pub name: IStr,
@@ -104,6 +137,14 @@ pub struct ProcedureParameter {
     pub ty: GqlType,
     /// Whether a statically resolved `NULL` argument is accepted.
     pub nullable: bool,
+}
+
+impl ProcedureParameter {
+    /// Construct a declared procedure parameter.
+    #[must_use]
+    pub const fn new(name: IStr, ty: GqlType, nullable: bool) -> Self {
+        Self { name, ty, nullable }
+    }
 }
 
 /// Output schema as a relation of named columns.
@@ -115,11 +156,20 @@ pub struct ProcedureOutputSchema {
 
 /// One output column from a procedure call.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureOutputColumn {
     /// Column name matched against `YIELD col` references.
     pub name: IStr,
     /// Static type assigned to the YIELD binding.
     pub ty: GqlType,
+}
+
+impl ProcedureOutputColumn {
+    /// Construct a declared procedure output column.
+    #[must_use]
+    pub const fn new(name: IStr, ty: GqlType) -> Self {
+        Self { name, ty }
+    }
 }
 
 /// Execution tier advertised by a procedure.

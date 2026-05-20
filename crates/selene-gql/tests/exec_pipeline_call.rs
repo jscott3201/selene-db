@@ -67,14 +67,14 @@ impl TestRegistry {
                 .map(|segment| istr(segment))
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
-            ProcedureMetadata {
+            ProcedureMetadata::new(
                 handle,
-                signature: ProcedureSignature { parameters },
-                output_schema: ProcedureOutputSchema { columns: outputs },
+                ProcedureSignature::new(parameters),
+                ProcedureOutputSchema { columns: outputs },
                 tier,
                 mutability,
-                capability_required: None,
-            },
+                None,
+            ),
         );
         self
     }
@@ -140,18 +140,11 @@ fn istr(value: &str) -> IStr {
 }
 
 fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-    ProcedureParameter {
-        name: istr(name),
-        ty,
-        nullable,
-    }
+    ProcedureParameter::new(istr(name), ty, nullable)
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn {
-        name: istr(name),
-        ty,
-    }
+    ProcedureOutputColumn::new(istr(name), ty)
 }
 
 fn registry_one(

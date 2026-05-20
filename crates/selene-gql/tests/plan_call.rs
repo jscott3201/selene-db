@@ -17,29 +17,15 @@ fn registry() -> MockProcedureRegistry {
             vec![istr("pkg"), istr("all")],
             Vec::new(),
             vec![
-                ProcedureOutputColumn {
-                    name: istr("outA"),
-                    ty: GqlType::String,
-                },
-                ProcedureOutputColumn {
-                    name: istr("outB"),
-                    ty: GqlType::Integer,
-                },
+                ProcedureOutputColumn::new(istr("outA"), GqlType::String),
+                ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
             ],
         )
         .with_procedure(
             vec![istr("pkg"), istr("args")],
             vec![
-                ProcedureParameter {
-                    name: istr("a"),
-                    ty: GqlType::Integer,
-                    nullable: false,
-                },
-                ProcedureParameter {
-                    name: istr("b"),
-                    ty: GqlType::String,
-                    nullable: false,
-                },
+                ProcedureParameter::new(istr("a"), GqlType::Integer, false),
+                ProcedureParameter::new(istr("b"), GqlType::String, false),
             ],
             Vec::new(),
         )
@@ -138,18 +124,9 @@ fn yield_star_duplicate_after_registry_drift_is_defensive_error() {
         vec![istr("pkg"), istr("all")],
         Vec::new(),
         vec![
-            ProcedureOutputColumn {
-                name: istr("outA"),
-                ty: GqlType::String,
-            },
-            ProcedureOutputColumn {
-                name: istr("outB"),
-                ty: GqlType::Integer,
-            },
-            ProcedureOutputColumn {
-                name: istr("first"),
-                ty: GqlType::String,
-            },
+            ProcedureOutputColumn::new(istr("outA"), GqlType::String),
+            ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
+            ProcedureOutputColumn::new(istr("first"), GqlType::String),
         ],
     );
 

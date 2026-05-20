@@ -433,14 +433,8 @@ mod tests {
                     vec![istr("pkg"), istr("all")],
                     Vec::new(),
                     vec![
-                        ProcedureOutputColumn {
-                            name: istr("outA"),
-                            ty: GqlType::String,
-                        },
-                        ProcedureOutputColumn {
-                            name: istr("outB"),
-                            ty: GqlType::Integer,
-                        },
+                        ProcedureOutputColumn::new(istr("outA"), GqlType::String),
+                        ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
                     ],
                 ),
         );

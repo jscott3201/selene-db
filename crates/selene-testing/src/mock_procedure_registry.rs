@@ -113,16 +113,16 @@ impl MockProcedureRegistry {
         self.next_handle += 1;
         self.procedures.insert(
             name.into_boxed_slice(),
-            ProcedureMetadata {
+            ProcedureMetadata::new(
                 handle,
-                signature: ProcedureSignature { parameters },
-                output_schema: ProcedureOutputSchema {
+                ProcedureSignature::new(parameters),
+                ProcedureOutputSchema {
                     columns: output_columns,
                 },
                 tier,
                 mutability,
-                capability_required: None,
-            },
+                None,
+            ),
         );
     }
 
@@ -182,10 +182,10 @@ pub fn default_corpus_registry() -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure(
         vec![interned("selene"), interned("labels")],
         Vec::new(),
-        vec![ProcedureOutputColumn {
-            name: interned("label"),
-            ty: GqlType::String,
-        }],
+        vec![ProcedureOutputColumn::new(
+            interned("label"),
+            GqlType::String,
+        )],
     )
 }
 
@@ -202,15 +202,15 @@ mod tests {
         let name = vec![interned("pkg"), interned("proc")];
         let registry = MockProcedureRegistry::new().with_procedure(
             name.clone(),
-            vec![ProcedureParameter {
-                name: interned("arg"),
-                ty: GqlType::String,
-                nullable: false,
-            }],
-            vec![ProcedureOutputColumn {
-                name: interned("out"),
-                ty: GqlType::Boolean,
-            }],
+            vec![ProcedureParameter::new(
+                interned("arg"),
+                GqlType::String,
+                false,
+            )],
+            vec![ProcedureOutputColumn::new(
+                interned("out"),
+                GqlType::Boolean,
+            )],
         );
 
         let metadata = registry.lookup(&name).expect("procedure registered");

@@ -137,11 +137,11 @@ fn selene_health_rejects_runtime_arguments() {
         runtime_handle,
         ProcedureMutability::Read,
         ProcedureTier::Graph,
-        vec![ProcedureParameter {
-            name: istr("unexpected"),
-            ty: GqlType::Integer,
-            nullable: false,
-        }],
+        vec![ProcedureParameter::new(
+            istr("unexpected"),
+            GqlType::Integer,
+            false,
+        )],
     );
     let plan = planned("CALL selene.health(42) YIELD graph_id", &planning_registry);
     let graph = SharedGraph::new(GraphId::new(4104));
@@ -228,10 +228,10 @@ impl PlanningRegistry {
         let mut metadata = HashMap::new();
         metadata.insert(
             vec![istr("selene"), istr("health")].into_boxed_slice(),
-            ProcedureMetadata {
+            ProcedureMetadata::new(
                 handle,
-                signature: ProcedureSignature { parameters },
-                output_schema: ProcedureOutputSchema {
+                ProcedureSignature::new(parameters),
+                ProcedureOutputSchema {
                     columns: vec![
                         output("graph_id", GqlType::Integer),
                         output("node_count", GqlType::Integer),
@@ -241,8 +241,8 @@ impl PlanningRegistry {
                 },
                 tier,
                 mutability,
-                capability_required: None,
-            },
+                None,
+            ),
         );
         Self { metadata }
     }
@@ -264,10 +264,7 @@ impl ProcedureRegistry for PlanningRegistry {
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn {
-        name: istr(name),
-        ty,
-    }
+    ProcedureOutputColumn::new(istr(name), ty)
 }
 
 fn runtime_health_handle(registry: &ProcedurePackRegistry) -> ProcedureHandle {
