@@ -19,10 +19,18 @@ pub fn search(
     n_probe: Option<u32>,
     config: &IvfConfig,
     filter: Option<&RoaringBitmap>,
+    metric_override: Option<DistanceMetric>,
 ) -> Result<Vec<(NodeId, f32)>, VectorError> {
     validate_query(query, config.dim)?;
     if k == 0 || !index.is_trained() {
         return Ok(Vec::new());
+    }
+    let effective_metric = metric_override.unwrap_or(config.metric);
+    if effective_metric == DistanceMetric::Cosine && config.metric != DistanceMetric::Cosine {
+        return Err(VectorError::IvfMetricOverrideRequiresSideData {
+            r#override: effective_metric,
+            build: config.metric,
+        });
     }
     let probe_count = n_probe.unwrap_or(config.n_probe);
     if probe_count == 0 || probe_count > config.k_coarse {
@@ -51,7 +59,7 @@ pub fn search(
     // so their query bytes are not comparable to stored residual bytes. Keep
     // the Hamming pre-filter only for L2 until a metric-specific residual-frame
     // query-code proof lands.
-    let hamming_filter_active = polysemous_active && config.metric == DistanceMetric::L2;
+    let hamming_filter_active = polysemous_active && effective_metric == DistanceMetric::L2;
     let polysemous_threshold = if hamming_filter_active {
         config.pq.resolve_hamming_threshold()
     } else {
@@ -65,7 +73,7 @@ pub fn search(
         let Some(list) = index.posting_lists.get(centroid_id as usize) else {
             continue;
         };
-        let residual_query = match config.metric {
+        let residual_query = match effective_metric {
             DistanceMetric::L2 => query
                 .iter()
                 .zip(centroid)
@@ -73,7 +81,7 @@ pub fn search(
                 .collect::<Vec<_>>(),
             DistanceMetric::Dot | DistanceMetric::Cosine => query.to_vec(),
         };
-        let lut = codebook.build_query_lut(&residual_query, config.metric);
+        let lut = codebook.build_query_lut(&residual_query, effective_metric);
         let centroid_dot = dot_product(query, centroid);
         // For L2 the per-probe residual changes, so we re-encode the query
         // codes against the possibly polysemous-permuted codebook for this
@@ -102,7 +110,7 @@ pub fn search(
             let Some(lut_sum) = codebook.lut_sum_for_codes(&lut, &entry.codes) else {
                 continue;
             };
-            let score = match config.metric {
+            let score = match effective_metric {
                 DistanceMetric::L2 => -lut_sum.sqrt(),
                 DistanceMetric::Dot => lut_sum + centroid_dot,
                 DistanceMetric::Cosine => {
@@ -208,7 +216,7 @@ mod tests {
         let trained = train(&rows(), &config).unwrap();
         let index = IvfIndex::trained(2, trained, 256);
 
-        let results = search(&index, &[0.0, 0.0], 5, Some(2), &config, None).unwrap();
+        let results = search(&index, &[0.0, 0.0], 5, Some(2), &config, None, None).unwrap();
 
         assert!(results.iter().all(|(node_id, _)| node_id.get() > 0));
     }

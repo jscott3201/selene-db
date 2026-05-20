@@ -72,6 +72,7 @@ impl ExternalGraphProcedure for IvfSearchProcedure {
                     parsed.k,
                     parsed.n_probe,
                     parsed.filter.as_ref(),
+                    None,
                 )
                 .map_err(|err| vector_error(IVF_SEARCH_PROC, err))?
                 .into_iter()

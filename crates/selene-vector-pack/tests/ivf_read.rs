@@ -234,7 +234,7 @@ fn ivf_search_returns_top_k_after_training() {
         &registry,
     ));
     let expected = provider
-        .search(&[0.0, 0.0], 5, None, None)
+        .search(&[0.0, 0.0], 5, None, None, None)
         .expect("direct search succeeds")
         .into_iter()
         .map(|(node_id, score)| vec![Value::NodeRef(node_id), Value::Float(f64::from(score))])

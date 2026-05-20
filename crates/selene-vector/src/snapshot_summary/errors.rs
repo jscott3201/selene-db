@@ -80,6 +80,9 @@ pub fn render_vector_error(error: &VectorError) -> String {
         VectorError::IvfInvalidNProbe { n_probe, k_coarse } => {
             format!("{kind}{{n_probe={n_probe}, k_coarse={k_coarse}}}")
         }
+        VectorError::IvfMetricOverrideRequiresSideData { r#override, build } => {
+            format!("{kind}{{override={override:?}, build={build:?}}}")
+        }
         VectorError::IvfSectionInconsistent { reason } => {
             format!("{kind}{{reason={reason:?}}}")
         }
