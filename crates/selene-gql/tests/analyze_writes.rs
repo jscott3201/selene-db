@@ -82,10 +82,7 @@ fn registry_with_mutability(mutability: ProcedureMutability) -> MockProcedureReg
     MockProcedureRegistry::new().with_procedure_mutability(
         vec![istr("pkg"), istr("proc")],
         Vec::new(),
-        vec![ProcedureOutputColumn {
-            name: istr("result"),
-            ty: GqlType::String,
-        }],
+        vec![ProcedureOutputColumn::new(istr("result"), GqlType::String)],
         mutability,
     )
 }

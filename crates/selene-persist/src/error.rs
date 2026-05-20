@@ -248,7 +248,7 @@ impl PersistError {
             Self::PrincipalTooLarge { .. } => "22023",
             Self::PayloadTooLarge { .. }
             | Self::TooManySections { .. }
-            | Self::SectionTooLarge { .. } => "54000",
+            | Self::SectionTooLarge { .. } => "5GQL1",
             Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22023",
             Self::UnsupportedVersion { .. } => "08000",
             Self::Io(_)
@@ -286,7 +286,7 @@ mod tests {
     #[case(PersistError::HeaderCodec("bad".to_owned()), "XX500")]
     #[case(PersistError::PayloadCodec("bad".to_owned()), "XX500")]
     #[case(PersistError::Compression("bad".to_owned()), "XX500")]
-    #[case(PersistError::PayloadTooLarge { len: 1, max: 0 }, "54000")]
+    #[case(PersistError::PayloadTooLarge { len: 1, max: 0 }, "5GQL1")]
     #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22023")]
     #[case(PersistError::MagicMismatch { observed: *b"NOPE" }, "XX500")]
     #[case(PersistError::UnsupportedVersion { major: 2, minor: 0 }, "08000")]
@@ -297,8 +297,8 @@ mod tests {
     #[case(PersistError::WriterLockHeld, "XX500")]
     #[case(PersistError::TruncatedSnapshotHeader, "XX500")]
     #[case(PersistError::TruncatedSectionTable { offset: 32 }, "XX500")]
-    #[case(PersistError::TooManySections { count: 2, max: 1 }, "54000")]
-    #[case(PersistError::SectionTooLarge { len: 2, max: 1 }, "54000")]
+    #[case(PersistError::TooManySections { count: 2, max: 1 }, "5GQL1")]
+    #[case(PersistError::SectionTooLarge { len: 2, max: 1 }, "5GQL1")]
     #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22023")]
     #[case(PersistError::BodyHashMismatch { expected: [1; 16], observed: [2; 16] }, "XX500")]
     #[case(PersistError::UnsupportedFlag { flag: 1 }, "XX500")]

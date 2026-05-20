@@ -73,6 +73,38 @@ pub struct ExternalParameter {
     pub ty: GqlType,
     /// Whether NULL is accepted.
     pub nullable: bool,
+    /// Human-readable parameter description.
+    pub description: &'static str,
+    /// Documentation-only default value text.
+    pub default_doc: Option<&'static str>,
+}
+
+impl ExternalParameter {
+    /// Construct external parameter metadata.
+    #[must_use]
+    pub const fn new(name: &'static str, ty: GqlType, nullable: bool) -> Self {
+        Self {
+            name,
+            ty,
+            nullable,
+            description: "",
+            default_doc: None,
+        }
+    }
+
+    /// Attach a human-readable parameter description.
+    #[must_use]
+    pub const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
+
+    /// Attach documentation-only default value text.
+    #[must_use]
+    pub const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
+        self.default_doc = Some(default_doc);
+        self
+    }
 }
 
 /// One external procedure output column.
@@ -82,12 +114,43 @@ pub struct ExternalOutputColumn {
     pub name: &'static str,
     /// Output column type.
     pub ty: GqlType,
+    /// Human-readable output-column description.
+    pub description: &'static str,
+}
+
+impl ExternalOutputColumn {
+    /// Construct external output-column metadata.
+    #[must_use]
+    pub const fn new(name: &'static str, ty: GqlType) -> Self {
+        Self {
+            name,
+            ty,
+            description: "",
+        }
+    }
+
+    /// Attach a human-readable output-column description.
+    #[must_use]
+    pub const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
 }
 
 /// Metadata exposed by an external graph procedure.
 pub trait ExternalProcedureMetadata: Send + Sync + 'static {
     /// Canonical multipart procedure name.
     fn name(&self) -> &'static [&'static str];
+
+    /// Human-readable procedure summary.
+    fn description(&self) -> &'static str {
+        ""
+    }
+
+    /// Version where this procedure became available.
+    fn since_version(&self) -> &'static str {
+        "1.0.0"
+    }
 
     /// Positional input signature.
     fn signature(&self) -> Vec<ExternalParameter>;

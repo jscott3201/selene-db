@@ -48,9 +48,12 @@ pub trait ProcedureRegistry: Send + Sync {
 /// Owned by `selene-gql` so the planner can consume procedure metadata without
 /// importing `selene-pack`.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureMetadata {
     /// Opaque handle returned to the executor after successful planning.
     pub handle: ProcedureHandle,
+    /// Human-readable procedure summary for catalog introspection.
+    pub description: &'static str,
     /// Input signature used for argument type-checking.
     pub signature: ProcedureSignature,
     /// Output schema used for YIELD validation and binding-table construction.
@@ -61,6 +64,36 @@ pub struct ProcedureMetadata {
     pub mutability: ProcedureMutability,
     /// Caller-owned capability string, if the manifest requires one.
     pub capability_required: Option<String>,
+}
+
+impl ProcedureMetadata {
+    /// Construct planner-visible metadata for a registered procedure.
+    #[must_use]
+    pub const fn new(
+        handle: ProcedureHandle,
+        signature: ProcedureSignature,
+        output_schema: ProcedureOutputSchema,
+        tier: ProcedureTier,
+        mutability: ProcedureMutability,
+        capability_required: Option<String>,
+    ) -> Self {
+        Self {
+            handle,
+            description: "",
+            signature,
+            output_schema,
+            tier,
+            mutability,
+            capability_required,
+        }
+    }
+
+    /// Attach a human-readable procedure summary.
+    #[must_use]
+    pub const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
 }
 
 /// Opaque procedure handle.
@@ -89,14 +122,42 @@ impl ProcedureHandle {
 }
 
 /// Static signature used for plan-time argument validation.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureSignature {
     /// Positional parameters in declaration order.
     pub parameters: Vec<ProcedureParameter>,
+    /// Version where this procedure became available.
+    pub since_version: &'static str,
+}
+
+impl ProcedureSignature {
+    /// Construct a signature from positional parameters.
+    #[must_use]
+    pub const fn new(parameters: Vec<ProcedureParameter>) -> Self {
+        Self {
+            parameters,
+            since_version: "1.0.0",
+        }
+    }
+
+    /// Attach the version where this procedure became available.
+    #[must_use]
+    pub const fn with_since_version(mut self, since_version: &'static str) -> Self {
+        self.since_version = since_version;
+        self
+    }
+}
+
+impl Default for ProcedureSignature {
+    fn default() -> Self {
+        Self::new(Vec::new())
+    }
 }
 
 /// One declared procedure parameter.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureParameter {
     /// Parameter name. Diagnostic-only; arguments are positional in v1.0.
     pub name: IStr,
@@ -104,6 +165,38 @@ pub struct ProcedureParameter {
     pub ty: GqlType,
     /// Whether a statically resolved `NULL` argument is accepted.
     pub nullable: bool,
+    /// Human-readable parameter description for catalog introspection.
+    pub description: &'static str,
+    /// Documentation-only default value text for optional parameters.
+    pub default_doc: Option<&'static str>,
+}
+
+impl ProcedureParameter {
+    /// Construct a declared procedure parameter.
+    #[must_use]
+    pub const fn new(name: IStr, ty: GqlType, nullable: bool) -> Self {
+        Self {
+            name,
+            ty,
+            nullable,
+            description: "",
+            default_doc: None,
+        }
+    }
+
+    /// Attach a human-readable parameter description.
+    #[must_use]
+    pub const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
+
+    /// Attach documentation-only default value text.
+    #[must_use]
+    pub const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
+        self.default_doc = Some(default_doc);
+        self
+    }
 }
 
 /// Output schema as a relation of named columns.
@@ -115,11 +208,33 @@ pub struct ProcedureOutputSchema {
 
 /// One output column from a procedure call.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct ProcedureOutputColumn {
     /// Column name matched against `YIELD col` references.
     pub name: IStr,
     /// Static type assigned to the YIELD binding.
     pub ty: GqlType,
+    /// Human-readable output-column description for catalog introspection.
+    pub description: &'static str,
+}
+
+impl ProcedureOutputColumn {
+    /// Construct a declared procedure output column.
+    #[must_use]
+    pub const fn new(name: IStr, ty: GqlType) -> Self {
+        Self {
+            name,
+            ty,
+            description: "",
+        }
+    }
+
+    /// Attach a human-readable output-column description.
+    #[must_use]
+    pub const fn with_description(mut self, description: &'static str) -> Self {
+        self.description = description;
+        self
+    }
 }
 
 /// Execution tier advertised by a procedure.

@@ -62,10 +62,10 @@ fn unknown_name_after_yield_star_expansion_errors() {
     let registry = MockProcedureRegistry::new().with_procedure(
         vec![intern("pkg").unwrap(), intern("fn").unwrap()],
         Vec::new(),
-        vec![ProcedureOutputColumn {
-            name: intern("out").unwrap(),
-            ty: GqlType::String,
-        }],
+        vec![ProcedureOutputColumn::new(
+            intern("out").unwrap(),
+            GqlType::String,
+        )],
     );
     let statement = parse("MATCH (n) CALL pkg.fn() YIELD * RETURN col").expect("test input parses");
     let err = analyze(statement, &registry, None).expect_err("col not bound");

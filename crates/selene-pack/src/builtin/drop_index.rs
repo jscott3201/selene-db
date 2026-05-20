@@ -11,16 +11,8 @@ use crate::builtin::{
 };
 
 static DROP_INDEX_PARAMS: [StaticParameter; 2] = [
-    StaticParameter {
-        name: "label",
-        ty: GqlType::String,
-        nullable: false,
-    },
-    StaticParameter {
-        name: "property",
-        ty: GqlType::String,
-        nullable: false,
-    },
+    StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
+    StaticParameter::new("property", GqlType::String, false).with_description("Property name."),
 ];
 
 static DROP_INDEX_OUTPUTS: [StaticOutputColumn; 0] = [];
@@ -32,6 +24,10 @@ pub(crate) struct SeleneDropIndex;
 impl BuiltInMetadata for SeleneDropIndex {
     fn name(&self) -> &'static [&'static str] {
         &["selene", "drop_index"]
+    }
+
+    fn description(&self) -> &'static str {
+        "Drop a property index."
     }
 
     fn tier(&self) -> ProcedureTier {

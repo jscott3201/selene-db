@@ -227,13 +227,15 @@ struct CountingRegistry {
 
 impl ProcedureRegistry for CountingRegistry {
     fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
-        (name == [istr("test"), istr("bump")]).then(|| ProcedureMetadata {
-            handle: ProcedureHandle::new(1),
-            signature: ProcedureSignature::default(),
-            output_schema: ProcedureOutputSchema::default(),
-            tier: ProcedureTier::Graph,
-            mutability: ProcedureMutability::Read,
-            capability_required: None,
+        (name == [istr("test"), istr("bump")]).then(|| {
+            ProcedureMetadata::new(
+                ProcedureHandle::new(1),
+                ProcedureSignature::default(),
+                ProcedureOutputSchema::default(),
+                ProcedureTier::Graph,
+                ProcedureMutability::Read,
+                None,
+            )
         })
     }
 

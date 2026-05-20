@@ -32,6 +32,10 @@ impl ExternalProcedureMetadata for UpsertProcedure {
         &UPSERT_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Upsert one vector into an HNSW index."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("index_name", GqlType::String, false),
@@ -101,5 +105,11 @@ pub(crate) fn emit_payload(
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }

@@ -85,15 +85,12 @@ fn order_by_alias_resolves_to_projection() {
 #[test]
 fn explicit_yield_columns_bind_by_visible_name() {
     let registry = pkg_fn_registry(
-        vec![ProcedureParameter {
-            name: istr("node"),
-            ty: GqlType::NodeRef,
-            nullable: false,
-        }],
-        vec![ProcedureOutputColumn {
-            name: istr("col"),
-            ty: GqlType::String,
-        }],
+        vec![ProcedureParameter::new(
+            istr("node"),
+            GqlType::NodeRef,
+            false,
+        )],
+        vec![ProcedureOutputColumn::new(istr("col"), GqlType::String)],
     );
     let analyzed = analyze_with(
         "MATCH (n) CALL pkg.fn(n) YIELD col AS answer RETURN answer",
@@ -110,14 +107,8 @@ fn yield_star_expands_registered_columns() {
     let registry = pkg_fn_registry(
         Vec::new(),
         vec![
-            ProcedureOutputColumn {
-                name: istr("first"),
-                ty: GqlType::String,
-            },
-            ProcedureOutputColumn {
-                name: istr("second"),
-                ty: GqlType::Integer,
-            },
+            ProcedureOutputColumn::new(istr("first"), GqlType::String),
+            ProcedureOutputColumn::new(istr("second"), GqlType::Integer),
         ],
     );
     let analyzed = analyze_with("CALL pkg.fn() YIELD *", &registry).expect("analyzes");
@@ -226,10 +217,7 @@ fn next_chain_threads_bindings_forward() {
 fn mixed_yield_star_binds_explicit_columns() {
     let registry = pkg_fn_registry(
         Vec::new(),
-        vec![ProcedureOutputColumn {
-            name: istr("result"),
-            ty: GqlType::String,
-        }],
+        vec![ProcedureOutputColumn::new(istr("result"), GqlType::String)],
     );
     let analyzed = analyze_with("CALL pkg.fn() YIELD *, result AS alias", &registry)
         .expect("mixed YIELD analyses");

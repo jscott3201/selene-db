@@ -33,6 +33,10 @@ impl ExternalProcedureMetadata for IvfBulkUpsertProcedure {
         &IVF_BULK_UPSERT_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Bulk upsert vectors into an IVF index."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("index_name", GqlType::String, false),

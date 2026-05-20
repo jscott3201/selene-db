@@ -48,6 +48,10 @@ impl ExternalProcedureMetadata for ProjectionBuild {
         &BUILD_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Build an algorithm projection."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![
             parameter("name", GqlType::String, false),
@@ -102,6 +106,10 @@ impl ExternalProcedureMetadata for ProjectionGet {
         &GET_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Inspect one algorithm projection."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![parameter("name", GqlType::String, false)]
     }
@@ -145,6 +153,10 @@ impl ExternalProcedureMetadata for ProjectionDrop {
         &DROP_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Drop an algorithm projection."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![parameter("name", GqlType::String, false)]
     }
@@ -177,6 +189,10 @@ struct ProjectionList {
 impl ExternalProcedureMetadata for ProjectionList {
     fn name(&self) -> &'static [&'static str] {
         &LIST_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "List algorithm projections."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -247,7 +263,13 @@ fn projection_snapshot_row(snapshot: ProjectionSnapshot) -> Vec<Value> {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }
 
 fn projection_output_columns() -> Vec<ExternalOutputColumn> {
@@ -260,7 +282,7 @@ fn projection_output_columns() -> Vec<ExternalOutputColumn> {
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty).with_description("Procedure output column.")
 }
 
 fn projection_row(projection: &GraphProjection) -> Vec<Value> {

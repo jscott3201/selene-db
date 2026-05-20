@@ -29,18 +29,11 @@ fn registry(
 }
 
 fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-    ProcedureParameter {
-        name: istr(name),
-        ty,
-        nullable,
-    }
+    ProcedureParameter::new(istr(name), ty, nullable)
 }
 
 fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-    ProcedureOutputColumn {
-        name: istr(name),
-        ty,
-    }
+    ProcedureOutputColumn::new(istr(name), ty)
 }
 
 fn yield_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {

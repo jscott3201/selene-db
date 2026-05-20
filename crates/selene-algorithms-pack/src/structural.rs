@@ -66,6 +66,10 @@ impl ExternalProcedureMetadata for WccProcedure {
         &WCC_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Compute weakly connected components."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         projection_signature()
     }
@@ -102,6 +106,10 @@ struct SccProcedure {
 impl ExternalProcedureMetadata for SccProcedure {
     fn name(&self) -> &'static [&'static str] {
         &SCC_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "Compute strongly connected components."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -142,6 +150,10 @@ impl ExternalProcedureMetadata for WccCountProcedure {
         &WCC_COUNT_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Count weakly connected components."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         projection_signature()
     }
@@ -176,6 +188,10 @@ impl ExternalProcedureMetadata for SccCountProcedure {
         &SCC_COUNT_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Count strongly connected components."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         projection_signature()
     }
@@ -208,6 +224,10 @@ struct TopologicalSortProcedure {
 impl ExternalProcedureMetadata for TopologicalSortProcedure {
     fn name(&self) -> &'static [&'static str] {
         &TOPO_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "Return a topological ordering for a projection."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -252,6 +272,10 @@ impl ExternalProcedureMetadata for ArticulationPointsProcedure {
         &ARTICULATION_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Find articulation points in a projection."
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         projection_signature()
     }
@@ -288,6 +312,10 @@ struct BridgesProcedure {
 impl ExternalProcedureMetadata for BridgesProcedure {
     fn name(&self) -> &'static [&'static str] {
         &BRIDGES_NAME
+    }
+
+    fn description(&self) -> &'static str {
+        "Find bridge edges in a projection."
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
@@ -354,11 +382,17 @@ fn single_uint_result(value: u64) -> ProcedureResult {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty).with_description("Procedure output column.")
 }
 
 #[cfg(test)]

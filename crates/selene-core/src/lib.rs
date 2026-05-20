@@ -47,7 +47,8 @@ pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
 pub use identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
 pub use istr::{
-    AdmissionError, IStr, intern, intern_atomic_admit, intern_with_admission, lookup, resolve,
+    AdmissionError, IStr, IStrAdmissionPolicy, intern, intern_atomic_admit, intern_or_external,
+    intern_with_admission, lookup, resolve,
 };
 pub use label_set::LabelSet;
 pub use origin::Origin;

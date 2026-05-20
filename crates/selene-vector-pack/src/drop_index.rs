@@ -32,6 +32,14 @@ impl ExternalProcedureMetadata for DropIndexProcedure {
         &DROP_INDEX_NAME
     }
 
+    fn description(&self) -> &'static str {
+        "Drop a vector index."
+    }
+
+    fn since_version(&self) -> &'static str {
+        "1.1.0"
+    }
+
     fn signature(&self) -> Vec<ExternalParameter> {
         vec![parameter("name", GqlType::String, false)]
     }
@@ -65,5 +73,11 @@ impl ExternalMutationProcedure for DropIndexProcedure {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    let parameter =
+        ExternalParameter::new(name, ty, nullable).with_description("Procedure parameter.");
+    if nullable {
+        parameter.with_default_doc("NULL (use procedure default)")
+    } else {
+        parameter
+    }
 }

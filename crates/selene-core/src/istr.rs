@@ -2,10 +2,10 @@
 //!
 //! See spec 02 section 5.1. The cap of 1,000,000 distinct strings protects against
 //! unbounded interner growth; exceeding the cap raises
-//! [`CoreError::IStrCapExceeded`], mapped to GQLSTATUS `54000`.
+//! [`CoreError::IStrCapExceeded`], mapped to GQLSTATUS `5GQL1`.
 
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use lasso::{Spur, ThreadedRodeo};
 use parking_lot::Mutex;
@@ -16,13 +16,32 @@ use rkyv::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::error::{CoreError, CoreResult};
+use crate::{
+    error::{CoreError, CoreResult},
+    value::Value,
+};
 
 /// Maximum number of distinct interned strings per process.
 ///
 /// This is the spec 02 section 5.1 DoS guard for the `IL013` family of implementation
 /// choices.
 pub const MAX_INTERNED_STRINGS: usize = 1_000_000;
+
+/// Policy for converting raw text into engine values at string-admission boundaries.
+///
+/// The low-level [`intern`] and [`intern_with_admission`] APIs always preserve
+/// their hard cap. This policy is only applied by [`intern_or_external`] for
+/// callers that can safely carry high-cardinality text as
+/// [`Value::ExternalString`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum IStrAdmissionPolicy {
+    /// Propagate [`CoreError::IStrCapExceeded`] when the interner is full.
+    #[default]
+    Reject,
+    /// Fall back to [`Value::ExternalString`] only when the global interner cap is full.
+    FallbackToExternal,
+}
 
 /// Interned string handle.
 ///
@@ -40,7 +59,7 @@ static INTERNER: OnceLock<ThreadedRodeo<Spur>> = OnceLock::new();
 /// Held only on the slow path for strings that are not yet interned.
 /// Already-interned strings hit the lock-free fast path via `rodeo.get(s)`.
 /// Without this lock, concurrent callers could both observe capacity and insert
-/// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 54000 contract.
+/// distinct strings, breaking the spec 02 section 5.1 GQLSTATUS 5GQL1 contract.
 ///
 /// Uses `parking_lot::Mutex` with no poison semantics so a panic in the
 /// admission predicate path cannot brick all future intern calls.
@@ -67,6 +86,41 @@ const fn cap_exceeded(current_len: usize) -> bool {
 /// string is not already present.
 pub fn intern(s: &str) -> CoreResult<IStr> {
     intern_with_admission(s).map(|(value, _was_new)| value)
+}
+
+/// Convert raw text into a [`Value`] using the requested admission policy.
+///
+/// Successful interning returns [`Value::String`]. When the global cap is full,
+/// [`IStrAdmissionPolicy::Reject`] propagates the cap error, while
+/// [`IStrAdmissionPolicy::FallbackToExternal`] returns
+/// [`Value::ExternalString`]. Other core errors are always propagated.
+///
+/// GQL runtime comparison and hashing treat `Value::String` and
+/// `Value::ExternalString` with the same content as equal even though Rust's
+/// derived `Value` equality is variant-strict.
+///
+/// # Errors
+///
+/// Returns [`CoreError::IStrCapExceeded`] when the policy is
+/// [`IStrAdmissionPolicy::Reject`] and the string is not already admitted.
+pub fn intern_or_external(s: &str, policy: IStrAdmissionPolicy) -> CoreResult<Value> {
+    intern_or_external_from_result(s, policy, intern(s))
+}
+
+fn intern_or_external_from_result(
+    s: &str,
+    policy: IStrAdmissionPolicy,
+    result: CoreResult<IStr>,
+) -> CoreResult<Value> {
+    match result {
+        Ok(value) => Ok(Value::String(value)),
+        Err(CoreError::IStrCapExceeded { .. })
+            if policy == IStrAdmissionPolicy::FallbackToExternal =>
+        {
+            Ok(Value::ExternalString(Arc::from(s)))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Intern a string slice and report whether it was newly admitted.
@@ -319,6 +373,46 @@ mod tests {
     }
 
     #[test]
+    fn intern_or_external_reject_policy_propagates_cap_without_global_fill() {
+        let err = intern_or_external_from_result(
+            "overflow",
+            IStrAdmissionPolicy::Reject,
+            Err(CoreError::IStrCapExceeded {
+                count: MAX_INTERNED_STRINGS,
+                max: MAX_INTERNED_STRINGS,
+            }),
+        )
+        .expect_err("reject policy propagates cap");
+
+        assert!(matches!(err, CoreError::IStrCapExceeded { .. }));
+    }
+
+    #[test]
+    fn intern_or_external_fallback_policy_returns_external_on_cap() {
+        let value = intern_or_external_from_result(
+            "overflow",
+            IStrAdmissionPolicy::FallbackToExternal,
+            Err(CoreError::IStrCapExceeded {
+                count: MAX_INTERNED_STRINGS,
+                max: MAX_INTERNED_STRINGS,
+            }),
+        )
+        .expect("fallback policy converts cap");
+
+        assert!(matches!(value, Value::ExternalString(ref text) if text.as_ref() == "overflow"));
+    }
+
+    #[test]
+    fn intern_or_external_returns_interned_string_on_success() {
+        let key = intern("admitted").expect("test string interns");
+        let value =
+            intern_or_external_from_result("admitted", IStrAdmissionPolicy::Reject, Ok(key))
+                .expect("successful intern returns value");
+
+        assert_eq!(value, Value::String(key));
+    }
+
+    #[test]
     fn istr_is_32_bit_sized() {
         assert_eq!(std::mem::size_of::<IStr>(), 4);
     }
@@ -405,7 +499,7 @@ mod tests {
             count: MAX_INTERNED_STRINGS,
             max: MAX_INTERNED_STRINGS,
         };
-        assert_eq!(err.gqlstatus(), "54000");
+        assert_eq!(err.gqlstatus(), "5GQL1");
         assert!(err.to_string().contains(&MAX_INTERNED_STRINGS.to_string()));
     }
 

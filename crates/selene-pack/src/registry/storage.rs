@@ -83,6 +83,24 @@ impl TierEntry {
             Self::ExternalMutation(_) => UNSTABLE_BUILTIN_CONTENT_HASH,
         }
     }
+
+    fn description(&self) -> &'static str {
+        match self {
+            Self::Graph(procedure) => procedure.description(),
+            Self::Mutation(procedure) => procedure.description(),
+            Self::ExternalGraph(procedure) => procedure.description(),
+            Self::ExternalMutation(procedure) => procedure.description(),
+        }
+    }
+
+    fn since_version(&self) -> &'static str {
+        match self {
+            Self::Graph(procedure) => procedure.since_version(),
+            Self::Mutation(procedure) => procedure.since_version(),
+            Self::ExternalGraph(procedure) => procedure.since_version(),
+            Self::ExternalMutation(procedure) => procedure.since_version(),
+        }
+    }
 }
 
 pub(crate) struct PendingEntry {
@@ -318,46 +336,59 @@ fn procedure_metadata(pending: &PendingEntry) -> Result<ProcedureMetadata, Regis
                 .collect::<Result<Vec<_>, _>>()?,
         ),
     };
-    Ok(ProcedureMetadata {
-        handle: pending.handle,
-        signature: ProcedureSignature { parameters },
-        output_schema: ProcedureOutputSchema { columns },
-        tier: pending.attempted_tier,
-        mutability: pending.entry.mutability(),
-        capability_required: None,
-    })
+    Ok(ProcedureMetadata::new(
+        pending.handle,
+        ProcedureSignature::new(parameters).with_since_version(pending.entry.since_version()),
+        ProcedureOutputSchema { columns },
+        pending.attempted_tier,
+        pending.entry.mutability(),
+        None,
+    )
+    .with_description(pending.entry.description()))
 }
 
 fn parameter(parameter: &StaticParameter) -> Result<ProcedureParameter, RegistryError> {
-    Ok(ProcedureParameter {
-        name: intern_static(parameter.name, "parameter")?,
-        ty: parameter.ty.clone(),
-        nullable: parameter.nullable,
-    })
+    let mut result = ProcedureParameter::new(
+        intern_static(parameter.name, "parameter")?,
+        parameter.ty.clone(),
+        parameter.nullable,
+    )
+    .with_description(parameter.description);
+    if let Some(default_doc) = parameter.default_doc {
+        result = result.with_default_doc(default_doc);
+    }
+    Ok(result)
 }
 
 fn output_column(column: &StaticOutputColumn) -> Result<ProcedureOutputColumn, RegistryError> {
-    Ok(ProcedureOutputColumn {
-        name: intern_static(column.name, "output column")?,
-        ty: column.ty.clone(),
-    })
+    Ok(ProcedureOutputColumn::new(
+        intern_static(column.name, "output column")?,
+        column.ty.clone(),
+    )
+    .with_description(column.description))
 }
 
 fn external_parameter(parameter: &ExternalParameter) -> Result<ProcedureParameter, RegistryError> {
-    Ok(ProcedureParameter {
-        name: intern_static(parameter.name, "parameter")?,
-        ty: parameter.ty.clone(),
-        nullable: parameter.nullable,
-    })
+    let mut result = ProcedureParameter::new(
+        intern_static(parameter.name, "parameter")?,
+        parameter.ty.clone(),
+        parameter.nullable,
+    )
+    .with_description(parameter.description);
+    if let Some(default_doc) = parameter.default_doc {
+        result = result.with_default_doc(default_doc);
+    }
+    Ok(result)
 }
 
 fn external_output_column(
     column: &ExternalOutputColumn,
 ) -> Result<ProcedureOutputColumn, RegistryError> {
-    Ok(ProcedureOutputColumn {
-        name: intern_static(column.name, "output column")?,
-        ty: column.ty.clone(),
-    })
+    Ok(ProcedureOutputColumn::new(
+        intern_static(column.name, "output column")?,
+        column.ty.clone(),
+    )
+    .with_description(column.description))
 }
 
 fn intern_name(raw: &'static [&'static str]) -> Result<NameKey, RegistryError> {

@@ -27,10 +27,7 @@ impl ExternalProcedureMetadata for TestProcedure {
     }
 
     fn output_columns(&self) -> Vec<ExternalOutputColumn> {
-        vec![ExternalOutputColumn {
-            name: "value",
-            ty: GqlType::Integer,
-        }]
+        vec![ExternalOutputColumn::new("value", GqlType::Integer)]
     }
 }
 

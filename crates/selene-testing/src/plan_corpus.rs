@@ -93,27 +93,21 @@ impl PlanCorpus {
                 vec![istr("pkg"), istr("all")],
                 Vec::new(),
                 vec![
-                    ProcedureOutputColumn {
-                        name: istr("outA"),
-                        ty: GqlType::String,
-                    },
-                    ProcedureOutputColumn {
-                        name: istr("outB"),
-                        ty: GqlType::Integer,
-                    },
+                    ProcedureOutputColumn::new(istr("outA"), GqlType::String),
+                    ProcedureOutputColumn::new(istr("outB"), GqlType::Integer),
                 ],
             )
             .with_procedure_mutability(
                 vec![istr("pkg"), istr("mutate")],
-                vec![ProcedureParameter {
-                    name: istr("name"),
-                    ty: GqlType::String,
-                    nullable: false,
-                }],
-                vec![ProcedureOutputColumn {
-                    name: istr("changed"),
-                    ty: GqlType::Boolean,
-                }],
+                vec![ProcedureParameter::new(
+                    istr("name"),
+                    GqlType::String,
+                    false,
+                )],
+                vec![ProcedureOutputColumn::new(
+                    istr("changed"),
+                    GqlType::Boolean,
+                )],
                 ProcedureMutability::GraphWrite,
             )
     }

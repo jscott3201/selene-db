@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
 
-use selene_core::{CancellationToken, Change, IStr, Value};
+use selene_core::{CancellationToken, Change, IStr, IStrAdmissionPolicy, Value};
 use selene_graph::{SharedGraph, WriteTxn};
 
 use crate::{
@@ -23,6 +23,7 @@ pub struct Session<'g> {
     pub(crate) cancellation: Option<CancellationToken>,
     pub(crate) deadline: Option<Instant>,
     pub(crate) row_cap: Option<usize>,
+    pub(crate) istr_admission_policy: IStrAdmissionPolicy,
 }
 
 /// Metadata returned after committing an explicit transaction through a [`Session`].
@@ -86,6 +87,7 @@ impl<'g> Session<'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
         }
     }
 
@@ -104,6 +106,7 @@ impl<'g> Session<'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
         }
     }
 
@@ -141,6 +144,18 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_row_cap(mut self, max_rows: usize) -> Self {
         self.row_cap = Some(max_rows);
+        self
+    }
+
+    /// Set the policy used when engine-created strings cross admission boundaries.
+    ///
+    /// The default is [`IStrAdmissionPolicy::Reject`], preserving the hard-error
+    /// behavior of v1.0. [`IStrAdmissionPolicy::FallbackToExternal`] lets
+    /// eligible runtime boundaries carry over-cap strings as
+    /// [`Value::ExternalString`].
+    #[must_use]
+    pub fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
+        self.istr_admission_policy = policy;
         self
     }
 
@@ -361,9 +376,9 @@ impl<'g> Session<'g> {
 
 #[cfg(test)]
 mod tests {
-    use std::{num::NonZeroUsize, time::Instant};
+    use std::{num::NonZeroUsize, thread, time::Instant};
 
-    use selene_core::{GraphId, IStr, intern_with_admission};
+    use selene_core::{GraphId, IStr, IStrAdmissionPolicy, intern_with_admission};
     use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
     use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
@@ -403,6 +418,28 @@ mod tests {
             .expect("empty type validates")
             .build()
             .expect("closed graph builds")
+    }
+
+    #[test]
+    fn istr_admission_policy_is_session_scoped_across_threads() {
+        let graph = SharedGraph::new(GraphId::new(3896));
+        thread::scope(|scope| {
+            let reject = scope.spawn(|| Session::new(&graph).istr_admission_policy);
+            let fallback = scope.spawn(|| {
+                Session::new(&graph)
+                    .with_istr_admission_policy(IStrAdmissionPolicy::FallbackToExternal)
+                    .istr_admission_policy
+            });
+
+            assert_eq!(
+                reject.join().expect("reject session joins"),
+                IStrAdmissionPolicy::Reject
+            );
+            assert_eq!(
+                fallback.join().expect("fallback session joins"),
+                IStrAdmissionPolicy::FallbackToExternal
+            );
+        });
     }
 
     #[test]
