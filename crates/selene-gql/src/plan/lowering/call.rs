@@ -325,18 +325,11 @@ mod defensive_tests {
     }
 
     fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
-        ProcedureParameter {
-            name: istr(name),
-            ty,
-            nullable,
-        }
+        ProcedureParameter::new(istr(name), ty, nullable)
     }
 
     fn output(name: &str, ty: GqlType) -> ProcedureOutputColumn {
-        ProcedureOutputColumn {
-            name: istr(name),
-            ty,
-        }
+        ProcedureOutputColumn::new(istr(name), ty)
     }
 
     fn registry(
@@ -345,14 +338,14 @@ mod defensive_tests {
         mutability: ProcedureMutability,
     ) -> StaticRegistry {
         StaticRegistry {
-            metadata: ProcedureMetadata {
-                handle: ProcedureHandle::new(1),
-                signature: ProcedureSignature { parameters },
-                output_schema: ProcedureOutputSchema { columns },
-                tier: ProcedureTier::Graph,
+            metadata: ProcedureMetadata::new(
+                ProcedureHandle::new(1),
+                ProcedureSignature::new(parameters),
+                ProcedureOutputSchema { columns },
+                ProcedureTier::Graph,
                 mutability,
-                capability_required: None,
-            },
+                None,
+            ),
         }
     }
 
