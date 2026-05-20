@@ -15,6 +15,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod cancellation;
 pub mod changeset;
 mod changeset_variants;
 pub mod codec;
@@ -34,6 +35,7 @@ pub mod schema;
 pub mod value;
 pub mod value_adapter;
 
+pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind};
 pub use codec::{Codec, CodecError};
 pub use error::{CoreError, CoreResult};

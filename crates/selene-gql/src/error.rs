@@ -19,6 +19,12 @@ impl GqlStatus {
     /// Maps to GQLSTATUS 5GQL1, a selene-db implementation-defined class per
     /// ISO/IEC 39075:2024 section 23.1.
     pub const PROGRAM_LIMIT_EXCEEDED: Self = Self(*b"5GQL1");
+    /// Maps to GQLSTATUS 5GQL2, a selene-db implementation-defined class per
+    /// ISO/IEC 39075:2024 section 23.1.
+    pub const OPERATION_CANCELLED: Self = Self(*b"5GQL2");
+    /// Maps to GQLSTATUS 5GQL3, a selene-db implementation-defined class per
+    /// ISO/IEC 39075:2024 section 23.1.
+    pub const DEADLINE_EXCEEDED: Self = Self(*b"5GQL3");
     /// Maps to GQLSTATUS 42N03, a selene-db implementation-defined subclass
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const UNDEFINED_REFERENCE: Self = Self(*b"42N03");
@@ -212,6 +218,8 @@ mod tests {
             (GqlStatus::SYNTAX_ERROR, "42001", *b"42"),
             (GqlStatus::FEATURE_NOT_SUPPORTED, "42N01", *b"42"),
             (GqlStatus::PROGRAM_LIMIT_EXCEEDED, "5GQL1", *b"5G"),
+            (GqlStatus::OPERATION_CANCELLED, "5GQL2", *b"5G"),
+            (GqlStatus::DEADLINE_EXCEEDED, "5GQL3", *b"5G"),
             (GqlStatus::UNDEFINED_REFERENCE, "42N03", *b"42"),
             (GqlStatus::INVALID_REFERENCE, "42002", *b"42"),
             (GqlStatus::DUPLICATE_OBJECT, "42N10", *b"42"),
