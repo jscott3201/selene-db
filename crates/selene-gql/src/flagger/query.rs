@@ -42,6 +42,7 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
         Statement::Mutate(pipeline) => mutation::pipeline(pipeline, uses),
         Statement::Ddl(statement) => ddl::statement(statement, uses),
         Statement::Call(call) => call::procedure_call(call, uses),
+        Statement::Explain { inner, .. } => self::statement(inner, uses),
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => record_feature(uses, FeatureId::GT01, statement.span()),

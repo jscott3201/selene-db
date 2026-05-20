@@ -32,6 +32,7 @@ pub fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
         Statement::Mutate(_)
         | Statement::Ddl(_)
         | Statement::Call(_)
+        | Statement::Explain { .. }
         | Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => Ok(()),

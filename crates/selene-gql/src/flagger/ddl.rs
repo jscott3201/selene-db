@@ -74,6 +74,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
         DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
             type_ddl(*span, uses);
         }
+        DdlStatement::ShowIndexes(_) | DdlStatement::ShowProcedures(_) => {}
     }
 }
 
