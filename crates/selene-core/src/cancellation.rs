@@ -1,4 +1,9 @@
 //! Cooperative cancellation primitives shared by executor and extension crates.
+//!
+//! Cancellation is cooperative: callers request cancellation through a
+//! [`CancellationToken`], and long-running executor, procedure-pack, or
+//! algorithm loops observe it at explicit checkpoints. Work between
+//! checkpoints is allowed to finish before the cancellation surfaces.
 
 use std::{
     sync::{
@@ -9,6 +14,11 @@ use std::{
 };
 
 /// Caller-owned cancellation flag that can be cloned across sessions or threads.
+///
+/// Clones share the same underlying flag, so a host can keep one handle and
+/// pass another into `selene-gql` session builders. Calling [`Self::cancel`]
+/// requests cancellation; it does not interrupt running Rust code
+/// preemptively.
 #[derive(Clone, Debug, Default)]
 pub struct CancellationToken(Arc<AtomicBool>);
 
@@ -44,6 +54,10 @@ pub enum CancellationCause {
 }
 
 /// Cheap composite checker passed into hot loops that cannot depend on `selene-gql`.
+///
+/// The checker combines an optional cancellation token with an optional
+/// absolute deadline. It is intentionally `Copy` so callers can pass it into
+/// nested loops and procedure-pack adapters without allocation.
 #[derive(Clone, Copy, Debug)]
 pub struct CancellationChecker<'a> {
     token: Option<&'a CancellationToken>,

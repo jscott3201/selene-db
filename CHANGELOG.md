@@ -58,6 +58,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   v1.1 evaluator feature errors.
 - `runtime/evaluator/` submodule layout split into `mod.rs`, `binary_ops.rs`,
   `predicates.rs`, `scalar_fns.rs`, `case.rs`, and `collections.rs`.
+- Cooperative cancellation and per-statement resource limits:
+  `CancellationToken`, `Session::with_cancellation_token(...)`,
+  `Session::with_deadline(Instant)`, and `Session::with_row_cap(usize)`.
+  Cancellation is cooperative across executor pipeline checkpoints,
+  procedure-pack adapters, algorithm hot loops, and bulk vector payload
+  construction. Row caps apply only to outermost statement output rows.
+  New `ExecutorError::{Cancelled, Timeout, RowCapExceeded}` map to
+  implementation-defined GQLSTATUS codes `5GQL2`, `5GQL3`, and reused
+  `5GQL1`, respectively.
 
 ### Changed
 

@@ -108,13 +108,23 @@ impl<'g> Session<'g> {
     }
 
     /// Attach a cooperative cancellation token to subsequent statements.
+    ///
+    /// Cancellation is cooperative: statements observe the token at executor,
+    /// procedure-pack, and algorithm checkpoints. If a statement inside an
+    /// explicit transaction returns `Cancelled`, the transaction enters the
+    /// failed state until `ROLLBACK`.
     #[must_use]
     pub fn with_cancellation_token(mut self, token: CancellationToken) -> Self {
         self.cancellation = Some(token);
         self
     }
 
-    /// Attach a per-statement deadline to subsequent statements.
+    /// Attach an absolute per-statement deadline to subsequent statements.
+    ///
+    /// The deadline is compared with `Instant::now()` at the same cooperative
+    /// checkpoints as cancellation. Expiry returns `Timeout`; inside an
+    /// explicit transaction that also marks the transaction failed until
+    /// `ROLLBACK`.
     #[must_use]
     pub fn with_deadline(mut self, deadline: Instant) -> Self {
         self.deadline = Some(deadline);
@@ -122,6 +132,12 @@ impl<'g> Session<'g> {
     }
 
     /// Attach an outermost result-row cap to subsequent statements.
+    ///
+    /// The cap is enforced only at the statement output boundary. Intermediate
+    /// rows produced by scans, joins, `UNWIND`, or other pipeline operators do
+    /// not count against it. Exceeding the cap returns `RowCapExceeded`; inside
+    /// an explicit transaction that marks the transaction failed until
+    /// `ROLLBACK`.
     #[must_use]
     pub fn with_row_cap(mut self, max_rows: usize) -> Self {
         self.row_cap = Some(max_rows);

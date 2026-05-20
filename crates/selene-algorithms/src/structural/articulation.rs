@@ -34,6 +34,8 @@ use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
 use crate::structural::{RowIndex, SENTINEL};
 
+type LowlinkOutput = (Vec<NodeId>, Vec<(NodeId, NodeId)>);
+
 /// Articulation points (cut vertices) under the projection's undirected view.
 ///
 /// Returns `NodeId`s sorted ASC. Empty projection → empty `Vec` per spec 16
@@ -83,7 +85,7 @@ pub fn bridges_with_checker(
 fn lowlink_pass_with_checker(
     proj: &GraphProjection,
     checker: CancellationChecker<'_>,
-) -> Result<(Vec<NodeId>, Vec<(NodeId, NodeId)>), AlgorithmAborted> {
+) -> Result<LowlinkOutput, AlgorithmAborted> {
     check_algorithm(checker)?;
     let idx = RowIndex::new(proj);
     if idx.is_empty() {
