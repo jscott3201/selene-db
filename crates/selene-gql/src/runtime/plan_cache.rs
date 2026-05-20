@@ -117,7 +117,9 @@ fn contains_call(plan: &ExecutionPlan) -> bool {
 fn op_contains_call(op: &PipelineOp) -> bool {
     match op {
         PipelineOp::Call(_) => true,
-        PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => contains_call(rhs),
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::ExplainPlan { inner: rhs, .. } => contains_call(rhs),
         _ => false,
     }
 }
@@ -207,6 +209,26 @@ mod tests {
         })
     }
 
+    fn explain_call_plan() -> Arc<ExecutionPlan> {
+        let inner = call_plan();
+        Arc::new(ExecutionPlan {
+            category: StatementCategory::ReadOnly,
+            pattern_plan: None,
+            pipeline: vec![PipelineOp::ExplainPlan {
+                inner: Box::new(inner.as_ref().clone()),
+                span: SourceSpan::default(),
+            }],
+            output_schema: BindingTableSchema {
+                columns: Vec::new(),
+            },
+            impl_defined_caps: ImplDefinedCaps::default(),
+            expr_ids: Default::default(),
+            subqueries: Default::default(),
+            next_expr_id: ExprId::new(0),
+            next_pipeline_op_id: PipelineOpId::new(1),
+        })
+    }
+
     #[test]
     fn plan_cache_basic_hit_miss() {
         let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
@@ -276,6 +298,19 @@ mod tests {
         cache.insert(Arc::from("CALL cache.call()"), call_plan(), 0);
 
         assert!(cache.get("CALL cache.call()", 0).is_none());
+        assert_eq!(cache.stats().misses, 1);
+    }
+
+    #[test]
+    fn cache_skips_explain_call_plans() {
+        let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
+        cache.insert(
+            Arc::from("EXPLAIN CALL cache.call()"),
+            explain_call_plan(),
+            0,
+        );
+
+        assert!(cache.get("EXPLAIN CALL cache.call()", 0).is_none());
         assert_eq!(cache.stats().misses, 1);
     }
 }

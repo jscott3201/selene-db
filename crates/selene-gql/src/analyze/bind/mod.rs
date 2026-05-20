@@ -76,14 +76,7 @@ pub(crate) fn bind_statement(
         }
         Ok(())
     })();
-    if let Err(err) = bind_result {
-        if matches!(err, AnalysisError::RecursionLimitExceeded { .. }) {
-            // The rejected AST may itself be adversarially deep; leaking it here
-            // avoids a recursive drop stack overflow on the error path.
-            std::mem::forget(stmt);
-        }
-        return Err(err);
-    }
+    bind_result?;
     let category = category::classify(&stmt, registry);
     let write_set = statement_write_set(&stmt).then(|| ctx.write_set.clone());
     Ok(ctx.finish(stmt, category, write_set))
