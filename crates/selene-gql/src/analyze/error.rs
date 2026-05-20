@@ -92,6 +92,14 @@ pub enum AnalysisError {
         hint: Option<String>,
     },
 
+    /// Analyzer expression recursion exceeded the implementation-defined cap.
+    #[error("expression nesting depth {depth} exceeds analyzer limit")]
+    #[diagnostic(code(SLENE_GQL_5GQL1))]
+    RecursionLimitExceeded {
+        /// Depth observed when the limit was exceeded.
+        depth: u32,
+    },
+
     /// A statically-decidable type mismatch.
     #[error("{context}: expected {expected}, found {found:?}")]
     #[diagnostic(code(SLENE_GQL_22G03))]
@@ -596,6 +604,7 @@ impl AnalysisError {
             | Self::PatternKindMismatch { .. }
             | Self::AliasReusedAsPatternBinding { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,
             Self::WrongArgumentCount { .. } => GqlStatus::DATATYPE_MISMATCH,

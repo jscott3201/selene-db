@@ -90,6 +90,7 @@ impl ExecutionPlan {
                 PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
                     rhs.refresh_pipeline_op_high_water();
                 }
+                PipelineOp::ExplainPlan { inner, .. } => inner.refresh_pipeline_op_high_water(),
                 _ => {}
             }
         }
@@ -354,6 +355,13 @@ pub enum PipelineOp {
     Mutation(MutationOp),
     /// Catalog operation.
     Catalog(CatalogOp),
+    /// Return a textual dump of an inner execution plan.
+    ExplainPlan {
+        /// Planned inner statement. It is never executed by this operation.
+        inner: Box<ExecutionPlan>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// Transaction-control operation.
     Tx(TxOp),
 }

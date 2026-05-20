@@ -14,7 +14,7 @@ use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 use crate::adjacency::AdjacencyEntry;
 use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
-use crate::typed_index::TypedIndex;
+use crate::typed_index::{TypedIndex, TypedIndexKind};
 
 /// Snapshot metadata.
 #[derive(
@@ -227,6 +227,17 @@ impl SeleneGraph {
     #[must_use]
     pub fn property_index_count(&self) -> usize {
         self.property_index.len()
+    }
+
+    /// Iterate built-in property indexes as owned `(label, property, kind)` tuples.
+    ///
+    /// This covers only SeleneGraph's built-in property indexes. Vector indexes
+    /// are extension-provider state and remain available through
+    /// `CALL vector.list_indexes()`.
+    pub fn iter_property_indexes(&self) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind)> + '_ {
+        self.property_index
+            .iter()
+            .map(|((label, property), index)| (*label, *property, index.kind()))
     }
 
     /// Return rows matching `value` under a registered property index.

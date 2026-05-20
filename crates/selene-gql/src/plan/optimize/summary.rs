@@ -342,6 +342,13 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
             kind: "Catalog",
             payload: catalog_summary(catalog),
         },
+        PipelineOp::ExplainPlan { inner, .. } => PipelineOpSummary {
+            kind: "ExplainPlan",
+            payload: format!(
+                "inner={}",
+                PlanSnapshot::from_plan(inner, Vec::new()).compact()
+            ),
+        },
         PipelineOp::Tx(tx) => PipelineOpSummary {
             kind: "Tx",
             payload: tx_summary(tx),
@@ -370,6 +377,9 @@ fn collect_order_access(pipeline: &[PipelineOp]) -> Vec<Option<String>> {
             PipelineOp::TopK { keys, .. } => access.extend(keys.iter().map(order_access)),
             PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
                 access.extend(collect_order_access(&rhs.pipeline));
+            }
+            PipelineOp::ExplainPlan { inner, .. } => {
+                access.extend(collect_order_access(&inner.pipeline));
             }
             PipelineOp::Filter(_)
             | PipelineOp::Project(_)
@@ -620,6 +630,8 @@ fn catalog_summary(catalog: &CatalogOp) -> String {
         }
         CatalogOp::ShowNodeTypes(_) => "op=ShowNodeTypes".to_owned(),
         CatalogOp::ShowEdgeTypes(_) => "op=ShowEdgeTypes".to_owned(),
+        CatalogOp::ShowIndexes(_) => "op=ShowIndexes".to_owned(),
+        CatalogOp::ShowProcedures(_) => "op=ShowProcedures".to_owned(),
     }
 }
 

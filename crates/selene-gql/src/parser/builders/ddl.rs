@@ -28,6 +28,8 @@ pub(super) fn build_ddl_statement(
         Rule::drop_edge_type => build_drop_edge_type(inner, budget),
         Rule::show_node_types => Ok(DdlStatement::ShowNodeTypes(span(&inner))),
         Rule::show_edge_types => Ok(DdlStatement::ShowEdgeTypes(span(&inner))),
+        Rule::show_indexes => Ok(DdlStatement::ShowIndexes(span(&inner))),
+        Rule::show_procedures => Ok(DdlStatement::ShowProcedures(span(&inner))),
         Rule::create_trigger | Rule::drop_trigger | Rule::show_triggers => Err(not_implemented(
             &inner,
             "triggers are out of v1.0 scope per spec 03 §7",
@@ -42,9 +44,13 @@ pub(super) fn build_ddl_statement(
             &inner,
             "procedures are registered through selene-pack, not via DDL",
         )),
-        Rule::create_index | Rule::drop_index => Err(not_implemented(
+        Rule::create_index => Err(not_implemented(
             &inner,
-            "use CALL selene.create_index(...) once selene-pack lands",
+            "named CREATE INDEX DDL requires storage-layer named-index support - landing in a follow-up brief; use `CALL selene.create_index('Label', 'property', 'kind')` today",
+        )),
+        Rule::drop_index => Err(not_implemented(
+            &inner,
+            "named DROP INDEX DDL requires storage-layer named-index support - landing in a follow-up brief; use `CALL selene.drop_index('Label', 'property')` today",
         )),
         Rule::create_user
         | Rule::drop_user

@@ -23,14 +23,68 @@ use crate::{
     },
 };
 
+pub(crate) const ANALYZER_MAX_DEPTH: u32 = 256;
+
 /// Analyze one statement with the binding pass.
 pub(crate) fn bind_statement(
     stmt: Statement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<AnalyzedStatement, AnalysisError> {
     let mut ctx = BindContext::new(stmt.span(), registry);
-    match &stmt {
-        Statement::Query(pipeline) => query::bind_query_pipeline(&mut ctx, pipeline)?,
+    let bind_result = (|| -> Result<(), AnalysisError> {
+        match &stmt {
+            Statement::Query(pipeline) => query::bind_query_pipeline(&mut ctx, pipeline)?,
+            Statement::Composite { first, rest, .. } => {
+                ctx.with_child_scope(ScopeKind::Projection, first.span, true, |ctx| {
+                    query::bind_query_pipeline(ctx, first)
+                })?;
+                for (_, pipeline) in rest {
+                    ctx.with_child_scope(ScopeKind::Projection, pipeline.span, true, |ctx| {
+                        query::bind_query_pipeline(ctx, pipeline)
+                    })?;
+                }
+            }
+            Statement::Chained { blocks, .. } => {
+                // Each NEXT block consumes the prior block's binding table, so
+                // we run sequential blocks in scopes chained off the previous
+                // block's *terminal* scope (which holds the projection aliases
+                // each block published). Boundary stays `false` so post-RETURN
+                // bindings flow forward through GA07.
+                let root = ctx.current_scope();
+                let mut prior_tail = root;
+                for block in blocks {
+                    let block_root =
+                        ctx.scopes
+                            .push_scope(prior_tail, ScopeKind::Projection, block.span, false);
+                    ctx.set_scope(block_root);
+                    query::bind_query_pipeline(&mut ctx, block)?;
+                    prior_tail = ctx.current_scope();
+                }
+                ctx.set_scope(root);
+            }
+            Statement::Mutate(pipeline) => mutation::bind_mutation_pipeline(&mut ctx, pipeline)?,
+            Statement::Ddl(statement) => ddl::bind_ddl_statement(&mut ctx, statement)?,
+            Statement::Call(call) => {
+                call::bind_procedure_call(&mut ctx, call)?;
+            }
+            Statement::Explain { inner, .. } => bind_explain_inner(&mut ctx, inner)?,
+            Statement::StartTransaction { span }
+            | Statement::Commit { span }
+            | Statement::Rollback { span } => {
+                transaction::bind_transaction_control(&mut ctx, *span)
+            }
+        }
+        Ok(())
+    })();
+    bind_result?;
+    let category = category::classify(&stmt, registry);
+    let write_set = statement_write_set(&stmt).then(|| ctx.write_set.clone());
+    Ok(ctx.finish(stmt, category, write_set))
+}
+
+fn bind_explain_inner(ctx: &mut BindContext<'_>, inner: &Statement) -> Result<(), AnalysisError> {
+    match inner {
+        Statement::Query(pipeline) => query::bind_query_pipeline(ctx, pipeline),
         Statement::Composite { first, rest, .. } => {
             ctx.with_child_scope(ScopeKind::Projection, first.span, true, |ctx| {
                 query::bind_query_pipeline(ctx, first)
@@ -40,13 +94,9 @@ pub(crate) fn bind_statement(
                     query::bind_query_pipeline(ctx, pipeline)
                 })?;
             }
+            Ok(())
         }
         Statement::Chained { blocks, .. } => {
-            // Each NEXT block consumes the prior block's binding table, so
-            // we run sequential blocks in scopes chained off the previous
-            // block's *terminal* scope (which holds the projection aliases
-            // each block published). Boundary stays `false` so post-RETURN
-            // bindings flow forward through GA07.
             let root = ctx.current_scope();
             let mut prior_tail = root;
             for block in blocks {
@@ -54,23 +104,35 @@ pub(crate) fn bind_statement(
                     ctx.scopes
                         .push_scope(prior_tail, ScopeKind::Projection, block.span, false);
                 ctx.set_scope(block_root);
-                query::bind_query_pipeline(&mut ctx, block)?;
+                query::bind_query_pipeline(ctx, block)?;
                 prior_tail = ctx.current_scope();
             }
             ctx.set_scope(root);
+            Ok(())
         }
-        Statement::Mutate(pipeline) => mutation::bind_mutation_pipeline(&mut ctx, pipeline)?,
-        Statement::Ddl(statement) => ddl::bind_ddl_statement(&mut ctx, statement)?,
-        Statement::Call(call) => {
-            call::bind_procedure_call(&mut ctx, call)?;
-        }
+        Statement::Mutate(pipeline) => mutation::bind_mutation_pipeline(ctx, pipeline),
+        Statement::Ddl(statement) => ddl::bind_ddl_statement(ctx, statement),
+        Statement::Call(call) => call::bind_procedure_call(ctx, call),
+        Statement::Explain { span, .. } => Err(AnalysisError::NotImplemented {
+            message: "EXPLAIN EXPLAIN is not supported".into(),
+            span: *span,
+            hint: None,
+        }),
         Statement::StartTransaction { span }
         | Statement::Commit { span }
-        | Statement::Rollback { span } => transaction::bind_transaction_control(&mut ctx, *span),
+        | Statement::Rollback { span } => {
+            transaction::bind_transaction_control(ctx, *span);
+            Ok(())
+        }
     }
-    let category = category::classify(&stmt, registry);
-    let write_set = matches!(&stmt, Statement::Mutate(_)).then(|| ctx.write_set.clone());
-    Ok(ctx.finish(stmt, category, write_set))
+}
+
+fn statement_write_set(statement: &Statement) -> bool {
+    match statement {
+        Statement::Mutate(_) => true,
+        Statement::Explain { inner, .. } => matches!(inner.as_ref(), Statement::Mutate(_)),
+        _ => false,
+    }
 }
 
 pub(crate) struct BindContext<'ctx> {
@@ -81,6 +143,7 @@ pub(crate) struct BindContext<'ctx> {
     expr_ids: ExprIdLookup,
     write_set: MutationWriteSet,
     registry: &'ctx dyn ProcedureRegistry,
+    expr_depth: u32,
 }
 
 impl<'ctx> BindContext<'ctx> {
@@ -95,6 +158,7 @@ impl<'ctx> BindContext<'ctx> {
             expr_ids: ExprIdLookup::default(),
             write_set: MutationWriteSet::default(),
             registry,
+            expr_depth: 0,
         }
     }
 
@@ -270,5 +334,23 @@ impl<'ctx> BindContext<'ctx> {
 
     pub(crate) fn registry(&self) -> &'ctx dyn ProcedureRegistry {
         self.registry
+    }
+
+    pub(crate) fn with_expr_depth<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, AnalysisError>,
+    ) -> Result<T, AnalysisError> {
+        let next = self.expr_depth.saturating_add(1);
+        if next > ANALYZER_MAX_DEPTH {
+            return Err(AnalysisError::RecursionLimitExceeded { depth: next });
+        }
+        self.expr_depth = next;
+        let result = f(self);
+        self.expr_depth = self.expr_depth.saturating_sub(1);
+        result
+    }
+
+    pub(crate) const fn at_expr_root(&self) -> bool {
+        self.expr_depth == 0
     }
 }

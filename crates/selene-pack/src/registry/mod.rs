@@ -12,7 +12,8 @@ use selene_gql::{
 use crate::{
     builtin::{
         GraphProcedureBuiltIn, MutationProcedureBuiltIn, create_index::SeleneCreateIndex,
-        drop_index::SeleneDropIndex, health::SeleneHealth, pack_history::SelenePackHistory,
+        drop_index::SeleneDropIndex, feature_status::SeleneFeatureStatus, health::SeleneHealth,
+        pack_history::SelenePackHistory,
     },
     error::RegistryError,
     external::ExternalProcedurePack,
@@ -84,6 +85,12 @@ impl ProcedureRegistry for ProcedurePackRegistry {
         self.storage.lookup(name)
     }
 
+    fn iter_handles(
+        &self,
+    ) -> Box<dyn Iterator<Item = (Vec<selene_core::IStr>, ProcedureMetadata)> + '_> {
+        Box::new(self.storage.iter_handles().into_iter())
+    }
+
     fn execute(
         &self,
         handle: ProcedureHandle,
@@ -142,6 +149,7 @@ impl ProcedurePackRegistryBuilder {
     #[must_use]
     pub fn with_builtins(self) -> Self {
         self.with_graph_builtin(SeleneHealth)
+            .with_graph_builtin(SeleneFeatureStatus)
             .with_mutation_builtin(SeleneCreateIndex)
             .with_mutation_builtin(SeleneDropIndex)
     }
@@ -150,6 +158,7 @@ impl ProcedurePackRegistryBuilder {
     #[must_use]
     pub fn with_builtins_and_history(self, history_source: Arc<dyn PackHistorySource>) -> Self {
         self.with_graph_builtin(SeleneHealth)
+            .with_graph_builtin(SeleneFeatureStatus)
             .with_graph_builtin(SelenePackHistory::new(history_source))
             .with_mutation_builtin(SeleneCreateIndex)
             .with_mutation_builtin(SeleneDropIndex)

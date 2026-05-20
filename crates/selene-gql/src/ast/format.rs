@@ -61,6 +61,11 @@ pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
                 variant: "ProcedureCall",
             });
         }
+        Statement::Explain { .. } => {
+            return Err(FormatError::Unsupported {
+                variant: "ExplainStatement",
+            });
+        }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => {

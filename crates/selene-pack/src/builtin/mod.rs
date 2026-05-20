@@ -2,6 +2,7 @@
 
 pub(crate) mod create_index;
 pub(crate) mod drop_index;
+pub(crate) mod feature_status;
 pub(crate) mod health;
 pub(crate) mod pack_history;
 
@@ -92,7 +93,8 @@ mod tests {
 
     use super::{
         BuiltInMetadata, UNSTABLE_BUILTIN_CONTENT_HASH, create_index::SeleneCreateIndex,
-        drop_index::SeleneDropIndex, health::SeleneHealth, pack_history::SelenePackHistory,
+        drop_index::SeleneDropIndex, feature_status::SeleneFeatureStatus, health::SeleneHealth,
+        pack_history::SelenePackHistory,
     };
 
     struct DummyHistory;
@@ -111,8 +113,9 @@ mod tests {
     #[test]
     fn every_platform_builtin_uses_unstable_content_hash_sentinel() {
         let history = SelenePackHistory::new(Arc::new(DummyHistory));
-        let builtins: [&dyn BuiltInMetadata; 4] = [
+        let builtins: [&dyn BuiltInMetadata; 5] = [
             &SeleneHealth,
+            &SeleneFeatureStatus,
             &SeleneCreateIndex,
             &SeleneDropIndex,
             &history,

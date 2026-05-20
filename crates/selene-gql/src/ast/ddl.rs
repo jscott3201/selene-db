@@ -84,6 +84,13 @@ pub enum DdlStatement {
     ShowNodeTypes(SourceSpan),
     /// `SHOW EDGE TYPES`.
     ShowEdgeTypes(SourceSpan),
+    /// `SHOW INDEXES`.
+    ///
+    /// Lists built-in property indexes only. Vector indexes remain exposed via
+    /// `CALL vector.list_indexes()`.
+    ShowIndexes(SourceSpan),
+    /// `SHOW PROCEDURES`.
+    ShowProcedures(SourceSpan),
 }
 
 impl DdlStatement {
@@ -98,7 +105,9 @@ impl DdlStatement {
             | Self::DropNodeType { span, .. }
             | Self::DropEdgeType { span, .. }
             | Self::ShowNodeTypes(span)
-            | Self::ShowEdgeTypes(span) => *span,
+            | Self::ShowEdgeTypes(span)
+            | Self::ShowIndexes(span)
+            | Self::ShowProcedures(span) => *span,
         }
     }
 }
