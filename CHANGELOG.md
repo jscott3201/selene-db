@@ -48,6 +48,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   returns `ExecutorError::FeatureNotInV1_1` with GQLSTATUS 42N01 pending v1.2
   Unicode normalization work; `Exists` and `CountSubquery` are deferred to
   BRIEF-116b.
+- Evaluator now executes `EXISTS { MATCH ... }` and `COUNT { MATCH ... }`
+  subqueries (ISO §19.4 EXISTS predicate; COUNT subquery is a selene-db
+  dialect extension). 18/18 v1.0 evaluator stubs now closed (16 by BRIEF-116;
+  2 by BRIEF-116b). Outer-binding references in subquery patterns are resolved
+  at lowering and seeded at evaluation.
 - `ExecutorError::{UnknownFunction, FunctionArityMismatch,
   InvalidFunctionModifier, FeatureNotInV1_1}` for scalar dispatch and scoped
   v1.1 evaluator feature errors.

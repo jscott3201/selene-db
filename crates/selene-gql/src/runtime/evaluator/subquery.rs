@@ -3,7 +3,8 @@
 //! `EXISTS { MATCH ... }` follows ISO/IEC 39075:2024 section 19.4 and is
 //! two-valued: it returns `TRUE` when the inner pattern has at least one row and
 //! `FALSE` otherwise. `COUNT { MATCH ... }` is a selene-db dialect extension
-//! over the same planned single-MATCH surface.
+//! over the same planned single-MATCH surface. Correlated outer bindings are
+//! projected into the inner pattern's seed row before execution.
 
 use selene_core::Value;
 

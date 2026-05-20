@@ -12,7 +12,8 @@ use super::PatternPlan;
 /// Planned subquery referenced by an expression ID in a containing plan.
 ///
 /// `Exists` follows ISO/IEC 39075:2024 section 19.4. `CountSubquery` is a
-/// selene-db dialect extension over a single `MATCH` pattern.
+/// selene-db dialect extension over a single `MATCH` pattern; it counts every
+/// row produced by that pattern, including duplicates from join shapes.
 #[derive(Clone, Debug)]
 pub struct PlannedSubquery {
     /// Subquery expression kind.
@@ -37,7 +38,11 @@ pub enum SubqueryKind {
     Count,
 }
 
-/// Planned subqueries indexed by the expression ID of their AST node.
+/// Plan-level registry of expression subqueries indexed by AST expression ID.
+///
+/// The analyzer allocates expression IDs, lowering clones that lookup table
+/// onto the execution plan, and runtime evaluation uses this registry as the
+/// single source of truth for subquery bodies.
 #[derive(Clone, Debug, Default)]
 pub struct SubqueryRegistry {
     by_expr_id: BTreeMap<ExprId, PlannedSubquery>,
