@@ -182,7 +182,6 @@ fn with_projection_alias_survives_boundary() {
 #[test]
 fn top_level_shapes_without_data_bindings_analyze() {
     for source in [
-        "CREATE GRAPH IF NOT EXISTS demo",
         "CREATE NODE TYPE :Person (id :: STRING)",
         "START TRANSACTION",
         "COMMIT",

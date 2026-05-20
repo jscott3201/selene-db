@@ -224,10 +224,6 @@ fn deferred_pattern_features_have_stable_tags() {
             "variable-length edge patterns (quantifier)",
         ),
         (
-            "MATCH ANY (n) RETURN n",
-            "MATCH path selector (SHORTEST/ALL/ANY)",
-        ),
-        (
             "MATCH DIFFERENT EDGES (n) RETURN n",
             "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
         ),
@@ -247,9 +243,9 @@ fn deferred_pattern_features_have_stable_tags() {
 }
 
 #[test]
-fn planner_errors_emit_xx500() {
-    let err = plan_err("MATCH ANY (n) RETURN n");
-    assert_eq!(err.gqlstatus().as_str(), "XX500");
+fn planner_not_implemented_errors_emit_42n01() {
+    let err = plan_err("MATCH DIFFERENT EDGES (n) RETURN n");
+    assert_eq!(err.gqlstatus().as_str(), "42N01");
 }
 
 #[test]

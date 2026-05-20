@@ -19,28 +19,6 @@ fn catalog_op(plan: &selene_gql::ExecutionPlan) -> &CatalogOp {
 }
 
 #[test]
-fn create_and_drop_graph_lower_to_catalog_ops() {
-    let plan = plan_one("CREATE GRAPH IF NOT EXISTS g");
-    assert!(matches!(
-        catalog_op(&plan),
-        CatalogOp::CreateGraph {
-            if_not_exists: true,
-            or_replace: false,
-            ..
-        }
-    ));
-
-    let plan = plan_one("DROP GRAPH IF EXISTS g");
-    assert!(matches!(
-        catalog_op(&plan),
-        CatalogOp::DropGraph {
-            if_exists: true,
-            ..
-        }
-    ));
-}
-
-#[test]
 fn create_node_type_preserves_properties_default_and_validation() {
     let plan = plan_one(
         "CREATE NODE TYPE IF NOT EXISTS :Person EXTENDS :Entity \

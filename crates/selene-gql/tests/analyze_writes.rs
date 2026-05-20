@@ -372,9 +372,8 @@ fn mutation_pipeline_classifies_as_data_modifying() {
 
 #[test]
 fn create_graph_classifies_as_catalog_modifying() {
-    let analyzed = analyze_one("CREATE GRAPH demo").expect("analyzes");
-    assert_eq!(analyzed.category, StatementCategory::CatalogModifying);
-    assert!(analyzed.write_set.is_none());
+    let error = parse("CREATE GRAPH demo").expect_err("graph management is outside v1.0");
+    assert_eq!(error.gqlstatus().as_str(), "42N01");
 }
 
 #[test]

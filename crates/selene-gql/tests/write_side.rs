@@ -96,27 +96,14 @@ fn parse_finish_terminator() {
 
 #[test]
 fn parse_graph_ddl() {
-    assert!(matches!(
-        parse_ddl("CREATE GRAPH foo"),
-        DdlStatement::CreateGraph { .. }
-    ));
-    assert!(matches!(
-        parse_ddl("CREATE GRAPH IF NOT EXISTS foo"),
-        DdlStatement::CreateGraph {
-            if_not_exists: true,
-            ..
-        }
-    ));
-    // CREATE OR REPLACE GRAPH parses to or_replace=true at the builder layer
-    // but the Flagger now rejects it (no ISO feature ID for OR REPLACE in
-    // graph DDL). Coverage for the rejection path lives in flagger.rs.
-    assert!(matches!(
-        parse_ddl("DROP GRAPH IF EXISTS foo"),
-        DdlStatement::DropGraph {
-            if_exists: true,
-            ..
-        }
-    ));
+    for source in [
+        "CREATE GRAPH foo",
+        "CREATE GRAPH IF NOT EXISTS foo",
+        "DROP GRAPH IF EXISTS foo",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    }
 }
 
 #[test]
