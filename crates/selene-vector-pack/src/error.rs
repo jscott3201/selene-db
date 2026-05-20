@@ -62,6 +62,11 @@ pub(crate) fn vector_error(procedure: &'static str, error: VectorError) -> Proce
         VectorError::IvfInvalidNProbe { n_probe, k_coarse } => invalid_argument(format!(
             "{procedure}: n_probe={n_probe} out of range (k_coarse={k_coarse})"
         )),
+        VectorError::IvfMetricOverrideRequiresSideData { r#override, build } => {
+            invalid_argument(format!(
+                "{procedure}: metric override {override:?} requires side data not stored by {build:?} index"
+            ))
+        }
         other => ProcedureError::Internal {
             detail: format!("{procedure}: provider error: {other}"),
         },
@@ -83,5 +88,19 @@ mod tests {
         );
 
         assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+    }
+
+    #[test]
+    fn ivf_metric_side_data_error_maps_to_invalid_argument_status() {
+        let err = vector_error(
+            "vector.ivf_search",
+            VectorError::IvfMetricOverrideRequiresSideData {
+                r#override: selene_vector::DistanceMetric::Cosine,
+                build: selene_vector::DistanceMetric::L2,
+            },
+        );
+
+        assert!(matches!(err, ProcedureError::InvalidArgument { .. }));
+        assert_eq!(err.gqlstatus().as_str(), "22G03");
     }
 }

@@ -475,13 +475,13 @@ fn recall_bench_uses_public_provider_search() {
     )
     .expect("read composition replay bench");
 
-    assert!(bench.contains(".search(query, k, Some(ef_search), None)"));
+    assert!(bench.contains(".search(query, k, Some(ef_search), None, None)"));
     assert!(!bench.contains("hnsw::search::search"));
-    assert!(quant_bench.contains(".search(query, k, Some(ef_search), None)"));
+    assert!(quant_bench.contains(".search(query, k, Some(ef_search), None, None)"));
     assert!(!quant_bench.contains("hnsw::search::search"));
     assert!(quant_bench.contains("benchmark_group(\"quant_recall_at_10\")"));
     assert!(quant_bench.contains("benchmark_group(\"opq_recall_at_10\")"));
-    assert!(composition_bench.contains(".search(&corpus[0], 10, Some(100), None)"));
+    assert!(composition_bench.contains(".search(&corpus[0], 10, Some(100), None, None)"));
     assert!(!composition_bench.contains("hnsw::search::search"));
     assert!(composition_bench.contains("benchmark_group(\"composition_replay\")"));
 }

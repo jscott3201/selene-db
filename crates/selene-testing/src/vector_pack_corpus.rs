@@ -201,7 +201,7 @@ impl VectorPackInvocation {
                 ef_search,
                 filter_nodes,
             } => format!(
-                "CALL vector.search({}, {}, {k}, {}, {})",
+                "CALL vector.search({}, {}, {k}, {}, {}, NULL)",
                 quoted(index_name),
                 f32_list(query),
                 nullable_usize(*ef_search),
@@ -270,7 +270,7 @@ impl VectorPackInvocation {
                 n_probe,
                 filter_nodes,
             } => format!(
-                "CALL vector.ivf_search({}, {}, {k}, {}, {})",
+                "CALL vector.ivf_search({}, {}, {k}, {}, {}, NULL)",
                 quoted(index_name),
                 f32_list(query),
                 nullable_u32(*n_probe),

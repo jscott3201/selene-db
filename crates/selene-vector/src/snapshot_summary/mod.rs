@@ -365,6 +365,8 @@ pub enum VectorErrorKind {
     IvfDimensionMismatch,
     /// Invalid IVF probe count.
     IvfInvalidNProbe,
+    /// IVF metric override requires side data absent from the index.
+    IvfMetricOverrideRequiresSideData,
     /// IVF snapshot sections are inconsistent.
     IvfSectionInconsistent,
     /// IVF training failed.
@@ -401,6 +403,7 @@ impl VectorErrorKind {
             Self::IvfTrainingDeferred => "IvfTrainingDeferred",
             Self::IvfDimensionMismatch => "IvfDimensionMismatch",
             Self::IvfInvalidNProbe => "IvfInvalidNProbe",
+            Self::IvfMetricOverrideRequiresSideData => "IvfMetricOverrideRequiresSideData",
             Self::IvfSectionInconsistent => "IvfSectionInconsistent",
             Self::IvfTrainingFailed => "IvfTrainingFailed",
             Self::PqCodebookTrainFailed => "PqCodebookTrainFailed",
@@ -513,6 +516,9 @@ pub fn vector_error_kind_for(error: &VectorError) -> VectorErrorKind {
         VectorError::IvfTrainingDeferred { .. } => VectorErrorKind::IvfTrainingDeferred,
         VectorError::IvfDimensionMismatch { .. } => VectorErrorKind::IvfDimensionMismatch,
         VectorError::IvfInvalidNProbe { .. } => VectorErrorKind::IvfInvalidNProbe,
+        VectorError::IvfMetricOverrideRequiresSideData { .. } => {
+            VectorErrorKind::IvfMetricOverrideRequiresSideData
+        }
         VectorError::IvfSectionInconsistent { .. } => VectorErrorKind::IvfSectionInconsistent,
         VectorError::IvfTrainingFailed { .. } => VectorErrorKind::IvfTrainingFailed,
         VectorError::PqCodebookTrainFailed { .. } => VectorErrorKind::PqCodebookTrainFailed,

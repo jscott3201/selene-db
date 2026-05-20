@@ -76,6 +76,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `AnalysisError::RecursionLimitExceeded` (GQLSTATUS `5GQL1`). Named
   `CREATE INDEX` / `DROP INDEX` DDL lowering remains deferred pending
   storage-layer named-index support.
+- `vector.search` and `vector.ivf_search` now accept an optional nullable
+  `metric` argument (`cosine`, `l2`, or `dot`) that overrides query-time
+  scoring. HNSW overrides score against the existing build-time topology; IVF
+  supports every override except Cosine on non-Cosine-built indexes, where
+  reconstructed-norm side data is absent and the call returns GQLSTATUS
+  `22G03`. IVF top-k search now uses a bounded heap and reusable per-thread
+  scratch buffers.
 
 ### Changed
 

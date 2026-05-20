@@ -21,7 +21,7 @@ use crate::quantize::PqCodebook;
 use crate::snapshot::cqnt::{CqntBodyV1, decode_cqnt, encode_cqnt};
 use crate::snapshot::ipqb::{IpqbBodyV1, decode_ipqb, encode_ipqb};
 use crate::snapshot::post::{PostBodyV1, decode_post, encode_post};
-use crate::{IvfConfig, VectorError, snapshot};
+use crate::{DistanceMetric, IvfConfig, VectorError, snapshot};
 
 /// Stateful vector index provider registered under the `IVFP` provider tag.
 pub struct IvfProvider {
@@ -77,6 +77,10 @@ impl IvfProvider {
 
     /// Search the currently published IVF-PQ index.
     ///
+    /// `metric_override` changes the query-time scoring metric. Cosine
+    /// overrides require Cosine-built reconstructed-norm side data. Search
+    /// skips NaN scores before top-k ordering.
+    ///
     /// # Errors
     ///
     /// Returns [`VectorError::DimensionsLocked`] for query dimension
@@ -88,9 +92,18 @@ impl IvfProvider {
         k: usize,
         n_probe: Option<u32>,
         filter: Option<&RoaringBitmap>,
+        metric_override: Option<DistanceMetric>,
     ) -> Result<Vec<(NodeId, f32)>, VectorError> {
         let snapshot = self.state.load_full();
-        search::search(&snapshot, query, k, n_probe, &self.config, filter)
+        search::search(
+            &snapshot,
+            query,
+            k,
+            n_probe,
+            &self.config,
+            filter,
+            metric_override,
+        )
     }
 
     /// Return statistics for the currently loaded IVF-PQ state.

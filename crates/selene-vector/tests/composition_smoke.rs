@@ -116,10 +116,10 @@ fn composition_replay_representative_matrix() {
         let (direct, recovered, filter) = providers_for_case(&corpus, *case);
         let filter = filter.as_ref();
         let direct_rows = direct
-            .search(query, 10, Some(160), filter)
+            .search(query, 10, Some(160), filter, None)
             .unwrap_or_else(|err| panic!("{} direct search failed: {err:?}", case.name));
         let recovered_rows = recovered
-            .search(query, 10, Some(160), filter)
+            .search(query, 10, Some(160), filter, None)
             .unwrap_or_else(|err| panic!("{} recovered search failed: {err:?}", case.name));
 
         assert!(
@@ -208,9 +208,11 @@ fn composition_replay_with_roaringbitmap_filter_l2_full_stack() {
     let (direct, recovered, filter) = providers_for_case(&corpus, case);
     let filter = filter.expect("filtered case builds a RoaringBitmap");
     let query = &corpus.queries[0];
-    let direct_rows = direct.search(query, 10, Some(160), Some(&filter)).unwrap();
+    let direct_rows = direct
+        .search(query, 10, Some(160), Some(&filter), None)
+        .unwrap();
     let recovered_rows = recovered
-        .search(query, 10, Some(160), Some(&filter))
+        .search(query, 10, Some(160), Some(&filter), None)
         .unwrap();
 
     assert!(!direct_rows.is_empty());
@@ -265,7 +267,7 @@ fn composition_quantized_prefix_tail_fallback_trickle_insert() {
     apply_insert(&provider, tail_id, tail.clone(), 0);
 
     let rows = provider
-        .search(&tail, 5, Some(320), None)
+        .search(&tail, 5, Some(320), None, None)
         .expect("tail fallback search succeeds");
 
     assert_eq!(
@@ -449,7 +451,7 @@ fn mean_exact_recall_with_ef(
             .into_iter()
             .collect::<HashSet<_>>();
         let approx = provider
-            .search(query, 10, Some(ef_search), None)
+            .search(query, 10, Some(ef_search), None, None)
             .expect("composition search succeeds")
             .into_iter()
             .map(|(id, _)| id)
@@ -477,7 +479,7 @@ fn mean_exact_recall_on_vector_queries(
             .into_iter()
             .collect::<HashSet<_>>();
         let approx = provider
-            .search(query, 10, Some(50), None)
+            .search(query, 10, Some(50), None, None)
             .expect("composition search succeeds")
             .into_iter()
             .map(|(id, _)| id)

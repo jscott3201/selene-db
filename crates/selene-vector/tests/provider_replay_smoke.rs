@@ -139,7 +139,7 @@ fn delete_removes_node_from_search_results() {
         .on_change(&vector_change(delete_payload(NodeId::new(3))))
         .expect("delete succeeds");
     let results = provider
-        .search(&[3.0, 0.0, 0.0, 0.0], 5, Some(16), None)
+        .search(&[3.0, 0.0, 0.0, 0.0], 5, Some(16), None, None)
         .expect("search succeeds");
 
     assert_eq!(provider.snapshot().len(), 5);
@@ -170,7 +170,7 @@ fn delete_all_nodes_clears_entry_point() {
     assert_eq!(provider.snapshot().live_len(), 0);
     assert!(
         provider
-            .search(&[1.0, 0.0, 0.0, 0.0], 3, Some(16), None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 3, Some(16), None, None)
             .unwrap()
             .is_empty()
     );
@@ -198,7 +198,7 @@ fn delete_then_insert_reuses_node_id_correctly() {
         .expect("same NodeId can be reinserted after delete");
 
     let results = provider
-        .search(&[0.0, 1.0, 0.0, 0.0], 1, Some(16), None)
+        .search(&[0.0, 1.0, 0.0, 0.0], 1, Some(16), None, None)
         .unwrap();
 
     assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(1)));
@@ -282,7 +282,7 @@ fn provider_search_after_inserts_returns_recent_node_first() {
     }
 
     let results = provider
-        .search(&[0.0, 0.0, 0.0, 1.0], 1, Some(8), None)
+        .search(&[0.0, 0.0, 0.0, 1.0], 1, Some(8), None, None)
         .unwrap();
 
     assert_eq!(results.first().map(|(id, _)| *id), Some(NodeId::new(5)));
@@ -300,7 +300,7 @@ fn provider_search_uses_config_ef_when_override_none() {
         .unwrap();
 
     let results = provider
-        .search(&[1.0, 0.0, 0.0, 0.0], 3, None, None)
+        .search(&[1.0, 0.0, 0.0, 0.0], 3, None, None, None)
         .unwrap();
 
     assert_eq!(results.len(), 1);

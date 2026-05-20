@@ -25,7 +25,7 @@ fn bench_composition_replay(c: &mut Criterion) {
                     let sections = snapshot_sections(&provider);
                     let recovered = recover_provider(&sections, mode);
                     let rows = recovered
-                        .search(&corpus[0], 10, Some(100), None)
+                        .search(&corpus[0], 10, Some(100), None, None)
                         .expect("composition replay search succeeds");
                     std::hint::black_box(rows);
                 });
@@ -36,7 +36,7 @@ fn bench_composition_replay(c: &mut Criterion) {
                 let provider = provider_for(&corpus, mode);
                 let _sections = snapshot_sections(&provider);
                 let rows = provider
-                    .search(&corpus[0], 10, Some(100), None)
+                    .search(&corpus[0], 10, Some(100), None, None)
                     .expect("composition direct search succeeds");
                 std::hint::black_box(rows);
             });

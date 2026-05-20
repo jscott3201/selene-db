@@ -58,7 +58,7 @@ fn mean_recall_for_provider(
             .into_iter()
             .collect::<HashSet<_>>();
         let approx = provider
-            .search(query, k, Some(ef_search), None)
+            .search(query, k, Some(ef_search), None, None)
             .expect("HNSW search succeeds")
             .into_iter()
             .map(|(id, _)| id)

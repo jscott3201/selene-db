@@ -52,7 +52,7 @@ fn v1_0_0_snapshot_and_wal_forward_read_as_default() {
         hnsw_from_snapshot
             .get("default")
             .expect("default HNSW exists")
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None)
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
             .expect("snapshot HNSW search succeeds")
             .first()
             .map(|(node_id, _)| *node_id),

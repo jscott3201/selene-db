@@ -48,7 +48,7 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
                 .expect("baseline config is valid");
             let baseline_source = provider_with_graph(entry.graph, baseline_config);
             let baseline = baseline_source
-                .search(query, *k, *ef_search, bitmap(filter).as_ref())
+                .search(query, *k, *ef_search, bitmap(filter).as_ref(), None)
                 .expect("baseline search succeeds");
             let asymmetric_config = config
                 .clone()
@@ -72,10 +72,10 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
             let rescored = recover_provider(&rescored_config, &sections);
             let filter = bitmap(filter);
             let sq8 = asymmetric
-                .search(query, *k, *ef_search, filter.as_ref())
+                .search(query, *k, *ef_search, filter.as_ref(), None)
                 .expect("SQ8 search succeeds");
             let rescore = rescored
-                .search(query, *k, *ef_search, filter.as_ref())
+                .search(query, *k, *ef_search, filter.as_ref(), None)
                 .expect("SQ8 rescore search succeeds");
             VectorInvocationResult::SearchParity {
                 parity: QuantizationParitySummary {
@@ -93,7 +93,7 @@ pub(crate) fn execute_entry(entry: &VectorCorpusEntry) -> VectorSnapshot {
         } => {
             let filter = bitmap(filter);
             let rows = source
-                .search(query, *k, *ef_search, filter.as_ref())
+                .search(query, *k, *ef_search, filter.as_ref(), None)
                 .expect("search succeeds");
             VectorInvocationResult::Search {
                 rows: SearchRowsSummary::from_rows(&rows),
@@ -471,7 +471,7 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
                 .expect_err("tombstone rejected")
         }
         ApiInductionPayload::DimensionsLockedSearch => provider
-            .search(&[1.0], 1, Some(4), None)
+            .search(&[1.0], 1, Some(4), None, None)
             .expect_err("wrong dim rejected"),
         ApiInductionPayload::InvalidPayloadEmptyBulk => VectorBulkInsertPayloadV1 { rows: vec![] }
             .encode()
@@ -531,7 +531,7 @@ fn induce_api_error(payload: &ApiInductionPayload, provider: &HnswProvider) -> V
             .expect_err("layer cap rejected")
         }
         ApiInductionPayload::NonFiniteQuery => provider
-            .search(&[1.0, f32::NAN, 0.0, 0.0], 1, Some(4), None)
+            .search(&[1.0, f32::NAN, 0.0, 0.0], 1, Some(4), None, None)
             .expect_err("NaN query rejected"),
         ApiInductionPayload::PqDimensionNotDivisible => {
             HnswConfig::with_params(10, 16, 200, 50, DistanceMetric::L2)

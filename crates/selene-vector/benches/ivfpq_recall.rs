@@ -20,7 +20,7 @@ fn bench_ivfpq_recall(c: &mut Criterion) {
         group.bench_function(BenchmarkId::new("n_probe", n_probe), |b| {
             b.iter(|| {
                 let rows = provider
-                    .search(&corpus[0], 10, Some(n_probe), None)
+                    .search(&corpus[0], 10, Some(n_probe), None, None)
                     .expect("IVF search succeeds");
                 std::hint::black_box(rows);
             });

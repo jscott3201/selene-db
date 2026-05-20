@@ -109,8 +109,8 @@ fn dot_metric_polysemous_search_matches_no_polysemous_baseline() {
     populate(&plain, &rows);
     populate(&polysemous, &rows);
 
-    let plain_ids = result_ids(&plain.search(&query, 10, Some(4), None).unwrap());
-    let polysemous_ids = result_ids(&polysemous.search(&query, 10, Some(4), None).unwrap());
+    let plain_ids = result_ids(&plain.search(&query, 10, Some(4), None, None).unwrap());
+    let polysemous_ids = result_ids(&polysemous.search(&query, 10, Some(4), None, None).unwrap());
     let exact = exact_dot_top_k(&rows, &query, 10);
 
     assert_eq!(polysemous_ids, plain_ids);

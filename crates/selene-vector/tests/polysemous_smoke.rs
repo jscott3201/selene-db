@@ -140,7 +140,7 @@ fn polysemous_search_returns_results_and_is_runtime_active() {
     let _ = provider.write_section(SubTag(*b"VECS")).unwrap();
     let _ = provider.write_section(SubTag(*b"QUNT")).unwrap();
     let query = vec![0.1, -0.2, 0.3, -0.4, 0.05, -0.05, 0.0, 0.0];
-    let results = provider.search(&query, 5, Some(32), None).unwrap();
+    let results = provider.search(&query, 5, Some(32), None, None).unwrap();
     // Filter is at default 0.5 threshold; results may legitimately be
     // shorter than 5 if every candidate fails the Hamming cutoff, but on
     // a 256-vector corpus with a moderate threshold we expect at least
@@ -185,7 +185,7 @@ fn polysemous_threshold_at_zero_admits_only_exact_matches() {
     let _ = provider.write_section(SubTag(*b"VECS")).unwrap();
     let _ = provider.write_section(SubTag(*b"QUNT")).unwrap();
     let query = vec![0.731, -0.314, 0.159, 0.265, -0.358, 0.979, -0.323, 0.846];
-    let results = provider.search(&query, 5, Some(32), None).unwrap();
+    let results = provider.search(&query, 5, Some(32), None, None).unwrap();
     // Allow up to a few results in case the corpus happens to contain a
     // vector that encodes identically to the query; the contract is
     // strict cutoff, not "always empty."
@@ -278,8 +278,10 @@ fn polysemous_filter_activates_when_pq_params_default_to_resolved() {
     let _ = zero_provider.write_section(SubTag(*b"VECS")).unwrap();
     let _ = zero_provider.write_section(SubTag(*b"QUNT")).unwrap();
     let query = vec![0.5, -0.5, 0.25, -0.25, 0.1, -0.1, 0.05, -0.05];
-    let _default_results = provider.search(&query, 5, Some(32), None).unwrap();
-    let _zero_results = zero_provider.search(&query, 5, Some(32), None).unwrap();
+    let _default_results = provider.search(&query, 5, Some(32), None, None).unwrap();
+    let _zero_results = zero_provider
+        .search(&query, 5, Some(32), None, None)
+        .unwrap();
     // The contract under test is that the filter is *active* (not silently
     // skipped) when the embedder leaves `pq: None`. Active means: same input
     // routes through `pq_encode_query_codes` + Hamming gate, which is

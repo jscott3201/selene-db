@@ -332,7 +332,7 @@ fn ivf_search_returns_rows_after_training() {
     provider.write_section(SubTag(*b"POST")).unwrap();
 
     let rows = provider
-        .search(&[0.0, 0.0], 5, Some(2), None)
+        .search(&[0.0, 0.0], 5, Some(2), None, None)
         .expect("search succeeds");
 
     assert!(!rows.is_empty());
@@ -351,7 +351,7 @@ fn ivf_delete_removes_node_from_search_candidates() {
         .on_change(&ivf_delete_change(3))
         .expect("delete succeeds");
     let rows = provider
-        .search(&[2.0, 2.0], 256, Some(4), None)
+        .search(&[2.0, 2.0], 256, Some(4), None, None)
         .expect("search succeeds");
 
     assert!(!rows.iter().any(|(node_id, _)| *node_id == NodeId::new(3)));
@@ -391,7 +391,7 @@ fn ivf_delete_existing_deferred_row_not_resurrected_on_train() {
     assert!(snapshot.is_trained());
     assert_eq!(snapshot.len(), 256);
     let rows = provider
-        .search(&[1.0, 1.0], 300, Some(4), None)
+        .search(&[1.0, 1.0], 300, Some(4), None, None)
         .expect("search succeeds");
     assert!(!rows.iter().any(|(node_id, _)| *node_id == NodeId::new(2)));
 }
@@ -524,7 +524,7 @@ fn ivf_bulk_delete_removes_trained_posting_entries_from_search() {
         .expect("bulk delete succeeds");
 
     let rows = provider
-        .search(&[2.0, 2.0], 256, Some(4), None)
+        .search(&[2.0, 2.0], 256, Some(4), None, None)
         .expect("search succeeds");
     assert_eq!(provider.snapshot().len(), 253);
     for node_id in [3, 4, 5] {
