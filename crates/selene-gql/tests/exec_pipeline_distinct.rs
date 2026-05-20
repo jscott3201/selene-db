@@ -52,13 +52,10 @@ fn distinct_preserves_first_occurrence_order() {
 }
 
 #[test]
-fn distinct_treats_int_and_float_as_distinct() {
+fn distinct_dedups_lossless_int_and_float_equivalents() {
     let table = distinct(vec![Value::Int(1), Value::Float(1.0)]);
 
-    assert_eq!(
-        column_values(&table, "v"),
-        vec![Value::Int(1), Value::Float(1.0)]
-    );
+    assert_eq!(column_values(&table, "v"), vec![Value::Int(1)]);
 }
 
 #[test]
@@ -71,10 +68,6 @@ fn distinct_uses_lossless_numeric_equality() {
 
     assert_eq!(
         column_values(&table, "v"),
-        vec![
-            Value::Int(LARGE_COUNTER_A),
-            Value::Int(LARGE_COUNTER_B),
-            Value::Float(LARGE_COUNTER_A as f64),
-        ]
+        vec![Value::Int(LARGE_COUNTER_A), Value::Int(LARGE_COUNTER_B)]
     );
 }

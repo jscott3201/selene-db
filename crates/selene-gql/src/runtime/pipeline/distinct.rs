@@ -1,6 +1,8 @@
 use rustc_hash::FxHashSet;
 
-use crate::runtime::{BindingTable, ExecutorError, TxContext, value_key::DistinctRowKey};
+use crate::runtime::{BindingTable, ExecutorError, TxContext};
+
+use super::row_key;
 
 pub(super) fn execute(
     table: BindingTable,
@@ -12,7 +14,7 @@ pub(super) fn execute(
     let mut rows_since_check = 0;
     for row in rows {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
-        let key = DistinctRowKey(row.values().to_vec());
+        let key = row_key(&row);
         if seen.insert(key) {
             output.push(row);
         }

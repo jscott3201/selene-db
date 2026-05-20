@@ -21,8 +21,12 @@ mod unwind;
 use crate::{
     PipelineOp, SubqueryRegistry,
     analyze::ExprIdLookup,
-    runtime::{BindingTable, EvalCtx, ExecutorError, TxContext},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, value_key::RuntimeEqKey},
 };
+
+pub(super) fn row_key(row: &Binding) -> RuntimeEqKey {
+    RuntimeEqKey::from_row(row.values().to_vec())
+}
 
 /// Execute a sequence of pipeline operations against a binding table.
 pub fn execute_pipeline(
