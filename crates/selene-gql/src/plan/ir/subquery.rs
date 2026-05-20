@@ -2,6 +2,8 @@
 
 use std::collections::BTreeMap;
 
+use selene_core::IStr;
+
 use crate::{
     SourceSpan,
     analyze::{BindingId, ExprId},
@@ -21,9 +23,18 @@ pub struct PlannedSubquery {
     /// Lowered pattern executed for the subquery body.
     pub plan: PatternPlan,
     /// Outer-scope bindings referenced by the inner pattern, sorted and deduped.
-    pub outer_binding_refs: Vec<BindingId>,
+    pub outer_binding_refs: Vec<OuterBindingRef>,
     /// Source span of the subquery expression.
     pub span: SourceSpan,
+}
+
+/// One outer-scope binding referenced from inside a planned subquery.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OuterBindingRef {
+    /// Analyzer binding ID for the outer declaration.
+    pub binding: BindingId,
+    /// Interned source name used to project the value into the subquery seed.
+    pub name: IStr,
 }
 
 /// Planned expression-subquery kind.

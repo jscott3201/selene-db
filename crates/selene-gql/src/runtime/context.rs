@@ -35,6 +35,8 @@ pub struct TxContext<'a, 'g> {
     providers: &'a [Arc<dyn IndexProvider>],
     parameters: &'a BTreeMap<IStr, Value>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
+    plan_expr_ids: Option<&'a ExprIdLookup>,
+    plan_subqueries: Option<&'a SubqueryRegistry>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
 
@@ -101,6 +103,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             reopt_hook: None,
+            plan_expr_ids: None,
+            plan_subqueries: None,
             write_txn: None,
         }
     }
@@ -139,6 +143,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             reopt_hook: Some(reopt_hook),
+            plan_expr_ids: None,
+            plan_subqueries: None,
             write_txn: None,
         }
     }
@@ -177,8 +183,27 @@ impl<'a, 'g> TxContext<'a, 'g> {
             providers,
             parameters,
             reopt_hook: None,
+            plan_expr_ids: None,
+            plan_subqueries: None,
             write_txn: Some(txn),
         }
+    }
+
+    /// Attach plan-owned expression metadata for direct pipeline execution.
+    ///
+    /// Top-level statement execution passes this metadata directly from the
+    /// owning [`crate::ExecutionPlan`]. Embedding and test-harness code that
+    /// runs `execute_pipeline(&plan.pipeline, ...)` directly should attach the
+    /// same side tables so planned expression subqueries can be evaluated.
+    #[must_use]
+    pub fn with_plan_metadata(
+        mut self,
+        expr_ids: &'a ExprIdLookup,
+        subqueries: &'a SubqueryRegistry,
+    ) -> Self {
+        self.plan_expr_ids = Some(expr_ids);
+        self.plan_subqueries = Some(subqueries);
+        self
     }
 
     /// Borrow the graph snapshot used by this context.
@@ -270,6 +295,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
     pub const fn reopt_hook(&self) -> Option<&dyn AdaptiveOptimizer> {
         self.reopt_hook
     }
+
+    pub(crate) const fn plan_metadata(&self) -> Option<(&'a ExprIdLookup, &'a SubqueryRegistry)> {
+        match (self.plan_expr_ids, self.plan_subqueries) {
+            (Some(expr_ids), Some(subqueries)) => Some((expr_ids, subqueries)),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Debug for TxContext<'_, '_> {
@@ -281,6 +313,8 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("providers", &self.providers.len())
             .field("parameters", &self.parameters.len())
             .field("reopt_hook", &self.reopt_hook.is_some())
+            .field("plan_expr_ids", &self.plan_expr_ids.is_some())
+            .field("plan_subqueries", &self.plan_subqueries.is_some())
             .field("write_txn", &self.write_txn.is_some())
             .finish()
     }

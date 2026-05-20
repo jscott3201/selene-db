@@ -31,7 +31,8 @@ pub fn execute_pipeline(
 ) -> Result<BindingTable, ExecutorError> {
     let expr_ids = ExprIdLookup::default();
     let subqueries = SubqueryRegistry::default();
-    execute_pipeline_with_plan(pipeline, table, ctx, &expr_ids, &subqueries)
+    let (expr_ids, subqueries) = ctx.plan_metadata().unwrap_or((&expr_ids, &subqueries));
+    execute_pipeline_with_plan(pipeline, table, ctx, expr_ids, subqueries)
 }
 
 pub(crate) fn execute_pipeline_with_plan(

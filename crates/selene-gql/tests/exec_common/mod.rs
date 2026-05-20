@@ -144,6 +144,7 @@ impl ExecFixture {
             &EmptyProcedureRegistry,
             self.graph.index_providers(),
         )
+        .with_plan_metadata(&plan.expr_ids, &plan.subqueries)
     }
 
     pub fn index_catalog(&self) -> MockIndexCatalog {

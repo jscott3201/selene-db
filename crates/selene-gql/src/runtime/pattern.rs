@@ -20,10 +20,11 @@ pub fn execute_pattern(
 ) -> Result<BindingTable, ExecutorError> {
     let expr_ids = ExprIdLookup::default();
     let subqueries = SubqueryRegistry::default();
+    let (expr_ids, subqueries) = ctx.plan_metadata().unwrap_or((&expr_ids, &subqueries));
     let eval_ctx = EvalCtx {
         tx: ctx,
-        expr_ids: &expr_ids,
-        subqueries: &subqueries,
+        expr_ids,
+        subqueries,
     };
     execute_pattern_with_seed(pattern, None, &eval_ctx)
 }
@@ -35,6 +36,15 @@ pub(crate) fn execute_pattern_with_seed(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let schema = schema_for_pattern(pattern);
+    execute_pattern_with_seed_and_schema(pattern, seed, schema, ctx)
+}
+
+pub(crate) fn execute_pattern_with_seed_and_schema(
+    pattern: &PatternPlan,
+    seed: Option<&Binding>,
+    schema: BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<BindingTable, ExecutorError> {
     let env = WalkContext {
         pattern,
         schema: &schema,

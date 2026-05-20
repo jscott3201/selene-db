@@ -5,8 +5,8 @@ use crate::{
     analyze::{AnalyzedStatement, BindingId, ExprId},
     plan::{
         AggregateArg, CatalogOp, ExecutionPlan, FilterPredicate, FilterPredicateKind, JoinTree,
-        MutationOp, OrderKey, PipelineOp, PlannedSubquery, PlannedTypePropertyConstraint,
-        PlannerError, ProjectExpr, SubqueryKind,
+        MutationOp, OrderKey, OuterBindingRef, PipelineOp, PlannedSubquery,
+        PlannedTypePropertyConstraint, PlannerError, ProjectExpr, SubqueryKind,
     },
 };
 
@@ -240,7 +240,11 @@ fn collect_binding_refs_in_expr(
             }
         }
         ValueExpr::Exists { pattern, span, .. } | ValueExpr::CountSubquery { pattern, span } => {
-            refs.extend(outer_binding_refs_in_match(pattern, *span, analyzed)?);
+            refs.extend(
+                outer_binding_uses_in_match(pattern, *span, analyzed)?
+                    .into_iter()
+                    .map(|(binding, _, span)| (binding, span)),
+            );
         }
     }
     Ok(())
@@ -584,10 +588,7 @@ fn collect_planned_subquery(
         PlannedSubquery {
             kind,
             plan,
-            outer_binding_refs: outer_binding_refs_in_match(pattern, span, analyzed)?
-                .into_iter()
-                .map(|(binding, _)| binding)
-                .collect(),
+            outer_binding_refs: outer_binding_refs_in_match(pattern, span, analyzed)?,
             span,
         },
     ));
@@ -598,7 +599,20 @@ fn outer_binding_refs_in_match(
     pattern: &crate::MatchClause,
     subquery_span: SourceSpan,
     analyzed: &AnalyzedStatement,
-) -> Result<Vec<(BindingId, SourceSpan)>, PlannerError> {
+) -> Result<Vec<OuterBindingRef>, PlannerError> {
+    Ok(
+        outer_binding_uses_in_match(pattern, subquery_span, analyzed)?
+            .into_iter()
+            .map(|(binding, name, _)| OuterBindingRef { binding, name })
+            .collect(),
+    )
+}
+
+fn outer_binding_uses_in_match(
+    pattern: &crate::MatchClause,
+    subquery_span: SourceSpan,
+    analyzed: &AnalyzedStatement,
+) -> Result<Vec<(BindingId, selene_core::IStr, SourceSpan)>, PlannerError> {
     let mut refs = Vec::new();
     for reference in &analyzed.references {
         if !span_contains(subquery_span, reference.span) {
@@ -611,11 +625,11 @@ fn outer_binding_refs_in_match(
             },
         )?;
         if !span_contains(pattern.span, declaration.span()) {
-            refs.push((reference.binding, reference.span));
+            refs.push((reference.binding, reference.name, reference.span));
         }
     }
-    refs.sort_by_key(|(binding, _)| *binding);
-    refs.dedup_by_key(|(binding, _)| *binding);
+    refs.sort_by_key(|(binding, _, _)| *binding);
+    refs.dedup_by_key(|(binding, _, _)| *binding);
     Ok(refs)
 }
 

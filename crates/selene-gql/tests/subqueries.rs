@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, column_values};
+use exec_common::{ExecFixture, column_values, execute_plan as execute_planned_pipeline, planned};
 use selene_core::Value;
 use selene_gql::{EmptyProcedureRegistry, ExecutorError, Session, StatementOutput};
 
@@ -106,6 +106,62 @@ fn exists_nested_two_levels() {
         bool_values(&table, "has_two_hop_sensor"),
         [true, false, false]
     );
+}
+
+#[test]
+fn exists_correlates_when_outer_binding_only_appears_in_where() {
+    let table = execute(
+        "MATCH (a:Person)
+         RETURN a.name AS name,
+                EXISTS {
+                  MATCH (b:Person)
+                  WHERE b = a
+                } AS has_same_node
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(bool_values(&table, "has_same_node"), [true, true, true]);
+}
+
+#[test]
+fn null_correlated_seed_returns_empty_subquery_result() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL MATCH (a)-[:KNOWS]->(m:Sensor)
+         RETURN a.name AS name, EXISTS { MATCH (m)-[:KNOWS]->() } AS has_sensor_outgoing
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(
+        bool_values(&table, "has_sensor_outgoing"),
+        [false, false, false]
+    );
+}
+
+#[test]
+fn public_pipeline_execution_uses_attached_plan_subquery_metadata() {
+    let fixture = ExecFixture::build();
+    let plan = planned(
+        "MATCH (a:Person)
+         RETURN a.name AS name, EXISTS { MATCH (a)-[:KNOWS]->() } AS has_outgoing
+         ORDER BY name",
+    );
+
+    let table = execute_planned_pipeline(&fixture, &plan).expect("pipeline executes");
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(bool_values(&table, "has_outgoing"), [true, true, false]);
 }
 
 #[test]
