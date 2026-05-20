@@ -40,6 +40,19 @@ impl HnswParams {
         }
     }
 
+    /// Derive HNSW parameters with a query-time metric override applied.
+    #[must_use]
+    pub fn from_config_with_metric_override(
+        config: &HnswConfig,
+        metric_override: Option<DistanceMetric>,
+    ) -> Self {
+        let mut params = Self::from_config(config);
+        if let Some(metric) = metric_override {
+            params.metric = metric;
+        }
+        params
+    }
+
     /// Return the max neighbor count for `layer`.
     #[must_use]
     pub fn max_neighbors(&self, layer: u8) -> usize {
