@@ -1,4 +1,4 @@
--- corpus: positive
+-- corpus: negative
 -- feature: G018
--- expects: parse-ok
+-- expects: parse-rejected(G018)
 MATCH ANY SHORTEST (a:Person)-[:KNOWS]->(b:Person) RETURN b

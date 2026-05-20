@@ -1,5 +1,0 @@
--- corpus: positive
--- feature: GC04
--- also-covers: GC05, GG01
--- expects: parse-ok
-CREATE GRAPH IF NOT EXISTS demo

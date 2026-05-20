@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: GQ12
+-- expects: parse-ok
+UNWIND [1, 2] AS n RETURN n OFFSET 1

@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: GF13
+-- expects: parse-ok
+RETURN size([1, 2, 3]) AS n

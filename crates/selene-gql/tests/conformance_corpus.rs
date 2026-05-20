@@ -76,7 +76,7 @@ fn corpus_covers_feature_register() {
     let negative = cases
         .iter()
         .filter(|case| case.kind == CorpusKind::Negative)
-        .map(|case| case.feature)
+        .flat_map(|case| case.declared_features())
         .collect::<BTreeSet<_>>();
 
     let missing_supported = SUPPORTED_FEATURES
