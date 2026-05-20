@@ -16,8 +16,10 @@ pub(super) fn execute(
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, aggregates);
     let mut groups = Vec::<Group>::new();
+    let mut rows_since_check = 0;
 
     for row in &input_rows {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let key = evaluate_key_tuple(keys, row, &input_schema, ctx)?;
         let index = groups
             .iter()
@@ -43,7 +45,10 @@ pub(super) fn execute(
 
     let rows = groups
         .into_iter()
-        .map(Group::finalize)
+        .map(|group| {
+            ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
+            group.finalize()
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(BindingTable::new(output_schema, rows))
 }

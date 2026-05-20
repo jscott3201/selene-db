@@ -18,13 +18,14 @@ pub(super) fn execute(
             let rhs_table = execute_plan(rhs, ctx)?;
             assert_compatible_schemas(&table, &rhs_table)?;
             let (schema, mut rows) = table.into_parts();
+            ctx.check_cancellation()?;
             rows.extend(rhs_table.rows().iter().cloned());
             let combined = BindingTable::new(schema, rows);
-            Ok(if matches!(op, SetOp::Union) {
-                distinct::execute(combined)
+            if matches!(op, SetOp::Union) {
+                distinct::execute(combined, ctx)
             } else {
-                combined
-            })
+                Ok(combined)
+            }
         }
         SetOp::Intersect
         | SetOp::IntersectAll

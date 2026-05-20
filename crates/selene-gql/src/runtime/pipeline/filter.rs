@@ -17,16 +17,15 @@ pub(super) fn execute(
     }
 
     let (schema, input_rows) = table.into_parts();
-    let rows = input_rows
-        .into_iter()
-        .filter_map(
-            |row| match evaluator::evaluate(&predicate.expr, &row, &schema, ctx) {
-                Ok(Value::Bool(true)) => Some(Ok(row)),
-                Ok(Value::Bool(false) | Value::Null) => None,
-                Ok(_) => None,
-                Err(err) => Some(Err(err)),
-            },
-        )
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut rows = Vec::new();
+    let mut rows_since_check = 0;
+    for row in input_rows {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
+        match evaluator::evaluate(&predicate.expr, &row, &schema, ctx)? {
+            Value::Bool(true) => rows.push(row),
+            Value::Bool(false) | Value::Null => {}
+            _ => {}
+        }
+    }
     Ok(BindingTable::new(schema, rows))
 }

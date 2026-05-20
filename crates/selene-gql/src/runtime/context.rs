@@ -21,6 +21,9 @@ pub trait AdaptiveOptimizer: Send + Sync {
 
 static EMPTY_PARAMETERS: BTreeMap<IStr, Value> = BTreeMap::new();
 
+/// Row cadence for cooperative cancellation checkpoints.
+pub(crate) const CANCEL_CHECK_STRIDE: usize = 1024;
+
 /// Executor context for one statement.
 ///
 /// Read-only contexts own an immutable graph snapshot so every scan in a
@@ -224,6 +227,20 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.cancellation_checker()
             .check()
             .map_err(|cause| self.cancellation_error(cause, SourceSpan::default()))
+    }
+
+    /// Accumulate processed rows and check cancellation when the stride is reached.
+    pub(crate) fn check_cancellation_stride(
+        &self,
+        rows_since_check: &mut usize,
+        rows: usize,
+    ) -> Result<(), ExecutorError> {
+        *rows_since_check = rows_since_check.saturating_add(rows);
+        if *rows_since_check >= CANCEL_CHECK_STRIDE {
+            self.check_cancellation()?;
+            *rows_since_check = 0;
+        }
+        Ok(())
     }
 
     /// Count outermost result rows and enforce the optional row cap.

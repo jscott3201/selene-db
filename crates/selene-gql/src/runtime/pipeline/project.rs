@@ -10,16 +10,16 @@ pub(super) fn execute(
 ) -> Result<BindingTable, ExecutorError> {
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = schema_for_items(items);
-    let rows = input_rows
-        .into_iter()
-        .map(|row| {
-            let values = items
-                .iter()
-                .map(|item| project_value(item, &row, &input_schema, ctx))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(Binding::new(values))
-        })
-        .collect::<Result<Vec<_>, ExecutorError>>()?;
+    let mut rows = Vec::with_capacity(input_rows.len());
+    let mut rows_since_check = 0;
+    for row in input_rows {
+        ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
+        let values = items
+            .iter()
+            .map(|item| project_value(item, &row, &input_schema, ctx))
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.push(Binding::new(values));
+    }
     Ok(BindingTable::new(output_schema, rows))
 }
 
