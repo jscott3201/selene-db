@@ -168,7 +168,12 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG21,
     FeatureId::GP04,
     FeatureId::GQ03,
+    FeatureId::GQ04,
+    FeatureId::GQ05,
+    FeatureId::GQ06,
+    FeatureId::GQ07,
     FeatureId::GQ08,
+    FeatureId::GQ09,
     FeatureId::GQ12,
     FeatureId::GQ13,
     FeatureId::GQ15,
@@ -292,26 +297,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GC05,
         "graph management IF [NOT] EXISTS modifiers remain outside the v1.0 catalog claim",
-    ),
-    (
-        FeatureId::GQ04,
-        "EXCEPT DISTINCT is outside the v1.0 composite-query claim; only UNION is supported",
-    ),
-    (
-        FeatureId::GQ05,
-        "EXCEPT ALL is outside the v1.0 composite-query claim; only UNION is supported",
-    ),
-    (
-        FeatureId::GQ06,
-        "INTERSECT DISTINCT is outside the v1.0 composite-query claim; only UNION is supported",
-    ),
-    (
-        FeatureId::GQ07,
-        "INTERSECT ALL is outside the v1.0 composite-query claim; only UNION is supported",
-    ),
-    (
-        FeatureId::GQ09,
-        "OTHERWISE is outside the selene-db v1.0 composite-query claim",
     ),
     (
         FeatureId::GT03,
