@@ -12,7 +12,7 @@ use selene_core::{IStr, Record, Value};
 
 use crate::{
     BinaryOp, NonEmpty, SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{
@@ -30,7 +30,7 @@ pub(super) fn eval_function_call(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let display_name = display_name(name);
     if star {
@@ -276,7 +276,7 @@ fn eval_coalesce(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     if args.is_empty() {
         return Err(ExecutorError::FunctionArityMismatch {
@@ -333,7 +333,7 @@ fn eval_fixed_args(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     eval_range_args(name, args, expected..=expected, span, binding, schema, ctx)
 }
@@ -345,7 +345,7 @@ fn eval_range_args(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     let min = *arity.start();
     let max = *arity.end();

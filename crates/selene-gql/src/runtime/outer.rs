@@ -14,7 +14,7 @@ pub(crate) fn execute(
     right: &JoinTree,
     key: &[IStr],
     right_filters: &[FilterPredicate],
-    env: pattern::WalkContext<'_, '_, '_, '_>,
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let left_rows = pattern::walk_join_tree(left, env)?;
     let mut output = Vec::new();

@@ -1,12 +1,12 @@
 use crate::{
     BindingTableColumn, BindingTableSchema, ProjectExpr,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext, evaluator},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator},
 };
 
 pub(super) fn execute(
     items: &[ProjectExpr],
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = schema_for_items(items);
@@ -27,7 +27,7 @@ fn project_value(
     item: &ProjectExpr,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<selene_core::Value, ExecutorError> {
     evaluator::evaluate(&item.expr, row, schema, ctx)
 }

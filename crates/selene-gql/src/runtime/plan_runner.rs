@@ -2,18 +2,33 @@
 
 use crate::{
     BindingTableSchema, ExecutionPlan,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext, pattern, pipeline},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, pattern, pipeline},
 };
 
 pub(crate) fn execute_plan(
     plan: &ExecutionPlan,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let table = match &plan.pattern_plan {
-        Some(pattern_plan) => pattern::execute_pattern(pattern_plan, ctx)?,
-        None => seed_table(),
+    let table = {
+        let eval_ctx = EvalCtx {
+            tx: ctx,
+            expr_ids: &plan.expr_ids,
+            subqueries: &plan.subqueries,
+        };
+        match &plan.pattern_plan {
+            Some(pattern_plan) => {
+                pattern::execute_pattern_with_seed(pattern_plan, None, &eval_ctx)?
+            }
+            None => seed_table(),
+        }
     };
-    pipeline::execute_pipeline(plan.pipeline.as_slice(), table, ctx)
+    pipeline::execute_pipeline_with_plan(
+        plan.pipeline.as_slice(),
+        table,
+        ctx,
+        &plan.expr_ids,
+        &plan.subqueries,
+    )
 }
 
 pub(crate) fn seed_table() -> BindingTable {

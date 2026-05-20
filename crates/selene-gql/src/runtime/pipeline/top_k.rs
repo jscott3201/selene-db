@@ -4,7 +4,7 @@ use selene_core::Value;
 
 use crate::{
     LimitAmount, OrderKey,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext},
 };
 
 use super::{limit, order_by};
@@ -14,7 +14,8 @@ pub(super) fn execute(
     offset: &LimitAmount,
     count: &LimitAmount,
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &TxContext<'_, '_>,
+    eval_ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let offset = limit::resolve_amount(offset, ctx)?;
     let count = limit::resolve_amount(count, ctx)?;
@@ -27,7 +28,7 @@ pub(super) fn execute(
     let keys = Arc::<[OrderKey]>::from(keys.to_vec());
     let mut heap = BinaryHeap::<Reverse<RankedRow>>::with_capacity(retained.saturating_add(1));
     for (sequence, row) in rows.into_iter().enumerate() {
-        let tuple = order_by::evaluate_key_tuple(&keys, &row, &schema, ctx)?;
+        let tuple = order_by::evaluate_key_tuple(&keys, &row, &schema, eval_ctx)?;
         heap.push(Reverse(RankedRow {
             tuple,
             sequence,

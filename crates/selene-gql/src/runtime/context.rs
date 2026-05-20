@@ -7,6 +7,8 @@ use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
     ProcedureRegistry, SourceSpan,
+    analyze::ExprIdLookup,
+    plan::SubqueryRegistry,
     plan::{ImplDefinedCaps, PipelineOpId},
     runtime::ExecutorError,
 };
@@ -34,6 +36,37 @@ pub struct TxContext<'a, 'g> {
     parameters: &'a BTreeMap<IStr, Value>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
+}
+
+/// Expression-evaluation context for one planned execution point.
+///
+/// Expression subqueries are planned into side tables on the execution plan.
+/// The evaluator borrows those side tables through this wrapper while all
+/// graph, parameter, and procedure access continues to flow through
+/// [`TxContext`].
+pub struct EvalCtx<'a, 'ctx, 'g, 'plan> {
+    /// Transaction context for graph and parameter access.
+    pub tx: &'a TxContext<'ctx, 'g>,
+    /// Plan-owned expression IDs cloned from analyzer output.
+    pub expr_ids: &'plan ExprIdLookup,
+    /// Plan-owned expression-subquery registry.
+    pub subqueries: &'plan SubqueryRegistry,
+}
+
+impl<'a, 'ctx, 'g, 'plan> EvalCtx<'a, 'ctx, 'g, 'plan> {
+    /// Borrow the same transaction context with a different plan registry.
+    #[must_use]
+    pub const fn with_plan<'next>(
+        &self,
+        expr_ids: &'next ExprIdLookup,
+        subqueries: &'next SubqueryRegistry,
+    ) -> EvalCtx<'a, 'ctx, 'g, 'next> {
+        EvalCtx {
+            tx: self.tx,
+            expr_ids,
+            subqueries,
+        }
+    }
 }
 
 impl<'a, 'g> TxContext<'a, 'g> {

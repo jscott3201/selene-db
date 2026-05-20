@@ -3,20 +3,22 @@
 //! BRIEF-116 factors evaluator behavior by expression family:
 //! [`binary_ops`] owns operators, [`predicates`] owns GQL predicate forms,
 //! [`scalar_fns`] owns the v1.1 closed scalar-function set, [`case`] owns
-//! searched `CASE`, and [`collections`] owns list/record expressions. Expression
-//! subqueries remain explicit BRIEF-116b planned-IR work.
+//! searched `CASE`, [`collections`] owns list/record expressions, and
+//! [`subquery`] owns planned expression subqueries.
 
 mod binary_ops;
 mod case;
 mod collections;
 mod predicates;
 mod scalar_fns;
+mod subquery;
 
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
-    Literal, SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    Literal, SourceSpan, SubqueryRegistry, ValueExpr,
+    analyze::ExprIdLookup,
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError, TxContext},
 };
 
 use self::{
@@ -27,6 +29,7 @@ use self::{
         eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
     },
     scalar_fns::eval_function_call,
+    subquery::{eval_count_subquery, eval_exists},
 };
 
 /// Evaluate a value expression against one binding-table row.
@@ -34,7 +37,7 @@ pub fn evaluate(
     expr: &ValueExpr,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match expr {
         ValueExpr::Literal(literal) => Ok(literal_value(literal)),
@@ -73,7 +76,8 @@ pub fn evaluate(
             .collect::<Result<Vec<_>, _>>()
             .map(Value::List),
         ValueExpr::Parameter { name, span } => {
-            ctx.parameters()
+            ctx.tx
+                .parameters()
                 .get(name)
                 .cloned()
                 .ok_or(ExecutorError::UnboundParameter {
@@ -100,14 +104,12 @@ pub fn evaluate(
             schema,
             ctx,
         ),
-        ValueExpr::Exists { .. } => Err(ExecutorError::ImplementationDefined {
-            // BRIEF-116b owns planned-IR support for expression subqueries.
-            detail: "EXISTS subquery evaluation not implemented",
-        }),
-        ValueExpr::CountSubquery { .. } => Err(ExecutorError::ImplementationDefined {
-            // BRIEF-116b owns planned-IR support for expression subqueries.
-            detail: "COUNT subquery evaluation not implemented",
-        }),
+        ValueExpr::Exists { negated, span, .. } => {
+            eval_exists(expr, *negated, *span, binding, schema, ctx)
+        }
+        ValueExpr::CountSubquery { span, .. } => {
+            eval_count_subquery(expr, *span, binding, schema, ctx)
+        }
         ValueExpr::Like {
             operand,
             pattern,
@@ -137,6 +139,28 @@ pub fn evaluate(
             eval_record_literal(fields, *span, binding, schema, ctx)
         }
     }
+}
+
+/// Evaluate an expression without a plan-level subquery registry.
+///
+/// This preserves the public test helper surface for expression families that
+/// do not require planned subqueries. Statement execution uses [`evaluate`]
+/// with the owning execution plan's registries.
+#[allow(dead_code)]
+pub fn evaluate_for_test(
+    expr: &ValueExpr,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &TxContext<'_, '_>,
+) -> Result<Value, ExecutorError> {
+    let expr_ids = ExprIdLookup::default();
+    let subqueries = SubqueryRegistry::default();
+    let eval_ctx = EvalCtx {
+        tx: ctx,
+        expr_ids: &expr_ids,
+        subqueries: &subqueries,
+    };
+    evaluate(expr, binding, schema, &eval_ctx)
 }
 
 fn lookup_variable(
@@ -169,7 +193,7 @@ fn lookup_variable(
 pub(super) fn property_access(
     target: &Value,
     key: selene_core::IStr,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match target {
         Value::Null => Ok(Value::Null),
@@ -181,16 +205,18 @@ pub(super) fn property_access(
     }
 }
 
-fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &TxContext<'_, '_>) -> Value {
-    ctx.snapshot()
+fn property_from_node(id: NodeId, key: selene_core::IStr, ctx: &EvalCtx<'_, '_, '_, '_>) -> Value {
+    ctx.tx
+        .snapshot()
         .node_properties(id)
         .and_then(|properties| properties.get(&key))
         .cloned()
         .unwrap_or(Value::Null)
 }
 
-fn property_from_edge(id: EdgeId, key: selene_core::IStr, ctx: &TxContext<'_, '_>) -> Value {
-    ctx.snapshot()
+fn property_from_edge(id: EdgeId, key: selene_core::IStr, ctx: &EvalCtx<'_, '_, '_, '_>) -> Value {
+    ctx.tx
+        .snapshot()
         .edge_properties(id)
         .and_then(|properties| properties.get(&key))
         .cloned()

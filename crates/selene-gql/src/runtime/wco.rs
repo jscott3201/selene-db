@@ -9,7 +9,7 @@ use super::pattern;
 
 pub(crate) fn execute_phase_a(
     intersection: &[JoinTree],
-    env: pattern::WalkContext<'_, '_, '_, '_>,
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let [inner] = intersection else {
         return Err(ExecutorError::ImplementationDefined {

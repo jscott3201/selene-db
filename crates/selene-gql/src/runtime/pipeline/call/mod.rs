@@ -6,14 +6,17 @@ mod project;
 use selene_core::Value;
 
 use crate::{
-    BindingTableSchema, PlannedCall, ProjectExpr,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext, evaluator},
+    BindingTableSchema, PlannedCall, ProjectExpr, SubqueryRegistry,
+    analyze::ExprIdLookup,
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, evaluator},
 };
 
 pub(super) fn execute(
     call: &PlannedCall,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {
     context::validate_call_tier(call)?;
     let registry = ctx.registry();
@@ -22,7 +25,14 @@ pub(super) fn execute(
     let mut output = Vec::new();
 
     for row in rows {
-        let args = evaluate_args(&call.args, &row, &input_schema, ctx)?;
+        let args = {
+            let eval_ctx = EvalCtx {
+                tx: ctx,
+                expr_ids,
+                subqueries,
+            };
+            evaluate_args(&call.args, &row, &input_schema, &eval_ctx)?
+        };
         let result = {
             let mut procedure_ctx = context::build(call, ctx)?;
             registry
@@ -47,7 +57,7 @@ fn evaluate_args(
     args: &[ProjectExpr],
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     args.iter()
         .map(|arg| evaluator::evaluate(&arg.expr, row, schema, ctx))

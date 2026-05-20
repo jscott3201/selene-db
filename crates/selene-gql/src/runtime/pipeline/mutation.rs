@@ -7,13 +7,17 @@ use selene_core::{EdgeId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, Prope
 use crate::{
     BindingTableColumn, BindingTableSchema, DeleteMode, EdgeDirection, ElementKind,
     InsertEndpointRef, LabelExpr, MutationOp, ProjectExpr, PropertyInit, SourceSpan,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext, evaluator},
+    SubqueryRegistry,
+    analyze::ExprIdLookup,
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, evaluator},
 };
 
 pub(super) fn execute(
     op: &MutationOp,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {
     {
         let _mutator = ctx.mutator()?;
@@ -36,6 +40,8 @@ pub(super) fn execute(
             *span,
             table,
             ctx,
+            expr_ids,
+            subqueries,
         ),
         MutationOp::InsertEdge {
             site_id,
@@ -60,6 +66,8 @@ pub(super) fn execute(
             *span,
             table,
             ctx,
+            expr_ids,
+            subqueries,
         ),
         MutationOp::SetProperty {
             element,
@@ -76,6 +84,8 @@ pub(super) fn execute(
             *span,
             table,
             ctx,
+            expr_ids,
+            subqueries,
         ),
         MutationOp::SetLabel {
             element,
@@ -118,6 +128,8 @@ fn execute_insert_node(
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {
     let labels = node_labels(label_expr, span)?;
     let (mut schema, rows) = table.into_parts();
@@ -125,7 +137,14 @@ fn execute_insert_node(
     extend_schema(&mut schema, output_column_index, output_column)?;
     let mut output = Vec::with_capacity(rows.len());
     for row in rows {
-        let props = property_map(property_inits, &row, &input_schema, ctx)?;
+        let props = {
+            let eval_ctx = EvalCtx {
+                tx: ctx,
+                expr_ids,
+                subqueries,
+            };
+            property_map(property_inits, &row, &input_schema, &eval_ctx)?
+        };
         let node_id = {
             let mut mutator = ctx.mutator()?;
             mutator
@@ -156,6 +175,8 @@ fn execute_insert_edge(
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {
     let label = edge_label(label_expr, span)?;
     let (mut schema, rows) = table.into_parts();
@@ -166,7 +187,14 @@ fn execute_insert_edge(
         let left = endpoint_node(&row, left, span)?;
         let right = endpoint_node(&row, right, span)?;
         let (source, target) = edge_endpoints(left, right, direction, span)?;
-        let props = property_map(property_inits, &row, &input_schema, ctx)?;
+        let props = {
+            let eval_ctx = EvalCtx {
+                tx: ctx,
+                expr_ids,
+                subqueries,
+            };
+            property_map(property_inits, &row, &input_schema, &eval_ctx)?
+        };
         let edge_id = {
             let mut mutator = ctx.mutator()?;
             mutator
@@ -186,6 +214,7 @@ fn execute_insert_edge(
     Ok(BindingTable::new(schema, output))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn execute_set_property(
     element: ElementKind,
     target_column_index: u32,
@@ -194,10 +223,19 @@ fn execute_set_property(
     span: SourceSpan,
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = table.into_parts();
     for row in &rows {
-        let value = evaluator::evaluate(&value.expr, row, &schema, ctx)?;
+        let value = {
+            let eval_ctx = EvalCtx {
+                tx: ctx,
+                expr_ids,
+                subqueries,
+            };
+            evaluator::evaluate(&value.expr, row, &schema, &eval_ctx)?
+        };
         let diff = property_diff([(key, value)], [], span)?;
         match element {
             ElementKind::Node => {
@@ -357,7 +395,7 @@ fn property_map(
     property_inits: &[PropertyInit],
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<PropertyMap, ExecutorError> {
     let mut pairs = Vec::with_capacity(property_inits.len());
     for init in property_inits {

@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 
 use crate::{
     SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{
@@ -25,7 +25,7 @@ pub(super) fn eval_list_access(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let target = evaluate(target, binding, schema, ctx)?;
     let index = evaluate(index, binding, schema, ctx)?;
@@ -56,7 +56,7 @@ pub(super) fn eval_record_literal(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let mut seen = BTreeSet::new();
     let mut values = SmallVec::<[(IStr, Value); 4]>::new();

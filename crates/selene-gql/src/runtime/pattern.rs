@@ -6,8 +6,9 @@ use selene_core::{IStr, Value};
 
 use crate::{
     AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
-    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext},
+    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind, SubqueryRegistry,
+    analyze::ExprIdLookup,
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext},
 };
 
 use super::{evaluator, expand, hash_join, outer, scan, subplan, value_compare, wco};
@@ -17,11 +18,27 @@ pub fn execute_pattern(
     pattern: &PatternPlan,
     ctx: &TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    let expr_ids = ExprIdLookup::default();
+    let subqueries = SubqueryRegistry::default();
+    let eval_ctx = EvalCtx {
+        tx: ctx,
+        expr_ids: &expr_ids,
+        subqueries: &subqueries,
+    };
+    execute_pattern_with_seed(pattern, None, &eval_ctx)
+}
+
+/// Execute a pattern plan with an optional row seed for correlated subqueries.
+pub(crate) fn execute_pattern_with_seed(
+    pattern: &PatternPlan,
+    seed: Option<&Binding>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<BindingTable, ExecutorError> {
     let schema = schema_for_pattern(pattern);
     let env = WalkContext {
         pattern,
         schema: &schema,
-        seed: None,
+        seed,
         ctx,
     };
     let rows = walk_join_tree(&pattern.join_tree, env)?
@@ -38,16 +55,16 @@ pub fn execute_pattern(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct WalkContext<'a, 'seed, 'ctx, 'g> {
+pub(crate) struct WalkContext<'a, 'seed, 'eval, 'ctx, 'g, 'plan> {
     pub(crate) pattern: &'a PatternPlan,
     pub(crate) schema: &'a BindingTableSchema,
     pub(crate) seed: Option<&'seed Binding>,
-    pub(crate) ctx: &'a TxContext<'ctx, 'g>,
+    pub(crate) ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
 }
 
 pub(crate) fn walk_join_tree(
     tree: &JoinTree,
-    env: WalkContext<'_, '_, '_, '_>,
+    env: WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     match tree {
         JoinTree::Scan(scan_node) => {
@@ -298,7 +315,7 @@ fn pattern_filters_pass(
     pattern: &PatternPlan,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<bool, ExecutorError> {
     filter_predicates_pass(&pattern.filters, pattern, row, schema, ctx)
 }
@@ -308,7 +325,7 @@ pub(crate) fn filter_predicates_pass(
     pattern: &PatternPlan,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<bool, ExecutorError> {
     for predicate in predicates {
         if !filter_predicate_passes(predicate, pattern, row, schema, ctx)? {
@@ -323,7 +340,7 @@ fn filter_predicate_passes(
     pattern: &PatternPlan,
     row: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<bool, ExecutorError> {
     if predicate.index_consumed {
         return Ok(true);

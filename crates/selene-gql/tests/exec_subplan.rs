@@ -72,10 +72,11 @@ fn subplan_with_pipeline_ops_returns_implementation_defined() {
 }
 
 #[test]
-fn subplan_with_seed_returns_implementation_defined() {
+fn subplan_with_seed_executes_correlated_rows() {
     let fixture = ExecFixture::build();
     let mut plan = planned("MATCH (a:Person) OPTIONAL MATCH (a)-[:KNOWS]->(b:Sensor) RETURN a, b");
-    let subplan = planned("MATCH (b:Sensor) RETURN b");
+    let mut subplan = planned("MATCH (a:Person)-[:KNOWS]->(b:Sensor) RETURN a, b");
+    subplan.pipeline.clear();
     let pattern_plan = plan.pattern_plan.as_mut().expect("pattern plan");
     let JoinTree::Outer { right, .. } = &mut pattern_plan.join_tree else {
         panic!("expected outer tree");
@@ -84,12 +85,8 @@ fn subplan_with_seed_returns_implementation_defined() {
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
     let ctx = fixture.context_caps(&plan);
 
-    let err = selene_gql::execute_pattern(pattern, &ctx).expect_err("guard fires");
+    let table = selene_gql::execute_pattern(pattern, &ctx).expect("seeded subplan executes");
 
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "correlated subplans not yet supported"
-        }
-    ));
+    assert_eq!(node_ids_for(&table, "a"), vec![Some(1), Some(2), Some(3)]);
+    assert_eq!(node_ids_for(&table, "b"), vec![None, Some(4), None]);
 }
