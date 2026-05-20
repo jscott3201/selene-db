@@ -53,6 +53,7 @@ pub fn plan(
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
     }?;
     plan.category = analyzed.category;
+    plan.expr_ids = analyzed.expr_ids.clone();
     plan.refresh_pipeline_op_high_water();
     Ok(plan)
 }
@@ -219,6 +220,8 @@ fn lower_query_pipeline(
         pipeline: ops,
         output_schema: BindingTableSchema { columns: visible },
         impl_defined_caps: ImplDefinedCaps::default(),
+        expr_ids: analyzed.expr_ids.clone(),
+        subqueries: Default::default(),
         next_expr_id: next_expr_id(analyzed),
         next_pipeline_op_id,
     })
@@ -355,6 +358,8 @@ fn empty_plan() -> ExecutionPlan {
             columns: Vec::new(),
         },
         impl_defined_caps: ImplDefinedCaps::default(),
+        expr_ids: Default::default(),
+        subqueries: Default::default(),
         next_expr_id: ExprId::new(0),
         next_pipeline_op_id: crate::PipelineOpId::new(0),
     }
@@ -376,6 +381,8 @@ fn tx_plan(op: TxOp) -> ExecutionPlan {
             columns: Vec::new(),
         },
         impl_defined_caps: ImplDefinedCaps::default(),
+        expr_ids: Default::default(),
+        subqueries: Default::default(),
         next_expr_id: ExprId::new(0),
         next_pipeline_op_id: crate::PipelineOpId::new(1),
     }

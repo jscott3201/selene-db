@@ -5,11 +5,12 @@ mod call;
 mod catalog;
 mod filter;
 mod mutation;
+mod subquery;
 mod tx;
 
 use crate::{
     EdgeDirection, LabelExpr, SetOp, SourceSpan,
-    analyze::{AnalyzedType, BindingId, ExprId, StatementCategory},
+    analyze::{AnalyzedType, BindingId, ExprId, ExprIdLookup, StatementCategory},
 };
 
 pub use access::{NodeIdOrdering, OrderAccess, ScanAccess, TypedIndexBounds};
@@ -20,6 +21,7 @@ pub use filter::{
     ProjectExpr,
 };
 pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
+pub use subquery::{PlannedSubquery, SubqueryKind, SubqueryRegistry};
 pub use tx::TxOp;
 
 /// Identifier for a pipeline op within one execution plan.
@@ -52,6 +54,10 @@ pub struct ExecutionPlan {
     pub output_schema: BindingTableSchema,
     /// Planner implementation-defined limits.
     pub impl_defined_caps: ImplDefinedCaps,
+    /// Analyzer expression lookup cloned into the executable plan.
+    pub expr_ids: ExprIdLookup,
+    /// Planned expression subqueries indexed by their analyzer expression ID.
+    pub subqueries: SubqueryRegistry,
     /// Next optimizer-owned expression ID for this plan.
     pub next_expr_id: ExprId,
     /// Next executor-observable pipeline op ID for this plan.

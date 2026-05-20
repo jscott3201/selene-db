@@ -20,9 +20,9 @@ pub use ir::{
     BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
     HiddenBindingId, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount,
     MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, PathPlan, PatternPlan,
-    PipelineOp, PipelineOpId, PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    PlannedYieldItem, ProjectExpr, PropertyInit, ScanAccess, ScanKind, TxOp, TypedIndexBounds,
-    YieldKind,
+    PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr, PropertyInit, ScanAccess, ScanKind,
+    SubqueryKind, SubqueryRegistry, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;
 pub use optimize::{

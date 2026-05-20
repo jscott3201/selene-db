@@ -200,6 +200,8 @@ mod tests {
                 columns: Vec::new(),
             },
             impl_defined_caps: ImplDefinedCaps::default(),
+            expr_ids: Default::default(),
+            subqueries: Default::default(),
             next_expr_id: ExprId::new(0),
             next_pipeline_op_id: PipelineOpId::new(1),
         })
