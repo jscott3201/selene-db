@@ -85,5 +85,5 @@ fn metric_name(metric: DistanceMetric) -> &'static str {
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty)
 }

@@ -382,7 +382,7 @@ fn lifecycle_config_error(error: VectorError) -> ProcedureError {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    ExternalParameter::new(name, ty, nullable)
 }
 
 const PQ_FIELDS: &[&str] = &[

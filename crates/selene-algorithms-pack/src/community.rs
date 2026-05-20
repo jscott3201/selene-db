@@ -219,11 +219,11 @@ fn node_community_row((node_id, community_id): (NodeId, u64)) -> Vec<Value> {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    ExternalParameter::new(name, ty, nullable)
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty)
 }
 
 #[cfg(test)]

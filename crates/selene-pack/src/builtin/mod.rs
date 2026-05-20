@@ -103,6 +103,11 @@ pub(crate) trait BuiltInMetadata: Send + Sync + 'static {
         ""
     }
 
+    /// Version where this procedure became available.
+    fn since_version(&self) -> &'static str {
+        "1.0.0"
+    }
+
     /// Static parameter metadata.
     fn signature_static(&self) -> &'static [StaticParameter];
 

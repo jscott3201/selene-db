@@ -73,5 +73,5 @@ impl ExternalMutationProcedure for DeleteProcedure {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    ExternalParameter::new(name, ty, nullable)
 }

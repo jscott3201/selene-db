@@ -247,7 +247,7 @@ fn projection_snapshot_row(snapshot: ProjectionSnapshot) -> Vec<Value> {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    ExternalParameter::new(name, ty, nullable)
 }
 
 fn projection_output_columns() -> Vec<ExternalOutputColumn> {
@@ -260,7 +260,7 @@ fn projection_output_columns() -> Vec<ExternalOutputColumn> {
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty)
 }
 
 fn projection_row(projection: &GraphProjection) -> Vec<Value> {

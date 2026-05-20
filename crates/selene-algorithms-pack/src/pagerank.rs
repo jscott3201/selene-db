@@ -128,11 +128,11 @@ fn validate_config(damping: f64, tolerance: f64) -> Result<(), ProcedureError> {
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    ExternalParameter::new(name, ty, nullable)
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty)
 }
 
 #[cfg(test)]

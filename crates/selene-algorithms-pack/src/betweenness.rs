@@ -81,11 +81,11 @@ fn parse_betweenness_args(args: &[Value]) -> Result<(String, BetweennessConfig),
 }
 
 fn parameter(name: &'static str, ty: GqlType, nullable: bool) -> ExternalParameter {
-    ExternalParameter { name, ty, nullable }
+    ExternalParameter::new(name, ty, nullable)
 }
 
 fn output(name: &'static str, ty: GqlType) -> ExternalOutputColumn {
-    ExternalOutputColumn { name, ty }
+    ExternalOutputColumn::new(name, ty)
 }
 
 #[cfg(test)]
