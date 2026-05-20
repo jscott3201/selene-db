@@ -1,11 +1,14 @@
 //! Catalog DDL pipeline operator.
 
 use selene_core::{IStr, LabelSet, PropertyValueType, Value, intern_with_admission};
-use selene_graph::{EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
+use selene_graph::{
+    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, TypedIndexKind,
+};
 
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, EdgeEndpointSpec, GqlType,
-    PlannedTypePropertyConstraint, PlannedTypePropertyDef, SourceSpan,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, ProcedureMetadata, ProcedureMutability,
+    ProcedureSignature, ProcedureTier, SourceSpan,
     runtime::{Binding, BindingTable, ExecutorError, TxContext},
 };
 
@@ -90,6 +93,8 @@ pub(super) fn execute(
         }
         CatalogOp::ShowNodeTypes(_) => show_node_types(ctx),
         CatalogOp::ShowEdgeTypes(_) => show_edge_types(ctx),
+        CatalogOp::ShowIndexes(_) => show_indexes(ctx),
+        CatalogOp::ShowProcedures(_) => show_procedures(ctx),
     }
 }
 
@@ -292,6 +297,47 @@ fn show_edge_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
     Ok(BindingTable::new(show_schema()?, rows))
 }
 
+fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {
+    let mut indexes = ctx.snapshot().iter_property_indexes().collect::<Vec<_>>();
+    indexes.sort_by(
+        |(left_label, left_property, _), (right_label, right_property, _)| {
+            left_label
+                .as_str()
+                .cmp(right_label.as_str())
+                .then_with(|| left_property.as_str().cmp(right_property.as_str()))
+        },
+    );
+    let rows = indexes
+        .into_iter()
+        .map(|(label, property, kind)| {
+            Ok(Binding::new([
+                Value::String(label),
+                Value::String(property),
+                Value::String(intern_runtime(render_index_kind(kind))?),
+            ]))
+        })
+        .collect::<Result<Vec<_>, ExecutorError>>()?;
+    Ok(BindingTable::new(
+        string_schema(&["label", "property", "kind"])?,
+        rows,
+    ))
+}
+
+fn show_procedures(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {
+    let mut procedures = ctx.registry().iter_handles().collect::<Vec<_>>();
+    procedures.sort_by(|(left, _), (right, _)| {
+        render_procedure_name(left).cmp(&render_procedure_name(right))
+    });
+    let rows = procedures
+        .into_iter()
+        .map(|(name, metadata)| procedure_row(&name, &metadata))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(BindingTable::new(
+        string_schema(&["name", "tier", "mutability", "signature"])?,
+        rows,
+    ))
+}
+
 fn show_row(label: &str, definition: &str) -> Result<Binding, ExecutorError> {
     Ok(Binding::new([
         Value::String(intern_runtime(label)?),
@@ -316,12 +362,132 @@ fn show_schema() -> Result<BindingTableSchema, ExecutorError> {
     })
 }
 
+fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
+    let columns = names
+        .iter()
+        .map(|name| {
+            Ok(BindingTableColumn {
+                name: Some(intern_runtime(name)?),
+                hidden: None,
+                ty: AnalyzedType::Resolved(GqlType::String),
+            })
+        })
+        .collect::<Result<Vec<_>, ExecutorError>>()?;
+    Ok(BindingTableSchema { columns })
+}
+
 fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
     intern_with_admission(value)
         .map(|(value, _was_new)| value)
         .map_err(|_err| ExecutorError::ImplementationDefined {
             detail: "interner cap exhausted during catalog rendering",
         })
+}
+
+fn render_index_kind(kind: TypedIndexKind) -> &'static str {
+    match kind {
+        TypedIndexKind::I64 => "i64",
+        TypedIndexKind::F64 => "f64",
+        TypedIndexKind::String => "string",
+        TypedIndexKind::Date => "date",
+        TypedIndexKind::LocalDateTime => "local_datetime",
+        TypedIndexKind::Uuid => "uuid",
+    }
+}
+
+fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding, ExecutorError> {
+    let name = render_procedure_name(name);
+    Ok(Binding::new([
+        Value::String(intern_runtime(&name)?),
+        Value::String(intern_runtime(render_tier(metadata.tier))?),
+        Value::String(intern_runtime(render_mutability(metadata.mutability))?),
+        Value::String(intern_runtime(&render_signature(
+            &name,
+            &metadata.signature,
+        ))?),
+    ]))
+}
+
+fn render_procedure_name(name: &[IStr]) -> String {
+    name.iter()
+        .map(|part| part.as_str())
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn render_tier(tier: ProcedureTier) -> &'static str {
+    match tier {
+        ProcedureTier::Graph => "graph",
+        ProcedureTier::Mutation => "mutation",
+        ProcedureTier::Persist => "persist",
+    }
+}
+
+fn render_mutability(mutability: ProcedureMutability) -> &'static str {
+    match mutability {
+        ProcedureMutability::Read => "read",
+        ProcedureMutability::GraphWrite => "graph_write",
+        ProcedureMutability::SchemaWrite => "schema_write",
+        ProcedureMutability::Admin => "admin",
+    }
+}
+
+fn render_signature(name: &str, signature: &ProcedureSignature) -> String {
+    let params = signature
+        .parameters
+        .iter()
+        .map(|parameter| {
+            let nullable = if parameter.nullable { "?" } else { "" };
+            format!(
+                "{}: {}{}",
+                parameter.name,
+                render_gql_type(&parameter.ty),
+                nullable
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{name}({params})")
+}
+
+fn render_gql_type(ty: &GqlType) -> String {
+    match ty {
+        GqlType::String => "STRING".to_owned(),
+        GqlType::Boolean => "BOOLEAN".to_owned(),
+        GqlType::Integer => "INTEGER".to_owned(),
+        GqlType::Float => "FLOAT".to_owned(),
+        GqlType::Int8 => "INT8".to_owned(),
+        GqlType::Int16 => "INT16".to_owned(),
+        GqlType::Int32 => "INT32".to_owned(),
+        GqlType::Int64 => "INT64".to_owned(),
+        GqlType::Int128 => "INT128".to_owned(),
+        GqlType::Uint8 => "UINT8".to_owned(),
+        GqlType::Uint16 => "UINT16".to_owned(),
+        GqlType::Uint32 => "UINT32".to_owned(),
+        GqlType::Uint64 => "UINT64".to_owned(),
+        GqlType::Uint128 => "UINT128".to_owned(),
+        GqlType::SmallInt => "SMALLINT".to_owned(),
+        GqlType::BigInt => "BIGINT".to_owned(),
+        GqlType::Decimal => "DECIMAL".to_owned(),
+        GqlType::Float32 => "FLOAT32".to_owned(),
+        GqlType::Float64 => "FLOAT64".to_owned(),
+        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => "BYTES".to_owned(),
+        GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),
+        GqlType::LocalDateTime => "LOCAL DATETIME".to_owned(),
+        GqlType::Date => "DATE".to_owned(),
+        GqlType::ZonedTime => "ZONED TIME".to_owned(),
+        GqlType::LocalTime => "LOCAL TIME".to_owned(),
+        GqlType::Duration => "DURATION".to_owned(),
+        GqlType::Record(_) => "RECORD".to_owned(),
+        GqlType::List(inner) => format!("LIST<{}>", render_gql_type(inner)),
+        GqlType::Path => "PATH".to_owned(),
+        GqlType::GraphRef => "GRAPH".to_owned(),
+        GqlType::NodeRef => "NODE".to_owned(),
+        GqlType::EdgeRef => "EDGE".to_owned(),
+        GqlType::TableRef => "TABLE".to_owned(),
+        GqlType::Null => "NULL".to_owned(),
+        GqlType::Nothing => "NOTHING".to_owned(),
+    }
 }
 
 fn render_node_type_def(node_type: &NodeTypeDef) -> String {

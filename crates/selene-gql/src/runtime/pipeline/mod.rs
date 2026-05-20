@@ -5,6 +5,7 @@ mod call;
 mod catalog;
 mod chain;
 mod distinct;
+mod explain;
 mod filter;
 mod group_by;
 mod let_op;
@@ -116,6 +117,7 @@ pub(crate) fn execute_pipeline_with_plan(
                 mutation::execute(mutation, table, ctx, expr_ids, subqueries)?
             }
             PipelineOp::Catalog(catalog) => catalog::execute(catalog, table, ctx)?,
+            PipelineOp::ExplainPlan { inner, .. } => explain::execute(inner)?,
             PipelineOp::Call(call) => call::execute(call, table, ctx, expr_ids, subqueries)?,
             PipelineOp::Tx(_) => {
                 return Err(ExecutorError::ImplementationDefined {
