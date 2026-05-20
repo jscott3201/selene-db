@@ -164,6 +164,10 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
         Statement::Mutate(pipeline) => rebase_mutation_pipeline(pipeline, offset),
         Statement::Ddl(statement) => rebase_ddl(statement, offset),
         Statement::Call(call) => rebase_call(call, offset),
+        Statement::Explain { inner, span } => {
+            rebase_span(span, offset);
+            rebase_statement_spans(inner, offset);
+        }
         Statement::StartTransaction { span }
         | Statement::Commit { span }
         | Statement::Rollback { span } => rebase_span(span, offset),
@@ -496,7 +500,10 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
                 rebase_property_def(property, offset);
             }
         }
-        DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
+        DdlStatement::ShowNodeTypes(span)
+        | DdlStatement::ShowEdgeTypes(span)
+        | DdlStatement::ShowIndexes(span)
+        | DdlStatement::ShowProcedures(span) => {
             rebase_span(span, offset);
         }
     }

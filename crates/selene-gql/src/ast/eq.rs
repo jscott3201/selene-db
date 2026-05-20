@@ -38,6 +38,10 @@ fn scrub_statement(statement: &mut Statement) {
         Statement::Mutate(pipeline) => scrub_mutation_pipeline(pipeline),
         Statement::Ddl(statement) => scrub_ddl(statement),
         Statement::Call(call) => scrub_call(call),
+        Statement::Explain { inner, span } => {
+            *span = SourceSpan::default();
+            scrub_statement(inner);
+        }
         Statement::StartTransaction { span }
         | Statement::Commit { span }
         | Statement::Rollback { span } => *span = SourceSpan::default(),
@@ -364,7 +368,10 @@ fn scrub_ddl(statement: &mut DdlStatement) {
                 scrub_property_def(property);
             }
         }
-        DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
+        DdlStatement::ShowNodeTypes(span)
+        | DdlStatement::ShowEdgeTypes(span)
+        | DdlStatement::ShowIndexes(span)
+        | DdlStatement::ShowProcedures(span) => {
             *span = SourceSpan::default();
         }
     }
