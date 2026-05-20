@@ -3,7 +3,7 @@
 use selene_core::NodeId;
 use selene_graph::SubTag;
 
-use crate::VectorOp;
+use crate::{DistanceMetric, VectorOp};
 
 /// Errors returned by selene-vector public APIs.
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
@@ -191,6 +191,16 @@ pub enum VectorError {
         n_probe: u32,
         /// Configured coarse centroid count.
         k_coarse: u32,
+    },
+
+    /// An IVF query metric override needs side data not stored by this index.
+    #[error("IVF metric override {override:?} requires side data not stored by {build:?} index")]
+    #[diagnostic(code(SLENE_VEC_025))]
+    IvfMetricOverrideRequiresSideData {
+        /// Requested query-time metric override.
+        r#override: DistanceMetric,
+        /// Build-time metric for the IVF index.
+        build: DistanceMetric,
     },
 
     /// IVF snapshot sections are not mutually consistent.
