@@ -15,7 +15,11 @@ use super::{FeatureUse, query, record_feature};
 pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
     match value {
         ValueExpr::Literal(value) => literal(value, uses),
-        ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
+        ValueExpr::Variable { .. } => {}
+        ValueExpr::Parameter { span, .. } => {
+            record_feature(uses, FeatureId::GE04, *span);
+            record_feature(uses, FeatureId::GE05, *span);
+        }
         ValueExpr::PropertyAccess { target, .. } => self::value(target, uses),
         ValueExpr::ListAccess { target, index, .. } => {
             self::value(target, uses);
@@ -42,11 +46,21 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             ) {
                 record_feature(uses, FeatureId::GA01, *span);
             }
+            if *op == BinaryOp::Xor {
+                record_feature(uses, FeatureId::GE07, *span);
+            }
             self::value(lhs, uses);
             self::value(rhs, uses);
         }
         ValueExpr::UnaryOp { operand, .. } => self::value(operand, uses),
-        ValueExpr::FunctionCall { args, .. } => values(args, uses),
+        ValueExpr::FunctionCall {
+            name, args, span, ..
+        } => {
+            if name.len() == 1 && name.first().as_str().eq_ignore_ascii_case("size") {
+                record_feature(uses, FeatureId::GF13, *span);
+            }
+            values(args, uses);
+        }
         ValueExpr::IsCheck {
             operand,
             kind,
