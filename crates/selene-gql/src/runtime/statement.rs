@@ -190,7 +190,8 @@ fn execute_read_only(
             providers,
             parameters,
         )
-        .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+        .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+        .with_istr_admission_policy(session.istr_admission_policy);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
         note_output_rows(plan, &ctx, table.row_count())?;
@@ -203,7 +204,8 @@ fn execute_read_only(
             providers,
             parameters,
         )
-        .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+        .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+        .with_istr_admission_policy(session.istr_admission_policy);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
         note_output_rows(plan, &ctx, table.row_count())?;
@@ -246,7 +248,8 @@ fn execute_inside_explicit_tx(
         providers,
         parameters,
     )
-    .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+    .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+    .with_istr_admission_policy(session.istr_admission_policy);
     let result = ctx
         .check_cancellation()
         .and_then(|()| execute_plan(plan, &mut ctx))
@@ -280,7 +283,8 @@ fn execute_auto_commit(
             providers,
             parameters,
         )
-        .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
+        .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+        .with_istr_admission_policy(session.istr_admission_policy);
         ctx.check_cancellation()
             .and_then(|()| execute_plan(plan, &mut ctx))
             .and_then(|table| {

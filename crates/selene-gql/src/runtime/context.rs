@@ -2,7 +2,9 @@
 
 use std::{cell::Cell, collections::BTreeMap, fmt, sync::Arc, time::Instant};
 
-use selene_core::{CancellationCause, CancellationChecker, CancellationToken, IStr, Value};
+use selene_core::{
+    CancellationCause, CancellationChecker, CancellationToken, IStr, IStrAdmissionPolicy, Value,
+};
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
@@ -43,6 +45,7 @@ pub struct TxContext<'a, 'g> {
     cancellation: Option<&'a CancellationToken>,
     deadline: Option<Instant>,
     row_cap: Option<usize>,
+    istr_admission_policy: IStrAdmissionPolicy,
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
@@ -115,6 +118,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
             result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
@@ -159,6 +163,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
             result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
@@ -203,6 +208,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
         }
@@ -219,6 +225,13 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.cancellation = cancellation;
         self.deadline = deadline;
         self.row_cap = row_cap;
+        self
+    }
+
+    /// Attach the per-session string-admission policy visible to runtime helpers.
+    #[must_use]
+    pub const fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
+        self.istr_admission_policy = policy;
         self
     }
 
@@ -274,6 +287,12 @@ impl<'a, 'g> TxContext<'a, 'g> {
     #[must_use]
     pub(crate) const fn deadline(&self) -> Option<Instant> {
         self.deadline
+    }
+
+    /// Return the policy used when runtime code admits engine-created strings.
+    #[must_use]
+    pub const fn istr_admission_policy(&self) -> IStrAdmissionPolicy {
+        self.istr_admission_policy
     }
 
     pub(crate) fn cancellation_error(
@@ -420,6 +439,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("cancellation", &self.cancellation.is_some())
             .field("deadline", &self.deadline.is_some())
             .field("row_cap", &self.row_cap)
+            .field("istr_admission_policy", &self.istr_admission_policy)
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
             .finish()
