@@ -17,9 +17,6 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("0G009", "overlapping-diff"),
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
-    // kept for selene-core, selene-graph, and selene-persist compatibility - TODO migrate
-    // in a cross-crate GQLSTATUS audit.
-    ("22023", "data-exception-invalid-parameter-value"),
     ("22G03", "invalid-value-type"),
     ("25G02", "invalid-transaction-state-mixing"),
     ("25N02", "in-failed-transaction"),
@@ -34,9 +31,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("5GQL1", "program-limit-exceeded"),
     ("5GQL2", "operation-cancelled"),
     ("5GQL3", "deadline-exceeded"),
-    ("XX500", "implementation-defined-error"),
-    ("XX501", "graph-mutation-error"),
-    ("XX502", "durability-flush-error"),
+    ("5GQL0", "implementation-defined-error"),
 ];
 
 /// Return the human-readable name for a GQLSTATUS code.

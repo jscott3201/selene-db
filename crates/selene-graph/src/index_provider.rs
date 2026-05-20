@@ -239,7 +239,7 @@ mod tests {
     #[case(ProviderError::Inconsistent { reason: "duplicate".to_owned() })]
     fn provider_error_gqlstatus_mappings(#[case] provider_error: ProviderError) {
         let graph_error = GraphError::Provider(provider_error);
-        assert_eq!(graph_error.gqlstatus(), "XX500");
+        assert_eq!(graph_error.gqlstatus(), "5GQL0");
     }
 
     #[test]

@@ -29,6 +29,32 @@ fn avg_preserves_integer_precision_when_inputs_are_int() {
 }
 
 #[test]
+fn stddev_pop_and_samp_use_welford_accumulator() {
+    let table = execute_read(
+        "UNWIND [2, 4, 4, 4, 5, 5, 7, 9] AS x \
+         RETURN stddev_pop(x) AS pop, stddev_samp(x) AS samp",
+    );
+
+    assert_eq!(column_values(&table, "pop"), vec![Value::Float(2.0)]);
+    let values = column_values(&table, "samp");
+    let [Value::Float(sample)] = values.as_slice() else {
+        panic!("expected sample stddev float, got {values:?}");
+    };
+    assert!((sample - 2.138_089_935_299_395).abs() < 1.0e-12);
+}
+
+#[test]
+fn stddev_skips_null_inputs_and_sample_requires_two_values() {
+    let table = execute_read(
+        "UNWIND [1, NULL, 3] AS x \
+         RETURN stddev_pop(x) AS pop, stddev_samp(NULL) AS samp",
+    );
+
+    assert_eq!(column_values(&table, "pop"), vec![Value::Float(1.0)]);
+    assert_eq!(column_values(&table, "samp"), vec![Value::Null]);
+}
+
+#[test]
 fn multiple_sum_aggregates_with_distinct_arguments_disambiguate() {
     let table =
         execute_read("MATCH (n:Person) RETURN sum(n.age) AS age_sum, sum(n.score) AS score_sum");

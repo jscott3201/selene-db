@@ -140,16 +140,16 @@ impl GraphError {
             Self::NodeNotFound { .. }
             | Self::EdgeNotFound { .. }
             | Self::NodeNotAlive { .. }
-            | Self::EdgeNotAlive { .. } => "22023",
+            | Self::EdgeNotAlive { .. } => "22G03",
             Self::IdOverflow { .. } => "53000",
-            Self::Inconsistent { .. } => "XX500",
+            Self::Inconsistent { .. } => "5GQL0",
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
-            | Self::IndexValueRejected { .. } => "22023",
+            | Self::IndexValueRejected { .. } => "22G03",
             Self::TypeViolation(_) => "22000",
             Self::Core(_) => "22000",
-            Self::Durable { .. } => "XX500",
-            Self::Provider(_) | Self::Persist(_) => "XX500",
+            Self::Durable { .. } => "5GQL0",
+            Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
     }
 }
@@ -163,31 +163,31 @@ mod tests {
     use crate::ProviderError;
 
     #[rstest]
-    #[case(GraphError::NodeNotFound { id: NodeId::new(1) }, "22023")]
-    #[case(GraphError::EdgeNotFound { id: EdgeId::new(1) }, "22023")]
-    #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22023")]
-    #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22023")]
+    #[case(GraphError::NodeNotFound { id: NodeId::new(1) }, "22G03")]
+    #[case(GraphError::EdgeNotFound { id: EdgeId::new(1) }, "22G03")]
+    #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22G03")]
+    #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22G03")]
     #[case(
         GraphError::IdOverflow { kind: "node", raw: 5_000_000_000, max: 4_294_967_296 },
         "53000"
     )]
     #[case(
         GraphError::Inconsistent { reason: "row index exceeds u32::MAX".to_owned() },
-        "XX500"
+        "5GQL0"
     )]
     #[case(
         GraphError::PropertyIndexAlreadyExists {
             label: intern("err.label").unwrap(),
             property: intern("err.property").unwrap(),
         },
-        "22023"
+        "22G03"
     )]
     #[case(
         GraphError::PropertyIndexNotFound {
             label: intern("err.label.missing").unwrap(),
             property: intern("err.property.missing").unwrap(),
         },
-        "22023"
+        "22G03"
     )]
     #[case(
         GraphError::IndexValueRejected {
@@ -196,7 +196,7 @@ mod tests {
             expected_kind: TypedIndexKind::I64,
             observed: "String",
         },
-        "22023"
+        "22G03"
     )]
     #[case(
         GraphError::TypeViolation(TypeViolation::UnknownEdgeLabel {
@@ -206,12 +206,12 @@ mod tests {
         "22000"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
-    #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "XX500")]
+    #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
     #[case(
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag VECT".to_owned() }),
-        "XX500"
+        "5GQL0"
     )]
-    #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "XX500")]
+    #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(

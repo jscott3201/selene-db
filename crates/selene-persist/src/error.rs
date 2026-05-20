@@ -245,11 +245,11 @@ impl PersistError {
     #[must_use]
     pub const fn gqlstatus(&self) -> &'static str {
         match self {
-            Self::PrincipalTooLarge { .. } => "22023",
+            Self::PrincipalTooLarge { .. } => "22G03",
             Self::PayloadTooLarge { .. }
             | Self::TooManySections { .. }
             | Self::SectionTooLarge { .. } => "5GQL1",
-            Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22023",
+            Self::DuplicateSection { .. } | Self::DuplicateProviderTag { .. } => "22G03",
             Self::UnsupportedVersion { .. } => "08000",
             Self::Io(_)
             | Self::HeaderCodec(_)
@@ -271,7 +271,7 @@ impl PersistError {
             | Self::MalformedSectionLayout { .. }
             | Self::UnknownProvider { .. }
             | Self::ProviderFailed { .. }
-            | Self::WalSnapshotMismatch { .. } => "XX500",
+            | Self::WalSnapshotMismatch { .. } => "5GQL0",
         }
     }
 }
@@ -283,37 +283,37 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case(PersistError::HeaderCodec("bad".to_owned()), "XX500")]
-    #[case(PersistError::PayloadCodec("bad".to_owned()), "XX500")]
-    #[case(PersistError::Compression("bad".to_owned()), "XX500")]
+    #[case(PersistError::HeaderCodec("bad".to_owned()), "5GQL0")]
+    #[case(PersistError::PayloadCodec("bad".to_owned()), "5GQL0")]
+    #[case(PersistError::Compression("bad".to_owned()), "5GQL0")]
     #[case(PersistError::PayloadTooLarge { len: 1, max: 0 }, "5GQL1")]
-    #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22023")]
-    #[case(PersistError::MagicMismatch { observed: *b"NOPE" }, "XX500")]
+    #[case(PersistError::PrincipalTooLarge { len: 1, max: 0 }, "22G03")]
+    #[case(PersistError::MagicMismatch { observed: *b"NOPE" }, "5GQL0")]
     #[case(PersistError::UnsupportedVersion { major: 2, minor: 0 }, "08000")]
-    #[case(PersistError::ChecksumMismatch { sequence: 7 }, "XX500")]
-    #[case(PersistError::NonMonotonicSequence { previous: 7, current: 7 }, "XX500")]
-    #[case(PersistError::TruncatedFileHeader, "XX500")]
-    #[case(PersistError::TruncatedEntry { offset: 16 }, "XX500")]
-    #[case(PersistError::WriterLockHeld, "XX500")]
-    #[case(PersistError::TruncatedSnapshotHeader, "XX500")]
-    #[case(PersistError::TruncatedSectionTable { offset: 32 }, "XX500")]
+    #[case(PersistError::ChecksumMismatch { sequence: 7 }, "5GQL0")]
+    #[case(PersistError::NonMonotonicSequence { previous: 7, current: 7 }, "5GQL0")]
+    #[case(PersistError::TruncatedFileHeader, "5GQL0")]
+    #[case(PersistError::TruncatedEntry { offset: 16 }, "5GQL0")]
+    #[case(PersistError::WriterLockHeld, "5GQL0")]
+    #[case(PersistError::TruncatedSnapshotHeader, "5GQL0")]
+    #[case(PersistError::TruncatedSectionTable { offset: 32 }, "5GQL0")]
     #[case(PersistError::TooManySections { count: 2, max: 1 }, "5GQL1")]
     #[case(PersistError::SectionTooLarge { len: 2, max: 1 }, "5GQL1")]
-    #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22023")]
-    #[case(PersistError::BodyHashMismatch { expected: [1; 16], observed: [2; 16] }, "XX500")]
-    #[case(PersistError::UnsupportedFlag { flag: 1 }, "XX500")]
-    #[case(PersistError::ReservedBytesNonZero { offset: 12 }, "XX500")]
-    #[case(PersistError::MalformedSnapshotFilename, "XX500")]
-    #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "XX500")]
-    #[case(PersistError::MalformedSectionLayout { reason: "test" }, "XX500")]
-    #[case(PersistError::DuplicateProviderTag { tag: *b"CORE" }, "22023")]
-    #[case(PersistError::UnknownProvider { provider: *b"CORE", sub: *b"META" }, "XX500")]
+    #[case(PersistError::DuplicateSection { provider: *b"CORE", sub: *b"META" }, "22G03")]
+    #[case(PersistError::BodyHashMismatch { expected: [1; 16], observed: [2; 16] }, "5GQL0")]
+    #[case(PersistError::UnsupportedFlag { flag: 1 }, "5GQL0")]
+    #[case(PersistError::ReservedBytesNonZero { offset: 12 }, "5GQL0")]
+    #[case(PersistError::MalformedSnapshotFilename, "5GQL0")]
+    #[case(PersistError::SectionMissing { provider: *b"CORE", sub: *b"META" }, "5GQL0")]
+    #[case(PersistError::MalformedSectionLayout { reason: "test" }, "5GQL0")]
+    #[case(PersistError::DuplicateProviderTag { tag: *b"CORE" }, "22G03")]
+    #[case(PersistError::UnknownProvider { provider: *b"CORE", sub: *b"META" }, "5GQL0")]
     #[case(PersistError::ProviderFailed {
         provider: *b"CORE",
         sub: Some(*b"META"),
         source: Box::new(std::io::Error::other("provider failed")),
-    }, "XX500")]
-    #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "XX500")]
+    }, "5GQL0")]
+    #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(

@@ -101,8 +101,8 @@ impl PlannerError {
     #[must_use]
     pub const fn gqlstatus(&self) -> GqlStatus {
         match self {
-            Self::NotImplemented { .. }
-            | Self::BindingResolutionLost { .. }
+            Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::BindingResolutionLost { .. }
             | Self::ExpressionTypeMissing { .. }
             | Self::UnknownProcedure { .. }
             | Self::WriteSetMissing { .. }

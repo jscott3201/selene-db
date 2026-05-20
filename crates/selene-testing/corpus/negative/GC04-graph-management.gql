@@ -1,5 +1,5 @@
--- corpus: positive
+-- corpus: negative
 -- feature: GC04
 -- also-covers: GC05, GG01
--- expects: parse-ok
+-- expects: parse-rejected(GC04)
 CREATE GRAPH IF NOT EXISTS demo

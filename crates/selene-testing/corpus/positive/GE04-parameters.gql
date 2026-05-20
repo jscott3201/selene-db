@@ -1,0 +1,5 @@
+-- corpus: positive
+-- feature: GE04
+-- also-covers: GE05
+-- expects: parse-ok
+RETURN $name AS value

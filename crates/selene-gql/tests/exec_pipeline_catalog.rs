@@ -484,21 +484,6 @@ fn drop_nonexistent_node_type_returns_data_exception() {
 }
 
 #[test]
-fn graph_level_catalog_ops_are_deferred() {
-    let graph = empty_closed_graph(3713);
-    let plan = planned("CREATE GRAPH g");
-
-    let err = run_write(&graph, &plan).expect_err("graph catalog deferred");
-
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "graph-level catalog ops not in v1.0 (D1 single-graph embeddable)",
-        }
-    ));
-}
-
-#[test]
 fn phase_a_flags_and_constraints_are_deferred() {
     let graph = empty_closed_graph(3714);
     let mut cases = Vec::new();

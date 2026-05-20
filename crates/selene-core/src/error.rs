@@ -106,7 +106,7 @@ impl CoreError {
             // Mirrors selene-gql::error::GqlStatus::PROGRAM_LIMIT_EXCEEDED
             // without introducing a dependency from selene-core to selene-gql.
             Self::IStrCapExceeded { .. } => "5GQL1",
-            Self::StringTooLong { .. } | Self::ConstructedValueTooLarge { .. } => "22023",
+            Self::StringTooLong { .. } | Self::ConstructedValueTooLarge { .. } => "22G03",
             Self::DecimalPrecisionExceeded { .. } => "22003",
             Self::ExtensionTypeIdConflict { .. } => "0G001",
             Self::ExtensionTypeIdUnregistered { .. } => "0G002",
@@ -126,10 +126,10 @@ mod tests {
 
     #[rstest]
     #[case(CoreError::IStrCapExceeded { count: 2, max: 1 }, "5GQL1", "SLENE_C_001")]
-    #[case(CoreError::StringTooLong { got: 2, max: 1 }, "22023", "SLENE_C_002")]
+    #[case(CoreError::StringTooLong { got: 2, max: 1 }, "22G03", "SLENE_C_002")]
     #[case(
         CoreError::ConstructedValueTooLarge { got: 2, max: 1 },
-        "22023",
+        "22G03",
         "SLENE_C_003"
     )]
     #[case(

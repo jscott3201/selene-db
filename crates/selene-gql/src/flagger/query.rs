@@ -6,8 +6,8 @@ use crate::{
     PipelineStatement, QueryPipeline, ReturnClause, SetOp, Statement, WithClause,
     ast::{
         pattern::{
-            EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathSelector,
-            PatternElement,
+            EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern,
+            PathSelector, PatternElement,
         },
         statement::{LetBinding, OrderTerm, UnwindStatement},
     },
@@ -34,7 +34,8 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
                 query_pipeline(pipeline, uses);
             }
         }
-        Statement::Chained { blocks, .. } => {
+        Statement::Chained { blocks, span } => {
+            record_feature(uses, FeatureId::GQ20, *span);
             for block in blocks {
                 query_pipeline(block, uses);
             }
@@ -58,11 +59,15 @@ pub(crate) fn query_pipeline(pipeline: &QueryPipeline, uses: &mut Vec<FeatureUse
 pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<FeatureUse>) {
     match statement {
         PipelineStatement::Match(value) => match_clause(value, uses),
-        PipelineStatement::Filter(value) => expr::value(value, uses),
+        PipelineStatement::Filter(value) => {
+            record_feature(uses, FeatureId::GQ08, value.span());
+            expr::value(value, uses);
+        }
         PipelineStatement::Let(values) => let_bindings(values, uses),
         PipelineStatement::Unwind(value) => unwind(value, uses),
         PipelineStatement::Sorting(values) => order_terms(values, uses),
-        PipelineStatement::Limit(_) | PipelineStatement::Offset(_) => {}
+        PipelineStatement::Limit(value) => record_feature(uses, FeatureId::GQ13, value.span()),
+        PipelineStatement::Offset(value) => record_feature(uses, FeatureId::GQ12, value.span()),
         PipelineStatement::Return(value) => return_clause(value, uses),
         PipelineStatement::With(value) => with_clause(value, uses),
         PipelineStatement::Call(value) => call::procedure_call(value, uses),
@@ -143,6 +148,9 @@ fn node_pattern(pattern: &NodePattern, uses: &mut Vec<FeatureUse>) {
 }
 
 fn edge_pattern(pattern: &EdgePattern, uses: &mut Vec<FeatureUse>) {
+    if pattern.direction == EdgeDirection::Undirected {
+        record_feature(uses, FeatureId::GH02, pattern.span);
+    }
     if let Some(label_expr) = &pattern.label_expr {
         label_expression(label_expr);
     }

@@ -221,7 +221,7 @@ pub enum ExecutorError {
 
     /// The graph mutation funnel rejected a write.
     #[error("graph mutation failed: {source}")]
-    #[diagnostic(code(SLENE_X_XX501))]
+    #[diagnostic(code(SLENE_X_5GQL0_GRAPH_MUTATION))]
     GraphMutation {
         /// Underlying graph-layer error.
         #[source]
@@ -233,7 +233,7 @@ pub enum ExecutorError {
 
     /// Commit-critical durability provider flush failed.
     #[error("durability flush failed for provider {provider_tag}: {reason}")]
-    #[diagnostic(code(SLENE_X_XX502))]
+    #[diagnostic(code(SLENE_X_5GQL0_FLUSH))]
     Flush {
         /// Durable provider tag.
         provider_tag: selene_graph::ProviderTag,
@@ -255,7 +255,7 @@ pub enum ExecutorError {
 
     /// Implementation-defined executor surface not supported by this brief.
     #[error("implementation-defined executor failure: {detail}")]
-    #[diagnostic(code(SLENE_X_XX500))]
+    #[diagnostic(code(SLENE_X_5GQL0_IMPLEMENTATION_DEFINED))]
     ImplementationDefined {
         /// Stable detail tag asserted by tests.
         detail: &'static str,

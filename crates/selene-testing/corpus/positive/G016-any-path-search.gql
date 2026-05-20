@@ -1,4 +1,0 @@
--- corpus: positive
--- feature: G016
--- expects: parse-ok
-MATCH ANY (n:Person) RETURN n

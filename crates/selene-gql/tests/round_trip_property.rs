@@ -11,7 +11,6 @@ fn representative_read_shapes_round_trip() {
         "RETURN (1 + 2) * 3 AS n",
         "RETURN count(*) AS c",
         "RETURN CASE WHEN n.age > 10 THEN 'old' ELSE 'new' END AS bucket",
-        "MATCH ANY SHORTEST (a)-[:K]->(b) RETURN b",
     ] {
         assert_round_trip(source);
     }

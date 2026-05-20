@@ -92,6 +92,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   descriptions. `SHOW PROCEDURES` now returns seven columns:
   `name`, `tier`, `mutability`, `signature`, `description`, `since_version`,
   and `capability_required`.
+- Conformance-integrity coverage for v1.1: Pattern beta ISO feature IDs
+  `GQ08`, `GQ12`, `GQ13`, `GQ20`, `GE04`, `GE05`, `GE07`, `GF13`, and
+  `GH02` are now registered and covered by corpus cases, and
+  `STDDEV_POP` / `STDDEV_SAMP` execute with an O(1) Welford accumulator.
 
 ### Changed
 
@@ -106,6 +110,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Program-limit errors from `IStrCapExceeded`, `PayloadTooLarge`,
   `TooManySections`, and `SectionTooLarge` now report GQLSTATUS `5GQL1`
   instead of the SQLSTATE-shaped `54000`.
+- Removed phantom Pattern alpha support claims for path selectors
+  (`G015`-`G018`) and graph management (`GC04`/`GC05`); these surfaces now
+  reject with GQLSTATUS `42N01` before execution instead of reaching planner
+  or runtime implementation-defined failures.
+- Collapsed residual implementation-defined `XX500`/`XX501`/`XX502` status
+  emissions to single GQLSTATUS `5GQL0`, with diagnostic-detail tags for graph
+  mutation, durability flush, and generic implementation-defined failures.
+  Residual `22023` emissions in core, graph, and persist now report `22G03`.
+- GQL record equality now propagates NULL and NaN through nested record fields
+  in the runtime `=` comparator while preserving `Value::PartialEq` and
+  runtime row-key structural equality for deduplication.
 
 ## [1.0.0] — 2026-05-16
 

@@ -4,9 +4,9 @@ mod exec_common;
 
 use selene_core::{Change, GraphId, LabelSet, NodeId, PropertyMap, Value};
 use selene_gql::{
-    AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema,
-    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType, TxContext, analyze,
-    execute_pattern, execute_pipeline, parse, plan,
+    AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema, EdgeDirection,
+    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, GqlType, MutationOp,
+    PipelineOp, TxContext, analyze, execute_pattern, execute_pipeline, parse, plan,
 };
 use selene_graph::{CommitOutcome, SharedGraph};
 
@@ -176,6 +176,31 @@ fn insert_edge_between_two_matched_bindings_creates_edge() {
     let (_, _) = run_write(&graph, &plan).expect("write executes");
 
     assert_eq!(graph.read().edge_count(), 1);
+}
+
+#[test]
+fn undirected_insert_edge_is_rejected_at_runtime() {
+    let graph = empty_graph();
+    let mut plan = planned("INSERT (:A)-[:REL]->(:B) RETURN 1 AS ok");
+    let edge = plan
+        .pipeline
+        .iter_mut()
+        .find_map(|op| match op {
+            PipelineOp::Mutation(MutationOp::InsertEdge { direction, .. }) => Some(direction),
+            _ => None,
+        })
+        .expect("plan inserts an edge");
+    *edge = EdgeDirection::Undirected;
+
+    let err = run_write(&graph, &plan).expect_err("undirected INSERT edge rejects");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ImplementationDefined {
+            detail: "INSERT undirected edge not implemented",
+        }
+    ));
+    assert_eq!(graph.read().edge_count(), 0);
 }
 
 #[test]

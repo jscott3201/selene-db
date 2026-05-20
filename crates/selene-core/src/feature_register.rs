@@ -63,6 +63,11 @@ feature_ids! {
     GC04 = "GC04" => "Graph management";
     GC05 = "GC05" => "Graph management: IF [ NOT ] EXISTS";
     GD01 = "GD01" => "Updatable graphs";
+    GE04 = "GE04" => "Parameters";
+    GE05 = "GE05" => "Named parameters";
+    GE07 = "GE07" => "XOR operator";
+    GF13 = "GF13" => "SIZE function";
+    GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
     GG20 = "GG20" => "Explicit element type names";
@@ -88,8 +93,12 @@ feature_ids! {
     GQ05 = "GQ05" => "Composite query: EXCEPT ALL";
     GQ06 = "GQ06" => "Composite query: INTERSECT DISTINCT";
     GQ07 = "GQ07" => "Composite query: INTERSECT ALL";
+    GQ08 = "GQ08" => "FILTER statement";
     GQ09 = "GQ09" => "Composite query: OTHERWISE";
+    GQ12 = "GQ12" => "OFFSET clause";
+    GQ13 = "GQ13" => "LIMIT clause";
     GQ15 = "GQ15" => "GROUP BY clause";
+    GQ20 = "GQ20" => "Linear query composition";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
     GV01 = "GV01" => "8 bit unsigned integer numbers";
@@ -138,10 +147,6 @@ feature_ids! {
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
 pub const SUPPORTED_FEATURES: &[FeatureId] = &[
-    FeatureId::G015,
-    FeatureId::G016,
-    FeatureId::G017,
-    FeatureId::G018,
     FeatureId::G110,
     FeatureId::G111,
     FeatureId::G112,
@@ -151,16 +156,23 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GA01,
     FeatureId::GA07,
     FeatureId::GC03,
-    FeatureId::GC04,
-    FeatureId::GC05,
     FeatureId::GD01,
+    FeatureId::GE04,
+    FeatureId::GE05,
+    FeatureId::GE07,
+    FeatureId::GF13,
+    FeatureId::GH02,
     FeatureId::GG01,
     FeatureId::GG02,
     FeatureId::GG20,
     FeatureId::GG21,
     FeatureId::GP04,
     FeatureId::GQ03,
+    FeatureId::GQ08,
+    FeatureId::GQ12,
+    FeatureId::GQ13,
     FeatureId::GQ15,
+    FeatureId::GQ20,
     FeatureId::GT01,
     FeatureId::GV01,
     FeatureId::GV02,
@@ -191,6 +203,22 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 
 /// Rationale for referenced optional features not claimed in v1.0.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
+    (
+        FeatureId::G015,
+        "explicit ALL path selector parses but is not lowered by the v1.0 path planner",
+    ),
+    (
+        FeatureId::G016,
+        "ANY path selector parses but is not lowered by the v1.0 path planner",
+    ),
+    (
+        FeatureId::G017,
+        "ALL SHORTEST path selector parses but is not lowered by the v1.0 path planner",
+    ),
+    (
+        FeatureId::G018,
+        "ANY SHORTEST path selector parses but is not lowered by the v1.0 path planner",
+    ),
     (
         FeatureId::G019,
         "counted shortest selectors require grammar + PathSelector AST work; reclaim with the path-selector extension brief",
@@ -256,6 +284,14 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GC02,
         "CREATE/DROP SCHEMA is outside the v1.0 catalog claim (graph-schema vs graph-type vs graph)",
+    ),
+    (
+        FeatureId::GC04,
+        "CREATE/DROP GRAPH parses but graph management DDL remains outside the v1.0 catalog claim",
+    ),
+    (
+        FeatureId::GC05,
+        "graph management IF [NOT] EXISTS modifiers remain outside the v1.0 catalog claim",
     ),
     (
         FeatureId::GQ04,

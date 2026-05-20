@@ -18,14 +18,15 @@ fn group_by_feature_is_supported() {
 }
 
 #[test]
-fn path_selector_features_are_supported_for_reachable_ast_variants() {
-    for source in [
-        "MATCH ALL (n) RETURN n",
-        "MATCH ANY (n) RETURN n",
-        "MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m",
-        "MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m",
+fn path_selector_features_are_rejected_before_planning() {
+    for (source, expected) in [
+        ("MATCH ALL (n) RETURN n", FeatureId::G015),
+        ("MATCH ANY (n) RETURN n", FeatureId::G016),
+        ("MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m", FeatureId::G017),
+        ("MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m", FeatureId::G018),
     ] {
-        parse(source).expect(source);
+        let error = parse(source).expect_err(source);
+        assert_feature(error, expected);
     }
 }
 
@@ -58,9 +59,17 @@ fn mutation_feature_is_supported() {
 }
 
 #[test]
-fn graph_management_and_if_exists_features_are_supported() {
-    parse("CREATE GRAPH IF NOT EXISTS demo").expect("GC04 and GC05 are claimed");
-    parse("DROP GRAPH IF EXISTS demo").expect("GC04 and GC05 are claimed");
+fn graph_management_features_are_rejected_before_planning() {
+    for source in [
+        "CREATE GRAPH demo",
+        "CREATE GRAPH IF NOT EXISTS demo",
+        "DROP GRAPH demo",
+        "DROP GRAPH IF EXISTS demo",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus().as_str(), "42N01");
+        assert_feature(error, FeatureId::GC04);
+    }
 }
 
 #[test]

@@ -69,6 +69,8 @@ enum AggregateFn {
     CountStar,
     Sum,
     Avg,
+    StddevPop,
+    StddevSamp,
     Min,
     Max,
     Collect,
@@ -79,6 +81,8 @@ enum AggregateState {
     CountStar { count: u64 },
     Sum { sum: Option<NumericSum> },
     Avg { sum: Option<NumericSum>, count: u64 },
+    StddevPop { stats: Welford },
+    StddevSamp { stats: Welford },
     Min { value: Option<Value> },
     Max { value: Option<Value> },
     Collect { values: Vec<Value> },
@@ -93,6 +97,12 @@ impl AggregateState {
             AggregateFn::Avg => Self::Avg {
                 sum: None,
                 count: 0,
+            },
+            AggregateFn::StddevPop => Self::StddevPop {
+                stats: Welford::default(),
+            },
+            AggregateFn::StddevSamp => Self::StddevSamp {
+                stats: Welford::default(),
             },
             AggregateFn::Min => Self::Min { value: None },
             AggregateFn::Max => Self::Max { value: None },
@@ -129,6 +139,12 @@ impl AggregateState {
                 *count = count.saturating_add(1);
                 Ok(())
             }
+            Self::StddevPop { stats } | Self::StddevSamp { stats } => {
+                let value = value.ok_or(ExecutorError::ImplementationDefined {
+                    detail: "aggregate value missing",
+                })?;
+                stats.observe(value, span)
+            }
             Self::Min { value: current } => update_min_max(current, value, span, true),
             Self::Max { value: current } => update_min_max(current, value, span, false),
             Self::Collect { values } => {
@@ -145,6 +161,8 @@ impl AggregateState {
             Self::Count { count } | Self::CountStar { count } => count_to_value(count, span),
             Self::Sum { sum } => Ok(sum.map_or(Value::Int(0), NumericSum::into_value)),
             Self::Avg { sum, count } => avg_to_value(sum, count, span),
+            Self::StddevPop { stats } => stddev_pop_to_value(stats, span),
+            Self::StddevSamp { stats } => stddev_samp_to_value(stats, span),
             Self::Min { value } | Self::Max { value } => Ok(value.unwrap_or(Value::Null)),
             Self::Collect { values } => Ok(Value::List(values)),
         }
@@ -163,6 +181,29 @@ impl NumericSum {
             Self::Int(value) => Value::Int(value),
             Self::Float(value) => Value::Float(value),
         }
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct Welford {
+    count: u64,
+    mean: f64,
+    m2: f64,
+}
+
+impl Welford {
+    fn observe(&mut self, value: Value, span: SourceSpan) -> Result<(), ExecutorError> {
+        let value = numeric_sum_to_f64(numeric_value(value, span)?, span)?;
+        let count = self
+            .count
+            .checked_add(1)
+            .ok_or_else(|| data_exception_value("aggregate count is out of range", span))?;
+        let delta = value - self.mean;
+        self.count = count;
+        self.mean += delta / count as f64;
+        let delta2 = value - self.mean;
+        self.m2 = finite_float(self.m2 + delta * delta2, span)?;
+        Ok(())
     }
 }
 
@@ -186,6 +227,8 @@ fn classify(aggregate: &Aggregate) -> Result<AggregateFn, ExecutorError> {
         "count" => Ok(AggregateFn::Count),
         "sum" => Ok(AggregateFn::Sum),
         "avg" | "average" => Ok(AggregateFn::Avg),
+        "stddev_pop" => Ok(AggregateFn::StddevPop),
+        "stddev_samp" => Ok(AggregateFn::StddevSamp),
         "min" => Ok(AggregateFn::Min),
         "max" => Ok(AggregateFn::Max),
         "collect" | "collect_list" => Ok(AggregateFn::Collect),
@@ -273,6 +316,20 @@ fn avg_to_value(
     }
     let sum = numeric_sum_to_f64(sum, span)?;
     finite_float(sum / count as f64, span).map(Value::Float)
+}
+
+fn stddev_pop_to_value(stats: Welford, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if stats.count == 0 {
+        return Ok(Value::Null);
+    }
+    finite_float((stats.m2 / stats.count as f64).sqrt(), span).map(Value::Float)
+}
+
+fn stddev_samp_to_value(stats: Welford, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if stats.count < 2 {
+        return Ok(Value::Null);
+    }
+    finite_float((stats.m2 / (stats.count - 1) as f64).sqrt(), span).map(Value::Float)
 }
 
 fn finite_float(value: f64, span: SourceSpan) -> Result<f64, ExecutorError> {
