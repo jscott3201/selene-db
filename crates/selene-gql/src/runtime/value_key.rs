@@ -314,13 +314,14 @@ fn hash_binary_number<H: Hasher>(
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::hash_map::DefaultHasher,
+        collections::{HashMap, hash_map::DefaultHasher},
         hash::{Hash, Hasher},
         sync::Arc,
     };
 
     use proptest::{prelude::*, test_runner::Config};
-    use selene_core::{Value, intern_with_admission};
+    use selene_core::{Record, Value, intern_with_admission};
+    use smallvec::smallvec;
 
     use super::{DistinctRowKey, RuntimeEqKey, runtime_values_equal};
 
@@ -382,6 +383,20 @@ mod tests {
 
         assert_eq!(interned, external);
         assert_eq!(key_hash(&interned), key_hash(&external));
+    }
+
+    #[test]
+    fn runtime_eq_key_dedups_record_with_null_by_rust_equality() {
+        let key = intern_with_admission("x").expect("test key interns").0;
+        let record = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+        let mut map = HashMap::new();
+
+        assert_eq!(record, record.clone());
+        map.insert(RuntimeEqKey::from_row(vec![record.clone()]), 1);
+        map.insert(RuntimeEqKey::from_row(vec![record]), 2);
+
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.values().copied().collect::<Vec<_>>(), vec![2]);
     }
 
     proptest! {
