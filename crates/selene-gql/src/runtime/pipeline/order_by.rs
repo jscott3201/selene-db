@@ -5,7 +5,7 @@ use selene_core::Value;
 use crate::{
     NullsPolicy, OrderDirection, OrderKey,
     runtime::{
-        Binding, BindingTable, ExecutorError, TxContext, evaluator,
+        Binding, BindingTable, EvalCtx, ExecutorError, evaluator,
         value_compare::{self, NullSortOrder},
     },
 };
@@ -13,7 +13,7 @@ use crate::{
 pub(super) fn execute(
     keys: &[OrderKey],
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (schema, rows) = table.into_parts();
     let mut keyed_rows = rows
@@ -43,7 +43,7 @@ pub(super) fn evaluate_key_tuple(
     keys: &[OrderKey],
     row: &Binding,
     schema: &crate::BindingTableSchema,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     keys.iter()
         .map(|key| evaluator::evaluate(&key.expr, row, schema, ctx))

@@ -4,7 +4,7 @@ use selene_core::Value;
 
 use crate::{
     BinaryOp, SourceSpan, UnaryOp, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext, evaluator, value_compare},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError, evaluator, value_compare},
 };
 
 pub(super) fn eval_binary(
@@ -344,7 +344,7 @@ pub(super) fn eval_in_list(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     if matches!(value, Value::Null) {
         return Ok(Value::Null);

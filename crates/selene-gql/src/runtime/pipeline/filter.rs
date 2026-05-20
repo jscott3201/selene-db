@@ -2,13 +2,13 @@ use selene_core::Value;
 
 use crate::{
     FilterPredicate,
-    runtime::{BindingTable, ExecutorError, TxContext, evaluator},
+    runtime::{BindingTable, EvalCtx, ExecutorError, evaluator},
 };
 
 pub(super) fn execute(
     predicate: &FilterPredicate,
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     if predicate.index_consumed {
         return Err(ExecutorError::ImplementationDefined {

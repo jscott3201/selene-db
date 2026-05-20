@@ -6,7 +6,7 @@ use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
     EdgeDirection, EdgeMatch, JoinTree, PatternPlan,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{pattern, scan};
@@ -15,7 +15,7 @@ pub(crate) fn execute(
     child: &JoinTree,
     edge: &EdgeMatch,
     direction: EdgeDirection,
-    env: pattern::WalkContext<'_, '_, '_, '_>,
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut rows = Vec::new();
@@ -35,11 +35,11 @@ pub(crate) fn execute(
     Ok(rows)
 }
 
-struct ExpandState<'a, 'ctx, 'g, 'out> {
+struct ExpandState<'a, 'eval, 'ctx, 'g, 'plan, 'out> {
     edge: &'a EdgeMatch,
     pattern_plan: &'a PatternPlan,
     schema: &'a BindingTableSchema,
-    ctx: &'a TxContext<'ctx, 'g>,
+    ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
     output: &'out mut Vec<Binding>,
 }
 
@@ -74,33 +74,33 @@ fn expand_from_source(
     source: NodeId,
     row: &Binding,
     direction: EdgeDirection,
-    state: &mut ExpandState<'_, '_, '_, '_>,
+    state: &mut ExpandState<'_, '_, '_, '_, '_, '_>,
 ) -> Result<(), ExecutorError> {
     let mut seen = BTreeSet::new();
     match direction {
         EdgeDirection::Right => {
-            if let Some(entry) = state.ctx.snapshot().outgoing_edges(source) {
+            if let Some(entry) = state.ctx.tx.snapshot().outgoing_edges(source) {
                 for adjacent in entry.iter() {
                     maybe_emit(adjacent.edge_id, adjacent.neighbor, row, state)?;
                 }
             }
         }
         EdgeDirection::Left => {
-            if let Some(entry) = state.ctx.snapshot().incoming_edges(source) {
+            if let Some(entry) = state.ctx.tx.snapshot().incoming_edges(source) {
                 for adjacent in entry.iter() {
                     maybe_emit(adjacent.edge_id, adjacent.neighbor, row, state)?;
                 }
             }
         }
         EdgeDirection::Undirected => {
-            if let Some(entry) = state.ctx.snapshot().outgoing_edges(source) {
+            if let Some(entry) = state.ctx.tx.snapshot().outgoing_edges(source) {
                 for adjacent in entry.iter() {
                     if seen.insert(adjacent.edge_id) {
                         maybe_emit(adjacent.edge_id, adjacent.neighbor, row, state)?;
                     }
                 }
             }
-            if let Some(entry) = state.ctx.snapshot().incoming_edges(source) {
+            if let Some(entry) = state.ctx.tx.snapshot().incoming_edges(source) {
                 for adjacent in entry.iter() {
                     if seen.insert(adjacent.edge_id) {
                         maybe_emit(adjacent.edge_id, adjacent.neighbor, row, state)?;
@@ -116,7 +116,7 @@ fn maybe_emit(
     edge_id: EdgeId,
     right_node: NodeId,
     row: &Binding,
-    state: &mut ExpandState<'_, '_, '_, '_>,
+    state: &mut ExpandState<'_, '_, '_, '_, '_, '_>,
 ) -> Result<(), ExecutorError> {
     if !edge_label_matches(state.edge, edge_id, state.ctx)
         || !right_node_matches(state.edge, right_node, state.ctx)
@@ -185,20 +185,22 @@ fn maybe_emit(
     Ok(())
 }
 
-fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &TxContext<'_, '_>) -> bool {
+fn edge_label_matches(edge: &EdgeMatch, edge_id: EdgeId, ctx: &EvalCtx<'_, '_, '_, '_>) -> bool {
     let Some(label_expr) = &edge.label_predicate else {
         return true;
     };
-    ctx.snapshot()
+    ctx.tx
+        .snapshot()
         .edge_label(edge_id)
         .is_some_and(|label| scan::label_matches_edge(label_expr, *label))
 }
 
-fn right_node_matches(edge: &EdgeMatch, node: NodeId, ctx: &TxContext<'_, '_>) -> bool {
+fn right_node_matches(edge: &EdgeMatch, node: NodeId, ctx: &EvalCtx<'_, '_, '_, '_>) -> bool {
     let Some(label_expr) = &edge.right_label_predicate else {
         return true;
     };
-    ctx.snapshot()
+    ctx.tx
+        .snapshot()
         .node_labels(node)
         .is_some_and(|labels| scan::label_matches_node(label_expr, labels))
 }
@@ -209,7 +211,7 @@ fn predicates_pass(
     row: &Binding,
     schema: &BindingTableSchema,
     entity: &Value,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<bool, ExecutorError> {
     for predicate in predicates {
         if !scan::predicate_passes(predicate, pattern_plan, row, schema, entity, ctx)? {

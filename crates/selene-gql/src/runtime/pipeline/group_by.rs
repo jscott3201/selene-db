@@ -2,7 +2,7 @@ use selene_core::Value;
 
 use crate::{
     Aggregate, BindingTableColumn, ProjectExpr,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext, evaluator, value_compare},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator, value_compare},
 };
 
 use super::aggregate::{self, AggregateSlot};
@@ -11,7 +11,7 @@ pub(super) fn execute(
     keys: &[ProjectExpr],
     aggregates: &[Aggregate],
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, aggregates);
@@ -75,7 +75,7 @@ impl Group {
         &mut self,
         row: &Binding,
         schema: &crate::BindingTableSchema,
-        ctx: &mut TxContext<'_, '_>,
+        ctx: &EvalCtx<'_, '_, '_, '_>,
     ) -> Result<(), ExecutorError> {
         for aggregate in &mut self.aggregates {
             aggregate.observe(row, schema, ctx)?;
@@ -116,7 +116,7 @@ fn evaluate_key_tuple(
     keys: &[ProjectExpr],
     row: &Binding,
     schema: &crate::BindingTableSchema,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     keys.iter()
         .map(|key| evaluator::evaluate(&key.expr, row, schema, ctx))

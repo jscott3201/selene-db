@@ -2,7 +2,7 @@
 
 use crate::{
     ExecutionPlan,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::pattern;
@@ -11,15 +11,16 @@ pub(crate) fn execute(
     plan: &ExecutionPlan,
     schema: &BindingTableSchema,
     seed: Option<&Binding>,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
-    ensure_phase_a_compatible(plan, seed)?;
+    ensure_phase_a_compatible(plan)?;
     let Some(pattern_plan) = &plan.pattern_plan else {
         return Err(ExecutorError::ImplementationDefined {
             detail: "Subplan without pattern plan",
         });
     };
-    let table = pattern::execute_pattern(pattern_plan, ctx)?;
+    let sub_ctx = ctx.with_plan(&plan.expr_ids, &plan.subqueries);
+    let table = pattern::execute_pattern_with_seed(pattern_plan, seed, &sub_ctx)?;
     Ok(table
         .rows()
         .iter()
@@ -27,15 +28,7 @@ pub(crate) fn execute(
         .collect())
 }
 
-fn ensure_phase_a_compatible(
-    plan: &ExecutionPlan,
-    seed: Option<&Binding>,
-) -> Result<(), ExecutorError> {
-    if seed.is_some() {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "correlated subplans not yet supported",
-        });
-    }
+fn ensure_phase_a_compatible(plan: &ExecutionPlan) -> Result<(), ExecutorError> {
     if !plan.pipeline.is_empty() {
         return Err(ExecutorError::ImplementationDefined {
             detail: "Subplan pipeline ops not yet supported",

@@ -2,7 +2,7 @@ use selene_core::{IStr, Value};
 
 use crate::{
     AnalyzedType, BindingTableColumn, GqlType, ProjectExpr, SourceSpan,
-    runtime::{Binding, BindingTable, ExecutorError, TxContext, evaluator},
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator},
 };
 
 pub(super) fn execute(
@@ -10,7 +10,7 @@ pub(super) fn execute(
     alias: IStr,
     span: SourceSpan,
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let (input_schema, input_rows) = table.into_parts();
     let mut output_schema = input_schema.clone();

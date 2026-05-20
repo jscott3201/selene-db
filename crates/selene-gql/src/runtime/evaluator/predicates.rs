@@ -8,7 +8,7 @@ use selene_core::{IStr, Value};
 
 use crate::{
     BinaryOp, GqlType, IsCheckKind, LabelExpr, SourceSpan, TruthValue, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{
@@ -24,7 +24,7 @@ pub(super) fn eval_like(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let operand = evaluate(operand, binding, schema, ctx)?;
     let pattern = evaluate(pattern, binding, schema, ctx)?;
@@ -44,7 +44,7 @@ pub(super) fn eval_between(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let operand = evaluate(operand, binding, schema, ctx)?;
     let low = evaluate(bounds.0, binding, schema, ctx)?;
@@ -68,7 +68,7 @@ pub(super) fn eval_is_check(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     if matches!(kind, IsCheckKind::Normalized(_)) {
         return Err(ExecutorError::FeatureNotInV1_1 {
@@ -100,7 +100,7 @@ pub(super) fn eval_all_different(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let values = evaluate_items(items, binding, schema, ctx)?;
     let mut saw_unknown = false;
@@ -139,7 +139,7 @@ pub(super) fn eval_same(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let values = evaluate_items(items, binding, schema, ctx)?;
     let Some(first) = values.first() else {
@@ -180,7 +180,7 @@ pub(super) fn eval_property_exists(
     _span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let target = evaluate(target, binding, schema, ctx)?;
     if matches!(target, Value::Null) {
@@ -194,7 +194,7 @@ fn evaluate_items(
     items: &[ValueExpr],
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<Value>, ExecutorError> {
     items
         .iter()
@@ -205,11 +205,11 @@ fn evaluate_items(
 fn eval_is_directed(
     value: Value,
     span: SourceSpan,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match value {
         Value::Null => Ok(Value::Null),
-        Value::EdgeRef(id) => Ok(Value::Bool(ctx.snapshot().edge_endpoints(id).is_some())),
+        Value::EdgeRef(id) => Ok(Value::Bool(ctx.tx.snapshot().edge_endpoints(id).is_some())),
         Value::NodeRef(_) => data_exception("IS DIRECTED operand is not an edge", span),
         _ => data_exception("IS DIRECTED operand is not a graph element", span),
     }
@@ -219,17 +219,17 @@ fn eval_is_labeled(
     value: Value,
     label_expr: &LabelExpr,
     span: SourceSpan,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match value {
         Value::Null => Ok(Value::Null),
         Value::NodeRef(id) => {
-            Ok(Value::Bool(ctx.snapshot().node_labels(id).is_some_and(
+            Ok(Value::Bool(ctx.tx.snapshot().node_labels(id).is_some_and(
                 |labels| scan::label_matches_node(label_expr, labels),
             )))
         }
         Value::EdgeRef(id) => {
-            Ok(Value::Bool(ctx.snapshot().edge_label(id).is_some_and(
+            Ok(Value::Bool(ctx.tx.snapshot().edge_label(id).is_some_and(
                 |label| scan::label_matches_edge(label_expr, *label),
             )))
         }
@@ -255,7 +255,7 @@ fn eval_is_endpoint(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let value = evaluate(value, binding, schema, ctx)?;
     if matches!(operand, Value::Null) || matches!(value, Value::Null) {
@@ -268,7 +268,8 @@ fn eval_is_endpoint(
         return data_exception("endpoint predicate value is not a node", span);
     };
     Ok(Value::Bool(
-        ctx.snapshot()
+        ctx.tx
+            .snapshot()
             .edge_endpoints(edge_id)
             .is_some_and(|(source_id, destination_id)| {
                 if source {

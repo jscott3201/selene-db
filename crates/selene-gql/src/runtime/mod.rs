@@ -32,7 +32,7 @@ mod value_key;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};
-pub use context::{AdaptiveOptimizer, TxContext};
+pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
 pub use context_tiers::{GraphContext, MutationContext, ProcedureContext};
 pub use error::ExecutorError;
 pub use pattern::execute_pattern;
@@ -50,4 +50,4 @@ pub use statement::{StatementOutput, WriteOutcome, execute_statement};
 pub use crate::plan::{BindingTableColumn, BindingTableSchema};
 
 #[cfg(any(test, feature = "test-harness"))]
-pub use evaluator::evaluate as evaluate_for_test;
+pub use evaluator::evaluate_for_test;

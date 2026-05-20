@@ -4,7 +4,7 @@ use selene_core::Value;
 use crate::{
     Aggregate, SourceSpan,
     runtime::{
-        Binding, BindingTableSchema, ExecutorError, TxContext, evaluator, value_compare,
+        Binding, BindingTableSchema, EvalCtx, ExecutorError, evaluator, value_compare,
         value_key::RuntimeEqKey,
     },
 };
@@ -28,7 +28,7 @@ impl AggregateSlot {
         &mut self,
         row: &Binding,
         schema: &BindingTableSchema,
-        ctx: &mut TxContext<'_, '_>,
+        ctx: &EvalCtx<'_, '_, '_, '_>,
     ) -> Result<(), ExecutorError> {
         if matches!(self.state, AggregateState::CountStar { .. }) {
             return self.state.observe(None, self.aggregate.span);

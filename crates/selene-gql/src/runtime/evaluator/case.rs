@@ -8,7 +8,7 @@ use selene_core::Value;
 
 use crate::{
     SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, ExecutorError, TxContext},
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{binary_ops::data_exception, evaluate};
@@ -19,7 +19,7 @@ pub(super) fn eval_case(
     span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
-    ctx: &TxContext<'_, '_>,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     for (condition, value) in branches {
         match evaluate(condition, binding, schema, ctx)? {

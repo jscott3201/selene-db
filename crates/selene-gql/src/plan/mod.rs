@@ -19,9 +19,10 @@ pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
     HiddenBindingId, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount,
-    MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, PathPlan, PatternPlan,
-    PipelineOp, PipelineOpId, PlannedCall, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    PlannedYieldItem, ProjectExpr, PropertyInit, ScanAccess, ScanKind, TxOp, TypedIndexBounds,
+    MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, OuterBindingRef, PathPlan,
+    PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
+    PropertyInit, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry, TxOp, TypedIndexBounds,
     YieldKind,
 };
 pub use lowering::plan;
