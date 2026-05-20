@@ -2,10 +2,10 @@
 //!
 //! See spec 02 section 5.1. The cap of 1,000,000 distinct strings protects against
 //! unbounded interner growth; exceeding the cap raises
-//! [`CoreError::IStrCapExceeded`], mapped to GQLSTATUS `54000`.
+//! [`CoreError::IStrCapExceeded`], mapped to GQLSTATUS `5GQL1`.
 
 use std::fmt;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use lasso::{Spur, ThreadedRodeo};
 use parking_lot::Mutex;
@@ -16,13 +16,32 @@ use rkyv::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::error::{CoreError, CoreResult};
+use crate::{
+    error::{CoreError, CoreResult},
+    value::Value,
+};
 
 /// Maximum number of distinct interned strings per process.
 ///
 /// This is the spec 02 section 5.1 DoS guard for the `IL013` family of implementation
 /// choices.
 pub const MAX_INTERNED_STRINGS: usize = 1_000_000;
+
+/// Policy for converting raw text into engine values at string-admission boundaries.
+///
+/// The low-level [`intern`] and [`intern_with_admission`] APIs always preserve
+/// their hard cap. This policy is only applied by [`intern_or_external`] for
+/// callers that can safely carry high-cardinality text as
+/// [`Value::ExternalString`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum IStrAdmissionPolicy {
+    /// Propagate [`CoreError::IStrCapExceeded`] when the interner is full.
+    #[default]
+    Reject,
+    /// Fall back to [`Value::ExternalString`] only when the global interner cap is full.
+    FallbackToExternal,
+}
 
 /// Interned string handle.
 ///
@@ -67,6 +86,33 @@ const fn cap_exceeded(current_len: usize) -> bool {
 /// string is not already present.
 pub fn intern(s: &str) -> CoreResult<IStr> {
     intern_with_admission(s).map(|(value, _was_new)| value)
+}
+
+/// Convert raw text into a [`Value`] using the requested admission policy.
+///
+/// Successful interning returns [`Value::String`]. When the global cap is full,
+/// [`IStrAdmissionPolicy::Reject`] propagates the cap error, while
+/// [`IStrAdmissionPolicy::FallbackToExternal`] returns
+/// [`Value::ExternalString`]. Other core errors are always propagated.
+///
+/// GQL runtime comparison and hashing treat `Value::String` and
+/// `Value::ExternalString` with the same content as equal even though Rust's
+/// derived `Value` equality is variant-strict.
+///
+/// # Errors
+///
+/// Returns [`CoreError::IStrCapExceeded`] when the policy is
+/// [`IStrAdmissionPolicy::Reject`] and the string is not already admitted.
+pub fn intern_or_external(s: &str, policy: IStrAdmissionPolicy) -> CoreResult<Value> {
+    match intern(s) {
+        Ok(value) => Ok(Value::String(value)),
+        Err(CoreError::IStrCapExceeded { .. })
+            if policy == IStrAdmissionPolicy::FallbackToExternal =>
+        {
+            Ok(Value::ExternalString(Arc::from(s)))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Intern a string slice and report whether it was newly admitted.
