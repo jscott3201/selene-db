@@ -36,6 +36,16 @@ pub enum Statement {
     Ddl(DdlStatement),
     /// Top-level procedure call.
     Call(ProcedureCall),
+    /// `EXPLAIN <statement>`.
+    ///
+    /// Plans the inner statement and returns a textual plan without executing
+    /// the inner statement.
+    Explain {
+        /// Inner statement to plan.
+        inner: Box<Statement>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `START TRANSACTION`.
     StartTransaction {
         /// Source span.
@@ -63,6 +73,7 @@ impl Statement {
             Self::Mutate(pipeline) => pipeline.span,
             Self::Ddl(statement) => statement.span(),
             Self::Call(call) => call.span,
+            Self::Explain { span, .. } => *span,
             Self::StartTransaction { span } | Self::Commit { span } | Self::Rollback { span } => {
                 *span
             }
