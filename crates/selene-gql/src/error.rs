@@ -52,14 +52,14 @@ impl GqlStatus {
     /// Maps to GQLSTATUS 42N28, a selene-db implementation-defined subclass
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const CAPABILITY_VIOLATION: Self = Self(*b"42N28");
-    /// Maps to GQLSTATUS XX500, a selene-db implementation-defined class per
+    /// Maps to GQLSTATUS 5GQL0, a selene-db implementation-defined class per
     /// ISO/IEC 39075:2024 section 23.1.
-    pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"XX500");
+    pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
 
     /// Return this status as its 5-character string form.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        std::str::from_utf8(&self.0).unwrap_or("XX500")
+        std::str::from_utf8(&self.0).unwrap_or("5GQL0")
     }
 
     /// Return this status's two-character class code.
@@ -231,7 +231,7 @@ mod tests {
             (GqlStatus::UNKNOWN_PROCEDURE, "42N04", *b"42"),
             (GqlStatus::INVALID_PROCEDURE_ARGUMENT, "22G03", *b"22"),
             (GqlStatus::CAPABILITY_VIOLATION, "42N28", *b"42"),
-            (GqlStatus::IMPLEMENTATION_DEFINED_ERROR, "XX500", *b"XX"),
+            (GqlStatus::IMPLEMENTATION_DEFINED_ERROR, "5GQL0", *b"5G"),
         ];
 
         for (status, code, class) in cases {

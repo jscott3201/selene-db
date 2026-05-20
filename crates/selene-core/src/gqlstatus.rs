@@ -34,9 +34,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("5GQL1", "program-limit-exceeded"),
     ("5GQL2", "operation-cancelled"),
     ("5GQL3", "deadline-exceeded"),
-    ("XX500", "implementation-defined-error"),
-    ("XX501", "graph-mutation-error"),
-    ("XX502", "durability-flush-error"),
+    ("5GQL0", "implementation-defined-error"),
 ];
 
 /// Return the human-readable name for a GQLSTATUS code.

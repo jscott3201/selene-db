@@ -142,14 +142,14 @@ impl GraphError {
             | Self::NodeNotAlive { .. }
             | Self::EdgeNotAlive { .. } => "22023",
             Self::IdOverflow { .. } => "53000",
-            Self::Inconsistent { .. } => "XX500",
+            Self::Inconsistent { .. } => "5GQL0",
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
             | Self::IndexValueRejected { .. } => "22023",
             Self::TypeViolation(_) => "22000",
             Self::Core(_) => "22000",
-            Self::Durable { .. } => "XX500",
-            Self::Provider(_) | Self::Persist(_) => "XX500",
+            Self::Durable { .. } => "5GQL0",
+            Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
     }
 }
@@ -173,7 +173,7 @@ mod tests {
     )]
     #[case(
         GraphError::Inconsistent { reason: "row index exceeds u32::MAX".to_owned() },
-        "XX500"
+        "5GQL0"
     )]
     #[case(
         GraphError::PropertyIndexAlreadyExists {
@@ -206,12 +206,12 @@ mod tests {
         "22000"
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "22000")]
-    #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "XX500")]
+    #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
     #[case(
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag VECT".to_owned() }),
-        "XX500"
+        "5GQL0"
     )]
-    #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "XX500")]
+    #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: GraphError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(
