@@ -87,7 +87,7 @@ pub fn search(
     } else {
         0
     };
-    let mut top = BinaryHeap::with_capacity(k.saturating_add(1));
+    let mut top = top_k_heap_for_request(k);
     let probe_len = scratch.as_mut().probe_scores.len();
     for probe_index in 0..probe_len {
         let centroid_id = scratch.as_mut().probe_scores[probe_index].0;
@@ -376,6 +376,12 @@ impl Worst {
 }
 
 #[inline]
+fn top_k_heap_for_request(_k: usize) -> BinaryHeap<Worst> {
+    // `k` is user input; grow with accepted candidates instead of preallocating from it.
+    BinaryHeap::new()
+}
+
+#[inline]
 fn push_top_k(top: &mut BinaryHeap<Worst>, k: usize, node_id: NodeId, score: f32) {
     if score.is_nan() {
         return;
@@ -490,7 +496,7 @@ mod tests {
         ];
 
         for k in [1, 2, 3, 10] {
-            let mut heap = BinaryHeap::with_capacity(k + 1);
+            let mut heap = top_k_heap_for_request(k);
             for (node_id, score) in candidates.iter().copied() {
                 push_top_k(&mut heap, k, node_id, score);
             }
@@ -509,7 +515,7 @@ mod tests {
 
     #[test]
     fn bounded_heap_tie_break_keeps_lower_node_id() {
-        let mut heap = BinaryHeap::with_capacity(3);
+        let mut heap = top_k_heap_for_request(2);
         for node_id in [NodeId::new(3), NodeId::new(1), NodeId::new(2)] {
             push_top_k(&mut heap, 2, node_id, 1.0);
         }
@@ -525,7 +531,7 @@ mod tests {
 
     #[test]
     fn bounded_heap_skips_nan_scores() {
-        let mut heap = BinaryHeap::with_capacity(3);
+        let mut heap = top_k_heap_for_request(2);
         push_top_k(&mut heap, 2, NodeId::new(1), f32::NAN);
         push_top_k(&mut heap, 2, NodeId::new(2), 0.5);
 
@@ -535,6 +541,24 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(observed, vec![(NodeId::new(2), 0.5)]);
+    }
+
+    #[test]
+    fn bounded_heap_does_not_preallocate_from_large_user_k() {
+        let heap = top_k_heap_for_request(1_000_000);
+
+        assert_eq!(heap.capacity(), 0);
+    }
+
+    #[test]
+    fn search_large_k_returns_available_candidates_without_preallocating() {
+        let config = config(DistanceMetric::L2);
+        let trained = train(&rows(), &config).unwrap();
+        let index = IvfIndex::trained(2, trained, 256);
+
+        let results = search(&index, &[0.0, 0.0], 1_000_000, Some(2), &config, None, None).unwrap();
+
+        assert_eq!(results.len(), 256);
     }
 
     #[test]
