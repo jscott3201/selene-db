@@ -1,5 +1,7 @@
 //! Executor diagnostics and GQLSTATUS mapping.
 
+use std::time::{Duration, Instant};
+
 use selene_core::IStr;
 
 use crate::{AnalysisError, GqlStatus, ParserError, PlannerError, ProcedureError, SourceSpan};
@@ -184,6 +186,39 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Caller-requested cooperative cancellation interrupted the statement.
+    #[error("statement cancelled")]
+    #[diagnostic(code(SLENE_X_5GQL2))]
+    Cancelled {
+        /// Source span for the cancellation checkpoint.
+        #[label("cancelled here")]
+        span: SourceSpan,
+    },
+
+    /// The statement deadline elapsed before completion.
+    #[error("statement deadline exceeded")]
+    #[diagnostic(code(SLENE_X_5GQL3))]
+    Timeout {
+        /// Deadline configured on the session.
+        deadline: Instant,
+        /// Duration since the deadline elapsed.
+        elapsed: Duration,
+        /// Source span for the timeout checkpoint.
+        #[label("deadline exceeded here")]
+        span: SourceSpan,
+    },
+
+    /// The statement produced more outermost result rows than allowed.
+    #[error("statement row cap exceeded ({cap})")]
+    #[diagnostic(code(SLENE_X_5GQL1))]
+    RowCapExceeded {
+        /// Maximum allowed outermost result rows.
+        cap: usize,
+        /// Source span for the result boundary.
+        #[label("row cap exceeded here")]
+        span: SourceSpan,
+    },
+
     /// The graph mutation funnel rejected a write.
     #[error("graph mutation failed: {source}")]
     #[diagnostic(code(SLENE_X_XX501))]
@@ -248,6 +283,9 @@ impl ExecutorError {
             | Self::TransactionAlreadyActive { .. }
             | Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_STATE,
             Self::InFailedTransaction { .. } => GqlStatus::IN_FAILED_TRANSACTION,
+            Self::Cancelled { .. } => GqlStatus::OPERATION_CANCELLED,
+            Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
+            Self::RowCapExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::GraphMutation { .. } | Self::Flush { .. } => {
                 GqlStatus::IMPLEMENTATION_DEFINED_ERROR
             }

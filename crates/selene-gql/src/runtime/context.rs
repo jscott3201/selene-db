@@ -1,8 +1,8 @@
 //! Executor transaction context.
 
-use std::{collections::BTreeMap, fmt, sync::Arc, time::Instant};
+use std::{cell::Cell, collections::BTreeMap, fmt, sync::Arc, time::Instant};
 
-use selene_core::{CancellationToken, IStr, Value};
+use selene_core::{CancellationCause, CancellationChecker, CancellationToken, IStr, Value};
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
@@ -40,6 +40,7 @@ pub struct TxContext<'a, 'g> {
     cancellation: Option<&'a CancellationToken>,
     deadline: Option<Instant>,
     row_cap: Option<usize>,
+    result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
 }
 
@@ -111,6 +112,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
     }
@@ -154,6 +156,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            result_rows_emitted: Cell::new(0),
             write_txn: None,
         }
     }
@@ -197,6 +200,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
+            result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
         }
     }
@@ -213,6 +217,55 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.deadline = deadline;
         self.row_cap = row_cap;
         self
+    }
+
+    /// Check the token and deadline at a cooperative cancellation point.
+    pub(crate) fn check_cancellation(&self) -> Result<(), ExecutorError> {
+        self.cancellation_checker()
+            .check()
+            .map_err(|cause| self.cancellation_error(cause, SourceSpan::default()))
+    }
+
+    /// Count outermost result rows and enforce the optional row cap.
+    pub(crate) fn note_result_rows(&self, n: usize) -> Result<(), ExecutorError> {
+        let Some(cap) = self.row_cap else {
+            return Ok(());
+        };
+        let Some(next) = self.result_rows_emitted.get().checked_add(n) else {
+            return Err(ExecutorError::RowCapExceeded {
+                cap,
+                span: SourceSpan::default(),
+            });
+        };
+        self.result_rows_emitted.set(next);
+        if next > cap {
+            return Err(ExecutorError::RowCapExceeded {
+                cap,
+                span: SourceSpan::default(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Build a checker that can cross into procedure packs and algorithm crates.
+    #[must_use]
+    pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'_> {
+        CancellationChecker::new(self.cancellation, self.deadline)
+    }
+
+    pub(crate) fn cancellation_error(
+        &self,
+        cause: CancellationCause,
+        span: SourceSpan,
+    ) -> ExecutorError {
+        match cause {
+            CancellationCause::Cancelled => ExecutorError::Cancelled { span },
+            CancellationCause::Timeout { elapsed } => ExecutorError::Timeout {
+                deadline: self.deadline.unwrap_or_else(Instant::now),
+                elapsed,
+                span,
+            },
+        }
     }
 
     /// Attach plan-owned expression metadata for direct pipeline execution.
@@ -344,6 +397,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("cancellation", &self.cancellation.is_some())
             .field("deadline", &self.deadline.is_some())
             .field("row_cap", &self.row_cap)
+            .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
             .finish()
     }

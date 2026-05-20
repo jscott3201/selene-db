@@ -191,7 +191,10 @@ fn execute_read_only(
             parameters,
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
-        execute_plan(plan, &mut ctx)?
+        ctx.check_cancellation()?;
+        let table = execute_plan(plan, &mut ctx)?;
+        ctx.note_result_rows(table.row_count())?;
+        table
     } else {
         let mut ctx = TxContext::read_only_with_parameters(
             snapshot,
@@ -201,7 +204,10 @@ fn execute_read_only(
             parameters,
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
-        execute_plan(plan, &mut ctx)?
+        ctx.check_cancellation()?;
+        let table = execute_plan(plan, &mut ctx)?;
+        ctx.note_result_rows(table.row_count())?;
+        table
     };
     Ok(output_from_table(plan, table))
 }
@@ -241,7 +247,13 @@ fn execute_inside_explicit_tx(
         parameters,
     )
     .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
-    let result = execute_plan(plan, &mut ctx);
+    let result = ctx
+        .check_cancellation()
+        .and_then(|()| execute_plan(plan, &mut ctx))
+        .and_then(|table| {
+            ctx.note_result_rows(table.row_count())?;
+            Ok(table)
+        });
     if result.is_err() {
         session.aborted = true;
     }
@@ -269,7 +281,12 @@ fn execute_auto_commit(
             parameters,
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap);
-        execute_plan(plan, &mut ctx)
+        ctx.check_cancellation()
+            .and_then(|()| execute_plan(plan, &mut ctx))
+            .and_then(|table| {
+                ctx.note_result_rows(table.row_count())?;
+                Ok(table)
+            })
     };
     match result {
         Ok(table) => {
