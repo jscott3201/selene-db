@@ -284,7 +284,7 @@ fn start_transaction_with_active_txn_returns_already_active() {
         err,
         ExecutorError::TransactionAlreadyActive { .. }
     ));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_STATE);
+    assert_eq!(err.gqlstatus(), GqlStatus::ACTIVE_TRANSACTION);
     session.abort();
 }
 
@@ -296,7 +296,7 @@ fn commit_without_active_txn_returns_no_active_transaction() {
     let err = execute("COMMIT", &mut session).expect_err("commit errors");
 
     assert!(matches!(err, ExecutorError::NoActiveTransaction { .. }));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_STATE);
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_TERMINATION);
 }
 
 #[test]
@@ -307,7 +307,7 @@ fn rollback_without_active_txn_returns_no_active_transaction() {
     let err = execute("ROLLBACK", &mut session).expect_err("rollback errors");
 
     assert!(matches!(err, ExecutorError::NoActiveTransaction { .. }));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_STATE);
+    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_TERMINATION);
 }
 
 #[test]

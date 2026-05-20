@@ -4,7 +4,10 @@ use selene_core::Value;
 
 use crate::{
     BinaryOp, SourceSpan, UnaryOp, ValueExpr,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError, evaluator, value_compare},
+    runtime::{
+        Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError, evaluator,
+        value_compare,
+    },
 };
 
 pub(super) fn eval_binary(
@@ -46,10 +49,13 @@ pub(super) fn eval_unary(
             _ => data_exception("NOT operand is not boolean", span),
         },
         UnaryOp::Negate => match value {
-            Value::Int(value) => value
-                .checked_neg()
-                .map(Value::Int)
-                .ok_or_else(|| data_exception_value("integer arithmetic overflow", span)),
+            Value::Int(value) => value.checked_neg().map(Value::Int).ok_or_else(|| {
+                data_exception_value_with(
+                    DataExceptionSubclass::NumericValueOutOfRange,
+                    "integer arithmetic overflow",
+                    span,
+                )
+            }),
             Value::Float(value) => Ok(Value::Float(-value)),
             Value::Null => Ok(Value::Null),
             _ => data_exception("unary minus operand is not numeric", span),
@@ -116,7 +122,11 @@ pub(super) fn eval_ordering(
         return Ok(Value::Null);
     }
     let Some(ordering) = value_compare::compare_non_null(&lhs, &rhs) else {
-        return data_exception("values are not order-comparable", span);
+        return data_exception_with(
+            DataExceptionSubclass::ValuesNotComparable,
+            "values are not order-comparable",
+            span,
+        );
     };
     Ok(Value::Bool(match op {
         BinaryOp::Lt => ordering == Ordering::Less,
@@ -194,12 +204,20 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     if let (Value::Int(lhs), Value::Int(rhs)) = (&lhs, &rhs)
         && *rhs >= 0
     {
-        let exponent = u32::try_from(*rhs)
-            .map_err(|_| data_exception_value("integer exponent is negative or too large", span))?;
-        return lhs
-            .checked_pow(exponent)
-            .map(Value::Int)
-            .ok_or_else(|| data_exception_value("integer exponentiation overflow", span));
+        let exponent = u32::try_from(*rhs).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer exponent is negative or too large",
+                span,
+            )
+        })?;
+        return lhs.checked_pow(exponent).map(Value::Int).ok_or_else(|| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer exponentiation overflow",
+                span,
+            )
+        });
     }
     let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
         return data_exception("power operands are not numeric", span);
@@ -208,7 +226,8 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     if value.is_finite() {
         Ok(Value::Float(value))
     } else {
-        data_exception(
+        data_exception_with(
+            DataExceptionSubclass::InvalidArgumentForPowerFunction,
             "floating-point exponentiation produced non-finite value",
             span,
         )
@@ -273,7 +292,16 @@ fn eval_int_arithmetic(
         _ => None,
     };
     value.map(Value::Int).ok_or_else(|| {
-        data_exception_value("integer arithmetic overflow or division by zero", span)
+        let subclass = if matches!(op, BinaryOp::Div | BinaryOp::Mod) && rhs == 0 {
+            DataExceptionSubclass::DivisionByZero
+        } else {
+            DataExceptionSubclass::NumericValueOutOfRange
+        };
+        data_exception_value_with(
+            subclass,
+            "integer arithmetic overflow or division by zero",
+            span,
+        )
     })
 }
 
@@ -312,7 +340,16 @@ fn eval_i128_arithmetic(
         _ => None,
     };
     value.map(Value::Int128).ok_or_else(|| {
-        data_exception_value("integer arithmetic overflow or division by zero", span)
+        let subclass = if matches!(op, BinaryOp::Div | BinaryOp::Mod) && rhs == 0 {
+            DataExceptionSubclass::DivisionByZero
+        } else {
+            DataExceptionSubclass::NumericValueOutOfRange
+        };
+        data_exception_value_with(
+            subclass,
+            "integer arithmetic overflow or division by zero",
+            span,
+        )
     })
 }
 
@@ -328,12 +365,22 @@ fn eval_float_arithmetic(
         BinaryOp::Mul => lhs * rhs,
         BinaryOp::Div if rhs != 0.0 => lhs / rhs,
         BinaryOp::Mod if rhs != 0.0 => lhs % rhs,
-        _ => return data_exception("floating-point division by zero", span),
+        _ => {
+            return data_exception_with(
+                DataExceptionSubclass::DivisionByZero,
+                "floating-point division by zero",
+                span,
+            );
+        }
     };
     if value.is_finite() {
         Ok(Value::Float(value))
     } else {
-        data_exception("floating-point arithmetic produced non-finite value", span)
+        data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "floating-point arithmetic produced non-finite value",
+            span,
+        )
     }
 }
 
@@ -401,12 +448,25 @@ pub(super) fn data_exception<T>(
     message: impl Into<String>,
     span: SourceSpan,
 ) -> Result<T, ExecutorError> {
-    Err(data_exception_value(message, span))
+    data_exception_with(DataExceptionSubclass::InvalidValueType, message, span)
+}
+
+pub(super) fn data_exception_with<T>(
+    subclass: DataExceptionSubclass,
+    message: impl Into<String>,
+    span: SourceSpan,
+) -> Result<T, ExecutorError> {
+    Err(data_exception_value_with(subclass, message, span))
 }
 
 pub(super) fn data_exception_value(message: impl Into<String>, span: SourceSpan) -> ExecutorError {
-    ExecutorError::DataException {
-        message: message.into(),
-        span,
-    }
+    data_exception_value_with(DataExceptionSubclass::InvalidValueType, message, span)
+}
+
+pub(super) fn data_exception_value_with(
+    subclass: DataExceptionSubclass,
+    message: impl Into<String>,
+    span: SourceSpan,
+) -> ExecutorError {
+    ExecutorError::data_exception(subclass, message, span)
 }

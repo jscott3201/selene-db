@@ -11,7 +11,10 @@ use selene_core::Value;
 use crate::{
     BindingTableColumn, SourceSpan, ValueExpr,
     plan::{OuterBindingRef, PlannedSubquery},
-    runtime::{Binding, BindingTable, BindingTableSchema, EvalCtx, ExecutorError, pattern},
+    runtime::{
+        Binding, BindingTable, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
+        pattern,
+    },
 };
 
 pub(super) fn eval_exists(
@@ -35,9 +38,12 @@ pub(super) fn eval_count_subquery(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     let table = execute_subquery(expr, binding, schema, ctx)?;
-    let count = i64::try_from(table.row_count()).map_err(|_| ExecutorError::DataException {
-        message: "subquery count is out of range".to_owned(),
-        span,
+    let count = i64::try_from(table.row_count()).map_err(|_| {
+        ExecutorError::data_exception(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "subquery count is out of range",
+            span,
+        )
     })?;
     Ok(Value::Int(count))
 }

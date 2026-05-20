@@ -145,7 +145,7 @@ fn closed_graph_type(
         .bound_type
         .as_deref()
         .cloned()
-        .ok_or_else(|| ExecutorError::DataException {
+        .ok_or_else(|| ExecutorError::GraphTypeViolation {
             message: OPEN_GRAPH_CATALOG_DDL.to_owned(),
             span,
         })
@@ -174,7 +174,7 @@ fn single_endpoint(
     };
     graph_type
         .find_node_type_index(&LabelSet::single(*label))
-        .ok_or_else(|| ExecutorError::DataException {
+        .ok_or_else(|| ExecutorError::GraphTypeViolation {
             message: format!("edge endpoint references unknown node type label {label}"),
             span,
         })
@@ -597,7 +597,7 @@ fn render_property_value_type(value_type: PropertyValueType) -> &'static str {
 
 fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
     match source {
-        GraphError::Inconsistent { reason } => ExecutorError::DataException {
+        GraphError::Inconsistent { reason } => ExecutorError::GraphTypeViolation {
             message: reason,
             span,
         },

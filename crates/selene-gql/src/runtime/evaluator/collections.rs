@@ -11,11 +11,11 @@ use smallvec::SmallVec;
 
 use crate::{
     SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
+    runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
 use super::{
-    binary_ops::{data_exception, data_exception_value},
+    binary_ops::{data_exception, data_exception_value_with, data_exception_with},
     evaluate,
 };
 
@@ -42,8 +42,13 @@ pub(super) fn eval_list_access(
             };
             index
         }
-        Value::Uint(index) => usize::try_from(index)
-            .map_err(|_| data_exception_value("list access index is out of range", span))?,
+        Value::Uint(index) => usize::try_from(index).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::ListElementError,
+                "list access index is out of range",
+                span,
+            )
+        })?,
         _ => {
             return data_exception("list access index is not an integer", span);
         }
@@ -62,7 +67,11 @@ pub(super) fn eval_record_literal(
     let mut values = SmallVec::<[(IStr, Value); 4]>::new();
     for (key, expr) in fields {
         if !seen.insert(*key) {
-            return data_exception(format!("duplicate record field: {}", key.as_str()), span);
+            return data_exception_with(
+                DataExceptionSubclass::RecordDataFieldUnassignable,
+                format!("duplicate record field: {}", key.as_str()),
+                span,
+            );
         }
         values.push((*key, evaluate(expr, binding, schema, ctx)?));
     }

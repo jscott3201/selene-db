@@ -15,11 +15,29 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("0G004", "transient-codec-error"),
     ("0G008", "compact-key-value-length-mismatch"),
     ("0G009", "overlapping-diff"),
+    ("01G11", "null-value-eliminated-in-set-function"),
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
+    ("22012", "division-by-zero"),
+    ("2201F", "invalid-argument-for-power-function"),
     ("22G03", "invalid-value-type"),
+    ("22G04", "values-not-comparable"),
+    ("22G0C", "list-element-error"),
+    ("22G0M", "multiple-assignments-to-graph-element-property"),
+    (
+        "22G0S",
+        "number-of-node-properties-exceeds-supported-maximum",
+    ),
+    (
+        "22G0T",
+        "number-of-edge-properties-exceeds-supported-maximum",
+    ),
+    ("22G0X", "record-data-field-unassignable"),
+    ("25G01", "active-gql-transaction"),
     ("25G02", "invalid-transaction-state-mixing"),
+    ("25G03", "read-only-gql-transaction"),
     ("25N02", "in-failed-transaction"),
+    ("2D000", "invalid-transaction-termination"),
     ("42001", "invalid-syntax"),
     ("42002", "invalid-reference"),
     ("42N01", "feature-not-supported"),
@@ -32,6 +50,8 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("5GQL2", "operation-cancelled"),
     ("5GQL3", "deadline-exceeded"),
     ("5GQL0", "implementation-defined-error"),
+    ("G1001", "dependent-object-still-exists"),
+    ("G2000", "graph-type-violation"),
 ];
 
 /// Return the human-readable name for a GQLSTATUS code.

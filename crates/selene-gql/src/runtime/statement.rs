@@ -181,6 +181,7 @@ fn execute_read_only(
     let snapshot = session.graph().read();
     let parameters = &session.parameters;
     let (cancellation, deadline, row_cap) = resource_limits(session);
+    let warning_sink = session.warning_sink.as_ref();
     let table = if let Some(txn) = session.active_txn.as_mut() {
         let mut ctx = TxContext::write_with_parameters(
             snapshot,
@@ -191,7 +192,8 @@ fn execute_read_only(
             parameters,
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy);
+        .with_istr_admission_policy(session.istr_admission_policy)
+        .with_warning_sink(warning_sink);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
         note_output_rows(plan, &ctx, table.row_count())?;
@@ -205,7 +207,8 @@ fn execute_read_only(
             parameters,
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy);
+        .with_istr_admission_policy(session.istr_admission_policy)
+        .with_warning_sink(warning_sink);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
         note_output_rows(plan, &ctx, table.row_count())?;
@@ -234,6 +237,7 @@ fn execute_inside_explicit_tx(
     let snapshot = session.graph().read();
     let parameters = &session.parameters;
     let (cancellation, deadline, row_cap) = resource_limits(session);
+    let warning_sink = session.warning_sink.as_ref();
     let txn = session
         .active_txn
         .as_mut()
@@ -249,7 +253,8 @@ fn execute_inside_explicit_tx(
         parameters,
     )
     .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-    .with_istr_admission_policy(session.istr_admission_policy);
+    .with_istr_admission_policy(session.istr_admission_policy)
+    .with_warning_sink(warning_sink);
     let result = ctx
         .check_cancellation()
         .and_then(|()| execute_plan(plan, &mut ctx))
@@ -274,6 +279,7 @@ fn execute_auto_commit(
     let mut txn = session.graph().begin_write();
     let parameters = session.parameters();
     let (cancellation, deadline, row_cap) = resource_limits(session);
+    let warning_sink = session.warning_sink.as_ref();
     let result = {
         let mut ctx = TxContext::write_with_parameters(
             snapshot,
@@ -284,7 +290,8 @@ fn execute_auto_commit(
             parameters,
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy);
+        .with_istr_admission_policy(session.istr_admission_policy)
+        .with_warning_sink(warning_sink);
         ctx.check_cancellation()
             .and_then(|()| execute_plan(plan, &mut ctx))
             .and_then(|table| {

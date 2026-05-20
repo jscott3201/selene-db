@@ -341,7 +341,7 @@ fn open_graph_create_node_type_returns_data_exception() {
 
     assert!(matches!(
         err,
-        ExecutorError::DataException { message, .. }
+        ExecutorError::GraphTypeViolation { message, .. }
             if message.contains("open graph (GG01) does not support catalog type DDL")
     ));
 }
@@ -401,7 +401,7 @@ fn create_edge_type_unknown_endpoint_returns_data_exception() {
 
     assert!(matches!(
         err,
-        ExecutorError::DataException { message, .. }
+        ExecutorError::GraphTypeViolation { message, .. }
             if message.contains("unknown node type label Person")
     ));
 }
@@ -478,7 +478,7 @@ fn drop_nonexistent_node_type_returns_data_exception() {
 
     assert!(matches!(
         err,
-        ExecutorError::DataException { message, .. }
+        ExecutorError::GraphTypeViolation { message, .. }
             if message.contains("node type Missing does not exist")
     ));
 }

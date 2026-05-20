@@ -12,13 +12,13 @@ use selene_core::{IStr, Record, Value};
 
 use crate::{
     BinaryOp, NonEmpty, SourceSpan, ValueExpr,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
+    runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
 use super::{
     binary_ops::{
-        data_exception, data_exception_value, eval_binary, eval_equality, numeric_to_f64,
-        string_slice,
+        data_exception, data_exception_value, data_exception_value_with, data_exception_with,
+        eval_binary, eval_equality, numeric_to_f64, string_slice,
     },
     evaluate,
 };
@@ -130,19 +130,29 @@ pub(super) fn eval_function_call(
 fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
-        Value::Int(value) => value
-            .checked_abs()
-            .map(Value::Int)
-            .ok_or_else(|| data_exception_value("integer absolute value overflow", span)),
-        Value::Int128(value) => value
-            .checked_abs()
-            .map(Value::Int128)
-            .ok_or_else(|| data_exception_value("integer absolute value overflow", span)),
+        Value::Int(value) => value.checked_abs().map(Value::Int).ok_or_else(|| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer absolute value overflow",
+                span,
+            )
+        }),
+        Value::Int128(value) => value.checked_abs().map(Value::Int128).ok_or_else(|| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer absolute value overflow",
+                span,
+            )
+        }),
         Value::Uint(value) => Ok(Value::Uint(value)),
         Value::Uint128(value) => Ok(Value::Uint128(value)),
         Value::Float(value) if value.is_finite() => Ok(Value::Float(value.abs())),
         Value::Float32(value) if value.is_finite() => Ok(Value::Float(f64::from(value).abs())),
-        Value::Float(_) | Value::Float32(_) => data_exception("numeric result is non-finite", span),
+        Value::Float(_) | Value::Float32(_) => data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "numeric result is non-finite",
+            span,
+        ),
         _ => data_exception("abs argument is not numeric", span),
     }
 }
@@ -166,7 +176,11 @@ fn eval_unary_numeric(
             if value.is_finite() {
                 Ok(Value::Float(value))
             } else {
-                data_exception("numeric result is non-finite", span)
+                data_exception_with(
+                    DataExceptionSubclass::NumericValueOutOfRange,
+                    "numeric result is non-finite",
+                    span,
+                )
             }
         }
     }
@@ -181,13 +195,21 @@ fn eval_sqrt(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError>
         return data_exception("sqrt argument is not numeric", span);
     };
     if value < 0.0 {
-        return data_exception("sqrt argument is negative", span);
+        return data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "sqrt argument is negative",
+            span,
+        );
     }
     let value = value.sqrt();
     if value.is_finite() {
         Ok(Value::Float(value))
     } else {
-        data_exception("sqrt result is non-finite", span)
+        data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "sqrt result is non-finite",
+            span,
+        )
     }
 }
 
@@ -377,8 +399,13 @@ fn non_negative_usize(
 ) -> Result<usize, ExecutorError> {
     match value {
         Value::Int(value) if *value >= 0 => Ok(*value as usize),
-        Value::Uint(value) => usize::try_from(*value)
-            .map_err(|_| data_exception_value("integer argument is too large", span)),
+        Value::Uint(value) => usize::try_from(*value).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer argument is too large",
+                span,
+            )
+        }),
         Value::Null => Err(data_exception_value(message, span)),
         _ => data_exception(message, span),
     }

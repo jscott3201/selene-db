@@ -342,13 +342,17 @@ fn detach_delete_node_cascades_incident_edges() {
 }
 
 #[test]
-fn bare_delete_node_with_incident_edges_returns_data_exception() {
+fn bare_delete_node_with_incident_edges_returns_g1001() {
     let graph = graph_with_edge();
     let plan = planned("MATCH (n:Victim) DELETE n FINISH");
 
     let err = run_write(&graph, &plan).expect_err("strict delete errors");
 
-    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert!(matches!(
+        err,
+        ExecutorError::DependentObjectStillExists { .. }
+    ));
+    assert_eq!(err.gqlstatus(), GqlStatus::DEPENDENT_OBJECT_STILL_EXISTS);
 }
 
 #[test]
@@ -387,7 +391,7 @@ fn mutation_without_write_txn_returns_invalid_transaction_state() {
     let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect_err("write errors");
 
     assert!(matches!(err, ExecutorError::InvalidTransactionState { .. }));
-    assert_eq!(err.gqlstatus(), GqlStatus::INVALID_TRANSACTION_STATE);
+    assert_eq!(err.gqlstatus(), GqlStatus::READ_ONLY_TRANSACTION_VIOLATION);
 }
 
 #[test]

@@ -37,13 +37,39 @@ impl GqlStatus {
     pub const DATATYPE_MISMATCH: Self = Self(*b"22G03");
     /// Maps to GQLSTATUS 22000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
+    /// Maps to GQLSTATUS 22003 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NUMERIC_VALUE_OUT_OF_RANGE: Self = Self(*b"22003");
+    /// Maps to GQLSTATUS 22012 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const DIVISION_BY_ZERO: Self = Self(*b"22012");
+    /// Maps to GQLSTATUS 2201F per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_ARGUMENT_FOR_POWER_FUNCTION: Self = Self(*b"2201F");
+    /// Maps to GQLSTATUS 22G04 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const VALUES_NOT_COMPARABLE: Self = Self(*b"22G04");
+    /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const LIST_ELEMENT_ERROR: Self = Self(*b"22G0C");
+    /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY: Self = Self(*b"22G0M");
+    /// Maps to GQLSTATUS 22G0S per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0S");
+    /// Maps to GQLSTATUS 22G0T per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const EDGE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0T");
+    /// Maps to GQLSTATUS 22G0X per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const RECORD_DATA_FIELD_UNASSIGNABLE: Self = Self(*b"22G0X");
     /// Maps to GQLSTATUS 25000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_TRANSACTION_STATE: Self = Self(*b"25000");
+    /// Maps to GQLSTATUS 25G01 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const ACTIVE_TRANSACTION: Self = Self(*b"25G01");
     /// Maps to GQLSTATUS 25G02 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_TRANSACTION_STATE_MIXING: Self = Self(*b"25G02");
+    /// Maps to GQLSTATUS 25G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const READ_ONLY_TRANSACTION_VIOLATION: Self = Self(*b"25G03");
     /// Maps to GQLSTATUS 25N02, a selene-db implementation-defined subclass
     /// under standard class 25 per ISO/IEC 39075:2024 section 23.1.
     pub const IN_FAILED_TRANSACTION: Self = Self(*b"25N02");
+    /// Maps to GQLSTATUS 2D000 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_TRANSACTION_TERMINATION: Self = Self(*b"2D000");
+    /// Maps to GQLSTATUS 01G11 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const NULL_VALUE_ELIMINATED_IN_SET_FUNCTION: Self = Self(*b"01G11");
     /// Maps to GQLSTATUS 42N04, a selene-db implementation-defined subclass
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const UNKNOWN_PROCEDURE: Self = Self(*b"42N04");
@@ -56,6 +82,10 @@ impl GqlStatus {
     /// ISO/IEC 39075:2024 section 23.1. Specific executor diagnostics carry
     /// detail tags under this single public class.
     pub const IMPLEMENTATION_DEFINED_ERROR: Self = Self(*b"5GQL0");
+    /// Maps to GQLSTATUS G1001 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const DEPENDENT_OBJECT_STILL_EXISTS: Self = Self(*b"G1001");
+    /// Maps to GQLSTATUS G2000 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const GRAPH_TYPE_VIOLATION: Self = Self(*b"G2000");
 
     /// Return this status as its 5-character string form.
     #[must_use]
@@ -67,6 +97,13 @@ impl GqlStatus {
     #[must_use]
     pub const fn class(&self) -> [u8; 2] {
         [self.0[0], self.0[1]]
+    }
+
+    /// Build a status from a 5-character code already emitted by a lower crate.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        let bytes: [u8; 5] = code.as_bytes().try_into().ok()?;
+        bytes.iter().all(u8::is_ascii).then_some(Self(bytes))
     }
 }
 
@@ -226,18 +263,62 @@ mod tests {
             (GqlStatus::DUPLICATE_OBJECT, "42N10", *b"42"),
             (GqlStatus::DATATYPE_MISMATCH, "22G03", *b"22"),
             (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
+            (GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE, "22003", *b"22"),
+            (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
+            (
+                GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
+                "2201F",
+                *b"22",
+            ),
+            (GqlStatus::VALUES_NOT_COMPARABLE, "22G04", *b"22"),
+            (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
+            (
+                GqlStatus::MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY,
+                "22G0M",
+                *b"22",
+            ),
+            (
+                GqlStatus::NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM,
+                "22G0S",
+                *b"22",
+            ),
+            (
+                GqlStatus::EDGE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM,
+                "22G0T",
+                *b"22",
+            ),
+            (GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE, "22G0X", *b"22"),
             (GqlStatus::INVALID_TRANSACTION_STATE, "25000", *b"25"),
+            (GqlStatus::ACTIVE_TRANSACTION, "25G01", *b"25"),
             (GqlStatus::INVALID_TRANSACTION_STATE_MIXING, "25G02", *b"25"),
+            (GqlStatus::READ_ONLY_TRANSACTION_VIOLATION, "25G03", *b"25"),
             (GqlStatus::IN_FAILED_TRANSACTION, "25N02", *b"25"),
+            (GqlStatus::INVALID_TRANSACTION_TERMINATION, "2D000", *b"2D"),
+            (
+                GqlStatus::NULL_VALUE_ELIMINATED_IN_SET_FUNCTION,
+                "01G11",
+                *b"01",
+            ),
             (GqlStatus::UNKNOWN_PROCEDURE, "42N04", *b"42"),
             (GqlStatus::INVALID_PROCEDURE_ARGUMENT, "22G03", *b"22"),
             (GqlStatus::CAPABILITY_VIOLATION, "42N28", *b"42"),
             (GqlStatus::IMPLEMENTATION_DEFINED_ERROR, "5GQL0", *b"5G"),
+            (GqlStatus::DEPENDENT_OBJECT_STILL_EXISTS, "G1001", *b"G1"),
+            (GqlStatus::GRAPH_TYPE_VIOLATION, "G2000", *b"G2"),
         ];
 
         for (status, code, class) in cases {
             assert_eq!(status.as_str(), code);
             assert_eq!(status.class(), class);
         }
+    }
+
+    #[test]
+    fn gqlstatus_from_code_accepts_five_ascii_bytes() {
+        assert_eq!(
+            GqlStatus::from_code("G2000"),
+            Some(GqlStatus::GRAPH_TYPE_VIOLATION)
+        );
+        assert_eq!(GqlStatus::from_code("2200"), None);
     }
 }

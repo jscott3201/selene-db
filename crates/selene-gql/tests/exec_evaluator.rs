@@ -163,7 +163,7 @@ fn arithmetic_overflow_is_data_exception() {
     .expect_err("overflow errors");
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "22000");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn eval_arithmetic_int128_overflow_returns_data_exception() {
         .expect_err("i128 widening can still overflow");
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "22000");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
 }
 
 #[test]
@@ -278,7 +278,7 @@ fn lossy_integer_float_ordering_is_data_exception() {
     let err = eval_result(&expr).expect_err("lossy comparison errors");
 
     assert!(matches!(err, ExecutorError::DataException { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "22000");
+    assert_eq!(err.gqlstatus().as_str(), "22G04");
 }
 
 #[test]
