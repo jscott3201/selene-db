@@ -67,6 +67,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   New `ExecutorError::{Cancelled, Timeout, RowCapExceeded}` map to
   implementation-defined GQLSTATUS codes `5GQL2`, `5GQL3`, and reused
   `5GQL1`, respectively.
+- GQL surface completeness: `SHOW INDEXES` now lists built-in property indexes
+  only (vector indexes remain available through `CALL vector.list_indexes()`),
+  `SHOW PROCEDURES` lists registered procedures, `EXPLAIN <statement>` returns
+  an indented plan dump without executing the inner statement, and
+  `selene.feature_status` is registered in selene-pack. The analyzer now
+  bounds value-expression recursion at depth 256 with
+  `AnalysisError::RecursionLimitExceeded` (GQLSTATUS `5GQL1`). Named
+  `CREATE INDEX` / `DROP INDEX` DDL lowering remains deferred pending
+  storage-layer named-index support.
 
 ### Changed
 
