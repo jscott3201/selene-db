@@ -1,11 +1,46 @@
 //! Error helpers for vector procedure adapters.
 
+use selene_core::{CancellationCause, CancellationChecker};
 use selene_gql::ProcedureError;
 use selene_vector::VectorError;
+
+const VECTOR_CANCEL_CHECK_STRIDE: usize = 1024;
 
 pub(crate) fn invalid_argument(detail: impl Into<String>) -> ProcedureError {
     ProcedureError::InvalidArgument {
         detail: detail.into(),
+    }
+}
+
+#[inline(always)]
+pub(crate) fn check_cancellation(checker: CancellationChecker<'_>) -> Result<(), ProcedureError> {
+    if checker.is_disabled() {
+        return Ok(());
+    }
+    checker.check().map_err(cancellation_error)
+}
+
+#[inline(always)]
+pub(crate) fn check_cancellation_stride(
+    checker: CancellationChecker<'_>,
+    units_since_check: &mut usize,
+) -> Result<(), ProcedureError> {
+    if checker.is_disabled() {
+        return Ok(());
+    }
+    *units_since_check = units_since_check.saturating_add(1);
+    if *units_since_check >= VECTOR_CANCEL_CHECK_STRIDE {
+        check_cancellation(checker)?;
+        *units_since_check = 0;
+    }
+    Ok(())
+}
+
+#[inline]
+fn cancellation_error(cause: CancellationCause) -> ProcedureError {
+    match cause {
+        CancellationCause::Cancelled => ProcedureError::Cancelled,
+        CancellationCause::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
     }
 }
 
