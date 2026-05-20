@@ -202,6 +202,22 @@ impl Drop for IvfScratchLease {
     }
 }
 
+#[cfg(test)]
+fn clear_ivf_scratch_for_test() {
+    IVF_SCRATCH.with(|cell| *cell.borrow_mut() = IvfScratch::default());
+}
+
+#[cfg(test)]
+fn ivf_scratch_capacity_for_test() -> (usize, usize) {
+    IVF_SCRATCH.with(|cell| {
+        let scratch = cell.borrow();
+        (
+            scratch.residual_query.capacity(),
+            scratch.probe_query_codes.capacity(),
+        )
+    })
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Worst {
     score: f32,
@@ -324,5 +340,101 @@ mod tests {
         let results = search(&index, &[0.0, 0.0], 5, Some(2), &config, None, None).unwrap();
 
         assert!(results.iter().all(|(node_id, _)| node_id.get() > 0));
+    }
+
+    #[test]
+    fn bounded_heap_matches_legacy_sort_and_truncate() {
+        let candidates = vec![
+            (NodeId::new(9), 0.25),
+            (NodeId::new(2), 1.0),
+            (NodeId::new(7), -0.5),
+            (NodeId::new(1), 1.0),
+            (NodeId::new(4), 0.75),
+            (NodeId::new(3), 0.75),
+        ];
+
+        for k in [1, 2, 3, 10] {
+            let mut heap = BinaryHeap::with_capacity(k + 1);
+            for (node_id, score) in candidates.iter().copied() {
+                push_top_k(&mut heap, k, node_id, score);
+            }
+            let mut observed = heap
+                .into_iter()
+                .map(|entry| (entry.node_id, entry.score))
+                .collect::<Vec<_>>();
+            sort_results(&mut observed);
+
+            let mut expected = candidates.clone();
+            sort_results(&mut expected);
+            expected.truncate(k);
+            assert_eq!(observed, expected, "k={k}");
+        }
+    }
+
+    #[test]
+    fn bounded_heap_tie_break_keeps_lower_node_id() {
+        let mut heap = BinaryHeap::with_capacity(3);
+        for node_id in [NodeId::new(3), NodeId::new(1), NodeId::new(2)] {
+            push_top_k(&mut heap, 2, node_id, 1.0);
+        }
+        let mut observed = heap
+            .into_iter()
+            .map(|entry| (entry.node_id, entry.score))
+            .collect::<Vec<_>>();
+        sort_results(&mut observed);
+
+        assert_eq!(observed[0].0, NodeId::new(1));
+        assert_eq!(observed[1].0, NodeId::new(2));
+    }
+
+    #[test]
+    fn bounded_heap_skips_nan_scores() {
+        let mut heap = BinaryHeap::with_capacity(3);
+        push_top_k(&mut heap, 2, NodeId::new(1), f32::NAN);
+        push_top_k(&mut heap, 2, NodeId::new(2), 0.5);
+
+        let observed = heap
+            .into_iter()
+            .map(|entry| (entry.node_id, entry.score))
+            .collect::<Vec<_>>();
+
+        assert_eq!(observed, vec![(NodeId::new(2), 0.5)]);
+    }
+
+    #[test]
+    fn scratch_lease_reentrant_take_does_not_panic() {
+        clear_ivf_scratch_for_test();
+        {
+            let mut outer = IvfScratchLease::take();
+            outer.scratch.residual_query.reserve(16);
+            outer.scratch.probe_query_codes.reserve(8);
+            {
+                let mut inner = IvfScratchLease::take();
+                inner.scratch.residual_query.reserve(4);
+                inner.scratch.probe_query_codes.reserve(2);
+            }
+        }
+
+        let (residual_capacity, codes_capacity) = ivf_scratch_capacity_for_test();
+        assert!(residual_capacity >= 16);
+        assert!(codes_capacity >= 8);
+    }
+
+    #[test]
+    fn scratch_reuse_capacity_stays_bounded_across_searches() {
+        clear_ivf_scratch_for_test();
+        let config = config(DistanceMetric::L2);
+        let trained = train(&rows(), &config).unwrap();
+        let index = IvfIndex::trained(2, trained, 256);
+
+        search(&index, &[0.0, 0.0], 5, Some(2), &config, None, None).unwrap();
+        let (warm_residual, warm_codes) = ivf_scratch_capacity_for_test();
+        for _ in 0..100 {
+            search(&index, &[1.0, 0.0], 5, Some(2), &config, None, None).unwrap();
+        }
+        let (final_residual, final_codes) = ivf_scratch_capacity_for_test();
+
+        assert!(final_residual <= warm_residual.saturating_mul(2).max(2));
+        assert!(final_codes <= warm_codes.saturating_mul(2).max(2));
     }
 }
