@@ -227,9 +227,9 @@ in-process protocol is:
    `ArcSwap`, so this is lock-free).
 2. Build the snapshot at `sequence = wal.last_sequence()`.
 3. Finalize the snapshot and call `wal.rotate(outcome.snapshot_seq)`. The
-   rotation fsyncs the current WAL, archives it as
-   `wal.{last_sequence}.archive` with a no-clobber hard link, then opens a
-   fresh `wal.log` whose header is seeded with the snapshot sequence.
+   rotation fsyncs the current WAL, publishes a no-clobber
+   `wal.{last_sequence}.archive`, then rewrites the active `wal.log` header
+   in place with the snapshot sequence.
 
 ## Two-step recovery
 

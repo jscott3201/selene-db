@@ -118,3 +118,28 @@ fn wal_rotate_existing_archive_is_rejected_without_data_loss() {
     drop(writer);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn wal_rotate_rejects_snapshot_sequence_that_does_not_cover_current_wal() {
+    let dir = temp_dir("stale-snapshot");
+    let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let mut writer = WalWriter::open(&wal_path, WalConfig::default()).expect("wal opens");
+    assert_eq!(append(&mut writer, 1), 1);
+    assert_eq!(append(&mut writer, 2), 2);
+    writer.flush().expect("wal flushes");
+
+    let error = writer.rotate(1).expect_err("stale snapshot rejects");
+    assert!(matches!(
+        error,
+        PersistError::WalRotationSequenceMismatch {
+            snapshot_seq: 1,
+            last_sequence: 2
+        }
+    ));
+    assert!(!dir.join("wal.2.archive").exists());
+    assert_eq!(sequences(&wal_path), vec![1, 2]);
+    assert_eq!(append(&mut writer, 3), 3);
+
+    drop(writer);
+    let _ = fs::remove_dir_all(dir);
+}

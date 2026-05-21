@@ -24,6 +24,7 @@ pub mod snapshot_path;
 pub mod snapshot_reader;
 pub mod snapshot_writer;
 mod writer;
+mod writer_rotation;
 
 pub use crate::entry_header::{
     COMPRESS_THRESHOLD, FLAG_PAYLOAD_COMPRESSED, MAX_PRINCIPAL_BYTES, MAX_WAL_ENTRY_BYTES,
@@ -51,6 +52,5 @@ pub use crate::snapshot_reader::SnapshotReader;
 pub use crate::snapshot_writer::{
     SectionCompression, SnapshotBuilder, SnapshotConfig, SnapshotFinalizeOutcome,
 };
-pub use crate::writer::{
-    DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalRotationOutcome, WalWriter,
-};
+pub use crate::writer::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
+pub use crate::writer_rotation::WalRotationOutcome;

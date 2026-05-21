@@ -12,6 +12,9 @@ use crate::entry_header::{
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::payload::{encode_changes, verify_checksum};
+use crate::writer_rotation::{
+    WalRotationOutcome, archive_current_wal, reset_active_wal_file, wal_archive_path,
+};
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
 /// Conventional v1.0 single-file WAL name used by embedders.
@@ -109,17 +112,6 @@ pub struct WalWriter {
     /// offset so the writer's in-memory state and the on-disk state stay
     /// consistent.
     committed_offset: u64,
-}
-
-/// Result of a successful WAL rotation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WalRotationOutcome {
-    /// Archive path containing the pre-rotation WAL.
-    pub archived_path: PathBuf,
-    /// Active WAL path reopened for post-snapshot appends.
-    pub new_path: PathBuf,
-    /// Last sequence contained by the archived WAL.
-    pub archived_last_sequence: u64,
 }
 
 impl WalWriter {
@@ -296,10 +288,9 @@ impl WalWriter {
 
     /// Rotate this WAL after a durable snapshot has been finalized.
     ///
-    /// The current WAL is fsynced, archived in the same directory as
-    /// `wal.{last_sequence}.archive` via an atomic no-clobber hard link, and
-    /// replaced with a fresh standard WAL header seeded with
-    /// `new_snapshot_seq`.
+    /// The current WAL is fsynced, copied to an archive file in the same
+    /// directory as `wal.{last_sequence}.archive`, and then truncated in place
+    /// to a fresh standard WAL header seeded with `new_snapshot_seq`.
     ///
     /// A second mutable borrow cannot overlap the rotation:
     ///
@@ -314,46 +305,39 @@ impl WalWriter {
     ///
     /// # Errors
     ///
-    /// Returns I/O errors from fsync/link/unlink/open, a typed archive-exists
-    /// error when the archive path is already occupied, or a typed
-    /// rotation-incomplete error if the archive commit happened but rollback
-    /// failed after the fresh WAL could not be opened.
+    /// Returns a typed snapshot-sequence error when the supplied snapshot does
+    /// not exactly cover the current WAL, I/O errors from fsync/archive/header
+    /// writes, a typed archive-exists error when the archive path is already
+    /// occupied, or a typed rotation-incomplete error if the archive commit
+    /// happened but the active WAL could not be rewritten.
     pub fn rotate(&mut self, new_snapshot_seq: u64) -> PersistResult<WalRotationOutcome> {
+        if new_snapshot_seq != self.last_sequence {
+            return Err(PersistError::WalRotationSequenceMismatch {
+                snapshot_seq: new_snapshot_seq,
+                last_sequence: self.last_sequence,
+            });
+        }
         self.flush()?;
         let archived_last_sequence = self.last_sequence;
         let archived_path = wal_archive_path(&self.path, archived_last_sequence);
-        archive_current_wal(&self.path, &archived_path)?;
+        archive_current_wal(&mut self.file, &archived_path, self.committed_offset)?;
 
-        if let Err(error) = std::fs::remove_file(&self.path) {
-            let _ = std::fs::remove_file(&archived_path);
-            return Err(error.into());
+        if reset_active_wal_file(&mut self.file, new_snapshot_seq).is_err() {
+            return Err(PersistError::WalRotationIncomplete {
+                archived_path,
+                new_path: self.path.clone(),
+            });
         }
 
-        match create_fresh_wal_file(&self.path, new_snapshot_seq) {
-            Ok(new_file) => {
-                self.file = new_file;
-                self.last_sequence = new_snapshot_seq;
-                self.snapshot_seq = new_snapshot_seq;
-                self.committed_offset = WAL_FILE_HEADER_LEN as u64;
-                self.entries_since_fsync = 0;
-                Ok(WalRotationOutcome {
-                    archived_path,
-                    new_path: self.path.clone(),
-                    archived_last_sequence,
-                })
-            }
-            Err(error) => {
-                let _ = std::fs::remove_file(&self.path);
-                if rollback_archived_wal(&archived_path, &self.path).is_err() {
-                    return Err(PersistError::WalRotationIncomplete {
-                        archived_path,
-                        new_path: self.path.clone(),
-                    });
-                }
-                self.file.seek(SeekFrom::Start(self.committed_offset))?;
-                Err(error)
-            }
-        }
+        self.last_sequence = new_snapshot_seq;
+        self.snapshot_seq = new_snapshot_seq;
+        self.committed_offset = WAL_FILE_HEADER_LEN as u64;
+        self.entries_since_fsync = 0;
+        Ok(WalRotationOutcome {
+            archived_path,
+            new_path: self.path.clone(),
+            archived_last_sequence,
+        })
     }
 
     /// Best-effort rollback to the last committed offset on append failure.
@@ -369,50 +353,6 @@ impl WalWriter {
             tracing::error!(%error, "failed to seek WAL after append error");
         }
     }
-}
-
-fn wal_archive_path(path: &Path, last_sequence: u64) -> PathBuf {
-    let archive_name = format!("wal.{last_sequence}.archive");
-    path.parent().map_or_else(
-        || PathBuf::from(&archive_name),
-        |parent| parent.join(&archive_name),
-    )
-}
-
-fn archive_current_wal(path: &Path, archived_path: &Path) -> PersistResult<()> {
-    std::fs::hard_link(path, archived_path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::AlreadyExists {
-            PersistError::WalArchiveExists {
-                path: archived_path.to_path_buf(),
-            }
-        } else {
-            PersistError::Io(error)
-        }
-    })
-}
-
-fn rollback_archived_wal(archived_path: &Path, path: &Path) -> std::io::Result<()> {
-    std::fs::hard_link(archived_path, path)?;
-    std::fs::remove_file(archived_path)
-}
-
-fn create_fresh_wal_file(path: &Path, snapshot_seq: u64) -> PersistResult<File> {
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .read(true)
-        .write(true)
-        .open(path)?;
-    match file.try_lock() {
-        Ok(()) => {}
-        Err(std::fs::TryLockError::WouldBlock) => {
-            return Err(PersistError::WriterLockHeld);
-        }
-        Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
-    }
-    WalFileHeader::new(snapshot_seq).write_to(&mut file)?;
-    file.sync_data()?;
-    file.seek(SeekFrom::Start(WAL_FILE_HEADER_LEN as u64))?;
-    Ok(file)
 }
 
 impl Drop for WalWriter {

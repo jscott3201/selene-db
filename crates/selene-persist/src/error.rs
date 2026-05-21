@@ -258,6 +258,19 @@ pub enum PersistError {
         /// Active WAL path that could not be restored.
         new_path: PathBuf,
     },
+
+    /// WAL rotation was asked to rotate at a snapshot sequence that does not
+    /// match the writer's current high-water mark.
+    #[error(
+        "wal rotation snapshot sequence {snapshot_seq} does not match current sequence {last_sequence}"
+    )]
+    #[diagnostic(code(SLENE_P_031))]
+    WalRotationSequenceMismatch {
+        /// Sequence covered by the caller's finalized snapshot.
+        snapshot_seq: u64,
+        /// Current WAL high-water mark.
+        last_sequence: u64,
+    },
 }
 
 impl PersistError {
@@ -293,7 +306,8 @@ impl PersistError {
             | Self::ProviderFailed { .. }
             | Self::WalSnapshotMismatch { .. }
             | Self::WalArchiveExists { .. }
-            | Self::WalRotationIncomplete { .. } => "5GQL0",
+            | Self::WalRotationIncomplete { .. }
+            | Self::WalRotationSequenceMismatch { .. } => "5GQL0",
         }
     }
 }
@@ -340,6 +354,10 @@ mod tests {
     #[case(PersistError::WalRotationIncomplete {
         archived_path: "wal.1.archive".into(),
         new_path: "wal.log".into(),
+    }, "5GQL0")]
+    #[case(PersistError::WalRotationSequenceMismatch {
+        snapshot_seq: 1,
+        last_sequence: 2,
     }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
