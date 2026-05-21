@@ -112,7 +112,11 @@ pub(super) fn execute(
             if_exists,
             span,
         } => {
-            reject_if_exists(*if_exists)?;
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
+            if !node_type_exists(Some(&graph_type), *label) && *if_exists {
+                return Ok(table);
+            }
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .drop_node_type(*label)
                 .map_err(|source| catalog_graph_error(source, *span))?;
@@ -123,7 +127,11 @@ pub(super) fn execute(
             if_exists,
             span,
         } => {
-            reject_if_exists(*if_exists)?;
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
+            if !edge_type_exists(Some(&graph_type), *label) && *if_exists {
+                return Ok(table);
+            }
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .drop_edge_type(*label)
                 .map_err(|source| catalog_graph_error(source, *span))?;
@@ -179,15 +187,6 @@ fn edge_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
                 .any(|edge_type| edge_type.name == label)
         })
         .unwrap_or(false)
-}
-
-fn reject_if_exists(if_exists: bool) -> Result<(), ExecutorError> {
-    if if_exists {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "IF EXISTS not implemented for catalog DDL",
-        });
-    }
-    Ok(())
 }
 
 fn closed_graph_type(
