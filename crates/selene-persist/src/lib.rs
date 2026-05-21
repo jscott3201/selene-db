@@ -51,4 +51,6 @@ pub use crate::snapshot_reader::SnapshotReader;
 pub use crate::snapshot_writer::{
     SectionCompression, SnapshotBuilder, SnapshotConfig, SnapshotFinalizeOutcome,
 };
-pub use crate::writer::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
+pub use crate::writer::{
+    DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalRotationOutcome, WalWriter,
+};
