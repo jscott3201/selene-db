@@ -128,15 +128,18 @@ pub enum AnalysisError {
 
     /// Procedure argument arity mismatch.
     #[error(
-        "wrong argument count for {}: expected {expected}, found {actual}",
-        display_qualified_name(procedure)
+        "wrong argument count for {}: expected {}, found {actual}",
+        display_qualified_name(procedure),
+        display_argument_range(*minimum, *expected)
     )]
     #[diagnostic(code(SLENE_GQL_22G03))]
     WrongArgumentCount {
         /// Qualified procedure name.
         procedure: Box<[IStr]>,
-        /// Expected argument count.
+        /// Maximum expected argument count.
         expected: usize,
+        /// Minimum expected argument count.
+        minimum: usize,
         /// Actual argument count.
         actual: usize,
         /// Source span of the procedure call.
@@ -472,6 +475,14 @@ fn fmt_qualified_name(f: &mut std::fmt::Formatter<'_>, name: &[IStr]) -> std::fm
         first = false;
     }
     Ok(())
+}
+
+fn display_argument_range(minimum: usize, maximum: usize) -> String {
+    if minimum == maximum {
+        maximum.to_string()
+    } else {
+        format!("{minimum}..={maximum}")
+    }
 }
 
 /// Expected type category for a type mismatch.

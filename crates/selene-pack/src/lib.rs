@@ -45,8 +45,8 @@ pub use registry::{ProcedurePackRegistry, ProcedurePackRegistryBuilder};
 pub use reserved::{RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE};
 pub use selene_core::IStr;
 pub use selene_gql::{
-    GraphContext, MutationContext, ProcedureContext, ProcedureDefaultValue, ProcedureError,
-    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
+    GraphContext, MutationContext, ProcedureArity, ProcedureContext, ProcedureDefaultValue,
+    ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
     ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
     ProcedureSignature, ProcedureTier, Value,
 };

@@ -14,9 +14,9 @@ use super::{BindContext, call, expr, pattern};
 
 pub(crate) fn bind_query_pipeline(
     ctx: &mut BindContext,
-    pipeline: &QueryPipeline,
+    pipeline: &mut QueryPipeline,
 ) -> Result<(), AnalysisError> {
-    for statement in &pipeline.statements {
+    for statement in &mut pipeline.statements {
         bind_pipeline_statement(ctx, statement)?;
     }
     Ok(())
@@ -24,7 +24,7 @@ pub(crate) fn bind_query_pipeline(
 
 pub(crate) fn bind_pipeline_statement(
     ctx: &mut BindContext,
-    statement: &PipelineStatement,
+    statement: &mut PipelineStatement,
 ) -> Result<(), AnalysisError> {
     match statement {
         PipelineStatement::Match(clause) => pattern::bind_match_clause(ctx, clause),

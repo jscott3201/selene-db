@@ -61,7 +61,7 @@ pub use crate::plan::{
     WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
-    EmptyProcedureRegistry, ProcedureDefaultValue, ProcedureError, ProcedureHandle,
+    EmptyProcedureRegistry, ProcedureArity, ProcedureDefaultValue, ProcedureError, ProcedureHandle,
     ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn, ProcedureOutputSchema,
     ProcedureParameter, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
     Value,
