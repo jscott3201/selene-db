@@ -45,10 +45,10 @@ pub use registry::{ProcedurePackRegistry, ProcedurePackRegistryBuilder};
 pub use reserved::{RESERVED_LABEL_PREFIX, RESERVED_PACK_NAMESPACE};
 pub use selene_core::IStr;
 pub use selene_gql::{
-    GraphContext, MutationContext, ProcedureContext, ProcedureError, ProcedureHandle,
-    ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn, ProcedureOutputSchema,
-    ProcedureParameter, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
-    Value,
+    GraphContext, MutationContext, ProcedureContext, ProcedureDefaultValue, ProcedureError,
+    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
+    ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
+    ProcedureSignature, ProcedureTier, Value,
 };
 #[cfg(any(test, feature = "test-harness"))]
 pub use snapshot_summary::{

@@ -357,6 +357,9 @@ fn parameter(parameter: &StaticParameter) -> Result<ProcedureParameter, Registry
     if let Some(default_doc) = parameter.default_doc {
         result = result.with_default_doc(default_doc);
     }
+    if let Some(default) = parameter.default {
+        result = result.with_default(default);
+    }
     Ok(result)
 }
 
@@ -377,6 +380,9 @@ fn external_parameter(parameter: &ExternalParameter) -> Result<ProcedureParamete
     .with_description(parameter.description);
     if let Some(default_doc) = parameter.default_doc {
         result = result.with_default_doc(default_doc);
+    }
+    if let Some(default) = parameter.default {
+        result = result.with_default(default);
     }
     Ok(result)
 }
@@ -422,4 +428,42 @@ fn intern_static(value: &str, kind: &'static str) -> Result<IStr, RegistryError>
         .map_err(|_source| RegistryError::InternerCapExhausted {
             detail: format!("{kind} '{value}'"),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_gql::{GqlType, ProcedureDefaultValue};
+
+    use super::*;
+
+    #[test]
+    fn static_parameter_default_round_trips() {
+        let parameter = StaticParameter::new("enabled", GqlType::Boolean, false)
+            .with_description("Whether the option is enabled.")
+            .with_default_doc("FALSE")
+            .with_default(ProcedureDefaultValue::Boolean(false));
+
+        let converted = super::parameter(&parameter).expect("static parameter converts");
+
+        assert_eq!(converted.name.as_str(), "enabled");
+        assert_eq!(converted.default_doc, Some("FALSE"));
+        assert_eq!(
+            converted.default,
+            Some(ProcedureDefaultValue::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn external_parameter_default_round_trips() {
+        let parameter = ExternalParameter::new("limit", GqlType::Integer, false)
+            .with_description("Optional limit.")
+            .with_default_doc("10")
+            .with_default(ProcedureDefaultValue::Integer(10));
+
+        let converted = super::external_parameter(&parameter).expect("external parameter converts");
+
+        assert_eq!(converted.name.as_str(), "limit");
+        assert_eq!(converted.default_doc, Some("10"));
+        assert_eq!(converted.default, Some(ProcedureDefaultValue::Integer(10)));
+    }
 }

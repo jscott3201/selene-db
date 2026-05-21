@@ -169,6 +169,8 @@ pub struct ProcedureParameter {
     pub description: &'static str,
     /// Documentation-only default value text for optional parameters.
     pub default_doc: Option<&'static str>,
+    /// Executable default value for omitted trailing optional arguments.
+    pub default: Option<ProcedureDefaultValue>,
 }
 
 impl ProcedureParameter {
@@ -181,6 +183,7 @@ impl ProcedureParameter {
             nullable,
             description: "",
             default_doc: None,
+            default: None,
         }
     }
 
@@ -197,6 +200,30 @@ impl ProcedureParameter {
         self.default_doc = Some(default_doc);
         self
     }
+
+    /// Attach an executable default value.
+    #[must_use]
+    pub const fn with_default(mut self, default: ProcedureDefaultValue) -> Self {
+        self.default = Some(default);
+        self
+    }
+}
+
+/// Executable default value descriptor for optional procedure parameters.
+///
+/// This deliberately stays smaller than [`Value`]: procedure signatures are
+/// static metadata, and source-side parameter structs derive `Eq`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ProcedureDefaultValue {
+    /// Boolean default value.
+    Boolean(bool),
+    /// NULL default value.
+    Null,
+    /// Signed integer default value.
+    Integer(i64),
+    /// Static string default value.
+    String(&'static str),
 }
 
 /// Output schema as a relation of named columns.
