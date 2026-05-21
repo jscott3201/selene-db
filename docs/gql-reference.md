@@ -535,10 +535,18 @@ Property constraints recognized by the AST (`TypePropertyConstraint`):
 `SEARCHABLE`, `DICTIONARY`, `FILL <name>`, `INTERVAL '<duration>'`,
 `ENCODING <name>`.
 
-The trailing `STRICT` or `WARN` keyword sets `ValidationMode`. In a closed
-graph (`GG02`), writes that violate constraints are rejected under
-`STRICT` and logged under `WARN`. Element type names (`GG20`) and
-explicit key label sets (`GG21`) are claimed.
+The trailing `STRICT` or `WARN` keyword is accepted by the grammar and stored
+as `ValidationMode`, but v1.1 does not enforce validation-mode semantics at
+runtime. Catalog DDL carrying `STRICT` or `WARN` is currently rejected with
+GQLSTATUS `5GQL0`. Closed-graph type validation is separate from
+`ValidationMode`: writes against a closed graph hard-fail with `G2000` when
+they violate the bound graph type. Element type names (`GG20`) and explicit
+key label sets (`GG21`) are claimed.
+
+`DEFAULT <expr>` is represented in the AST and is independent from `NOT NULL`:
+a property with `DEFAULT` but no `NOT NULL` remains nullable. Runtime DEFAULT
+application is not implemented in v1.1, and catalog DDL containing `DEFAULT`
+is rejected with `5GQL0`.
 
 `OR REPLACE` and `IF NOT EXISTS` modifiers are accepted on `CREATE NODE
 TYPE` and `CREATE EDGE TYPE` (feature `GC03`).

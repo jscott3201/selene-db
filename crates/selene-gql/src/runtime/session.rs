@@ -165,7 +165,8 @@ impl<'g> Session<'g> {
     /// Attach an opt-in runtime warning sink to subsequent statements.
     ///
     /// Sessions without a sink silently discard warnings. The sink currently
-    /// receives `01G11` when an aggregate eliminates NULL input values.
+    /// receives `01G11` when an aggregate eliminates NULL input values; see
+    /// `docs/embedding-guide.md` for an embedder-side collection example.
     #[must_use]
     pub fn with_warning_sink(mut self, sink: impl WarningSink + 'static) -> Self {
         self.warning_sink = Some(RefCell::new(Box::new(sink)));

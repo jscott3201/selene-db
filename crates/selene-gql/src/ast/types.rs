@@ -13,6 +13,10 @@ pub enum GqlType {
     /// `INTEGER`.
     Integer,
     /// `FLOAT`.
+    ///
+    /// Width-generic floating-point type. Consumers deriving storage or
+    /// conversion maps from parsed GQL types must accept both `f32` and `f64`
+    /// values unless a narrower `FLOAT32` or `FLOAT64` was requested.
     Float,
     /// `INT8`.
     Int8,

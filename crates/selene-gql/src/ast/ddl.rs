@@ -30,7 +30,7 @@ pub enum DdlStatement {
     },
     /// `CREATE NODE TYPE`.
     CreateNodeType {
-        /// Node label.
+        /// Node label, stored without the source `:` prefix.
         label: IStr,
         /// `OR REPLACE`.
         or_replace: bool,
@@ -41,13 +41,17 @@ pub enum DdlStatement {
         /// Property definitions.
         properties: Vec<TypePropertyDef>,
         /// Optional validation mode.
+        ///
+        /// Parsed in v1.1, but catalog execution rejects validation modes with
+        /// implementation-defined status; runtime STRICT/WARN semantics are
+        /// not yet enforced.
         validation_mode: Option<ValidationMode>,
         /// Source span.
         span: SourceSpan,
     },
     /// `CREATE EDGE TYPE`.
     CreateEdgeType {
-        /// Edge label.
+        /// Edge label, stored without the source `:` prefix.
         label: IStr,
         /// `OR REPLACE`.
         or_replace: bool,
@@ -58,6 +62,10 @@ pub enum DdlStatement {
         /// Property definitions.
         properties: Vec<TypePropertyDef>,
         /// Optional validation mode.
+        ///
+        /// Parsed in v1.1, but catalog execution rejects validation modes with
+        /// implementation-defined status; runtime STRICT/WARN semantics are
+        /// not yet enforced.
         validation_mode: Option<ValidationMode>,
         /// Source span.
         span: SourceSpan,
@@ -113,6 +121,10 @@ impl DdlStatement {
 }
 
 /// Type-validation mode.
+///
+/// `STRICT` and `WARN` are parsed into the AST in v1.1, but runtime catalog
+/// execution rejects DDL carrying them rather than enforcing mode-specific
+/// validation behavior.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum ValidationMode {
     /// Reject violations.
@@ -150,8 +162,15 @@ pub struct TypePropertyDef {
 #[non_exhaustive]
 pub enum TypePropertyConstraint {
     /// `NOT NULL`.
+    ///
+    /// This is the only property constraint that currently makes a catalog
+    /// property required at runtime; `DEFAULT` alone leaves the property
+    /// nullable.
     NotNull(SourceSpan),
     /// `DEFAULT expr`.
+    ///
+    /// `DEFAULT` is independent from `NOT NULL`; DEFAULT alone does not imply
+    /// required. Runtime DEFAULT application is not yet enforced in v1.1.
     Default(ValueExpr, SourceSpan),
     /// `IMMUTABLE`.
     Immutable(SourceSpan),

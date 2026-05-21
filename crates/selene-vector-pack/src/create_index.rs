@@ -1,4 +1,9 @@
 //! `vector.create_index` mutation procedure adapter.
+//!
+//! The procedure is idempotent for matching configuration: re-creating an
+//! existing index with the same kind and config succeeds without emitting a new
+//! lifecycle event. Reusing a name with a different kind or config is rejected
+//! as an invalid argument.
 
 use std::collections::HashMap;
 use std::sync::Arc;
