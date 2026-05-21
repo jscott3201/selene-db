@@ -5,8 +5,8 @@ use std::sync::Arc;
 use selene_core::{Change, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_gql::{
     BindingTable, ExecutionPlan, ExecutorError, ImplDefinedCaps, MutationContext, ProcedureContext,
-    ProcedureError, ProcedureRegistry, ProcedureResult, StatementOutput, analyze,
-    execute_statement, parse, plan,
+    ProcedureDefaultValue, ProcedureError, ProcedureRegistry, ProcedureResult, StatementOutput,
+    analyze, execute_statement, parse, plan,
 };
 use selene_graph::{IndexProvider, SharedGraph};
 use selene_pack::ProcedurePackRegistry;
@@ -242,7 +242,12 @@ fn vector_search_registers_metadata_and_capability_free_name() {
     assert_eq!(metadata[4].output_schema.columns.len(), 0);
     assert_eq!(metadata[5].signature.parameters.len(), 3);
     assert_eq!(metadata[5].output_schema.columns.len(), 0);
-    assert_eq!(metadata[6].signature.parameters.len(), 1);
+    assert_eq!(metadata[6].signature.arity().minimum, 1);
+    assert_eq!(metadata[6].signature.arity().maximum, 2);
+    assert_eq!(
+        metadata[6].signature.parameters[1].default,
+        Some(ProcedureDefaultValue::Boolean(false))
+    );
     assert_eq!(metadata[6].output_schema.columns.len(), 0);
     assert_eq!(metadata[7].signature.parameters.len(), 0);
     assert_eq!(metadata[7].output_schema.columns.len(), 5);

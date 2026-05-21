@@ -1,9 +1,14 @@
 //! `vector.drop_index` mutation procedure adapter.
+//!
+//! The optional `if_exists` argument defaults to `FALSE` through the analyzer's
+//! trailing procedure-argument default materialization.
 
 use std::sync::Arc;
 
 use selene_core::Value;
-use selene_gql::{GqlType, MutationContext, ProcedureError, ProcedureResult};
+use selene_gql::{
+    GqlType, MutationContext, ProcedureDefaultValue, ProcedureError, ProcedureResult,
+};
 use selene_pack::{
     ExternalMutationProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
 };
@@ -41,7 +46,12 @@ impl ExternalProcedureMetadata for DropIndexProcedure {
     }
 
     fn signature(&self) -> Vec<ExternalParameter> {
-        vec![parameter("name", GqlType::String, false)]
+        vec![
+            parameter("name", GqlType::String, false),
+            parameter("if_exists", GqlType::Boolean, false)
+                .with_default_doc("FALSE")
+                .with_default(ProcedureDefaultValue::Boolean(false)),
+        ]
     }
 
     fn output_columns(&self) -> Vec<ExternalOutputColumn> {
@@ -56,8 +66,16 @@ impl ExternalMutationProcedure for DropIndexProcedure {
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
         let _state = &self.state;
-        expect_arity(DROP_INDEX_PROC, args, 1)?;
+        expect_arity(DROP_INDEX_PROC, args, 2)?;
         let name = required_string(DROP_INDEX_PROC, args, 0, "name")?;
+        let if_exists = match &args[1] {
+            Value::Bool(value) => *value,
+            other => {
+                return Err(invalid_argument(format!(
+                    "{DROP_INDEX_PROC}: expected if_exists to be BOOLEAN, got {other:?}"
+                )));
+            }
+        };
         let catalog = catalog_from_mutation(ctx, DROP_INDEX_PROC)?;
         match catalog.drop_index(&name)? {
             DropIndexOutcome::Hnsw | DropIndexOutcome::Ivf => {
@@ -65,6 +83,7 @@ impl ExternalMutationProcedure for DropIndexProcedure {
                 emit_payload_bytes(ctx, DROP_INDEX_PROC, LIFECYCLE_PROVIDER_NAME, &name, bytes)?;
                 Ok(ProcedureResult { rows: Vec::new() })
             }
+            DropIndexOutcome::Missing if if_exists => Ok(ProcedureResult { rows: Vec::new() }),
             DropIndexOutcome::Missing => Err(invalid_argument(format!(
                 "{DROP_INDEX_PROC}: vector index '{name}' does not exist"
             ))),
