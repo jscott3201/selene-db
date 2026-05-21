@@ -310,8 +310,16 @@ fn build_type_prop_constraint(
     if text == "UNIQUE" {
         return Ok(TypePropertyConstraint::Unique(source_span));
     }
-    if text == "INDEXED" {
-        return Ok(TypePropertyConstraint::Indexed(source_span));
+    if text.starts_with("INDEXED") {
+        let name = pair
+            .into_inner()
+            .find(|child| child.as_rule() == Rule::ident)
+            .map(|child| intern_pair(child, budget))
+            .transpose()?;
+        return Ok(TypePropertyConstraint::Indexed {
+            name,
+            span: source_span,
+        });
     }
     if text == "SEARCHABLE" {
         return Ok(TypePropertyConstraint::Searchable(source_span));

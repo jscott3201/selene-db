@@ -176,8 +176,13 @@ pub enum TypePropertyConstraint {
     Immutable(SourceSpan),
     /// `UNIQUE`.
     Unique(SourceSpan),
-    /// `INDEXED`.
-    Indexed(SourceSpan),
+    /// `INDEXED [AS name]`.
+    Indexed {
+        /// Optional explicit index name.
+        name: Option<IStr>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `SEARCHABLE`.
     Searchable(SourceSpan),
     /// `DICTIONARY`.
@@ -199,12 +204,12 @@ impl TypePropertyConstraint {
             | Self::Default(_, span)
             | Self::Immutable(span)
             | Self::Unique(span)
-            | Self::Indexed(span)
             | Self::Searchable(span)
             | Self::Dictionary(span)
             | Self::Fill(_, span)
             | Self::Interval(_, span)
             | Self::Encoding(_, span) => *span,
+            Self::Indexed { span, .. } => *span,
         }
     }
 }

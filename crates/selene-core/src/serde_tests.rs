@@ -311,6 +311,12 @@ fn schema_change_postcard_round_trip() {
                 at: jiff::Timestamp::new(5, 0).unwrap(),
             },
         },
+        SchemaChange::PropertyIndexCreatedNamed {
+            label: node_label,
+            property: istr("serde.schema.indexed"),
+            kind: SchemaPropertyIndexKind::I64,
+            name: Some(istr("serde.schema.index.name")),
+        },
     ];
     for change in changes {
         rt(&change);

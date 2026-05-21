@@ -384,12 +384,12 @@ fn scrub_property_def(property: &mut TypePropertyDef) {
             TypePropertyConstraint::NotNull(span)
             | TypePropertyConstraint::Immutable(span)
             | TypePropertyConstraint::Unique(span)
-            | TypePropertyConstraint::Indexed(span)
             | TypePropertyConstraint::Searchable(span)
             | TypePropertyConstraint::Dictionary(span)
             | TypePropertyConstraint::Fill(_, span)
             | TypePropertyConstraint::Interval(_, span)
             | TypePropertyConstraint::Encoding(_, span) => *span = SourceSpan::default(),
+            TypePropertyConstraint::Indexed { span, .. } => *span = SourceSpan::default(),
             TypePropertyConstraint::Default(value, span) => {
                 *span = SourceSpan::default();
                 scrub_value(value);

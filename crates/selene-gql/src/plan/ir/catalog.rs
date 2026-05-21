@@ -115,8 +115,13 @@ pub enum PlannedTypePropertyConstraint {
     Immutable(SourceSpan),
     /// `UNIQUE`.
     Unique(SourceSpan),
-    /// `INDEXED`.
-    Indexed(SourceSpan),
+    /// `INDEXED [AS name]`.
+    Indexed {
+        /// Optional explicit index name.
+        name: Option<IStr>,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `SEARCHABLE`.
     Searchable(SourceSpan),
     /// `DICTIONARY`.

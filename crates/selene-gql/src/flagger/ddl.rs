@@ -99,7 +99,7 @@ fn property_constraint(constraint: &TypePropertyConstraint, uses: &mut Vec<Featu
         TypePropertyConstraint::NotNull(_)
         | TypePropertyConstraint::Immutable(_)
         | TypePropertyConstraint::Unique(_)
-        | TypePropertyConstraint::Indexed(_)
+        | TypePropertyConstraint::Indexed { .. }
         | TypePropertyConstraint::Searchable(_)
         | TypePropertyConstraint::Dictionary(_)
         | TypePropertyConstraint::Fill(_, _)

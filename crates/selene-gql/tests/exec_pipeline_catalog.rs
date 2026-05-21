@@ -147,7 +147,12 @@ fn create_node_type_indexed_property_creates_property_index() {
                 ..
             },
             Change::SchemaChanged {
-                change: SchemaChange::PropertyIndexCreated { label: index_label, property, .. },
+                change: SchemaChange::PropertyIndexCreatedNamed {
+                    label: index_label,
+                    property,
+                    name: None,
+                    ..
+                },
                 ..
             }
         ] if label.as_str() == "Sensor"
@@ -175,6 +180,55 @@ fn create_node_type_indexed_unsupported_type_reports_feature_not_supported() {
     let err = run_write(&graph, &plan).expect_err("BOOLEAN inline index unsupported");
 
     assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+}
+
+#[test]
+fn create_node_type_duplicate_index_names_report_duplicate_object() {
+    let graph = empty_closed_graph(3720);
+    let plan = planned(
+        "CREATE NODE TYPE :Sensor \
+         (serial :: STRING INDEXED AS sensor_lookup, code :: STRING INDEXED AS sensor_lookup)",
+    );
+
+    let err = run_write(&graph, &plan).expect_err("duplicate index name rejected");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DUPLICATE_OBJECT);
+}
+
+#[test]
+fn show_indexes_renders_auto_and_explicit_inline_index_names() {
+    let graph = empty_closed_graph(3721);
+    let create = planned(
+        "CREATE NODE TYPE :Sensor \
+         (serial :: STRING INDEXED, code :: STRING INDEXED AS sensor_code_lookup)",
+    );
+    run_write(&graph, &create)
+        .expect("catalog executes")
+        .1
+        .expect("commit succeeds");
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW INDEXES")).expect("show executes");
+    outcome.expect("show commit succeeds");
+    let rows = table.rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(
+        rows[0].values(),
+        &[
+            Value::String(istr("sensor_code_lookup")),
+            Value::String(istr("Sensor")),
+            Value::String(istr("code")),
+            Value::String(istr("string")),
+        ]
+    );
+    assert_eq!(
+        rows[1].values(),
+        &[
+            Value::String(istr("Sensor_serial_idx")),
+            Value::String(istr("Sensor")),
+            Value::String(istr("serial")),
+            Value::String(istr("string")),
+        ]
+    );
 }
 
 #[test]

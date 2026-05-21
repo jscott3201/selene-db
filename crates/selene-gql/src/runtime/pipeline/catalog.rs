@@ -40,6 +40,7 @@ pub(super) fn execute(
             reject_create_flags(*or_replace, *if_not_exists, extends, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             let indexes = inline_index_specs(properties)?;
+            validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
             let properties = property_defs(properties)?;
             {
                 let mut mutator =
@@ -47,10 +48,10 @@ pub(super) fn execute(
                 mutator
                     .create_node_type(*label, LabelSet::single(*label), properties)
                     .map_err(|source| catalog_graph_error(source, *span))?;
-                for (property, kind, index_span) in indexes {
+                for index in indexes {
                     mutator
-                        .create_property_index(*label, property, kind)
-                        .map_err(|source| catalog_graph_error(source, index_span))?;
+                        .create_property_index_named(*label, index.property, index.kind, index.name)
+                        .map_err(|source| catalog_graph_error(source, index.span))?;
                 }
             }
             Ok(table)
@@ -213,7 +214,7 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
                     detail: "type property constraint not implemented (Phase A: NOT NULL only)",
                 });
             }
-            PlannedTypePropertyConstraint::Indexed(_) => {}
+            PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
     Ok(PropertyTypeDef {
@@ -223,24 +224,53 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
     })
 }
 
+struct InlineIndexSpec {
+    property: IStr,
+    kind: TypedIndexKind,
+    name: Option<IStr>,
+    span: SourceSpan,
+}
 fn inline_index_specs(
     properties: &[PlannedTypePropertyDef],
-) -> Result<Vec<(IStr, TypedIndexKind, SourceSpan)>, ExecutorError> {
+) -> Result<Vec<InlineIndexSpec>, ExecutorError> {
     let mut indexes = Vec::new();
     for property in properties {
         for constraint in &property.constraints {
-            if let PlannedTypePropertyConstraint::Indexed(span) = constraint {
-                indexes.push((
-                    property.name,
-                    gql_type_to_index_kind(&property.gql_type, *span)?,
-                    *span,
-                ));
+            if let PlannedTypePropertyConstraint::Indexed { name, span } = constraint {
+                indexes.push(InlineIndexSpec {
+                    property: property.name,
+                    kind: gql_type_to_index_kind(&property.gql_type, *span)?,
+                    name: *name,
+                    span: *span,
+                });
             }
         }
     }
     Ok(indexes)
 }
-
+fn validate_index_name_collisions(
+    label: IStr,
+    indexes: &[InlineIndexSpec],
+    graph: &selene_graph::SeleneGraph,
+) -> Result<(), ExecutorError> {
+    let mut used = graph
+        .iter_property_index_entries()
+        .map(|(label, property, _, name)| render_index_name(label, property, name))
+        .collect::<Vec<_>>();
+    for index in indexes {
+        let rendered = render_index_name(label, index.property, index.name);
+        if used.iter().any(|name| name == &rendered) {
+            let name = index.name.unwrap_or(intern_runtime(&rendered)?);
+            return Err(ExecutorError::DuplicateObject {
+                kind: "index",
+                name,
+                span: index.span,
+            });
+        }
+        used.push(rendered);
+    }
+    Ok(())
+}
 fn gql_type_to_index_kind(
     gql_type: &GqlType,
     span: SourceSpan,
@@ -349,9 +379,12 @@ fn show_edge_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
 }
 
 fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {
-    let mut indexes = ctx.snapshot().iter_property_indexes().collect::<Vec<_>>();
+    let mut indexes = ctx
+        .snapshot()
+        .iter_property_index_entries()
+        .collect::<Vec<_>>();
     indexes.sort_by(
-        |(left_label, left_property, _), (right_label, right_property, _)| {
+        |(left_label, left_property, _, _), (right_label, right_property, _, _)| {
             left_label
                 .as_str()
                 .cmp(right_label.as_str())
@@ -360,8 +393,10 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
     );
     let rows = indexes
         .into_iter()
-        .map(|(label, property, kind)| {
+        .map(|(label, property, kind, name)| {
+            let name = render_index_name(label, property, name);
             Ok(Binding::new([
+                Value::String(intern_runtime(&name)?),
                 Value::String(label),
                 Value::String(property),
                 Value::String(intern_runtime(render_index_kind(kind))?),
@@ -369,9 +404,15 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;
     Ok(BindingTable::new(
-        string_schema(&["label", "property", "kind"])?,
+        string_schema(&["name", "label", "property", "kind"])?,
         rows,
     ))
+}
+
+fn render_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
+    explicit
+        .map(|name| name.as_str().to_owned())
+        .unwrap_or_else(|| format!("{}_{}_idx", label.as_str(), property.as_str()))
 }
 
 fn show_procedures(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {

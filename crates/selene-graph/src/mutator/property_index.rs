@@ -19,6 +19,17 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         property: IStr,
         kind: TypedIndexKind,
     ) -> GraphResult<()> {
+        self.create_property_index_named(label, property, kind, None)
+    }
+
+    /// Register a durable node property index with optional catalog name.
+    pub fn create_property_index_named(
+        &mut self,
+        label: IStr,
+        property: IStr,
+        kind: TypedIndexKind,
+        name: Option<IStr>,
+    ) -> GraphResult<()> {
         if self
             .txn
             .read()
@@ -33,13 +44,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn
             .guard_mut()
             .property_index
-            .insert((label, property), PropertyIndexEntry::new(index, None));
+            .insert((label, property), PropertyIndexEntry::new(index, name));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
-            change: SchemaChange::PropertyIndexCreated {
+            change: SchemaChange::PropertyIndexCreatedNamed {
                 label,
                 property,
                 kind: schema_kind_from(kind),
+                name,
             },
         });
         Ok(())

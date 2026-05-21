@@ -144,7 +144,10 @@ fn lower_property_constraint(
         ),
         TypePropertyConstraint::Immutable(span) => PlannedTypePropertyConstraint::Immutable(*span),
         TypePropertyConstraint::Unique(span) => PlannedTypePropertyConstraint::Unique(*span),
-        TypePropertyConstraint::Indexed(span) => PlannedTypePropertyConstraint::Indexed(*span),
+        TypePropertyConstraint::Indexed { name, span } => PlannedTypePropertyConstraint::Indexed {
+            name: *name,
+            span: *span,
+        },
         TypePropertyConstraint::Searchable(span) => {
             PlannedTypePropertyConstraint::Searchable(*span)
         }
@@ -190,6 +193,7 @@ where
         DdlStatement::ShowIndexes(span) => named_output_schema(
             *span,
             &[
+                ("name", "static SHOW INDEXES column 'name'"),
                 ("label", "static SHOW INDEXES column 'label'"),
                 ("property", "static SHOW INDEXES column 'property'"),
                 ("kind", "static SHOW INDEXES column 'kind'"),
