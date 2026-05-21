@@ -13,7 +13,7 @@ use crate::{
     builtin::{
         GraphProcedureBuiltIn, MutationProcedureBuiltIn, create_index::SeleneCreateIndex,
         drop_index::SeleneDropIndex, feature_status::SeleneFeatureStatus, health::SeleneHealth,
-        pack_history::SelenePackHistory,
+        pack_history::SelenePackHistory, verify::SeleneVerify,
     },
     error::RegistryError,
     external::ExternalProcedurePack,
@@ -158,6 +158,7 @@ impl ProcedurePackRegistryBuilder {
     pub fn with_builtins(self) -> Self {
         self.with_graph_builtin(SeleneHealth)
             .with_graph_builtin(SeleneFeatureStatus)
+            .with_graph_builtin(SeleneVerify)
             .with_mutation_builtin(SeleneCreateIndex)
             .with_mutation_builtin(SeleneDropIndex)
     }
@@ -167,6 +168,7 @@ impl ProcedurePackRegistryBuilder {
     pub fn with_builtins_and_history(self, history_source: Arc<dyn PackHistorySource>) -> Self {
         self.with_graph_builtin(SeleneHealth)
             .with_graph_builtin(SeleneFeatureStatus)
+            .with_graph_builtin(SeleneVerify)
             .with_graph_builtin(SelenePackHistory::new(history_source))
             .with_mutation_builtin(SeleneCreateIndex)
             .with_mutation_builtin(SeleneDropIndex)
