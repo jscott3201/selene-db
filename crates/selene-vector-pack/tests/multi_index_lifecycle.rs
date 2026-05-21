@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use selene_core::{Change, GraphId, IStr, LabelSet, NodeId, PropertyMap, Record, Value, intern};
 use selene_gql::{
-    BindingTable, ExecutionPlan, ImplDefinedCaps, MutationContext, ProcedureContext,
-    ProcedureError, ProcedureRegistry, ProcedureResult, StatementOutput, analyze,
-    execute_statement, parse, plan,
+    BindingTable, ExecutionPlan, ExecutorError, ImplDefinedCaps, MutationContext, ProcedureContext,
+    ProcedureDefaultValue, ProcedureError, ProcedureRegistry, ProcedureResult, StatementOutput,
+    analyze, execute_statement, parse, plan,
 };
 use selene_graph::{IndexProvider, SharedGraph, SubTag};
 use selene_pack::ProcedurePackRegistry;
@@ -39,6 +39,16 @@ fn execute_ok(
     let plan = planned(source, registry);
     let mut session = selene_gql::Session::new(graph);
     execute_statement(&plan, &mut session, registry).expect("statement executes")
+}
+
+fn execute_err(
+    source: &str,
+    graph: &SharedGraph,
+    registry: &dyn ProcedureRegistry,
+) -> ExecutorError {
+    let plan = planned(source, registry);
+    let mut session = selene_gql::Session::new(graph);
+    execute_statement(&plan, &mut session, registry).expect_err("statement errors")
 }
 
 fn rows(output: StatementOutput) -> BindingTable {
@@ -220,7 +230,7 @@ fn drop_default_rejected_and_list_indexes_reports_both_kinds() {
         &graph,
         &procedures,
         &["vector", "drop_index"],
-        &[Value::String(istr("default"))],
+        &[Value::String(istr("default")), Value::Bool(false)],
     )
     .expect_err("default drop rejected");
     assert!(matches!(
@@ -268,6 +278,40 @@ fn drop_default_rejected_and_list_indexes_reports_both_kinds() {
     assert!(rendered.iter().any(|row| row.starts_with("staged:ivf:2")));
     assert!(rendered.iter().any(|row| row.starts_with("default:hnsw:4")));
     assert!(rendered.iter().any(|row| row.starts_with("default:ivf:4")));
+}
+
+#[test]
+fn drop_index_if_exists_is_optional_default_false() {
+    let pack = deterministic_pack();
+    let procedures = registry(&pack);
+    let (graph, _hnsw, _ivf, _nodes) = graph_with_registries(109_406, 1);
+
+    let metadata = procedures
+        .lookup(&[istr("vector"), istr("drop_index")])
+        .expect("drop_index registered");
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 1);
+    assert_eq!(arity.maximum, 2);
+    assert_eq!(
+        metadata.signature.parameters[1].default,
+        Some(ProcedureDefaultValue::Boolean(false))
+    );
+    assert_eq!(metadata.signature.parameters[1].default_doc, Some("FALSE"));
+
+    let err = execute_err("CALL vector.drop_index('missing')", &graph, &procedures);
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { detail },
+            ..
+        } if detail.contains("does not exist")
+    ));
+
+    execute_ok(
+        "CALL vector.drop_index('missing', TRUE)",
+        &graph,
+        &procedures,
+    );
 }
 
 #[test]

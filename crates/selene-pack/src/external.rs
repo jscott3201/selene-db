@@ -6,7 +6,10 @@
 
 use std::sync::Arc;
 
-use selene_gql::{GqlType, GraphContext, MutationContext, ProcedureError, ProcedureResult, Value};
+use selene_gql::{
+    GqlType, GraphContext, MutationContext, ProcedureDefaultValue, ProcedureError, ProcedureResult,
+    Value,
+};
 
 /// External graph and mutation procedures split by registry tier.
 pub(crate) type ExternalProcedureSet = (
@@ -77,6 +80,8 @@ pub struct ExternalParameter {
     pub description: &'static str,
     /// Documentation-only default value text.
     pub default_doc: Option<&'static str>,
+    /// Executable default value for omitted trailing optional arguments.
+    pub default: Option<ProcedureDefaultValue>,
 }
 
 impl ExternalParameter {
@@ -89,6 +94,7 @@ impl ExternalParameter {
             nullable,
             description: "",
             default_doc: None,
+            default: None,
         }
     }
 
@@ -103,6 +109,13 @@ impl ExternalParameter {
     #[must_use]
     pub const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
         self.default_doc = Some(default_doc);
+        self
+    }
+
+    /// Attach an executable default value.
+    #[must_use]
+    pub const fn with_default(mut self, default: ProcedureDefaultValue) -> Self {
+        self.default = Some(default);
         self
     }
 }

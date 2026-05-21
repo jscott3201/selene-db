@@ -147,6 +147,24 @@ impl ProcedureSignature {
         self.since_version = since_version;
         self
     }
+
+    /// Return the accepted positional argument range for this signature.
+    #[must_use]
+    pub fn arity(&self) -> ProcedureArity {
+        let maximum = self.parameters.len();
+        let minimum = self
+            .parameters
+            .iter()
+            .position(|parameter| parameter.default.is_some())
+            .unwrap_or(maximum);
+        debug_assert!(
+            self.parameters[minimum..]
+                .iter()
+                .all(|parameter| parameter.default.is_some()),
+            "procedure defaults must be a trailing suffix"
+        );
+        ProcedureArity { minimum, maximum }
+    }
 }
 
 impl Default for ProcedureSignature {
@@ -169,6 +187,8 @@ pub struct ProcedureParameter {
     pub description: &'static str,
     /// Documentation-only default value text for optional parameters.
     pub default_doc: Option<&'static str>,
+    /// Executable default value for omitted trailing optional arguments.
+    pub default: Option<ProcedureDefaultValue>,
 }
 
 impl ProcedureParameter {
@@ -181,6 +201,7 @@ impl ProcedureParameter {
             nullable,
             description: "",
             default_doc: None,
+            default: None,
         }
     }
 
@@ -196,6 +217,53 @@ impl ProcedureParameter {
     pub const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
         self.default_doc = Some(default_doc);
         self
+    }
+
+    /// Attach an executable default value.
+    #[must_use]
+    pub const fn with_default(mut self, default: ProcedureDefaultValue) -> Self {
+        self.default = Some(default);
+        self
+    }
+}
+
+/// Executable default value descriptor for optional procedure parameters.
+///
+/// This deliberately stays smaller than [`Value`]: procedure signatures are
+/// static metadata, and source-side parameter structs derive `Eq`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ProcedureDefaultValue {
+    /// Boolean default value.
+    Boolean(bool),
+    /// NULL default value.
+    Null,
+    /// Signed integer default value.
+    Integer(i64),
+    /// Static string default value.
+    String(&'static str),
+}
+
+/// Positional procedure argument range after accounting for trailing defaults.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProcedureArity {
+    /// Minimum caller-supplied argument count.
+    pub minimum: usize,
+    /// Maximum argument count after default materialization.
+    pub maximum: usize,
+}
+
+impl ProcedureArity {
+    /// Return true when `actual` is within this accepted argument range.
+    #[must_use]
+    pub const fn accepts(self, actual: usize) -> bool {
+        self.minimum <= actual && actual <= self.maximum
+    }
+
+    /// Return true when the range accepts only one exact argument count.
+    #[must_use]
+    pub const fn is_exact(self) -> bool {
+        self.minimum == self.maximum
     }
 }
 

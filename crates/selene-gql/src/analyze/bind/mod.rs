@@ -27,12 +27,12 @@ pub(crate) const ANALYZER_MAX_DEPTH: u32 = 256;
 
 /// Analyze one statement with the binding pass.
 pub(crate) fn bind_statement(
-    stmt: Statement,
+    mut stmt: Statement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<AnalyzedStatement, AnalysisError> {
     let mut ctx = BindContext::new(stmt.span(), registry);
     let bind_result = (|| -> Result<(), AnalysisError> {
-        match &stmt {
+        match &mut stmt {
             Statement::Query(pipeline) => query::bind_query_pipeline(&mut ctx, pipeline)?,
             Statement::Composite { first, rest, .. } => {
                 ctx.with_child_scope(ScopeKind::Projection, first.span, true, |ctx| {
@@ -82,7 +82,10 @@ pub(crate) fn bind_statement(
     Ok(ctx.finish(stmt, category, write_set))
 }
 
-fn bind_explain_inner(ctx: &mut BindContext<'_>, inner: &Statement) -> Result<(), AnalysisError> {
+fn bind_explain_inner(
+    ctx: &mut BindContext<'_>,
+    inner: &mut Statement,
+) -> Result<(), AnalysisError> {
     match inner {
         Statement::Query(pipeline) => query::bind_query_pipeline(ctx, pipeline),
         Statement::Composite { first, rest, .. } => {

@@ -7,8 +7,8 @@ pub(crate) mod health;
 pub(crate) mod pack_history;
 
 use selene_gql::{
-    GqlType, GraphContext, MutationContext, ProcedureError, ProcedureMutability, ProcedureResult,
-    ProcedureTier, Value,
+    GqlType, GraphContext, MutationContext, ProcedureDefaultValue, ProcedureError,
+    ProcedureMutability, ProcedureResult, ProcedureTier, Value,
 };
 
 /// Local sentinel for built-in procedures that do not carry user-pack manifests.
@@ -32,6 +32,8 @@ pub(crate) struct StaticParameter {
     pub(crate) description: &'static str,
     /// Documentation-only default value text.
     pub(crate) default_doc: Option<&'static str>,
+    /// Executable default value for omitted trailing optional arguments.
+    pub(crate) default: Option<ProcedureDefaultValue>,
 }
 
 impl StaticParameter {
@@ -43,6 +45,7 @@ impl StaticParameter {
             nullable,
             description: "",
             default_doc: None,
+            default: None,
         }
     }
 
@@ -56,6 +59,13 @@ impl StaticParameter {
     #[allow(dead_code)]
     pub(crate) const fn with_default_doc(mut self, default_doc: &'static str) -> Self {
         self.default_doc = Some(default_doc);
+        self
+    }
+
+    /// Attach an executable default value.
+    #[allow(dead_code)]
+    pub(crate) const fn with_default(mut self, default: ProcedureDefaultValue) -> Self {
+        self.default = Some(default);
         self
     }
 }

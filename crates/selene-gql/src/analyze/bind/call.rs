@@ -1,10 +1,11 @@
 //! Procedure-call bind handling.
 
-use selene_core::IStr;
+use selene_core::{IStr, intern_with_admission};
 
 use super::{BindContext, expr};
 use crate::{
-    ProcedureCall, ProcedureMetadata, ProcedureOutputColumn, YieldColumn,
+    Literal, ProcedureCall, ProcedureDefaultValue, ProcedureMetadata, ProcedureOutputColumn,
+    ValueExpr, YieldColumn,
     analyze::{
         binding::BindingDeclKind,
         error::{AnalysisError, ExpectedType, TypeMismatchContext},
@@ -15,7 +16,7 @@ use crate::{
 
 pub(crate) fn bind_procedure_call(
     ctx: &mut BindContext,
-    call: &ProcedureCall,
+    call: &mut ProcedureCall,
 ) -> Result<(), AnalysisError> {
     let metadata = lookup_metadata(ctx, call)?;
     bind_procedure_call_with_metadata(ctx, call, metadata)
@@ -36,21 +37,23 @@ pub(crate) fn lookup_metadata(
 
 pub(crate) fn bind_procedure_call_with_metadata(
     ctx: &mut BindContext,
-    call: &ProcedureCall,
+    call: &mut ProcedureCall,
     metadata: ProcedureMetadata,
 ) -> Result<(), AnalysisError> {
     let procedure = call.name.clone().into_vec().into_boxed_slice();
 
-    let expected = metadata.signature.parameters.len();
+    let arity = metadata.signature.arity();
     let actual = call.args.len();
-    if actual != expected {
+    if !arity.accepts(actual) {
         return Err(AnalysisError::WrongArgumentCount {
             procedure,
-            expected,
+            expected: arity.maximum,
+            minimum: arity.minimum,
             actual,
             span: call.span,
         });
     }
+    fill_missing_defaults(call, &metadata)?;
 
     let mut arg_types = Vec::with_capacity(call.args.len());
     for arg in &call.args {
@@ -113,6 +116,53 @@ pub(crate) fn bind_procedure_call_with_metadata(
         }
     }
     Ok(())
+}
+
+fn fill_missing_defaults(
+    call: &mut ProcedureCall,
+    metadata: &ProcedureMetadata,
+) -> Result<(), AnalysisError> {
+    let provided = call.args.len();
+    let expected = metadata.signature.parameters.len();
+    if provided == expected {
+        return Ok(());
+    }
+    let procedure = call.name.clone().into_vec().into_boxed_slice();
+    for parameter in metadata.signature.parameters.iter().skip(provided) {
+        let Some(default) = parameter.default else {
+            return Err(AnalysisError::WrongArgumentCount {
+                procedure,
+                expected,
+                minimum: expected,
+                actual: provided,
+                span: call.span,
+            });
+        };
+        call.args.push(default_expr(default, call.span)?);
+    }
+    Ok(())
+}
+
+fn default_expr(
+    default: ProcedureDefaultValue,
+    span: crate::SourceSpan,
+) -> Result<ValueExpr, AnalysisError> {
+    let literal = match default {
+        ProcedureDefaultValue::Boolean(value) => Literal::Bool(value, span),
+        ProcedureDefaultValue::Null => Literal::Null(span),
+        ProcedureDefaultValue::Integer(value) => Literal::Integer(value, span),
+        ProcedureDefaultValue::String(value) => {
+            let interned = intern_with_admission(value)
+                .map(|(interned, _was_new)| interned)
+                .map_err(|_| AnalysisError::NotImplemented {
+                    message: "procedure default string exhausted the interner budget".to_owned(),
+                    span,
+                    hint: None,
+                })?;
+            Literal::String(interned, span)
+        }
+    };
+    Ok(ValueExpr::Literal(literal))
 }
 
 fn declare_output(
