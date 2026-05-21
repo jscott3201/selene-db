@@ -100,6 +100,7 @@ impl WalConfig {
 pub struct WalWriter {
     file: File,
     last_sequence: u64,
+    snapshot_seq: u64,
     sync_policy: SyncPolicy,
     entries_since_fsync: u32,
     /// File offset of the last fully-committed entry's end. On any
@@ -169,6 +170,7 @@ impl WalWriter {
         Ok(Self {
             file,
             last_sequence,
+            snapshot_seq: header_snapshot_seq,
             sync_policy,
             entries_since_fsync: 0,
             committed_offset: scan.truncate_to,
@@ -259,6 +261,24 @@ impl WalWriter {
     #[must_use]
     pub const fn last_sequence(&self) -> u64 {
         self.last_sequence
+    }
+
+    /// Return the durable file offset of the last fully committed WAL entry.
+    #[must_use]
+    pub const fn committed_offset(&self) -> u64 {
+        self.committed_offset
+    }
+
+    /// Return the snapshot sequence stored in this WAL file's header.
+    #[must_use]
+    pub const fn snapshot_seq(&self) -> u64 {
+        self.snapshot_seq
+    }
+
+    /// Return the number of entries appended since the last fsync.
+    #[must_use]
+    pub const fn entries_since_fsync(&self) -> u32 {
+        self.entries_since_fsync
     }
 
     /// Best-effort rollback to the last committed offset on append failure.

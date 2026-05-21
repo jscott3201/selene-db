@@ -191,7 +191,7 @@ mod tests {
     use super::*;
     use crate::{
         RecoveryProvider, RecoveryResult, SectionCompression, SnapshotBuilder, SnapshotConfig,
-        WalConfig, WalWriter,
+        WalConfig, WalWriter, snapshot_path,
     };
 
     #[derive(Clone, Debug, PartialEq)]
@@ -312,7 +312,9 @@ mod tests {
         for (provider, sub, bytes) in sections {
             builder.add_section(*provider, *sub, bytes.clone()).unwrap();
         }
-        builder.finalize().unwrap()
+        let outcome = builder.finalize().unwrap();
+        assert_eq!(outcome.snapshot_seq, sequence);
+        snapshot_path(dir, sequence)
     }
 
     fn write_wal(dir: &Path, snapshot_seq: u64, entries: &[(Origin, Vec<Change>)]) -> PathBuf {

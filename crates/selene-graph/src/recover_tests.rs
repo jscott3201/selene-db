@@ -7,7 +7,7 @@ use selene_core::{
 };
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, PersistError, SectionCompression, SnapshotBuilder, SnapshotConfig,
-    SyncPolicy, WalConfig, WalWriter,
+    SyncPolicy, WalConfig, WalWriter, snapshot_path,
 };
 
 use crate::{CORE_PROVIDER_TAG, GraphError, GraphTypeDef, ProviderTag, SharedGraph};
@@ -49,7 +49,9 @@ fn write_snapshot(dir: &Path, shared: &SharedGraph, sequence: u64) -> PathBuf {
             .add_section(CORE_PROVIDER_TAG, sub.0, bytes)
             .unwrap();
     }
-    builder.finalize().unwrap()
+    let outcome = builder.finalize().unwrap();
+    assert_eq!(outcome.snapshot_seq, sequence);
+    snapshot_path(dir, sequence)
 }
 
 fn append_wal(dir: &Path, snapshot_seq: u64, changes: &[Change]) {

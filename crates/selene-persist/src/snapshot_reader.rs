@@ -225,7 +225,9 @@ mod tests {
                 .add_section(*provider, *sub, payload.clone())
                 .unwrap();
         }
-        builder.finalize().unwrap()
+        let outcome = builder.finalize().unwrap();
+        assert_eq!(outcome.snapshot_seq, sequence);
+        crate::snapshot_path(dir, sequence)
     }
 
     #[test]

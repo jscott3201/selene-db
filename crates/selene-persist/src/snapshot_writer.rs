@@ -83,6 +83,17 @@ struct PreparedSection {
     payload: Vec<u8>,
 }
 
+/// Metadata returned after a snapshot is durably finalized.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SnapshotFinalizeOutcome {
+    /// Snapshot sequence written into the finalized snapshot filename.
+    pub snapshot_seq: u64,
+    /// Low 128 bits of the finalized snapshot body hash.
+    pub body_hash: [u8; 16],
+    /// Number of section-table rows in the snapshot.
+    pub section_count: u32,
+}
+
 impl SnapshotBuilder {
     /// Construct an empty snapshot builder.
     #[must_use]
@@ -124,7 +135,7 @@ impl SnapshotBuilder {
         Ok(())
     }
 
-    /// Atomically write the snapshot and return the final path.
+    /// Atomically write the snapshot and return the finalized metadata.
     ///
     /// The writer creates `snapshot.{sequence}.snap.tmp`, writes and optionally
     /// fsyncs it, then **hard-links** it to `snapshot.{sequence}.snap` and
@@ -144,7 +155,7 @@ impl SnapshotBuilder {
         skip(self),
         fields(snapshot_seq = self.config.sequence, section_count = self.sections.len())
     )]
-    pub fn finalize(self) -> PersistResult<PathBuf> {
+    pub fn finalize(self) -> PersistResult<SnapshotFinalizeOutcome> {
         let final_path = snapshot_path(&self.config.dir, self.config.sequence);
         let tmp_path = snapshot_tmp_path(&self.config.dir, self.config.sequence);
         let prepared = prepare_sections(self.sections, self.config.compression)?;
@@ -178,7 +189,11 @@ impl SnapshotBuilder {
         match std::fs::hard_link(&tmp_path, &final_path) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&tmp_path);
-                Ok(final_path)
+                Ok(SnapshotFinalizeOutcome {
+                    snapshot_seq: self.config.sequence,
+                    body_hash: hash,
+                    section_count: entries.len() as u32,
+                })
             }
             Err(error) => {
                 let _ = std::fs::remove_file(&tmp_path);
@@ -256,9 +271,11 @@ mod tests {
     #[test]
     fn empty_snapshot_round_trips() {
         let dir = temp_dir("empty");
-        let path = SnapshotBuilder::new(config(dir.clone(), 1, SectionCompression::None))
+        let outcome = SnapshotBuilder::new(config(dir.clone(), 1, SectionCompression::None))
             .finalize()
             .unwrap();
+        assert_eq!(outcome.snapshot_seq, 1);
+        let path = snapshot_path(&dir, 1);
         let mut reader = SnapshotReader::open(&path).unwrap();
         reader.verify_body_hash().unwrap();
         assert!(reader.sections().is_empty());
@@ -276,7 +293,9 @@ mod tests {
         builder
             .add_section(*b"CORE", *b"META", vec![7_u8; 1024])
             .unwrap();
-        let path = builder.finalize().unwrap();
+        let outcome = builder.finalize().unwrap();
+        assert_eq!(outcome.section_count, 1);
+        let path = snapshot_path(&dir, 2);
         let mut reader = SnapshotReader::open(&path).unwrap();
         assert!(reader.header().is_section_compressed());
         assert_eq!(
@@ -293,7 +312,15 @@ mod tests {
         builder
             .add_section(*b"CORE", *b"NODE", b"nodes".to_vec())
             .unwrap();
-        let path = builder.finalize().unwrap();
+        let outcome = builder.finalize().unwrap();
+        assert_eq!(
+            outcome.body_hash,
+            SnapshotReader::open(&snapshot_path(&dir, 3))
+                .unwrap()
+                .header()
+                .body_hash
+        );
+        let path = snapshot_path(&dir, 3);
         let mut reader = SnapshotReader::open(&path).unwrap();
         assert!(!reader.header().is_section_compressed());
         assert_eq!(reader.read_section(*b"CORE", *b"NODE").unwrap(), b"nodes");
