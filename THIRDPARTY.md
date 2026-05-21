@@ -1579,6 +1579,7 @@ Used by:
 - bitflags v2.11.1 — https://github.com/bitflags/bitflags
 - fraction v0.15.4 — https://github.com/dnsl48/fraction.git
 - glob v0.3.3 — https://github.com/rust-lang/glob
+- log v0.4.29 — https://github.com/rust-lang/log
 - num-bigint v0.4.6 — https://github.com/rust-num/num-bigint
 - num-complex v0.4.6 — https://github.com/rust-num/num-complex
 - num-integer v0.1.46 — https://github.com/rust-num/num-integer
@@ -1984,6 +1985,7 @@ Used by:
 - parking_lot v0.12.5 — https://github.com/Amanieu/parking_lot
 - parking_lot_core v0.9.12 — https://github.com/Amanieu/parking_lot
 - rustc_version v0.4.1 — https://github.com/djc/rustc-version-rs
+- thread_local v1.1.9 — https://github.com/Amanieu/thread_local-rs
 
 ```
 Copyright (c) 2016 The Rust Project Developers
@@ -2767,6 +2769,36 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
+- sharded-slab v0.1.7 — https://github.com/hawkw/sharded-slab
+
+```
+Copyright (c) 2019 Eliza Weisman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
 - bumpalo v3.20.2 — https://github.com/fitzgen/bumpalo
 
 ```
@@ -2841,6 +2873,8 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 - tracing-attributes v0.1.31 — https://github.com/tokio-rs/tracing
 - tracing-core v0.1.36 — https://github.com/tokio-rs/tracing
+- tracing-log v0.2.0 — https://github.com/tokio-rs/tracing
+- tracing-subscriber v0.3.23 — https://github.com/tokio-rs/tracing
 - tracing v0.1.44 — https://github.com/tokio-rs/tracing
 
 ```
@@ -4854,6 +4888,39 @@ FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
 COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+```
+
+---
+
+## MIT License (MIT)
+
+Used by:
+- nu-ansi-term v0.50.3 — https://github.com/nushell/nu-ansi-term
+
+```
+The MIT License (MIT)
+
+Copyright (c) 2014 Benjamin Sago
+Copyright (c) 2021-2022 The Nushell Project Developers
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the &quot;Software&quot;), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ```
 
