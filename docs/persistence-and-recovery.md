@@ -182,14 +182,16 @@ let mut builder = SnapshotBuilder::new(SnapshotConfig {
 builder.add_section(*b"CORE", *b"META", core_meta_bytes)?;
 builder.add_section(*b"CORE", *b"NODE", core_node_bytes)?;
 builder.add_section(*b"VECT", *b"GRPH", hnsw_topology_bytes)?;
-let path = builder.finalize()?;
+let outcome = builder.finalize()?;
 ```
 
 `finalize()` writes `snapshot.{sequence}.snap.tmp`, fsyncs it when
 `fsync: true`, then atomically **hard-links** it to
 `snapshot.{sequence}.snap` and removes the tmp. The hard-link is the
 race-safe alternative to `rename` (which silently overwrites on POSIX); a
-sequence collision fails fast with `Io(AlreadyExists)`.
+sequence collision fails fast with `Io(AlreadyExists)`. The returned
+`SnapshotFinalizeOutcome` carries `snapshot_seq`, `body_hash`, and
+`section_count`.
 
 Each section's `(provider, sub)` tag pair identifies its producer. Common
 tags shipped by the workspace:
@@ -224,9 +226,10 @@ in-process protocol is:
 1. Take a consistent read of the graph (`SharedGraph` clones the snapshot via
    `ArcSwap`, so this is lock-free).
 2. Build the snapshot at `sequence = wal.last_sequence()`.
-3. Atomically rotate the WAL: open a new file with
-   `WalConfig { snapshot_seq: sequence, .. }`, the old WAL can be removed
-   once the new snapshot is durable on disk.
+3. Finalize the snapshot and call `wal.rotate(outcome.snapshot_seq)`. The
+   rotation fsyncs the current WAL, publishes a no-clobber
+   `wal.{last_sequence}.archive`, then rewrites the active `wal.log` header
+   in place with the snapshot sequence.
 
 ## Two-step recovery
 
@@ -416,8 +419,7 @@ let wal_config = WalConfig {
 };
 // Skip snapshots entirely. WAL replay rebuilds the graph on every restart.
 // Caution: replay time grows linearly in WAL length; bound the WAL with a
-// retention policy (e.g., cap at 1M entries, rotate by copy + truncate
-// under a maintenance window).
+// retention policy by taking snapshots and calling WalWriter::rotate.
 ```
 
 ### Server workload
@@ -433,9 +435,7 @@ let wal_config = WalConfig {
 };
 // Take a snapshot hourly and after every 1M WAL entries.
 // Retain the last N snapshots plus their WAL files.
-// Rotate the WAL after each snapshot: open a new file seeded with
-// snapshot_seq = previous_wal.last_sequence(), then remove the old WAL once
-// the new snapshot is durable on disk.
+// Rotate the WAL after each snapshot with wal.rotate(outcome.snapshot_seq).
 ```
 
 The hot path for all three is identical — `WalWriter::append` — and differs

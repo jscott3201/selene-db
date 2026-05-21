@@ -10,7 +10,7 @@ use criterion::Criterion;
 use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, SectionCompression, SnapshotBuilder, SnapshotConfig, SyncPolicy,
-    WalConfig, WalWriter,
+    WalConfig, WalWriter, snapshot_path,
 };
 use selene_testing::BenchProfile;
 
@@ -110,5 +110,6 @@ pub(crate) fn write_snapshot(dir: &Path, sequence: u64, bytes: usize) -> PathBuf
     builder
         .add_section(*b"CORE", *b"DATA", vec![0x5a; bytes])
         .expect("section add succeeds");
-    builder.finalize().expect("snapshot write succeeds")
+    builder.finalize().expect("snapshot write succeeds");
+    snapshot_path(dir, sequence)
 }

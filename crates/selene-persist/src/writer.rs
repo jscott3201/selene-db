@@ -2,7 +2,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use selene_core::{Change, HlcTimestamp, Origin};
@@ -12,6 +12,9 @@ use crate::entry_header::{
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::payload::{encode_changes, verify_checksum};
+use crate::writer_rotation::{
+    WalRotationOutcome, archive_current_wal, reset_active_wal_file, wal_archive_path,
+};
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
 /// Conventional v1.0 single-file WAL name used by embedders.
@@ -99,7 +102,9 @@ impl WalConfig {
 /// [`PersistError::WriterLockHeld`] rather than corrupting the log.
 pub struct WalWriter {
     file: File,
+    path: PathBuf,
     last_sequence: u64,
+    snapshot_seq: u64,
     sync_policy: SyncPolicy,
     entries_since_fsync: u32,
     /// File offset of the last fully-committed entry's end. On any
@@ -168,7 +173,9 @@ impl WalWriter {
         let last_sequence = scan.last_sequence.max(header_snapshot_seq);
         Ok(Self {
             file,
+            path: path.to_path_buf(),
             last_sequence,
+            snapshot_seq: header_snapshot_seq,
             sync_policy,
             entries_since_fsync: 0,
             committed_offset: scan.truncate_to,
@@ -259,6 +266,78 @@ impl WalWriter {
     #[must_use]
     pub const fn last_sequence(&self) -> u64 {
         self.last_sequence
+    }
+
+    /// Return the durable file offset of the last fully committed WAL entry.
+    #[must_use]
+    pub const fn committed_offset(&self) -> u64 {
+        self.committed_offset
+    }
+
+    /// Return the snapshot sequence stored in this WAL file's header.
+    #[must_use]
+    pub const fn snapshot_seq(&self) -> u64 {
+        self.snapshot_seq
+    }
+
+    /// Return the number of entries appended since the last fsync.
+    #[must_use]
+    pub const fn entries_since_fsync(&self) -> u32 {
+        self.entries_since_fsync
+    }
+
+    /// Rotate this WAL after a durable snapshot has been finalized.
+    ///
+    /// The current WAL is fsynced, copied to an archive file in the same
+    /// directory as `wal.{last_sequence}.archive`, and then truncated in place
+    /// to a fresh standard WAL header seeded with `new_snapshot_seq`.
+    ///
+    /// A second mutable borrow cannot overlap the rotation:
+    ///
+    /// ```compile_fail
+    /// # use selene_persist::WalWriter;
+    /// fn cannot_overlap(writer: &mut WalWriter) {
+    ///     let active = writer;
+    ///     let _ = writer.rotate(1);
+    ///     let _ = active.last_sequence();
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed snapshot-sequence error when the supplied snapshot does
+    /// not exactly cover the current WAL, I/O errors from fsync/archive/header
+    /// writes, a typed archive-exists error when the archive path is already
+    /// occupied, or a typed rotation-incomplete error if the archive commit
+    /// happened but the active WAL could not be rewritten.
+    pub fn rotate(&mut self, new_snapshot_seq: u64) -> PersistResult<WalRotationOutcome> {
+        if new_snapshot_seq != self.last_sequence {
+            return Err(PersistError::WalRotationSequenceMismatch {
+                snapshot_seq: new_snapshot_seq,
+                last_sequence: self.last_sequence,
+            });
+        }
+        self.flush()?;
+        let archived_last_sequence = self.last_sequence;
+        let archived_path = wal_archive_path(&self.path, archived_last_sequence);
+        archive_current_wal(&mut self.file, &archived_path, self.committed_offset)?;
+
+        if reset_active_wal_file(&mut self.file, new_snapshot_seq).is_err() {
+            return Err(PersistError::WalRotationIncomplete {
+                archived_path,
+                new_path: self.path.clone(),
+            });
+        }
+
+        self.last_sequence = new_snapshot_seq;
+        self.snapshot_seq = new_snapshot_seq;
+        self.committed_offset = WAL_FILE_HEADER_LEN as u64;
+        self.entries_since_fsync = 0;
+        Ok(WalRotationOutcome {
+            archived_path,
+            new_path: self.path.clone(),
+            archived_last_sequence,
+        })
     }
 
     /// Best-effort rollback to the last committed offset on append failure.

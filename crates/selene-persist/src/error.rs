@@ -1,5 +1,7 @@
 //! Error types for persistence formats.
 
+use std::path::PathBuf;
+
 use crate::provider::RecoveryError;
 
 /// Result alias for persistence operations.
@@ -238,6 +240,37 @@ pub enum PersistError {
         /// Snapshot sequence selected by recovery.
         snapshot_seq: u64,
     },
+
+    /// WAL rotation refused to overwrite an existing archive path.
+    #[error("wal archive already exists: {path}")]
+    #[diagnostic(code(SLENE_P_029))]
+    WalArchiveExists {
+        /// Existing archive path.
+        path: PathBuf,
+    },
+
+    /// WAL rotation archived the old file but could not restore a usable active WAL.
+    #[error("wal rotation incomplete: archived {archived_path}, active {new_path}")]
+    #[diagnostic(code(SLENE_P_030))]
+    WalRotationIncomplete {
+        /// Path containing the archived pre-rotation WAL.
+        archived_path: PathBuf,
+        /// Active WAL path that could not be restored.
+        new_path: PathBuf,
+    },
+
+    /// WAL rotation was asked to rotate at a snapshot sequence that does not
+    /// match the writer's current high-water mark.
+    #[error(
+        "wal rotation snapshot sequence {snapshot_seq} does not match current sequence {last_sequence}"
+    )]
+    #[diagnostic(code(SLENE_P_031))]
+    WalRotationSequenceMismatch {
+        /// Sequence covered by the caller's finalized snapshot.
+        snapshot_seq: u64,
+        /// Current WAL high-water mark.
+        last_sequence: u64,
+    },
 }
 
 impl PersistError {
@@ -271,7 +304,10 @@ impl PersistError {
             | Self::MalformedSectionLayout { .. }
             | Self::UnknownProvider { .. }
             | Self::ProviderFailed { .. }
-            | Self::WalSnapshotMismatch { .. } => "5GQL0",
+            | Self::WalSnapshotMismatch { .. }
+            | Self::WalArchiveExists { .. }
+            | Self::WalRotationIncomplete { .. }
+            | Self::WalRotationSequenceMismatch { .. } => "5GQL0",
         }
     }
 }
@@ -314,6 +350,15 @@ mod tests {
         source: Box::new(std::io::Error::other("provider failed")),
     }, "5GQL0")]
     #[case(PersistError::WalSnapshotMismatch { wal_snapshot_seq: 2, snapshot_seq: 1 }, "5GQL0")]
+    #[case(PersistError::WalArchiveExists { path: "wal.1.archive".into() }, "5GQL0")]
+    #[case(PersistError::WalRotationIncomplete {
+        archived_path: "wal.1.archive".into(),
+        new_path: "wal.log".into(),
+    }, "5GQL0")]
+    #[case(PersistError::WalRotationSequenceMismatch {
+        snapshot_seq: 1,
+        last_sequence: 2,
+    }, "5GQL0")]
     fn gqlstatus_for_each_variant(#[case] error: PersistError, #[case] status: &str) {
         assert_eq!(error.gqlstatus(), status);
         assert!(
