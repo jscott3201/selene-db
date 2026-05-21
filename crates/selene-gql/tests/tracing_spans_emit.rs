@@ -1,0 +1,167 @@
+//! Tracing span emission smoke tests.
+
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, intern};
+use selene_gql::{OptimizeContext, Session, analyze, optimize, parse, plan};
+use selene_graph::SharedGraph;
+use selene_pack::ProcedurePackRegistry;
+use selene_persist::{
+    DEFAULT_WAL_FILE_NAME, ProviderRegistry, SectionCompression, SnapshotBuilder, SnapshotConfig,
+    SyncPolicy, WalConfig, WalWriter, recover,
+};
+use tracing::{Id, Subscriber};
+use tracing_subscriber::{
+    Layer, Registry,
+    layer::{Context, SubscriberExt},
+};
+
+const EXPECTED_SPANS: &[&str] = &[
+    "selene.gql.parse",
+    "selene.gql.analyze",
+    "selene.gql.plan",
+    "selene.gql.execute_statement",
+    "selene.graph.begin_write",
+    "selene.graph.commit",
+    "selene.graph.notify_providers",
+    "selene.persist.recover",
+    "selene.persist.wal.append",
+    "selene.persist.wal.fsync",
+    "selene.persist.snapshot.finalize",
+    "selene.procedure.dispatch",
+];
+
+#[test]
+fn tracing_spans_emit_for_write_and_call() {
+    let observed = ObservedSpans::default();
+    let subscriber = Registry::default().with(CollectingLayer {
+        observed: observed.clone(),
+    });
+    let registry = ProcedurePackRegistry::with_builtins()
+        .expect("platform built-ins register cleanly in tests");
+    let graph = SharedGraph::new(GraphId::new(121_001));
+
+    tracing::subscriber::with_default(subscriber, || {
+        let mut session = Session::new(&graph);
+        session
+            .execute_source("INSERT (:TraceProbe)", &registry)
+            .expect("write executes");
+        session
+            .execute_source(
+                "CALL selene.health() YIELD graph_id, node_count, edge_count, schema_bound",
+                &registry,
+            )
+            .expect("call executes");
+
+        let stmt = parse("RETURN 1").expect("statement parses");
+        let analyzed = analyze(stmt, &registry, None).expect("statement analyzes");
+        let planned = plan(&analyzed, &registry).expect("statement plans");
+        let _optimized = optimize(planned, &OptimizeContext::default());
+
+        let dir = tempfile::tempdir().expect("tempdir is created");
+        recover(dir.path(), &ProviderRegistry::new()).expect("empty recovery succeeds");
+        let wal_path = dir.path().join(DEFAULT_WAL_FILE_NAME);
+        let mut writer = WalWriter::open(
+            &wal_path,
+            WalConfig {
+                sync_policy: SyncPolicy::OnFlushOnly,
+                snapshot_seq: 0,
+            },
+        )
+        .expect("wal opens");
+        let changes = [Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(intern("trace.node").expect("label interns")),
+            properties: PropertyMap::new(),
+        }];
+        writer
+            .append(HlcTimestamp::new(1, 0), Origin::Local, None, &changes)
+            .expect("wal append succeeds");
+        writer.flush().expect("wal flush succeeds");
+        SnapshotBuilder::new(SnapshotConfig {
+            dir: dir.path().to_path_buf(),
+            sequence: 1,
+            compression: SectionCompression::None,
+            fsync: false,
+        })
+        .finalize()
+        .expect("snapshot finalizes");
+    });
+
+    let closed = observed.closed();
+    for expected in EXPECTED_SPANS {
+        let duration = closed
+            .get(*expected)
+            .unwrap_or_else(|| panic!("missing tracing span {expected}"));
+        assert!(
+            *duration > Duration::ZERO,
+            "span {expected} should have non-zero duration"
+        );
+    }
+}
+
+#[derive(Clone, Default)]
+struct ObservedSpans {
+    inner: Arc<Mutex<ObservedState>>,
+}
+
+impl ObservedSpans {
+    fn closed(&self) -> HashMap<String, Duration> {
+        self.inner
+            .lock()
+            .expect("span collector lock")
+            .closed
+            .clone()
+    }
+}
+
+#[derive(Default)]
+struct ObservedState {
+    active: HashMap<Id, ActiveSpan>,
+    closed: HashMap<String, Duration>,
+}
+
+struct ActiveSpan {
+    name: &'static str,
+    started_at: Instant,
+}
+
+struct CollectingLayer {
+    observed: ObservedSpans,
+}
+
+impl<S> Layer<S> for CollectingLayer
+where
+    S: Subscriber,
+{
+    fn on_new_span(&self, attrs: &tracing::span::Attributes<'_>, id: &Id, _ctx: Context<'_, S>) {
+        self.observed
+            .inner
+            .lock()
+            .expect("span collector lock")
+            .active
+            .insert(
+                id.clone(),
+                ActiveSpan {
+                    name: attrs.metadata().name(),
+                    started_at: Instant::now(),
+                },
+            );
+    }
+
+    fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
+        let mut observed = self.observed.inner.lock().expect("span collector lock");
+        if let Some(active) = observed.active.remove(&id) {
+            let duration = active.started_at.elapsed();
+            observed
+                .closed
+                .entry(active.name.to_owned())
+                .and_modify(|existing| *existing = (*existing).max(duration))
+                .or_insert(duration);
+        }
+    }
+}

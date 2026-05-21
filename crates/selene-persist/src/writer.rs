@@ -183,6 +183,11 @@ impl WalWriter {
     /// in-memory sequence counter is **not** advanced and the file is
     /// truncated back to the last fully-committed entry, so the next
     /// append (or a reopen + retry) observes a consistent state.
+    #[tracing::instrument(
+        name = "selene.persist.wal.append",
+        skip(self, principal, changes),
+        fields(sequence = self.last_sequence + 1, change_count = changes.len(), has_principal = principal.is_some())
+    )]
     pub fn append(
         &mut self,
         hlc: HlcTimestamp,
@@ -243,6 +248,7 @@ impl WalWriter {
     /// # Errors
     ///
     /// Returns I/O errors from fsync.
+    #[tracing::instrument(name = "selene.persist.wal.fsync", skip(self))]
     pub fn flush(&mut self) -> PersistResult<()> {
         self.file.sync_data()?;
         self.entries_since_fsync = 0;

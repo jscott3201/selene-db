@@ -52,6 +52,7 @@ impl RecoveryOutcome {
 /// Returns persistence format errors, provider errors, or a
 /// [`PersistError::WalSnapshotMismatch`] when the WAL does not extend the
 /// applied snapshot epoch.
+#[tracing::instrument(name = "selene.persist.recover", skip(registry), fields(dir = %dir.display()))]
 pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<RecoveryOutcome> {
     let mut outcome = RecoveryOutcome::empty();
     let mut providers_invoked = BTreeSet::new();

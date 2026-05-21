@@ -61,6 +61,11 @@ impl WriteOutcome {
 ///
 /// The procedure registry argument is optional because statement kinds without
 /// CALL should not force embedders to construct a registry.
+#[tracing::instrument(
+    name = "selene.gql.execute_statement",
+    skip(plan, session, registry),
+    fields(category = ?plan.category)
+)]
 pub fn execute_statement(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,

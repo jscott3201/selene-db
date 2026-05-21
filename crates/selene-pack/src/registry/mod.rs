@@ -97,9 +97,17 @@ impl ProcedureRegistry for ProcedurePackRegistry {
         args: &[Value],
         ctx: &mut ProcedureContext<'_, '_>,
     ) -> Result<ProcedureResult, ProcedureError> {
+        let _span = tracing::span!(
+            tracing::Level::INFO,
+            "selene.procedure.dispatch",
+            procedure = tracing::field::Empty
+        )
+        .entered();
         let Some(entry) = self.storage.entry(handle) else {
             return Err(ProcedureError::UnknownProcedure { name: Box::new([]) });
         };
+        let procedure_name = entry.name().join(".");
+        tracing::Span::current().record("procedure", tracing::field::display(&procedure_name));
 
         let actual_tier = ctx.tier();
         match (&entry, ctx) {

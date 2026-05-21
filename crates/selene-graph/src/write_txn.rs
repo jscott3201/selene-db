@@ -103,6 +103,11 @@ impl<'g> WriteTxn<'g> {
     /// Cross-thread re-entry (a provider waiting on a spawned worker that
     /// calls `begin_write`) is documented misuse — see `reentry.rs` and
     /// the `IndexProvider` rustdoc.
+    #[tracing::instrument(
+        name = "selene.graph.commit",
+        skip(self, principal),
+        fields(change_count = self.change_count())
+    )]
     pub fn commit_with_principal(
         mut self,
         principal: Option<Arc<[u8]>>,
@@ -228,6 +233,11 @@ fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimest
 /// panic short-circuited `on_change`. When the tag is read successfully it
 /// is reused in both the error-return and panic branches of `on_change` so
 /// operators can attribute failures to the faulty provider.
+#[tracing::instrument(
+    name = "selene.graph.notify_providers",
+    skip(providers, changes),
+    fields(provider_count = providers.len(), change_count = changes.len())
+)]
 fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
     for change in changes {
         for provider in providers {

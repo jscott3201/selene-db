@@ -139,6 +139,11 @@ impl SnapshotBuilder {
     ///
     /// Returns cap, compression, hash/header construction, or I/O errors,
     /// including `Io(AlreadyExists)` when the final snapshot path is taken.
+    #[tracing::instrument(
+        name = "selene.persist.snapshot.finalize",
+        skip(self),
+        fields(snapshot_seq = self.config.sequence, section_count = self.sections.len())
+    )]
     pub fn finalize(self) -> PersistResult<PathBuf> {
         let final_path = snapshot_path(&self.config.dir, self.config.sequence);
         let tmp_path = snapshot_tmp_path(&self.config.dir, self.config.sequence);
