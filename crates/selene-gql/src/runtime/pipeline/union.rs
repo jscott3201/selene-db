@@ -38,11 +38,15 @@ pub(super) fn execute(
             execute_counted(op, table, &rhs_table, ctx)
         }
         SetOp::Otherwise => {
-            assert_compatible_schemas("OTHERWISE", table.schema(), &rhs.output_schema)?;
-            if table.is_empty() {
-                execute_plan(rhs, ctx)
+            let (schema, rows) = table.into_parts();
+            assert_compatible_schemas("OTHERWISE", &schema, &rhs.output_schema)?;
+            if rows.is_empty() {
+                let rhs_table = execute_plan(rhs, ctx)?;
+                assert_compatible_schemas("OTHERWISE", &schema, rhs_table.schema())?;
+                let (_, rhs_rows) = rhs_table.into_parts();
+                Ok(BindingTable::new(schema, rhs_rows))
             } else {
-                Ok(table)
+                Ok(BindingTable::new(schema, rows))
             }
         }
     }

@@ -124,6 +124,14 @@ fn otherwise_empty_lhs_evaluates_rhs() {
 }
 
 #[test]
+fn otherwise_empty_lhs_preserves_lhs_schema() {
+    let table = execute_read("RETURN 1 AS lhs LIMIT 0 OTHERWISE RETURN 2 AS rhs");
+
+    assert_eq!(column_values(&table, "lhs"), vec![Value::Int(2)]);
+    assert!(table.column_index(exec_common::istr("rhs")).is_none());
+}
+
+#[test]
 fn otherwise_non_empty_lhs_does_not_evaluate_rhs() {
     let table = execute_read("RETURN 1 AS n OTHERWISE RETURN 1 / 0 AS n");
 
