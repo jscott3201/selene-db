@@ -426,7 +426,22 @@ match output {
 
 The `analyze` schema argument is `Option<&GraphTypeDef>`. Pass `None` for open graphs (GG01); pass `Some(&type_def)` for closed graphs so the analyzer can run static label/property/edge validation at plan time. Closed-graph validation runs again at commit time inside `WriteTxn::commit`.
 
-### 6.4 `StatementOutput` variants
+### 6.4 Schema validation
+
+The parser accepts `STRICT` and `WARN` validation modes on `CREATE NODE TYPE`
+and `CREATE EDGE TYPE`, but v1.1 does not enforce validation-mode semantics at
+runtime. Catalog DDL carrying a validation mode is rejected with GQLSTATUS
+`5GQL0`.
+
+Closed-graph validation is a separate hard-fail path. If a graph is bound to a
+`GraphTypeDef`, writes are checked against that type during analysis and again
+at commit; violations return `G2000`. They are not downgraded to warnings.
+
+`DEFAULT` and `NOT NULL` are independent in the AST. A property with
+`DEFAULT <expr>` but no `NOT NULL` is nullable, and runtime DEFAULT application
+is not implemented in v1.1.
+
+### 6.5 `StatementOutput` variants
 
 `StatementOutput` is `#[non_exhaustive]`. Match all variants you handle:
 
@@ -435,7 +450,7 @@ The `analyze` schema argument is `Option<&GraphTypeDef>`. Pass `None` for open g
 
 Mutation statistics (rows inserted, edges updated, &c.) are not exposed as a separate variant in v1.0. If you need counts, plan an explicit `RETURN count(*)` or instrument via the WAL `Change` stream.
 
-### 6.5 Extracting values
+### 6.6 Extracting values
 
 `Value` is a non-exhaustive enum (`Bool`, `Int`, `Uint`, `Float`, `String`, `ExternalString`, `Bytes`, `List`, `Record`, `RecordTyped`, `Path`, `NodeRef`, `EdgeRef`, `GraphRef`, plus the temporal types). For interned strings:
 
@@ -450,7 +465,7 @@ let s: &str = resolve(*istr);
 
 For non-interned strings (free-form text from outside the global interner namespace), use `Value::ExternalString(Arc<str>)`.
 
-### 6.6 Reusing a plan
+### 6.7 Reusing a plan
 
 `ExecutionPlan` is `Clone` and stable across runs against the same graph topology. Embedders that issue the same statement many times should plan once and execute many times.
 
