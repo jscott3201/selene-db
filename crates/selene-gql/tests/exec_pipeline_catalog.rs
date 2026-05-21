@@ -655,14 +655,6 @@ fn phase_a_flags_and_constraints_are_deferred() {
     }
     cases.push(or_replace);
 
-    let mut if_not_exists = planned("CREATE NODE TYPE :Person ()");
-    if let PipelineOp::Catalog(CatalogOp::CreateNodeType { if_not_exists, .. }) =
-        &mut if_not_exists.pipeline[0]
-    {
-        *if_not_exists = true;
-    }
-    cases.push(if_not_exists);
-
     let mut extends = planned("CREATE NODE TYPE :Person ()");
     if let PipelineOp::Catalog(CatalogOp::CreateNodeType { extends, .. }) = &mut extends.pipeline[0]
     {
@@ -671,8 +663,6 @@ fn phase_a_flags_and_constraints_are_deferred() {
     cases.push(extends);
 
     cases.push(planned("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)"));
-    cases.push(planned("DROP NODE TYPE IF EXISTS :Missing"));
-
     for plan in cases {
         let err = run_write(&graph, &plan).expect_err("phase A surface is deferred");
         assert!(matches!(err, ExecutorError::ImplementationDefined { .. }));

@@ -1,15 +1,21 @@
 //! Catalog DDL pipeline operator.
 
-use selene_core::{IStr, LabelSet, PropertyValueType, Value, intern_with_admission};
+mod endpoints;
+mod property;
+
+use selene_core::{IStr, LabelSet, Value, intern_with_admission};
 use selene_graph::{EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
+use self::{
+    endpoints::resolve_endpoints,
+    property::{property_defs, render_property_value_type},
+};
 use super::catalog_index::{
     inline_index_specs, render_index_kind, render_index_name, validate_index_name_collisions,
 };
 use crate::{
-    AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, EdgeEndpointSpec, GqlType,
-    PlannedTypePropertyConstraint, PlannedTypePropertyDef, ProcedureMetadata, ProcedureMutability,
-    ProcedureSignature, ProcedureTier, SourceSpan,
+    AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, GqlType, ProcedureMetadata,
+    ProcedureMutability, ProcedureSignature, ProcedureTier, SourceSpan,
     runtime::{Binding, BindingTable, ExecutorError, TxContext},
 };
 
@@ -38,8 +44,18 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, *if_not_exists, extends, *validation_mode)?;
+            reject_create_flags(*or_replace, extends, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            if node_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
+                if *if_not_exists {
+                    return Ok(table);
+                }
+                return Err(ExecutorError::DuplicateObject {
+                    kind: "node type",
+                    name: *label,
+                    span: *span,
+                });
+            }
             let indexes = inline_index_specs(properties)?;
             validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
             let properties = property_defs(properties, true)?;
@@ -66,8 +82,18 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, *if_not_exists, &None, *validation_mode)?;
+            reject_create_flags(*or_replace, &None, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
+                if *if_not_exists {
+                    return Ok(table);
+                }
+                return Err(ExecutorError::DuplicateObject {
+                    kind: "edge type",
+                    name: *label,
+                    span: *span,
+                });
+            }
             let endpoints = endpoints
                 .as_ref()
                 .ok_or(ExecutorError::ImplementationDefined {
@@ -86,7 +112,11 @@ pub(super) fn execute(
             if_exists,
             span,
         } => {
-            reject_if_exists(*if_exists)?;
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
+            if !node_type_exists(Some(&graph_type), *label) && *if_exists {
+                return Ok(table);
+            }
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .drop_node_type(*label)
                 .map_err(|source| catalog_graph_error(source, *span))?;
@@ -97,7 +127,11 @@ pub(super) fn execute(
             if_exists,
             span,
         } => {
-            reject_if_exists(*if_exists)?;
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
+            if !edge_type_exists(Some(&graph_type), *label) && *if_exists {
+                return Ok(table);
+            }
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .drop_edge_type(*label)
                 .map_err(|source| catalog_graph_error(source, *span))?;
@@ -112,18 +146,12 @@ pub(super) fn execute(
 
 fn reject_create_flags(
     or_replace: bool,
-    if_not_exists: bool,
     extends: &Option<IStr>,
     validation_mode: Option<crate::ValidationMode>,
 ) -> Result<(), ExecutorError> {
     if or_replace {
         return Err(ExecutorError::ImplementationDefined {
             detail: "OR REPLACE not implemented for catalog DDL",
-        });
-    }
-    if if_not_exists {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "IF NOT EXISTS not implemented for catalog DDL",
         });
     }
     if extends.is_some() {
@@ -139,13 +167,26 @@ fn reject_create_flags(
     Ok(())
 }
 
-fn reject_if_exists(if_exists: bool) -> Result<(), ExecutorError> {
-    if if_exists {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "IF EXISTS not implemented for catalog DDL",
-        });
-    }
-    Ok(())
+fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
+    graph_type
+        .map(|graph_type| {
+            graph_type
+                .node_types
+                .iter()
+                .any(|node_type| node_type.name == label)
+        })
+        .unwrap_or(false)
+}
+
+fn edge_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
+    graph_type
+        .map(|graph_type| {
+            graph_type
+                .edge_types
+                .iter()
+                .any(|edge_type| edge_type.name == label)
+        })
+        .unwrap_or(false)
 }
 
 fn closed_graph_type(
@@ -161,121 +202,6 @@ fn closed_graph_type(
             message: OPEN_GRAPH_CATALOG_DDL.to_owned(),
             span,
         })
-}
-
-fn resolve_endpoints(
-    spec: &EdgeEndpointSpec,
-    graph_type: &GraphTypeDef,
-    span: SourceSpan,
-) -> Result<(u32, u32), ExecutorError> {
-    Ok((
-        single_endpoint(&spec.from_labels, graph_type, span)?,
-        single_endpoint(&spec.to_labels, graph_type, span)?,
-    ))
-}
-
-fn single_endpoint(
-    labels: &[IStr],
-    graph_type: &GraphTypeDef,
-    span: SourceSpan,
-) -> Result<u32, ExecutorError> {
-    let [label] = labels else {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "multi-label edge endpoint not supported (Phase A: single label per endpoint)",
-        });
-    };
-    graph_type
-        .find_node_type_index(&LabelSet::single(*label))
-        .ok_or_else(|| ExecutorError::GraphTypeViolation {
-            message: format!("edge endpoint references unknown node type label {label}"),
-            span,
-        })
-}
-
-fn property_defs(
-    properties: &[PlannedTypePropertyDef],
-    allow_inline_indexed: bool,
-) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
-    properties
-        .iter()
-        .map(|property| property_def(property, allow_inline_indexed))
-        .collect()
-}
-
-fn property_def(
-    property: &PlannedTypePropertyDef,
-    allow_inline_indexed: bool,
-) -> Result<PropertyTypeDef, ExecutorError> {
-    let mut required = false;
-    for constraint in &property.constraints {
-        match constraint {
-            PlannedTypePropertyConstraint::NotNull(_) => required = true,
-            PlannedTypePropertyConstraint::Default(_, _)
-            | PlannedTypePropertyConstraint::Immutable(_)
-            | PlannedTypePropertyConstraint::Unique(_)
-            | PlannedTypePropertyConstraint::Searchable(_)
-            | PlannedTypePropertyConstraint::Dictionary(_)
-            | PlannedTypePropertyConstraint::Fill(_, _)
-            | PlannedTypePropertyConstraint::Interval(_, _)
-            | PlannedTypePropertyConstraint::Encoding(_, _) => {
-                return Err(ExecutorError::ImplementationDefined {
-                    detail: "type property constraint not implemented (Phase A: NOT NULL only)",
-                });
-            }
-            PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
-                return Err(ExecutorError::FeatureNotInV1_1 {
-                    feature: "inline INDEXED on edge properties",
-                    span: *span,
-                });
-            }
-            PlannedTypePropertyConstraint::Indexed { .. } => {}
-        }
-    }
-    Ok(PropertyTypeDef {
-        name: property.name,
-        value_type: gql_type_to_property_value_type(&property.gql_type)?,
-        required,
-    })
-}
-
-fn gql_type_to_property_value_type(gql_type: &GqlType) -> Result<PropertyValueType, ExecutorError> {
-    Ok(match gql_type {
-        GqlType::String => PropertyValueType::String,
-        GqlType::Boolean => PropertyValueType::Bool,
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => PropertyValueType::Int,
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            PropertyValueType::Uint
-        }
-        GqlType::Int128 => PropertyValueType::Int128,
-        GqlType::Uint128 => PropertyValueType::Uint128,
-        GqlType::Float | GqlType::Float64 => PropertyValueType::Float,
-        GqlType::Float32 => PropertyValueType::Float32,
-        GqlType::Decimal => PropertyValueType::Decimal,
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => PropertyValueType::Bytes,
-        GqlType::ZonedDateTime => PropertyValueType::ZonedDateTime,
-        GqlType::LocalDateTime => PropertyValueType::LocalDateTime,
-        GqlType::Date => PropertyValueType::Date,
-        GqlType::ZonedTime => PropertyValueType::ZonedTime,
-        GqlType::LocalTime => PropertyValueType::LocalTime,
-        GqlType::Duration => PropertyValueType::Duration,
-        GqlType::Path => PropertyValueType::Path,
-        GqlType::GraphRef => PropertyValueType::GraphRef,
-        GqlType::NodeRef => PropertyValueType::NodeRef,
-        GqlType::EdgeRef => PropertyValueType::EdgeRef,
-        GqlType::TableRef => PropertyValueType::TableRef,
-        GqlType::Null => PropertyValueType::Null,
-        GqlType::Record(_) | GqlType::List(_) | GqlType::Nothing => {
-            return Err(ExecutorError::ImplementationDefined {
-                detail: "type property GQL type not supported as property value type (Phase A)",
-            });
-        }
-    })
 }
 
 fn show_node_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {
@@ -582,36 +508,6 @@ fn render_properties(properties: &[PropertyTypeDef]) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn render_property_value_type(value_type: PropertyValueType) -> &'static str {
-    match value_type {
-        PropertyValueType::Bool => "BOOLEAN",
-        PropertyValueType::Int => "INTEGER",
-        PropertyValueType::Uint => "UINT64",
-        PropertyValueType::Int128 => "INT128",
-        PropertyValueType::Uint128 => "UINT128",
-        PropertyValueType::Float => "FLOAT",
-        PropertyValueType::Float32 => "FLOAT32",
-        PropertyValueType::Decimal => "DECIMAL",
-        PropertyValueType::String => "STRING",
-        PropertyValueType::Bytes => "BYTES",
-        PropertyValueType::List => "LIST",
-        PropertyValueType::Record | PropertyValueType::RecordTyped => "RECORD",
-        PropertyValueType::Path => "PATH",
-        PropertyValueType::NodeRef => "NODE",
-        PropertyValueType::EdgeRef => "EDGE",
-        PropertyValueType::GraphRef => "GRAPH",
-        PropertyValueType::TableRef => "TABLE",
-        PropertyValueType::ZonedDateTime => "ZONED DATETIME",
-        PropertyValueType::LocalDateTime => "LOCAL DATETIME",
-        PropertyValueType::Date => "DATE",
-        PropertyValueType::ZonedTime => "ZONED TIME",
-        PropertyValueType::LocalTime => "LOCAL TIME",
-        PropertyValueType::Duration => "DURATION",
-        PropertyValueType::Null => "NULL",
-        PropertyValueType::Uuid => "UUID",
-    }
 }
 
 fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
