@@ -44,8 +44,18 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, *if_not_exists, extends, *validation_mode)?;
+            reject_create_flags(*or_replace, extends, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            if node_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
+                if *if_not_exists {
+                    return Ok(table);
+                }
+                return Err(ExecutorError::DuplicateObject {
+                    kind: "node type",
+                    name: *label,
+                    span: *span,
+                });
+            }
             let indexes = inline_index_specs(properties)?;
             validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
             let properties = property_defs(properties, true)?;
@@ -72,8 +82,18 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, *if_not_exists, &None, *validation_mode)?;
+            reject_create_flags(*or_replace, &None, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
+                if *if_not_exists {
+                    return Ok(table);
+                }
+                return Err(ExecutorError::DuplicateObject {
+                    kind: "edge type",
+                    name: *label,
+                    span: *span,
+                });
+            }
             let endpoints = endpoints
                 .as_ref()
                 .ok_or(ExecutorError::ImplementationDefined {
@@ -118,18 +138,12 @@ pub(super) fn execute(
 
 fn reject_create_flags(
     or_replace: bool,
-    if_not_exists: bool,
     extends: &Option<IStr>,
     validation_mode: Option<crate::ValidationMode>,
 ) -> Result<(), ExecutorError> {
     if or_replace {
         return Err(ExecutorError::ImplementationDefined {
             detail: "OR REPLACE not implemented for catalog DDL",
-        });
-    }
-    if if_not_exists {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "IF NOT EXISTS not implemented for catalog DDL",
         });
     }
     if extends.is_some() {
@@ -143,6 +157,28 @@ fn reject_create_flags(
         });
     }
     Ok(())
+}
+
+fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
+    graph_type
+        .map(|graph_type| {
+            graph_type
+                .node_types
+                .iter()
+                .any(|node_type| node_type.name == label)
+        })
+        .unwrap_or(false)
+}
+
+fn edge_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
+    graph_type
+        .map(|graph_type| {
+            graph_type
+                .edge_types
+                .iter()
+                .any(|edge_type| edge_type.name == label)
+        })
+        .unwrap_or(false)
 }
 
 fn reject_if_exists(if_exists: bool) -> Result<(), ExecutorError> {

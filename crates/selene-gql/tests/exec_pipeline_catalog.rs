@@ -128,6 +128,37 @@ fn create_node_type_creates_type_and_preserves_input_row() {
 }
 
 #[test]
+fn create_node_type_if_not_exists_creates_then_noops() {
+    let graph = empty_closed_graph(3725);
+    let plan = planned("CREATE NODE TYPE IF NOT EXISTS :Person ()");
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog creates");
+    let outcome = outcome.expect("first commit succeeds");
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::SchemaChanged {
+            change: SchemaChange::NodeTypeAdded { label, .. },
+            ..
+        }] if label.as_str() == "Person"
+    ));
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog noops");
+    let outcome = outcome.expect("second commit succeeds");
+    assert!(outcome.changes.is_empty());
+    assert_eq!(graph.graph_type().unwrap().node_types.len(), 1);
+}
+
+#[test]
+fn create_node_type_without_if_not_exists_duplicate_returns_duplicate_object() {
+    let graph = person_graph(3726);
+    let plan = planned("CREATE NODE TYPE :Person ()");
+
+    let err = run_write(&graph, &plan).expect_err("duplicate type fails");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DUPLICATE_OBJECT);
+}
+
+#[test]
 fn create_node_type_indexed_property_creates_property_index() {
     let graph = empty_closed_graph(3717);
     let plan = planned("CREATE NODE TYPE :Sensor (serial :: STRING INDEXED)");
@@ -371,6 +402,41 @@ fn create_edge_type_resolves_endpoints_created_earlier_in_same_statement() {
     assert_eq!(graph_type.edge_types[0].name.as_str(), "WORKS_AT");
     assert_eq!(graph_type.edge_types[0].source_node_type, 0);
     assert_eq!(graph_type.edge_types[0].target_node_type, 1);
+}
+
+#[test]
+fn create_edge_type_if_not_exists_creates_then_noops() {
+    let graph = person_graph(3727);
+    let plan = planned("CREATE EDGE TYPE IF NOT EXISTS :KNOWS (FROM :Person TO :Person)");
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog creates");
+    let outcome = outcome.expect("first commit succeeds");
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::SchemaChanged {
+            change: SchemaChange::EdgeTypeAdded { label, .. },
+            ..
+        }] if label.as_str() == "KNOWS"
+    ));
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog noops");
+    let outcome = outcome.expect("second commit succeeds");
+    assert!(outcome.changes.is_empty());
+    assert_eq!(graph.graph_type().unwrap().edge_types.len(), 1);
+}
+
+#[test]
+fn create_edge_type_without_if_not_exists_duplicate_returns_duplicate_object() {
+    let graph = person_graph(3728);
+    let create = planned("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)");
+    run_write(&graph, &create)
+        .expect("catalog creates")
+        .1
+        .expect("first commit succeeds");
+
+    let err = run_write(&graph, &create).expect_err("duplicate edge type fails");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DUPLICATE_OBJECT);
 }
 
 #[test]
@@ -654,14 +720,6 @@ fn phase_a_flags_and_constraints_are_deferred() {
         *or_replace = true;
     }
     cases.push(or_replace);
-
-    let mut if_not_exists = planned("CREATE NODE TYPE :Person ()");
-    if let PipelineOp::Catalog(CatalogOp::CreateNodeType { if_not_exists, .. }) =
-        &mut if_not_exists.pipeline[0]
-    {
-        *if_not_exists = true;
-    }
-    cases.push(if_not_exists);
 
     let mut extends = planned("CREATE NODE TYPE :Person ()");
     if let PipelineOp::Catalog(CatalogOp::CreateNodeType { extends, .. }) = &mut extends.pipeline[0]
