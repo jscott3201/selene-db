@@ -39,10 +39,20 @@ pub(super) fn execute(
         } => {
             reject_create_flags(*or_replace, *if_not_exists, extends, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let indexes = inline_index_specs(properties)?;
             let properties = property_defs(properties)?;
-            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .create_node_type(*label, LabelSet::single(*label), properties)
-                .map_err(|source| catalog_graph_error(source, *span))?;
+            {
+                let mut mutator =
+                    ctx.mutator_with_span("catalog op invoked without write transaction", *span)?;
+                mutator
+                    .create_node_type(*label, LabelSet::single(*label), properties)
+                    .map_err(|source| catalog_graph_error(source, *span))?;
+                for (property, kind, index_span) in indexes {
+                    mutator
+                        .create_property_index(*label, property, kind)
+                        .map_err(|source| catalog_graph_error(source, index_span))?;
+                }
+            }
             Ok(table)
         }
         CatalogOp::CreateEdgeType {
@@ -194,7 +204,6 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
             PlannedTypePropertyConstraint::Default(_, _)
             | PlannedTypePropertyConstraint::Immutable(_)
             | PlannedTypePropertyConstraint::Unique(_)
-            | PlannedTypePropertyConstraint::Indexed(_)
             | PlannedTypePropertyConstraint::Searchable(_)
             | PlannedTypePropertyConstraint::Dictionary(_)
             | PlannedTypePropertyConstraint::Fill(_, _)
@@ -204,6 +213,7 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
                     detail: "type property constraint not implemented (Phase A: NOT NULL only)",
                 });
             }
+            PlannedTypePropertyConstraint::Indexed(_) => {}
         }
     }
     Ok(PropertyTypeDef {
@@ -211,6 +221,47 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
         value_type: gql_type_to_property_value_type(&property.gql_type)?,
         required,
     })
+}
+
+fn inline_index_specs(
+    properties: &[PlannedTypePropertyDef],
+) -> Result<Vec<(IStr, TypedIndexKind, SourceSpan)>, ExecutorError> {
+    let mut indexes = Vec::new();
+    for property in properties {
+        for constraint in &property.constraints {
+            if let PlannedTypePropertyConstraint::Indexed(span) = constraint {
+                indexes.push((
+                    property.name,
+                    gql_type_to_index_kind(&property.gql_type, *span)?,
+                    *span,
+                ));
+            }
+        }
+    }
+    Ok(indexes)
+}
+
+fn gql_type_to_index_kind(
+    gql_type: &GqlType,
+    span: SourceSpan,
+) -> Result<TypedIndexKind, ExecutorError> {
+    match gql_type {
+        GqlType::String => Ok(TypedIndexKind::String),
+        GqlType::Integer
+        | GqlType::Int8
+        | GqlType::Int16
+        | GqlType::Int32
+        | GqlType::Int64
+        | GqlType::SmallInt
+        | GqlType::BigInt => Ok(TypedIndexKind::I64),
+        GqlType::Float | GqlType::Float64 => Ok(TypedIndexKind::F64),
+        GqlType::Date => Ok(TypedIndexKind::Date),
+        GqlType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
+        _ => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "inline INDEXED for this GQL type",
+            span,
+        }),
+    }
 }
 
 fn gql_type_to_property_value_type(gql_type: &GqlType) -> Result<PropertyValueType, ExecutorError> {

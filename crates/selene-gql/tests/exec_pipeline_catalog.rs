@@ -5,8 +5,9 @@ mod exec_common;
 use selene_core::{Change, GraphId, LabelSet, PropertyMap, SchemaChange, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, CatalogOp, EmptyProcedureRegistry, ExecutionPlan,
-    ExecutorError, GqlType, PipelineOp, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    RecordType, SourceSpan, TxContext, analyze, execute_pipeline, parse, plan,
+    ExecutorError, GqlStatus, GqlType, PipelineOp, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, RecordType, SourceSpan, TxContext, analyze, execute_pipeline, parse,
+    plan,
 };
 use selene_graph::EdgeTypeDef;
 use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph};
@@ -124,6 +125,56 @@ fn create_node_type_creates_type_and_preserves_input_row() {
             ..
         }] if label.as_str() == "Person"
     ));
+}
+
+#[test]
+fn create_node_type_indexed_property_creates_property_index() {
+    let graph = empty_closed_graph(3717);
+    let plan = planned("CREATE NODE TYPE :Sensor (serial :: STRING INDEXED)");
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    let outcome = outcome.expect("commit succeeds");
+
+    let sensor = istr("Sensor");
+    let serial = istr("serial");
+    assert!(graph.read().property_index_for(&sensor, &serial).is_some());
+    assert_eq!(graph.read().property_index_count(), 1);
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [
+            Change::SchemaChanged {
+                change: SchemaChange::NodeTypeAdded { label, .. },
+                ..
+            },
+            Change::SchemaChanged {
+                change: SchemaChange::PropertyIndexCreated { label: index_label, property, .. },
+                ..
+            }
+        ] if label.as_str() == "Sensor"
+            && index_label.as_str() == "Sensor"
+            && property.as_str() == "serial"
+    ));
+}
+
+#[test]
+fn create_node_type_unindexed_property_does_not_create_property_index() {
+    let graph = empty_closed_graph(3718);
+    let plan = planned("CREATE NODE TYPE :Sensor (serial :: STRING)");
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+
+    assert_eq!(graph.read().property_index_count(), 0);
+}
+
+#[test]
+fn create_node_type_indexed_unsupported_type_reports_feature_not_supported() {
+    let graph = empty_closed_graph(3719);
+    let plan = planned("CREATE NODE TYPE :Sensor (active :: BOOLEAN INDEXED)");
+
+    let err = run_write(&graph, &plan).expect_err("BOOLEAN inline index unsupported");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
 }
 
 #[test]
