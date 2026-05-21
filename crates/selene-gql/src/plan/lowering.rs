@@ -26,6 +26,11 @@ use crate::{
 /// looks up procedure metadata in `registry` and lowers to [`PipelineOp::Call`].
 ///
 /// [`MutationWriteSet`]: crate::analyze::MutationWriteSet
+#[tracing::instrument(
+    name = "selene.gql.plan",
+    skip(analyzed, registry),
+    fields(category = ?analyzed.category)
+)]
 pub fn plan(
     analyzed: &AnalyzedStatement,
     registry: &dyn ProcedureRegistry,

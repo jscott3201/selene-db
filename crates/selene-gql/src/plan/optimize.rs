@@ -30,6 +30,11 @@ use crate::plan::ExecutionPlan;
 
 /// Optimize an execution plan using the default structural rule set.
 #[must_use]
+#[tracing::instrument(
+    name = "selene.gql.optimize",
+    skip(plan, ctx),
+    fields(category = ?plan.category)
+)]
 pub fn optimize(plan: ExecutionPlan, ctx: &OptimizeContext<'_>) -> ExecutionPlan {
     optimize_with_rules(plan, DEFAULT_RULES, ctx)
 }

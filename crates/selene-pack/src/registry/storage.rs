@@ -66,7 +66,7 @@ impl TierEntry {
         }
     }
 
-    fn name(&self) -> &'static [&'static str] {
+    pub(crate) fn name(&self) -> &'static [&'static str] {
         match self {
             Self::Graph(procedure) => procedure.name(),
             Self::Mutation(procedure) => procedure.name(),

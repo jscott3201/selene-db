@@ -41,6 +41,7 @@ mod pest_impl {
 /// Returns [`ParserError::SyntaxError`] for parse failures and
 /// [`ParserError::NotImplemented`] for grammar surfaces whose AST builders
 /// are not yet supported in v1.0.
+#[tracing::instrument(name = "selene.gql.parse", skip(source), fields(source_len = source.len()))]
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     guard::validate(source)?;
     let mut pairs =

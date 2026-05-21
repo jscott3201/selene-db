@@ -313,6 +313,7 @@ impl SharedGraph {
     /// thread ancestry). See the module docs in `reentry.rs` and the
     /// `IndexProvider` rustdoc for the v1.0 contract.
     #[must_use]
+    #[tracing::instrument(name = "selene.graph.begin_write", skip(self))]
     pub fn begin_write(&self) -> WriteTxn<'_> {
         if crate::reentry::in_fanout() {
             panic!(

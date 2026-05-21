@@ -45,6 +45,11 @@ pub use write_set::{ElementKind, MutationWriteSet, WriteKind, WriteSetEntry};
 /// # Errors
 ///
 /// Returns the first [`AnalysisError`] detected by the fail-fast bind pass.
+#[tracing::instrument(
+    name = "selene.gql.analyze",
+    skip(stmt, registry, schema),
+    fields(schema_bound = schema.is_some())
+)]
 pub fn analyze(
     stmt: Statement,
     registry: &dyn ProcedureRegistry,
