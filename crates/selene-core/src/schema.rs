@@ -94,6 +94,9 @@ pub struct NodeTypeDef {
     pub properties: SmallVec<[PropertyDef; 8]>,
     /// Optional property-name key.
     pub key: Option<NodeKey>,
+    /// Closed-graph validation mode for this node type.
+    #[serde(default)]
+    pub validation_mode: ValidationMode,
 }
 
 impl NodeTypeDef {
@@ -104,6 +107,7 @@ impl NodeTypeDef {
             labels,
             properties: SmallVec::new(),
             key: None,
+            validation_mode: ValidationMode::Strict,
         }
     }
 }
@@ -126,6 +130,9 @@ pub struct EdgeTypeDef {
     pub target_node_type: NodeTypeRef,
     /// Property definitions in schema order.
     pub properties: SmallVec<[PropertyDef; 4]>,
+    /// Closed-graph validation mode for this edge type.
+    #[serde(default)]
+    pub validation_mode: ValidationMode,
 }
 
 impl EdgeTypeDef {
@@ -137,8 +144,19 @@ impl EdgeTypeDef {
             source_node_type: source,
             target_node_type: target,
             properties: SmallVec::new(),
+            validation_mode: ValidationMode::Strict,
         }
     }
+}
+
+/// Closed-graph validation mode.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum ValidationMode {
+    /// Reject type-model violations.
+    #[default]
+    Strict,
+    /// Allow relaxed property-shape writes and report warnings.
+    Warn,
 }
 
 /// Node type reference by label.
@@ -162,6 +180,9 @@ pub struct PropertyDef {
     pub nullable: bool,
     /// Optional default value.
     pub default: Option<Value>,
+    /// Whether updates to this property are forbidden after creation.
+    #[serde(default)]
+    pub immutable: bool,
 }
 
 /// Structural value type definition.

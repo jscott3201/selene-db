@@ -3,11 +3,13 @@
 use std::{cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
 
 use selene_core::{CancellationToken, Change, IStr, IStrAdmissionPolicy, Value};
-use selene_graph::{SharedGraph, WriteTxn};
+use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
 
 use crate::{
-    SourceSpan,
-    runtime::{ExecutorError, PlanCache, PlanCacheStats, WarningSink, WriteOutcome},
+    GqlStatus, SourceSpan,
+    runtime::{
+        ExecutorError, ExecutorWarning, PlanCache, PlanCacheStats, WarningSink, WriteOutcome,
+    },
 };
 
 /// Caller-owned executor session bound to one shared graph.
@@ -165,7 +167,8 @@ impl<'g> Session<'g> {
     /// Attach an opt-in runtime warning sink to subsequent statements.
     ///
     /// Sessions without a sink silently discard warnings. The sink currently
-    /// receives `01G11` when an aggregate eliminates NULL input values; see
+    /// receives ISO warning records such as `01G11` for aggregate NULL
+    /// elimination and `01N01` for relaxed validation-mode writes; see
     /// `docs/embedding-guide.md` for an embedder-side collection example.
     #[must_use]
     pub fn with_warning_sink(mut self, sink: impl WarningSink + 'static) -> Self {
@@ -309,6 +312,7 @@ impl<'g> Session<'g> {
             source,
             span: SourceSpan::default(),
         })?;
+        emit_commit_warnings(&outcome, self.warning_sink.as_ref());
         Ok(TransactionOutcome {
             changes: outcome.changes,
             generation: outcome.generation,
@@ -385,6 +389,22 @@ impl<'g> Session<'g> {
         self.aborted = false;
         self.tx_started_at = None;
         self.tx_statement_count = 0;
+    }
+}
+
+fn emit_commit_warnings(
+    outcome: &CommitOutcome,
+    warning_sink: Option<&RefCell<Box<dyn WarningSink>>>,
+) {
+    let Some(sink) = warning_sink else {
+        return;
+    };
+    for warning in &outcome.warnings {
+        sink.borrow_mut().emit(ExecutorWarning {
+            code: GqlStatus::VALIDATION_MODE_RELAXED_WRITE,
+            message: warning.warning.violation.to_string(),
+            span: SourceSpan::default(),
+        });
     }
 }
 

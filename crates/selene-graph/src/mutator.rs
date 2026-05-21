@@ -14,8 +14,10 @@ use selene_core::{
 
 use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
 use crate::error::{GraphError, GraphResult};
+use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::index_provider::{IndexProvider, ProviderTag};
 use crate::store::{edge_row_index, node_row_index};
+use crate::type_validator::{EntityId, TypeViolation};
 use crate::write_txn::WriteTxn;
 
 /// Borrowed mutation builder for one write transaction.
@@ -38,7 +40,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// Returns [`GraphError::IdOverflow`] when the allocator advances past the
     /// v1 row-index range (max 2^32 rows).
-    pub fn create_node(&mut self, labels: LabelSet, props: PropertyMap) -> GraphResult<NodeId> {
+    pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
+        fill_node_defaults(self.txn.read(), &labels, &mut props)?;
         let id = self.txn.allocator.allocate_node();
         let row = node_row_index(id).ok_or_else(|| GraphError::IdOverflow {
             kind: "node",
@@ -78,10 +81,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         label: IStr,
         source: NodeId,
         target: NodeId,
-        props: PropertyMap,
+        mut props: PropertyMap,
     ) -> GraphResult<EdgeId> {
         self.require_live_node(source)?;
         self.require_live_node(target)?;
+        fill_edge_defaults(self.txn.read(), label, source, target, &mut props)?;
         let id = self.txn.allocator.allocate_edge();
         let row = edge_row_index(id).ok_or_else(|| GraphError::IdOverflow {
             kind: "edge",
@@ -159,6 +163,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         for label in labels_diff.removed.iter() {
             labels.remove(label);
         }
+        reject_immutable_node_update(self.txn.read(), id, &old_labels, &props_diff)?;
+        reject_immutable_node_update(self.txn.read(), id, &labels, &props_diff)?;
 
         // Apply the property diff up front; if it errors we leave the working
         // graph (including idx_label) untouched so the transaction can still
@@ -211,6 +217,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// `idx_edge_label`.
     pub fn update_edge(&mut self, id: EdgeId, props_diff: PropertyDiff) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
+        reject_immutable_edge_update(self.txn.read(), id, &props_diff)?;
         let mut props = self
             .txn
             .read()
@@ -435,6 +442,153 @@ fn remove_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: &IStr
             index.insert(*label, bitmap);
         }
     }
+}
+
+fn fill_node_defaults(
+    graph: &crate::SeleneGraph,
+    labels: &LabelSet,
+    props: &mut PropertyMap,
+) -> GraphResult<()> {
+    let Some(graph_type) = graph.meta.bound_type.as_deref() else {
+        return Ok(());
+    };
+    let Some(node_type) = graph_type.find_node_type(labels) else {
+        return Ok(());
+    };
+    fill_property_defaults(&node_type.properties, props)
+}
+
+fn fill_edge_defaults(
+    graph: &crate::SeleneGraph,
+    label: IStr,
+    source: NodeId,
+    target: NodeId,
+    props: &mut PropertyMap,
+) -> GraphResult<()> {
+    let Some(graph_type) = graph.meta.bound_type.as_deref() else {
+        return Ok(());
+    };
+    let Some(source_type) = node_type_index_for_node(graph, graph_type, source) else {
+        return Ok(());
+    };
+    let Some(target_type) = node_type_index_for_node(graph, graph_type, target) else {
+        return Ok(());
+    };
+    let Some(edge_type) = graph_type.find_edge_type(label, source_type, target_type) else {
+        return Ok(());
+    };
+    fill_property_defaults(&edge_type.properties, props)
+}
+
+fn fill_property_defaults(
+    declarations: &[PropertyTypeDef],
+    props: &mut PropertyMap,
+) -> GraphResult<()> {
+    for declaration in declarations {
+        if props.contains_key(&declaration.name) {
+            continue;
+        }
+        if let Some(default) = &declaration.default {
+            props.set(declaration.name, default.to_value())?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_immutable_node_update(
+    graph: &crate::SeleneGraph,
+    id: NodeId,
+    labels: &LabelSet,
+    diff: &PropertyDiff,
+) -> GraphResult<()> {
+    let Some(graph_type) = graph.meta.bound_type.as_deref() else {
+        return Ok(());
+    };
+    let Some(node_type) = graph_type.find_node_type(labels) else {
+        return Ok(());
+    };
+    reject_immutable_property_update(
+        EntityId::Node(id),
+        node_type.name,
+        &node_type.properties,
+        diff,
+    )
+}
+
+fn reject_immutable_edge_update(
+    graph: &crate::SeleneGraph,
+    id: EdgeId,
+    diff: &PropertyDiff,
+) -> GraphResult<()> {
+    let Some(graph_type) = graph.meta.bound_type.as_deref() else {
+        return Ok(());
+    };
+    let Some(label) = graph.edge_label(id).copied() else {
+        return Ok(());
+    };
+    let Some((source, target)) = graph.edge_endpoints(id) else {
+        return Ok(());
+    };
+    let Some(source_type) = node_type_index_for_node(graph, graph_type, source) else {
+        return Ok(());
+    };
+    let Some(target_type) = node_type_index_for_node(graph, graph_type, target) else {
+        return Ok(());
+    };
+    let Some(edge_type) = graph_type.find_edge_type(label, source_type, target_type) else {
+        return Ok(());
+    };
+    reject_immutable_property_update(
+        EntityId::Edge(id),
+        edge_type.name,
+        &edge_type.properties,
+        diff,
+    )
+}
+
+fn node_type_index_for_node(
+    graph: &crate::SeleneGraph,
+    graph_type: &GraphTypeDef,
+    node: NodeId,
+) -> Option<u32> {
+    let labels = graph.node_labels(node)?;
+    graph_type.find_node_type_index(labels)
+}
+
+fn reject_immutable_property_update(
+    entity_id: EntityId,
+    declared_in: IStr,
+    declarations: &[PropertyTypeDef],
+    diff: &PropertyDiff,
+) -> GraphResult<()> {
+    for (key, _) in &diff.set {
+        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+    }
+    for key in &diff.removed {
+        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+    }
+    Ok(())
+}
+
+fn reject_if_immutable(
+    entity_id: EntityId,
+    declared_in: IStr,
+    declarations: &[PropertyTypeDef],
+    property: IStr,
+) -> GraphResult<()> {
+    if declarations
+        .iter()
+        .any(|declaration| declaration.name == property && declaration.immutable)
+    {
+        return Err(GraphError::TypeViolation(
+            TypeViolation::ImmutablePropertyUpdate {
+                entity_id,
+                property,
+                declared_in,
+            },
+        ));
+    }
+    Ok(())
 }
 
 fn apply_property_diff(map: &mut PropertyMap, diff: &PropertyDiff) -> GraphResult<()> {

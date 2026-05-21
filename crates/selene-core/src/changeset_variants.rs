@@ -155,6 +155,22 @@ impl SchemaChange {
             kind: SchemaPropertyIndexKind::I64,
             name: Some(changeset_variant_istr("schema.all.index")),
         },
+        || Self::NodeTypeAddedV2 {
+            graph_type: changeset_graph_type_id(),
+            label: changeset_variant_istr("schema.all.node.v2"),
+            def: NodeTypeDef::new(LabelSet::single(changeset_variant_istr(
+                "schema.all.node.v2",
+            ))),
+        },
+        || Self::EdgeTypeAddedV2 {
+            graph_type: changeset_graph_type_id(),
+            label: changeset_variant_istr("schema.all.edge.v2"),
+            def: EdgeTypeDef::new(
+                changeset_variant_istr("schema.all.edge.v2"),
+                NodeTypeRef(changeset_variant_istr("schema.all.node")),
+                NodeTypeRef(changeset_variant_istr("schema.all.node")),
+            ),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -180,6 +196,8 @@ impl SchemaChange {
             Self::PropertyIndexDropped { .. } => "PropertyIndexDropped",
             Self::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
             Self::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
+            Self::NodeTypeAddedV2 { .. } => "NodeTypeAddedV2",
+            Self::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
         }
     }
 }

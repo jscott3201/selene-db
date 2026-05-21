@@ -408,6 +408,32 @@ pub enum SchemaChange {
         /// Optional explicit catalog name.
         name: Option<IStr>,
     },
+    /// Node type addition carrying v2 type-model fields.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable. New code emits this
+    /// variant; old WALs continue to decode through [`SchemaChange::NodeTypeAdded`].
+    NodeTypeAddedV2 {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Node type label.
+        label: IStr,
+        /// Node type definition.
+        def: NodeTypeDef,
+    },
+    /// Edge type addition carrying v2 type-model fields.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable. New code emits this
+    /// variant; old WALs continue to decode through [`SchemaChange::EdgeTypeAdded`].
+    EdgeTypeAddedV2 {
+        /// Owning graph type.
+        graph_type: GraphTypeId,
+        /// Edge type label.
+        label: IStr,
+        /// Edge type definition.
+        def: EdgeTypeDef,
+    },
 }
 
 /// Schema-level property index value kind.
@@ -762,12 +788,12 @@ mod tests {
     fn schema_change_variants_construct() {
         let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
         assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 18);
     }
 
     #[test]
     fn schema_change_all_covers_every_variant() {
-        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 18);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in SchemaChange::ALL {

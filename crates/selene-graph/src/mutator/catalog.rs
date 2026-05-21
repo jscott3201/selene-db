@@ -10,6 +10,7 @@ use smallvec::SmallVec;
 
 use crate::{
     EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator, NodeTypeDef, PropertyTypeDef,
+    ValidationMode,
 };
 
 const OPEN_GRAPH_CATALOG_DDL: &str =
@@ -27,6 +28,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         name: IStr,
         key_labels: LabelSet,
         properties: Vec<PropertyTypeDef>,
+        validation_mode: ValidationMode,
     ) -> GraphResult<()> {
         let mut graph_type = self.current_graph_type()?;
         if graph_type
@@ -42,6 +44,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             name,
             key_labels,
             properties,
+            validation_mode,
         };
         graph_type.node_types.push(node_type.clone());
         graph_type.validate_ref()?;
@@ -49,7 +52,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn.guard_mut().meta.bound_type = Some(Arc::new(graph_type));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
-            change: SchemaChange::NodeTypeAdded {
+            change: SchemaChange::NodeTypeAddedV2 {
                 graph_type: implicit_graph_type_id(),
                 label: name,
                 def: core_node_type_def(&node_type),
@@ -72,6 +75,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         source_node_type: u32,
         target_node_type: u32,
         properties: Vec<PropertyTypeDef>,
+        validation_mode: ValidationMode,
     ) -> GraphResult<()> {
         let mut graph_type = self.current_graph_type()?;
         if graph_type
@@ -89,6 +93,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             source_node_type,
             target_node_type,
             properties,
+            validation_mode,
         };
         graph_type.edge_types.push(edge_type.clone());
         graph_type.validate_ref()?;
@@ -96,7 +101,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn.guard_mut().meta.bound_type = Some(Arc::new(graph_type.clone()));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
-            change: SchemaChange::EdgeTypeAdded {
+            change: SchemaChange::EdgeTypeAddedV2 {
                 graph_type: implicit_graph_type_id(),
                 label,
                 def: core_edge_type_def(&graph_type, &edge_type)?,
@@ -200,6 +205,7 @@ fn core_node_type_def(node_type: &NodeTypeDef) -> selene_core::NodeTypeDef {
         labels: node_type.key_labels.clone(),
         properties: core_node_properties(&node_type.properties),
         key: None,
+        validation_mode: core_validation_mode(node_type.validation_mode),
     }
 }
 
@@ -232,6 +238,7 @@ fn core_edge_type_def(
         source_node_type: NodeTypeRef(source),
         target_node_type: NodeTypeRef(target),
         properties: core_edge_properties(&edge_type.properties),
+        validation_mode: core_validation_mode(edge_type.validation_mode),
     })
 }
 
@@ -241,7 +248,8 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> SmallVec<[PropertyDef
         name: property.name,
         value_type: core_value_type(property.value_type, property.required),
         nullable: !property.required,
-        default: None,
+        default: property.default.as_ref().map(|default| default.to_value()),
+        immutable: property.immutable,
     }));
     out
 }
@@ -252,9 +260,17 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> SmallVec<[PropertyDef
         name: property.name,
         value_type: core_value_type(property.value_type, property.required),
         nullable: !property.required,
-        default: None,
+        default: property.default.as_ref().map(|default| default.to_value()),
+        immutable: property.immutable,
     }));
     out
+}
+
+const fn core_validation_mode(mode: ValidationMode) -> selene_core::ValidationMode {
+    match mode {
+        ValidationMode::Strict => selene_core::ValidationMode::Strict,
+        ValidationMode::Warn => selene_core::ValidationMode::Warn,
+    }
 }
 
 fn core_value_type(value_type: PropertyValueType, required: bool) -> ValueType {

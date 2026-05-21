@@ -12,8 +12,8 @@ use selene_persist::{
 };
 
 use crate::{
-    CORE_PROVIDER_TAG, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
-    ProviderTag, SharedGraph, TypeViolation,
+    CORE_PROVIDER_TAG, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
+    PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
 };
 
 fn istr(name: &str) -> selene_core::IStr {
@@ -34,7 +34,10 @@ fn person_graph_type() -> GraphTypeDef {
                 name: istr("name"),
                 value_type: PropertyValueType::String,
                 required: true,
+                default: None,
+                immutable: false,
             }],
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.knows"),
@@ -45,7 +48,10 @@ fn person_graph_type() -> GraphTypeDef {
                 name: istr("since"),
                 value_type: PropertyValueType::Int,
                 required: false,
+                default: None,
+                immutable: false,
             }],
+            validation_mode: ValidationMode::Strict,
         }],
     }
 }
@@ -132,6 +138,132 @@ fn closed_graph_accepts_valid_commit() {
     };
     txn.commit().unwrap();
     assert!(shared.read().is_node_alive(id));
+}
+
+#[test]
+fn create_node_fills_declared_default_property() {
+    let graph_type = GraphTypeDef {
+        name: istr("closed.default.graph"),
+        node_types: vec![NodeTypeDef {
+            name: istr("closed.default.person"),
+            key_labels: LabelSet::single(istr("Person")),
+            properties: vec![PropertyTypeDef {
+                name: istr("active"),
+                value_type: PropertyValueType::Bool,
+                required: false,
+                default: Some(PropertyDefaultValue::Boolean(true)),
+                immutable: false,
+            }],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(20))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let id = txn
+        .mutator()
+        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    assert_eq!(
+        shared
+            .read()
+            .node_properties(id)
+            .and_then(|properties| properties.get(&istr("active"))),
+        Some(&Value::Bool(true))
+    );
+}
+
+#[test]
+fn immutable_property_update_is_rejected_before_commit() {
+    let graph_type = GraphTypeDef {
+        name: istr("closed.immutable.graph"),
+        node_types: vec![NodeTypeDef {
+            name: istr("closed.immutable.person"),
+            key_labels: LabelSet::single(istr("Person")),
+            properties: vec![PropertyTypeDef {
+                name: istr("serial"),
+                value_type: PropertyValueType::String,
+                required: true,
+                default: None,
+                immutable: true,
+            }],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(21))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let id = txn
+        .mutator()
+        .create_node(
+            LabelSet::single(istr("Person")),
+            prop("serial", Value::String(istr("A"))),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+
+    let mut txn = shared.begin_write();
+    let err = txn
+        .mutator()
+        .update_node(
+            id,
+            LabelDiff::new([], []).unwrap(),
+            PropertyDiff::new([(istr("serial"), Value::String(istr("B")))], []).unwrap(),
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::TypeViolation(TypeViolation::ImmutablePropertyUpdate {
+            entity_id,
+            property,
+            ..
+        }) if entity_id == EntityId::Node(id) && property == istr("serial")
+    ));
+}
+
+#[test]
+fn warn_validation_mode_records_undeclared_property_warning() {
+    let graph_type = GraphTypeDef {
+        name: istr("closed.warn.graph"),
+        node_types: vec![NodeTypeDef {
+            name: istr("closed.warn.person"),
+            key_labels: LabelSet::single(istr("Person")),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Warn,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(22))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(
+            LabelSet::single(istr("Person")),
+            prop("extra", Value::Int(1)),
+        )
+        .unwrap();
+
+    let outcome = txn.commit().unwrap();
+
+    assert_eq!(outcome.warnings.len(), 1);
+    assert!(matches!(
+        outcome.warnings[0].warning.violation,
+        TypeViolation::UndeclaredProperty { property, .. } if property == istr("extra")
+    ));
 }
 
 #[test]
@@ -289,11 +421,13 @@ fn person_company_graph_type() -> GraphTypeDef {
                 name: istr("closed.person.pc"),
                 key_labels: LabelSet::single(istr("PCPerson")),
                 properties: vec![],
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("closed.company.pc"),
                 key_labels: LabelSet::single(istr("PCCompany")),
                 properties: vec![],
+                validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![crate::EdgeTypeDef {
@@ -302,6 +436,7 @@ fn person_company_graph_type() -> GraphTypeDef {
             source_node_type: 0, // PCPerson
             target_node_type: 1, // PCCompany
             properties: vec![],
+            validation_mode: ValidationMode::Strict,
         }],
     }
 }

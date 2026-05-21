@@ -13,6 +13,7 @@ use selene_core::{
 };
 use selene_graph::{
     EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SeleneGraph, SharedGraph,
+    ValidationMode,
 };
 use selene_testing::BenchProfile;
 
@@ -146,6 +147,7 @@ fn simple_graph_type() -> GraphTypeDef {
             name: label("bench.simple.node"),
             key_labels: LabelSet::single(label("SimpleNode")),
             properties: property_defs(3),
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: vec![EdgeTypeDef {
             name: label("bench.simple.edge"),
@@ -153,6 +155,7 @@ fn simple_graph_type() -> GraphTypeDef {
             source_node_type: 0,
             target_node_type: 0,
             properties: property_defs(3),
+            validation_mode: ValidationMode::Strict,
         }],
     }
 }
@@ -165,6 +168,7 @@ fn rich_graph_type() -> GraphTypeDef {
                 name: label(&format!("bench.rich.node{idx}")),
                 key_labels: LabelSet::single(label(&format!("RichNode{idx}"))),
                 properties: property_defs(10),
+                validation_mode: ValidationMode::Strict,
             })
             .collect(),
         edge_types: (0..10)
@@ -174,6 +178,7 @@ fn rich_graph_type() -> GraphTypeDef {
                 source_node_type: idx,
                 target_node_type: (idx + 1) % 10,
                 properties: property_defs(10),
+                validation_mode: ValidationMode::Strict,
             })
             .collect(),
     }
@@ -189,6 +194,8 @@ fn property_defs(count: usize) -> Vec<PropertyTypeDef> {
                 PropertyValueType::Int
             },
             required: idx < 3,
+            default: None,
+            immutable: false,
         })
         .collect()
 }

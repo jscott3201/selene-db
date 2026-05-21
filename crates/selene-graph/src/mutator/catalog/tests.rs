@@ -3,7 +3,8 @@ use selene_core::{
 };
 
 use crate::{
-    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypeViolation,
+    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SharedGraph,
+    TypeViolation, ValidationMode,
 };
 
 fn closed_empty_graph(id: u64) -> SharedGraph {
@@ -26,6 +27,7 @@ fn person_type() -> GraphTypeDef {
             name: person,
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }
@@ -42,11 +44,13 @@ fn person_company_type() -> GraphTypeDef {
                 name: person,
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: company,
                 key_labels: LabelSet::single(company),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![EdgeTypeDef {
@@ -55,6 +59,7 @@ fn person_company_type() -> GraphTypeDef {
             source_node_type: 0,
             target_node_type: 1,
             properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
         }],
     }
 }
@@ -76,7 +81,10 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
                         name,
                         value_type: PropertyValueType::String,
                         required: true,
+                        default: None,
+                        immutable: false,
                     }],
+                    ValidationMode::Strict,
                 )
                 .unwrap();
             assert_eq!(
@@ -99,7 +107,7 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::SchemaChanged {
-            change: SchemaChange::NodeTypeAdded { label, .. },
+            change: SchemaChange::NodeTypeAddedV2 { label, .. },
             ..
         }] if *label == person
     ));
@@ -116,7 +124,7 @@ fn create_edge_type_resolves_closed_type_and_emits_schema_change() {
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_edge_type(knows, knows, 0, 0, Vec::new())
+            .create_edge_type(knows, knows, 0, 0, Vec::new(), ValidationMode::Strict)
             .unwrap();
         txn.commit().unwrap()
     };
@@ -126,7 +134,7 @@ fn create_edge_type_resolves_closed_type_and_emits_schema_change() {
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::SchemaChanged {
-            change: SchemaChange::EdgeTypeAdded { label, .. },
+            change: SchemaChange::EdgeTypeAddedV2 { label, .. },
             ..
         }] if *label == knows
     ));
@@ -183,7 +191,12 @@ fn catalog_type_ddl_on_open_graph_is_rejected() {
     let person = intern("Person").unwrap();
     let err = txn
         .mutator()
-        .create_node_type(person, LabelSet::single(person), Vec::new())
+        .create_node_type(
+            person,
+            LabelSet::single(person),
+            Vec::new(),
+            ValidationMode::Strict,
+        )
         .unwrap_err();
 
     assert!(matches!(

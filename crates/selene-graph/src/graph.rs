@@ -47,7 +47,6 @@ impl PropertyIndexEntry {
     Clone,
     Debug,
     Deserialize,
-    Eq,
     PartialEq,
     rkyv::Archive,
     rkyv::Deserialize,

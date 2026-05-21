@@ -6,12 +6,14 @@ use selene_core::{CancellationToken, Change, metrics};
 use selene_graph::CommitOutcome;
 
 use crate::{
-    ExecutionPlan, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
+    ExecutionPlan, GqlStatus, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
     ast::Statement,
     parser::parse,
     plan::plan as build_plan,
-    runtime::{BindingTable, ExecutorError, Session, TxContext, execute_plan, pipeline},
+    runtime::{
+        BindingTable, ExecutorError, ExecutorWarning, Session, TxContext, execute_plan, pipeline,
+    },
 };
 
 /// Result returned by statement-level execution.
@@ -314,12 +316,26 @@ fn execute_auto_commit(
                     span: SourceSpan::default(),
                 }
             })?;
+            emit_commit_warnings(&outcome, session);
             Ok(write_output_from_commit(plan, table, outcome))
         }
         Err(error) => {
             txn.rollback();
             Err(error)
         }
+    }
+}
+
+fn emit_commit_warnings(outcome: &CommitOutcome, session: &Session<'_>) {
+    let Some(sink) = session.warning_sink.as_ref() else {
+        return;
+    };
+    for warning in &outcome.warnings {
+        sink.borrow_mut().emit(ExecutorWarning {
+            code: GqlStatus::VALIDATION_MODE_RELAXED_WRITE,
+            message: warning.warning.violation.to_string(),
+            span: SourceSpan::default(),
+        });
     }
 }
 

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use selene_core::{IStr, LabelSet, PropertyValueType};
+use selene_core::{IStr, LabelSet, PropertyValueType, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
@@ -12,8 +12,6 @@ use crate::error::{GraphError, GraphResult};
     Clone,
     Debug,
     Deserialize,
-    Eq,
-    Hash,
     PartialEq,
     rkyv::Archive,
     rkyv::Deserialize,
@@ -192,8 +190,6 @@ impl GraphTypeDef {
     Clone,
     Debug,
     Deserialize,
-    Eq,
-    Hash,
     PartialEq,
     rkyv::Archive,
     rkyv::Deserialize,
@@ -207,6 +203,8 @@ pub struct NodeTypeDef {
     pub key_labels: LabelSet,
     /// Declared properties.
     pub properties: Vec<PropertyTypeDef>,
+    /// Validation mode for undeclared-property writes.
+    pub validation_mode: ValidationMode,
 }
 
 /// Edge-type element.
@@ -214,8 +212,6 @@ pub struct NodeTypeDef {
     Clone,
     Debug,
     Deserialize,
-    Eq,
-    Hash,
     PartialEq,
     rkyv::Archive,
     rkyv::Deserialize,
@@ -233,6 +229,8 @@ pub struct EdgeTypeDef {
     pub target_node_type: u32,
     /// Declared properties.
     pub properties: Vec<PropertyTypeDef>,
+    /// Validation mode for undeclared-property writes.
+    pub validation_mode: ValidationMode,
 }
 
 /// Property declaration for a closed graph type.
@@ -240,8 +238,6 @@ pub struct EdgeTypeDef {
     Clone,
     Debug,
     Deserialize,
-    Eq,
-    Hash,
     PartialEq,
     rkyv::Archive,
     rkyv::Deserialize,
@@ -255,6 +251,83 @@ pub struct PropertyTypeDef {
     pub value_type: PropertyValueType,
     /// `true` means NOT NULL / required.
     pub required: bool,
+    /// Default value materialized when the property is omitted on create.
+    pub default: Option<PropertyDefaultValue>,
+    /// Whether updates to this property are forbidden after creation.
+    pub immutable: bool,
+}
+
+/// Persistable default-value descriptor for closed graph property declarations.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+#[non_exhaustive]
+pub enum PropertyDefaultValue {
+    /// Null default.
+    Null,
+    /// Boolean default.
+    Boolean(bool),
+    /// Signed integer default.
+    Integer(i64),
+    /// Interned string default.
+    String(IStr),
+}
+
+impl PropertyDefaultValue {
+    /// Materialize this descriptor as a runtime value.
+    #[must_use]
+    pub const fn to_value(&self) -> Value {
+        match self {
+            Self::Null => Value::Null,
+            Self::Boolean(value) => Value::Bool(*value),
+            Self::Integer(value) => Value::Int(*value),
+            Self::String(value) => Value::String(*value),
+        }
+    }
+
+    /// Convert a runtime value into a persistable default descriptor.
+    #[must_use]
+    pub const fn from_value(value: &Value) -> Option<Self> {
+        match value {
+            Value::Null => Some(Self::Null),
+            Value::Bool(value) => Some(Self::Boolean(*value)),
+            Value::Int(value) => Some(Self::Integer(*value)),
+            Value::String(value) => Some(Self::String(*value)),
+            _ => None,
+        }
+    }
+}
+
+/// Closed-graph validation mode.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub enum ValidationMode {
+    /// Reject undeclared-property writes.
+    #[default]
+    Strict,
+    /// Allow undeclared-property writes and record a warning.
+    Warn,
 }
 
 fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {
@@ -295,6 +368,8 @@ mod tests {
             name: label(name),
             value_type: PropertyValueType::String,
             required: true,
+            default: None,
+            immutable: false,
         }
     }
 
@@ -306,11 +381,13 @@ mod tests {
                     name: label("types.person"),
                     key_labels: LabelSet::single(label("Person")),
                     properties: vec![property("name")],
+                    validation_mode: ValidationMode::Strict,
                 },
                 NodeTypeDef {
                     name: label("types.company"),
                     key_labels: LabelSet::single(label("Company")),
                     properties: vec![property("name")],
+                    validation_mode: ValidationMode::Strict,
                 },
             ],
             edge_types: vec![EdgeTypeDef {
@@ -319,6 +396,7 @@ mod tests {
                 source_node_type: 0,
                 target_node_type: 1,
                 properties: vec![property("since")],
+                validation_mode: ValidationMode::Strict,
             }],
         }
     }

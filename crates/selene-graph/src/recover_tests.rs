@@ -10,7 +10,10 @@ use selene_persist::{
     SyncPolicy, WalConfig, WalWriter, snapshot_path,
 };
 
-use crate::{CORE_PROVIDER_TAG, GraphError, GraphTypeDef, ProviderTag, SharedGraph};
+use crate::{
+    CORE_PROVIDER_TAG, GraphError, GraphTypeDef, PropertyDefaultValue, PropertyTypeDef,
+    ProviderTag, SharedGraph, ValidationMode,
+};
 
 #[path = "recover_tests/variant_tests.rs"]
 mod variant_tests;
@@ -254,13 +257,32 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         .build()
         .unwrap();
     let sensor = intern("Sensor").unwrap();
+    let serial = intern("serial").unwrap();
     let changes = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node_type(sensor, LabelSet::single(sensor), Vec::new())
+            .create_node_type(
+                sensor,
+                LabelSet::single(sensor),
+                vec![PropertyTypeDef {
+                    name: serial,
+                    value_type: selene_core::PropertyValueType::String,
+                    required: false,
+                    default: Some(PropertyDefaultValue::String(intern("unknown").unwrap())),
+                    immutable: true,
+                }],
+                ValidationMode::Warn,
+            )
             .unwrap();
         txn.commit().unwrap().changes
     };
+    assert!(matches!(
+        changes.as_slice(),
+        [Change::SchemaChanged {
+            change: selene_core::SchemaChange::NodeTypeAddedV2 { .. },
+            ..
+        }]
+    ));
     append_wal(&dir, 0, &changes);
 
     let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
@@ -271,6 +293,16 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         graph_type.node_types[0].key_labels,
         LabelSet::single(sensor)
     );
+    assert_eq!(
+        graph_type.node_types[0].validation_mode,
+        ValidationMode::Warn
+    );
+    assert_eq!(graph_type.node_types[0].properties[0].name, serial);
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(PropertyDefaultValue::String(intern("unknown").unwrap()))
+    );
+    assert!(graph_type.node_types[0].properties[0].immutable);
     let _ = fs::remove_dir_all(dir);
 }
 

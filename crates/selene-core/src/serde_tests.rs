@@ -32,6 +32,7 @@ fn property_def(name: &str) -> PropertyDef {
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
+        immutable: false,
     }
 }
 
@@ -45,6 +46,7 @@ fn graph_type() -> GraphType {
             key: Some(NodeKey {
                 property_names: smallvec![istr("serde.node.name")],
             }),
+            validation_mode: ValidationMode::Strict,
         },
     );
     graph_type.edge_types.insert(
@@ -316,6 +318,20 @@ fn schema_change_postcard_round_trip() {
             property: istr("serde.schema.indexed"),
             kind: SchemaPropertyIndexKind::I64,
             name: Some(istr("serde.schema.index.name")),
+        },
+        SchemaChange::NodeTypeAddedV2 {
+            graph_type: graph_type_id,
+            label: istr("serde.schema.node.v2"),
+            def: NodeTypeDef::new(LabelSet::single(istr("serde.schema.node.v2"))),
+        },
+        SchemaChange::EdgeTypeAddedV2 {
+            graph_type: graph_type_id,
+            label: istr("serde.schema.edge.v2"),
+            def: EdgeTypeDef::new(
+                istr("serde.schema.edge.v2"),
+                NodeTypeRef(node_label),
+                NodeTypeRef(node_label),
+            ),
         },
     ];
     for change in changes {

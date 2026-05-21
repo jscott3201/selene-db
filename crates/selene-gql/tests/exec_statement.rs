@@ -1,13 +1,13 @@
 //! BRIEF-38 statement-level executor tests.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use selene_core::{GraphId, LabelSet, Value, intern};
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, GqlStatus, Session, StatementOutput,
-    WriteOutcome, analyze, execute_statement, parse, plan,
+    EmptyProcedureRegistry, ExecutionPlan, ExecutorError, ExecutorWarning, GqlStatus, Session,
+    StatementOutput, WarningSink, WriteOutcome, analyze, execute_statement, parse, plan,
 };
-use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph};
+use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
 fn istr(value: &str) -> selene_core::IStr {
@@ -60,12 +60,24 @@ fn closed_person_graph(id: u64) -> SharedGraph {
                 name: person,
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: Vec::new(),
         })
         .unwrap()
         .build()
         .unwrap()
+}
+
+#[derive(Clone)]
+struct RecordingSink {
+    warnings: Arc<Mutex<Vec<ExecutorWarning>>>,
+}
+
+impl WarningSink for RecordingSink {
+    fn emit(&mut self, warning: ExecutorWarning) {
+        self.warnings.lock().expect("warning mutex").push(warning);
+    }
 }
 
 #[test]
@@ -154,6 +166,80 @@ fn catalog_modifying_auto_commits_create_type() {
 }
 
 #[test]
+fn catalog_default_property_materializes_on_insert() {
+    let graph = empty_closed_graph(3814);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Person (active :: BOOLEAN DEFAULT true)",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Person) FINISH", &mut session).expect("insert succeeds");
+    let table = rows(
+        execute("MATCH (n:Person) RETURN n.active AS active", &mut session)
+            .expect("match succeeds"),
+    );
+
+    assert_eq!(table.rows()[0].values(), &[Value::Bool(true)]);
+}
+
+#[test]
+fn catalog_immutable_property_rejects_gql_set() {
+    let graph = empty_closed_graph(3815);
+    let mut session = Session::new(&graph);
+
+    execute(
+        "CREATE NODE TYPE :Person (serial :: STRING NOT NULL IMMUTABLE)",
+        &mut session,
+    )
+    .expect("catalog succeeds");
+    execute("INSERT (n:Person {serial: 'A'}) FINISH", &mut session).expect("insert succeeds");
+
+    let err = execute("MATCH (n:Person) SET n.serial = 'B' FINISH", &mut session)
+        .expect_err("immutable property rejects update");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::GRAPH_TYPE_VIOLATION);
+}
+
+#[test]
+fn catalog_warn_mode_emits_relaxed_write_warning_after_commit() {
+    let graph = empty_closed_graph(3816);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        warnings: Arc::clone(&warnings),
+    };
+    let mut session = Session::new(&graph).with_warning_sink(sink);
+
+    execute("CREATE NODE TYPE :Person () WARN", &mut session).expect("catalog succeeds");
+    execute("INSERT (n:Person {extra: 1}) FINISH", &mut session)
+        .expect("warn-mode insert succeeds");
+    let observed = warnings.lock().expect("warning mutex").clone();
+
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].code, GqlStatus::VALIDATION_MODE_RELAXED_WRITE);
+}
+
+#[test]
+fn explicit_commit_emits_relaxed_write_warning_after_commit() {
+    let graph = empty_closed_graph(3817);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let sink = RecordingSink {
+        warnings: Arc::clone(&warnings),
+    };
+    let mut session = Session::new(&graph).with_warning_sink(sink);
+
+    execute("START TRANSACTION", &mut session).expect("start succeeds");
+    execute("CREATE NODE TYPE :Person () WARN", &mut session).expect("catalog succeeds");
+    execute("INSERT (n:Person {extra: 1}) FINISH", &mut session).expect("insert succeeds");
+    execute("COMMIT", &mut session).expect("commit succeeds");
+    let observed = warnings.lock().expect("warning mutex").clone();
+
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].code, GqlStatus::VALIDATION_MODE_RELAXED_WRITE);
+}
+
+#[test]
 fn catalog_show_yields_rows() {
     let graph = SharedGraph::builder(GraphId::new(3806))
         .bound_to(GraphTypeDef {
@@ -162,6 +248,7 @@ fn catalog_show_yields_rows() {
                 name: istr("types.person"),
                 key_labels: LabelSet::single(istr("Person")),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: Vec::new(),
         })

@@ -39,7 +39,9 @@ pub use core_provider::{
 pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{GraphMeta, SeleneGraph};
-pub use graph_types::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
+pub use graph_types::{
+    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+};
 pub use id_allocator::IdAllocator;
 pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 pub use mutator::Mutator;
@@ -47,7 +49,7 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
-pub use write_txn::{CommitOutcome, WriteTxn};
+pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]
 mod closed_graph_tests;
