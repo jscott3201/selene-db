@@ -30,7 +30,7 @@ pub enum DdlStatement {
     },
     /// `CREATE NODE TYPE`.
     CreateNodeType {
-        /// Node label.
+        /// Node label, stored without the source `:` prefix.
         label: IStr,
         /// `OR REPLACE`.
         or_replace: bool,
@@ -51,7 +51,7 @@ pub enum DdlStatement {
     },
     /// `CREATE EDGE TYPE`.
     CreateEdgeType {
-        /// Edge label.
+        /// Edge label, stored without the source `:` prefix.
         label: IStr,
         /// `OR REPLACE`.
         or_replace: bool,

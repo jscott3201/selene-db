@@ -124,6 +124,11 @@ selene-vector-pack  = { path = "path/to/selene-db/crates/selene-vector-pack" }
 
 `selene-vector` is an `IndexProvider` implementation (HNSW + IVF, optional SQ8 / PQ / OPQ quantization). `selene-vector-pack` exposes the read/mutate operations as nine `vector.*` procedures.
 
+`CALL vector.create_index(name, kind, config)` is idempotent when the existing
+index has the same kind and config. Re-running the same create call succeeds
+as a no-op. Reusing a name with a different dimension, metric, kind, or other
+config is rejected as an invalid argument (`22G03`).
+
 ## 3. Opening a graph
 
 `SharedGraph` is the per-graph runtime handle. It owns:
@@ -441,7 +446,29 @@ at commit; violations return `G2000`. They are not downgraded to warnings.
 `DEFAULT <expr>` but no `NOT NULL` is nullable, and runtime DEFAULT application
 is not implemented in v1.1.
 
-### 6.5 `StatementOutput` variants
+### 6.5 Warning channel
+
+Runtime warnings are opt-in. A `Session` without a warning sink silently
+discards warnings; embedders that need visibility attach a sink with
+`Session::with_warning_sink`. The live warning today is aggregate
+NULL-elimination (`01G11`).
+
+```rust
+use selene_gql::{ExecutorWarning, Session, WarningSink};
+
+#[derive(Default)]
+struct WarningLog(Vec<ExecutorWarning>);
+
+impl WarningSink for WarningLog {
+    fn emit(&mut self, warning: ExecutorWarning) {
+        self.0.push(warning);
+    }
+}
+
+let mut session = Session::new(&graph).with_warning_sink(WarningLog::default());
+```
+
+### 6.6 `StatementOutput` variants
 
 `StatementOutput` is `#[non_exhaustive]`. Match all variants you handle:
 
@@ -450,7 +477,7 @@ is not implemented in v1.1.
 
 Mutation statistics (rows inserted, edges updated, &c.) are not exposed as a separate variant in v1.0. If you need counts, plan an explicit `RETURN count(*)` or instrument via the WAL `Change` stream.
 
-### 6.6 Extracting values
+### 6.7 Extracting values
 
 `Value` is a non-exhaustive enum (`Bool`, `Int`, `Uint`, `Float`, `String`, `ExternalString`, `Bytes`, `List`, `Record`, `RecordTyped`, `Path`, `NodeRef`, `EdgeRef`, `GraphRef`, plus the temporal types). For interned strings:
 
@@ -465,7 +492,7 @@ let s: &str = resolve(*istr);
 
 For non-interned strings (free-form text from outside the global interner namespace), use `Value::ExternalString(Arc<str>)`.
 
-### 6.7 Reusing a plan
+### 6.8 Reusing a plan
 
 `ExecutionPlan` is `Clone` and stable across runs against the same graph topology. Embedders that issue the same statement many times should plan once and execute many times.
 

@@ -1,4 +1,8 @@
 //! `vector.list_indexes` graph procedure adapter.
+//!
+//! The procedure returns a stable five-column contract in order:
+//! `name :: STRING`, `kind :: STRING`, `dim :: INT`, `metric :: STRING`, and
+//! `vector_count :: INT`.
 
 use std::sync::Arc;
 
