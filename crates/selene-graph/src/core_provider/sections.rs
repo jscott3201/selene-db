@@ -222,7 +222,46 @@ pub struct SchemaKey {
 pub struct SchemaEntry {
     /// Indexable value kind declared at registration time.
     pub kind: TypedIndexKind,
+    /// Optional explicit catalog name for the property index.
+    pub name: Option<IStr>,
 }
+
+/// Legacy v1 `CORE/SCMA` row with no stored index name.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub(super) struct SchemaEntryV1 {
+    /// Indexable value kind declared at registration time.
+    pub kind: TypedIndexKind,
+}
+
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+struct SchemaEntryV2 {
+    kind: TypedIndexKind,
+    name: Option<IStr>,
+}
+
+const SCMA_V2_MAGIC: u8 = 0xA5;
 
 pub(super) fn encode_meta(
     meta: &GraphMeta,
@@ -346,36 +385,76 @@ pub(super) fn decode_edges(bytes: &[u8]) -> Result<Vec<(EdgeId, EdgeRow)>, crate
 }
 
 pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
-    let mut rows: Vec<(SchemaKey, SchemaEntry)> = graph
+    let mut rows: Vec<(SchemaKey, SchemaEntryV2)> = graph
         .property_index
         .iter()
-        .map(|((label, property), index)| {
+        .map(|((label, property), entry)| {
             (
                 SchemaKey {
                     label: *label,
                     property: *property,
                 },
-                SchemaEntry { kind: index.kind() },
+                SchemaEntryV2 {
+                    kind: entry.kind(),
+                    name: entry.name,
+                },
             )
         })
         .collect();
     rows.sort_by(schema_wire_cmp);
-    encode_rkyv(&rows, "CORE/SCMA")
+    let mut payload = Vec::with_capacity(1);
+    payload.push(SCMA_V2_MAGIC);
+    payload.extend(encode_rkyv(&rows, "CORE/SCMA")?);
+    ensure_section_within_cap("CORE/SCMA", payload.len())?;
+    Ok(payload)
 }
 
 pub(super) fn decode_schemas(
     bytes: &[u8],
 ) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
-    let mut rows: Vec<(SchemaKey, SchemaEntry)> = decode_rkyv(bytes, "CORE/SCMA")?;
+    let mut rows = if bytes.first() == Some(&SCMA_V2_MAGIC) {
+        decode_schema_v2(&bytes[1..]).or_else(|_| decode_schema_v1(bytes))?
+    } else {
+        decode_schema_v1(bytes)?
+    };
     rows.sort_unstable_by_key(|(key, _)| *key);
     validate_sorted_unique(&rows, "CORE/SCMA")?;
     Ok(rows)
 }
 
-fn schema_wire_cmp(
-    lhs: &(SchemaKey, SchemaEntry),
-    rhs: &(SchemaKey, SchemaEntry),
-) -> std::cmp::Ordering {
+fn decode_schema_v1(bytes: &[u8]) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
+    let rows: Vec<(SchemaKey, SchemaEntryV1)> = decode_rkyv(bytes, "CORE/SCMA")?;
+    Ok(rows
+        .into_iter()
+        .map(|(key, entry)| {
+            (
+                key,
+                SchemaEntry {
+                    kind: entry.kind,
+                    name: None,
+                },
+            )
+        })
+        .collect())
+}
+
+fn decode_schema_v2(bytes: &[u8]) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
+    let rows: Vec<(SchemaKey, SchemaEntryV2)> = decode_rkyv(bytes, "CORE/SCMA")?;
+    Ok(rows
+        .into_iter()
+        .map(|(key, entry)| {
+            (
+                key,
+                SchemaEntry {
+                    kind: entry.kind,
+                    name: entry.name,
+                },
+            )
+        })
+        .collect())
+}
+
+fn schema_wire_cmp<V>(lhs: &(SchemaKey, V), rhs: &(SchemaKey, V)) -> std::cmp::Ordering {
     (lhs.0.label.as_str(), lhs.0.property.as_str())
         .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
 }

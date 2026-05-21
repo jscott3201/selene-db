@@ -1,9 +1,8 @@
 //! Property-index mutation methods for the transaction mutator.
 
-use std::sync::Arc;
-
 use selene_core::{Change, IStr, SchemaChange, SchemaPropertyIndexKind};
 
+use crate::graph::PropertyIndexEntry;
 use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
@@ -34,7 +33,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn
             .guard_mut()
             .property_index
-            .insert((label, property), Arc::new(index));
+            .insert((label, property), PropertyIndexEntry::new(index, None));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
             change: SchemaChange::PropertyIndexCreated {

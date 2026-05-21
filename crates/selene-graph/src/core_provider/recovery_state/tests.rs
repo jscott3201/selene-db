@@ -140,6 +140,7 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_property_index_created),
     schema_intent!(apply intent_property_index_dropped),
     schema_intent!(noop intent_pack_lifecycle, PACK_LIFECYCLE_NOOP),
+    schema_intent!(apply intent_property_index_created_named),
 ];
 
 fn intent_graph_created() -> SchemaChange {
@@ -255,6 +256,15 @@ fn intent_property_index_dropped() -> SchemaChange {
     }
 }
 
+fn intent_property_index_created_named() -> SchemaChange {
+    SchemaChange::PropertyIndexCreatedNamed {
+        label: intern("IntentNamedIndexedNode").unwrap(),
+        property: intern("intentNamedIndexedProperty").unwrap(),
+        kind: SchemaPropertyIndexKind::String,
+        name: Some(intern("intent_named_index").unwrap()),
+    }
+}
+
 fn intent_pack_lifecycle() -> SchemaChange {
     SchemaChange::ProcedurePackLifecycle {
         event: PackLifecycleEvent::Activated {
@@ -300,7 +310,8 @@ fn noop_intent(change: &SchemaChange) -> Intent {
         | SchemaChange::EdgeTypeDropped { .. }
         | SchemaChange::RecordTypeAdded { .. }
         | SchemaChange::PropertyIndexCreated { .. }
-        | SchemaChange::PropertyIndexDropped { .. } => {
+        | SchemaChange::PropertyIndexDropped { .. }
+        | SchemaChange::PropertyIndexCreatedNamed { .. } => {
             panic!(
                 "{} is not a no-op schema-change intent",
                 super::schema_change_variant(change)
@@ -312,7 +323,7 @@ fn noop_intent(change: &SchemaChange) -> Intent {
 #[test]
 fn recovery_intent_table_covers_every_schema_change_variant() {
     let mut seen = std::collections::BTreeSet::new();
-    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 15);
+    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 16);
 
     for (factory, expected_intent) in SCHEMA_CHANGE_INTENT {
         let change = factory();
@@ -552,6 +563,34 @@ fn wal_replay_restores_property_index_created_after_node_state() {
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
     assert_eq!(recovered.property_index_count(), 1);
+}
+
+#[test]
+fn wal_replay_restores_named_property_index_metadata() {
+    let provider = CoreProvider::new_for_recovery();
+    let label = intern("NamedWalPerson").unwrap();
+    let property = intern("name").unwrap();
+    let name = intern("named_wal_person_name_idx").unwrap();
+    RecoveryProvider::on_change(
+        provider.as_ref(),
+        &Change::SchemaChanged {
+            graph: GraphId::new(1),
+            change: SchemaChange::PropertyIndexCreatedNamed {
+                label,
+                property,
+                kind: SchemaPropertyIndexKind::String,
+                name: Some(name),
+            },
+        },
+    )
+    .unwrap();
+
+    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
+    let entries = recovered.iter_property_index_entries().collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        vec![(label, property, TypedIndexKind::String, Some(name))]
+    );
 }
 
 #[test]

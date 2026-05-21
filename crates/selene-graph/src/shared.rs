@@ -16,7 +16,7 @@ use crate::adjacency::AdjacencyEdge;
 use crate::core_provider::{CoreProvider, DurableState};
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
-use crate::graph::SeleneGraph;
+use crate::graph::{PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
@@ -246,7 +246,7 @@ impl SharedGraph {
         let index = crate::property_index::build_property_index(txn.read(), label, property, kind)?;
         txn.guard_mut()
             .property_index
-            .insert((label, property), Arc::new(index));
+            .insert((label, property), PropertyIndexEntry::new(index, None));
         let graph = txn.read().graph_id();
         txn.changes.push(Change::SchemaChanged {
             graph,
