@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use crate::{
-    GqlType, ProcedureCall, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
-    ProcedureRegistry, YieldColumn,
+    GqlType, Literal, ProcedureCall, ProcedureDefaultValue, ProcedureMetadata, ProcedureMutability,
+    ProcedureOutputColumn, ProcedureRegistry, YieldColumn,
     analyze::{
         AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, BindingDecl, BindingDeclKind,
         StatementCategory, infer,
@@ -165,6 +165,13 @@ fn validate_signature(
     analyzed: &AnalyzedStatement,
 ) -> Result<(), PlannerError> {
     for (arg, parameter) in args.iter().zip(&metadata.signature.parameters) {
+        if arg.span == call.span && !default_matches_project_expr(parameter.default, &arg.expr) {
+            return Err(PlannerError::ProcedureMetadataMismatch {
+                procedure: call.name.clone().into_vec().into_boxed_slice(),
+                detail: "signature parameter default changed",
+                span: arg.span,
+            });
+        }
         let arg_ty = analyzed.expr_types.get(arg.expr_id);
         if let AnalyzedType::Resolved(found) = arg_ty
             && !infer::argument_assignable(found, &parameter.ty, parameter.nullable)
@@ -182,6 +189,29 @@ fn validate_signature(
         }
     }
     Ok(())
+}
+
+fn default_matches_project_expr(
+    default: Option<ProcedureDefaultValue>,
+    expr: &crate::ValueExpr,
+) -> bool {
+    let Some(default) = default else {
+        return false;
+    };
+    let crate::ValueExpr::Literal(literal) = expr else {
+        return false;
+    };
+    match (default, literal) {
+        (ProcedureDefaultValue::Boolean(expected), Literal::Bool(found, _)) => expected == *found,
+        (ProcedureDefaultValue::Null, Literal::Null(_)) => true,
+        (ProcedureDefaultValue::Integer(expected), Literal::Integer(found, _)) => {
+            expected == *found
+        }
+        (ProcedureDefaultValue::String(expected), Literal::String(found, _)) => {
+            expected == found.as_str()
+        }
+        _ => false,
+    }
 }
 
 fn validate_output_schema(
@@ -295,8 +325,8 @@ mod defensive_tests {
 
     use super::*;
     use crate::{
-        ProcedureHandle, ProcedureOutputSchema, ProcedureParameter, ProcedureSignature,
-        ProcedureTier, SourceSpan,
+        ProcedureDefaultValue, ProcedureHandle, ProcedureOutputSchema, ProcedureParameter,
+        ProcedureSignature, ProcedureTier, SourceSpan,
         procedure_registry::{ProcedureError, ProcedureResult, Value},
     };
 
@@ -399,6 +429,31 @@ mod defensive_tests {
         let err = crate::plan::plan(&analyzed, &changed)
             .expect_err("signature nullability drift is rejected");
         assert_metadata_detail(err, "signature parameter nullability changed");
+    }
+
+    #[test]
+    fn changed_parameter_default_reports_metadata_mismatch() {
+        let source = "CALL pkg.arg()";
+        let original = registry(
+            vec![
+                param("enabled", GqlType::Boolean, false)
+                    .with_default(ProcedureDefaultValue::Boolean(false)),
+            ],
+            Vec::new(),
+            ProcedureMutability::Read,
+        );
+        let analyzed = analyzed_with(source, &original);
+        let changed = registry(
+            vec![
+                param("enabled", GqlType::Boolean, false)
+                    .with_default(ProcedureDefaultValue::Boolean(true)),
+            ],
+            Vec::new(),
+            ProcedureMutability::Read,
+        );
+
+        let err = crate::plan::plan(&analyzed, &changed).expect_err("default drift is rejected");
+        assert_metadata_detail(err, "signature parameter default changed");
     }
 
     #[test]
