@@ -11,6 +11,7 @@ use std::{
 use rustc_hash::FxHashSet;
 use selene_core::{
     CancellationCause, CancellationChecker, CancellationToken, IStr, IStrAdmissionPolicy, Value,
+    metrics,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
@@ -341,12 +342,18 @@ impl<'a, 'g> TxContext<'a, 'g> {
         span: SourceSpan,
     ) -> ExecutorError {
         match cause {
-            CancellationCause::Cancelled => ExecutorError::Cancelled { span },
-            CancellationCause::Timeout { elapsed } => ExecutorError::Timeout {
-                deadline: self.deadline.unwrap_or_else(Instant::now),
-                elapsed,
-                span,
-            },
+            CancellationCause::Cancelled => {
+                metrics::counter_inc(metrics::CANCELLATIONS_TOTAL);
+                ExecutorError::Cancelled { span }
+            }
+            CancellationCause::Timeout { elapsed } => {
+                metrics::counter_inc(metrics::CANCELLATIONS_TOTAL);
+                ExecutorError::Timeout {
+                    deadline: self.deadline.unwrap_or_else(Instant::now),
+                    elapsed,
+                    span,
+                }
+            }
         }
     }
 

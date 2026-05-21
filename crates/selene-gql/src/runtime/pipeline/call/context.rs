@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use selene_core::metrics;
+
 use crate::{
     PlannedCall, ProcedureError, ProcedureMutability, ProcedureTier,
     runtime::{ExecutorError, GraphContext, MutationContext, ProcedureContext, TxContext},
@@ -73,12 +75,18 @@ pub(super) fn procedure_error(
     deadline: Option<Instant>,
 ) -> ExecutorError {
     match source {
-        ProcedureError::Cancelled => ExecutorError::Cancelled { span },
-        ProcedureError::Timeout { elapsed } => ExecutorError::Timeout {
-            deadline: deadline.unwrap_or_else(Instant::now),
-            elapsed,
-            span,
-        },
+        ProcedureError::Cancelled => {
+            metrics::counter_inc(metrics::CANCELLATIONS_TOTAL);
+            ExecutorError::Cancelled { span }
+        }
+        ProcedureError::Timeout { elapsed } => {
+            metrics::counter_inc(metrics::CANCELLATIONS_TOTAL);
+            ExecutorError::Timeout {
+                deadline: deadline.unwrap_or_else(Instant::now),
+                elapsed,
+                span,
+            }
+        }
         source => ExecutorError::Procedure { source, span },
     }
 }

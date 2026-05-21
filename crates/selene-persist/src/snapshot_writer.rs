@@ -4,6 +4,9 @@ use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::time::Instant;
+
+use selene_core::metrics;
 
 use crate::compression::compress_zstd;
 use crate::section::{
@@ -156,6 +159,7 @@ impl SnapshotBuilder {
         fields(snapshot_seq = self.config.sequence, section_count = self.sections.len())
     )]
     pub fn finalize(self) -> PersistResult<SnapshotFinalizeOutcome> {
+        let started = Instant::now();
         let final_path = snapshot_path(&self.config.dir, self.config.sequence);
         let tmp_path = snapshot_tmp_path(&self.config.dir, self.config.sequence);
         let prepared = prepare_sections(self.sections, self.config.compression)?;
@@ -189,6 +193,11 @@ impl SnapshotBuilder {
         match std::fs::hard_link(&tmp_path, &final_path) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&tmp_path);
+                metrics::counter_inc(metrics::SNAPSHOTS_TOTAL);
+                metrics::histogram_record(
+                    metrics::SNAPSHOT_DURATION_SECONDS,
+                    started.elapsed().as_secs_f64(),
+                );
                 Ok(SnapshotFinalizeOutcome {
                     snapshot_seq: self.config.sequence,
                     body_hash: hash,

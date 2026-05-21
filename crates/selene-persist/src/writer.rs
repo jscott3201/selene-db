@@ -5,7 +5,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use selene_core::{Change, HlcTimestamp, Origin};
+use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
 use crate::entry_header::{
     encode_entry_header, ensure_payload_len, read_entry_header, validate_principal,
@@ -241,6 +241,7 @@ impl WalWriter {
                 self.committed_offset = new_offset;
                 self.last_sequence = sequence;
                 self.entries_since_fsync = if needs_fsync { 0 } else { pending_count };
+                metrics::counter_inc(metrics::WAL_APPENDS_TOTAL);
                 Ok(sequence)
             }
             Err(error) => {

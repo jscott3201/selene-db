@@ -4,10 +4,11 @@ use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
 };
+use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
-use selene_core::{Change, HlcTimestamp, Origin};
+use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
@@ -112,6 +113,7 @@ impl<'g> WriteTxn<'g> {
         mut self,
         principal: Option<Arc<[u8]>>,
     ) -> GraphResult<CommitOutcome> {
+        let started = Instant::now();
         debug_assert!(
             self.pre_txn.is_some(),
             "pre_txn must be present at commit entry"
@@ -179,6 +181,14 @@ impl<'g> WriteTxn<'g> {
             let _fanout_guard = crate::reentry::FanoutGuard::enter();
             notify_providers(&self.providers, &changes);
         }
+
+        metrics::counter_inc(metrics::COMMITS_TOTAL);
+        metrics::histogram_record(
+            metrics::COMMIT_DURATION_SECONDS,
+            started.elapsed().as_secs_f64(),
+        );
+        metrics::gauge_set(metrics::GRAPH_NODES, self.read().node_count() as f64);
+        metrics::gauge_set(metrics::GRAPH_EDGES, self.read().edge_count() as f64);
 
         Ok(CommitOutcome {
             generation,

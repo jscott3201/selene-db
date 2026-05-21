@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
+use std::time::Instant;
 
-use selene_core::{NodeId, Origin};
+use selene_core::{NodeId, Origin, metrics};
 
 use crate::{
     DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, ProviderRegistry, SectionEntry,
@@ -54,6 +55,7 @@ impl RecoveryOutcome {
 /// applied snapshot epoch.
 #[tracing::instrument(name = "selene.persist.recover", skip(registry), fields(dir = %dir.display()))]
 pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<RecoveryOutcome> {
+    let started = Instant::now();
     let mut outcome = RecoveryOutcome::empty();
     let mut providers_invoked = BTreeSet::new();
 
@@ -61,6 +63,11 @@ pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<Recover
     outcome.last_wal_seq = outcome.applied_snapshot_seq;
     replay_wal(dir, registry, &mut outcome, &mut providers_invoked)?;
     outcome.providers_invoked = providers_invoked.into_iter().collect();
+    metrics::counter_inc(metrics::RECOVERIES_TOTAL);
+    metrics::histogram_record(
+        metrics::RECOVERY_DURATION_SECONDS,
+        started.elapsed().as_secs_f64(),
+    );
     Ok(outcome)
 }
 

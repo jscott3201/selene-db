@@ -32,6 +32,7 @@ criterion.workspace = true
 iai-callgrind.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
+metrics.workspace = true
 parking_lot.workspace = true
 proptest.workspace = true
 rstest.workspace = true
@@ -56,6 +57,10 @@ required-features = ["test-harness"]
 [[test]]
 name = "evaluator_completeness"
 required-features = ["test-harness"]
+
+[[test]]
+name = "metrics_emit_under_feature"
+required-features = ["metrics"]
 
 [[bench]]
 name = "parse"
