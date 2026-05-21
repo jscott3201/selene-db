@@ -2,8 +2,11 @@
 
 use std::sync::Arc;
 
+use selene_core::{Value, metrics};
+use selene_gql::{GraphContext, ProcedureError, ProcedureResult};
 use selene_pack::{
-    ExternalGraphProcedure, ExternalProcedurePack, ProcedurePackRegistry, RegistryError,
+    ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
+    ExternalProcedurePack, ProcedurePackRegistry, RegistryError,
 };
 
 use crate::{
@@ -76,6 +79,50 @@ impl AlgorithmsPack {
         procedures.extend(community::procedures(Arc::clone(&self.state)));
         procedures.extend(structural::procedures(Arc::clone(&self.state)));
         procedures.extend(pathfinding::procedures(Arc::clone(&self.state)));
-        procedures
+        procedures.into_iter().map(measured).collect()
+    }
+}
+
+fn measured(inner: Arc<dyn ExternalGraphProcedure>) -> Arc<dyn ExternalGraphProcedure> {
+    Arc::new(MeasuredGraphProcedure { inner })
+}
+
+struct MeasuredGraphProcedure {
+    inner: Arc<dyn ExternalGraphProcedure>,
+}
+
+impl ExternalProcedureMetadata for MeasuredGraphProcedure {
+    fn name(&self) -> &'static [&'static str] {
+        self.inner.name()
+    }
+
+    fn description(&self) -> &'static str {
+        self.inner.description()
+    }
+
+    fn since_version(&self) -> &'static str {
+        self.inner.since_version()
+    }
+
+    fn signature(&self) -> Vec<ExternalParameter> {
+        self.inner.signature()
+    }
+
+    fn output_columns(&self) -> Vec<ExternalOutputColumn> {
+        self.inner.output_columns()
+    }
+}
+
+impl ExternalGraphProcedure for MeasuredGraphProcedure {
+    fn execute(
+        &self,
+        ctx: &GraphContext<'_>,
+        args: &[Value],
+    ) -> Result<ProcedureResult, ProcedureError> {
+        let result = self.inner.execute(ctx, args);
+        if result.is_ok() {
+            metrics::counter_inc(metrics::ALGORITHM_RUNS_TOTAL);
+        }
+        result
     }
 }

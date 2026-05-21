@@ -1,12 +1,12 @@
 //! Top-level statement executor.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
-use selene_core::{CancellationToken, Change};
+use selene_core::{CancellationToken, Change, metrics};
 use selene_graph::CommitOutcome;
 
 use crate::{
-    ExecutionPlan, ProcedureRegistry, SourceSpan, StatementCategory,
+    ExecutionPlan, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
     ast::Statement,
     parser::parse,
@@ -76,6 +76,7 @@ pub fn execute_statement(
             span: SourceSpan::default(),
         });
     }
+    let started = Instant::now();
     let counts_toward_tx =
         plan.category != StatementCategory::TransactionControl && session.active_txn.is_some();
     let result = match plan.category {
@@ -92,6 +93,7 @@ pub fn execute_statement(
             session.aborted = true;
         }
     }
+    record_statement_metrics(plan, started);
     result
 }
 
@@ -377,4 +379,40 @@ fn write_output_from_commit(
         Some(table)
     };
     StatementOutput::Written(WriteOutcome::from_commit(outcome, rows))
+}
+
+fn record_statement_metrics(plan: &ExecutionPlan, started: Instant) {
+    let label = metrics::Label::new(metrics::STATEMENT_KIND_LABEL, statement_kind(plan));
+    metrics::counter_inc_with_label(metrics::QUERIES_TOTAL, label);
+    metrics::histogram_record_with_label(
+        metrics::QUERY_DURATION_SECONDS,
+        started.elapsed().as_secs_f64(),
+        label,
+    );
+}
+
+fn statement_kind(plan: &ExecutionPlan) -> &'static str {
+    if let Some(kind) = plan.pipeline.iter().find_map(pipeline_statement_kind) {
+        return kind;
+    }
+    match plan.category {
+        StatementCategory::ReadOnly => "query",
+        StatementCategory::DataModifying => "mutation",
+        StatementCategory::CatalogModifying => "catalog",
+        StatementCategory::TransactionControl => "transaction",
+    }
+}
+
+fn pipeline_statement_kind(op: &PipelineOp) -> Option<&'static str> {
+    match op {
+        PipelineOp::Union { .. } | PipelineOp::Chain(_) => Some("composite"),
+        PipelineOp::Call(_) => Some("call"),
+        PipelineOp::Mutation(_) => Some("mutation"),
+        PipelineOp::Catalog(_) => Some("catalog"),
+        PipelineOp::ExplainPlan { .. } => Some("explain"),
+        PipelineOp::Tx(TxOp::Start { .. }) => Some("start_transaction"),
+        PipelineOp::Tx(TxOp::Commit { .. }) => Some("commit"),
+        PipelineOp::Tx(TxOp::Rollback { .. }) => Some("rollback"),
+        _ => None,
+    }
 }

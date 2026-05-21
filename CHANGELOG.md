@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Feature-gated `metrics` facade with query, commit, persistence, recovery,
+  cancellation, vector search, algorithm, and graph-size metrics.
 - `EXCEPT`, `EXCEPT ALL`, `INTERSECT`, `INTERSECT ALL`, and `OTHERWISE`
   set-operation runtime support per ISO GQL §14, including `RuntimeEqKey`
   grouping semantics and a configurable implementation-defined set-op key cap.

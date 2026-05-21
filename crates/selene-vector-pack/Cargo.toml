@@ -11,6 +11,7 @@ description = "Procedure-pack adapters for selene vector indexes"
 autobenches = false
 
 [features]
+metrics = ["selene-core/metrics"]
 test-harness = ["selene-gql/test-harness"]
 
 [dependencies]

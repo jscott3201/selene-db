@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use roaring::RoaringBitmap;
-use selene_core::Value;
+use selene_core::{Value, metrics};
 use selene_gql::{GqlType, GraphContext, ProcedureError, ProcedureResult};
 use selene_pack::{
     ExternalGraphProcedure, ExternalOutputColumn, ExternalParameter, ExternalProcedureMetadata,
@@ -88,6 +88,7 @@ impl ExternalGraphProcedure for SearchProcedure {
                     vec![Value::NodeRef(node_id), Value::Float(f64::from(score))]
                 })
                 .collect();
+            metrics::counter_inc(metrics::VECTOR_SEARCHES_TOTAL);
             Ok(ProcedureResult { rows })
         })
     }

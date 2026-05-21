@@ -28,6 +28,9 @@ miette.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
+[features]
+metrics = ["selene-core/metrics"]
+
 [dev-dependencies]
 criterion.workspace = true
 iai-callgrind.workspace = true
