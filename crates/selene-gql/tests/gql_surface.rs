@@ -101,7 +101,10 @@ fn show_indexes_lists_property_indexes_only() {
         .expect("index creation executes");
     let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
 
-    assert_eq!(column_strings(&table, "name"), vec!["Sensor_timestamp_idx"]);
+    assert_eq!(
+        column_strings(&table, "name"),
+        vec!["idx:6:Sensor:9:timestamp"]
+    );
     assert_eq!(column_strings(&table, "label"), vec!["Sensor"]);
     assert_eq!(column_strings(&table, "property"), vec!["timestamp"]);
     assert_eq!(column_strings(&table, "kind"), vec!["i64"]);

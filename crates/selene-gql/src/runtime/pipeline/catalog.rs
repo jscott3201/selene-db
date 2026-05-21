@@ -1,10 +1,11 @@
 //! Catalog DDL pipeline operator.
 
 use selene_core::{IStr, LabelSet, PropertyValueType, Value, intern_with_admission};
-use selene_graph::{
-    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, TypedIndexKind,
-};
+use selene_graph::{EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
+use super::catalog_index::{
+    inline_index_specs, render_index_kind, render_index_name, validate_index_name_collisions,
+};
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, EdgeEndpointSpec, GqlType,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, ProcedureMetadata, ProcedureMutability,
@@ -41,7 +42,7 @@ pub(super) fn execute(
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             let indexes = inline_index_specs(properties)?;
             validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
-            let properties = property_defs(properties)?;
+            let properties = property_defs(properties, true)?;
             {
                 let mut mutator =
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?;
@@ -74,7 +75,7 @@ pub(super) fn execute(
                 })?;
             let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
             let (source, target) = resolve_endpoints(endpoints, &graph_type, *span)?;
-            let properties = property_defs(properties)?;
+            let properties = property_defs(properties, false)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(*label, *label, source, target, properties)
                 .map_err(|source| catalog_graph_error(source, *span))?;
@@ -193,11 +194,18 @@ fn single_endpoint(
 
 fn property_defs(
     properties: &[PlannedTypePropertyDef],
+    allow_inline_indexed: bool,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
-    properties.iter().map(property_def).collect()
+    properties
+        .iter()
+        .map(|property| property_def(property, allow_inline_indexed))
+        .collect()
 }
 
-fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, ExecutorError> {
+fn property_def(
+    property: &PlannedTypePropertyDef,
+    allow_inline_indexed: bool,
+) -> Result<PropertyTypeDef, ExecutorError> {
     let mut required = false;
     for constraint in &property.constraints {
         match constraint {
@@ -214,6 +222,12 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
                     detail: "type property constraint not implemented (Phase A: NOT NULL only)",
                 });
             }
+            PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
+                return Err(ExecutorError::FeatureNotInV1_1 {
+                    feature: "inline INDEXED on edge properties",
+                    span: *span,
+                });
+            }
             PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
@@ -222,76 +236,6 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
         value_type: gql_type_to_property_value_type(&property.gql_type)?,
         required,
     })
-}
-
-struct InlineIndexSpec {
-    property: IStr,
-    kind: TypedIndexKind,
-    name: Option<IStr>,
-    span: SourceSpan,
-}
-fn inline_index_specs(
-    properties: &[PlannedTypePropertyDef],
-) -> Result<Vec<InlineIndexSpec>, ExecutorError> {
-    let mut indexes = Vec::new();
-    for property in properties {
-        for constraint in &property.constraints {
-            if let PlannedTypePropertyConstraint::Indexed { name, span } = constraint {
-                indexes.push(InlineIndexSpec {
-                    property: property.name,
-                    kind: gql_type_to_index_kind(&property.gql_type, *span)?,
-                    name: *name,
-                    span: *span,
-                });
-            }
-        }
-    }
-    Ok(indexes)
-}
-fn validate_index_name_collisions(
-    label: IStr,
-    indexes: &[InlineIndexSpec],
-    graph: &selene_graph::SeleneGraph,
-) -> Result<(), ExecutorError> {
-    let mut used = graph
-        .iter_property_index_entries()
-        .map(|(label, property, _, name)| render_index_name(label, property, name))
-        .collect::<Vec<_>>();
-    for index in indexes {
-        let rendered = render_index_name(label, index.property, index.name);
-        if used.iter().any(|name| name == &rendered) {
-            let name = index.name.unwrap_or(intern_runtime(&rendered)?);
-            return Err(ExecutorError::DuplicateObject {
-                kind: "index",
-                name,
-                span: index.span,
-            });
-        }
-        used.push(rendered);
-    }
-    Ok(())
-}
-fn gql_type_to_index_kind(
-    gql_type: &GqlType,
-    span: SourceSpan,
-) -> Result<TypedIndexKind, ExecutorError> {
-    match gql_type {
-        GqlType::String => Ok(TypedIndexKind::String),
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => Ok(TypedIndexKind::I64),
-        GqlType::Float | GqlType::Float64 => Ok(TypedIndexKind::F64),
-        GqlType::Date => Ok(TypedIndexKind::Date),
-        GqlType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "inline INDEXED for this GQL type",
-            span,
-        }),
-    }
 }
 
 fn gql_type_to_property_value_type(gql_type: &GqlType) -> Result<PropertyValueType, ExecutorError> {
@@ -409,12 +353,6 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
     ))
 }
 
-fn render_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
-    explicit
-        .map(|name| name.as_str().to_owned())
-        .unwrap_or_else(|| format!("{}_{}_idx", label.as_str(), property.as_str()))
-}
-
 fn show_procedures(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {
     let mut procedures = ctx.registry().iter_handles().collect::<Vec<_>>();
     procedures.sort_by(|(left, _), (right, _)| {
@@ -476,23 +414,12 @@ fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
     Ok(BindingTableSchema { columns })
 }
 
-fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
+pub(super) fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
     intern_with_admission(value)
         .map(|(value, _was_new)| value)
         .map_err(|_err| ExecutorError::ImplementationDefined {
             detail: "interner cap exhausted during catalog rendering",
         })
-}
-
-fn render_index_kind(kind: TypedIndexKind) -> &'static str {
-    match kind {
-        TypedIndexKind::I64 => "i64",
-        TypedIndexKind::F64 => "f64",
-        TypedIndexKind::String => "string",
-        TypedIndexKind::Date => "date",
-        TypedIndexKind::LocalDateTime => "local_datetime",
-        TypedIndexKind::Uuid => "uuid",
-    }
 }
 
 fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding, ExecutorError> {

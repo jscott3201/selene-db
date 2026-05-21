@@ -3,6 +3,7 @@
 mod aggregate;
 mod call;
 mod catalog;
+mod catalog_index;
 mod chain;
 mod distinct;
 mod explain;
