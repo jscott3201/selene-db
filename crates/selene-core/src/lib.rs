@@ -27,6 +27,7 @@ pub mod hlc;
 pub mod identity;
 pub mod istr;
 pub mod label_set;
+pub mod metrics;
 pub mod origin;
 pub mod pack_lifecycle;
 pub mod property_map;

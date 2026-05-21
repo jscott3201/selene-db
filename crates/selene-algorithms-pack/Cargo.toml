@@ -11,6 +11,7 @@ description = "Procedure-pack adapters for selene graph algorithms"
 autobenches = false
 
 [features]
+metrics = ["selene-core/metrics"]
 test-harness = []
 
 [dependencies]

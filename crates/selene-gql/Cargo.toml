@@ -23,6 +23,7 @@ tracing.workspace = true
 lru.workspace = true
 
 [features]
+metrics = ["selene-core/metrics"]
 test-harness = []
 plan-cache-source-tracing = []
 

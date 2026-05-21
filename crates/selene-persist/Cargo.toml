@@ -21,6 +21,9 @@ xxhash-rust.workspace = true
 zstd.workspace = true
 tracing.workspace = true
 
+[features]
+metrics = ["selene-core/metrics"]
+
 [dev-dependencies]
 criterion.workspace = true
 iai-callgrind.workspace = true

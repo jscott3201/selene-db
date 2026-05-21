@@ -20,12 +20,16 @@ smallvec.workspace = true
 bytes.workspace = true
 serde.workspace = true
 rkyv.workspace = true
+metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest.workspace = true
 rstest.workspace = true
 insta.workspace = true
 postcard.workspace = true
+
+[features]
+metrics = ["dep:metrics"]
 
 [lints]
 workspace = true
