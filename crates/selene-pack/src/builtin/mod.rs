@@ -5,6 +5,7 @@ pub(crate) mod drop_index;
 pub(crate) mod feature_status;
 pub(crate) mod health;
 pub(crate) mod pack_history;
+pub(crate) mod verify;
 
 use selene_gql::{
     GqlType, GraphContext, MutationContext, ProcedureDefaultValue, ProcedureError,
@@ -163,7 +164,7 @@ mod tests {
     use super::{
         BuiltInMetadata, UNSTABLE_BUILTIN_CONTENT_HASH, create_index::SeleneCreateIndex,
         drop_index::SeleneDropIndex, feature_status::SeleneFeatureStatus, health::SeleneHealth,
-        pack_history::SelenePackHistory,
+        pack_history::SelenePackHistory, verify::SeleneVerify,
     };
 
     struct DummyHistory;
@@ -182,9 +183,10 @@ mod tests {
     #[test]
     fn every_platform_builtin_uses_unstable_content_hash_sentinel() {
         let history = SelenePackHistory::new(Arc::new(DummyHistory));
-        let builtins: [&dyn BuiltInMetadata; 5] = [
+        let builtins: [&dyn BuiltInMetadata; 6] = [
             &SeleneHealth,
             &SeleneFeatureStatus,
+            &SeleneVerify,
             &SeleneCreateIndex,
             &SeleneDropIndex,
             &history,

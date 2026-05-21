@@ -142,8 +142,9 @@ fn show_procedures_lists_default_pack_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 35);
+    assert_eq!(table.row_count(), 36);
     assert!(names.contains(&"selene.feature_status".to_owned()));
+    assert!(names.contains(&"selene.verify".to_owned()));
     assert!(names.contains(&"vector.list_indexes".to_owned()));
     assert!(names.contains(&"algo.pagerank".to_owned()));
 }
