@@ -16,7 +16,7 @@ use crate::core_provider::{
     CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB, inconsistent,
     invalid_payload,
 };
-use crate::graph::{GraphMeta, SeleneGraph};
+use crate::graph::{GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 use crate::store::{edge_row_index, node_row_index};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
@@ -42,6 +42,7 @@ enum PendingIndex {
         label: IStr,
         property: IStr,
         kind: TypedIndexKind,
+        name: Option<IStr>,
     },
     Drop {
         label: IStr,
@@ -185,6 +186,7 @@ impl RecoveryState {
                         self.pending_schema_changes.push(change.clone());
                     }
                     SchemaChange::PropertyIndexCreated { .. }
+                    | SchemaChange::PropertyIndexCreatedNamed { .. }
                     | SchemaChange::PropertyIndexDropped { .. } => {
                         let pending = pending_property_index_change(change)
                             .expect("property-index variants map to pending recovery intent");
@@ -315,7 +317,7 @@ impl RecoveryState {
         for (key, entry) in self.schemas {
             graph.property_index.insert(
                 (key.label, key.property),
-                Arc::new(TypedIndex::new(entry.kind)),
+                PropertyIndexEntry::new(TypedIndex::new(entry.kind), entry.name),
             );
         }
         replay_property_index_changes(&mut graph, &self.pending_property_index_changes)?;
@@ -340,6 +342,18 @@ fn pending_property_index_change(change: &SchemaChange) -> Option<PendingIndex> 
             label: *label,
             property: *property,
             kind: typed_kind_from(*kind),
+            name: None,
+        }),
+        SchemaChange::PropertyIndexCreatedNamed {
+            label,
+            property,
+            kind,
+            name,
+        } => Some(PendingIndex::Create {
+            label: *label,
+            property: *property,
+            kind: typed_kind_from(*kind),
+            name: *name,
         }),
         SchemaChange::PropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
             label: *label,
@@ -359,13 +373,14 @@ fn replay_property_index_changes(
                 label,
                 property,
                 kind,
+                name,
             } => {
                 let index = crate::property_index::build_property_index_lenient(
                     graph, label, property, kind,
                 )?;
                 graph
                     .property_index
-                    .insert((label, property), Arc::new(index));
+                    .insert((label, property), PropertyIndexEntry::new(index, name));
             }
             PendingIndex::Drop { label, property } => {
                 graph.property_index.remove(&(label, property));
@@ -462,7 +477,9 @@ fn apply_schema_change(
             // Why: legacy, never emitted; postcard discriminant pinned for ABI
             // stability.
         }
-        SchemaChange::PropertyIndexCreated { .. } | SchemaChange::PropertyIndexDropped { .. } => {
+        SchemaChange::PropertyIndexCreated { .. }
+        | SchemaChange::PropertyIndexDropped { .. }
+        | SchemaChange::PropertyIndexCreatedNamed { .. } => {
             // Why: property-index intent is queued by apply_change and replayed
             // after primary node/edge rows materialize.
         }
@@ -605,6 +622,7 @@ fn schema_change_variant(change: &SchemaChange) -> &'static str {
         SchemaChange::PropertyIndexCreated { .. } => "PropertyIndexCreated",
         SchemaChange::PropertyIndexDropped { .. } => "PropertyIndexDropped",
         SchemaChange::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
+        SchemaChange::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
     }
 }
 

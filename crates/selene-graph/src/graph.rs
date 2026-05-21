@@ -16,6 +16,32 @@ use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 
+/// Registered built-in property-index metadata.
+#[derive(Clone, Debug)]
+pub struct PropertyIndexEntry {
+    /// Index data for the `(label, property)` registration.
+    pub index: Arc<TypedIndex>,
+    /// Optional explicit catalog name. `None` means the name is derived at render time.
+    pub name: Option<IStr>,
+}
+
+impl PropertyIndexEntry {
+    /// Construct an index entry from the built index and optional explicit name.
+    #[must_use]
+    pub fn new(index: TypedIndex, name: Option<IStr>) -> Self {
+        Self {
+            index: Arc::new(index),
+            name,
+        }
+    }
+
+    /// Return the registered index kind.
+    #[must_use]
+    pub fn kind(&self) -> TypedIndexKind {
+        self.index.kind()
+    }
+}
+
 /// Snapshot metadata.
 #[derive(
     Clone,
@@ -59,7 +85,7 @@ pub struct SeleneGraph {
     /// Bitmap of edge rows carrying each edge label.
     pub idx_edge_label: HashMap<IStr, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
-    pub property_index: FxHashMap<(IStr, IStr), Arc<TypedIndex>>,
+    pub property_index: FxHashMap<(IStr, IStr), PropertyIndexEntry>,
 }
 
 impl SeleneGraph {
@@ -220,7 +246,7 @@ impl SeleneGraph {
     pub fn property_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<TypedIndex>> {
         self.property_index
             .get(&(*label, *property))
-            .map(Arc::clone)
+            .map(|entry| Arc::clone(&entry.index))
     }
 
     /// Number of distinct `(label, property)` indexes currently registered.
@@ -237,7 +263,16 @@ impl SeleneGraph {
     pub fn iter_property_indexes(&self) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind)> + '_ {
         self.property_index
             .iter()
-            .map(|((label, property), index)| (*label, *property, index.kind()))
+            .map(|((label, property), entry)| (*label, *property, entry.kind()))
+    }
+
+    /// Iterate built-in property indexes with optional explicit catalog names.
+    pub fn iter_property_index_entries(
+        &self,
+    ) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind, Option<IStr>)> + '_ {
+        self.property_index
+            .iter()
+            .map(|((label, property), entry)| (*label, *property, entry.kind(), entry.name))
     }
 
     /// Return rows matching `value` under a registered property index.
@@ -254,7 +289,7 @@ impl SeleneGraph {
     ) -> Option<Cow<'_, RoaringBitmap>> {
         self.property_index
             .get(&(*label, *property))
-            .and_then(|index| index.lookup_eq(value))
+            .and_then(|entry| entry.index.lookup_eq(value))
     }
 
     /// Return rows matching `range` under a registered property index.
@@ -274,7 +309,7 @@ impl SeleneGraph {
     {
         self.property_index
             .get(&(*label, *property))
-            .and_then(|index| index.lookup_range(range))
+            .and_then(|entry| entry.index.lookup_range(range))
     }
 
     /// Return rows whose string property key starts with `prefix`.
@@ -290,7 +325,7 @@ impl SeleneGraph {
     ) -> Option<RoaringBitmap> {
         self.property_index
             .get(&(*label, *property))
-            .and_then(|index| index.lookup_prefix(prefix))
+            .and_then(|entry| entry.index.lookup_prefix(prefix))
     }
 
     fn live_node_row(&self, id: NodeId) -> Option<usize> {

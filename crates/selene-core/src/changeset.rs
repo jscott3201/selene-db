@@ -393,6 +393,21 @@ pub enum SchemaChange {
         /// Pack lifecycle event payload.
         event: PackLifecycleEvent,
     },
+    /// Property index creation with optional explicit catalog name.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable. Old WALs continue
+    /// to decode through [`SchemaChange::PropertyIndexCreated`].
+    PropertyIndexCreatedNamed {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property key.
+        property: IStr,
+        /// Declared index value kind.
+        kind: SchemaPropertyIndexKind,
+        /// Optional explicit catalog name.
+        name: Option<IStr>,
+    },
 }
 
 /// Schema-level property index value kind.
@@ -747,12 +762,12 @@ mod tests {
     fn schema_change_variants_construct() {
         let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
         assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-        assert_eq!(SchemaChange::VARIANT_COUNT, 15);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
     }
 
     #[test]
     fn schema_change_all_covers_every_variant() {
-        assert_eq!(SchemaChange::VARIANT_COUNT, 15);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in SchemaChange::ALL {

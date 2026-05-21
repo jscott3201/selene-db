@@ -247,6 +247,19 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// Catalog object name collides with an existing declaration.
+    #[error("duplicate {kind} name: {name}")]
+    #[diagnostic(code(SLENE_X_42N10))]
+    DuplicateObject {
+        /// Object class.
+        kind: &'static str,
+        /// Colliding object name.
+        name: IStr,
+        /// Source span of the duplicate name.
+        #[label("duplicate object name")]
+        span: SourceSpan,
+    },
+
     /// Transaction state does not permit the requested executor operation.
     #[error("invalid transaction state: {detail}")]
     #[diagnostic(code(SLENE_X_25000))]
@@ -391,6 +404,7 @@ impl ExecutorError {
             | Self::FunctionArityMismatch { .. }
             | Self::InvalidFunctionModifier { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::DuplicateObject { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::InvalidTransactionState { .. } => GqlStatus::READ_ONLY_TRANSACTION_VIOLATION,
             Self::TransactionAlreadyActive { .. } => GqlStatus::ACTIVE_TRANSACTION,
             Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_TERMINATION,

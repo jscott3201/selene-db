@@ -313,7 +313,7 @@ fn recover_from_wal_only_replays_property_index_created() {
         [
             Change::NodeCreated { .. },
             Change::SchemaChanged {
-                change: selene_core::SchemaChange::PropertyIndexCreated { .. },
+                change: selene_core::SchemaChange::PropertyIndexCreatedNamed { .. },
                 ..
             }
         ]
@@ -355,7 +355,7 @@ fn recover_from_wal_only_replays_property_index_dropped() {
         [
             Change::NodeCreated { .. },
             Change::SchemaChanged {
-                change: selene_core::SchemaChange::PropertyIndexCreated { .. },
+                change: selene_core::SchemaChange::PropertyIndexCreatedNamed { .. },
                 ..
             },
             Change::SchemaChanged {

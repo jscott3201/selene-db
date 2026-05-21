@@ -16,7 +16,7 @@ use crate::adjacency::AdjacencyEdge;
 use crate::core_provider::{CoreProvider, DurableState};
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
-use crate::graph::SeleneGraph;
+use crate::graph::{PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
@@ -239,6 +239,17 @@ impl SharedGraph {
         property: IStr,
         kind: TypedIndexKind,
     ) -> GraphResult<()> {
+        self.create_property_index_named(label, property, kind, None)
+    }
+
+    /// Register a built-in node property index with optional catalog name.
+    pub fn create_property_index_named(
+        &self,
+        label: IStr,
+        property: IStr,
+        kind: TypedIndexKind,
+        name: Option<IStr>,
+    ) -> GraphResult<()> {
         let mut txn = self.begin_write();
         if txn.read().property_index.contains_key(&(label, property)) {
             return Err(GraphError::PropertyIndexAlreadyExists { label, property });
@@ -246,14 +257,15 @@ impl SharedGraph {
         let index = crate::property_index::build_property_index(txn.read(), label, property, kind)?;
         txn.guard_mut()
             .property_index
-            .insert((label, property), Arc::new(index));
+            .insert((label, property), PropertyIndexEntry::new(index, name));
         let graph = txn.read().graph_id();
         txn.changes.push(Change::SchemaChanged {
             graph,
-            change: SchemaChange::PropertyIndexCreated {
+            change: SchemaChange::PropertyIndexCreatedNamed {
                 label,
                 property,
                 kind: schema_kind_from(kind),
+                name,
             },
         });
         txn.commit()?;

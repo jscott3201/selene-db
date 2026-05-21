@@ -332,7 +332,7 @@ fn walk_catalog_exprs(
                         PlannedTypePropertyConstraint::NotNull(_)
                         | PlannedTypePropertyConstraint::Immutable(_)
                         | PlannedTypePropertyConstraint::Unique(_)
-                        | PlannedTypePropertyConstraint::Indexed(_)
+                        | PlannedTypePropertyConstraint::Indexed { .. }
                         | PlannedTypePropertyConstraint::Searchable(_)
                         | PlannedTypePropertyConstraint::Dictionary(_)
                         | PlannedTypePropertyConstraint::Fill(_, _)

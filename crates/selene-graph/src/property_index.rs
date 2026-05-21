@@ -6,16 +6,15 @@
 //! stricter and returns a typed error because silently creating a partial index
 //! would be harder to reason about.
 
-use std::collections::BTreeSet;
-use std::sync::Arc;
-
 use rustc_hash::FxHashMap;
 use selene_core::{IStr, LabelSet, PropertyMap, Value};
+use std::collections::BTreeSet;
 
 use crate::error::{GraphError, GraphResult};
+use crate::graph::PropertyIndexEntry;
 use crate::typed_index::{TypedIndex, TypedIndexKind, TypedIndexValueError};
 
-type PropertyIndexMap = FxHashMap<(IStr, IStr), Arc<TypedIndex>>;
+type PropertyIndexMap = FxHashMap<(IStr, IStr), PropertyIndexEntry>;
 
 pub(crate) fn apply_node_create(
     indexes: &mut PropertyIndexMap,
@@ -191,17 +190,17 @@ fn build_property_index_inner(
 /// of a runtime-accepted snapshot never fails. The strict policy lives
 /// at registration only.
 pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
-    let registrations: Vec<((IStr, IStr), TypedIndexKind)> = graph
+    let registrations: Vec<((IStr, IStr), TypedIndexKind, Option<IStr>)> = graph
         .property_index
         .iter()
-        .map(|(key, index)| (*key, index.kind()))
+        .map(|(key, entry)| (*key, entry.kind(), entry.name))
         .collect();
     graph.property_index.clear();
-    for ((label, property), kind) in registrations {
+    for ((label, property), kind, name) in registrations {
         let index = build_property_index_lenient(graph, label, property, kind)?;
         graph
             .property_index
-            .insert((label, property), Arc::new(index));
+            .insert((label, property), PropertyIndexEntry::new(index, name));
     }
     Ok(())
 }
@@ -217,7 +216,7 @@ fn values_share_key(
         (None, None) => true,
         (Some(old_value), Some(new_value)) => indexes
             .get(&(label, property))
-            .is_some_and(|index| index.values_share_key(old_value, new_value)),
+            .is_some_and(|entry| entry.index.values_share_key(old_value, new_value)),
         _ => false,
     }
 }
@@ -242,7 +241,7 @@ fn insert_commit(
     row: u32,
 ) {
     if let Some(index) = indexes.get_mut(&(label, property))
-        && let Err(err) = Arc::make_mut(index).insert(value, row)
+        && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
     {
         warn_rejected("insert", label, property, row, err);
     }
@@ -256,7 +255,7 @@ fn remove_commit(
     row: u32,
 ) {
     if let Some(index) = indexes.get_mut(&(label, property))
-        && let Err(err) = Arc::make_mut(index).remove(value, row)
+        && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
     {
         warn_rejected("remove", label, property, row, err);
     }

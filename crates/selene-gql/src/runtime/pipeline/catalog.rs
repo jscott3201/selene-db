@@ -1,10 +1,11 @@
 //! Catalog DDL pipeline operator.
 
 use selene_core::{IStr, LabelSet, PropertyValueType, Value, intern_with_admission};
-use selene_graph::{
-    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, TypedIndexKind,
-};
+use selene_graph::{EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
+use super::catalog_index::{
+    inline_index_specs, render_index_kind, render_index_name, validate_index_name_collisions,
+};
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, EdgeEndpointSpec, GqlType,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, ProcedureMetadata, ProcedureMutability,
@@ -39,10 +40,21 @@ pub(super) fn execute(
         } => {
             reject_create_flags(*or_replace, *if_not_exists, extends, *validation_mode)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let properties = property_defs(properties)?;
-            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .create_node_type(*label, LabelSet::single(*label), properties)
-                .map_err(|source| catalog_graph_error(source, *span))?;
+            let indexes = inline_index_specs(properties)?;
+            validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
+            let properties = property_defs(properties, true)?;
+            {
+                let mut mutator =
+                    ctx.mutator_with_span("catalog op invoked without write transaction", *span)?;
+                mutator
+                    .create_node_type(*label, LabelSet::single(*label), properties)
+                    .map_err(|source| catalog_graph_error(source, *span))?;
+                for index in indexes {
+                    mutator
+                        .create_property_index_named(*label, index.property, index.kind, index.name)
+                        .map_err(|source| catalog_graph_error(source, index.span))?;
+                }
+            }
             Ok(table)
         }
         CatalogOp::CreateEdgeType {
@@ -63,7 +75,7 @@ pub(super) fn execute(
                 })?;
             let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
             let (source, target) = resolve_endpoints(endpoints, &graph_type, *span)?;
-            let properties = property_defs(properties)?;
+            let properties = property_defs(properties, false)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(*label, *label, source, target, properties)
                 .map_err(|source| catalog_graph_error(source, *span))?;
@@ -182,11 +194,18 @@ fn single_endpoint(
 
 fn property_defs(
     properties: &[PlannedTypePropertyDef],
+    allow_inline_indexed: bool,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
-    properties.iter().map(property_def).collect()
+    properties
+        .iter()
+        .map(|property| property_def(property, allow_inline_indexed))
+        .collect()
 }
 
-fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, ExecutorError> {
+fn property_def(
+    property: &PlannedTypePropertyDef,
+    allow_inline_indexed: bool,
+) -> Result<PropertyTypeDef, ExecutorError> {
     let mut required = false;
     for constraint in &property.constraints {
         match constraint {
@@ -194,7 +213,6 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
             PlannedTypePropertyConstraint::Default(_, _)
             | PlannedTypePropertyConstraint::Immutable(_)
             | PlannedTypePropertyConstraint::Unique(_)
-            | PlannedTypePropertyConstraint::Indexed(_)
             | PlannedTypePropertyConstraint::Searchable(_)
             | PlannedTypePropertyConstraint::Dictionary(_)
             | PlannedTypePropertyConstraint::Fill(_, _)
@@ -204,6 +222,13 @@ fn property_def(property: &PlannedTypePropertyDef) -> Result<PropertyTypeDef, Ex
                     detail: "type property constraint not implemented (Phase A: NOT NULL only)",
                 });
             }
+            PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
+                return Err(ExecutorError::FeatureNotInV1_1 {
+                    feature: "inline INDEXED on edge properties",
+                    span: *span,
+                });
+            }
+            PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
     Ok(PropertyTypeDef {
@@ -298,9 +323,12 @@ fn show_edge_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
 }
 
 fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> {
-    let mut indexes = ctx.snapshot().iter_property_indexes().collect::<Vec<_>>();
+    let mut indexes = ctx
+        .snapshot()
+        .iter_property_index_entries()
+        .collect::<Vec<_>>();
     indexes.sort_by(
-        |(left_label, left_property, _), (right_label, right_property, _)| {
+        |(left_label, left_property, _, _), (right_label, right_property, _, _)| {
             left_label
                 .as_str()
                 .cmp(right_label.as_str())
@@ -309,8 +337,10 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
     );
     let rows = indexes
         .into_iter()
-        .map(|(label, property, kind)| {
+        .map(|(label, property, kind, name)| {
+            let name = render_index_name(label, property, name);
             Ok(Binding::new([
+                Value::String(intern_runtime(&name)?),
                 Value::String(label),
                 Value::String(property),
                 Value::String(intern_runtime(render_index_kind(kind))?),
@@ -318,7 +348,7 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;
     Ok(BindingTable::new(
-        string_schema(&["label", "property", "kind"])?,
+        string_schema(&["name", "label", "property", "kind"])?,
         rows,
     ))
 }
@@ -384,23 +414,12 @@ fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
     Ok(BindingTableSchema { columns })
 }
 
-fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
+pub(super) fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
     intern_with_admission(value)
         .map(|(value, _was_new)| value)
         .map_err(|_err| ExecutorError::ImplementationDefined {
             detail: "interner cap exhausted during catalog rendering",
         })
-}
-
-fn render_index_kind(kind: TypedIndexKind) -> &'static str {
-    match kind {
-        TypedIndexKind::I64 => "i64",
-        TypedIndexKind::F64 => "f64",
-        TypedIndexKind::String => "string",
-        TypedIndexKind::Date => "date",
-        TypedIndexKind::LocalDateTime => "local_datetime",
-        TypedIndexKind::Uuid => "uuid",
-    }
 }
 
 fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding, ExecutorError> {

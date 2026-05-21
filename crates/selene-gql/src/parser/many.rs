@@ -516,12 +516,12 @@ fn rebase_property_def(property: &mut TypePropertyDef, offset: usize) {
             TypePropertyConstraint::NotNull(span)
             | TypePropertyConstraint::Immutable(span)
             | TypePropertyConstraint::Unique(span)
-            | TypePropertyConstraint::Indexed(span)
             | TypePropertyConstraint::Searchable(span)
             | TypePropertyConstraint::Dictionary(span)
             | TypePropertyConstraint::Fill(_, span)
             | TypePropertyConstraint::Interval(_, span)
             | TypePropertyConstraint::Encoding(_, span) => rebase_span(span, offset),
+            TypePropertyConstraint::Indexed { span, .. } => rebase_span(span, offset),
             TypePropertyConstraint::Default(value, span) => {
                 rebase_span(span, offset);
                 rebase_value(value, offset);

@@ -47,10 +47,11 @@ fn create_property_index_updates_working_graph_and_emits_schema_change() {
         outcome.changes.as_slice(),
         [Change::NodeCreated { .. }, Change::SchemaChanged {
             graph,
-            change: SchemaChange::PropertyIndexCreated {
+            change: SchemaChange::PropertyIndexCreatedNamed {
                 label: changed_label,
                 property: changed_property,
                 kind: SchemaPropertyIndexKind::I64,
+                name: None,
             },
         }] if *graph == GraphId::new(4201)
             && *changed_label == label

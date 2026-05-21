@@ -463,3 +463,29 @@ fn recover_round_trips_property_index_registrations() {
     assert_eq!(recovered.read().property_index_count(), 1);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn recover_round_trips_named_property_index_registrations() {
+    use crate::TypedIndexKind;
+
+    let dir = temp_dir("scma-named");
+    let shared = sample_shared_graph();
+    let label = intern("recover.named.node").unwrap();
+    let property = intern("recover.named.index").unwrap();
+    let name = intern("recover_named_index").unwrap();
+    shared
+        .create_property_index_named(label, property, TypedIndexKind::I64, Some(name))
+        .unwrap();
+    write_snapshot(&dir, &shared, shared.read().meta.generation);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    let entries = recovered
+        .read()
+        .iter_property_index_entries()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries,
+        vec![(label, property, TypedIndexKind::I64, Some(name))]
+    );
+    let _ = fs::remove_dir_all(dir);
+}

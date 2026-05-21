@@ -180,6 +180,22 @@ fn parse_type_property_constraints_exhaustively() {
 }
 
 #[test]
+fn parse_indexed_constraint_with_explicit_name() {
+    let DdlStatement::CreateNodeType { properties, .. } =
+        parse_ddl("CREATE NODE TYPE :Sensor (v :: STRING INDEXED AS sensor_v_idx)")
+    else {
+        panic!("expected CREATE NODE TYPE");
+    };
+    let TypePropertyConstraint::Indexed {
+        name: Some(name), ..
+    } = properties[0].constraints[0]
+    else {
+        panic!("expected named INDEXED constraint");
+    };
+    assert_eq!(name.as_str(), "sensor_v_idx");
+}
+
+#[test]
 fn parse_top_level_call_variants() {
     let Statement::Call(call) = parse("CALL pkg.fn(1, 'hello') YIELD col1").expect("CALL parses")
     else {

@@ -149,6 +149,12 @@ impl SchemaChange {
                 at: changeset_timestamp(1),
             },
         },
+        || Self::PropertyIndexCreatedNamed {
+            label: changeset_variant_istr("schema.all.node"),
+            property: changeset_variant_istr("schema.all.property"),
+            kind: SchemaPropertyIndexKind::I64,
+            name: Some(changeset_variant_istr("schema.all.index")),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -173,6 +179,7 @@ impl SchemaChange {
             Self::PropertyIndexCreated { .. } => "PropertyIndexCreated",
             Self::PropertyIndexDropped { .. } => "PropertyIndexDropped",
             Self::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
+            Self::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
         }
     }
 }

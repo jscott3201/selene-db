@@ -10,12 +10,14 @@ use selene_core::{
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
 use super::sections::{
-    SchemaEntry, SchemaKey, decode_edges, decode_graph_types, decode_meta, decode_nodes,
-    decode_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
+    SchemaEntry, SchemaEntryV1, SchemaKey, decode_edges, decode_graph_types, decode_meta,
+    decode_nodes, decode_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
     ensure_section_within_cap,
 };
 use super::*;
-use crate::{DurableProvider, GraphError, SharedGraph, TypedIndexKind};
+use crate::graph::PropertyIndexEntry;
+use crate::typed_index::TypedIndex;
+use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
 fn prop(name: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
@@ -240,13 +242,13 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
     let rows = vec![
         (
             apple_key,
-            SchemaEntry {
+            SchemaEntryV1 {
                 kind: TypedIndexKind::I64,
             },
         ),
         (
             zebra_key,
-            SchemaEntry {
+            SchemaEntryV1 {
                 kind: TypedIndexKind::String,
             },
         ),
@@ -263,16 +265,43 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
             (
                 zebra_key,
                 SchemaEntry {
-                    kind: TypedIndexKind::String
+                    kind: TypedIndexKind::String,
+                    name: None,
                 }
             ),
             (
                 apple_key,
                 SchemaEntry {
-                    kind: TypedIndexKind::I64
+                    kind: TypedIndexKind::I64,
+                    name: None,
                 }
             ),
         ]
+    );
+}
+
+#[test]
+fn scma_v2_round_trip_preserves_property_index_name() {
+    let label = intern("core.scma.named.label").unwrap();
+    let property = intern("core.scma.named.property").unwrap();
+    let name = intern("core.scma.named.index").unwrap();
+    let mut graph = SeleneGraph::new(GraphId::new(9991));
+    graph.property_index.insert(
+        (label, property),
+        PropertyIndexEntry::new(TypedIndex::new(TypedIndexKind::String), Some(name)),
+    );
+
+    let decoded = decode_schemas(&encode_schemas(&graph).unwrap()).unwrap();
+
+    assert_eq!(
+        decoded,
+        vec![(
+            SchemaKey { label, property },
+            SchemaEntry {
+                kind: TypedIndexKind::String,
+                name: Some(name),
+            }
+        )]
     );
 }
 
@@ -284,13 +313,13 @@ fn scma_decode_rejects_duplicate_keys_after_resort() {
     let rows = vec![
         (
             key,
-            SchemaEntry {
+            SchemaEntryV1 {
                 kind: TypedIndexKind::I64,
             },
         ),
         (
             key,
-            SchemaEntry {
+            SchemaEntryV1 {
                 kind: TypedIndexKind::String,
             },
         ),
