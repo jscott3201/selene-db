@@ -188,42 +188,27 @@ fn pattern_star_union_composes_positionally_with_lhs_schema() {
 }
 
 #[test]
-fn intersect_returns_implementation_defined() {
-    let err = execute_manual_set_op(SetOp::Intersect, "RETURN 1 AS n", int_table("n", &[1]))
-        .expect_err("intersect errors");
+fn intersect_returns_common_rows() {
+    let table = execute_manual_set_op(SetOp::Intersect, "RETURN 1 AS n", int_table("n", &[1, 2]))
+        .expect("intersect executes");
 
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "set operator not implemented"
-        }
-    ));
+    assert_eq!(column_values(&table, "n"), vec![Value::Int(1)]);
 }
 
 #[test]
-fn except_returns_implementation_defined() {
-    let err = execute_manual_set_op(SetOp::Except, "RETURN 1 AS n", int_table("n", &[1]))
-        .expect_err("except errors");
+fn except_returns_lhs_only_rows() {
+    let table = execute_manual_set_op(SetOp::Except, "RETURN 1 AS n", int_table("n", &[1, 2]))
+        .expect("except executes");
 
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "set operator not implemented"
-        }
-    ));
+    assert_eq!(column_values(&table, "n"), vec![Value::Int(2)]);
 }
 
 #[test]
-fn otherwise_returns_implementation_defined() {
-    let err = execute_manual_set_op(SetOp::Otherwise, "RETURN 1 AS n", int_table("n", &[1]))
-        .expect_err("otherwise errors");
+fn otherwise_with_non_empty_lhs_returns_lhs() {
+    let table = execute_manual_set_op(SetOp::Otherwise, "RETURN 2 AS n", int_table("n", &[1]))
+        .expect("otherwise executes");
 
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "set operator not implemented"
-        }
-    ));
+    assert_eq!(column_values(&table, "n"), vec![Value::Int(1)]);
 }
 
 #[test]

@@ -16,18 +16,22 @@ use selene_core::{PathSegment, Record, Value};
 
 use super::value_compare;
 
-/// Variant-strict key for top-level `DISTINCT` and structural row dedup.
+/// Variant-strict key for structural hash invariant tests.
 #[derive(Clone, Debug)]
+#[cfg(test)]
 pub(crate) struct DistinctRowKey(pub(crate) Vec<Value>);
 
+#[cfg(test)]
 impl PartialEq for DistinctRowKey {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 }
 
+#[cfg(test)]
 impl Eq for DistinctRowKey {}
 
+#[cfg(test)]
 impl Hash for DistinctRowKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.len().hash(state);

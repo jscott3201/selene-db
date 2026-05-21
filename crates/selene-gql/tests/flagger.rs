@@ -1,14 +1,12 @@
 //! Flagger feature-gating coverage.
 
 use selene_core::feature_register::FeatureId;
-use selene_gql::{ParserError, parse};
+use selene_gql::{EmptyProcedureRegistry, ParserError, analyze, parse, plan};
 
 #[test]
-fn union_feature_is_supported_and_otherwise_is_rejected() {
+fn union_and_otherwise_features_are_supported() {
     parse("RETURN 1 UNION RETURN 2").expect("UNION is claimed");
-
-    let error = parse("RETURN 1 OTHERWISE RETURN 2").expect_err("OTHERWISE is not claimed");
-    assert_feature(error, FeatureId::GQ09);
+    assert_read_plan("RETURN 1 OTHERWISE RETURN 2");
 }
 
 #[test]
@@ -73,15 +71,14 @@ fn graph_management_features_are_rejected_before_planning() {
 }
 
 #[test]
-fn intersect_and_except_composite_set_ops_are_rejected() {
-    for (source, expected) in [
-        ("RETURN 1 INTERSECT RETURN 2", FeatureId::GQ06),
-        ("RETURN 1 INTERSECT ALL RETURN 2", FeatureId::GQ07),
-        ("RETURN 1 EXCEPT RETURN 2", FeatureId::GQ04),
-        ("RETURN 1 EXCEPT ALL RETURN 2", FeatureId::GQ05),
+fn intersect_and_except_composite_set_ops_are_supported() {
+    for source in [
+        "RETURN 1 INTERSECT RETURN 2",
+        "RETURN 1 INTERSECT ALL RETURN 2",
+        "RETURN 1 EXCEPT RETURN 2",
+        "RETURN 1 EXCEPT ALL RETURN 2",
     ] {
-        let error = parse(source).expect_err(source);
-        assert_feature(error, expected);
+        assert_read_plan(source);
     }
 }
 
@@ -138,4 +135,10 @@ fn assert_feature(error: ParserError, expected: FeatureId) {
         panic!("expected UnsupportedFeature, got {error:?}");
     };
     assert_eq!(feature_id, expected);
+}
+
+fn assert_read_plan(source: &str) {
+    let statement = parse(source).expect(source);
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect(source);
+    plan(&analyzed, &EmptyProcedureRegistry).expect(source);
 }

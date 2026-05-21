@@ -8,6 +8,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `EXCEPT`, `EXCEPT ALL`, `INTERSECT`, `INTERSECT ALL`, and `OTHERWISE`
+  set-operation runtime support per ISO GQL §14, including `RuntimeEqKey`
+  grouping semantics and a configurable implementation-defined set-op key cap.
 - Named vector indexes for `selene-vector-pack`, including
   `vector.create_index`, `vector.drop_index`, and `vector.list_indexes`.
   The default HNSW and IVF indexes remain compatibility anchors for v1.0

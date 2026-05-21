@@ -19,15 +19,15 @@ fn parse_with_source_syntax_error_renders_source_highlight() {
 
 #[test]
 fn parse_with_source_reports_unsupported_feature() {
-    let error = parse_with_source(Arc::<str>::from("RETURN 1 OTHERWISE RETURN 2"), "query.gql")
-        .expect_err("OTHERWISE is unclaimed");
+    let error = parse_with_source(Arc::<str>::from("RETURN n IS TYPED REAL"), "query.gql")
+        .expect_err("REAL spelling is unclaimed");
     let ParserError::UnsupportedFeature { feature_id, .. } = error.error() else {
         panic!("expected UnsupportedFeature");
     };
-    assert_eq!(*feature_id, FeatureId::GQ09);
+    assert_eq!(*feature_id, FeatureId::GV20);
 
     let rendered = render(&error);
-    assert!(rendered.contains("GQ09"));
+    assert!(rendered.contains("GV20"));
 }
 
 #[test]

@@ -1,4 +1,4 @@
--- corpus: negative
+-- corpus: positive
 -- feature: GQ06
--- expects: parse-rejected(GQ06)
+-- expects: parse-ok
 RETURN 1 AS n INTERSECT RETURN 2 AS n

@@ -8,6 +8,8 @@ mod mutation;
 mod subquery;
 mod tx;
 
+use std::num::NonZeroUsize;
+
 use crate::{
     EdgeDirection, LabelExpr, SetOp, SourceSpan,
     analyze::{AnalyzedType, BindingId, ExprId, ExprIdLookup, StatementCategory},
@@ -378,6 +380,26 @@ pub struct ImplDefinedCaps {
     pub max_path_length: u32,
     /// Maximum number of expand nodes WCO cycle detection will inspect.
     pub max_wco_traversal_nodes: u32,
+    /// Maximum unique row keys a set operation may hold while counting rows.
+    pub set_op_key_cap: NonZeroUsize,
+}
+
+impl ImplDefinedCaps {
+    /// Default maximum unique row keys a set operation may hold.
+    pub const DEFAULT_SET_OP_KEY_CAP: usize = 1_000_000;
+
+    /// Return the configured set-operation key cap.
+    #[must_use]
+    pub const fn set_op_key_cap(&self) -> usize {
+        self.set_op_key_cap.get()
+    }
+
+    /// Return a copy with a different set-operation key cap.
+    #[must_use]
+    pub const fn with_set_op_key_cap(mut self, set_op_key_cap: NonZeroUsize) -> Self {
+        self.set_op_key_cap = set_op_key_cap;
+        self
+    }
 }
 
 impl Default for ImplDefinedCaps {
@@ -387,6 +409,8 @@ impl Default for ImplDefinedCaps {
             max_optimizer_iterations: 8,
             max_path_length: 32,
             max_wco_traversal_nodes: 64,
+            set_op_key_cap: NonZeroUsize::new(Self::DEFAULT_SET_OP_KEY_CAP)
+                .expect("default set-op key cap is non-zero"),
         }
     }
 }
