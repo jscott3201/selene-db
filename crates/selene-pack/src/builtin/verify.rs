@@ -4,11 +4,18 @@ use std::sync::Arc;
 
 use selene_core::{EdgeId, IStr, Value, intern_with_admission};
 use selene_gql::{
-    GqlType, GraphContext, ProcedureError, ProcedureMutability, ProcedureResult, ProcedureTier,
+    GqlType, GraphContext, ProcedureDefaultValue, ProcedureError, ProcedureMutability,
+    ProcedureResult, ProcedureTier,
 };
 use selene_graph::{SeleneGraph, TypedIndex};
 
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
+
+static VERIFY_PARAMS: [StaticParameter; 1] =
+    [StaticParameter::new("deep", GqlType::Boolean, false)
+        .with_description("Whether to run slower deep integrity checks.")
+        .with_default_doc("false")
+        .with_default(ProcedureDefaultValue::Boolean(false))];
 
 static VERIFY_OUTPUTS: [StaticOutputColumn; 3] = [
     StaticOutputColumn::new("check", GqlType::String).with_description("Integrity check name."),
@@ -44,7 +51,7 @@ impl BuiltInMetadata for SeleneVerify {
     }
 
     fn signature_static(&self) -> &'static [StaticParameter] {
-        &[]
+        &VERIFY_PARAMS
     }
 
     fn output_columns_static(&self) -> &'static [StaticOutputColumn] {
@@ -58,13 +65,22 @@ impl GraphProcedureBuiltIn for SeleneVerify {
         ctx: &GraphContext<'_>,
         args: &[Value],
     ) -> Result<ProcedureResult, ProcedureError> {
-        if !args.is_empty() {
-            return Err(ProcedureError::InvalidArgument {
-                detail: "selene.verify expects zero arguments".to_owned(),
-            });
-        }
+        let deep = deep_arg(args)?;
 
-        verify_snapshot(ctx.snapshot(), false)
+        verify_snapshot(ctx.snapshot(), deep)
+    }
+}
+
+fn deep_arg(args: &[Value]) -> Result<bool, ProcedureError> {
+    match args {
+        [] => Ok(false),
+        [Value::Bool(value)] => Ok(*value),
+        [_] => Err(ProcedureError::InvalidArgument {
+            detail: "selene.verify deep must be a BOOLEAN".to_owned(),
+        }),
+        _ => Err(ProcedureError::InvalidArgument {
+            detail: "selene.verify expects at most 1 argument".to_owned(),
+        }),
     }
 }
 
