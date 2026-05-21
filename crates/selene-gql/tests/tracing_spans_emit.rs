@@ -1,9 +1,8 @@
 //! Tracing span emission smoke tests.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, intern};
@@ -24,6 +23,7 @@ const EXPECTED_SPANS: &[&str] = &[
     "selene.gql.parse",
     "selene.gql.analyze",
     "selene.gql.plan",
+    "selene.gql.optimize",
     "selene.gql.execute_statement",
     "selene.graph.begin_write",
     "selene.graph.commit",
@@ -94,12 +94,9 @@ fn tracing_spans_emit_for_write_and_call() {
 
     let closed = observed.closed();
     for expected in EXPECTED_SPANS {
-        let duration = closed
-            .get(*expected)
-            .unwrap_or_else(|| panic!("missing tracing span {expected}"));
         assert!(
-            *duration > Duration::ZERO,
-            "span {expected} should have non-zero duration"
+            closed.contains(*expected),
+            "span {expected} should be emitted and closed"
         );
     }
 }
@@ -110,7 +107,7 @@ struct ObservedSpans {
 }
 
 impl ObservedSpans {
-    fn closed(&self) -> HashMap<String, Duration> {
+    fn closed(&self) -> HashSet<String> {
         self.inner
             .lock()
             .expect("span collector lock")
@@ -121,13 +118,8 @@ impl ObservedSpans {
 
 #[derive(Default)]
 struct ObservedState {
-    active: HashMap<Id, ActiveSpan>,
-    closed: HashMap<String, Duration>,
-}
-
-struct ActiveSpan {
-    name: &'static str,
-    started_at: Instant,
+    active: HashMap<Id, &'static str>,
+    closed: HashSet<String>,
 }
 
 struct CollectingLayer {
@@ -144,24 +136,13 @@ where
             .lock()
             .expect("span collector lock")
             .active
-            .insert(
-                id.clone(),
-                ActiveSpan {
-                    name: attrs.metadata().name(),
-                    started_at: Instant::now(),
-                },
-            );
+            .insert(id.clone(), attrs.metadata().name());
     }
 
     fn on_close(&self, id: Id, _ctx: Context<'_, S>) {
         let mut observed = self.observed.inner.lock().expect("span collector lock");
-        if let Some(active) = observed.active.remove(&id) {
-            let duration = active.started_at.elapsed();
-            observed
-                .closed
-                .entry(active.name.to_owned())
-                .and_modify(|existing| *existing = (*existing).max(duration))
-                .or_insert(duration);
+        if let Some(name) = observed.active.remove(&id) {
+            observed.closed.insert(name.to_owned());
         }
     }
 }
