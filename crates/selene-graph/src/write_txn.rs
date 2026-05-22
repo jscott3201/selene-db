@@ -277,8 +277,8 @@ fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimest
     fields(provider_count = providers.len(), change_count = changes.len())
 )]
 fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
-    for change in changes {
-        for provider in providers {
+    for provider in providers {
+        for change in changes {
             // First boundary: cache the provider tag for logging. If
             // `provider_tag()` itself panics, log with the sentinel tag and
             // skip `on_change` — the provider is in an inconsistent state
