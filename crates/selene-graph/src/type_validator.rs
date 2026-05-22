@@ -390,7 +390,7 @@ fn validate_properties(
             }
             continue;
         }
-        if !declaration.value_type.matches(value) {
+        if !property_value_matches(declaration, value) {
             return Err(TypeViolation::PropertyTypeMismatch {
                 entity_id,
                 property: *key,
@@ -413,6 +413,22 @@ fn validate_properties(
         }
     }
     Ok(warnings)
+}
+
+fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool {
+    if !declaration.value_type.matches(value) {
+        return false;
+    }
+    if declaration.value_type != PropertyValueType::List {
+        return true;
+    }
+    let Some(element_type) = declaration.list_element_type.as_ref() else {
+        return true;
+    };
+    match value {
+        Value::List(values) => values.iter().all(|value| element_type.matches(value)),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -442,6 +458,7 @@ mod tests {
                     properties: vec![PropertyTypeDef {
                         name: istr("name"),
                         value_type: PropertyValueType::String,
+                        list_element_type: None,
                         required: true,
                         default: None,
                         immutable: false,
@@ -454,6 +471,7 @@ mod tests {
                     properties: vec![PropertyTypeDef {
                         name: istr("name"),
                         value_type: PropertyValueType::String,
+                        list_element_type: None,
                         required: true,
                         default: None,
                         immutable: false,
@@ -469,6 +487,7 @@ mod tests {
                 properties: vec![PropertyTypeDef {
                     name: istr("since"),
                     value_type: PropertyValueType::Int,
+                    list_element_type: None,
                     required: false,
                     default: None,
                     immutable: false,
@@ -628,6 +647,24 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn legacy_untyped_list_declaration_accepts_any_list_elements() {
+        let declaration = PropertyTypeDef {
+            name: istr("legacy"),
+            value_type: PropertyValueType::List,
+            list_element_type: None,
+            required: false,
+            default: None,
+            immutable: false,
+        };
+
+        assert!(property_value_matches(
+            &declaration,
+            &Value::List(vec![Value::Int(1), Value::String(istr("two"))])
+        ));
+        assert!(!property_value_matches(&declaration, &Value::Int(1)));
     }
 
     #[test]

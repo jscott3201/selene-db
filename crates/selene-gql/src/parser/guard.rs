@@ -6,7 +6,7 @@ use crate::{SourceSpan, error::ParserError};
 ///
 /// This bounds pest recursion on hostile malformed expressions while leaving
 /// ordinary query, list, record, and subquery nesting comfortably below the cap.
-pub(super) const MAX_NESTING_DEPTH: u32 = 64;
+pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
 pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let bytes = source.as_bytes();

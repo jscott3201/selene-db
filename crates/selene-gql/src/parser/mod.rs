@@ -34,6 +34,8 @@ mod pest_impl {
     pub(crate) struct GqlParser;
 }
 
+pub(crate) const MAX_NESTING_DEPTH: u32 = guard::MAX_NESTING_DEPTH;
+
 /// Parse one GQL program.
 ///
 /// # Errors

@@ -160,6 +160,7 @@ fn graph_type() -> crate::GraphTypeDef {
             properties: vec![crate::PropertyTypeDef {
                 name: intern("core.gtyp.name").unwrap(),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,

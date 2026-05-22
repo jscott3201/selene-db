@@ -80,6 +80,7 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
                     vec![PropertyTypeDef {
                         name,
                         value_type: PropertyValueType::String,
+                        list_element_type: None,
                         required: true,
                         default: None,
                         immutable: false,

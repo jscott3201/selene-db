@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
 
+/// Maximum supported nesting for catalog `LIST<T>` property element descriptors.
+pub const MAX_LIST_TYPE_NESTING: u32 = 64;
+
 /// Definition of a closed graph type per ISO clause 18.
 #[derive(
     Clone,
@@ -157,6 +160,7 @@ impl GraphTypeDef {
                 "node property",
                 node_type.properties.iter().map(|property| property.name),
             )?;
+            validate_property_element_types(node_type.name, &node_type.properties)?;
         }
 
         let node_type_count = self.node_types.len();
@@ -168,6 +172,7 @@ impl GraphTypeDef {
                 "edge property",
                 edge_type.properties.iter().map(|property| property.name),
             )?;
+            validate_property_element_types(edge_type.name, &edge_type.properties)?;
             if !edge_triples.insert((
                 edge_type.label,
                 edge_type.source_node_type,
@@ -182,6 +187,61 @@ impl GraphTypeDef {
             }
         }
         Ok(())
+    }
+}
+
+fn validate_property_element_types(
+    type_name: IStr,
+    properties: &[PropertyTypeDef],
+) -> GraphResult<()> {
+    for property in properties {
+        if property.value_type == PropertyValueType::List {
+            let Some(element_type) = property.list_element_type.as_ref() else {
+                // Legacy snapshots written before typed LIST<T> descriptors
+                // stored only the coarse LIST tag. Keep that shape valid so
+                // recovery preserves existing closed graph schemas; new GQL
+                // catalog DDL always fills the descriptor.
+                continue;
+            };
+            validate_property_element_type(type_name, property.name, element_type, 1)?;
+        } else if property.list_element_type.is_some() {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares a list element type for non-LIST value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_property_element_type(
+    type_name: IStr,
+    property_name: IStr,
+    element_type: &PropertyElementType,
+    depth: u32,
+) -> GraphResult<()> {
+    if depth > MAX_LIST_TYPE_NESTING {
+        return Err(GraphError::Inconsistent {
+            reason: format!(
+                "property {property_name} on type {type_name} exceeds LIST nesting limit"
+            ),
+        });
+    }
+    match element_type {
+        PropertyElementType::Scalar(
+            PropertyValueType::List | PropertyValueType::Record | PropertyValueType::RecordTyped,
+        ) => Err(GraphError::Inconsistent {
+            reason: format!(
+                "property {property_name} on type {type_name} uses unsupported LIST element type {}",
+                element_type.value_type()
+            ),
+        }),
+        PropertyElementType::Scalar(_) => Ok(()),
+        PropertyElementType::List(inner) => {
+            validate_property_element_type(type_name, property_name, inner, depth + 1)
+        }
     }
 }
 
@@ -249,12 +309,63 @@ pub struct PropertyTypeDef {
     pub name: IStr,
     /// Declared value type.
     pub value_type: PropertyValueType,
+    /// Declared element type when [`PropertyTypeDef::value_type`] is `List`.
+    pub list_element_type: Option<PropertyElementType>,
     /// `true` means NOT NULL / required.
     pub required: bool,
     /// Default value materialized when the property is omitted on create.
     pub default: Option<PropertyDefaultValue>,
     /// Whether updates to this property are forbidden after creation.
     pub immutable: bool,
+}
+
+/// Persistable element-type descriptor for `LIST<T>` property declarations.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+#[rkyv(
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext)),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    serialize_bounds(__S: rkyv::ser::Writer)
+)]
+#[non_exhaustive]
+pub enum PropertyElementType {
+    /// Scalar list element type.
+    Scalar(PropertyValueType),
+    /// Nested list element type.
+    List(#[rkyv(omit_bounds)] Box<PropertyElementType>),
+}
+
+impl PropertyElementType {
+    /// Return the coarse property-value type for this descriptor.
+    #[must_use]
+    pub const fn value_type(&self) -> PropertyValueType {
+        match self {
+            Self::Scalar(value_type) => *value_type,
+            Self::List(_) => PropertyValueType::List,
+        }
+    }
+
+    /// Return true when `value` belongs to this element type.
+    #[must_use]
+    pub fn matches(&self, value: &Value) -> bool {
+        match self {
+            Self::Scalar(value_type) => value_type.matches(value),
+            Self::List(element_type) => match value {
+                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
+                _ => false,
+            },
+        }
+    }
 }
 
 /// Persistable default-value descriptor for closed graph property declarations.
@@ -367,6 +478,7 @@ mod tests {
         PropertyTypeDef {
             name: label(name),
             value_type: PropertyValueType::String,
+            list_element_type: None,
             required: true,
             default: None,
             immutable: false,

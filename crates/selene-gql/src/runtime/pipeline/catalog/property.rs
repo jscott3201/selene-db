@@ -1,11 +1,11 @@
 //! Property-definition helpers for catalog DDL.
 
 use selene_core::PropertyValueType;
-use selene_graph::{PropertyDefaultValue, PropertyTypeDef};
+use selene_graph::{PropertyDefaultValue, PropertyElementType, PropertyTypeDef};
 
 use crate::{
     DataExceptionSubclass, ExecutorError, GqlType, Literal, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, ProjectExpr, ValueExpr,
+    PlannedTypePropertyDef, ProjectExpr, ValueExpr, parser::MAX_NESTING_DEPTH,
 };
 
 pub(super) fn property_defs(
@@ -53,13 +53,14 @@ fn property_def(
             PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
-    let value_type = gql_type_to_property_value_type(&property.gql_type)?;
+    let (value_type, list_element_type) = gql_type_to_property_value_type(&property.gql_type)?;
     if let Some(default) = &default {
         validate_default_value(property.name, value_type, required, default, default_span)?;
     }
     Ok(PropertyTypeDef {
         name: property.name,
         value_type,
+        list_element_type,
         required,
         default,
         immutable,
@@ -136,7 +137,36 @@ fn default_type_error(
     )
 }
 
-fn gql_type_to_property_value_type(gql_type: &GqlType) -> Result<PropertyValueType, ExecutorError> {
+fn gql_type_to_property_value_type(
+    gql_type: &GqlType,
+) -> Result<(PropertyValueType, Option<PropertyElementType>), ExecutorError> {
+    if let GqlType::List(inner) = gql_type {
+        let element_type = gql_type_to_property_element_type(inner, 1)?;
+        return Ok((PropertyValueType::List, Some(element_type)));
+    }
+    gql_type_to_scalar_property_value_type(gql_type).map(|value_type| (value_type, None))
+}
+
+fn gql_type_to_property_element_type(
+    gql_type: &GqlType,
+    depth: u32,
+) -> Result<PropertyElementType, ExecutorError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "nested LIST property type exceeds parser nesting limit",
+        });
+    }
+    match gql_type {
+        GqlType::List(inner) => Ok(PropertyElementType::List(Box::new(
+            gql_type_to_property_element_type(inner, depth + 1)?,
+        ))),
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(PropertyElementType::Scalar),
+    }
+}
+
+fn gql_type_to_scalar_property_value_type(
+    gql_type: &GqlType,
+) -> Result<PropertyValueType, ExecutorError> {
     Ok(match gql_type {
         GqlType::String => PropertyValueType::String,
         GqlType::Boolean => PropertyValueType::Bool,
@@ -176,7 +206,31 @@ fn gql_type_to_property_value_type(gql_type: &GqlType) -> Result<PropertyValueTy
     })
 }
 
-pub(super) fn render_property_value_type(value_type: PropertyValueType) -> &'static str {
+pub(super) fn render_property_value_type(
+    value_type: PropertyValueType,
+    list_element_type: Option<&PropertyElementType>,
+) -> String {
+    if value_type == PropertyValueType::List
+        && let Some(element_type) = list_element_type
+    {
+        return format!("LIST<{}>", render_property_element_type(element_type));
+    }
+    scalar_property_value_type_name(value_type).to_owned()
+}
+
+fn render_property_element_type(element_type: &PropertyElementType) -> String {
+    match element_type {
+        PropertyElementType::Scalar(value_type) => {
+            scalar_property_value_type_name(*value_type).to_owned()
+        }
+        PropertyElementType::List(inner) => {
+            format!("LIST<{}>", render_property_element_type(inner))
+        }
+        _ => "<unsupported-element>".to_owned(),
+    }
+}
+
+fn scalar_property_value_type_name(value_type: PropertyValueType) -> &'static str {
     match value_type {
         PropertyValueType::Bool => "BOOLEAN",
         PropertyValueType::Int => "INTEGER",

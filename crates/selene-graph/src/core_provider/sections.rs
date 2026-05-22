@@ -33,8 +33,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload, serialization_failed};
 use crate::graph::{GraphMeta, SeleneGraph};
-use crate::graph_types::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode};
 use crate::typed_index::TypedIndexKind;
+
+mod gtyp;
+
+pub(super) use gtyp::{decode_graph_types, encode_graph_types};
 
 struct ArcBytes;
 
@@ -262,99 +265,6 @@ struct SchemaEntryV2 {
 }
 
 const SCMA_V2_MAGIC: u8 = 0xA5;
-const GTYP_V2_MAGIC: u8 = 0xB6;
-
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-struct GraphTypeDefV1 {
-    name: IStr,
-    node_types: Vec<NodeTypeDefV1>,
-    edge_types: Vec<EdgeTypeDefV1>,
-}
-
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-struct NodeTypeDefV1 {
-    name: IStr,
-    key_labels: LabelSet,
-    properties: Vec<PropertyTypeDefV1>,
-}
-
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-struct EdgeTypeDefV1 {
-    name: IStr,
-    label: IStr,
-    source_node_type: u32,
-    target_node_type: u32,
-    properties: Vec<PropertyTypeDefV1>,
-}
-
-#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
-struct PropertyTypeDefV1 {
-    name: IStr,
-    value_type: selene_core::PropertyValueType,
-    required: bool,
-}
-
-impl GraphTypeDefV1 {
-    fn into_runtime(self) -> GraphTypeDef {
-        GraphTypeDef {
-            name: self.name,
-            node_types: self
-                .node_types
-                .into_iter()
-                .map(NodeTypeDefV1::into_runtime)
-                .collect(),
-            edge_types: self
-                .edge_types
-                .into_iter()
-                .map(EdgeTypeDefV1::into_runtime)
-                .collect(),
-        }
-    }
-}
-
-impl NodeTypeDefV1 {
-    fn into_runtime(self) -> NodeTypeDef {
-        NodeTypeDef {
-            name: self.name,
-            key_labels: self.key_labels,
-            properties: self
-                .properties
-                .into_iter()
-                .map(PropertyTypeDefV1::into_runtime)
-                .collect(),
-            validation_mode: ValidationMode::Strict,
-        }
-    }
-}
-
-impl EdgeTypeDefV1 {
-    fn into_runtime(self) -> EdgeTypeDef {
-        EdgeTypeDef {
-            name: self.name,
-            label: self.label,
-            source_node_type: self.source_node_type,
-            target_node_type: self.target_node_type,
-            properties: self
-                .properties
-                .into_iter()
-                .map(PropertyTypeDefV1::into_runtime)
-                .collect(),
-            validation_mode: ValidationMode::Strict,
-        }
-    }
-}
-
-impl PropertyTypeDefV1 {
-    fn into_runtime(self) -> PropertyTypeDef {
-        PropertyTypeDef {
-            name: self.name,
-            value_type: self.value_type,
-            required: self.required,
-            default: None,
-            immutable: false,
-        }
-    }
-}
 
 pub(super) fn encode_meta(
     meta: &GraphMeta,
@@ -375,44 +285,6 @@ pub(super) fn encode_meta(
 
 pub(super) fn decode_meta(bytes: &[u8]) -> Result<MetaPayload, crate::ProviderError> {
     decode_rkyv(bytes, "CORE/META")
-}
-
-pub(super) fn encode_graph_types(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
-    let rows = graph
-        .meta
-        .bound_type
-        .as_ref()
-        .map(|type_def| vec![(0_u32, (**type_def).clone())])
-        .unwrap_or_default();
-    let mut payload = Vec::with_capacity(1);
-    payload.push(GTYP_V2_MAGIC);
-    payload.extend(encode_rkyv(&rows, "CORE/GTYP")?);
-    ensure_section_within_cap("CORE/GTYP", payload.len())?;
-    Ok(payload)
-}
-
-pub(super) fn decode_graph_types(
-    bytes: &[u8],
-) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
-    let rows = if bytes.first() == Some(&GTYP_V2_MAGIC) {
-        decode_graph_types_v2(&bytes[1..]).or_else(|_| decode_graph_types_v1(bytes))?
-    } else {
-        decode_graph_types_v1(bytes)?
-    };
-    validate_sorted_unique(&rows, "CORE/GTYP")?;
-    Ok(rows)
-}
-
-fn decode_graph_types_v1(bytes: &[u8]) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
-    let rows: Vec<(u32, GraphTypeDefV1)> = decode_rkyv(bytes, "CORE/GTYP")?;
-    Ok(rows
-        .into_iter()
-        .map(|(index, graph_type)| (index, graph_type.into_runtime()))
-        .collect())
-}
-
-fn decode_graph_types_v2(bytes: &[u8]) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
-    decode_rkyv(bytes, "CORE/GTYP")
 }
 
 pub(super) fn encode_nodes(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
@@ -652,42 +524,4 @@ where
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use selene_core::{LabelSet, PropertyValueType, intern};
-
-    use super::*;
-
-    #[test]
-    fn legacy_gtyp_rows_decode_with_default_v2_fields() {
-        let person = intern("LegacyPerson").unwrap();
-        let name = intern("name").unwrap();
-        let rows = vec![(
-            0_u32,
-            GraphTypeDefV1 {
-                name: intern("legacy.graph").unwrap(),
-                node_types: vec![NodeTypeDefV1 {
-                    name: person,
-                    key_labels: LabelSet::single(person),
-                    properties: vec![PropertyTypeDefV1 {
-                        name,
-                        value_type: PropertyValueType::String,
-                        required: true,
-                    }],
-                }],
-                edge_types: Vec::new(),
-            },
-        )];
-        let bytes = encode_rkyv(&rows, "CORE/GTYP").unwrap();
-
-        let decoded = decode_graph_types(&bytes).unwrap();
-
-        assert_eq!(decoded.len(), 1);
-        let node_type = &decoded[0].1.node_types[0];
-        assert_eq!(node_type.validation_mode, ValidationMode::Strict);
-        assert_eq!(node_type.properties[0].default, None);
-        assert!(!node_type.properties[0].immutable);
-    }
 }

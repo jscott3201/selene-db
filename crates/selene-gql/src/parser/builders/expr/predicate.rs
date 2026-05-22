@@ -6,7 +6,7 @@ use selene_core::feature_register::FeatureId;
 use crate::{
     ast::{BinaryOp, GqlType, IsCheckKind, NormalForm, SourceSpan, TruthValue, ValueExpr},
     error::ParserError,
-    parser::budget::InternerBudget,
+    parser::{MAX_NESTING_DEPTH, budget::InternerBudget},
 };
 
 use super::{Rule, build_value_expr, literal};
@@ -240,8 +240,18 @@ fn find_child<'a>(
 }
 
 pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    build_type_name_with_depth(pair, 0)
+}
+
+fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::type_name);
     let source_span = span(&pair);
+    if depth > MAX_NESTING_DEPTH {
+        return Err(ParserError::NestingLimitExceeded {
+            limit: MAX_NESTING_DEPTH,
+            span: source_span,
+        });
+    }
     let text = pair.as_str().to_ascii_uppercase();
     let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if compact == "REAL" {
@@ -307,7 +317,10 @@ pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserErr
             .ok_or_else(|| {
                 ParserError::syntax("LIST type is missing element type", source_span, None)
             })?;
-        return Ok(GqlType::List(Box::new(build_type_name(inner)?)));
+        return Ok(GqlType::List(Box::new(build_type_name_with_depth(
+            inner,
+            depth + 1,
+        )?)));
     }
 
     match compact.as_str() {

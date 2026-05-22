@@ -13,7 +13,7 @@ use selene_persist::{
 
 use crate::{
     CORE_PROVIDER_TAG, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
-    PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
+    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
 };
 
 #[path = "closed_graph_tests/immutable.rs"]
@@ -36,6 +36,7 @@ fn person_graph_type() -> GraphTypeDef {
             properties: vec![PropertyTypeDef {
                 name: istr("name"),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
@@ -50,6 +51,7 @@ fn person_graph_type() -> GraphTypeDef {
             properties: vec![PropertyTypeDef {
                 name: istr("since"),
                 value_type: PropertyValueType::Int,
+                list_element_type: None,
                 required: false,
                 default: None,
                 immutable: false,
@@ -153,6 +155,7 @@ fn create_node_fills_declared_default_property() {
             properties: vec![PropertyTypeDef {
                 name: istr("active"),
                 value_type: PropertyValueType::Bool,
+                list_element_type: None,
                 required: false,
                 default: Some(PropertyDefaultValue::Boolean(true)),
                 immutable: false,
@@ -183,6 +186,49 @@ fn create_node_fills_declared_default_property() {
 }
 
 #[test]
+fn typed_list_property_rejects_wrong_element_type() {
+    let graph_type = GraphTypeDef {
+        name: istr("closed.list.graph"),
+        node_types: vec![NodeTypeDef {
+            name: istr("closed.list.person"),
+            key_labels: LabelSet::single(istr("Person")),
+            properties: vec![PropertyTypeDef {
+                name: istr("tags"),
+                value_type: PropertyValueType::List,
+                list_element_type: Some(PropertyElementType::Scalar(PropertyValueType::String)),
+                required: false,
+                default: None,
+                immutable: false,
+            }],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(22))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(
+            LabelSet::single(istr("Person")),
+            prop(
+                "tags",
+                Value::List(vec![Value::String(istr("ok")), Value::Int(7)]),
+            ),
+        )
+        .unwrap();
+
+    let err = txn.commit().unwrap_err();
+    assert!(matches!(
+        err,
+        GraphError::TypeViolation(TypeViolation::PropertyTypeMismatch { property, .. })
+            if property == istr("tags")
+    ));
+}
+
+#[test]
 fn immutable_property_update_is_rejected_before_commit() {
     let graph_type = GraphTypeDef {
         name: istr("closed.immutable.graph"),
@@ -192,6 +238,7 @@ fn immutable_property_update_is_rejected_before_commit() {
             properties: vec![PropertyTypeDef {
                 name: istr("serial"),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: true,

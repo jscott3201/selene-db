@@ -522,7 +522,10 @@ fn render_properties(properties: &[PropertyTypeDef]) -> String {
             format!(
                 "{} :: {}{}{}{}",
                 property.name,
-                render_property_value_type(property.value_type),
+                render_property_value_type(
+                    property.value_type,
+                    property.list_element_type.as_ref()
+                ),
                 nullability,
                 default,
                 immutable

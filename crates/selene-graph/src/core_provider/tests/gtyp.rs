@@ -6,22 +6,25 @@ use selene_persist::RecoveryProvider;
 use super::*;
 use crate::core_provider::sections::{decode_graph_types, encode_graph_types};
 use crate::graph_types::{
-    GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+    GraphTypeDef, NodeTypeDef, PropertyElementType, PropertyTypeDef, ValidationMode,
 };
 use crate::{GraphError, SeleneGraph, SharedGraph};
 
 #[test]
-fn gtyp_v2_preserves_type_model_fields() {
+fn gtyp_v3_preserves_type_model_fields() {
     let graph_type = GraphTypeDef {
-        name: intern("core.gtyp.v2").unwrap(),
+        name: intern("core.gtyp.v3").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("core.gtyp.v2.node").unwrap(),
-            key_labels: LabelSet::single(intern("V2Node").unwrap()),
+            name: intern("core.gtyp.v3.node").unwrap(),
+            key_labels: LabelSet::single(intern("V3Node").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("core.gtyp.v2.name").unwrap(),
-                value_type: PropertyValueType::String,
+                name: intern("core.gtyp.v3.name").unwrap(),
+                value_type: PropertyValueType::List,
+                list_element_type: Some(PropertyElementType::List(Box::new(
+                    PropertyElementType::Scalar(PropertyValueType::String),
+                ))),
                 required: false,
-                default: Some(PropertyDefaultValue::String(intern("anon").unwrap())),
+                default: None,
                 immutable: true,
             }],
             validation_mode: ValidationMode::Warn,
@@ -57,6 +60,7 @@ fn finish_recovery_rejects_gtyp_without_meta() {
             properties: vec![PropertyTypeDef {
                 name: intern("name").unwrap(),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: false,
                 default: None,
                 immutable: false,

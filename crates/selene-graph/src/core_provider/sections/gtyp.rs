@@ -1,0 +1,367 @@
+use selene_core::{IStr, LabelSet};
+
+use super::{decode_rkyv, encode_rkyv, ensure_section_within_cap, validate_sorted_unique};
+use crate::graph::SeleneGraph;
+use crate::graph_types::{
+    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+};
+
+const GTYP_V2_MAGIC: u8 = 0xB6;
+const GTYP_V3_MAGIC: u8 = 0xB7;
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct GraphTypeDefV1 {
+    name: IStr,
+    node_types: Vec<NodeTypeDefV1>,
+    edge_types: Vec<EdgeTypeDefV1>,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct NodeTypeDefV1 {
+    name: IStr,
+    key_labels: LabelSet,
+    properties: Vec<PropertyTypeDefV1>,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct EdgeTypeDefV1 {
+    name: IStr,
+    label: IStr,
+    source_node_type: u32,
+    target_node_type: u32,
+    properties: Vec<PropertyTypeDefV1>,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct PropertyTypeDefV1 {
+    name: IStr,
+    value_type: selene_core::PropertyValueType,
+    required: bool,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct GraphTypeDefV2 {
+    name: IStr,
+    node_types: Vec<NodeTypeDefV2>,
+    edge_types: Vec<EdgeTypeDefV2>,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct NodeTypeDefV2 {
+    name: IStr,
+    key_labels: LabelSet,
+    properties: Vec<PropertyTypeDefV2>,
+    validation_mode: ValidationMode,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct EdgeTypeDefV2 {
+    name: IStr,
+    label: IStr,
+    source_node_type: u32,
+    target_node_type: u32,
+    properties: Vec<PropertyTypeDefV2>,
+    validation_mode: ValidationMode,
+}
+
+#[derive(rkyv::Archive, rkyv::Deserialize, rkyv::Serialize)]
+struct PropertyTypeDefV2 {
+    name: IStr,
+    value_type: selene_core::PropertyValueType,
+    required: bool,
+    default: Option<PropertyDefaultValue>,
+    immutable: bool,
+}
+
+impl GraphTypeDefV1 {
+    fn into_runtime(self) -> GraphTypeDef {
+        GraphTypeDef {
+            name: self.name,
+            node_types: self
+                .node_types
+                .into_iter()
+                .map(NodeTypeDefV1::into_runtime)
+                .collect(),
+            edge_types: self
+                .edge_types
+                .into_iter()
+                .map(EdgeTypeDefV1::into_runtime)
+                .collect(),
+        }
+    }
+}
+
+impl NodeTypeDefV1 {
+    fn into_runtime(self) -> NodeTypeDef {
+        NodeTypeDef {
+            name: self.name,
+            key_labels: self.key_labels,
+            properties: self
+                .properties
+                .into_iter()
+                .map(PropertyTypeDefV1::into_runtime)
+                .collect(),
+            validation_mode: ValidationMode::Strict,
+        }
+    }
+}
+
+impl EdgeTypeDefV1 {
+    fn into_runtime(self) -> EdgeTypeDef {
+        EdgeTypeDef {
+            name: self.name,
+            label: self.label,
+            source_node_type: self.source_node_type,
+            target_node_type: self.target_node_type,
+            properties: self
+                .properties
+                .into_iter()
+                .map(PropertyTypeDefV1::into_runtime)
+                .collect(),
+            validation_mode: ValidationMode::Strict,
+        }
+    }
+}
+
+impl PropertyTypeDefV1 {
+    fn into_runtime(self) -> PropertyTypeDef {
+        PropertyTypeDef {
+            name: self.name,
+            value_type: self.value_type,
+            list_element_type: None,
+            required: self.required,
+            default: None,
+            immutable: false,
+        }
+    }
+}
+
+impl GraphTypeDefV2 {
+    fn into_runtime(self) -> GraphTypeDef {
+        GraphTypeDef {
+            name: self.name,
+            node_types: self
+                .node_types
+                .into_iter()
+                .map(NodeTypeDefV2::into_runtime)
+                .collect(),
+            edge_types: self
+                .edge_types
+                .into_iter()
+                .map(EdgeTypeDefV2::into_runtime)
+                .collect(),
+        }
+    }
+}
+
+impl NodeTypeDefV2 {
+    fn into_runtime(self) -> NodeTypeDef {
+        NodeTypeDef {
+            name: self.name,
+            key_labels: self.key_labels,
+            properties: self
+                .properties
+                .into_iter()
+                .map(PropertyTypeDefV2::into_runtime)
+                .collect(),
+            validation_mode: self.validation_mode,
+        }
+    }
+}
+
+impl EdgeTypeDefV2 {
+    fn into_runtime(self) -> EdgeTypeDef {
+        EdgeTypeDef {
+            name: self.name,
+            label: self.label,
+            source_node_type: self.source_node_type,
+            target_node_type: self.target_node_type,
+            properties: self
+                .properties
+                .into_iter()
+                .map(PropertyTypeDefV2::into_runtime)
+                .collect(),
+            validation_mode: self.validation_mode,
+        }
+    }
+}
+
+impl PropertyTypeDefV2 {
+    fn into_runtime(self) -> PropertyTypeDef {
+        PropertyTypeDef {
+            name: self.name,
+            value_type: self.value_type,
+            list_element_type: None,
+            required: self.required,
+            default: self.default,
+            immutable: self.immutable,
+        }
+    }
+}
+
+pub(in crate::core_provider) fn encode_graph_types(
+    graph: &SeleneGraph,
+) -> Result<Vec<u8>, crate::ProviderError> {
+    let rows = graph
+        .meta
+        .bound_type
+        .as_ref()
+        .map(|type_def| vec![(0_u32, (**type_def).clone())])
+        .unwrap_or_default();
+    let mut payload = Vec::with_capacity(1);
+    payload.push(GTYP_V3_MAGIC);
+    payload.extend(encode_rkyv(&rows, "CORE/GTYP")?);
+    ensure_section_within_cap("CORE/GTYP", payload.len())?;
+    Ok(payload)
+}
+
+pub(in crate::core_provider) fn decode_graph_types(
+    bytes: &[u8],
+) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
+    let rows = if bytes.first() == Some(&GTYP_V3_MAGIC) {
+        decode_graph_types_v3(&bytes[1..])?
+    } else if bytes.first() == Some(&GTYP_V2_MAGIC) {
+        decode_graph_types_v2(&bytes[1..]).or_else(|_| decode_graph_types_v1(bytes))?
+    } else {
+        decode_graph_types_v1(bytes)?
+    };
+    validate_sorted_unique(&rows, "CORE/GTYP")?;
+    Ok(rows)
+}
+
+fn decode_graph_types_v1(bytes: &[u8]) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
+    let rows: Vec<(u32, GraphTypeDefV1)> = decode_rkyv(bytes, "CORE/GTYP")?;
+    Ok(rows
+        .into_iter()
+        .map(|(index, graph_type)| (index, graph_type.into_runtime()))
+        .collect())
+}
+
+fn decode_graph_types_v2(bytes: &[u8]) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
+    let rows: Vec<(u32, GraphTypeDefV2)> = decode_rkyv(bytes, "CORE/GTYP")?;
+    Ok(rows
+        .into_iter()
+        .map(|(index, graph_type)| (index, graph_type.into_runtime()))
+        .collect())
+}
+
+fn decode_graph_types_v3(bytes: &[u8]) -> Result<Vec<(u32, GraphTypeDef)>, crate::ProviderError> {
+    decode_rkyv(bytes, "CORE/GTYP")
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::{GraphId, PropertyValueType, intern};
+
+    use super::*;
+    use crate::SharedGraph;
+
+    #[test]
+    fn legacy_gtyp_rows_decode_with_default_v2_fields() {
+        let person = intern("LegacyPerson").unwrap();
+        let name = intern("name").unwrap();
+        let tags = intern("tags").unwrap();
+        let rows = vec![(
+            0_u32,
+            GraphTypeDefV1 {
+                name: intern("legacy.graph").unwrap(),
+                node_types: vec![NodeTypeDefV1 {
+                    name: person,
+                    key_labels: LabelSet::single(person),
+                    properties: vec![
+                        PropertyTypeDefV1 {
+                            name,
+                            value_type: PropertyValueType::String,
+                            required: true,
+                        },
+                        PropertyTypeDefV1 {
+                            name: tags,
+                            value_type: PropertyValueType::List,
+                            required: false,
+                        },
+                    ],
+                }],
+                edge_types: Vec::new(),
+            },
+        )];
+        let bytes = encode_rkyv(&rows, "CORE/GTYP").unwrap();
+
+        let decoded = decode_graph_types(&bytes).unwrap();
+
+        assert_eq!(decoded.len(), 1);
+        decoded[0].1.validate_ref().unwrap();
+        let node_type = &decoded[0].1.node_types[0];
+        assert_eq!(node_type.validation_mode, ValidationMode::Strict);
+        assert_eq!(node_type.properties[0].default, None);
+        assert!(!node_type.properties[0].immutable);
+        assert_eq!(node_type.properties[1].value_type, PropertyValueType::List);
+        assert_eq!(node_type.properties[1].list_element_type, None);
+    }
+
+    #[test]
+    fn gtyp_v2_rows_decode_with_legacy_untyped_list() {
+        let person = intern("V2LegacyPerson").unwrap();
+        let tags = intern("v2.tags").unwrap();
+        let rows = vec![(
+            0_u32,
+            GraphTypeDefV2 {
+                name: intern("legacy.v2.graph").unwrap(),
+                node_types: vec![NodeTypeDefV2 {
+                    name: person,
+                    key_labels: LabelSet::single(person),
+                    properties: vec![PropertyTypeDefV2 {
+                        name: tags,
+                        value_type: PropertyValueType::List,
+                        required: false,
+                        default: None,
+                        immutable: true,
+                    }],
+                    validation_mode: ValidationMode::Warn,
+                }],
+                edge_types: Vec::new(),
+            },
+        )];
+        let mut bytes = vec![GTYP_V2_MAGIC];
+        bytes.extend(encode_rkyv(&rows, "CORE/GTYP").unwrap());
+
+        let decoded = decode_graph_types(&bytes).unwrap();
+
+        assert_eq!(decoded.len(), 1);
+        decoded[0].1.validate_ref().unwrap();
+        let property = &decoded[0].1.node_types[0].properties[0];
+        assert_eq!(
+            decoded[0].1.node_types[0].validation_mode,
+            ValidationMode::Warn
+        );
+        assert_eq!(property.value_type, PropertyValueType::List);
+        assert_eq!(property.list_element_type, None);
+        assert!(property.immutable);
+    }
+
+    #[test]
+    fn encode_graph_types_writes_gtyp_v3_magic() {
+        let person = intern("V3Person").unwrap();
+        let graph_type = GraphTypeDef {
+            name: intern("v3.graph").unwrap(),
+            node_types: vec![NodeTypeDef {
+                name: person,
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            }],
+            edge_types: Vec::new(),
+        };
+        let graph = SharedGraph::builder(GraphId::new(211))
+            .bound_to(graph_type)
+            .unwrap()
+            .build()
+            .unwrap()
+            .read()
+            .as_ref()
+            .clone();
+
+        let bytes = encode_graph_types(&graph).unwrap();
+
+        assert_eq!(bytes.first(), Some(&GTYP_V3_MAGIC));
+    }
+}

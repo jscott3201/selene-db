@@ -89,6 +89,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Drop debuginfo from the `cargo test` build graph. The whole graph
+      # (workspace + deps) builds under the `test` profile, so this strips
+      # the DWARF bulk from every rlib/test binary, keeping the linker's
+      # disk/mmap footprint under the runner cap (ubuntu `ld` SIGBUS).
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

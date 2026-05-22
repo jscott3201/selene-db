@@ -676,13 +676,9 @@ fn phase_a_flags_and_constraints_are_deferred() {
 }
 
 #[test]
-fn record_list_and_nothing_property_types_are_deferred() {
+fn record_and_nothing_property_types_are_deferred() {
     let graph = empty_closed_graph(3715);
-    for gql_type in [
-        GqlType::Record(RecordType::Open),
-        GqlType::List(Box::new(GqlType::Integer)),
-        GqlType::Nothing,
-    ] {
+    for gql_type in [GqlType::Record(RecordType::Open), GqlType::Nothing] {
         let mut plan = planned("CREATE NODE TYPE :Person ()");
         let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) =
             &mut plan.pipeline[0]
