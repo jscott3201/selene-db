@@ -11,7 +11,7 @@ use crate::{
     plan::{
         Aggregate, BindingDef, BindingTableColumn, CatalogOp, EdgeMatch, ExecutionPlan,
         FilterPredicate, JoinTree, MutationOp, NodeOrEdgeScan, OrderAccess, OrderKey, PipelineOp,
-        PlannedYieldItem, ScanAccess, ScanKind, TxOp, YieldKind,
+        PlannedYieldItem, RepeatEdgeMatch, ScanAccess, ScanKind, TxOp, YieldKind,
     },
 };
 
@@ -417,6 +417,19 @@ fn collect_scans(
                 });
             }
         }
+        JoinTree::Repeat { child, edge, .. } => {
+            collect_scans(child, bindings, scans);
+            scans.push(repeat_edge_snapshot(edge, bindings));
+            if !edge.final_property_predicates.is_empty() {
+                scans.push(ScanSnapshot {
+                    binding: binding_name(edge.final_binding, bindings, "<anonymous-node>"),
+                    kind: "Node",
+                    access: "Linear",
+                    residual_predicates: edge.final_property_predicates.len(),
+                    consumed_predicates: consumed_count(&edge.final_property_predicates),
+                });
+            }
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_scans(left, bindings, scans);
             collect_scans(right, bindings, scans);
@@ -454,6 +467,20 @@ fn edge_snapshot(edge: &EdgeMatch, bindings: &BTreeMap<BindingId, String>) -> Sc
     }
 }
 
+fn repeat_edge_snapshot(
+    edge: &RepeatEdgeMatch,
+    bindings: &BTreeMap<BindingId, String>,
+) -> ScanSnapshot {
+    ScanSnapshot {
+        binding: binding_name(edge.group_binding, bindings, "<anonymous-repeat-edge>"),
+        kind: "Edge",
+        access: scan_access(&edge.access),
+        residual_predicates: edge.property_predicates.len() + edge.inline_predicates.len(),
+        consumed_predicates: consumed_count(&edge.property_predicates)
+            + consumed_count(&edge.inline_predicates),
+    }
+}
+
 fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> String {
     match tree {
         JoinTree::Scan(scan) => format!("Scan({})", binding_name(scan.binding, bindings, "_")),
@@ -462,6 +489,20 @@ fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> S
             join_tree_shape(child, bindings),
             binding_name(edge.binding, bindings, "_"),
             binding_name(edge.right_binding, bindings, "_")
+        ),
+        JoinTree::Repeat {
+            child,
+            edge,
+            min,
+            max,
+            ..
+        } => format!(
+            "{}->Repeat({}->{};{}..{})",
+            join_tree_shape(child, bindings),
+            binding_name(edge.group_binding, bindings, "_"),
+            binding_name(edge.final_binding, bindings, "_"),
+            min,
+            max.map_or_else(|| "*".to_owned(), |max| max.to_string())
         ),
         JoinTree::HashJoin { left, right, .. } => format!(
             "HashJoin({}, {})",

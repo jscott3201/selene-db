@@ -360,6 +360,18 @@ fn collect_subqueries_in_join_tree(
                 collect_subqueries_in_expr(&predicate.expr, analyzed, entries)?;
             }
         }
+        JoinTree::Repeat { child, edge, .. } => {
+            collect_subqueries_in_join_tree(child, analyzed, entries)?;
+            for predicate in &edge.property_predicates {
+                collect_subqueries_in_expr(&predicate.expr, analyzed, entries)?;
+            }
+            for predicate in &edge.inline_predicates {
+                collect_subqueries_in_expr(&predicate.expr, analyzed, entries)?;
+            }
+            for predicate in &edge.final_property_predicates {
+                collect_subqueries_in_expr(&predicate.expr, analyzed, entries)?;
+            }
+        }
         JoinTree::HashJoin { left, right, .. } => {
             collect_subqueries_in_join_tree(left, analyzed, entries)?;
             collect_subqueries_in_join_tree(right, analyzed, entries)?;

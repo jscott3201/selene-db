@@ -330,8 +330,13 @@ mod tests {
             _ => panic!("expected edge pattern"),
         };
         assert_eq!(edge.direction, EdgeDirection::Undirected);
-        assert_eq!(edge.quantifier.unwrap().min, 1);
-        assert_eq!(edge.quantifier.unwrap().max, Some(3));
+        assert_eq!(
+            edge.quantifier,
+            Some(crate::ast::Quantifier::GraphPattern {
+                min: 1,
+                max: Some(3)
+            })
+        );
     }
 
     #[test]
@@ -526,6 +531,54 @@ mod tests {
                 "expected syntax error for {source:?}, got {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn questioned_quantifier_is_preserved_distinctly() {
+        let question_source = "MATCH (a)-[r?]->(b) RETURN r";
+        let bounded_source = "MATCH (a)-[r{0,1}]->(b) RETURN r";
+        let question_stmt = parse(question_source).expect("parse succeeds");
+        let bounded_stmt = parse(bounded_source).expect("parse succeeds");
+        assert_eq!(
+            crate::ast::format_read_statement(&question_stmt).expect("format succeeds"),
+            "MATCH (a)-[r?]->(b)\nRETURN r"
+        );
+        assert_eq!(
+            crate::ast::format_read_statement(&bounded_stmt).expect("format succeeds"),
+            "MATCH (a)-[r{0, 1}]->(b)\nRETURN r"
+        );
+
+        let Statement::Query(question) = question_stmt else {
+            panic!("expected query statement");
+        };
+        let Statement::Query(bounded) = bounded_stmt else {
+            panic!("expected query statement");
+        };
+        let PipelineStatement::Match(question_match) = &question.statements[0] else {
+            panic!("expected MATCH");
+        };
+        let PipelineStatement::Match(bounded_match) = &bounded.statements[0] else {
+            panic!("expected MATCH");
+        };
+        let question_edge = match &question_match.patterns[0].elements[1] {
+            crate::ast::PatternElement::Edge(edge) => edge,
+            _ => panic!("expected edge pattern"),
+        };
+        let bounded_edge = match &bounded_match.patterns[0].elements[1] {
+            crate::ast::PatternElement::Edge(edge) => edge,
+            _ => panic!("expected edge pattern"),
+        };
+        assert_eq!(
+            question_edge.quantifier,
+            Some(crate::ast::Quantifier::Questioned)
+        );
+        assert_eq!(
+            bounded_edge.quantifier,
+            Some(crate::ast::Quantifier::GraphPattern {
+                min: 0,
+                max: Some(1)
+            })
+        );
     }
 
     #[test]

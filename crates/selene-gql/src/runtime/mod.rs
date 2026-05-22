@@ -22,6 +22,7 @@ mod pattern;
 mod pipeline;
 mod plan_cache;
 mod plan_runner;
+mod repeat;
 mod scan;
 mod session;
 #[cfg(any(test, feature = "test-harness"))]

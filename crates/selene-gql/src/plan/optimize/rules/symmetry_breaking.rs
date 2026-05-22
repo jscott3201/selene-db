@@ -67,7 +67,7 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
             }
             true
         }
-        JoinTree::Expand { child, .. } => rewrite_tree(child, cap),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => rewrite_tree(child, cap),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, cap) | rewrite_tree(right, cap)
         }

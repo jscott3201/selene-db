@@ -56,7 +56,9 @@ fn rewrite_tree(
 ) -> bool {
     match tree {
         JoinTree::Scan(scan) => rewrite_scan(scan, bindings, catalog),
-        JoinTree::Expand { child, .. } => rewrite_tree(child, bindings, catalog),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
+            rewrite_tree(child, bindings, catalog)
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }

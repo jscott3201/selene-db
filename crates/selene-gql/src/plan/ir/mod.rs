@@ -11,7 +11,7 @@ mod tx;
 use std::num::NonZeroUsize;
 
 use crate::{
-    EdgeDirection, LabelExpr, SetOp, SourceSpan,
+    EdgeDirection, LabelExpr, PathMode, PathSelector, SetOp, SourceSpan,
     analyze::{AnalyzedType, BindingId, ExprId, ExprIdLookup, StatementCategory},
 };
 
@@ -105,7 +105,9 @@ impl ExecutionPlan {
 fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
     match tree {
         JoinTree::Scan(_) => {}
-        JoinTree::Expand { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
+            refresh_join_tree_pipeline_op_high_water(child)
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             refresh_join_tree_pipeline_op_high_water(left);
             refresh_join_tree_pipeline_op_high_water(right);
@@ -176,6 +178,27 @@ pub enum JoinTree {
         edge: EdgeMatch,
         /// Direction requested by the source pattern.
         direction: EdgeDirection,
+    },
+    /// Bounded or future variable-length expansion across one edge pattern.
+    ///
+    /// The IR carries selector and path-mode discriminants even when the current
+    /// runtime only implements `WALK` + non-selective `ALL`, so later BRIEF-133
+    /// leaves can add behaviour without changing the join-tree shape.
+    Repeat {
+        /// Input side of the expansion.
+        child: Box<JoinTree>,
+        /// Quantified edge pattern to traverse.
+        edge: RepeatEdgeMatch,
+        /// Direction requested by the source pattern.
+        direction: EdgeDirection,
+        /// Minimum number of hops.
+        min: u32,
+        /// Maximum number of hops, or `None` for future unbounded forms.
+        max: Option<u32>,
+        /// Path mode in scope for this repeat.
+        path_mode: PathMode,
+        /// Path selector in scope for this repeat.
+        selector: Option<PathSelector>,
     },
     /// Binary join between two pattern fragments.
     HashJoin {
@@ -287,6 +310,35 @@ pub struct EdgeMatch {
     /// Property-map equality predicates on the syntactic right-side node.
     pub right_property_predicates: Vec<FilterPredicate>,
     /// Optimizer-selected access path.
+    pub access: ScanAccess,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Quantified edge pattern in a variable-length expansion.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RepeatEdgeMatch {
+    /// Named group edge binding, or `None` for anonymous quantified edges.
+    pub group_binding: Option<BindingId>,
+    /// Label predicate attached to each traversed edge.
+    pub label_predicate: Option<LabelExpr>,
+    /// Property-map predicates evaluated against each traversed edge.
+    pub property_predicates: Vec<FilterPredicate>,
+    /// Inline edge predicates evaluated once per traversed edge.
+    pub inline_predicates: Vec<FilterPredicate>,
+    /// Binding on the syntactic left side of the repeat, if named.
+    pub left_binding: Option<BindingId>,
+    /// Executor-private slot on the syntactic left side of the repeat.
+    pub left_hidden_binding: Option<HiddenBindingId>,
+    /// Binding on the syntactic final node, if named.
+    pub final_binding: Option<BindingId>,
+    /// Executor-private slot on the syntactic final node.
+    pub final_hidden_binding: Option<HiddenBindingId>,
+    /// Label predicate on the syntactic final node, if any.
+    pub final_label_predicate: Option<LabelExpr>,
+    /// Property-map equality predicates on the syntactic final node.
+    pub final_property_predicates: Vec<FilterPredicate>,
+    /// Optimizer-selected access path for future repeat-aware planning.
     pub access: ScanAccess,
     /// Source span.
     pub span: SourceSpan,
@@ -440,4 +492,52 @@ pub struct PathPlan {
     pub binding: BindingId,
     /// Source span.
     pub span: SourceSpan,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeat_join_tree_carries_group_and_final_node_slots_separately() {
+        let tree = JoinTree::Repeat {
+            child: Box::new(JoinTree::Scan(NodeOrEdgeScan {
+                binding: None,
+                hidden_binding: Some(HiddenBindingId::new(0)),
+                kind: ScanKind::Node,
+                label_predicate: None,
+                property_predicates: Vec::new(),
+                access: ScanAccess::Linear,
+                span: SourceSpan::default(),
+            })),
+            edge: RepeatEdgeMatch {
+                group_binding: None,
+                label_predicate: None,
+                property_predicates: Vec::new(),
+                inline_predicates: Vec::new(),
+                left_binding: None,
+                left_hidden_binding: Some(HiddenBindingId::new(0)),
+                final_binding: None,
+                final_hidden_binding: Some(HiddenBindingId::new(1)),
+                final_label_predicate: None,
+                final_property_predicates: Vec::new(),
+                access: ScanAccess::Linear,
+                span: SourceSpan::default(),
+            },
+            direction: EdgeDirection::Right,
+            min: 0,
+            max: Some(2),
+            path_mode: PathMode::Walk,
+            selector: None,
+        };
+
+        let JoinTree::Repeat { edge, min, max, .. } = tree else {
+            panic!("expected repeat");
+        };
+        assert_eq!(edge.group_binding, None);
+        assert_eq!(edge.left_hidden_binding, Some(HiddenBindingId::new(0)));
+        assert_eq!(edge.final_hidden_binding, Some(HiddenBindingId::new(1)));
+        assert_eq!(min, 0);
+        assert_eq!(max, Some(2));
+    }
 }

@@ -22,8 +22,8 @@ pub use ir::{
     MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, OuterBindingRef, PathPlan,
     PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry, TxOp, TypedIndexBounds,
-    YieldKind,
+    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry, TxOp,
+    TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;
 pub use optimize::{

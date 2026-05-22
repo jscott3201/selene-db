@@ -564,6 +564,10 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .right_binding
             .map(TailBinding::Named)
             .or_else(|| edge.right_hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::Repeat { edge, .. } => edge
+            .final_binding
+            .map(TailBinding::Named)
+            .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
         }
