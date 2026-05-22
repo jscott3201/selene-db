@@ -19,6 +19,9 @@ use crate::graph::PropertyIndexEntry;
 use crate::typed_index::TypedIndex;
 use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
+#[path = "tests/gtyp.rs"]
+mod gtyp;
+
 fn prop(name: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(name).unwrap(), value)]).unwrap()
 }
@@ -158,7 +161,10 @@ fn graph_type() -> crate::GraphTypeDef {
                 name: intern("core.gtyp.name").unwrap(),
                 value_type: PropertyValueType::String,
                 required: true,
+                default: None,
+                immutable: false,
             }],
+            validation_mode: crate::ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }
@@ -722,40 +728,4 @@ fn recovery_provider_on_change_calls_typed_path() {
     .unwrap();
     let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
     assert!(recovered.is_node_alive(NodeId::new(1)));
-}
-
-#[test]
-fn finish_recovery_rejects_gtyp_without_meta() {
-    // F5 regression: a snapshot whose section table carries CORE/GTYP rows
-    // but no CORE/META row is structurally inconsistent — the type rows have
-    // no graph identity to bind to. Recovery must error rather than silently
-    // downgrading to an open graph.
-    use crate::graph_types::{GraphTypeDef, NodeTypeDef, PropertyTypeDef};
-    let mut graph = SeleneGraph::new(GraphId::new(20));
-    graph.meta.bound_type = Some(Arc::new(GraphTypeDef {
-        name: intern("test.gtyp.no.meta").unwrap(),
-        node_types: vec![NodeTypeDef {
-            name: intern("test.node").unwrap(),
-            key_labels: LabelSet::single(intern("Test").unwrap()),
-            properties: vec![PropertyTypeDef {
-                name: intern("name").unwrap(),
-                value_type: PropertyValueType::String,
-                required: false,
-            }],
-        }],
-        edge_types: vec![],
-    }));
-    let gtyp_bytes = encode_graph_types(&graph).unwrap();
-
-    // Apply only GTYP, never META.
-    let provider = CoreProvider::new_for_recovery();
-    RecoveryProvider::read_section(provider.as_ref(), CORE_GTYP_SUB, &gtyp_bytes).unwrap();
-    let err = provider
-        .finish_recovery(GraphId::new(20), None)
-        .expect_err("recovery must fail when GTYP is non-empty but META is missing");
-    assert!(matches!(
-        err,
-        GraphError::Provider(ProviderError::Inconsistent { reason })
-            if reason.contains("GTYP non-empty") && reason.contains("META missing")
-    ));
 }

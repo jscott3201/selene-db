@@ -4,7 +4,7 @@ use selene_core::{
     Change, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
 };
 
-use crate::{NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind};
+use crate::{NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode};
 
 use super::{append_wal, expect_prop, prop, temp_dir};
 
@@ -16,6 +16,7 @@ fn person_closed_graph_type() -> crate::GraphTypeDef {
             name: person,
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }
@@ -218,7 +219,14 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
         let mut txn = shared.begin_write();
         let mut mutator = txn.mutator();
         mutator
-            .create_edge_type(rel, rel, 0, 0, Vec::<PropertyTypeDef>::new())
+            .create_edge_type(
+                rel,
+                rel,
+                0,
+                0,
+                Vec::<PropertyTypeDef>::new(),
+                ValidationMode::Strict,
+            )
             .unwrap();
         mutator.drop_edge_type(rel).unwrap();
         txn.commit().unwrap()
@@ -233,7 +241,7 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
         outcome.changes.as_slice(),
         [
             Change::SchemaChanged {
-                change: selene_core::SchemaChange::EdgeTypeAdded { .. },
+                change: selene_core::SchemaChange::EdgeTypeAddedV2 { .. },
                 ..
             },
             Change::SchemaChanged {

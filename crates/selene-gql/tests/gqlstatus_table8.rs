@@ -12,7 +12,7 @@ use selene_gql::{
     EmptyProcedureRegistry, ExecutorWarning, GqlStatus, Session, SourceSpan, ValueExpr,
     WarningSink, analyze, parse,
 };
-use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph};
+use selene_graph::{GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
@@ -173,6 +173,7 @@ fn closed_graph_schema_analysis_emits_g2000() {
             name: person,
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     };

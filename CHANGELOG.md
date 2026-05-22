@@ -81,6 +81,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `AnalysisError::RecursionLimitExceeded` (GQLSTATUS `5GQL1`). Named
   `CREATE INDEX` / `DROP INDEX` DDL lowering remains deferred pending
   storage-layer named-index support.
+- Catalog type declarations now persist and enforce `DEFAULT`, `IMMUTABLE`,
+  and `STRICT` / `WARN` validation modes. CORE/GTYP snapshots and schema WAL
+  changes use additive v2 encodings while preserving legacy recovery; relaxed
+  writes emit implementation-defined warning GQLSTATUS `01N01`.
 - `vector.search` and `vector.ivf_search` now accept an optional nullable
   `metric` argument (`cosine`, `l2`, or `dot`) that overrides query-time
   scoring. HNSW overrides score against the existing build-time topology; IVF

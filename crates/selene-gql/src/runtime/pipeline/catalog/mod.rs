@@ -4,7 +4,10 @@ mod endpoints;
 mod property;
 
 use selene_core::{IStr, LabelSet, Value, intern_with_admission};
-use selene_graph::{EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
+use selene_graph::{
+    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
+    ValidationMode as GraphValidationMode,
+};
 
 use self::{
     endpoints::resolve_endpoints,
@@ -44,7 +47,7 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, extends, *validation_mode)?;
+            reject_create_flags(*or_replace, extends)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             if node_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
                 if *if_not_exists {
@@ -63,7 +66,12 @@ pub(super) fn execute(
                 let mut mutator =
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?;
                 mutator
-                    .create_node_type(*label, LabelSet::single(*label), properties)
+                    .create_node_type(
+                        *label,
+                        LabelSet::single(*label),
+                        properties,
+                        graph_validation_mode(*validation_mode),
+                    )
                     .map_err(|source| catalog_graph_error(source, *span))?;
                 for index in indexes {
                     mutator
@@ -82,7 +90,7 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, &None, *validation_mode)?;
+            reject_create_flags(*or_replace, &None)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
                 if *if_not_exists {
@@ -103,7 +111,14 @@ pub(super) fn execute(
             let (source, target) = resolve_endpoints(endpoints, &graph_type, *span)?;
             let properties = property_defs(properties, false)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .create_edge_type(*label, *label, source, target, properties)
+                .create_edge_type(
+                    *label,
+                    *label,
+                    source,
+                    target,
+                    properties,
+                    graph_validation_mode(*validation_mode),
+                )
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
@@ -144,11 +159,7 @@ pub(super) fn execute(
     }
 }
 
-fn reject_create_flags(
-    or_replace: bool,
-    extends: &Option<IStr>,
-    validation_mode: Option<crate::ValidationMode>,
-) -> Result<(), ExecutorError> {
+fn reject_create_flags(or_replace: bool, extends: &Option<IStr>) -> Result<(), ExecutorError> {
     if or_replace {
         return Err(ExecutorError::ImplementationDefined {
             detail: "OR REPLACE not implemented for catalog DDL",
@@ -159,12 +170,14 @@ fn reject_create_flags(
             detail: "EXTENDS not implemented for catalog DDL",
         });
     }
-    if validation_mode.is_some() {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "VALIDATION_MODE not implemented for catalog DDL",
-        });
-    }
     Ok(())
+}
+
+const fn graph_validation_mode(mode: Option<crate::ValidationMode>) -> GraphValidationMode {
+    match mode {
+        Some(crate::ValidationMode::Warn) => GraphValidationMode::Warn,
+        Some(crate::ValidationMode::Strict) | None => GraphValidationMode::Strict,
+    }
 }
 
 fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {
@@ -499,15 +512,34 @@ fn render_properties(properties: &[PropertyTypeDef]) -> String {
         .iter()
         .map(|property| {
             let nullability = if property.required { " NOT NULL" } else { "" };
+            let default = property
+                .default
+                .as_ref()
+                .map(render_default_value)
+                .map(|value| format!(" DEFAULT {value}"))
+                .unwrap_or_default();
+            let immutable = if property.immutable { " IMMUTABLE" } else { "" };
             format!(
-                "{} :: {}{}",
+                "{} :: {}{}{}{}",
                 property.name,
                 render_property_value_type(property.value_type),
-                nullability
+                nullability,
+                default,
+                immutable
             )
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_default_value(default: &selene_graph::PropertyDefaultValue) -> String {
+    match default {
+        selene_graph::PropertyDefaultValue::Null => "NULL".to_owned(),
+        selene_graph::PropertyDefaultValue::Boolean(value) => value.to_string().to_uppercase(),
+        selene_graph::PropertyDefaultValue::Integer(value) => value.to_string(),
+        selene_graph::PropertyDefaultValue::String(value) => format!("'{}'", value.as_str()),
+        _ => "<unsupported-default>".to_owned(),
+    }
 }
 
 fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {

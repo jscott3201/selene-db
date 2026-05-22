@@ -1,7 +1,9 @@
 //! Executor corpus graph fixtures.
 
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, PropertyValueType, Value, intern};
-use selene_graph::{GraphTypeDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind};
+use selene_graph::{
+    GraphTypeDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode,
+};
 
 /// Deterministic graph fixture selector for executor corpus entries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -129,6 +131,7 @@ fn person_graph_type() -> GraphTypeDef {
             name: istr("Person"),
             key_labels: LabelSet::single(istr("Person")),
             properties: vec![property("name", PropertyValueType::String, false)],
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }
@@ -139,6 +142,8 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         name: istr(name),
         value_type,
         required,
+        default: None,
+        immutable: false,
     }
 }
 

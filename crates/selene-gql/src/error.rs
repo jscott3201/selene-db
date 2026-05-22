@@ -70,6 +70,9 @@ impl GqlStatus {
     pub const INVALID_TRANSACTION_TERMINATION: Self = Self(*b"2D000");
     /// Maps to GQLSTATUS 01G11 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NULL_VALUE_ELIMINATED_IN_SET_FUNCTION: Self = Self(*b"01G11");
+    /// Maps to GQLSTATUS 01N01, a selene-db implementation-defined subclass
+    /// under standard warning class 01 per ISO/IEC 39075:2024 section 23.1.
+    pub const VALIDATION_MODE_RELAXED_WRITE: Self = Self(*b"01N01");
     /// Maps to GQLSTATUS 42N04, a selene-db implementation-defined subclass
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const UNKNOWN_PROCEDURE: Self = Self(*b"42N04");
@@ -299,6 +302,7 @@ mod tests {
                 "01G11",
                 *b"01",
             ),
+            (GqlStatus::VALIDATION_MODE_RELAXED_WRITE, "01N01", *b"01"),
             (GqlStatus::UNKNOWN_PROCEDURE, "42N04", *b"42"),
             (GqlStatus::INVALID_PROCEDURE_ARGUMENT, "22G03", *b"22"),
             (GqlStatus::CAPABILITY_VIOLATION, "42N28", *b"42"),

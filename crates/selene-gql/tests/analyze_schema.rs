@@ -6,7 +6,7 @@ use selene_gql::{
     GraphPattern, InsertStatement, LabelExpr, Literal, MutationPipeline, MutationStatement,
     NodePattern, NonEmpty, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
 };
-use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
+use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode};
 use selene_testing::{person_company_graph_type, person_only_graph_type};
 
 fn istr(value: &str) -> IStr {
@@ -22,6 +22,8 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         name: istr(name),
         value_type,
         required,
+        default: None,
+        immutable: false,
     }
 }
 
@@ -85,6 +87,7 @@ fn ambiguous_property_graph_type() -> GraphTypeDef {
                     property("name", PropertyValueType::String, true),
                     property("flag", PropertyValueType::String, false),
                 ],
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("ActivePerson"),
@@ -93,6 +96,7 @@ fn ambiguous_property_graph_type() -> GraphTypeDef {
                     property("name", PropertyValueType::String, true),
                     property("flag", PropertyValueType::Int, false),
                 ],
+                validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: Vec::new(),
@@ -109,11 +113,13 @@ fn duplicate_edge_label_graph_type() -> GraphTypeDef {
                 name: istr("Person"),
                 key_labels: LabelSet::single(istr("Person")),
                 properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("Company"),
                 key_labels: LabelSet::single(istr("Company")),
                 properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![
@@ -123,6 +129,7 @@ fn duplicate_edge_label_graph_type() -> GraphTypeDef {
                 source_node_type: 0,
                 target_node_type: 1,
                 properties: vec![property("since", PropertyValueType::Int, false)],
+                validation_mode: ValidationMode::Strict,
             },
             EdgeTypeDef {
                 name: istr("Knows"),
@@ -130,6 +137,7 @@ fn duplicate_edge_label_graph_type() -> GraphTypeDef {
                 source_node_type: 0,
                 target_node_type: 0,
                 properties: vec![property("strength", PropertyValueType::Int, false)],
+                validation_mode: ValidationMode::Strict,
             },
         ],
     }
@@ -145,21 +153,25 @@ fn label_transition_graph_type() -> GraphTypeDef {
                 name: istr("Person"),
                 key_labels: LabelSet::single(istr("Person")),
                 properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("ActivePerson"),
                 key_labels: labels(&["Person", "Active"]),
                 properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("SeniorPerson"),
                 key_labels: labels(&["Person", "Senior"]),
                 properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("VisitorPerson"),
                 key_labels: labels(&["Person", "Visitor"]),
                 properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: Vec::new(),

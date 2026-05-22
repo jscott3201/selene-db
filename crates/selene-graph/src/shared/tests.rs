@@ -78,7 +78,10 @@ fn sample_type() -> GraphTypeDef {
                 name: intern("shared.name").unwrap(),
                 value_type: PropertyValueType::String,
                 required: true,
+                default: None,
+                immutable: false,
             }],
+            validation_mode: crate::ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }
@@ -116,7 +119,12 @@ fn schema_changed_commit_bumps_version() {
     let label = intern("SchemaVersioned").unwrap();
     let mut txn = shared.begin_write();
     txn.mutator()
-        .create_node_type(label, LabelSet::single(label), Vec::new())
+        .create_node_type(
+            label,
+            LabelSet::single(label),
+            Vec::new(),
+            crate::ValidationMode::Strict,
+        )
         .expect("schema mutation succeeds");
 
     txn.commit().expect("schema commit succeeds");

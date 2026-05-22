@@ -7,7 +7,7 @@ use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
     ExecutorError, GqlStatus, TxContext, execute_pipeline,
 };
-use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph};
+use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
 use exec_common::{istr, planned};
 
@@ -41,6 +41,7 @@ fn person_graph(id: u64) -> SharedGraph {
                 name: person,
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: Vec::new(),
         })
@@ -90,7 +91,7 @@ fn create_node_type_if_not_exists_creates_then_noops() {
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::SchemaChanged {
-            change: SchemaChange::NodeTypeAdded { label, .. },
+            change: SchemaChange::NodeTypeAddedV2 { label, .. },
             ..
         }] if label.as_str() == "Person"
     ));
@@ -121,7 +122,7 @@ fn create_edge_type_if_not_exists_creates_then_noops() {
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::SchemaChanged {
-            change: SchemaChange::EdgeTypeAdded { label, .. },
+            change: SchemaChange::EdgeTypeAddedV2 { label, .. },
             ..
         }] if label.as_str() == "KNOWS"
     ));

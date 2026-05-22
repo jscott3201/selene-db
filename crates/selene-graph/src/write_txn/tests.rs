@@ -8,7 +8,7 @@ use selene_core::{
 
 use crate::{
     GraphTypeDef, IndexProvider, NodeTypeDef, PropertyTypeDef, ProviderError, ProviderTag,
-    SharedGraph, SubTag,
+    SharedGraph, SubTag, ValidationMode,
 };
 
 fn istr(value: &str) -> selene_core::IStr {
@@ -29,7 +29,10 @@ fn person_graph_type() -> GraphTypeDef {
                 name: istr("name"),
                 value_type: PropertyValueType::String,
                 required: true,
+                default: None,
+                immutable: false,
             }],
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }

@@ -16,6 +16,14 @@ use crate::graph::SeleneGraph;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::IndexProvider;
 use crate::mutator::Mutator;
+use crate::type_validator::TypeWarning;
+
+/// Non-fatal graph commit warning.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CommitWarning {
+    /// Closed-graph validation warning.
+    pub warning: TypeWarning,
+}
 
 /// Result metadata returned after a successful commit.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,6 +40,8 @@ pub struct CommitOutcome {
     pub next_node_id: u64,
     /// Next edge ID after commit.
     pub next_edge_id: u64,
+    /// Non-fatal warnings produced during commit validation.
+    pub warnings: Vec<CommitWarning>,
 }
 
 /// RAII owner of the single graph write lock.
@@ -44,6 +54,7 @@ pub struct WriteTxn<'g> {
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
     pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
     pub(crate) changes: Vec<Change>,
+    pub(crate) warnings: Vec<CommitWarning>,
 }
 
 impl<'g> WriteTxn<'g> {
@@ -65,6 +76,7 @@ impl<'g> WriteTxn<'g> {
             providers,
             durable_providers,
             changes: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 
@@ -138,12 +150,26 @@ impl<'g> WriteTxn<'g> {
 
         let generation = self.read().meta.generation;
 
+        let mut validation_warnings = Vec::new();
         if let Some(type_def) = self.read().meta.bound_type.as_deref() {
             for change in &self.changes {
-                crate::type_validator::validate_change(change, self.read(), type_def)?;
+                validation_warnings.extend(
+                    crate::type_validator::validate_change(change, self.read(), type_def)?
+                        .into_iter()
+                        .map(|warning| CommitWarning { warning }),
+                );
             }
             if schema_changed {
-                crate::type_validator::validate_entity_state(self.read(), type_def)?;
+                validation_warnings.extend(
+                    crate::type_validator::validate_entity_state(self.read(), type_def)?
+                        .into_iter()
+                        .map(|warning| CommitWarning { warning }),
+                );
+            }
+        }
+        for warning in validation_warnings {
+            if !self.warnings.contains(&warning) {
+                self.warnings.push(warning);
             }
         }
 
@@ -170,6 +196,7 @@ impl<'g> WriteTxn<'g> {
         }
 
         let changes = std::mem::take(&mut self.changes);
+        let warnings = std::mem::take(&mut self.warnings);
 
         // Hold guard + allocator across fanout. The thread-local fanout
         // guard increments a counter that `SharedGraph::begin_write` checks
@@ -197,6 +224,7 @@ impl<'g> WriteTxn<'g> {
             durable_at,
             next_node_id,
             next_edge_id,
+            warnings,
         })
     }
 

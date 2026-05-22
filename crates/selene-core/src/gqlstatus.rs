@@ -16,6 +16,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("0G008", "compact-key-value-length-mismatch"),
     ("0G009", "overlapping-diff"),
     ("01G11", "null-value-eliminated-in-set-function"),
+    ("01N01", "validation-mode-relaxed-write"),
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
     ("22012", "division-by-zero"),

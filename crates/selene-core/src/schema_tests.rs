@@ -43,6 +43,7 @@ fn property_def_with_default_carries_value() {
         value_type: ValueType::predefined(PredefinedValueType::Int),
         nullable: false,
         default: Some(Value::Int(7)),
+        immutable: false,
     };
     assert_eq!(property.default, Some(Value::Int(7)));
 }
@@ -82,12 +83,14 @@ fn record_type_def_with_multiple_fields() {
         value_type: ValueType::predefined(PredefinedValueType::String),
         nullable: false,
         default: None,
+        immutable: false,
     };
     let field_b = PropertyDef {
         name: istr("schema.field.b"),
         value_type: ValueType::predefined(PredefinedValueType::Bool),
         nullable: true,
         default: Some(Value::Bool(false)),
+        immutable: false,
     };
     let def = RecordTypeDef {
         id: RecordTypeId::new(1),
@@ -112,6 +115,7 @@ fn property_def_with_no_default_is_valid() {
         value_type: ValueType::predefined(PredefinedValueType::Bytes),
         nullable: true,
         default: None,
+        immutable: false,
     };
     assert!(property.default.is_none());
 }

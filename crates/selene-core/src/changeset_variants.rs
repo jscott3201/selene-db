@@ -3,9 +3,9 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::{
-    Change, EdgeId, EdgeTypeDef, GraphId, GraphType, GraphTypeId, IStr, LabelDiff, LabelSet,
-    NodeId, NodeTypeDef, NodeTypeRef, PackLifecycleEvent, PropertyDiff, PropertyMap, RecordTypeDef,
-    RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    Change, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, IStr, LabelDiff,
+    LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PackLifecycleEvent, PropertyDiff,
+    PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
 };
 
 impl Change {
@@ -91,12 +91,12 @@ impl SchemaChange {
         || Self::NodeTypeAdded {
             graph_type: changeset_graph_type_id(),
             label: changeset_variant_istr("schema.all.node"),
-            def: NodeTypeDef::new(LabelSet::single(changeset_variant_istr("schema.all.node"))),
+            def: NodeTypeDefV1::new(LabelSet::single(changeset_variant_istr("schema.all.node"))),
         },
         || Self::EdgeTypeAdded {
             graph_type: changeset_graph_type_id(),
             label: changeset_variant_istr("schema.all.edge"),
-            def: EdgeTypeDef::new(
+            def: EdgeTypeDefV1::new(
                 changeset_variant_istr("schema.all.edge"),
                 NodeTypeRef(changeset_variant_istr("schema.all.node")),
                 NodeTypeRef(changeset_variant_istr("schema.all.node")),
@@ -155,6 +155,22 @@ impl SchemaChange {
             kind: SchemaPropertyIndexKind::I64,
             name: Some(changeset_variant_istr("schema.all.index")),
         },
+        || Self::NodeTypeAddedV2 {
+            graph_type: changeset_graph_type_id(),
+            label: changeset_variant_istr("schema.all.node.v2"),
+            def: NodeTypeDef::new(LabelSet::single(changeset_variant_istr(
+                "schema.all.node.v2",
+            ))),
+        },
+        || Self::EdgeTypeAddedV2 {
+            graph_type: changeset_graph_type_id(),
+            label: changeset_variant_istr("schema.all.edge.v2"),
+            def: EdgeTypeDef::new(
+                changeset_variant_istr("schema.all.edge.v2"),
+                NodeTypeRef(changeset_variant_istr("schema.all.node")),
+                NodeTypeRef(changeset_variant_istr("schema.all.node")),
+            ),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -180,6 +196,8 @@ impl SchemaChange {
             Self::PropertyIndexDropped { .. } => "PropertyIndexDropped",
             Self::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
             Self::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
+            Self::NodeTypeAddedV2 { .. } => "NodeTypeAddedV2",
+            Self::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
         }
     }
 }

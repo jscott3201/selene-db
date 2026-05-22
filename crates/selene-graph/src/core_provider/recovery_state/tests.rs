@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, GraphId, GraphType, GraphTypeId, LabelSet, NodeId, NodeTypeRef, PackLifecycleEvent,
-    PredefinedValueType, PropertyDef, PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange,
-    SchemaPropertyIndexKind, Value, ValueType, ValueTypeCardinality, intern,
+    Change, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1,
+    NodeTypeRef, PackLifecycleEvent, PredefinedValueType, PropertyDefV1, PropertyMap,
+    RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind, Value, ValueType,
+    ValueTypeCardinality, intern,
 };
 use selene_persist::RecoveryProvider;
 use smallvec::smallvec;
@@ -12,7 +13,7 @@ use crate::core_provider::sections::{encode_graph_types, encode_meta, encode_sch
 use crate::core_provider::{CORE_GTYP_SUB, CORE_META_SUB, CORE_SCMA_SUB, CoreProvider};
 use crate::{
     EdgeTypeDef, GraphError, GraphTypeDef, IndexProvider, NodeTypeDef, ProviderError, SharedGraph,
-    SubTag, TypedIndexKind,
+    SubTag, TypedIndexKind, ValidationMode,
 };
 
 fn test_graph_type_id() -> GraphTypeId {
@@ -35,6 +36,7 @@ fn person_runtime_graph_type() -> GraphTypeDef {
             name: person,
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
         }],
         edge_types: Vec::new(),
     }
@@ -49,6 +51,7 @@ fn person_knows_runtime_graph_type() -> GraphTypeDef {
         source_node_type: 0,
         target_node_type: 0,
         properties: Vec::new(),
+        validation_mode: ValidationMode::Strict,
     });
     graph_type
 }
@@ -79,8 +82,8 @@ fn load_closed_snapshot(provider: &CoreProvider, graph: &crate::SeleneGraph) {
     .unwrap();
 }
 
-fn core_string_property(name: &str, required: bool) -> PropertyDef {
-    PropertyDef {
+fn core_string_property(name: &str, required: bool) -> PropertyDefV1 {
+    PropertyDefV1 {
         name: intern(name).unwrap(),
         value_type: ValueType {
             predefined: Some(PredefinedValueType::String),
@@ -174,7 +177,7 @@ fn intent_node_type_added() -> SchemaChange {
     SchemaChange::NodeTypeAdded {
         graph_type: test_graph_type_id(),
         label,
-        def: selene_core::NodeTypeDef::new(LabelSet::single(label)),
+        def: NodeTypeDefV1::new(LabelSet::single(label)),
     }
 }
 
@@ -184,7 +187,7 @@ fn intent_edge_type_added() -> SchemaChange {
     SchemaChange::EdgeTypeAdded {
         graph_type: test_graph_type_id(),
         label,
-        def: selene_core::EdgeTypeDef {
+        def: EdgeTypeDefV1 {
             label,
             source_node_type: NodeTypeRef(endpoint),
             target_node_type: NodeTypeRef(endpoint),
@@ -305,7 +308,9 @@ fn noop_intent(change: &SchemaChange) -> Intent {
         | SchemaChange::GraphTypeCreated { .. }
         | SchemaChange::GraphTypeDropped { .. }
         | SchemaChange::NodeTypeAdded { .. }
+        | SchemaChange::NodeTypeAddedV2 { .. }
         | SchemaChange::EdgeTypeAdded { .. }
+        | SchemaChange::EdgeTypeAddedV2 { .. }
         | SchemaChange::NodeTypeDropped { .. }
         | SchemaChange::EdgeTypeDropped { .. }
         | SchemaChange::RecordTypeAdded { .. }
@@ -314,7 +319,7 @@ fn noop_intent(change: &SchemaChange) -> Intent {
         | SchemaChange::PropertyIndexCreatedNamed { .. } => {
             panic!(
                 "{} is not a no-op schema-change intent",
-                super::schema_change_variant(change)
+                super::schema_replay::schema_change_variant(change)
             )
         }
     }
@@ -327,7 +332,7 @@ fn recovery_intent_table_covers_every_schema_change_variant() {
 
     for (factory, expected_intent) in SCHEMA_CHANGE_INTENT {
         let change = factory();
-        let variant = super::schema_change_variant(&change);
+        let variant = super::schema_replay::schema_change_variant(&change);
         assert!(seen.insert(variant), "duplicate intent row for {variant}");
         let actual = drive_handler_and_observe(change.clone());
         assert_eq!(
@@ -352,7 +357,7 @@ fn wal_replay_applies_node_type_added_to_graph_type() {
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label: sensor,
-                def: selene_core::NodeTypeDef {
+                def: NodeTypeDefV1 {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![core_string_property("serial", true)],
                     key: None,
@@ -390,7 +395,7 @@ fn wal_replay_applies_edge_type_added() {
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label: knows,
-                def: selene_core::EdgeTypeDef {
+                def: EdgeTypeDefV1 {
                     label: knows,
                     source_node_type: NodeTypeRef(intern("Person").unwrap()),
                     target_node_type: NodeTypeRef(intern("Person").unwrap()),
@@ -488,7 +493,7 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label: intern("Sensor").unwrap(),
-                def: selene_core::NodeTypeDef::new(LabelSet::single(intern("Sensor").unwrap())),
+                def: NodeTypeDefV1::new(LabelSet::single(intern("Sensor").unwrap())),
             },
         },
     )
@@ -671,7 +676,7 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label,
-                def: selene_core::NodeTypeDef::new(LabelSet::single(label)),
+                def: NodeTypeDefV1::new(LabelSet::single(label)),
             },
         },
     )

@@ -5,7 +5,7 @@ use std::fmt;
 use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyMap, PropertyValueType, Value};
 
 use crate::graph::SeleneGraph;
-use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
+use crate::graph_types::{GraphTypeDef, PropertyTypeDef, ValidationMode};
 
 /// Identifier for a typed graph entity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -114,6 +114,25 @@ pub enum TypeViolation {
         /// Undeclared property name.
         property: IStr,
     },
+
+    /// Immutable property was updated or removed.
+    #[error("{entity_id} property {property} declared in {declared_in} is immutable")]
+    #[diagnostic(code(SLENE_G_017))]
+    ImmutablePropertyUpdate {
+        /// Entity that violated the declaration.
+        entity_id: EntityId,
+        /// Immutable property name.
+        property: IStr,
+        /// Node or edge type that declares the property.
+        declared_in: IStr,
+    },
+}
+
+/// Non-fatal closed graph validation record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TypeWarning {
+    /// Relaxed type-model violation.
+    pub violation: TypeViolation,
 }
 
 /// Validate a single already-applied change against a graph type.
@@ -125,7 +144,7 @@ pub fn validate_change(
     change: &Change,
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
-) -> Result<(), TypeViolation> {
+) -> Result<Vec<TypeWarning>, TypeViolation> {
     match change {
         Change::NodeCreated { id, .. } => {
             // Skip validation for entities the same transaction has since
@@ -133,32 +152,60 @@ pub fn validate_change(
             // create-then-delete pair has no net effect and should not
             // surface UnknownNodeLabel for a row that no longer exists.
             if !graph.is_node_alive(*id) {
-                return Ok(());
+                return Ok(Vec::new());
             }
-            validate_node_state(*id, graph, type_def).map(|_| ())
+            validate_node_state(*id, graph, type_def).map(|(_, warnings)| warnings)
         }
-        Change::NodeUpdated { id, .. } => {
+        Change::NodeUpdated {
+            id,
+            properties_diff,
+            ..
+        } => {
             if !graph.is_node_alive(*id) {
-                return Ok(());
+                return Ok(Vec::new());
             }
-            validate_node_state(*id, graph, type_def).map(|_| ())?;
+            let (node_type_index, mut warnings) = validate_node_state(*id, graph, type_def)?;
+            let node_type = &type_def.node_types[node_type_index as usize];
+            reject_immutable_property_update(
+                EntityId::Node(*id),
+                node_type.name,
+                &node_type.properties,
+                properties_diff,
+            )?;
             // A label change can invalidate every incident edge's
             // (label, source_type, target_type) constraint without the
             // edge itself producing a Change. Re-validate every alive
             // incident edge so closed-graph commits cannot publish a
             // graph that violates the edge-type rules.
-            revalidate_incident_edges(*id, graph, type_def)
+            warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
+            Ok(warnings)
         }
-        Change::EdgeCreated { id, .. } | Change::EdgeUpdated { id, .. } => {
+        Change::EdgeCreated { id, .. } => {
             if !graph.is_edge_alive(*id) {
-                return Ok(());
+                return Ok(Vec::new());
             }
-            validate_edge_state(*id, graph, type_def)
+            validate_edge_state(*id, graph, type_def).map(|(_, warnings)| warnings)
+        }
+        Change::EdgeUpdated {
+            id,
+            properties_diff,
+        } => {
+            if !graph.is_edge_alive(*id) {
+                return Ok(Vec::new());
+            }
+            let (edge_type, warnings) = validate_edge_state(*id, graph, type_def)?;
+            reject_immutable_property_update(
+                EntityId::Edge(*id),
+                edge_type.name,
+                &edge_type.properties,
+                properties_diff,
+            )?;
+            Ok(warnings)
         }
         Change::NodeDeleted { .. }
         | Change::EdgeDeleted { .. }
         | Change::SchemaChanged { .. }
-        | Change::IndexExtensionEvent { .. } => Ok(()),
+        | Change::IndexExtensionEvent { .. } => Ok(Vec::new()),
     }
 }
 
@@ -166,43 +213,45 @@ fn revalidate_incident_edges(
     node: NodeId,
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
-) -> Result<(), TypeViolation> {
+) -> Result<Vec<TypeWarning>, TypeViolation> {
+    let mut warnings = Vec::new();
     if let Some(entry) = graph.outgoing_edges(node) {
         for edge in entry.iter() {
             if graph.is_edge_alive(edge.edge_id) {
-                validate_edge_state(edge.edge_id, graph, type_def)?;
+                warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?.1);
             }
         }
     }
     if let Some(entry) = graph.incoming_edges(node) {
         for edge in entry.iter() {
             if graph.is_edge_alive(edge.edge_id) {
-                validate_edge_state(edge.edge_id, graph, type_def)?;
+                warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?.1);
             }
         }
     }
-    Ok(())
+    Ok(warnings)
 }
 
 /// Validate every alive node and edge in a materialized graph.
 pub fn validate_entity_state(
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
-) -> Result<(), TypeViolation> {
+) -> Result<Vec<TypeWarning>, TypeViolation> {
+    let mut warnings = Vec::new();
     for row in graph.node_store.alive.iter() {
-        validate_node_state(NodeId::new(row as u64 + 1), graph, type_def)?;
+        warnings.extend(validate_node_state(NodeId::new(row as u64 + 1), graph, type_def)?.1);
     }
     for row in graph.edge_store.alive.iter() {
-        validate_edge_state(EdgeId::new(row as u64 + 1), graph, type_def)?;
+        warnings.extend(validate_edge_state(EdgeId::new(row as u64 + 1), graph, type_def)?.1);
     }
-    Ok(())
+    Ok(warnings)
 }
 
 fn validate_node_state(
     id: NodeId,
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
-) -> Result<u32, TypeViolation> {
+) -> Result<(u32, Vec<TypeWarning>), TypeViolation> {
     let labels = graph.node_labels(id).cloned().unwrap_or_else(LabelSet::new);
     let node_type_index =
         type_def
@@ -216,20 +265,21 @@ fn validate_node_state(
         .node_properties(id)
         .cloned()
         .unwrap_or_else(PropertyMap::new);
-    validate_properties(
+    let warnings = validate_properties(
         EntityId::Node(id),
         node_type.name,
+        node_type.validation_mode,
         &node_type.properties,
         &properties,
     )?;
-    Ok(node_type_index)
+    Ok((node_type_index, warnings))
 }
 
-fn validate_edge_state(
+fn validate_edge_state<'a>(
     id: EdgeId,
     graph: &SeleneGraph,
-    type_def: &GraphTypeDef,
-) -> Result<(), TypeViolation> {
+    type_def: &'a GraphTypeDef,
+) -> Result<(&'a crate::graph_types::EdgeTypeDef, Vec<TypeWarning>), TypeViolation> {
     let label = *graph
         .edge_label(id)
         .ok_or(TypeViolation::UnknownEdgeLabel {
@@ -239,8 +289,9 @@ fn validate_edge_state(
     let (source, target) = graph
         .edge_endpoints(id)
         .ok_or(TypeViolation::UnknownEdgeLabel { id, label })?;
-    let source_type = validate_node_state(source, graph, type_def)?;
-    let target_type = validate_node_state(target, graph, type_def)?;
+    let (source_type, mut warnings) = validate_node_state(source, graph, type_def)?;
+    let (target_type, target_warnings) = validate_node_state(target, graph, type_def)?;
+    warnings.extend(target_warnings);
 
     let Some(edge_type) = type_def.find_edge_type(label, source_type, target_type) else {
         let Some(expected) = type_def.first_edge_type_with_label(label) else {
@@ -259,26 +310,69 @@ fn validate_edge_state(
         .edge_properties(id)
         .cloned()
         .unwrap_or_else(PropertyMap::new);
-    validate_properties(
+    warnings.extend(validate_properties(
         EntityId::Edge(id),
         edge_type.name,
+        edge_type.validation_mode,
         &edge_type.properties,
         &properties,
-    )
+    )?);
+    Ok((edge_type, warnings))
+}
+
+fn reject_immutable_property_update(
+    entity_id: EntityId,
+    declared_in: IStr,
+    declarations: &[PropertyTypeDef],
+    diff: &selene_core::PropertyDiff,
+) -> Result<(), TypeViolation> {
+    for (key, _) in &diff.set {
+        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+    }
+    for key in &diff.removed {
+        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+    }
+    Ok(())
+}
+
+fn reject_if_immutable(
+    entity_id: EntityId,
+    declared_in: IStr,
+    declarations: &[PropertyTypeDef],
+    property: IStr,
+) -> Result<(), TypeViolation> {
+    if declarations
+        .iter()
+        .any(|declaration| declaration.name == property && declaration.immutable)
+    {
+        return Err(TypeViolation::ImmutablePropertyUpdate {
+            entity_id,
+            property,
+            declared_in,
+        });
+    }
+    Ok(())
 }
 
 fn validate_properties(
     entity_id: EntityId,
     declared_in: IStr,
+    validation_mode: ValidationMode,
     declarations: &[PropertyTypeDef],
     properties: &PropertyMap,
-) -> Result<(), TypeViolation> {
+) -> Result<Vec<TypeWarning>, TypeViolation> {
+    let mut warnings = Vec::new();
     for (key, value) in properties.iter() {
         let Some(declaration) = declarations.iter().find(|decl| decl.name == *key) else {
-            return Err(TypeViolation::UndeclaredProperty {
+            let violation = TypeViolation::UndeclaredProperty {
                 entity_id,
                 property: *key,
-            });
+            };
+            if validation_mode == ValidationMode::Warn {
+                warnings.push(TypeWarning { violation });
+                continue;
+            }
+            return Err(violation);
         };
         if matches!(value, Value::Extended { .. }) {
             return Err(TypeViolation::ExtensionValueRejected {
@@ -318,7 +412,7 @@ fn validate_properties(
             });
         }
     }
-    Ok(())
+    Ok(warnings)
 }
 
 #[cfg(test)]
@@ -349,7 +443,10 @@ mod tests {
                         name: istr("name"),
                         value_type: PropertyValueType::String,
                         required: true,
+                        default: None,
+                        immutable: false,
                     }],
+                    validation_mode: ValidationMode::Strict,
                 },
                 crate::NodeTypeDef {
                     name: istr("validator.company"),
@@ -358,7 +455,10 @@ mod tests {
                         name: istr("name"),
                         value_type: PropertyValueType::String,
                         required: true,
+                        default: None,
+                        immutable: false,
                     }],
+                    validation_mode: ValidationMode::Strict,
                 },
             ],
             edge_types: vec![crate::EdgeTypeDef {
@@ -370,7 +470,10 @@ mod tests {
                     name: istr("since"),
                     value_type: PropertyValueType::Int,
                     required: false,
+                    default: None,
+                    immutable: false,
                 }],
+                validation_mode: ValidationMode::Strict,
             }],
         }
     }

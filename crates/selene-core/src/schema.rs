@@ -94,6 +94,9 @@ pub struct NodeTypeDef {
     pub properties: SmallVec<[PropertyDef; 8]>,
     /// Optional property-name key.
     pub key: Option<NodeKey>,
+    /// Closed-graph validation mode for this node type.
+    #[serde(default)]
+    pub validation_mode: ValidationMode,
 }
 
 impl NodeTypeDef {
@@ -104,6 +107,46 @@ impl NodeTypeDef {
             labels,
             properties: SmallVec::new(),
             key: None,
+            validation_mode: ValidationMode::Strict,
+        }
+    }
+}
+
+/// Legacy WAL node type definition carried by [`SchemaChange::NodeTypeAdded`](crate::SchemaChange::NodeTypeAdded).
+///
+/// This freezes the pre-v1.1 catalog-DDL payload shape. New WAL entries use
+/// [`SchemaChange::NodeTypeAddedV2`](crate::SchemaChange::NodeTypeAddedV2)
+/// with [`NodeTypeDef`]; recovery upgrades this shape with
+/// [`ValidationMode::Strict`] and non-immutable properties.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct NodeTypeDefV1 {
+    /// Label set required by this node type.
+    pub labels: LabelSet,
+    /// Property definitions in schema order.
+    pub properties: SmallVec<[PropertyDefV1; 8]>,
+    /// Optional property-name key.
+    pub key: Option<NodeKey>,
+}
+
+impl NodeTypeDefV1 {
+    /// Construct a legacy node type definition with no properties.
+    #[must_use]
+    pub fn new(labels: LabelSet) -> Self {
+        Self {
+            labels,
+            properties: SmallVec::new(),
+            key: None,
+        }
+    }
+}
+
+impl From<NodeTypeDefV1> for NodeTypeDef {
+    fn from(value: NodeTypeDefV1) -> Self {
+        Self {
+            labels: value.labels,
+            properties: value.properties.into_iter().map(Into::into).collect(),
+            key: value.key,
+            validation_mode: ValidationMode::Strict,
         }
     }
 }
@@ -126,6 +169,9 @@ pub struct EdgeTypeDef {
     pub target_node_type: NodeTypeRef,
     /// Property definitions in schema order.
     pub properties: SmallVec<[PropertyDef; 4]>,
+    /// Closed-graph validation mode for this edge type.
+    #[serde(default)]
+    pub validation_mode: ValidationMode,
 }
 
 impl EdgeTypeDef {
@@ -137,8 +183,62 @@ impl EdgeTypeDef {
             source_node_type: source,
             target_node_type: target,
             properties: SmallVec::new(),
+            validation_mode: ValidationMode::Strict,
         }
     }
+}
+
+/// Legacy WAL edge type definition carried by [`SchemaChange::EdgeTypeAdded`](crate::SchemaChange::EdgeTypeAdded).
+///
+/// This freezes the pre-v1.1 catalog-DDL payload shape. New WAL entries use
+/// [`SchemaChange::EdgeTypeAddedV2`](crate::SchemaChange::EdgeTypeAddedV2)
+/// with [`EdgeTypeDef`]; recovery upgrades this shape with
+/// [`ValidationMode::Strict`] and non-immutable properties.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct EdgeTypeDefV1 {
+    /// Single edge label.
+    pub label: IStr,
+    /// Source node type reference.
+    pub source_node_type: NodeTypeRef,
+    /// Target node type reference.
+    pub target_node_type: NodeTypeRef,
+    /// Property definitions in schema order.
+    pub properties: SmallVec<[PropertyDefV1; 4]>,
+}
+
+impl EdgeTypeDefV1 {
+    /// Construct a legacy edge type definition with no properties.
+    #[must_use]
+    pub fn new(label: IStr, source: NodeTypeRef, target: NodeTypeRef) -> Self {
+        Self {
+            label,
+            source_node_type: source,
+            target_node_type: target,
+            properties: SmallVec::new(),
+        }
+    }
+}
+
+impl From<EdgeTypeDefV1> for EdgeTypeDef {
+    fn from(value: EdgeTypeDefV1) -> Self {
+        Self {
+            label: value.label,
+            source_node_type: value.source_node_type,
+            target_node_type: value.target_node_type,
+            properties: value.properties.into_iter().map(Into::into).collect(),
+            validation_mode: ValidationMode::Strict,
+        }
+    }
+}
+
+/// Closed-graph validation mode.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum ValidationMode {
+    /// Reject type-model violations.
+    #[default]
+    Strict,
+    /// Allow relaxed property-shape writes and report warnings.
+    Warn,
 }
 
 /// Node type reference by label.
@@ -162,6 +262,34 @@ pub struct PropertyDef {
     pub nullable: bool,
     /// Optional default value.
     pub default: Option<Value>,
+    /// Whether updates to this property are forbidden after creation.
+    #[serde(default)]
+    pub immutable: bool,
+}
+
+/// Legacy WAL property definition carried by v1 catalog-DDL schema changes.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PropertyDefV1 {
+    /// Property name.
+    pub name: IStr,
+    /// Property value type.
+    pub value_type: ValueType,
+    /// Whether `Value::Null` is allowed.
+    pub nullable: bool,
+    /// Optional default value.
+    pub default: Option<Value>,
+}
+
+impl From<PropertyDefV1> for PropertyDef {
+    fn from(value: PropertyDefV1) -> Self {
+        Self {
+            name: value.name,
+            value_type: value.value_type,
+            nullable: value.nullable,
+            default: value.default,
+            immutable: false,
+        }
+    }
 }
 
 /// Structural value type definition.

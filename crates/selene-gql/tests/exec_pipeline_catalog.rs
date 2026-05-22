@@ -10,7 +10,7 @@ use selene_gql::{
     plan,
 };
 use selene_graph::EdgeTypeDef;
-use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph};
+use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
 use exec_common::istr;
 
@@ -50,6 +50,7 @@ fn person_graph(id: u64) -> SharedGraph {
                 name: person,
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: Vec::new(),
         })
@@ -121,7 +122,7 @@ fn create_node_type_creates_type_and_preserves_input_row() {
     assert!(matches!(
         outcome.changes.as_slice(),
         [Change::SchemaChanged {
-            change: SchemaChange::NodeTypeAdded { label, .. },
+            change: SchemaChange::NodeTypeAddedV2 { label, .. },
             ..
         }] if label.as_str() == "Person"
     ));
@@ -143,7 +144,7 @@ fn create_node_type_indexed_property_creates_property_index() {
         outcome.changes.as_slice(),
         [
             Change::SchemaChanged {
-                change: SchemaChange::NodeTypeAdded { label, .. },
+                change: SchemaChange::NodeTypeAddedV2 { label, .. },
                 ..
             },
             Change::SchemaChanged {
@@ -336,6 +337,7 @@ fn show_node_types_renders_key_labels_not_internal_name() {
                 name: istr("types.person"),
                 key_labels: LabelSet::single(istr("Person")),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: Vec::new(),
         },
@@ -408,6 +410,7 @@ fn show_edge_types_renders_label_not_internal_name() {
                 name: istr("types.person"),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
@@ -415,6 +418,7 @@ fn show_edge_types_renders_label_not_internal_name() {
                 source_node_type: 0,
                 target_node_type: 0,
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
         },
     );
@@ -447,6 +451,7 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
                 name: istr("types.active_person"),
                 key_labels: labels,
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
@@ -454,6 +459,7 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
                 source_node_type: 0,
                 target_node_type: 0,
                 properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
             }],
         },
     );
@@ -702,7 +708,7 @@ fn record_list_and_nothing_property_types_are_deferred() {
 }
 
 #[test]
-fn default_property_constraint_is_deferred_from_hand_built_ir() {
+fn default_property_constraint_accepts_supported_literal_ir() {
     let graph = empty_closed_graph(3716);
     let mut plan = planned("CREATE NODE TYPE :Person ()");
     let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) = &mut plan.pipeline[0]
@@ -727,12 +733,55 @@ fn default_property_constraint_is_deferred_from_hand_built_ir() {
         span: SourceSpan::new(0, 1),
     });
 
-    let err = run_write(&graph, &plan).expect_err("default constraint is deferred");
+    run_write(&graph, &plan)
+        .expect("default constraint executes")
+        .1
+        .expect("commit succeeds");
+    let graph_type = graph.graph_type().expect("closed graph type");
+    assert_eq!(
+        graph_type.node_types[0].properties[0].default,
+        Some(selene_graph::PropertyDefaultValue::Integer(1))
+    );
+}
 
+#[test]
+fn unsupported_default_literal_returns_feature_not_supported() {
+    let graph = empty_closed_graph(3724);
+    let plan = planned("CREATE NODE TYPE :Metric (score :: FLOAT DEFAULT 1.5)");
+
+    let err = run_write(&graph, &plan).expect_err("float default unsupported");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+}
+
+#[test]
+fn default_literal_must_match_declared_property_type() {
+    let graph = empty_closed_graph(3725);
+    let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN DEFAULT 1)");
+
+    let err = run_write(&graph, &plan).expect_err("default type mismatch");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
     assert!(matches!(
         err,
-        ExecutorError::ImplementationDefined {
-            detail: "type property constraint not implemented (Phase A: NOT NULL only)",
-        }
+        ExecutorError::DataException { message, .. }
+            if message.contains("DEFAULT literal is not assignable")
+                && message.contains("active")
+    ));
+}
+
+#[test]
+fn not_null_property_rejects_default_null() {
+    let graph = empty_closed_graph(3726);
+    let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN NOT NULL DEFAULT NULL)");
+
+    let err = run_write(&graph, &plan).expect_err("not null default null");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("NOT NULL property cannot default to NULL")
+                && message.contains("active")
     ));
 }
