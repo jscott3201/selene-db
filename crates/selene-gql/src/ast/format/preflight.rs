@@ -58,7 +58,7 @@ fn validate_pipeline(pipeline: &QueryPipeline) -> Result<(), FormatError> {
             crate::PipelineStatement::Limit(_) | crate::PipelineStatement::Offset(_) => {}
             crate::PipelineStatement::Return(value) => validate_return(value)?,
             crate::PipelineStatement::With(value) => validate_with(value)?,
-            crate::PipelineStatement::Call(value) => validate_call(value)?,
+            crate::PipelineStatement::Call(value) => validate_procedure_call(value)?,
         }
     }
     Ok(())
@@ -137,7 +137,7 @@ fn validate_with(clause: &WithClause) -> Result<(), FormatError> {
     Ok(())
 }
 
-fn validate_call(call: &ProcedureCall) -> Result<(), FormatError> {
+pub(super) fn validate_procedure_call(call: &ProcedureCall) -> Result<(), FormatError> {
     for arg in &call.args {
         validate_expr(arg)?;
     }

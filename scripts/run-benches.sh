@@ -100,6 +100,7 @@ selene-gql:parse:criterion
 selene-gql:analyze:criterion
 selene-gql:plan_optimize:criterion
 selene-gql:write_e2e:criterion
+selene-gql:procedure_call_repeat:criterion
 selene-gql:iai_gates:iai
 selene-algorithms:algo_bench:criterion
 selene-algorithms-pack:algo_pack:criterion

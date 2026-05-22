@@ -10,6 +10,9 @@ _Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.
 > BRIEF-89 bulk-mutation benches return their per-iteration `SharedGraph`
 > from the timed routine so Criterion drops fixture teardown after timing;
 > those rows measure mutation + commit, not graph deallocation.
+> BRIEF-122 spot-refresh rows were measured on 2026-05-22 with the same
+> command and hardware: `graph_mutation_commit_batch`, `provider_fanout`,
+> `persist_snapshot_write`, and `procedure_call_repeat`.
 
 ## Hardware footprint
 
@@ -39,9 +42,9 @@ Registered tokens: `selene-graph:single_graph:criterion`,
 | `graph_typed_index_range` | 20.10 µs | 178.8 µs | 294.4 µs | Sub-linear range scan. |
 | `graph_composite_index_proxy` | 52.12 ns | 143.2 ns | 287.8 ns | Linear. |
 | `graph_edge_create_cascade` | 211.7 µs | 153.0 µs | 343.5 µs | Mutation + commit body; fixture teardown excluded from timed routine. |
-| `graph_mutation_commit_batch` (10) | 262.5 µs | 231.8 µs | 360.8 µs | Restored via in-place mutation against `Arc<SeleneGraph>` write lock + explicit `pre_txn` rollback per BRIEF-89; three-clone cascade replaced with one COW clone at first mutation. |
-| `graph_mutation_commit_batch` (100) | 322.7 µs | 292.4 µs | 434.0 µs | Batch of 100; fixture teardown excluded from timed routine. |
-| `graph_mutation_commit_batch` (1000) | 783.9 µs | 603.7 µs | 761.9 µs | Batch of 1000; batching wins at higher cardinality. |
+| `graph_mutation_commit_batch` (10) | 291.3 µs | 234.9 µs | 382.7 µs | BRIEF-122 spot refresh after provider-notification loop inversion; no significant change at 100k/10. |
+| `graph_mutation_commit_batch` (100) | 347.1 µs | 328.8 µs | 465.5 µs | BRIEF-122 spot refresh; 10k/50k improved vs the immediately previous Criterion baseline, 100k was noise-flat. |
+| `graph_mutation_commit_batch` (1000) | 937.1 µs | 918.2 µs | 1.048 ms | BRIEF-122 spot refresh; 10k/1000 regressed in this local run, 50k/100k were noise-flat. |
 | `graph_concurrent_reads` | 76.78 µs | 84.18 µs | 84.72 µs | **Flat above 10k** — ArcSwap snapshot read confirmed O(1). |
 | `graph_bfs` (depth=1) | 99.36 ns | 98.31 ns | 99.66 ns | Depth-1 BFS independent of N. |
 | `graph_bfs` (depth=10) | 10.90 µs | 11.09 µs | 11.28 µs | Mostly traversal cost. |
@@ -62,12 +65,12 @@ Rows added by BRIEF-111 are compile-registered but not measured yet. They isolat
 | `write_txn_lifecycle/delete_only` | batch=10 | TBD | Fixture seed excluded from timed body. |
 | `write_txn_lifecycle/delete_only` | batch=100 | TBD | Fixture seed excluded from timed body. |
 | `write_txn_lifecycle/delete_only` | batch=1000 | TBD | Fixture seed excluded from timed body. |
-| `provider_fanout/core_only` | providers=core | TBD | Commit notification baseline. |
-| `provider_fanout/extra_k1` | extra=1 | TBD | Additional no-op provider fanout. |
-| `provider_fanout/extra_k4` | extra=4 | TBD | Additional no-op provider fanout. |
-| `provider_fanout/extra_k16` | extra=16 | TBD | Additional no-op provider fanout. |
-| `provider_fanout/extra_k4_with_error_one` | extra=4 + error | TBD | Error-path notification scaling. |
-| `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | TBD | Opt-in via `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
+| `provider_fanout/core_only` | providers=core | 194.7 µs | Commit notification baseline. |
+| `provider_fanout/extra_k1` | extra=1 | 190.1 µs | Additional no-op provider fanout. |
+| `provider_fanout/extra_k4` | extra=4 | 187.0 µs | Additional no-op provider fanout. |
+| `provider_fanout/extra_k16` | extra=16 | 187.9 µs | Additional no-op provider fanout. |
+| `provider_fanout/extra_k4_with_error_one` | extra=4 + error | 190.6 µs | Error-path notification scaling. |
+| `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | 198.5 µs | Opt-in via `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
 | `bound_type_validation/unbound_commit` | unbound | TBD | Commit without graph type validation. |
 | `bound_type_validation/bound_commit_simple` | simple type graph | TBD | Typed commit validation delta. |
 | `bound_type_validation/bound_commit_rich` | rich type graph | TBD | Wider type graph validation delta. |
@@ -96,7 +99,7 @@ Registered tokens: `selene-persist:wal:criterion`,
 | `persist_wal_append_batch_1000` | 6.31 ms | 8.02 ms | 10.95 ms | **54× faster than per-entry at 100k** — batching wins. |
 | `persist_wal_append_batch_1000_no_fsync` | **1.46 ms** | 3.79 ms | 6.37 ms | Batched donor-parity diagnostic; timed body does not call `flush()`. |
 | `persist_wal_replay` | **4.04 ms** | 16.78 ms | 30.51 ms | BRIEF-90 WAL v2: fixed-layout header + xxh3 checksum + BufReader. |
-| `persist_snapshot_write` | 719.3 µs | 2.12 ms | 4.58 ms | Snapshot capture; sub-linear at 100k. |
+| `persist_snapshot_write` | 395.7 µs | 534.9 µs | 652.5 µs | BRIEF-122 spot refresh with five independently compressed snapshot sections; per-section zstd work runs in parallel. |
 | `persist_snapshot_read` | 549.6 µs | 2.35 ms | 4.68 ms | Snapshot read-and-apply. |
 | `persist_full_recovery` | 2.93 ms | 12.91 ms | 24.75 ms | Snapshot reconciliation + WAL v2 replay. |
 
@@ -119,7 +122,7 @@ Platform note: donor WAL append baselines were measured with snapshot-only sync 
 ## §3 selene-gql (scale-independent)
 
 Registered tokens: `selene-gql:parse:criterion`, `selene-gql:analyze:criterion`,
-`selene-gql:plan_optimize:criterion`.
+`selene-gql:plan_optimize:criterion`, `selene-gql:procedure_call_repeat:criterion`.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -127,6 +130,8 @@ Registered tokens: `selene-gql:parse:criterion`, `selene-gql:analyze:criterion`,
 | `gql_analyze_corpus/m5c` | **5.32 µs** | Semantic analysis; well below donor floor (<1 ms). |
 | `gql_plan_optimize_corpus/m5c` | 19.11 µs | Planner/optimizer end-to-end. |
 | `gql_plan_ir_clone/representative` | 94.95 ns | IR-clone hot path. |
+| `procedure_call_repeat/no_cache` | 235.6 µs | 100 short-lived sessions executing the same top-level `CALL`; parse/analyze/plan each time. |
+| `procedure_call_repeat/shared_cache` | **28.47 µs** | Shared `Arc<CallPlanCache>` warm-hit path; 88.2% lower than `no_cache`. |
 
 ## §3a selene-gql write_e2e
 

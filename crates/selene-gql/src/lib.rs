@@ -28,6 +28,7 @@ pub use crate::ast::{
         DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
     },
     expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr},
+    format::format_procedure_call,
     mutation::{
         DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
         MutationTerminator, RemoveItem, SetItem,
@@ -67,10 +68,11 @@ pub use crate::procedure_registry::{
     Value,
 };
 pub use crate::runtime::{
-    AdaptiveOptimizer, Binding, BindingTable, DataExceptionSubclass, ExecutorError,
-    ExecutorWarning, GraphContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext,
-    RollbackOutcome, Session, StatementOutput, TransactionOutcome, TxContext, WarningSink,
-    WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
+    AdaptiveOptimizer, Binding, BindingTable, CallPlanCache, CallPlanCacheStats, CallPlanKey,
+    DataExceptionSubclass, ExecutorError, ExecutorWarning, GraphContext, MutationContext,
+    PlanCache, PlanCacheStats, ProcedureContext, RollbackOutcome, Session, StatementOutput,
+    TransactionOutcome, TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline,
+    execute_statement,
 };
 pub use selene_core::{
     CancellationCause, CancellationChecker, CancellationToken, IStrAdmissionPolicy,
