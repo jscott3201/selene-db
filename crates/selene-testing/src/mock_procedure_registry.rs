@@ -15,6 +15,7 @@ pub struct MockProcedureRegistry {
     procedures: HashMap<Box<[IStr]>, ProcedureMetadata>,
     results: HashMap<ProcedureHandle, ProcedureResult>,
     next_handle: u64,
+    version: u64,
 }
 
 impl MockProcedureRegistry {
@@ -25,6 +26,7 @@ impl MockProcedureRegistry {
             procedures: HashMap::new(),
             results: HashMap::new(),
             next_handle: 1,
+            version: 0,
         }
     }
 
@@ -111,6 +113,7 @@ impl MockProcedureRegistry {
     ) {
         let handle = ProcedureHandle::new(self.next_handle);
         self.next_handle += 1;
+        self.version = self.version.saturating_add(1);
         self.procedures.insert(
             name.into_boxed_slice(),
             ProcedureMetadata::new(
@@ -129,12 +132,13 @@ impl MockProcedureRegistry {
     /// Register a deterministic runtime result for a procedure handle.
     #[must_use]
     pub fn with_result(mut self, handle: ProcedureHandle, result: ProcedureResult) -> Self {
-        self.results.insert(handle, result);
+        self.insert_result(handle, result);
         self
     }
 
     /// Register a deterministic runtime result in place.
     pub fn insert_result(&mut self, handle: ProcedureHandle, result: ProcedureResult) {
+        self.version = self.version.saturating_add(1);
         self.results.insert(handle, result);
     }
 
@@ -148,6 +152,10 @@ impl MockProcedureRegistry {
 impl ProcedureRegistry for MockProcedureRegistry {
     fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
         self.procedures.get(name).cloned()
+    }
+
+    fn registry_version(&self) -> u64 {
+        self.version
     }
 
     fn execute(

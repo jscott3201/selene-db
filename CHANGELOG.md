@@ -8,6 +8,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Shared `selene-gql` `CallPlanCache` for repeated top-level procedure
+  `CALL` statements across short-lived sessions, with graph-id and
+  schema-version keyed invalidation plus a cache-hit metric.
 - Feature-gated `metrics` facade with query, commit, persistence, recovery,
   cancellation, vector search, algorithm, and graph-size metrics.
 - `EXCEPT`, `EXCEPT ALL`, `INTERSECT`, `INTERSECT ALL`, and `OTHERWISE`

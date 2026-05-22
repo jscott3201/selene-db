@@ -29,6 +29,8 @@ pub const CANCELLATIONS_TOTAL: &str = "selene.cancellations.total";
 pub const VECTOR_SEARCHES_TOTAL: &str = "selene.vector.searches.total";
 /// Total algorithm procedure calls.
 pub const ALGORITHM_RUNS_TOTAL: &str = "selene.algorithm.runs.total";
+/// Total shared GQL procedure-CALL plan-cache hits.
+pub const CALL_PLAN_CACHE_HITS_TOTAL: &str = "selene.gql.call_plan_cache.hits.total";
 /// Current live node count.
 pub const GRAPH_NODES: &str = "selene.graph.nodes";
 /// Current live edge count.

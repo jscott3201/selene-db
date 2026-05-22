@@ -46,10 +46,17 @@ fn bench_snapshot_read(c: &mut Criterion) {
                 |(_dir, path)| {
                     let mut reader = SnapshotReader::open(&path).expect("snapshot opens");
                     reader.verify_body_hash().expect("hash verifies");
-                    let bytes = reader
-                        .read_section(*b"CORE", *b"DATA")
-                        .expect("section reads");
-                    std::hint::black_box(bytes.len());
+                    let sections = reader.sections().to_vec();
+                    let bytes = sections
+                        .iter()
+                        .map(|entry| {
+                            reader
+                                .read_section(entry.provider, entry.sub)
+                                .expect("section reads")
+                                .len()
+                        })
+                        .sum::<usize>();
+                    std::hint::black_box(bytes);
                 },
                 BatchSize::SmallInput,
             );

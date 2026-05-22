@@ -20,7 +20,8 @@ pub use ddl::{
 pub use eq::structurally_eq;
 pub use expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr};
 pub use format::{
-    FormatError, format_mutate_statement, format_read_statement, validate_formattable,
+    FormatError, format_mutate_statement, format_procedure_call, format_read_statement,
+    validate_formattable,
 };
 pub use mutation::{
     DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,

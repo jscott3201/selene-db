@@ -63,6 +63,52 @@ impl RecordingProvider {
     }
 }
 
+struct PanicOnSecondChangeProvider {
+    tag: ProviderTag,
+    seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>,
+    calls: Mutex<usize>,
+}
+
+impl PanicOnSecondChangeProvider {
+    fn new(tag: ProviderTag, seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>) -> Self {
+        Self {
+            tag,
+            seen,
+            calls: Mutex::new(0),
+        }
+    }
+}
+
+impl IndexProvider for PanicOnSecondChangeProvider {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn provider_tag(&self) -> ProviderTag {
+        self.tag
+    }
+
+    fn read_section(&self, _sub_tag: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    fn write_section(&self, _sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
+        Ok(Vec::new())
+    }
+
+    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
+        self.seen.lock().push((self.tag, change.clone()));
+        let mut calls = self.calls.lock();
+        *calls += 1;
+        assert_ne!(*calls, 2, "synthetic provider panic on the second change");
+        Ok(())
+    }
+
+    fn declared_sub_tags(&self) -> &[SubTag] {
+        &[]
+    }
+}
+
 impl IndexProvider for RecordingProvider {
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -455,6 +501,92 @@ fn commit_calls_each_provider_in_registration_order() {
     txn.commit().unwrap();
     let tags = seen.lock().iter().map(|(tag, _)| *tag).collect::<Vec<_>>();
     assert_eq!(tags, vec![ProviderTag(*b"ONE1"), ProviderTag(*b"TWO2")]);
+}
+
+#[test]
+fn multi_provider_commit_ordering() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .with_provider(Arc::new(RecordingProvider::new(
+            ProviderTag(*b"ONE1"),
+            Arc::clone(&seen),
+        )))
+        .with_provider(Arc::new(RecordingProvider::new(
+            ProviderTag(*b"TWO2"),
+            Arc::clone(&seen),
+        )))
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let id = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .expect("create_node ok");
+        mutator.delete_node(id).expect("delete_node ok");
+    }
+    txn.commit().unwrap();
+
+    let seen = seen.lock();
+    let provider_one = seen
+        .iter()
+        .filter(|(tag, _)| *tag == ProviderTag(*b"ONE1"))
+        .map(|(_, change)| change)
+        .collect::<Vec<_>>();
+    let provider_two = seen
+        .iter()
+        .filter(|(tag, _)| *tag == ProviderTag(*b"TWO2"))
+        .map(|(_, change)| change)
+        .collect::<Vec<_>>();
+    assert_eq!(provider_one.len(), 2);
+    assert_eq!(provider_two.len(), 2);
+    assert!(matches!(provider_one[0], Change::NodeCreated { .. }));
+    assert!(matches!(provider_one[1], Change::NodeDeleted { .. }));
+    assert!(matches!(provider_two[0], Change::NodeCreated { .. }));
+    assert!(matches!(provider_two[1], Change::NodeDeleted { .. }));
+}
+
+#[test]
+fn provider_panic_isolation() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .with_provider(Arc::new(PanicOnSecondChangeProvider::new(
+            ProviderTag(*b"PAN1"),
+            Arc::clone(&seen),
+        )))
+        .with_provider(Arc::new(RecordingProvider::new(
+            ProviderTag(*b"OKAY"),
+            Arc::clone(&seen),
+        )))
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let id = mutator
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .expect("create_node ok");
+        let prop = intern("txn.panic.prop").unwrap();
+        let diff = selene_core::PropertyDiff::new([(prop, Value::Int(1))], []).unwrap();
+        mutator
+            .update_node(id, selene_core::LabelDiff::new([], []).unwrap(), diff)
+            .expect("update_node ok");
+        mutator.delete_node(id).expect("delete_node ok");
+    }
+    let outcome = txn.commit().unwrap();
+    assert_eq!(outcome.changes.len(), 3);
+
+    let seen = seen.lock();
+    let panicking_count = seen
+        .iter()
+        .filter(|(tag, _)| *tag == ProviderTag(*b"PAN1"))
+        .count();
+    let other_count = seen
+        .iter()
+        .filter(|(tag, _)| *tag == ProviderTag(*b"OKAY"))
+        .count();
+    assert_eq!(panicking_count, 3);
+    assert_eq!(other_count, 3);
 }
 
 #[test]

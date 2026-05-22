@@ -10,6 +10,7 @@
 //! §3-§8.
 
 mod binding_table;
+mod call_plan_cache;
 mod context;
 mod context_tiers;
 mod error;
@@ -32,6 +33,7 @@ mod value_key;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};
+pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
 pub use context_tiers::{GraphContext, MutationContext, ProcedureContext};
 pub use error::{DataExceptionSubclass, ExecutorError, ExecutorWarning, WarningSink};

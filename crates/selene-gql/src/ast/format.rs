@@ -77,6 +77,20 @@ pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
     Ok(out)
 }
 
+/// Format one procedure call as canonical GQL source.
+///
+/// # Errors
+///
+/// Returns [`FormatError::Unsupported`] when the call contains an AST-only
+/// expression surface that the parser cannot read back from formatted source.
+pub fn format_procedure_call(call: &ProcedureCall) -> Result<String, FormatError> {
+    preflight::validate_procedure_call(call)?;
+
+    let mut out = String::new();
+    fmt_call(&mut out, call)?;
+    Ok(out)
+}
+
 /// Reserved mutation-formatter entry point.
 ///
 /// # Errors
