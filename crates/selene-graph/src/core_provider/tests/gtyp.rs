@@ -6,7 +6,7 @@ use selene_persist::RecoveryProvider;
 use super::*;
 use crate::core_provider::sections::{decode_graph_types, encode_graph_types};
 use crate::graph_types::{
-    GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+    GraphTypeDef, NodeTypeDef, PropertyElementType, PropertyTypeDef, ValidationMode,
 };
 use crate::{GraphError, SeleneGraph, SharedGraph};
 
@@ -19,10 +19,12 @@ fn gtyp_v2_preserves_type_model_fields() {
             key_labels: LabelSet::single(intern("V2Node").unwrap()),
             properties: vec![PropertyTypeDef {
                 name: intern("core.gtyp.v2.name").unwrap(),
-                value_type: PropertyValueType::String,
-                list_element_type: None,
+                value_type: PropertyValueType::List,
+                list_element_type: Some(PropertyElementType::List(Box::new(
+                    PropertyElementType::Scalar(PropertyValueType::String),
+                ))),
                 required: false,
-                default: Some(PropertyDefaultValue::String(intern("anon").unwrap())),
+                default: None,
                 immutable: true,
             }],
             validation_mode: ValidationMode::Warn,

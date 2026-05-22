@@ -4,8 +4,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use selene_core::{
     Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, HlcTimestamp, LabelSet, NodeId,
-    NodeTypeDefV1, NodeTypeRef, Origin, PredefinedValueType, PropertyDefV1, PropertyMap,
-    SchemaChange, Value, ValueType, ValueTypeCardinality, intern,
+    NodeTypeDefV1, NodeTypeRef, Origin, PredefinedValueType, PropertyDef, PropertyDefV1,
+    PropertyMap, SchemaChange, Value, ValueType, ValueTypeCardinality, intern,
 };
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, PersistError, SectionCompression, SnapshotBuilder, SnapshotConfig,
@@ -14,8 +14,8 @@ use selene_persist::{
 use smallvec::smallvec;
 
 use crate::{
-    CORE_PROVIDER_TAG, GraphError, GraphTypeDef, PropertyDefaultValue, PropertyTypeDef,
-    ProviderTag, SharedGraph, ValidationMode,
+    CORE_PROVIDER_TAG, GraphError, GraphTypeDef, PropertyDefaultValue, PropertyElementType,
+    PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
 };
 
 #[path = "recover_tests/variant_tests.rs"]
@@ -323,6 +323,94 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         Some(PropertyDefaultValue::String(intern("unknown").unwrap()))
     );
     assert!(graph_type.node_types[0].properties[0].immutable);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_closed_wal_only_preserves_typed_list_property() {
+    let dir = temp_dir("closed-schema-list-wal-only");
+    let graph_id = GraphId::new(21);
+    let base = empty_closed_graph_type();
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let sensor = intern("ListSensor").unwrap();
+    let readings = intern("readings").unwrap();
+    let element_type = PropertyElementType::List(Box::new(PropertyElementType::Scalar(
+        selene_core::PropertyValueType::Int,
+    )));
+    let changes = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node_type(
+                sensor,
+                LabelSet::single(sensor),
+                vec![PropertyTypeDef {
+                    name: readings,
+                    value_type: selene_core::PropertyValueType::List,
+                    list_element_type: Some(element_type.clone()),
+                    required: false,
+                    default: None,
+                    immutable: false,
+                }],
+                ValidationMode::Strict,
+            )
+            .unwrap();
+        txn.commit().unwrap().changes
+    };
+    append_wal(&dir, 0, &changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    let property = &graph_type.node_types[0].properties[0];
+    assert_eq!(property.name, readings);
+    assert_eq!(property.value_type, selene_core::PropertyValueType::List);
+    assert_eq!(property.list_element_type, Some(element_type));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_closed_rejects_overdeep_typed_list_property() {
+    let dir = temp_dir("closed-schema-list-depth");
+    let graph_id = GraphId::new(22);
+    let base = empty_closed_graph_type();
+    let graph_type = GraphTypeId::new(1).unwrap();
+    let sensor = intern("DeepListSensor").unwrap();
+    let mut value_type = ValueType::predefined(PredefinedValueType::Int);
+    for _ in 0..=64 {
+        value_type = ValueType::list_of(value_type);
+    }
+    append_wal(
+        &dir,
+        0,
+        &[Change::SchemaChanged {
+            graph: graph_id,
+            change: SchemaChange::NodeTypeAddedV2 {
+                graph_type,
+                label: sensor,
+                def: selene_core::NodeTypeDef {
+                    labels: LabelSet::single(sensor),
+                    properties: smallvec![PropertyDef {
+                        name: intern("too_deep").unwrap(),
+                        value_type,
+                        nullable: true,
+                        default: None,
+                        immutable: false,
+                    }],
+                    key: None,
+                    validation_mode: selene_core::ValidationMode::Strict,
+                },
+            },
+        }],
+    );
+
+    let err = match SharedGraph::recover_closed(&dir, graph_id, base) {
+        Ok(_) => panic!("overdeep LIST property recovery should fail"),
+        Err(err) => err,
+    };
+    assert!(format!("{err}").contains("LIST nesting limit"));
     let _ = fs::remove_dir_all(dir);
 }
 

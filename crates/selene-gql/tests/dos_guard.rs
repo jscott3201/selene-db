@@ -121,6 +121,21 @@ fn rejects_excessive_syntax_nesting_before_pest_parse() {
 }
 
 #[test]
+fn rejects_excessive_type_name_list_nesting() {
+    let depth = NESTING_LIMIT + 1;
+    let source = format!(
+        "CREATE NODE TYPE :Deep (v :: {}INTEGER{})",
+        "LIST<".repeat(depth),
+        ">".repeat(depth)
+    );
+    let error = parse(&source).expect_err("over-nested type name rejects");
+    assert!(matches!(
+        error,
+        ParserError::NestingLimitExceeded { limit: 64, .. }
+    ));
+}
+
+#[test]
 fn nesting_guard_ignores_quoted_and_commented_delimiters() {
     let noisy_string = "[".repeat(NESTING_LIMIT + 32);
     let noisy_comment = "(".repeat(NESTING_LIMIT + 32);

@@ -9,8 +9,8 @@ use selene_core::{
 use smallvec::SmallVec;
 
 use crate::{
-    EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator, NodeTypeDef, PropertyTypeDef,
-    ValidationMode,
+    EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator, NodeTypeDef, PropertyElementType,
+    PropertyTypeDef, ValidationMode, graph_types::MAX_LIST_TYPE_NESTING,
 };
 
 const OPEN_GRAPH_CATALOG_DDL: &str =
@@ -55,7 +55,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             change: SchemaChange::NodeTypeAddedV2 {
                 graph_type: implicit_graph_type_id(),
                 label: name,
-                def: core_node_type_def(&node_type),
+                def: core_node_type_def(&node_type)?,
             },
         });
         Ok(())
@@ -200,13 +200,13 @@ fn implicit_graph_type_id() -> GraphTypeId {
     GraphTypeId::new(1).expect("implicit graph type id")
 }
 
-fn core_node_type_def(node_type: &NodeTypeDef) -> selene_core::NodeTypeDef {
-    selene_core::NodeTypeDef {
+fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeTypeDef> {
+    Ok(selene_core::NodeTypeDef {
         labels: node_type.key_labels.clone(),
-        properties: core_node_properties(&node_type.properties),
+        properties: core_node_properties(&node_type.properties)?,
         key: None,
         validation_mode: core_validation_mode(node_type.validation_mode),
-    }
+    })
 }
 
 fn core_edge_type_def(
@@ -237,33 +237,45 @@ fn core_edge_type_def(
         label: edge_type.label,
         source_node_type: NodeTypeRef(source),
         target_node_type: NodeTypeRef(target),
-        properties: core_edge_properties(&edge_type.properties),
+        properties: core_edge_properties(&edge_type.properties)?,
         validation_mode: core_validation_mode(edge_type.validation_mode),
     })
 }
 
-fn core_node_properties(properties: &[PropertyTypeDef]) -> SmallVec<[PropertyDef; 8]> {
+fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 8]>> {
     let mut out = SmallVec::new();
-    out.extend(properties.iter().map(|property| PropertyDef {
-        name: property.name,
-        value_type: core_value_type(property.value_type, property.required),
-        nullable: !property.required,
-        default: property.default.as_ref().map(|default| default.to_value()),
-        immutable: property.immutable,
-    }));
-    out
+    for property in properties {
+        out.push(PropertyDef {
+            name: property.name,
+            value_type: core_value_type(
+                property.value_type,
+                property.list_element_type.as_ref(),
+                property.required,
+            )?,
+            nullable: !property.required,
+            default: property.default.as_ref().map(|default| default.to_value()),
+            immutable: property.immutable,
+        });
+    }
+    Ok(out)
 }
 
-fn core_edge_properties(properties: &[PropertyTypeDef]) -> SmallVec<[PropertyDef; 4]> {
+fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 4]>> {
     let mut out = SmallVec::new();
-    out.extend(properties.iter().map(|property| PropertyDef {
-        name: property.name,
-        value_type: core_value_type(property.value_type, property.required),
-        nullable: !property.required,
-        default: property.default.as_ref().map(|default| default.to_value()),
-        immutable: property.immutable,
-    }));
-    out
+    for property in properties {
+        out.push(PropertyDef {
+            name: property.name,
+            value_type: core_value_type(
+                property.value_type,
+                property.list_element_type.as_ref(),
+                property.required,
+            )?,
+            nullable: !property.required,
+            default: property.default.as_ref().map(|default| default.to_value()),
+            immutable: property.immutable,
+        });
+    }
+    Ok(out)
 }
 
 const fn core_validation_mode(mode: ValidationMode) -> selene_core::ValidationMode {
@@ -273,7 +285,42 @@ const fn core_validation_mode(mode: ValidationMode) -> selene_core::ValidationMo
     }
 }
 
-fn core_value_type(value_type: PropertyValueType, required: bool) -> ValueType {
+fn core_value_type(
+    value_type: PropertyValueType,
+    list_element_type: Option<&PropertyElementType>,
+    required: bool,
+) -> GraphResult<ValueType> {
+    let mut value_type = if value_type == PropertyValueType::List {
+        let element_type = list_element_type.ok_or_else(|| GraphError::Inconsistent {
+            reason: "LIST property definition is missing element type".to_owned(),
+        })?;
+        ValueType::list_of(core_element_value_type(element_type, 1)?)
+    } else {
+        core_scalar_value_type(value_type)
+    };
+    value_type.not_null = required;
+    Ok(value_type)
+}
+
+fn core_element_value_type(
+    element_type: &PropertyElementType,
+    depth: u32,
+) -> GraphResult<ValueType> {
+    if depth > MAX_LIST_TYPE_NESTING {
+        return Err(GraphError::Inconsistent {
+            reason: "LIST property definition exceeds nesting limit".to_owned(),
+        });
+    }
+    match element_type {
+        PropertyElementType::Scalar(value_type) => Ok(core_scalar_value_type(*value_type)),
+        PropertyElementType::List(inner) => Ok(ValueType::list_of(core_element_value_type(
+            inner,
+            depth + 1,
+        )?)),
+    }
+}
+
+fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
     let predefined = match value_type {
         PropertyValueType::Bool => Some(PredefinedValueType::Bool),
         PropertyValueType::Int => Some(PredefinedValueType::Int),
@@ -307,7 +354,7 @@ fn core_value_type(value_type: PropertyValueType, required: bool) -> ValueType {
         union: None,
         list_of: None,
         record: None,
-        not_null: required,
+        not_null: false,
         cardinality: selene_core::ValueTypeCardinality::ExactlyOne,
     }
 }

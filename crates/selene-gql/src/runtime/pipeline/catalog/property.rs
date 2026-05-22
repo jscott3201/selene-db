@@ -210,10 +210,10 @@ pub(super) fn render_property_value_type(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
 ) -> String {
-    if value_type == PropertyValueType::List {
-        if let Some(element_type) = list_element_type {
-            return format!("LIST<{}>", render_property_element_type(element_type));
-        }
+    if value_type == PropertyValueType::List
+        && let Some(element_type) = list_element_type
+    {
+        return format!("LIST<{}>", render_property_element_type(element_type));
     }
     scalar_property_value_type_name(value_type).to_owned()
 }

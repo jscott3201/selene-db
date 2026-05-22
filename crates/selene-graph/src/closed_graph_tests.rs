@@ -13,7 +13,7 @@ use selene_persist::{
 
 use crate::{
     CORE_PROVIDER_TAG, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
-    PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
+    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
 };
 
 #[path = "closed_graph_tests/immutable.rs"]
@@ -183,6 +183,49 @@ fn create_node_fills_declared_default_property() {
             .and_then(|properties| properties.get(&istr("active"))),
         Some(&Value::Bool(true))
     );
+}
+
+#[test]
+fn typed_list_property_rejects_wrong_element_type() {
+    let graph_type = GraphTypeDef {
+        name: istr("closed.list.graph"),
+        node_types: vec![NodeTypeDef {
+            name: istr("closed.list.person"),
+            key_labels: LabelSet::single(istr("Person")),
+            properties: vec![PropertyTypeDef {
+                name: istr("tags"),
+                value_type: PropertyValueType::List,
+                list_element_type: Some(PropertyElementType::Scalar(PropertyValueType::String)),
+                required: false,
+                default: None,
+                immutable: false,
+            }],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(22))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(
+            LabelSet::single(istr("Person")),
+            prop(
+                "tags",
+                Value::List(vec![Value::String(istr("ok")), Value::Int(7)]),
+            ),
+        )
+        .unwrap();
+
+    let err = txn.commit().unwrap_err();
+    assert!(matches!(
+        err,
+        GraphError::TypeViolation(TypeViolation::PropertyTypeMismatch { property, .. })
+            if property == istr("tags")
+    ));
 }
 
 #[test]

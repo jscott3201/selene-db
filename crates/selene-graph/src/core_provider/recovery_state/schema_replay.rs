@@ -8,7 +8,8 @@ use selene_core::{
 
 use crate::core_provider::inconsistent;
 use crate::graph_types::{
-    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+    EdgeTypeDef, GraphTypeDef, MAX_LIST_TYPE_NESTING, NodeTypeDef, PropertyDefaultValue,
+    PropertyElementType, PropertyTypeDef, ValidationMode,
 };
 
 pub(super) fn replay_schema_changes(
@@ -165,10 +166,11 @@ fn runtime_properties(
     properties
         .iter()
         .map(|property| {
+            let (value_type, list_element_type) = runtime_value_type(&property.value_type)?;
             Ok(PropertyTypeDef {
                 name: property.name,
-                value_type: runtime_value_type(&property.value_type)?,
-                list_element_type: None,
+                value_type,
+                list_element_type,
                 required: !property.nullable || property.value_type.not_null,
                 default: runtime_default_value(property.default.as_ref())?,
                 immutable: property.immutable,
@@ -199,12 +201,17 @@ const fn runtime_validation_mode(mode: selene_core::ValidationMode) -> Validatio
     }
 }
 
-fn runtime_value_type(value_type: &ValueType) -> Result<PropertyValueType, crate::ProviderError> {
-    if value_type.list_of.is_some() {
-        return Ok(PropertyValueType::List);
+fn runtime_value_type(
+    value_type: &ValueType,
+) -> Result<(PropertyValueType, Option<PropertyElementType>), crate::ProviderError> {
+    if let Some(element_type) = value_type.list_of.as_deref() {
+        return Ok((
+            PropertyValueType::List,
+            Some(runtime_element_type(element_type, 1)?),
+        ));
     }
     if value_type.record.is_some() {
-        return Ok(PropertyValueType::RecordTyped);
+        return Ok((PropertyValueType::RecordTyped, None));
     }
     if value_type.union.is_some() {
         return Err(inconsistent(
@@ -212,8 +219,42 @@ fn runtime_value_type(value_type: &ValueType) -> Result<PropertyValueType, crate
         ));
     }
     let Some(predefined) = value_type.predefined else {
-        return Ok(PropertyValueType::Null);
+        return Ok((PropertyValueType::Null, None));
     };
+    Ok((runtime_predefined_value_type(predefined)?, None))
+}
+
+fn runtime_element_type(
+    value_type: &ValueType,
+    depth: u32,
+) -> Result<PropertyElementType, crate::ProviderError> {
+    if depth > MAX_LIST_TYPE_NESTING {
+        return Err(inconsistent(
+            "WAL property definition exceeds LIST nesting limit",
+        ));
+    }
+    if let Some(element_type) = value_type.list_of.as_deref() {
+        return Ok(PropertyElementType::List(Box::new(runtime_element_type(
+            element_type,
+            depth + 1,
+        )?)));
+    }
+    if value_type.record.is_some() || value_type.union.is_some() {
+        return Err(inconsistent(
+            "WAL list property definition uses unsupported nested value type",
+        ));
+    }
+    let Some(predefined) = value_type.predefined else {
+        return Ok(PropertyElementType::Scalar(PropertyValueType::Null));
+    };
+    Ok(PropertyElementType::Scalar(runtime_predefined_value_type(
+        predefined,
+    )?))
+}
+
+fn runtime_predefined_value_type(
+    predefined: PredefinedValueType,
+) -> Result<PropertyValueType, crate::ProviderError> {
     Ok(match predefined {
         PredefinedValueType::Bool => PropertyValueType::Bool,
         PredefinedValueType::Int

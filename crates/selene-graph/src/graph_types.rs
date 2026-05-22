@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
 
+/// Maximum supported nesting for catalog `LIST<T>` property element descriptors.
+pub const MAX_LIST_TYPE_NESTING: u32 = 64;
+
 /// Definition of a closed graph type per ISO clause 18.
 #[derive(
     Clone,
@@ -193,14 +196,15 @@ fn validate_property_element_types(
 ) -> GraphResult<()> {
     for property in properties {
         if property.value_type == PropertyValueType::List {
-            if property.list_element_type.is_none() {
+            let Some(element_type) = property.list_element_type.as_ref() else {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
                         "property {} on type {type_name} declares LIST without an element type",
                         property.name
                     ),
                 });
-            }
+            };
+            validate_property_element_type(type_name, property.name, element_type, 1)?;
         } else if property.list_element_type.is_some() {
             return Err(GraphError::Inconsistent {
                 reason: format!(
@@ -211,6 +215,35 @@ fn validate_property_element_types(
         }
     }
     Ok(())
+}
+
+fn validate_property_element_type(
+    type_name: IStr,
+    property_name: IStr,
+    element_type: &PropertyElementType,
+    depth: u32,
+) -> GraphResult<()> {
+    if depth > MAX_LIST_TYPE_NESTING {
+        return Err(GraphError::Inconsistent {
+            reason: format!(
+                "property {property_name} on type {type_name} exceeds LIST nesting limit"
+            ),
+        });
+    }
+    match element_type {
+        PropertyElementType::Scalar(
+            PropertyValueType::List | PropertyValueType::Record | PropertyValueType::RecordTyped,
+        ) => Err(GraphError::Inconsistent {
+            reason: format!(
+                "property {property_name} on type {type_name} uses unsupported LIST element type {}",
+                element_type.value_type()
+            ),
+        }),
+        PropertyElementType::Scalar(_) => Ok(()),
+        PropertyElementType::List(inner) => {
+            validate_property_element_type(type_name, property_name, inner, depth + 1)
+        }
+    }
 }
 
 /// Node-type element.

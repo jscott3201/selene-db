@@ -390,7 +390,7 @@ fn validate_properties(
             }
             continue;
         }
-        if !declaration.value_type.matches(value) {
+        if !property_value_matches(declaration, value) {
             return Err(TypeViolation::PropertyTypeMismatch {
                 entity_id,
                 property: *key,
@@ -413,6 +413,22 @@ fn validate_properties(
         }
     }
     Ok(warnings)
+}
+
+fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool {
+    if !declaration.value_type.matches(value) {
+        return false;
+    }
+    if declaration.value_type != PropertyValueType::List {
+        return true;
+    }
+    let Some(element_type) = declaration.list_element_type.as_ref() else {
+        return false;
+    };
+    match value {
+        Value::List(values) => values.iter().all(|value| element_type.matches(value)),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
