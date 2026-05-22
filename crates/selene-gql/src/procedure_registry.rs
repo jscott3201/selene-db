@@ -26,6 +26,16 @@ pub trait ProcedureRegistry: Send + Sync {
     /// Look up procedure metadata by canonical CALL-time name.
     fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata>;
 
+    /// Return the registry epoch used by shared CALL plan caches.
+    ///
+    /// Construct-once registries may keep the default `0`. Registries that can
+    /// change lookup metadata or handle dispatch while a [`crate::CallPlanCache`]
+    /// may still contain plans must return a value that changes whenever cached
+    /// procedure plans would need to be recompiled.
+    fn registry_version(&self) -> u64 {
+        0
+    }
+
     /// Iterate registered procedure handles and metadata.
     ///
     /// Registries that cannot enumerate may keep the default empty iterator.

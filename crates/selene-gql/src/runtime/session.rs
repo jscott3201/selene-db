@@ -228,7 +228,8 @@ impl<'g> Session<'g> {
     ///
     /// Embedders should pass one shared cache per graph so short-lived
     /// sessions can reuse procedure-call plans across requests. The cache key
-    /// includes the graph ID and schema-version epoch.
+    /// includes the graph ID, schema-version epoch, and procedure-registry
+    /// version.
     #[must_use]
     pub fn with_call_plan_cache(mut self, cache: Arc<CallPlanCache>) -> Self {
         self.call_plan_cache = Some(cache);

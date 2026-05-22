@@ -23,7 +23,7 @@ pub struct CallPlanCache {
 
 struct CallPlanCacheInner {
     plans: LruCache<CallPlanKey, Arc<ExecutionPlan>>,
-    source_index: LruCache<CallPlanSourceKey, CallPlanKey>,
+    source_index: LruCache<Arc<str>, Vec<CallPlanSourceEntry>>,
     stats: CallPlanCacheStats,
 }
 
@@ -32,14 +32,16 @@ struct CallPlanCacheInner {
 pub struct CallPlanKey {
     graph_id: GraphId,
     schema_version: u64,
+    registry_version: u64,
     canonical_source: Arc<str>,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-struct CallPlanSourceKey {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CallPlanSourceEntry {
     graph_id: GraphId,
     schema_version: u64,
-    source: Arc<str>,
+    registry_version: u64,
+    key: CallPlanKey,
 }
 
 /// Counters for [`CallPlanCache`] lookup and eviction behavior.
@@ -70,15 +72,23 @@ impl CallPlanCache {
         &self,
         graph_id: GraphId,
         schema_version: u64,
+        registry_version: u64,
         source: &str,
     ) -> Option<Arc<ExecutionPlan>> {
-        let source_key = CallPlanSourceKey {
-            graph_id,
-            schema_version,
-            source: Arc::from(source),
-        };
         let mut inner = self.lock_inner();
-        let key = inner.source_index.get(&source_key).cloned()?;
+        let Some(key) = inner.source_index.get(source).and_then(|entries| {
+            entries
+                .iter()
+                .find(|entry| {
+                    entry.graph_id == graph_id
+                        && entry.schema_version == schema_version
+                        && entry.registry_version == registry_version
+                })
+                .map(|entry| entry.key.clone())
+        }) else {
+            inner.stats.misses = inner.stats.misses.saturating_add(1);
+            return None;
+        };
         match inner.plans.get(&key) {
             Some(plan) => {
                 let plan = Arc::clone(plan);
@@ -86,7 +96,14 @@ impl CallPlanCache {
                 Some(plan)
             }
             None => {
-                inner.source_index.pop(&source_key);
+                remove_source_entry(
+                    &mut inner,
+                    source,
+                    graph_id,
+                    schema_version,
+                    registry_version,
+                );
+                inner.stats.misses = inner.stats.misses.saturating_add(1);
                 None
             }
         }
@@ -123,14 +140,28 @@ impl CallPlanCache {
             inner.stats.capacity_evictions = inner.stats.capacity_evictions.saturating_add(1);
         }
         if let Some(source) = source {
-            inner.source_index.push(
-                CallPlanSourceKey {
-                    graph_id: key.graph_id,
-                    schema_version: key.schema_version,
-                    source,
-                },
+            let entry = CallPlanSourceEntry {
+                graph_id: key.graph_id,
+                schema_version: key.schema_version,
+                registry_version: key.registry_version,
                 key,
-            );
+            };
+            match inner.source_index.get_mut(source.as_ref()) {
+                Some(entries) => {
+                    if let Some(existing) = entries.iter_mut().find(|existing| {
+                        existing.graph_id == entry.graph_id
+                            && existing.schema_version == entry.schema_version
+                            && existing.registry_version == entry.registry_version
+                    }) {
+                        *existing = entry;
+                    } else {
+                        entries.push(entry);
+                    }
+                }
+                None => {
+                    inner.source_index.push(source, vec![entry]);
+                }
+            }
         }
     }
 
@@ -154,16 +185,38 @@ impl CallPlanCache {
     }
 }
 
+fn remove_source_entry(
+    inner: &mut CallPlanCacheInner,
+    source: &str,
+    graph_id: GraphId,
+    schema_version: u64,
+    registry_version: u64,
+) {
+    let Some(entries) = inner.source_index.get_mut(source) else {
+        return;
+    };
+    entries.retain(|entry| {
+        !(entry.graph_id == graph_id
+            && entry.schema_version == schema_version
+            && entry.registry_version == registry_version)
+    });
+    if entries.is_empty() {
+        inner.source_index.pop(source);
+    }
+}
+
 impl CallPlanKey {
     pub(crate) fn for_statement(
         graph_id: GraphId,
         schema_version: u64,
+        registry_version: u64,
         statement: &Statement,
     ) -> Option<Self> {
         let canonical_source = canonical_call_source(statement)?;
         Some(Self {
             graph_id,
             schema_version,
+            registry_version,
             canonical_source: Arc::from(canonical_source),
         })
     }
@@ -178,6 +231,12 @@ impl CallPlanKey {
     #[must_use]
     pub const fn schema_version(&self) -> u64 {
         self.schema_version
+    }
+
+    /// Return the procedure-registry epoch carried by this cache key.
+    #[must_use]
+    pub const fn registry_version(&self) -> u64 {
+        self.registry_version
     }
 
     /// Return the canonical CALL source carried by this cache key.
@@ -221,8 +280,12 @@ mod tests {
     };
 
     fn key(source: &str) -> CallPlanKey {
+        key_with_registry(source, 11)
+    }
+
+    fn key_with_registry(source: &str, registry_version: u64) -> CallPlanKey {
         let statement = parse(source).expect("source parses");
-        CallPlanKey::for_statement(GraphId::new(7), 3, &statement)
+        CallPlanKey::for_statement(GraphId::new(7), 3, registry_version, &statement)
             .expect("source produces CALL cache key")
     }
 
@@ -270,23 +333,27 @@ mod tests {
         let statement =
             parse("MATCH (n) CALL cache.echo(n) YIELD out RETURN out").expect("source parses");
 
-        assert!(CallPlanKey::for_statement(GraphId::new(7), 3, &statement).is_none());
+        assert!(CallPlanKey::for_statement(GraphId::new(7), 3, 11, &statement).is_none());
     }
 
     #[test]
-    fn key_carries_graph_id_and_schema_version() {
+    fn key_carries_graph_id_schema_version_and_registry_version() {
         let statement = parse("CALL cache.echo()").expect("source parses");
-        let graph_one = CallPlanKey::for_statement(GraphId::new(1), 0, &statement)
+        let graph_one = CallPlanKey::for_statement(GraphId::new(1), 0, 11, &statement)
             .expect("source produces key");
-        let graph_two = CallPlanKey::for_statement(GraphId::new(2), 0, &statement)
+        let graph_two = CallPlanKey::for_statement(GraphId::new(2), 0, 11, &statement)
             .expect("source produces key");
-        let schema_one = CallPlanKey::for_statement(GraphId::new(1), 1, &statement)
+        let schema_one = CallPlanKey::for_statement(GraphId::new(1), 1, 11, &statement)
+            .expect("source produces key");
+        let registry_one = CallPlanKey::for_statement(GraphId::new(1), 0, 12, &statement)
             .expect("source produces key");
 
         assert_ne!(graph_one, graph_two);
         assert_ne!(graph_one, schema_one);
+        assert_ne!(graph_one, registry_one);
         assert_eq!(graph_one.graph_id(), GraphId::new(1));
         assert_eq!(graph_one.schema_version(), 0);
+        assert_eq!(graph_one.registry_version(), 11);
     }
 
     #[test]
@@ -329,9 +396,61 @@ mod tests {
 
         assert!(
             cache
-                .get_source(GraphId::new(7), 3, "CALL cache.one()")
+                .get_source(GraphId::new(7), 3, 11, "CALL cache.one()")
                 .is_some()
         );
         assert_eq!(cache.stats().hits, 1);
+    }
+
+    #[test]
+    fn call_plan_cache_source_misses_are_recorded() {
+        let cache = CallPlanCache::new(NonZeroUsize::new(2).expect("nonzero"));
+        let source = Arc::<str>::from("CALL cache.one()");
+        let key = key(&source);
+
+        assert!(
+            cache
+                .get_source(GraphId::new(7), 3, 11, "CALL cache.one()")
+                .is_none()
+        );
+        cache.insert_with_source(key, Arc::clone(&source), plan_for("RETURN 1"));
+        assert!(
+            cache
+                .get_source(GraphId::new(7), 3, 12, "CALL cache.one()")
+                .is_none()
+        );
+
+        assert_eq!(cache.stats().misses, 2);
+    }
+
+    #[test]
+    fn call_plan_cache_stale_source_entries_are_recorded_as_misses() {
+        let cache = CallPlanCache::new(NonZeroUsize::new(1).expect("nonzero"));
+        let source = Arc::<str>::from("CALL cache.one()");
+        let old_key = key_with_registry(&source, 11);
+        let new_key = key_with_registry(&source, 12);
+
+        cache.insert_with_source(old_key, Arc::clone(&source), plan_for("RETURN 1"));
+        cache.insert_with_source(new_key, Arc::clone(&source), plan_for("RETURN 2"));
+
+        assert!(
+            cache
+                .get_source(GraphId::new(7), 3, 11, "CALL cache.one()")
+                .is_none()
+        );
+        assert!(
+            cache
+                .get_source(GraphId::new(7), 3, 12, "CALL cache.one()")
+                .is_some()
+        );
+
+        assert_eq!(
+            cache.stats(),
+            CallPlanCacheStats {
+                hits: 1,
+                misses: 1,
+                capacity_evictions: 1,
+            }
+        );
     }
 }

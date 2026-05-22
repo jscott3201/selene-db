@@ -17,15 +17,21 @@ use selene_graph::{SharedGraph, TypedIndexKind};
 struct TestRegistry {
     name: Box<[IStr]>,
     metadata: ProcedureMetadata,
+    version: u64,
+    value: i64,
     records: Mutex<u64>,
 }
 
 impl TestRegistry {
     fn new() -> Self {
+        Self::with_version_handle_and_value(1, ProcedureHandle::new(1), 7)
+    }
+
+    fn with_version_handle_and_value(version: u64, handle: ProcedureHandle, value: i64) -> Self {
         Self {
             name: Box::from([istr("cache"), istr("values")]),
             metadata: ProcedureMetadata::new(
-                ProcedureHandle::new(1),
+                handle,
                 ProcedureSignature::new(Vec::new()),
                 ProcedureOutputSchema {
                     columns: vec![ProcedureOutputColumn::new(istr("value"), GqlType::Integer)],
@@ -34,6 +40,8 @@ impl TestRegistry {
                 ProcedureMutability::Read,
                 None,
             ),
+            version,
+            value,
             records: Mutex::new(0),
         }
     }
@@ -48,15 +56,24 @@ impl ProcedureRegistry for TestRegistry {
         (name == self.name.as_ref()).then(|| self.metadata.clone())
     }
 
+    fn registry_version(&self) -> u64 {
+        self.version
+    }
+
     fn execute(
         &self,
-        _handle: ProcedureHandle,
+        handle: ProcedureHandle,
         _args: &[Value],
         _ctx: &mut ProcedureContext<'_, '_>,
     ) -> Result<ProcedureResult, ProcedureError> {
+        if handle != self.metadata.handle {
+            return Err(ProcedureError::UnknownProcedure {
+                name: self.name.clone(),
+            });
+        }
         *self.records() += 1;
         Ok(ProcedureResult {
-            rows: vec![vec![Value::Int(7)]],
+            rows: vec![vec![Value::Int(self.value)]],
         })
     }
 }
@@ -77,7 +94,7 @@ fn call_plan_cache_miss_then_hit_across_short_lived_sessions() {
         .expect("second call executes");
 
     let stats = cache.stats();
-    assert_eq!(stats.misses, 1);
+    assert_eq!(stats.misses, 2);
     assert_eq!(stats.hits, 1);
     assert_eq!(*registry.records(), 2);
 }
@@ -103,7 +120,7 @@ fn call_plan_cache_schema_version_change_misses_next_lookup() {
         .expect("post-schema-change call executes");
 
     let stats = cache.stats();
-    assert_eq!(stats.misses, 2);
+    assert_eq!(stats.misses, 4);
     assert_eq!(stats.hits, 1);
 }
 
@@ -128,8 +145,36 @@ fn call_plan_cache_graph_id_separates_shared_cache_keys() {
         .expect("first graph second call executes");
 
     let stats = cache.stats();
-    assert_eq!(stats.misses, 2);
+    assert_eq!(stats.misses, 4);
     assert_eq!(stats.hits, 1);
+}
+
+#[test]
+fn call_plan_cache_registry_version_separates_shared_cache_keys() {
+    let registry_one = TestRegistry::with_version_handle_and_value(1, ProcedureHandle::new(1), 7);
+    let registry_two = TestRegistry::with_version_handle_and_value(2, ProcedureHandle::new(2), 11);
+    let graph = graph(12_206);
+    let cache = cache();
+
+    let first = Session::new(&graph)
+        .with_call_plan_cache(Arc::clone(&cache))
+        .execute_source("CALL cache.values() YIELD value", &registry_one)
+        .expect("first registry executes");
+    let second = Session::new(&graph)
+        .with_call_plan_cache(Arc::clone(&cache))
+        .execute_source("CALL cache.values() YIELD value", &registry_two)
+        .expect("second registry executes");
+    let third = Session::new(&graph)
+        .with_call_plan_cache(Arc::clone(&cache))
+        .execute_source("CALL cache.values() YIELD value", &registry_two)
+        .expect("second registry repeats");
+
+    assert_eq!(single_int(first), 7);
+    assert_eq!(single_int(second), 11);
+    assert_eq!(single_int(third), 11);
+    assert_eq!(*registry_one.records(), 1);
+    assert_eq!(*registry_two.records(), 2);
+    assert_eq!(cache.stats().hits, 1);
 }
 
 #[test]
@@ -156,6 +201,18 @@ fn embedded_pipeline_call_does_not_touch_call_plan_cache() {
         .expect("second embedded call executes");
 
     assert_eq!(cache.stats(), Default::default());
+}
+
+fn single_int(output: selene_gql::StatementOutput) -> i64 {
+    let selene_gql::StatementOutput::Rows(table) = output else {
+        panic!("expected rows");
+    };
+    assert_eq!(table.row_count(), 1);
+    let row = table.rows().first().expect("one row");
+    let Value::Int(value) = row.values().first().expect("one value") else {
+        panic!("expected integer");
+    };
+    *value
 }
 
 fn graph(id: u64) -> SharedGraph {

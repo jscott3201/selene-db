@@ -106,8 +106,9 @@ impl Session<'_> {
     /// When the session has a plan cache, source strings whose cached plan was
     /// prepared against the current graph schema version skip parse, analyze,
     /// and plan. Procedure-call-rooted statements can additionally use the
-    /// opt-in shared CALL plan cache, keyed by graph ID, schema version, and
-    /// formatter-canonical source. Embedded in-pipeline `CALL` remains uncached.
+    /// opt-in shared CALL plan cache, keyed by graph ID, schema version,
+    /// registry version, and formatter-canonical source. Embedded in-pipeline
+    /// `CALL` remains uncached.
     /// If an active explicit transaction has uncommitted schema changes, both
     /// caches bypass lookup and insert so analysis sees transaction-local
     /// schema.
@@ -117,6 +118,7 @@ impl Session<'_> {
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
         let schema_version = self.graph().schema_version();
+        let registry_version = registry.registry_version();
         let active_txn_has_schema_changes = self
             .active_txn
             .as_ref()
@@ -136,8 +138,10 @@ impl Session<'_> {
         let call_graph_id = call_plan_cache
             .as_ref()
             .map(|_| self.graph().read().graph_id());
-        if let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), call_graph_id)
-            && let Some(cached) = cache.get_source(graph_id, schema_version, source)
+        if is_top_level_call_candidate(source)
+            && let (Some(cache), Some(graph_id)) = (call_plan_cache.as_ref(), call_graph_id)
+            && let Some(cached) =
+                cache.get_source(graph_id, schema_version, registry_version, source)
         {
             metrics::counter_inc(metrics::CALL_PLAN_CACHE_HITS_TOTAL);
             return execute_statement(&cached, self, registry);
@@ -166,8 +170,9 @@ impl Session<'_> {
             });
         }
 
-        let call_plan_key = call_graph_id
-            .and_then(|graph_id| CallPlanKey::for_statement(graph_id, schema_version, &statement));
+        let call_plan_key = call_graph_id.and_then(|graph_id| {
+            CallPlanKey::for_statement(graph_id, schema_version, registry_version, &statement)
+        });
         if let (Some(cache), Some(key)) = (call_plan_cache.as_ref(), call_plan_key.as_ref())
             && let Some(cached) = cache.get(key)
         {
@@ -207,6 +212,17 @@ fn is_tx_control_statement(statement: &Statement) -> bool {
         statement,
         Statement::StartTransaction { .. } | Statement::Commit { .. } | Statement::Rollback { .. }
     )
+}
+
+fn is_top_level_call_candidate(source: &str) -> bool {
+    let source = source.trim_start();
+    let Some(prefix) = source.get(..4) else {
+        return false;
+    };
+    if !prefix.eq_ignore_ascii_case("CALL") {
+        return false;
+    }
+    source[4..].chars().next().is_none_or(char::is_whitespace)
 }
 
 fn execute_read_only(
