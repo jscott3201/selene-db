@@ -177,7 +177,7 @@ pub fn optimized(source: &str, catalog: &MockIndexCatalog) -> ExecutionPlan {
 pub fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
     match tree {
         JoinTree::Scan(scan) => Some(scan),
-        JoinTree::Expand { child, .. } => first_scan(child),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => first_scan(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             first_scan(left).or_else(|| first_scan(right))
         }
@@ -189,7 +189,7 @@ pub fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
 pub fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut NodeOrEdgeScan> {
     match tree {
         JoinTree::Scan(scan) => Some(scan),
-        JoinTree::Expand { child, .. } => first_scan_mut(child),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => first_scan_mut(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             first_scan_mut(left).or_else(|| first_scan_mut(right))
         }

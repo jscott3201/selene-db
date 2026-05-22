@@ -20,6 +20,16 @@ struct LoweredClause {
     filters: Vec<FilterPredicate>,
 }
 
+struct GraphLoweringContext<'a, 's> {
+    path_mode: PathMode,
+    selector: Option<PathSelector>,
+    analyzed: &'a AnalyzedStatement,
+    filters: &'s mut Vec<FilterPredicate>,
+    paths: &'s mut Vec<PathPlan>,
+    binding_ids: &'s mut BTreeSet<BindingId>,
+    hidden: &'s mut HiddenAllocator,
+}
+
 /// Predicates collected from the syntactic right-side node of an edge
 /// expansion. Bundled so they ride the `EdgeMatch` instead of leaking into
 /// the unscoped pattern filter list.
@@ -165,16 +175,16 @@ fn lower_match_clause(
     let mut filters = Vec::new();
     let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
     for pattern in &clause.patterns {
-        let (tree, names) = lower_graph_pattern(
-            pattern,
-            clause.path_mode,
-            clause.selector,
+        let mut ctx = GraphLoweringContext {
+            path_mode: clause.path_mode,
+            selector: clause.selector,
             analyzed,
-            &mut filters,
+            filters: &mut filters,
             paths,
             binding_ids,
             hidden,
-        )?;
+        };
+        let (tree, names) = lower_graph_pattern(pattern, &mut ctx)?;
         current = Some(match current {
             None => (tree, names),
             Some((left, left_names)) => {
@@ -209,18 +219,17 @@ fn lower_match_clause(
 
 fn lower_graph_pattern(
     pattern: &GraphPattern,
-    path_mode: PathMode,
-    selector: Option<PathSelector>,
-    analyzed: &AnalyzedStatement,
-    filters: &mut Vec<FilterPredicate>,
-    paths: &mut Vec<PathPlan>,
-    binding_ids: &mut BTreeSet<BindingId>,
-    hidden: &mut HiddenAllocator,
+    ctx: &mut GraphLoweringContext<'_, '_>,
 ) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
     if let Some(name) = pattern.path_binding {
-        let binding = binding_for_decl(name, pattern.span, BindingDeclKind::PathBinding, analyzed)?;
-        binding_ids.insert(binding);
-        paths.push(PathPlan {
+        let binding = binding_for_decl(
+            name,
+            pattern.span,
+            BindingDeclKind::PathBinding,
+            ctx.analyzed,
+        )?;
+        ctx.binding_ids.insert(binding);
+        ctx.paths.push(PathPlan {
             binding,
             span: pattern.span,
         });
@@ -236,11 +245,11 @@ fn lower_graph_pattern(
     let mut names = BTreeSet::new();
     let mut current = JoinTree::Scan(node_scan(
         first,
-        analyzed,
-        filters,
+        ctx.analyzed,
+        ctx.filters,
         &mut names,
-        binding_ids,
-        hidden,
+        ctx.binding_ids,
+        ctx.hidden,
     )?);
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
@@ -256,14 +265,22 @@ fn lower_graph_pattern(
             });
         };
         let left_binding = chain_tail_binding(&current);
-        let right_node =
-            right_node_predicates(right, analyzed, filters, &mut names, binding_ids, hidden)?;
+        let right_node = right_node_predicates(
+            right,
+            ctx.analyzed,
+            ctx.filters,
+            &mut names,
+            ctx.binding_ids,
+            ctx.hidden,
+        )?;
+        let path_mode = ctx.path_mode;
+        let selector = ctx.selector;
         let mut edge_ctx = EdgeLoweringContext {
-            analyzed,
-            filters,
+            analyzed: ctx.analyzed,
+            filters: ctx.filters,
             names: &mut names,
-            binding_ids,
-            hidden,
+            binding_ids: ctx.binding_ids,
+            hidden: ctx.hidden,
         };
         current = match &edge.quantifier {
             Some(Quantifier::GraphPattern {

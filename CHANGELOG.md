@@ -8,6 +8,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Bounded variable-length edge patterns in `selene-gql` for `WALK` matches,
+  including `JoinTree::Repeat`, `LIST<EdgeRef>` group-variable binding, zero-hop
+  results, per-hop edge predicates, and cancellation checks.
 - Shared `selene-gql` `CallPlanCache` for repeated top-level procedure
   `CALL` statements across short-lived sessions, with graph-id and
   schema-version keyed invalidation plus a cache-hit metric.
