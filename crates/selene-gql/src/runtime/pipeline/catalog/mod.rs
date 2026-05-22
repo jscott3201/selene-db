@@ -102,20 +102,19 @@ pub(super) fn execute(
                     span: *span,
                 });
             }
-            let endpoints = endpoints
-                .as_ref()
-                .ok_or(ExecutorError::ImplementationDefined {
-                    detail: "create edge type without endpoints requires open graph (GG01)",
-                })?;
             let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
-            let (source, target) = resolve_endpoints(endpoints, &graph_type, *span)?;
+            let (source, target) = endpoints
+                .as_ref()
+                .map(|endpoints| resolve_endpoints(endpoints, &graph_type, *span))
+                .transpose()?
+                .unwrap_or((EdgeEndpointDef::Any, EdgeEndpointDef::Any));
             let properties = property_defs(properties, false)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(
                     *label,
                     *label,
-                    EdgeEndpointDef::NodeType(source),
-                    EdgeEndpointDef::NodeType(target),
+                    source,
+                    target,
                     properties,
                     graph_validation_mode(*validation_mode),
                 )
@@ -470,29 +469,43 @@ fn render_node_type_def(node_type: &NodeTypeDef) -> String {
 }
 
 fn render_edge_type_def(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
+    let endpoint_clause = render_edge_endpoint_clause(graph_type, edge_type);
+    let properties = render_properties(&edge_type.properties);
+    let body = match (endpoint_clause.is_empty(), properties.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => properties,
+        (false, true) => endpoint_clause,
+        (false, false) => format!("{endpoint_clause}, {properties}"),
+    };
+    format!("CREATE EDGE TYPE :{} ({body})", edge_type.label)
+}
+
+fn render_edge_endpoint_clause(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
+    if edge_type.source_node_type == EdgeEndpointDef::Any
+        && edge_type.target_node_type == EdgeEndpointDef::Any
+    {
+        return String::new();
+    }
     let source = render_endpoint(graph_type, edge_type.source_node_type);
     let target = render_endpoint(graph_type, edge_type.target_node_type);
-    let properties = render_properties(&edge_type.properties);
-    if properties.is_empty() {
-        format!(
-            "CREATE EDGE TYPE :{} (FROM {} TO {})",
-            edge_type.label, source, target
-        )
-    } else {
-        format!(
-            "CREATE EDGE TYPE :{} (FROM {} TO {}, {})",
-            edge_type.label, source, target, properties
-        )
-    }
+    format!("FROM {source} TO {target}")
 }
 
 fn render_endpoint(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> String {
     match endpoint {
         EdgeEndpointDef::Any => "ANY".to_owned(),
         EdgeEndpointDef::NodeType(index) => {
-            render_node_label_set(&graph_type.node_types[index as usize].key_labels)
+            render_endpoint_label_set(&graph_type.node_types[index as usize].key_labels)
         }
     }
+}
+
+fn render_endpoint_label_set(labels: &LabelSet) -> String {
+    labels
+        .iter()
+        .map(|label| format!(":{label}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn render_node_label_set(labels: &LabelSet) -> String {

@@ -652,6 +652,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_ambiguous_overlapping_edge_endpoints() {
+        let mut graph_type = valid_type();
+        graph_type.edge_types.push(EdgeTypeDef {
+            name: label("types.works_at_any"),
+            label: label("WORKS_AT"),
+            source_node_type: EdgeEndpointDef::Any,
+            target_node_type: EdgeEndpointDef::NodeType(1),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
+        });
+
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason })
+                if reason.contains("ambiguous edge type endpoints")
+        ));
+    }
+
+    #[test]
     fn lookup_returns_matching_elements() {
         let graph_type = valid_type();
         let person = LabelSet::single(label("Person"));
