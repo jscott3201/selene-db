@@ -157,6 +157,7 @@ impl GraphTypeDef {
                 "node property",
                 node_type.properties.iter().map(|property| property.name),
             )?;
+            validate_property_element_types(node_type.name, &node_type.properties)?;
         }
 
         let node_type_count = self.node_types.len();
@@ -168,6 +169,7 @@ impl GraphTypeDef {
                 "edge property",
                 edge_type.properties.iter().map(|property| property.name),
             )?;
+            validate_property_element_types(edge_type.name, &edge_type.properties)?;
             if !edge_triples.insert((
                 edge_type.label,
                 edge_type.source_node_type,
@@ -183,6 +185,32 @@ impl GraphTypeDef {
         }
         Ok(())
     }
+}
+
+fn validate_property_element_types(
+    type_name: IStr,
+    properties: &[PropertyTypeDef],
+) -> GraphResult<()> {
+    for property in properties {
+        if property.value_type == PropertyValueType::List {
+            if property.list_element_type.is_none() {
+                return Err(GraphError::Inconsistent {
+                    reason: format!(
+                        "property {} on type {type_name} declares LIST without an element type",
+                        property.name
+                    ),
+                });
+            }
+        } else if property.list_element_type.is_some() {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares a list element type for non-LIST value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Node-type element.
@@ -249,12 +277,63 @@ pub struct PropertyTypeDef {
     pub name: IStr,
     /// Declared value type.
     pub value_type: PropertyValueType,
+    /// Declared element type when [`PropertyTypeDef::value_type`] is `List`.
+    pub list_element_type: Option<PropertyElementType>,
     /// `true` means NOT NULL / required.
     pub required: bool,
     /// Default value materialized when the property is omitted on create.
     pub default: Option<PropertyDefaultValue>,
     /// Whether updates to this property are forbidden after creation.
     pub immutable: bool,
+}
+
+/// Persistable element-type descriptor for `LIST<T>` property declarations.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+#[rkyv(
+    bytecheck(bounds(__C: rkyv::validation::ArchiveContext)),
+    deserialize_bounds(__D::Error: rkyv::rancor::Source),
+    serialize_bounds(__S: rkyv::ser::Writer)
+)]
+#[non_exhaustive]
+pub enum PropertyElementType {
+    /// Scalar list element type.
+    Scalar(PropertyValueType),
+    /// Nested list element type.
+    List(#[rkyv(omit_bounds)] Box<PropertyElementType>),
+}
+
+impl PropertyElementType {
+    /// Return the coarse property-value type for this descriptor.
+    #[must_use]
+    pub const fn value_type(&self) -> PropertyValueType {
+        match self {
+            Self::Scalar(value_type) => *value_type,
+            Self::List(_) => PropertyValueType::List,
+        }
+    }
+
+    /// Return true when `value` belongs to this element type.
+    #[must_use]
+    pub fn matches(&self, value: &Value) -> bool {
+        match self {
+            Self::Scalar(value_type) => value_type.matches(value),
+            Self::List(element_type) => match value {
+                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
+                _ => false,
+            },
+        }
+    }
 }
 
 /// Persistable default-value descriptor for closed graph property declarations.
@@ -367,6 +446,7 @@ mod tests {
         PropertyTypeDef {
             name: label(name),
             value_type: PropertyValueType::String,
+            list_element_type: None,
             required: true,
             default: None,
             immutable: false,

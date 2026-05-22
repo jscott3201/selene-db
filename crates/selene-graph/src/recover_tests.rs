@@ -286,6 +286,7 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
                 vec![PropertyTypeDef {
                     name: serial,
                     value_type: selene_core::PropertyValueType::String,
+                    list_element_type: None,
                     required: false,
                     default: Some(PropertyDefaultValue::String(intern("unknown").unwrap())),
                     immutable: true,

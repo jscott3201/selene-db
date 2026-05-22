@@ -349,6 +349,7 @@ impl PropertyTypeDefV1 {
         PropertyTypeDef {
             name: self.name,
             value_type: self.value_type,
+            list_element_type: None,
             required: self.required,
             default: None,
             immutable: false,

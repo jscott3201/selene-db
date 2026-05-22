@@ -168,6 +168,7 @@ fn runtime_properties(
             Ok(PropertyTypeDef {
                 name: property.name,
                 value_type: runtime_value_type(&property.value_type)?,
+                list_element_type: None,
                 required: !property.nullable || property.value_type.not_null,
                 default: runtime_default_value(property.default.as_ref())?,
                 immutable: property.immutable,

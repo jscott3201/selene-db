@@ -21,6 +21,7 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
     PropertyTypeDef {
         name: istr(name),
         value_type,
+        list_element_type: None,
         required,
         default: None,
         immutable: false,

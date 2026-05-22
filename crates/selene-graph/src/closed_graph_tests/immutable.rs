@@ -11,6 +11,7 @@ fn node_property_rejects_relabel_bypass_at_commit() {
                 properties: vec![PropertyTypeDef {
                     name: istr("serial"),
                     value_type: PropertyValueType::String,
+                    list_element_type: None,
                     required: true,
                     default: None,
                     immutable: true,
@@ -23,6 +24,7 @@ fn node_property_rejects_relabel_bypass_at_commit() {
                 properties: vec![PropertyTypeDef {
                     name: istr("serial"),
                     value_type: PropertyValueType::String,
+                    list_element_type: None,
                     required: true,
                     default: None,
                     immutable: false,
@@ -115,6 +117,7 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
             properties: vec![PropertyTypeDef {
                 name: istr("serial"),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: true,

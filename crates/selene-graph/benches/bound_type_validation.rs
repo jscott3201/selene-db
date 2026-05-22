@@ -193,6 +193,7 @@ fn property_defs(count: usize) -> Vec<PropertyTypeDef> {
             } else {
                 PropertyValueType::Int
             },
+            list_element_type: None,
             required: idx < 3,
             default: None,
             immutable: false,

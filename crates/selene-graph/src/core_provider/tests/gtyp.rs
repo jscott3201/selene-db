@@ -20,6 +20,7 @@ fn gtyp_v2_preserves_type_model_fields() {
             properties: vec![PropertyTypeDef {
                 name: intern("core.gtyp.v2.name").unwrap(),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: false,
                 default: Some(PropertyDefaultValue::String(intern("anon").unwrap())),
                 immutable: true,
@@ -57,6 +58,7 @@ fn finish_recovery_rejects_gtyp_without_meta() {
             properties: vec![PropertyTypeDef {
                 name: intern("name").unwrap(),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: false,
                 default: None,
                 immutable: false,

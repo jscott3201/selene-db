@@ -60,6 +60,7 @@ fn property_def(
     Ok(PropertyTypeDef {
         name: property.name,
         value_type,
+        list_element_type: None,
         required,
         default,
         immutable,

@@ -28,6 +28,7 @@ fn person_graph_type() -> GraphTypeDef {
             properties: vec![PropertyTypeDef {
                 name: istr("name"),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,

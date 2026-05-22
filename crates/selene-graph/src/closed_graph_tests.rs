@@ -36,6 +36,7 @@ fn person_graph_type() -> GraphTypeDef {
             properties: vec![PropertyTypeDef {
                 name: istr("name"),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,
@@ -50,6 +51,7 @@ fn person_graph_type() -> GraphTypeDef {
             properties: vec![PropertyTypeDef {
                 name: istr("since"),
                 value_type: PropertyValueType::Int,
+                list_element_type: None,
                 required: false,
                 default: None,
                 immutable: false,
@@ -153,6 +155,7 @@ fn create_node_fills_declared_default_property() {
             properties: vec![PropertyTypeDef {
                 name: istr("active"),
                 value_type: PropertyValueType::Bool,
+                list_element_type: None,
                 required: false,
                 default: Some(PropertyDefaultValue::Boolean(true)),
                 immutable: false,
@@ -192,6 +195,7 @@ fn immutable_property_update_is_rejected_before_commit() {
             properties: vec![PropertyTypeDef {
                 name: istr("serial"),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: true,

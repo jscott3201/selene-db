@@ -77,6 +77,7 @@ fn sample_type() -> GraphTypeDef {
             properties: vec![crate::PropertyTypeDef {
                 name: intern("shared.name").unwrap(),
                 value_type: PropertyValueType::String,
+                list_element_type: None,
                 required: true,
                 default: None,
                 immutable: false,

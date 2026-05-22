@@ -442,6 +442,7 @@ mod tests {
                     properties: vec![PropertyTypeDef {
                         name: istr("name"),
                         value_type: PropertyValueType::String,
+                        list_element_type: None,
                         required: true,
                         default: None,
                         immutable: false,
@@ -454,6 +455,7 @@ mod tests {
                     properties: vec![PropertyTypeDef {
                         name: istr("name"),
                         value_type: PropertyValueType::String,
+                        list_element_type: None,
                         required: true,
                         default: None,
                         immutable: false,
@@ -469,6 +471,7 @@ mod tests {
                 properties: vec![PropertyTypeDef {
                     name: istr("since"),
                     value_type: PropertyValueType::Int,
+                    list_element_type: None,
                     required: false,
                     default: None,
                     immutable: false,
