@@ -6,6 +6,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::time::Instant;
 
+use rayon::prelude::*;
 use selene_core::metrics;
 
 use crate::compression::compress_zstd;
@@ -217,33 +218,64 @@ fn prepare_sections(
     compression: SectionCompression,
 ) -> PersistResult<Vec<PreparedSection>> {
     let count = sections.len();
-    let mut payload_offset =
-        SNAPSHOT_FILE_HEADER_LEN as u64 + (count * SECTION_TABLE_ROW_LEN) as u64;
-    let mut prepared = Vec::with_capacity(count);
-    for section in sections {
-        let RawSection {
+    let mut prepared = match compression {
+        SectionCompression::None => sections
+            .into_iter()
+            .map(prepare_uncompressed_section)
+            .collect::<PersistResult<Vec<_>>>()?,
+        SectionCompression::PerSection { level } => sections
+            .into_par_iter()
+            .map(|section| prepare_compressed_section(section, level))
+            .collect::<PersistResult<Vec<_>>>()?,
+    };
+    assign_section_offsets(&mut prepared, count);
+    Ok(prepared)
+}
+
+fn prepare_uncompressed_section(section: RawSection) -> PersistResult<PreparedSection> {
+    let RawSection {
+        provider,
+        sub,
+        payload,
+    } = section;
+    validate_section_payload_len(payload.len())?;
+    Ok(PreparedSection {
+        entry: SectionEntry {
             provider,
             sub,
-            payload,
-        } = section;
-        let payload = match compression {
-            SectionCompression::None => payload,
-            SectionCompression::PerSection { level } => compress_zstd(&payload, level)?,
-        };
-        validate_section_payload_len(payload.len())?;
-        let payload_len = payload.len() as u64;
-        prepared.push(PreparedSection {
-            entry: SectionEntry {
-                provider,
-                sub,
-                payload_offset,
-                payload_len,
-            },
-            payload,
-        });
-        payload_offset = payload_offset.saturating_add(payload_len);
+            payload_offset: 0,
+            payload_len: payload.len() as u64,
+        },
+        payload,
+    })
+}
+
+fn prepare_compressed_section(section: RawSection, level: i32) -> PersistResult<PreparedSection> {
+    let RawSection {
+        provider,
+        sub,
+        payload,
+    } = section;
+    let payload = compress_zstd(&payload, level)?;
+    validate_section_payload_len(payload.len())?;
+    Ok(PreparedSection {
+        entry: SectionEntry {
+            provider,
+            sub,
+            payload_offset: 0,
+            payload_len: payload.len() as u64,
+        },
+        payload,
+    })
+}
+
+fn assign_section_offsets(prepared: &mut [PreparedSection], section_count: usize) {
+    let mut payload_offset =
+        SNAPSHOT_FILE_HEADER_LEN as u64 + (section_count * SECTION_TABLE_ROW_LEN) as u64;
+    for section in prepared {
+        section.entry.payload_offset = payload_offset;
+        payload_offset = payload_offset.saturating_add(section.entry.payload_len);
     }
-    Ok(prepared)
 }
 
 #[cfg(test)]
@@ -406,6 +438,45 @@ mod tests {
         let left = fs::read(snapshot_path(&dir, 7)).unwrap();
         let right = fs::read(snapshot_path(&dir, 8)).unwrap();
         assert_eq!(left, right);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn snapshot_par_iter_roundtrip() {
+        let dir = temp_dir("par-iter");
+        let sections = [
+            (*b"CORE", *b"META", vec![1_u8; 257]),
+            (*b"CORE", *b"NODE", vec![2_u8; 1_024]),
+            (*b"CORE", *b"EDGE", vec![3_u8; 2_049]),
+            (*b"VECT", *b"HNSW", vec![4_u8; 4_096]),
+            (*b"IVFP", *b"LIST", vec![5_u8; 8_193]),
+        ];
+        let mut builder = SnapshotBuilder::new(config(
+            dir.clone(),
+            9,
+            SectionCompression::PerSection { level: 1 },
+        ));
+        for (provider, sub, payload) in &sections {
+            builder
+                .add_section(*provider, *sub, payload.clone())
+                .unwrap();
+        }
+        let outcome = builder.finalize().unwrap();
+        assert_eq!(outcome.section_count, sections.len() as u32);
+
+        let mut reader = SnapshotReader::open(&snapshot_path(&dir, 9)).unwrap();
+        reader.verify_body_hash().unwrap();
+        assert!(reader.header().is_section_compressed());
+        assert_eq!(reader.sections().len(), sections.len());
+        let entries = reader.sections().to_vec();
+        for ((provider, sub, expected), entry) in sections.iter().zip(&entries) {
+            assert_eq!(entry.provider, *provider);
+            assert_eq!(entry.sub, *sub);
+            assert_eq!(
+                reader.read_section(*provider, *sub).unwrap(),
+                expected.as_slice()
+            );
+        }
         let _ = fs::remove_dir_all(dir);
     }
 }

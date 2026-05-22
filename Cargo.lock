@@ -2294,6 +2294,7 @@ dependencies = [
  "mimalloc",
  "postcard",
  "proptest",
+ "rayon",
  "rstest",
  "selene-core",
  "selene-testing",

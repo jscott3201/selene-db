@@ -104,12 +104,23 @@ pub(crate) fn write_snapshot(dir: &Path, sequence: u64, bytes: usize) -> PathBuf
     let mut builder = SnapshotBuilder::new(SnapshotConfig {
         dir: dir.to_path_buf(),
         sequence,
-        compression: SectionCompression::None,
+        compression: SectionCompression::PerSection { level: 1 },
         fsync: false,
     });
-    builder
-        .add_section(*b"CORE", *b"DATA", vec![0x5a; bytes])
-        .expect("section add succeeds");
+    let section_tags = [*b"DAT0", *b"DAT1", *b"DAT2", *b"DAT3", *b"DAT4"];
+    let base_len = bytes / section_tags.len();
+    let mut remaining = bytes % section_tags.len();
+    for (idx, sub) in section_tags.into_iter().enumerate() {
+        let extra = usize::from(remaining > 0);
+        remaining = remaining.saturating_sub(extra);
+        builder
+            .add_section(
+                *b"CORE",
+                sub,
+                vec![0x5a_u8.wrapping_add(idx as u8); base_len + extra],
+            )
+            .expect("section add succeeds");
+    }
     builder.finalize().expect("snapshot write succeeds");
     snapshot_path(dir, sequence)
 }
