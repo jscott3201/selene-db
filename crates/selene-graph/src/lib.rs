@@ -40,7 +40,8 @@ pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{GraphMeta, SeleneGraph};
 pub use graph_types::{
-    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyElementType,
+    PropertyTypeDef, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
 pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
