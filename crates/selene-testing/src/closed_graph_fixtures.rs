@@ -1,7 +1,9 @@
 //! Closed-graph type fixtures shared by analyzer and graph tests.
 
 use selene_core::{IStr, LabelSet, PropertyValueType, intern};
-use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode};
+use selene_graph::{
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode,
+};
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("fixture strings fit interner")
@@ -56,8 +58,8 @@ pub fn person_company_graph_type() -> GraphTypeDef {
         edge_types: vec![EdgeTypeDef {
             name: istr("WorksAt"),
             label: istr("WORKS_AT"),
-            source_node_type: 0,
-            target_node_type: 2,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(2),
             properties: vec![property("since", PropertyValueType::Int, false)],
             validation_mode: ValidationMode::Strict,
         }],

@@ -9,7 +9,7 @@ use selene_gql::{
     PlannedTypePropertyDef, RecordType, SourceSpan, TxContext, analyze, execute_pipeline, parse,
     plan,
 };
-use selene_graph::EdgeTypeDef;
+use selene_graph::{EdgeEndpointDef, EdgeTypeDef};
 use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
 use exec_common::istr;
@@ -370,9 +370,10 @@ fn create_edge_type_resolves_endpoints_created_earlier_in_same_statement() {
     outcome.expect("commit succeeds");
 
     let graph_type = graph.graph_type().unwrap();
-    assert_eq!(graph_type.edge_types[0].name.as_str(), "WORKS_AT");
-    assert_eq!(graph_type.edge_types[0].source_node_type, 0);
-    assert_eq!(graph_type.edge_types[0].target_node_type, 1);
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(edge_type.name.as_str(), "WORKS_AT");
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(1));
 }
 
 #[test]
@@ -415,8 +416,8 @@ fn show_edge_types_renders_label_not_internal_name() {
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
                 label: knows,
-                source_node_type: 0,
-                target_node_type: 0,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
@@ -440,6 +441,32 @@ fn show_edge_types_renders_label_not_internal_name() {
 }
 
 #[test]
+fn show_edge_types_renders_any_endpoints_as_endpoint_less() {
+    let graph = person_graph(3721);
+    let mut plan = planned("SHOW EDGE TYPES");
+    plan.pipeline
+        .insert(0, catalog_op("CREATE EDGE TYPE :KNOWS ()"));
+
+    let (table, outcome) = run_write(&graph, &plan).expect("catalog executes");
+    outcome.expect("commit succeeds");
+    let graph_type = graph.graph_type().unwrap();
+    assert_eq!(
+        graph_type.edge_types[0].source_node_type,
+        EdgeEndpointDef::Any
+    );
+    assert_eq!(
+        graph_type.edge_types[0].target_node_type,
+        EdgeEndpointDef::Any
+    );
+
+    let Value::String(definition) = table.rows()[0].values()[1] else {
+        panic!("definition is string");
+    };
+    assert_eq!(definition.as_str(), "CREATE EDGE TYPE :KNOWS ()");
+    parse(definition.as_str()).expect("endpoint-less definition round-trips");
+}
+
+#[test]
 fn show_edge_types_renders_multi_label_endpoint_labels() {
     let knows = istr("KNOWS");
     let labels = LabelSet::from_iter([istr("Person"), istr("Active")]);
@@ -456,8 +483,8 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
                 label: knows,
-                source_node_type: 0,
-                target_node_type: 0,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
@@ -476,9 +503,13 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(istr(
-            "CREATE EDGE TYPE :KNOWS (FROM :Person:Active TO :Person:Active)"
+            "CREATE EDGE TYPE :KNOWS (FROM :Person,:Active TO :Person,:Active)"
         ))
     );
+    let Value::String(definition) = table.rows()[0].values()[1] else {
+        panic!("definition is string");
+    };
+    parse(definition.as_str()).expect("multi-label endpoint definition round-trips");
 }
 
 #[test]
@@ -567,52 +598,35 @@ fn create_edge_type_unknown_endpoint_returns_data_exception() {
     assert!(matches!(
         err,
         ExecutorError::GraphTypeViolation { message, .. }
-            if message.contains("unknown node type label Person")
+            if message.contains("unknown node type label set :Person")
     ));
 }
 
 #[test]
-fn create_edge_type_multi_label_endpoint_returns_implementation_defined() {
-    let graph = person_graph(3709);
-    let mut plan = planned("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)");
-    let PipelineOp::Catalog(CatalogOp::CreateEdgeType { endpoints, .. }) = &mut plan.pipeline[0]
-    else {
-        panic!("expected create edge type");
-    };
-    endpoints
-        .as_mut()
-        .unwrap()
-        .from_labels
-        .push(istr("Employee"));
+fn create_edge_type_multi_label_endpoint_resolves_exact_label_set() {
+    let labels = LabelSet::from_iter([istr("Person"), istr("Employee")]);
+    let graph = closed_graph_with_type(
+        3709,
+        GraphTypeDef {
+            name: istr("catalog.multi.endpoint.graph"),
+            node_types: vec![NodeTypeDef {
+                name: istr("types.employee_person"),
+                key_labels: labels,
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            }],
+            edge_types: Vec::new(),
+        },
+    );
+    let plan = planned("CREATE EDGE TYPE :KNOWS (FROM :Person,:Employee TO :Person,:Employee)");
 
-    let err = run_write(&graph, &plan).expect_err("multi-label endpoint deferred");
+    let (_, outcome) = run_write(&graph, &plan).expect("multi-label endpoint resolves");
+    outcome.expect("commit succeeds");
 
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "multi-label edge endpoint not supported (Phase A: single label per endpoint)",
-        }
-    ));
-}
-
-#[test]
-fn create_edge_type_without_endpoints_returns_implementation_defined() {
-    let graph = person_graph(3710);
-    let mut plan = planned("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)");
-    let PipelineOp::Catalog(CatalogOp::CreateEdgeType { endpoints, .. }) = &mut plan.pipeline[0]
-    else {
-        panic!("expected create edge type");
-    };
-    *endpoints = None;
-
-    let err = run_write(&graph, &plan).expect_err("missing endpoints deferred");
-
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "create edge type without endpoints requires open graph (GG01)",
-        }
-    ));
+    let graph_type = graph.graph_type().unwrap();
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
 }
 
 #[test]

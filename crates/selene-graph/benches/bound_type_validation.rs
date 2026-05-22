@@ -12,8 +12,8 @@ use selene_core::{
     SchemaChange, Value, intern,
 };
 use selene_graph::{
-    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SeleneGraph, SharedGraph,
-    ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SeleneGraph,
+    SharedGraph, ValidationMode,
 };
 use selene_testing::BenchProfile;
 
@@ -152,8 +152,8 @@ fn simple_graph_type() -> GraphTypeDef {
         edge_types: vec![EdgeTypeDef {
             name: label("bench.simple.edge"),
             label: label("SIMPLE_EDGE"),
-            source_node_type: 0,
-            target_node_type: 0,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(0),
             properties: property_defs(3),
             validation_mode: ValidationMode::Strict,
         }],
@@ -175,8 +175,8 @@ fn rich_graph_type() -> GraphTypeDef {
             .map(|idx| EdgeTypeDef {
                 name: label(&format!("bench.rich.edge{idx}")),
                 label: label(&format!("RICH_EDGE{idx}")),
-                source_node_type: idx,
-                target_node_type: (idx + 1) % 10,
+                source_node_type: EdgeEndpointDef::NodeType(idx),
+                target_node_type: EdgeEndpointDef::NodeType((idx + 1) % 10),
                 properties: property_defs(10),
                 validation_mode: ValidationMode::Strict,
             })

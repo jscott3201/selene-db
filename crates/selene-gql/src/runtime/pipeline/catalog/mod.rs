@@ -5,7 +5,7 @@ mod property;
 
 use selene_core::{IStr, LabelSet, Value, intern_with_admission};
 use selene_graph::{
-    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
+    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
     ValidationMode as GraphValidationMode,
 };
 
@@ -102,13 +102,12 @@ pub(super) fn execute(
                     span: *span,
                 });
             }
-            let endpoints = endpoints
-                .as_ref()
-                .ok_or(ExecutorError::ImplementationDefined {
-                    detail: "create edge type without endpoints requires open graph (GG01)",
-                })?;
             let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
-            let (source, target) = resolve_endpoints(endpoints, &graph_type, *span)?;
+            let (source, target) = endpoints
+                .as_ref()
+                .map(|endpoints| resolve_endpoints(endpoints, &graph_type, *span))
+                .transpose()?
+                .unwrap_or((EdgeEndpointDef::Any, EdgeEndpointDef::Any));
             let properties = property_defs(properties, false)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(
@@ -470,24 +469,44 @@ fn render_node_type_def(node_type: &NodeTypeDef) -> String {
 }
 
 fn render_edge_type_def(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
+    let endpoint_clause = render_edge_endpoint_clause(graph_type, edge_type);
+    let properties = render_properties(&edge_type.properties);
+    let body = match (endpoint_clause.is_empty(), properties.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => properties,
+        (false, true) => endpoint_clause,
+        (false, false) => format!("{endpoint_clause}, {properties}"),
+    };
+    format!("CREATE EDGE TYPE :{} ({body})", edge_type.label)
+}
+
+fn render_edge_endpoint_clause(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
+    if edge_type.source_node_type == EdgeEndpointDef::Any
+        || edge_type.target_node_type == EdgeEndpointDef::Any
+    {
+        // Partial Any has no DDL syntax; keep SHOW output parseable.
+        return String::new();
+    }
     let source = render_endpoint(graph_type, edge_type.source_node_type);
     let target = render_endpoint(graph_type, edge_type.target_node_type);
-    let properties = render_properties(&edge_type.properties);
-    if properties.is_empty() {
-        format!(
-            "CREATE EDGE TYPE :{} (FROM {} TO {})",
-            edge_type.label, source, target
-        )
-    } else {
-        format!(
-            "CREATE EDGE TYPE :{} (FROM {} TO {}, {})",
-            edge_type.label, source, target, properties
-        )
+    format!("FROM {source} TO {target}")
+}
+
+fn render_endpoint(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> String {
+    match endpoint {
+        EdgeEndpointDef::Any => "ANY".to_owned(),
+        EdgeEndpointDef::NodeType(index) => {
+            render_endpoint_label_set(&graph_type.node_types[index as usize].key_labels)
+        }
     }
 }
 
-fn render_endpoint(graph_type: &GraphTypeDef, index: u32) -> String {
-    render_node_label_set(&graph_type.node_types[index as usize].key_labels)
+fn render_endpoint_label_set(labels: &LabelSet) -> String {
+    labels
+        .iter()
+        .map(|label| format!(":{label}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn render_node_label_set(labels: &LabelSet) -> String {
@@ -552,5 +571,47 @@ fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
             span,
         },
         source => ExecutorError::GraphMutation { source, span },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn istr(value: &str) -> IStr {
+        intern_with_admission(value).expect("test label admits").0
+    }
+
+    #[test]
+    fn render_partial_any_edge_endpoint_as_endpoint_less_ddl() {
+        let person = istr("Person");
+        let graph_type = GraphTypeDef {
+            name: istr("catalog.partial.any.graph"),
+            node_types: vec![NodeTypeDef {
+                name: person,
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+                validation_mode: GraphValidationMode::Strict,
+            }],
+            edge_types: Vec::new(),
+        };
+        let knows = istr("KNOWS");
+
+        for (source_node_type, target_node_type) in [
+            (EdgeEndpointDef::Any, EdgeEndpointDef::NodeType(0)),
+            (EdgeEndpointDef::NodeType(0), EdgeEndpointDef::Any),
+        ] {
+            let edge_type = EdgeTypeDef {
+                name: knows,
+                label: knows,
+                source_node_type,
+                target_node_type,
+                properties: Vec::new(),
+                validation_mode: GraphValidationMode::Strict,
+            };
+            let rendered = render_edge_type_def(&graph_type, &edge_type);
+            assert_eq!(rendered, "CREATE EDGE TYPE :KNOWS ()");
+            crate::parse(&rendered).expect("rendered edge type DDL parses");
+        }
     }
 }

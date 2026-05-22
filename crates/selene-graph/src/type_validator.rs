@@ -5,7 +5,7 @@ use std::fmt;
 use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyMap, PropertyValueType, Value};
 
 use crate::graph::SeleneGraph;
-use crate::graph_types::{GraphTypeDef, PropertyTypeDef, ValidationMode};
+use crate::graph_types::{EdgeEndpointDef, GraphTypeDef, PropertyTypeDef, ValidationMode};
 
 /// Identifier for a typed graph entity.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -59,12 +59,12 @@ pub enum TypeViolation {
         id: EdgeId,
         /// Edge label.
         label: IStr,
-        /// Expected source node-type index.
-        expected_source_type: u32,
+        /// Expected source endpoint.
+        expected_source_type: EdgeEndpointDef,
         /// Observed source node-type index.
         observed_source_type: u32,
-        /// Expected target node-type index.
-        expected_target_type: u32,
+        /// Expected target endpoint.
+        expected_target_type: EdgeEndpointDef,
         /// Observed target node-type index.
         observed_target_type: u32,
     },
@@ -482,8 +482,8 @@ mod tests {
             edge_types: vec![crate::EdgeTypeDef {
                 name: istr("validator.works_at"),
                 label: istr("WORKS_AT"),
-                source_node_type: 0,
-                target_node_type: 1,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(1),
                 properties: vec![PropertyTypeDef {
                     name: istr("since"),
                     value_type: PropertyValueType::Int,

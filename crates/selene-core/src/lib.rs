@@ -57,9 +57,9 @@ pub use pack_lifecycle::PackLifecycleEvent;
 pub use property_map::PropertyMap;
 pub use property_value_type::PropertyValueType;
 pub use schema::{
-    EdgeTypeDef, EdgeTypeDefV1, GraphType, GraphTypeId, KeyLabelSetPolicy, NodeKey, NodeTypeDef,
-    NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDef, PropertyDefV1, RecordTypeDef,
-    RecordTypeRef, ValidationMode, ValueType, ValueTypeCardinality,
+    EdgeEndpointDef, EdgeTypeDef, EdgeTypeDefV1, GraphType, GraphTypeId, KeyLabelSetPolicy,
+    NodeKey, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDef,
+    PropertyDefV1, RecordTypeDef, RecordTypeRef, ValidationMode, ValueType, ValueTypeCardinality,
 };
 pub use value::{EdgeDirection, Path, PathSegment, Record, RecordTyped, Value};
 pub use value_adapter::{

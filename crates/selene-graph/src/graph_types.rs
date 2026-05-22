@@ -1,6 +1,6 @@
 //! Closed graph type catalog definitions.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fmt};
 
 use selene_core::{IStr, LabelSet, PropertyValueType, Value};
 use serde::{Deserialize, Serialize};
@@ -69,7 +69,7 @@ impl GraphTypeDef {
             .and_then(|index| u32::try_from(index).ok())
     }
 
-    /// Return the edge type for `(label, source_node_type, target_node_type)`.
+    /// Return the edge type matching `label` and observed endpoint node types.
     #[must_use]
     pub fn find_edge_type(
         &self,
@@ -79,8 +79,12 @@ impl GraphTypeDef {
     ) -> Option<&EdgeTypeDef> {
         self.edge_types.iter().find(|edge_type| {
             edge_type.label == label
-                && edge_type.source_node_type == source_node_type
-                && edge_type.target_node_type == target_node_type
+                && edge_type
+                    .source_node_type
+                    .matches_node_type(source_node_type)
+                && edge_type
+                    .target_node_type
+                    .matches_node_type(target_node_type)
         })
     }
 
@@ -164,23 +168,26 @@ impl GraphTypeDef {
         }
 
         let node_type_count = self.node_types.len();
-        let mut edge_triples = BTreeSet::new();
-        for edge_type in &self.edge_types {
-            ensure_node_type_index(node_type_count, edge_type.source_node_type, edge_type.name)?;
-            ensure_node_type_index(node_type_count, edge_type.target_node_type, edge_type.name)?;
+        for (index, edge_type) in self.edge_types.iter().enumerate() {
+            ensure_endpoint_index(node_type_count, edge_type.source_node_type, edge_type.name)?;
+            ensure_endpoint_index(node_type_count, edge_type.target_node_type, edge_type.name)?;
             ensure_unique_names(
                 "edge property",
                 edge_type.properties.iter().map(|property| property.name),
             )?;
             validate_property_element_types(edge_type.name, &edge_type.properties)?;
-            if !edge_triples.insert((
-                edge_type.label,
-                edge_type.source_node_type,
-                edge_type.target_node_type,
-            )) {
+            if self.edge_types[..index].iter().any(|previous| {
+                previous.label == edge_type.label
+                    && previous
+                        .source_node_type
+                        .overlaps(edge_type.source_node_type)
+                    && previous
+                        .target_node_type
+                        .overlaps(edge_type.target_node_type)
+            }) {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
-                        "duplicate edge type triple ({}, {}, {})",
+                        "ambiguous edge type endpoints ({}, {}, {})",
                         edge_type.label, edge_type.source_node_type, edge_type.target_node_type
                     ),
                 });
@@ -267,6 +274,67 @@ pub struct NodeTypeDef {
     pub validation_mode: ValidationMode,
 }
 
+/// Edge endpoint definition.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub enum EdgeEndpointDef {
+    /// Accept any declared node type at this endpoint.
+    Any,
+    /// Require one concrete node-type index.
+    NodeType(u32),
+}
+
+impl EdgeEndpointDef {
+    /// Return true when this endpoint accepts the observed node-type index.
+    #[must_use]
+    pub const fn matches_node_type(self, node_type: u32) -> bool {
+        match self {
+            Self::Any => true,
+            Self::NodeType(expected) => expected == node_type,
+        }
+    }
+
+    /// Return true when two endpoint declarations can match the same node type.
+    #[must_use]
+    pub const fn overlaps(self, other: Self) -> bool {
+        match (self, other) {
+            (Self::Any, _) | (_, Self::Any) => true,
+            (Self::NodeType(left), Self::NodeType(right)) => left == right,
+        }
+    }
+
+    /// Return the concrete node-type index when this endpoint is not polymorphic.
+    #[must_use]
+    pub const fn node_type_index(self) -> Option<u32> {
+        match self {
+            Self::Any => None,
+            Self::NodeType(index) => Some(index),
+        }
+    }
+}
+
+impl fmt::Display for EdgeEndpointDef {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Any => formatter.write_str("Any"),
+            Self::NodeType(index) => write!(formatter, "{index}"),
+        }
+    }
+}
+
 /// Edge-type element.
 #[derive(
     Clone,
@@ -283,10 +351,10 @@ pub struct EdgeTypeDef {
     pub name: IStr,
     /// Edge label.
     pub label: IStr,
-    /// Index into [`GraphTypeDef::node_types`] for the source endpoint.
-    pub source_node_type: u32,
-    /// Index into [`GraphTypeDef::node_types`] for the target endpoint.
-    pub target_node_type: u32,
+    /// Source endpoint definition.
+    pub source_node_type: EdgeEndpointDef,
+    /// Target endpoint definition.
+    pub target_node_type: EdgeEndpointDef,
     /// Declared properties.
     pub properties: Vec<PropertyTypeDef>,
     /// Validation mode for undeclared-property writes.
@@ -464,6 +532,17 @@ fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphRes
     })
 }
 
+fn ensure_endpoint_index(
+    count: usize,
+    endpoint: EdgeEndpointDef,
+    edge_name: IStr,
+) -> GraphResult<()> {
+    match endpoint {
+        EdgeEndpointDef::Any => Ok(()),
+        EdgeEndpointDef::NodeType(index) => ensure_node_type_index(count, index, edge_name),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use selene_core::{PropertyValueType, intern};
@@ -505,8 +584,8 @@ mod tests {
             edge_types: vec![EdgeTypeDef {
                 name: label("types.works_at"),
                 label: label("WORKS_AT"),
-                source_node_type: 0,
-                target_node_type: 1,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(1),
                 properties: vec![property("since")],
                 validation_mode: ValidationMode::Strict,
             }],
@@ -531,7 +610,7 @@ mod tests {
     #[test]
     fn validate_rejects_edge_index_out_of_range() {
         let mut graph_type = valid_type();
-        graph_type.edge_types[0].target_node_type = 99;
+        graph_type.edge_types[0].target_node_type = EdgeEndpointDef::NodeType(99);
         assert!(matches!(
             graph_type.validate(),
             Err(GraphError::Inconsistent { reason }) if reason.contains("references node type index")
@@ -573,6 +652,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_ambiguous_overlapping_edge_endpoints() {
+        let mut graph_type = valid_type();
+        graph_type.edge_types.push(EdgeTypeDef {
+            name: label("types.works_at_any"),
+            label: label("WORKS_AT"),
+            source_node_type: EdgeEndpointDef::Any,
+            target_node_type: EdgeEndpointDef::NodeType(1),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
+        });
+
+        assert!(matches!(
+            graph_type.validate(),
+            Err(GraphError::Inconsistent { reason })
+                if reason.contains("ambiguous edge type endpoints")
+        ));
+    }
+
+    #[test]
     fn lookup_returns_matching_elements() {
         let graph_type = valid_type();
         let person = LabelSet::single(label("Person"));
@@ -603,8 +701,14 @@ mod tests {
             .without_node_type(label("types.person"))
             .expect("node type removed");
         assert_eq!(without_node.node_types.len(), 1);
-        assert_eq!(without_node.edge_types[0].source_node_type, 0);
-        assert_eq!(without_node.edge_types[0].target_node_type, 1);
+        assert_eq!(
+            without_node.edge_types[0].source_node_type,
+            EdgeEndpointDef::NodeType(0)
+        );
+        assert_eq!(
+            without_node.edge_types[0].target_node_type,
+            EdgeEndpointDef::NodeType(1)
+        );
 
         let without_edge = graph_type
             .without_edge_type(label("types.works_at"))

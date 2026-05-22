@@ -112,8 +112,8 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.immutable.edge.knows"),
             label: knows,
-            source_node_type: 0,
-            target_node_type: 0,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![PropertyTypeDef {
                 name: istr("serial"),
                 value_type: PropertyValueType::String,

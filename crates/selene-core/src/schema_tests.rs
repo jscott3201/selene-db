@@ -32,8 +32,8 @@ fn edge_type_def_constructed_with_endpoints() {
     let target = NodeTypeRef(istr("schema.target"));
     let def = EdgeTypeDef::new(edge, source, target);
     assert_eq!(def.label, edge);
-    assert_eq!(def.source_node_type, source);
-    assert_eq!(def.target_node_type, target);
+    assert_eq!(def.source_node_type, EdgeEndpointDef::NodeType(source));
+    assert_eq!(def.target_node_type, EdgeEndpointDef::NodeType(target));
 }
 
 #[test]

@@ -12,8 +12,9 @@ use selene_persist::{
 };
 
 use crate::{
-    CORE_PROVIDER_TAG, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
-    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
+    CORE_PROVIDER_TAG, EdgeEndpointDef, EntityId, GraphError, GraphTypeDef, NodeTypeDef,
+    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph,
+    TypeViolation, ValidationMode,
 };
 
 #[path = "closed_graph_tests/immutable.rs"]
@@ -46,8 +47,8 @@ fn person_graph_type() -> GraphTypeDef {
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.knows"),
             label: istr("KNOWS"),
-            source_node_type: 0,
-            target_node_type: 0,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![PropertyTypeDef {
                 name: istr("since"),
                 value_type: PropertyValueType::Int,
@@ -483,12 +484,72 @@ fn person_company_graph_type() -> GraphTypeDef {
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.works_at"),
             label: istr("WORKS_AT"),
-            source_node_type: 0, // PCPerson
-            target_node_type: 1, // PCCompany
+            source_node_type: EdgeEndpointDef::NodeType(0), // PCPerson
+            target_node_type: EdgeEndpointDef::NodeType(1), // PCCompany
             properties: vec![],
             validation_mode: ValidationMode::Strict,
         }],
     }
+}
+
+fn any_edge_person_company_graph_type() -> GraphTypeDef {
+    let mut graph_type = person_company_graph_type();
+    graph_type.edge_types[0].source_node_type = EdgeEndpointDef::Any;
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::Any;
+    graph_type
+}
+
+#[test]
+fn closed_graph_any_edge_accepts_declared_endpoint_types() {
+    let shared = SharedGraph::builder(GraphId::new(25))
+        .bound_to(any_edge_person_company_graph_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let person = mutator
+            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .unwrap();
+        let company = mutator
+            .create_node(LabelSet::single(istr("PCCompany")), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(istr("WORKS_AT"), company, person, PropertyMap::new())
+            .unwrap();
+    }
+
+    txn.commit()
+        .expect("Any endpoints accept all declared node types");
+}
+
+#[test]
+fn closed_graph_any_edge_rejects_undeclared_endpoint_type() {
+    let shared = SharedGraph::builder(GraphId::new(26))
+        .bound_to(any_edge_person_company_graph_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let person = mutator
+            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .unwrap();
+        let project = mutator
+            .create_node(LabelSet::single(istr("PCProject")), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(istr("WORKS_AT"), person, project, PropertyMap::new())
+            .unwrap();
+    }
+
+    assert!(matches!(
+        txn.commit().unwrap_err(),
+        GraphError::TypeViolation(TypeViolation::UnknownNodeLabel { labels, .. })
+            if labels == LabelSet::single(istr("PCProject"))
+    ));
 }
 
 #[test]
@@ -581,7 +642,7 @@ fn from_graph_validates_bound_type_self_consistency() {
     // have rejected.
     use crate::SeleneGraph;
     let mut bad_type = person_company_graph_type();
-    bad_type.edge_types[0].source_node_type = 99; // out of range
+    bad_type.edge_types[0].source_node_type = EdgeEndpointDef::NodeType(99); // out of range
     let mut graph = SeleneGraph::new(GraphId::new(13));
     graph.meta.bound_type = Some(std::sync::Arc::new(bad_type));
     let result = SharedGraph::try_from_graph(graph);

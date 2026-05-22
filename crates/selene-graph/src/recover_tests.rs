@@ -14,8 +14,8 @@ use selene_persist::{
 use smallvec::smallvec;
 
 use crate::{
-    CORE_PROVIDER_TAG, GraphError, GraphTypeDef, PropertyDefaultValue, PropertyElementType,
-    PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
+    CORE_PROVIDER_TAG, EdgeEndpointDef, GraphError, GraphTypeDef, PropertyDefaultValue,
+    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
 };
 
 #[path = "recover_tests/variant_tests.rs"]
@@ -372,6 +372,73 @@ fn recover_closed_wal_only_preserves_typed_list_property() {
 }
 
 #[test]
+fn recover_closed_wal_only_preserves_any_edge_endpoints() {
+    let dir = temp_dir("closed-schema-any-edge-wal-only");
+    let graph_id = GraphId::new(22);
+    let person = intern("RecoverAnyPerson").unwrap();
+    let company = intern("RecoverAnyCompany").unwrap();
+    let rel = intern("RECOVER_ANY_REL").unwrap();
+    let base = GraphTypeDef {
+        name: intern("recover.any.edge.graph").unwrap(),
+        node_types: vec![
+            crate::NodeTypeDef {
+                name: person,
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+            crate::NodeTypeDef {
+                name: company,
+                key_labels: LabelSet::single(company),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+        ],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_edge_type(
+                rel,
+                rel,
+                EdgeEndpointDef::Any,
+                EdgeEndpointDef::Any,
+                Vec::new(),
+                ValidationMode::Strict,
+            )
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    append_wal(&dir, 0, &outcome.changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    assert_eq!(
+        graph_type.edge_types[0].source_node_type,
+        EdgeEndpointDef::Any
+    );
+    assert_eq!(
+        graph_type.edge_types[0].target_node_type,
+        EdgeEndpointDef::Any
+    );
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::SchemaChanged {
+            change: SchemaChange::EdgeTypeAddedV2 { def, .. },
+            ..
+        }] if def.source_node_type == selene_core::EdgeEndpointDef::Any
+            && def.target_node_type == selene_core::EdgeEndpointDef::Any
+    ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_closed_rejects_overdeep_typed_list_property() {
     let dir = temp_dir("closed-schema-list-depth");
     let graph_id = GraphId::new(22);
@@ -461,8 +528,8 @@ fn recover_closed_wal_only_decodes_legacy_catalog_ddl_v1() {
     assert!(!node_type.properties[0].immutable);
     let edge_type = &graph_type.edge_types[0];
     assert_eq!(edge_type.name, linked);
-    assert_eq!(edge_type.source_node_type, 0);
-    assert_eq!(edge_type.target_node_type, 0);
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
     assert_eq!(edge_type.validation_mode, ValidationMode::Strict);
     assert_eq!(edge_type.properties[0].name.as_str(), "since");
     assert!(!edge_type.properties[0].required);
