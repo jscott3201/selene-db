@@ -423,7 +423,7 @@ fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool 
         return true;
     }
     let Some(element_type) = declaration.list_element_type.as_ref() else {
-        return false;
+        return true;
     };
     match value {
         Value::List(values) => values.iter().all(|value| element_type.matches(value)),
@@ -647,6 +647,24 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn legacy_untyped_list_declaration_accepts_any_list_elements() {
+        let declaration = PropertyTypeDef {
+            name: istr("legacy"),
+            value_type: PropertyValueType::List,
+            list_element_type: None,
+            required: false,
+            default: None,
+            immutable: false,
+        };
+
+        assert!(property_value_matches(
+            &declaration,
+            &Value::List(vec![Value::Int(1), Value::String(istr("two"))])
+        ));
+        assert!(!property_value_matches(&declaration, &Value::Int(1)));
     }
 
     #[test]

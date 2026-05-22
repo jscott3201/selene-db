@@ -197,12 +197,11 @@ fn validate_property_element_types(
     for property in properties {
         if property.value_type == PropertyValueType::List {
             let Some(element_type) = property.list_element_type.as_ref() else {
-                return Err(GraphError::Inconsistent {
-                    reason: format!(
-                        "property {} on type {type_name} declares LIST without an element type",
-                        property.name
-                    ),
-                });
+                // Legacy snapshots written before typed LIST<T> descriptors
+                // stored only the coarse LIST tag. Keep that shape valid so
+                // recovery preserves existing closed graph schemas; new GQL
+                // catalog DDL always fills the descriptor.
+                continue;
             };
             validate_property_element_type(type_name, property.name, element_type, 1)?;
         } else if property.list_element_type.is_some() {

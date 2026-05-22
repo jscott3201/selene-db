@@ -11,14 +11,14 @@ use crate::graph_types::{
 use crate::{GraphError, SeleneGraph, SharedGraph};
 
 #[test]
-fn gtyp_v2_preserves_type_model_fields() {
+fn gtyp_v3_preserves_type_model_fields() {
     let graph_type = GraphTypeDef {
-        name: intern("core.gtyp.v2").unwrap(),
+        name: intern("core.gtyp.v3").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: intern("core.gtyp.v2.node").unwrap(),
-            key_labels: LabelSet::single(intern("V2Node").unwrap()),
+            name: intern("core.gtyp.v3.node").unwrap(),
+            key_labels: LabelSet::single(intern("V3Node").unwrap()),
             properties: vec![PropertyTypeDef {
-                name: intern("core.gtyp.v2.name").unwrap(),
+                name: intern("core.gtyp.v3.name").unwrap(),
                 value_type: PropertyValueType::List,
                 list_element_type: Some(PropertyElementType::List(Box::new(
                     PropertyElementType::Scalar(PropertyValueType::String),
