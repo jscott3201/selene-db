@@ -3,7 +3,8 @@ use selene_core::{IStr, LabelSet};
 use super::{decode_rkyv, encode_rkyv, ensure_section_within_cap, validate_sorted_unique};
 use crate::graph::SeleneGraph;
 use crate::graph_types::{
-    EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef, ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue, PropertyTypeDef,
+    ValidationMode,
 };
 
 const GTYP_V2_MAGIC: u8 = 0xB6;
@@ -111,8 +112,8 @@ impl EdgeTypeDefV1 {
         EdgeTypeDef {
             name: self.name,
             label: self.label,
-            source_node_type: self.source_node_type,
-            target_node_type: self.target_node_type,
+            source_node_type: EdgeEndpointDef::NodeType(self.source_node_type),
+            target_node_type: EdgeEndpointDef::NodeType(self.target_node_type),
             properties: self
                 .properties
                 .into_iter()
@@ -174,8 +175,8 @@ impl EdgeTypeDefV2 {
         EdgeTypeDef {
             name: self.name,
             label: self.label,
-            source_node_type: self.source_node_type,
-            target_node_type: self.target_node_type,
+            source_node_type: EdgeEndpointDef::NodeType(self.source_node_type),
+            target_node_type: EdgeEndpointDef::NodeType(self.target_node_type),
             properties: self
                 .properties
                 .into_iter()

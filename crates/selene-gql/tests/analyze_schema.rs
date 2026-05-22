@@ -6,7 +6,9 @@ use selene_gql::{
     GraphPattern, InsertStatement, LabelExpr, Literal, MutationPipeline, MutationStatement,
     NodePattern, NonEmpty, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
 };
-use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode};
+use selene_graph::{
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode,
+};
 use selene_testing::{person_company_graph_type, person_only_graph_type};
 
 fn istr(value: &str) -> IStr {
@@ -127,16 +129,16 @@ fn duplicate_edge_label_graph_type() -> GraphTypeDef {
             EdgeTypeDef {
                 name: istr("WorksAt"),
                 label: istr("REL"),
-                source_node_type: 0,
-                target_node_type: 1,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(1),
                 properties: vec![property("since", PropertyValueType::Int, false)],
                 validation_mode: ValidationMode::Strict,
             },
             EdgeTypeDef {
                 name: istr("Knows"),
                 label: istr("REL"),
-                source_node_type: 0,
-                target_node_type: 0,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: vec![property("strength", PropertyValueType::Int, false)],
                 validation_mode: ValidationMode::Strict,
             },

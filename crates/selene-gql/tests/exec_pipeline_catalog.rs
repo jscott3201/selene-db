@@ -9,7 +9,7 @@ use selene_gql::{
     PlannedTypePropertyDef, RecordType, SourceSpan, TxContext, analyze, execute_pipeline, parse,
     plan,
 };
-use selene_graph::EdgeTypeDef;
+use selene_graph::{EdgeEndpointDef, EdgeTypeDef};
 use selene_graph::{GraphError, GraphTypeDef, NodeTypeDef, SharedGraph, ValidationMode};
 
 use exec_common::istr;
@@ -371,8 +371,14 @@ fn create_edge_type_resolves_endpoints_created_earlier_in_same_statement() {
 
     let graph_type = graph.graph_type().unwrap();
     assert_eq!(graph_type.edge_types[0].name.as_str(), "WORKS_AT");
-    assert_eq!(graph_type.edge_types[0].source_node_type, 0);
-    assert_eq!(graph_type.edge_types[0].target_node_type, 1);
+    assert_eq!(
+        graph_type.edge_types[0].source_node_type,
+        EdgeEndpointDef::NodeType(0)
+    );
+    assert_eq!(
+        graph_type.edge_types[0].target_node_type,
+        EdgeEndpointDef::NodeType(1)
+    );
 }
 
 #[test]
@@ -415,8 +421,8 @@ fn show_edge_types_renders_label_not_internal_name() {
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
                 label: knows,
-                source_node_type: 0,
-                target_node_type: 0,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
@@ -456,8 +462,8 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
                 label: knows,
-                source_node_type: 0,
-                target_node_type: 0,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],

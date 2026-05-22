@@ -4,7 +4,9 @@ use selene_core::{
     Change, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
 };
 
-use crate::{NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode};
+use crate::{
+    EdgeEndpointDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode,
+};
 
 use super::{append_wal, expect_prop, prop, temp_dir};
 
@@ -222,8 +224,8 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
             .create_edge_type(
                 rel,
                 rel,
-                0,
-                0,
+                EdgeEndpointDef::NodeType(0),
+                EdgeEndpointDef::NodeType(0),
                 Vec::<PropertyTypeDef>::new(),
                 ValidationMode::Strict,
             )

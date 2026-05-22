@@ -4,7 +4,7 @@ mod labels;
 mod properties;
 
 use selene_core::IStr;
-use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef};
+use selene_graph::{EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef};
 
 use self::{
     labels::{
@@ -163,14 +163,21 @@ fn validate_insert_edge(
             .expect("edge label existence was checked before endpoint validation");
         return Err(AnalysisError::SchemaEdgeEndpointMismatch {
             label,
-            expected_source: graph_type.node_types[expected.source_node_type as usize].name,
-            expected_target: graph_type.node_types[expected.target_node_type as usize].name,
+            expected_source: endpoint_name(graph_type, expected.source_node_type),
+            expected_target: endpoint_name(graph_type, expected.target_node_type),
             observed_source: source_labels,
             observed_target: target_labels,
             span: edge.span,
         });
     };
     validate_insert_edge_properties(edge, edge_type, graph_type, stmt_index, analyzed)
+}
+
+fn endpoint_name(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> selene_core::IStr {
+    match endpoint {
+        EdgeEndpointDef::Any => selene_core::intern("Any").expect("static label admits"),
+        EdgeEndpointDef::NodeType(index) => graph_type.node_types[index as usize].name,
+    }
 }
 
 fn validate_insert_edge_properties(

@@ -12,8 +12,9 @@ use selene_persist::{
 };
 
 use crate::{
-    CORE_PROVIDER_TAG, EntityId, GraphError, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
-    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
+    CORE_PROVIDER_TAG, EdgeEndpointDef, EntityId, GraphError, GraphTypeDef, NodeTypeDef,
+    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph,
+    TypeViolation, ValidationMode,
 };
 
 #[path = "closed_graph_tests/immutable.rs"]
@@ -46,8 +47,8 @@ fn person_graph_type() -> GraphTypeDef {
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.knows"),
             label: istr("KNOWS"),
-            source_node_type: 0,
-            target_node_type: 0,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![PropertyTypeDef {
                 name: istr("since"),
                 value_type: PropertyValueType::Int,
@@ -483,8 +484,8 @@ fn person_company_graph_type() -> GraphTypeDef {
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.works_at"),
             label: istr("WORKS_AT"),
-            source_node_type: 0, // PCPerson
-            target_node_type: 1, // PCCompany
+            source_node_type: EdgeEndpointDef::NodeType(0), // PCPerson
+            target_node_type: EdgeEndpointDef::NodeType(1), // PCCompany
             properties: vec![],
             validation_mode: ValidationMode::Strict,
         }],
@@ -581,7 +582,7 @@ fn from_graph_validates_bound_type_self_consistency() {
     // have rejected.
     use crate::SeleneGraph;
     let mut bad_type = person_company_graph_type();
-    bad_type.edge_types[0].source_node_type = 99; // out of range
+    bad_type.edge_types[0].source_node_type = EdgeEndpointDef::NodeType(99); // out of range
     let mut graph = SeleneGraph::new(GraphId::new(13));
     graph.meta.bound_type = Some(std::sync::Arc::new(bad_type));
     let result = SharedGraph::try_from_graph(graph);

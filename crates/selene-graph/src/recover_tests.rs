@@ -14,8 +14,8 @@ use selene_persist::{
 use smallvec::smallvec;
 
 use crate::{
-    CORE_PROVIDER_TAG, GraphError, GraphTypeDef, PropertyDefaultValue, PropertyElementType,
-    PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
+    CORE_PROVIDER_TAG, EdgeEndpointDef, GraphError, GraphTypeDef, PropertyDefaultValue,
+    PropertyElementType, PropertyTypeDef, ProviderTag, SharedGraph, ValidationMode,
 };
 
 #[path = "recover_tests/variant_tests.rs"]
@@ -461,8 +461,8 @@ fn recover_closed_wal_only_decodes_legacy_catalog_ddl_v1() {
     assert!(!node_type.properties[0].immutable);
     let edge_type = &graph_type.edge_types[0];
     assert_eq!(edge_type.name, linked);
-    assert_eq!(edge_type.source_node_type, 0);
-    assert_eq!(edge_type.target_node_type, 0);
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
     assert_eq!(edge_type.validation_mode, ValidationMode::Strict);
     assert_eq!(edge_type.properties[0].name.as_str(), "since");
     assert!(!edge_type.properties[0].required);

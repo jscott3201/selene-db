@@ -158,15 +158,24 @@ pub struct NodeKey {
     pub property_names: SmallVec<[IStr; 2]>,
 }
 
+/// Edge endpoint definition.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum EdgeEndpointDef {
+    /// Accept any declared node type at this endpoint.
+    Any,
+    /// Reference one concrete node type.
+    NodeType(NodeTypeRef),
+}
+
 /// Edge type definition.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct EdgeTypeDef {
     /// Single edge label.
     pub label: IStr,
-    /// Source node type reference.
-    pub source_node_type: NodeTypeRef,
-    /// Target node type reference.
-    pub target_node_type: NodeTypeRef,
+    /// Source endpoint definition.
+    pub source_node_type: EdgeEndpointDef,
+    /// Target endpoint definition.
+    pub target_node_type: EdgeEndpointDef,
     /// Property definitions in schema order.
     pub properties: SmallVec<[PropertyDef; 4]>,
     /// Closed-graph validation mode for this edge type.
@@ -178,6 +187,20 @@ impl EdgeTypeDef {
     /// Construct an edge type definition with no properties.
     #[must_use]
     pub fn new(label: IStr, source: NodeTypeRef, target: NodeTypeRef) -> Self {
+        Self::new_with_endpoints(
+            label,
+            EdgeEndpointDef::NodeType(source),
+            EdgeEndpointDef::NodeType(target),
+        )
+    }
+
+    /// Construct an edge type definition with explicit endpoints and no properties.
+    #[must_use]
+    pub fn new_with_endpoints(
+        label: IStr,
+        source: EdgeEndpointDef,
+        target: EdgeEndpointDef,
+    ) -> Self {
         Self {
             label,
             source_node_type: source,
@@ -223,8 +246,8 @@ impl From<EdgeTypeDefV1> for EdgeTypeDef {
     fn from(value: EdgeTypeDefV1) -> Self {
         Self {
             label: value.label,
-            source_node_type: value.source_node_type,
-            target_node_type: value.target_node_type,
+            source_node_type: EdgeEndpointDef::NodeType(value.source_node_type),
+            target_node_type: EdgeEndpointDef::NodeType(value.target_node_type),
             properties: value.properties.into_iter().map(Into::into).collect(),
             validation_mode: ValidationMode::Strict,
         }

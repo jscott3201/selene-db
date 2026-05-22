@@ -3,14 +3,14 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, GraphTypeId, IStr, LabelSet, NodeTypeRef, PredefinedValueType, PropertyDef,
-    PropertyValueType, SchemaChange, ValueType,
+    Change, EdgeEndpointDef as CoreEdgeEndpointDef, GraphTypeId, IStr, LabelSet,
+    PredefinedValueType, PropertyDef, PropertyValueType, SchemaChange, ValueType,
 };
 use smallvec::SmallVec;
 
 use crate::{
-    EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator, NodeTypeDef, PropertyElementType,
-    PropertyTypeDef, ValidationMode, graph_types::MAX_LIST_TYPE_NESTING,
+    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator, NodeTypeDef,
+    PropertyElementType, PropertyTypeDef, ValidationMode, graph_types::MAX_LIST_TYPE_NESTING,
 };
 
 const OPEN_GRAPH_CATALOG_DDL: &str =
@@ -72,8 +72,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         &mut self,
         name: IStr,
         label: IStr,
-        source_node_type: u32,
-        target_node_type: u32,
+        source_node_type: EdgeEndpointDef,
+        target_node_type: EdgeEndpointDef,
         properties: Vec<PropertyTypeDef>,
         validation_mode: ValidationMode,
     ) -> GraphResult<()> {
@@ -126,8 +126,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     reason: format!("node type {name} does not exist"),
                 })?;
         for edge_type in &graph_type.edge_types {
-            if edge_type.source_node_type >= removed_index
-                || edge_type.target_node_type >= removed_index
+            if endpoint_depends_on_shifted_node(edge_type.source_node_type, removed_index)
+                || endpoint_depends_on_shifted_node(edge_type.target_node_type, removed_index)
             {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
@@ -200,6 +200,12 @@ fn implicit_graph_type_id() -> GraphTypeId {
     GraphTypeId::new(1).expect("implicit graph type id")
 }
 
+fn endpoint_depends_on_shifted_node(endpoint: EdgeEndpointDef, removed_index: u32) -> bool {
+    endpoint
+        .node_type_index()
+        .is_some_and(|index| index >= removed_index)
+}
+
 fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeTypeDef> {
     Ok(selene_core::NodeTypeDef {
         labels: node_type.key_labels.clone(),
@@ -213,33 +219,40 @@ fn core_edge_type_def(
     graph_type: &GraphTypeDef,
     edge_type: &EdgeTypeDef,
 ) -> GraphResult<selene_core::EdgeTypeDef> {
-    let source = graph_type
-        .node_types
-        .get(edge_type.source_node_type as usize)
-        .and_then(|node_type| node_type.key_labels.iter().next().copied())
-        .ok_or_else(|| GraphError::Inconsistent {
-            reason: format!(
-                "edge type {} references invalid source node type {}",
-                edge_type.name, edge_type.source_node_type
-            ),
-        })?;
-    let target = graph_type
-        .node_types
-        .get(edge_type.target_node_type as usize)
-        .and_then(|node_type| node_type.key_labels.iter().next().copied())
-        .ok_or_else(|| GraphError::Inconsistent {
-            reason: format!(
-                "edge type {} references invalid target node type {}",
-                edge_type.name, edge_type.target_node_type
-            ),
-        })?;
     Ok(selene_core::EdgeTypeDef {
         label: edge_type.label,
-        source_node_type: NodeTypeRef(source),
-        target_node_type: NodeTypeRef(target),
+        source_node_type: core_edge_endpoint_def(
+            graph_type,
+            edge_type.name,
+            edge_type.source_node_type,
+        )?,
+        target_node_type: core_edge_endpoint_def(
+            graph_type,
+            edge_type.name,
+            edge_type.target_node_type,
+        )?,
         properties: core_edge_properties(&edge_type.properties)?,
         validation_mode: core_validation_mode(edge_type.validation_mode),
     })
+}
+
+fn core_edge_endpoint_def(
+    graph_type: &GraphTypeDef,
+    edge_name: IStr,
+    endpoint: EdgeEndpointDef,
+) -> GraphResult<CoreEdgeEndpointDef> {
+    match endpoint {
+        EdgeEndpointDef::Any => Ok(CoreEdgeEndpointDef::Any),
+        EdgeEndpointDef::NodeType(index) => graph_type
+            .node_types
+            .get(index as usize)
+            .map(|node_type| {
+                CoreEdgeEndpointDef::NodeType(selene_core::NodeTypeRef(node_type.name))
+            })
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!("edge type {edge_name} references invalid node type {index}"),
+            }),
+    }
 }
 
 fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<[PropertyDef; 8]>> {

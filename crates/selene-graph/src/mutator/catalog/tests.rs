@@ -3,8 +3,8 @@ use selene_core::{
 };
 
 use crate::{
-    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef, SharedGraph,
-    TypeViolation, ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
+    SharedGraph, TypeViolation, ValidationMode,
 };
 
 fn closed_empty_graph(id: u64) -> SharedGraph {
@@ -56,8 +56,8 @@ fn person_company_type() -> GraphTypeDef {
         edge_types: vec![EdgeTypeDef {
             name: works_at,
             label: works_at,
-            source_node_type: 0,
-            target_node_type: 1,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(1),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
         }],
@@ -125,7 +125,14 @@ fn create_edge_type_resolves_closed_type_and_emits_schema_change() {
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_edge_type(knows, knows, 0, 0, Vec::new(), ValidationMode::Strict)
+            .create_edge_type(
+                knows,
+                knows,
+                EdgeEndpointDef::NodeType(0),
+                EdgeEndpointDef::NodeType(0),
+                Vec::new(),
+                ValidationMode::Strict,
+            )
             .unwrap();
         txn.commit().unwrap()
     };

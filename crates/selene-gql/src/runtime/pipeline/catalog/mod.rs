@@ -5,7 +5,7 @@ mod property;
 
 use selene_core::{IStr, LabelSet, Value, intern_with_admission};
 use selene_graph::{
-    EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
+    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
     ValidationMode as GraphValidationMode,
 };
 
@@ -114,8 +114,8 @@ pub(super) fn execute(
                 .create_edge_type(
                     *label,
                     *label,
-                    source,
-                    target,
+                    EdgeEndpointDef::NodeType(source),
+                    EdgeEndpointDef::NodeType(target),
                     properties,
                     graph_validation_mode(*validation_mode),
                 )
@@ -486,8 +486,13 @@ fn render_edge_type_def(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> S
     }
 }
 
-fn render_endpoint(graph_type: &GraphTypeDef, index: u32) -> String {
-    render_node_label_set(&graph_type.node_types[index as usize].key_labels)
+fn render_endpoint(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> String {
+    match endpoint {
+        EdgeEndpointDef::Any => "ANY".to_owned(),
+        EdgeEndpointDef::NodeType(index) => {
+            render_node_label_set(&graph_type.node_types[index as usize].key_labels)
+        }
+    }
 }
 
 fn render_node_label_set(labels: &LabelSet) -> String {

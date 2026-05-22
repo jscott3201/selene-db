@@ -12,8 +12,8 @@ use smallvec::smallvec;
 use crate::core_provider::sections::{encode_graph_types, encode_meta, encode_schemas};
 use crate::core_provider::{CORE_GTYP_SUB, CORE_META_SUB, CORE_SCMA_SUB, CoreProvider};
 use crate::{
-    EdgeTypeDef, GraphError, GraphTypeDef, IndexProvider, NodeTypeDef, ProviderError, SharedGraph,
-    SubTag, TypedIndexKind, ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, IndexProvider, NodeTypeDef,
+    ProviderError, SharedGraph, SubTag, TypedIndexKind, ValidationMode,
 };
 
 fn test_graph_type_id() -> GraphTypeId {
@@ -48,8 +48,8 @@ fn person_knows_runtime_graph_type() -> GraphTypeDef {
     graph_type.edge_types.push(EdgeTypeDef {
         name: knows,
         label: knows,
-        source_node_type: 0,
-        target_node_type: 0,
+        source_node_type: EdgeEndpointDef::NodeType(0),
+        target_node_type: EdgeEndpointDef::NodeType(0),
         properties: Vec::new(),
         validation_mode: ValidationMode::Strict,
     });
@@ -412,8 +412,8 @@ fn wal_replay_applies_edge_type_added() {
     let edge_type = &recovered.meta.bound_type.as_ref().unwrap().edge_types[0];
     assert_eq!(edge_type.name, knows);
     assert_eq!(edge_type.label, knows);
-    assert_eq!(edge_type.source_node_type, 0);
-    assert_eq!(edge_type.target_node_type, 0);
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
     assert_eq!(edge_type.properties[0].name.as_str(), "since");
 }
 

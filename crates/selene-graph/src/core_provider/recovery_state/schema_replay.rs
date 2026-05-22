@@ -3,13 +3,14 @@
 use std::sync::Arc;
 
 use selene_core::{
-    IStr, LabelSet, PredefinedValueType, PropertyValueType, SchemaChange, ValueType,
+    EdgeEndpointDef as CoreEdgeEndpointDef, IStr, LabelSet, PredefinedValueType, PropertyValueType,
+    SchemaChange, ValueType,
 };
 
 use crate::core_provider::inconsistent;
 use crate::graph_types::{
-    EdgeTypeDef, GraphTypeDef, MAX_LIST_TYPE_NESTING, NodeTypeDef, PropertyDefaultValue,
-    PropertyElementType, PropertyTypeDef, ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_LIST_TYPE_NESTING, NodeTypeDef,
+    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, ValidationMode,
 };
 
 pub(super) fn replay_schema_changes(
@@ -134,30 +135,36 @@ fn runtime_edge_type_def(
     label: IStr,
     def: &selene_core::EdgeTypeDef,
 ) -> Result<EdgeTypeDef, crate::ProviderError> {
-    let source_node_type = graph_type
-        .find_node_type_index(&LabelSet::single(def.source_node_type.0))
-        .ok_or_else(|| {
-            inconsistent(format!(
-                "WAL EdgeTypeAdded references unknown source node type {}",
-                def.source_node_type.0
-            ))
-        })?;
-    let target_node_type = graph_type
-        .find_node_type_index(&LabelSet::single(def.target_node_type.0))
-        .ok_or_else(|| {
-            inconsistent(format!(
-                "WAL EdgeTypeAdded references unknown target node type {}",
-                def.target_node_type.0
-            ))
-        })?;
     Ok(EdgeTypeDef {
         name: label,
         label: def.label,
-        source_node_type,
-        target_node_type,
+        source_node_type: runtime_edge_endpoint_def(graph_type, def.source_node_type, "source")?,
+        target_node_type: runtime_edge_endpoint_def(graph_type, def.target_node_type, "target")?,
         properties: runtime_properties(&def.properties)?,
         validation_mode: runtime_validation_mode(def.validation_mode),
     })
+}
+
+fn runtime_edge_endpoint_def(
+    graph_type: &GraphTypeDef,
+    endpoint: CoreEdgeEndpointDef,
+    role: &str,
+) -> Result<EdgeEndpointDef, crate::ProviderError> {
+    match endpoint {
+        CoreEdgeEndpointDef::Any => Ok(EdgeEndpointDef::Any),
+        CoreEdgeEndpointDef::NodeType(node_type) => {
+            let index = graph_type
+                .node_type_index_for(node_type.0)
+                .or_else(|| graph_type.find_node_type_index(&LabelSet::single(node_type.0)))
+                .ok_or_else(|| {
+                    inconsistent(format!(
+                        "WAL EdgeTypeAdded references unknown {role} node type {}",
+                        node_type.0
+                    ))
+                })?;
+            Ok(EdgeEndpointDef::NodeType(index))
+        }
+    }
 }
 
 fn runtime_properties(
