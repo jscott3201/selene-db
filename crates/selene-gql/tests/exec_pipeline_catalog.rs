@@ -753,3 +753,35 @@ fn unsupported_default_literal_returns_feature_not_supported() {
 
     assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
 }
+
+#[test]
+fn default_literal_must_match_declared_property_type() {
+    let graph = empty_closed_graph(3725);
+    let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN DEFAULT 1)");
+
+    let err = run_write(&graph, &plan).expect_err("default type mismatch");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("DEFAULT literal is not assignable")
+                && message.contains("active")
+    ));
+}
+
+#[test]
+fn not_null_property_rejects_default_null() {
+    let graph = empty_closed_graph(3726);
+    let plan = planned("CREATE NODE TYPE :Person (active :: BOOLEAN NOT NULL DEFAULT NULL)");
+
+    let err = run_write(&graph, &plan).expect_err("not null default null");
+
+    assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+    assert!(matches!(
+        err,
+        ExecutorError::DataException { message, .. }
+            if message.contains("NOT NULL property cannot default to NULL")
+                && message.contains("active")
+    ));
+}

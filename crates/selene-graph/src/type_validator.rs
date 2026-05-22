@@ -156,11 +156,22 @@ pub fn validate_change(
             }
             validate_node_state(*id, graph, type_def).map(|(_, warnings)| warnings)
         }
-        Change::NodeUpdated { id, .. } => {
+        Change::NodeUpdated {
+            id,
+            properties_diff,
+            ..
+        } => {
             if !graph.is_node_alive(*id) {
                 return Ok(Vec::new());
             }
-            let (_, mut warnings) = validate_node_state(*id, graph, type_def)?;
+            let (node_type_index, mut warnings) = validate_node_state(*id, graph, type_def)?;
+            let node_type = &type_def.node_types[node_type_index as usize];
+            reject_immutable_property_update(
+                EntityId::Node(*id),
+                node_type.name,
+                &node_type.properties,
+                properties_diff,
+            )?;
             // A label change can invalidate every incident edge's
             // (label, source_type, target_type) constraint without the
             // edge itself producing a Change. Re-validate every alive
@@ -169,11 +180,27 @@ pub fn validate_change(
             warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
             Ok(warnings)
         }
-        Change::EdgeCreated { id, .. } | Change::EdgeUpdated { id, .. } => {
+        Change::EdgeCreated { id, .. } => {
             if !graph.is_edge_alive(*id) {
                 return Ok(Vec::new());
             }
-            validate_edge_state(*id, graph, type_def)
+            validate_edge_state(*id, graph, type_def).map(|(_, warnings)| warnings)
+        }
+        Change::EdgeUpdated {
+            id,
+            properties_diff,
+        } => {
+            if !graph.is_edge_alive(*id) {
+                return Ok(Vec::new());
+            }
+            let (edge_type, warnings) = validate_edge_state(*id, graph, type_def)?;
+            reject_immutable_property_update(
+                EntityId::Edge(*id),
+                edge_type.name,
+                &edge_type.properties,
+                properties_diff,
+            )?;
+            Ok(warnings)
         }
         Change::NodeDeleted { .. }
         | Change::EdgeDeleted { .. }
@@ -191,14 +218,14 @@ fn revalidate_incident_edges(
     if let Some(entry) = graph.outgoing_edges(node) {
         for edge in entry.iter() {
             if graph.is_edge_alive(edge.edge_id) {
-                warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?);
+                warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?.1);
             }
         }
     }
     if let Some(entry) = graph.incoming_edges(node) {
         for edge in entry.iter() {
             if graph.is_edge_alive(edge.edge_id) {
-                warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?);
+                warnings.extend(validate_edge_state(edge.edge_id, graph, type_def)?.1);
             }
         }
     }
@@ -215,11 +242,7 @@ pub fn validate_entity_state(
         warnings.extend(validate_node_state(NodeId::new(row as u64 + 1), graph, type_def)?.1);
     }
     for row in graph.edge_store.alive.iter() {
-        warnings.extend(validate_edge_state(
-            EdgeId::new(row as u64 + 1),
-            graph,
-            type_def,
-        )?);
+        warnings.extend(validate_edge_state(EdgeId::new(row as u64 + 1), graph, type_def)?.1);
     }
     Ok(warnings)
 }
@@ -252,11 +275,11 @@ fn validate_node_state(
     Ok((node_type_index, warnings))
 }
 
-fn validate_edge_state(
+fn validate_edge_state<'a>(
     id: EdgeId,
     graph: &SeleneGraph,
-    type_def: &GraphTypeDef,
-) -> Result<Vec<TypeWarning>, TypeViolation> {
+    type_def: &'a GraphTypeDef,
+) -> Result<(&'a crate::graph_types::EdgeTypeDef, Vec<TypeWarning>), TypeViolation> {
     let label = *graph
         .edge_label(id)
         .ok_or(TypeViolation::UnknownEdgeLabel {
@@ -294,7 +317,41 @@ fn validate_edge_state(
         &edge_type.properties,
         &properties,
     )?);
-    Ok(warnings)
+    Ok((edge_type, warnings))
+}
+
+fn reject_immutable_property_update(
+    entity_id: EntityId,
+    declared_in: IStr,
+    declarations: &[PropertyTypeDef],
+    diff: &selene_core::PropertyDiff,
+) -> Result<(), TypeViolation> {
+    for (key, _) in &diff.set {
+        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+    }
+    for key in &diff.removed {
+        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+    }
+    Ok(())
+}
+
+fn reject_if_immutable(
+    entity_id: EntityId,
+    declared_in: IStr,
+    declarations: &[PropertyTypeDef],
+    property: IStr,
+) -> Result<(), TypeViolation> {
+    if declarations
+        .iter()
+        .any(|declaration| declaration.name == property && declaration.immutable)
+    {
+        return Err(TypeViolation::ImmutablePropertyUpdate {
+            entity_id,
+            property,
+            declared_in,
+        });
+    }
+    Ok(())
 }
 
 fn validate_properties(

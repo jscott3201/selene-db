@@ -16,6 +16,9 @@ use crate::{
     PropertyTypeDef, ProviderTag, SharedGraph, TypeViolation, ValidationMode,
 };
 
+#[path = "closed_graph_tests/immutable.rs"]
+mod immutable;
+
 fn istr(name: &str) -> selene_core::IStr {
     intern(name).unwrap()
 }

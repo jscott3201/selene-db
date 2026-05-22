@@ -4,8 +4,8 @@ use selene_core::PropertyValueType;
 use selene_graph::{PropertyDefaultValue, PropertyTypeDef};
 
 use crate::{
-    ExecutorError, GqlType, Literal, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
-    ProjectExpr, ValueExpr,
+    DataExceptionSubclass, ExecutorError, GqlType, Literal, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, ProjectExpr, ValueExpr,
 };
 
 pub(super) fn property_defs(
@@ -24,12 +24,14 @@ fn property_def(
 ) -> Result<PropertyTypeDef, ExecutorError> {
     let mut required = false;
     let mut default = None;
+    let mut default_span = property.span;
     let mut immutable = false;
     for constraint in &property.constraints {
         match constraint {
             PlannedTypePropertyConstraint::NotNull(_) => required = true,
             PlannedTypePropertyConstraint::Default(project, span) => {
                 default = Some(property_default_value(project, *span)?);
+                default_span = *span;
             }
             PlannedTypePropertyConstraint::Immutable(_) => immutable = true,
             PlannedTypePropertyConstraint::Unique(_)
@@ -51,9 +53,13 @@ fn property_def(
             PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
+    let value_type = gql_type_to_property_value_type(&property.gql_type)?;
+    if let Some(default) = &default {
+        validate_default_value(property.name, value_type, required, default, default_span)?;
+    }
     Ok(PropertyTypeDef {
         name: property.name,
-        value_type: gql_type_to_property_value_type(&property.gql_type)?,
+        value_type,
         required,
         default,
         immutable,
@@ -79,6 +85,55 @@ fn property_default_value(
             span,
         }),
     }
+}
+
+fn validate_default_value(
+    property: selene_core::IStr,
+    value_type: PropertyValueType,
+    required: bool,
+    default: &PropertyDefaultValue,
+    span: crate::SourceSpan,
+) -> Result<(), ExecutorError> {
+    let value = default.to_value();
+    if matches!(value, selene_core::Value::Null) {
+        if required {
+            return Err(default_type_error(
+                property,
+                value_type,
+                "Null",
+                "NOT NULL property cannot default to NULL",
+                span,
+            ));
+        }
+        return Ok(());
+    }
+    if value_type.matches(&value) {
+        return Ok(());
+    }
+    Err(default_type_error(
+        property,
+        value_type,
+        PropertyValueType::observed_name(&value),
+        "DEFAULT literal is not assignable to property type",
+        span,
+    ))
+}
+
+fn default_type_error(
+    property: selene_core::IStr,
+    expected: PropertyValueType,
+    observed: &'static str,
+    reason: &'static str,
+    span: crate::SourceSpan,
+) -> ExecutorError {
+    ExecutorError::data_exception(
+        DataExceptionSubclass::InvalidValueType,
+        format!(
+            "{reason}: property {property} expects {}, default is {observed}",
+            expected.name()
+        ),
+        span,
+    )
 }
 
 fn gql_type_to_property_value_type(gql_type: &GqlType) -> Result<PropertyValueType, ExecutorError> {
