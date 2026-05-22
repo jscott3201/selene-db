@@ -492,6 +492,66 @@ fn person_company_graph_type() -> GraphTypeDef {
     }
 }
 
+fn any_edge_person_company_graph_type() -> GraphTypeDef {
+    let mut graph_type = person_company_graph_type();
+    graph_type.edge_types[0].source_node_type = EdgeEndpointDef::Any;
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::Any;
+    graph_type
+}
+
+#[test]
+fn closed_graph_any_edge_accepts_declared_endpoint_types() {
+    let shared = SharedGraph::builder(GraphId::new(25))
+        .bound_to(any_edge_person_company_graph_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let person = mutator
+            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .unwrap();
+        let company = mutator
+            .create_node(LabelSet::single(istr("PCCompany")), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(istr("WORKS_AT"), company, person, PropertyMap::new())
+            .unwrap();
+    }
+
+    txn.commit()
+        .expect("Any endpoints accept all declared node types");
+}
+
+#[test]
+fn closed_graph_any_edge_rejects_undeclared_endpoint_type() {
+    let shared = SharedGraph::builder(GraphId::new(26))
+        .bound_to(any_edge_person_company_graph_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let person = mutator
+            .create_node(LabelSet::single(istr("PCPerson")), PropertyMap::new())
+            .unwrap();
+        let project = mutator
+            .create_node(LabelSet::single(istr("PCProject")), PropertyMap::new())
+            .unwrap();
+        mutator
+            .create_edge(istr("WORKS_AT"), person, project, PropertyMap::new())
+            .unwrap();
+    }
+
+    assert!(matches!(
+        txn.commit().unwrap_err(),
+        GraphError::TypeViolation(TypeViolation::UnknownNodeLabel { labels, .. })
+            if labels == LabelSet::single(istr("PCProject"))
+    ));
+}
+
 #[test]
 fn closed_graph_revalidates_incident_edges_on_node_label_change() {
     // F1 regression: a NodeUpdated that flips labels can leave incident edges

@@ -340,6 +340,40 @@ mod tests {
     }
 
     #[test]
+    fn gtyp_v2_rows_decode_legacy_edge_endpoints_as_node_type_endpoints() {
+        let person = intern("V2EndpointPerson").unwrap();
+        let knows = intern("V2_ENDPOINT_KNOWS").unwrap();
+        let rows = vec![(
+            0_u32,
+            GraphTypeDefV2 {
+                name: intern("legacy.v2.endpoint.graph").unwrap(),
+                node_types: vec![NodeTypeDefV2 {
+                    name: person,
+                    key_labels: LabelSet::single(person),
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                }],
+                edge_types: vec![EdgeTypeDefV2 {
+                    name: knows,
+                    label: knows,
+                    source_node_type: 0,
+                    target_node_type: 0,
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                }],
+            },
+        )];
+        let mut bytes = vec![GTYP_V2_MAGIC];
+        bytes.extend(encode_rkyv(&rows, "CORE/GTYP").unwrap());
+
+        let decoded = decode_graph_types(&bytes).unwrap();
+
+        let edge_type = &decoded[0].1.edge_types[0];
+        assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+        assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
+    }
+
+    #[test]
     fn encode_graph_types_writes_gtyp_v3_magic() {
         let person = intern("V3Person").unwrap();
         let graph_type = GraphTypeDef {

@@ -370,15 +370,10 @@ fn create_edge_type_resolves_endpoints_created_earlier_in_same_statement() {
     outcome.expect("commit succeeds");
 
     let graph_type = graph.graph_type().unwrap();
-    assert_eq!(graph_type.edge_types[0].name.as_str(), "WORKS_AT");
-    assert_eq!(
-        graph_type.edge_types[0].source_node_type,
-        EdgeEndpointDef::NodeType(0)
-    );
-    assert_eq!(
-        graph_type.edge_types[0].target_node_type,
-        EdgeEndpointDef::NodeType(1)
-    );
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(edge_type.name.as_str(), "WORKS_AT");
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(1));
 }
 
 #[test]
@@ -454,6 +449,15 @@ fn show_edge_types_renders_any_endpoints_as_endpoint_less() {
 
     let (table, outcome) = run_write(&graph, &plan).expect("catalog executes");
     outcome.expect("commit succeeds");
+    let graph_type = graph.graph_type().unwrap();
+    assert_eq!(
+        graph_type.edge_types[0].source_node_type,
+        EdgeEndpointDef::Any
+    );
+    assert_eq!(
+        graph_type.edge_types[0].target_node_type,
+        EdgeEndpointDef::Any
+    );
 
     let Value::String(definition) = table.rows()[0].values()[1] else {
         panic!("definition is string");
@@ -620,33 +624,9 @@ fn create_edge_type_multi_label_endpoint_resolves_exact_label_set() {
     outcome.expect("commit succeeds");
 
     let graph_type = graph.graph_type().unwrap();
-    assert_eq!(
-        graph_type.edge_types[0].source_node_type,
-        EdgeEndpointDef::NodeType(0)
-    );
-    assert_eq!(
-        graph_type.edge_types[0].target_node_type,
-        EdgeEndpointDef::NodeType(0)
-    );
-}
-
-#[test]
-fn create_edge_type_without_endpoints_uses_any_endpoints() {
-    let graph = person_graph(3710);
-    let plan = planned("CREATE EDGE TYPE :KNOWS ()");
-
-    let (_, outcome) = run_write(&graph, &plan).expect("endpoint-less edge type executes");
-    outcome.expect("commit succeeds");
-
-    let graph_type = graph.graph_type().unwrap();
-    assert_eq!(
-        graph_type.edge_types[0].source_node_type,
-        EdgeEndpointDef::Any
-    );
-    assert_eq!(
-        graph_type.edge_types[0].target_node_type,
-        EdgeEndpointDef::Any
-    );
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
 }
 
 #[test]
