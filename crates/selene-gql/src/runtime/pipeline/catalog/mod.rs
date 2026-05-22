@@ -482,8 +482,9 @@ fn render_edge_type_def(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> S
 
 fn render_edge_endpoint_clause(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
     if edge_type.source_node_type == EdgeEndpointDef::Any
-        && edge_type.target_node_type == EdgeEndpointDef::Any
+        || edge_type.target_node_type == EdgeEndpointDef::Any
     {
+        // Partial Any has no DDL syntax; keep SHOW output parseable.
         return String::new();
     }
     let source = render_endpoint(graph_type, edge_type.source_node_type);
@@ -570,5 +571,47 @@ fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
             span,
         },
         source => ExecutorError::GraphMutation { source, span },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn istr(value: &str) -> IStr {
+        intern_with_admission(value).expect("test label admits").0
+    }
+
+    #[test]
+    fn render_partial_any_edge_endpoint_as_endpoint_less_ddl() {
+        let person = istr("Person");
+        let graph_type = GraphTypeDef {
+            name: istr("catalog.partial.any.graph"),
+            node_types: vec![NodeTypeDef {
+                name: person,
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+                validation_mode: GraphValidationMode::Strict,
+            }],
+            edge_types: Vec::new(),
+        };
+        let knows = istr("KNOWS");
+
+        for (source_node_type, target_node_type) in [
+            (EdgeEndpointDef::Any, EdgeEndpointDef::NodeType(0)),
+            (EdgeEndpointDef::NodeType(0), EdgeEndpointDef::Any),
+        ] {
+            let edge_type = EdgeTypeDef {
+                name: knows,
+                label: knows,
+                source_node_type,
+                target_node_type,
+                properties: Vec::new(),
+                validation_mode: GraphValidationMode::Strict,
+            };
+            let rendered = render_edge_type_def(&graph_type, &edge_type);
+            assert_eq!(rendered, "CREATE EDGE TYPE :KNOWS ()");
+            crate::parse(&rendered).expect("rendered edge type DDL parses");
+        }
     }
 }

@@ -154,8 +154,8 @@ fn runtime_edge_endpoint_def(
         CoreEdgeEndpointDef::Any => Ok(EdgeEndpointDef::Any),
         CoreEdgeEndpointDef::NodeType(node_type) => {
             let index = graph_type
-                .node_type_index_for(node_type.0)
-                .or_else(|| graph_type.find_node_type_index(&LabelSet::single(node_type.0)))
+                .find_node_type_index(&LabelSet::single(node_type.0))
+                .or_else(|| graph_type.node_type_index_for(node_type.0))
                 .ok_or_else(|| {
                     inconsistent(format!(
                         "WAL EdgeTypeAdded references unknown {role} node type {}",

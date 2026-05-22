@@ -173,10 +173,13 @@ fn validate_insert_edge(
     validate_insert_edge_properties(edge, edge_type, graph_type, stmt_index, analyzed)
 }
 
-fn endpoint_name(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> selene_core::IStr {
+fn endpoint_name(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> String {
     match endpoint {
-        EdgeEndpointDef::Any => selene_core::intern("Any").expect("static label admits"),
-        EdgeEndpointDef::NodeType(index) => graph_type.node_types[index as usize].name,
+        EdgeEndpointDef::Any => "Any".to_owned(),
+        EdgeEndpointDef::NodeType(index) => graph_type.node_types[index as usize]
+            .name
+            .as_str()
+            .to_owned(),
     }
 }
 

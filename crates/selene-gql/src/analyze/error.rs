@@ -215,9 +215,9 @@ pub enum AnalysisError {
         /// Edge label.
         label: IStr,
         /// Expected source node type name.
-        expected_source: IStr,
+        expected_source: String,
         /// Expected target node type name.
-        expected_target: IStr,
+        expected_target: String,
         /// Observed source label set.
         observed_source: LabelSet,
         /// Observed target label set.

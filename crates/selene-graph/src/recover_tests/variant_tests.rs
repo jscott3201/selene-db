@@ -1,8 +1,10 @@
 use std::fs;
 
 use selene_core::{
-    Change, EdgeId, GraphId, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
+    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelDiff, LabelSet, NodeId, NodeTypeRef,
+    PropertyDiff, PropertyMap, SchemaChange, Value, intern,
 };
+use smallvec::smallvec;
 
 use crate::{
     EdgeEndpointDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode,
@@ -20,6 +22,28 @@ fn person_closed_graph_type() -> crate::GraphTypeDef {
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
         }],
+        edge_types: Vec::new(),
+    }
+}
+
+fn colliding_legacy_endpoint_graph_type() -> crate::GraphTypeDef {
+    let legacy_label = intern("recover.legacy.person").unwrap();
+    crate::GraphTypeDef {
+        name: intern("recover.legacy.collision.graph").unwrap(),
+        node_types: vec![
+            NodeTypeDef {
+                name: intern("recover.legacy.person.type").unwrap(),
+                key_labels: LabelSet::single(legacy_label),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+            NodeTypeDef {
+                name: legacy_label,
+                key_labels: LabelSet::single(intern("recover.legacy.other").unwrap()),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+        ],
         edge_types: Vec::new(),
     }
 }
@@ -252,6 +276,49 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
             }
         ]
     ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_closed_legacy_edge_endpoint_prefers_label_set_over_type_name() {
+    let dir = temp_dir("legacy-edge-endpoint-label-precedence");
+    let graph_id = GraphId::new(708);
+    let base = colliding_legacy_endpoint_graph_type();
+    let legacy_label = base.node_types[0]
+        .key_labels
+        .iter()
+        .next()
+        .copied()
+        .unwrap();
+    let rel = intern("recover.legacy.knows").unwrap();
+    append_wal(
+        &dir,
+        0,
+        &[Change::SchemaChanged {
+            graph: graph_id,
+            change: SchemaChange::EdgeTypeAdded {
+                graph_type: GraphTypeId::new(1).unwrap(),
+                label: rel,
+                def: EdgeTypeDefV1 {
+                    label: rel,
+                    source_node_type: NodeTypeRef(legacy_label),
+                    target_node_type: NodeTypeRef(legacy_label),
+                    properties: smallvec![],
+                },
+            },
+        }],
+    );
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    assert_eq!(
+        graph_type.edge_types[0].source_node_type,
+        EdgeEndpointDef::NodeType(0)
+    );
+    assert_eq!(
+        graph_type.edge_types[0].target_node_type,
+        EdgeEndpointDef::NodeType(0)
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
