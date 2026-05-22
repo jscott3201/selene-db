@@ -119,7 +119,7 @@ impl SharedGraph {
         Self::from_graph_with_core_and_durables(graph, providers, Vec::new(), None)
     }
 
-    fn from_graph_with_core_and_durables(
+    pub(crate) fn from_graph_with_core_and_durables(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
         mut durable_providers: Vec<Arc<dyn DurableProvider>>,
@@ -512,7 +512,9 @@ fn edge_row_parts(
     Ok((label, source, target))
 }
 
-fn validate_unique_provider_tags(providers: &[Arc<dyn IndexProvider>]) -> GraphResult<()> {
+pub(crate) fn validate_unique_provider_tags(
+    providers: &[Arc<dyn IndexProvider>],
+) -> GraphResult<()> {
     let mut seen = std::collections::BTreeSet::new();
     for provider in providers {
         let tag = provider.provider_tag();
