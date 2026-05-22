@@ -53,19 +53,31 @@ fn apply_schema_change(
         | SchemaChange::RecordTypeAdded { .. } => {
             return Err(unsupported_schema_recovery(change));
         }
-        SchemaChange::NodeTypeAdded { label, def, .. }
-        | SchemaChange::NodeTypeAddedV2 { label, def, .. } => {
+        SchemaChange::NodeTypeAdded { label, def, .. } => {
             // Why: snapshot sections store the bound graph type at recovery
             // index 0 in v1.0. SchemaChange.graph_type uses the durable
             // catalog id space, so replay maps every catalog type DDL event
             // onto that single recovery-state entry until multi-bound-type
             // work replaces the constant.
+            let def = selene_core::NodeTypeDef::from(def.clone());
+            graph_type
+                .node_types
+                .push(runtime_node_type_def(*label, &def)?);
+        }
+        SchemaChange::NodeTypeAddedV2 { label, def, .. } => {
+            // See the legacy NodeTypeAdded arm above for the recovery-index
+            // mapping. V2 carries live type-model fields directly.
             graph_type
                 .node_types
                 .push(runtime_node_type_def(*label, def)?);
         }
-        SchemaChange::EdgeTypeAdded { label, def, .. }
-        | SchemaChange::EdgeTypeAddedV2 { label, def, .. } => {
+        SchemaChange::EdgeTypeAdded { label, def, .. } => {
+            let def = selene_core::EdgeTypeDef::from(def.clone());
+            graph_type
+                .edge_types
+                .push(runtime_edge_type_def(graph_type, *label, &def)?);
+        }
+        SchemaChange::EdgeTypeAddedV2 { label, def, .. } => {
             graph_type
                 .edge_types
                 .push(runtime_edge_type_def(graph_type, *label, def)?);

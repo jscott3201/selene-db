@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use selene_core::{
-    Change, GraphId, GraphType, GraphTypeId, LabelSet, NodeId, NodeTypeRef, PackLifecycleEvent,
-    PredefinedValueType, PropertyDef, PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange,
-    SchemaPropertyIndexKind, ValidationMode as CoreValidationMode, Value, ValueType,
+    Change, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1,
+    NodeTypeRef, PackLifecycleEvent, PredefinedValueType, PropertyDefV1, PropertyMap,
+    RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind, Value, ValueType,
     ValueTypeCardinality, intern,
 };
 use selene_persist::RecoveryProvider;
@@ -82,8 +82,8 @@ fn load_closed_snapshot(provider: &CoreProvider, graph: &crate::SeleneGraph) {
     .unwrap();
 }
 
-fn core_string_property(name: &str, required: bool) -> PropertyDef {
-    PropertyDef {
+fn core_string_property(name: &str, required: bool) -> PropertyDefV1 {
+    PropertyDefV1 {
         name: intern(name).unwrap(),
         value_type: ValueType {
             predefined: Some(PredefinedValueType::String),
@@ -95,7 +95,6 @@ fn core_string_property(name: &str, required: bool) -> PropertyDef {
         },
         nullable: !required,
         default: None,
-        immutable: false,
     }
 }
 
@@ -178,7 +177,7 @@ fn intent_node_type_added() -> SchemaChange {
     SchemaChange::NodeTypeAdded {
         graph_type: test_graph_type_id(),
         label,
-        def: selene_core::NodeTypeDef::new(LabelSet::single(label)),
+        def: NodeTypeDefV1::new(LabelSet::single(label)),
     }
 }
 
@@ -188,12 +187,11 @@ fn intent_edge_type_added() -> SchemaChange {
     SchemaChange::EdgeTypeAdded {
         graph_type: test_graph_type_id(),
         label,
-        def: selene_core::EdgeTypeDef {
+        def: EdgeTypeDefV1 {
             label,
             source_node_type: NodeTypeRef(endpoint),
             target_node_type: NodeTypeRef(endpoint),
             properties: smallvec![],
-            validation_mode: CoreValidationMode::Strict,
         },
     }
 }
@@ -359,11 +357,10 @@ fn wal_replay_applies_node_type_added_to_graph_type() {
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label: sensor,
-                def: selene_core::NodeTypeDef {
+                def: NodeTypeDefV1 {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![core_string_property("serial", true)],
                     key: None,
-                    validation_mode: CoreValidationMode::Strict,
                 },
             },
         },
@@ -398,12 +395,11 @@ fn wal_replay_applies_edge_type_added() {
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label: knows,
-                def: selene_core::EdgeTypeDef {
+                def: EdgeTypeDefV1 {
                     label: knows,
                     source_node_type: NodeTypeRef(intern("Person").unwrap()),
                     target_node_type: NodeTypeRef(intern("Person").unwrap()),
                     properties: smallvec![since],
-                    validation_mode: CoreValidationMode::Strict,
                 },
             },
         },
@@ -497,7 +493,7 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label: intern("Sensor").unwrap(),
-                def: selene_core::NodeTypeDef::new(LabelSet::single(intern("Sensor").unwrap())),
+                def: NodeTypeDefV1::new(LabelSet::single(intern("Sensor").unwrap())),
             },
         },
     )
@@ -680,7 +676,7 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
                 label,
-                def: selene_core::NodeTypeDef::new(LabelSet::single(label)),
+                def: NodeTypeDefV1::new(LabelSet::single(label)),
             },
         },
     )

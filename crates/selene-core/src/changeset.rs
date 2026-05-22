@@ -12,8 +12,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 use crate::{
-    CoreError, CoreResult, EdgeId, EdgeTypeDef, GraphId, GraphType, GraphTypeId, IStr, LabelSet,
-    NodeId, NodeTypeDef, PackLifecycleEvent, PropertyMap, RecordTypeDef, Value,
+    CoreError, CoreResult, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
+    IStr, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PackLifecycleEvent, PropertyMap,
+    RecordTypeDef, Value,
 };
 
 /// A graph, schema, or extension-provider change carried by the WAL.
@@ -293,8 +294,8 @@ pub enum SchemaChange {
         graph_type: GraphTypeId,
         /// Node type label.
         label: IStr,
-        /// Node type definition.
-        def: NodeTypeDef,
+        /// Legacy node type definition.
+        def: NodeTypeDefV1,
     },
     /// Edge type addition.
     EdgeTypeAdded {
@@ -302,8 +303,8 @@ pub enum SchemaChange {
         graph_type: GraphTypeId,
         /// Edge type label.
         label: IStr,
-        /// Edge type definition.
-        def: EdgeTypeDef,
+        /// Legacy edge type definition.
+        def: EdgeTypeDefV1,
     },
     /// Node type deletion.
     NodeTypeDropped {

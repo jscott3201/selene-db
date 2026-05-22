@@ -225,12 +225,12 @@ fn schema_change_postcard_round_trip() {
         SchemaChange::NodeTypeAdded {
             graph_type: graph_type_id,
             label: node_label,
-            def: NodeTypeDef::new(LabelSet::single(node_label)),
+            def: NodeTypeDefV1::new(LabelSet::single(node_label)),
         },
         SchemaChange::EdgeTypeAdded {
             graph_type: graph_type_id,
             label: edge_label,
-            def: EdgeTypeDef::new(edge_label, NodeTypeRef(node_label), NodeTypeRef(node_label)),
+            def: EdgeTypeDefV1::new(edge_label, NodeTypeRef(node_label), NodeTypeRef(node_label)),
         },
         SchemaChange::NodeTypeDropped {
             graph_type: graph_type_id,

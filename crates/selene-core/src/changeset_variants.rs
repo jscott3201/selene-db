@@ -3,9 +3,9 @@ use std::sync::Arc;
 use smallvec::SmallVec;
 
 use crate::{
-    Change, EdgeId, EdgeTypeDef, GraphId, GraphType, GraphTypeId, IStr, LabelDiff, LabelSet,
-    NodeId, NodeTypeDef, NodeTypeRef, PackLifecycleEvent, PropertyDiff, PropertyMap, RecordTypeDef,
-    RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    Change, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, IStr, LabelDiff,
+    LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PackLifecycleEvent, PropertyDiff,
+    PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
 };
 
 impl Change {
@@ -91,12 +91,12 @@ impl SchemaChange {
         || Self::NodeTypeAdded {
             graph_type: changeset_graph_type_id(),
             label: changeset_variant_istr("schema.all.node"),
-            def: NodeTypeDef::new(LabelSet::single(changeset_variant_istr("schema.all.node"))),
+            def: NodeTypeDefV1::new(LabelSet::single(changeset_variant_istr("schema.all.node"))),
         },
         || Self::EdgeTypeAdded {
             graph_type: changeset_graph_type_id(),
             label: changeset_variant_istr("schema.all.edge"),
-            def: EdgeTypeDef::new(
+            def: EdgeTypeDefV1::new(
                 changeset_variant_istr("schema.all.edge"),
                 NodeTypeRef(changeset_variant_istr("schema.all.node")),
                 NodeTypeRef(changeset_variant_istr("schema.all.node")),
