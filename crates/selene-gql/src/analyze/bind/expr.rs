@@ -27,8 +27,9 @@ pub(crate) fn bind_value_expr(
                 ctx.binding_type(binding)
             }
             ValueExpr::Parameter { .. } => AnalyzedType::Dynamic,
-            ValueExpr::PropertyAccess { target, .. } => {
-                bind_value_expr(ctx, target)?;
+            ValueExpr::PropertyAccess { target, span, .. } => {
+                let target_id = bind_value_expr(ctx, target)?;
+                reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;
                 AnalyzedType::Dynamic
             }
             ValueExpr::ListAccess { target, index, .. } => {
@@ -116,8 +117,9 @@ pub(crate) fn bind_value_expr(
                 bind_many(ctx, items)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
-            ValueExpr::PropertyExists { target, .. } => {
-                bind_value_expr(ctx, target)?;
+            ValueExpr::PropertyExists { target, span, .. } => {
+                let target_id = bind_value_expr(ctx, target)?;
+                reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
             }
             ValueExpr::Case {
@@ -249,6 +251,29 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             | ValueExpr::Exists { .. }
             | ValueExpr::CountSubquery { .. } => {}
         }
+    }
+    Ok(())
+}
+
+fn reject_group_variable_property_access(
+    ty: &AnalyzedType,
+    span: crate::SourceSpan,
+) -> Result<(), AnalysisError> {
+    let AnalyzedType::Resolved(crate::GqlType::List(item)) = ty else {
+        return Ok(());
+    };
+    if matches!(
+        item.as_ref(),
+        crate::GqlType::NodeRef | crate::GqlType::EdgeRef
+    ) {
+        return Err(AnalysisError::NotImplemented {
+            message: "group-variable property access is not supported".into(),
+            span,
+            hint: Some(
+                "return the group variable as a list, or unnest it before accessing element properties"
+                    .into(),
+            ),
+        });
     }
     Ok(())
 }

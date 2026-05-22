@@ -88,6 +88,23 @@ fn pattern_node_is_node_ref() {
 }
 
 #[test]
+fn quantified_edge_binding_is_edge_ref_list() {
+    let analyzed = analyze_one("MATCH (a)-[r:K*1..2]->(b) RETURN r").unwrap();
+    assert_eq!(
+        projection_type(&analyzed, "r"),
+        AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
+    );
+}
+
+#[test]
+fn group_variable_property_access_is_rejected() {
+    let err = analyze_one("MATCH (a)-[r:K*1..2]->(b) RETURN r.weight")
+        .expect_err("GQ17 group-variable property access is rejected");
+    assert!(matches!(err, AnalysisError::NotImplemented { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "42N01");
+}
+
+#[test]
 fn static_case_branches_unify_to_string() {
     let analyzed =
         analyze_one("RETURN CASE WHEN true THEN 'adult' ELSE 'minor' END AS label").unwrap();

@@ -6,6 +6,7 @@ mod catalog;
 mod expr;
 mod match_clause;
 mod mutation;
+mod repeat;
 
 use crate::{
     GqlType, LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause,
