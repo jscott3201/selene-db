@@ -695,5 +695,7 @@ pub(crate) fn cast(
     _source: &AnalyzedType,
     _span: SourceSpan,
 ) -> Result<AnalyzedType, AnalysisError> {
+    // TODO(BRIEF-135x): wire _source for source-type-aware cast diagnostics;
+    // _span for diagnostic span attribution.
     Ok(AnalyzedType::Resolved(target_type.clone()))
 }

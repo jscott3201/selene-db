@@ -350,25 +350,29 @@ fn cast_float_to_integer_overflow_returns_22003() {
 
 #[test]
 fn cast_float_nan_to_integer_returns_22018() {
-    // CAST of NaN to INTEGER has no representable image; the implementation
-    // emits 22018 (invalid-character-value-for-cast) per ISO §22. NaN has
-    // no GQL literal — the inline unit test in `runtime/evaluator/cast.rs`
-    // pins the NaN branch directly via `Value::Float(f64::NAN)`. This
-    // integration test stays as a documentation point that
-    // `eval_cast(NaN, INTEGER)` is exercised through the same dispatch
-    // path that the GQL-reachable cases use.
-    //
-    // To keep the integration coverage observable, we use the `sqrt` of a
-    // negative literal which itself fires `22000` data exception before
-    // CAST runs — this confirms the analyzer/planner pipeline routes the
-    // CAST node intact without compile-time rejection.
-    let stmt = parse("RETURN CAST(0.0 AS INTEGER) AS v").expect("baseline parses");
-    assert!(matches!(
-        first_return_item_expr(
-            &analyze(stmt, &EmptyProcedureRegistry, None).expect("baseline analyzes")
-        ),
-        ValueExpr::Cast { .. }
-    ));
+    // CAST of NaN to INTEGER has no representable image; ISO §22 emits
+    // 22018 (invalid-character-value-for-cast). NaN has no GQL literal,
+    // so the integration test threads `f64::NAN` through the runtime via
+    // a session parameter binding — exercising the full parse → analyze
+    // → plan → execute → evaluator pipeline end-to-end. The inline unit
+    // test in `runtime/evaluator/cast.rs::tests::float_nan_to_integer_returns_22018`
+    // pins the same branch in isolation.
+    let graph = SharedGraph::new(GraphId::new(13_520));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        selene_core::intern("nan").expect("intern parameter name"),
+        Value::Float(f64::NAN),
+    );
+    let status = session
+        .execute_source(
+            "RETURN CAST($nan AS INTEGER) AS v",
+            &EmptyProcedureRegistry,
+        )
+        .expect_err("NaN cast must reject at runtime")
+        .gqlstatus()
+        .as_str()
+        .to_owned();
+    assert_eq!(status, "22018");
 }
 
 #[test]

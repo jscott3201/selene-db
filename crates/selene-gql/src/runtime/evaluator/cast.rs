@@ -231,6 +231,8 @@ fn float_to_integer(f: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
 }
 
 fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
+    // BRIEF-135a §O Q2-deviation.
     text.trim()
         .parse::<i64>()
         .map(Value::Int)
@@ -238,6 +240,8 @@ fn string_to_integer(text: &str, span: SourceSpan) -> Result<Value, ExecutorErro
 }
 
 fn string_to_float(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Trim whitespace per ecosystem precedent (Postgres/Neo4j/SQLite); see
+    // BRIEF-135a §O Q2-deviation.
     text.trim()
         .parse::<f64>()
         .map(Value::Float)
