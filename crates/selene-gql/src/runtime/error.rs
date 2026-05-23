@@ -18,6 +18,8 @@ pub enum DataExceptionSubclass {
     DivisionByZero,
     /// Invalid argument for power function (`2201F`).
     InvalidArgumentForPowerFunction,
+    /// Invalid character value for cast (`22018`).
+    InvalidCharacterValueForCast,
     /// Invalid value type (`22G03`).
     InvalidValueType,
     /// Values not comparable (`22G04`).
@@ -43,6 +45,7 @@ impl DataExceptionSubclass {
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
             Self::InvalidArgumentForPowerFunction => GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
+            Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,

@@ -8,6 +8,7 @@
 
 mod binary_ops;
 mod case;
+mod cast;
 mod collections;
 mod predicates;
 mod scalar_fns;
@@ -141,13 +142,13 @@ pub fn evaluate(
         ValueExpr::RecordLiteral { fields, span } => {
             eval_record_literal(fields, *span, binding, schema, ctx)
         }
-        ValueExpr::Cast { span, .. } => {
-            // Commit-1 stub: variant + walker arms land first; runtime
-            // dispatch matrix arrives in commit 2 alongside cast::eval_cast.
-            Err(ExecutorError::FeatureNotInV1_1 {
-                feature: "CAST evaluation",
-                span: *span,
-            })
+        ValueExpr::Cast {
+            value,
+            target_type,
+            span,
+        } => {
+            let evaluated = evaluate(value, binding, schema, ctx)?;
+            cast::eval_cast(evaluated, target_type, *span)
         }
     }
 }
