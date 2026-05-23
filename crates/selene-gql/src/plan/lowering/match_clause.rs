@@ -273,7 +273,9 @@ fn lower_graph_pattern(
                 repeat::ensure_within_max_quantifier(*max, edge.span)?;
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
-                if selector.is_some() && repeat_edge.group_binding.is_none() && min != max {
+                if repeat_edge.group_binding.is_none()
+                    && selector_needs_repeat_group(selector, *min, *max)
+                {
                     repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
                 }
                 JoinTree::Repeat {
@@ -584,6 +586,16 @@ fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
         });
     }
     Ok(())
+}
+
+fn selector_needs_repeat_group(selector: Option<PathSelector>, min: u32, max: u32) -> bool {
+    selector.is_some_and(|selector| {
+        min != max
+            || matches!(
+                selector,
+                PathSelector::AllShortest | PathSelector::AnyShortest
+            )
+    })
 }
 
 fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {

@@ -28,7 +28,7 @@ fn person_catalog() -> MockIndexCatalog {
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
     match tree {
         JoinTree::Scan(scan) => Some(scan),
-        JoinTree::Expand { child, .. } => first_scan(child),
+        JoinTree::Expand { child, .. } | JoinTree::PathSearch { child, .. } => first_scan(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             first_scan(left).or_else(|| first_scan(right))
         }
@@ -86,6 +86,15 @@ fn leaves_type_mismatch_unchanged() {
 
     assert!(matches!(scan.access, ScanAccess::Linear));
     assert_eq!(scan.property_predicates.len(), 1);
+}
+
+#[test]
+fn rewrites_scan_under_path_search_selector() {
+    let plan = optimized_one("MATCH ANY (n:Person {age: 30}) RETURN n", &person_catalog());
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(scan.access, ScanAccess::TypedIndexRange { .. }));
+    assert!(scan.property_predicates.is_empty());
 }
 
 #[test]

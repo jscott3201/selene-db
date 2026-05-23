@@ -2,7 +2,7 @@
 
 use crate::{
     HopContributor, JoinTree, PathSelector, SourceSpan, TailBinding,
-    plan::{PlannerError, RepeatEdgeMatch},
+    plan::{EdgeMatch, PlannerError, RepeatEdgeMatch},
 };
 
 pub(super) fn wrap_in_path_search(
@@ -67,9 +67,9 @@ fn collect_hop_contributors(
 ) -> Result<(), PlannerError> {
     match tree {
         JoinTree::Scan(_) => {}
-        JoinTree::Expand { child, .. } => {
+        JoinTree::Expand { child, edge, .. } => {
             collect_hop_contributors(child, span, contributors)?;
-            contributors.push(HopContributor::Fixed(1));
+            contributors.push(edge_contributor(edge, span)?);
         }
         JoinTree::Repeat {
             child,
@@ -114,14 +114,27 @@ fn repeat_contributor(
     max: Option<u32>,
     span: SourceSpan,
 ) -> Result<HopContributor, PlannerError> {
+    if let Some(binding) = edge.group_binding {
+        return Ok(HopContributor::GroupNamed(binding));
+    }
+    if let Some(hidden) = edge.group_hidden_binding {
+        return Ok(HopContributor::GroupHidden(hidden));
+    }
     if max == Some(min) {
         return Ok(HopContributor::Fixed(min));
     }
-    edge.group_binding
-        .map(HopContributor::GroupNamed)
-        .or_else(|| edge.group_hidden_binding.map(HopContributor::GroupHidden))
+    Err(PlannerError::NotImplemented {
+        feature: "path selector over quantified edge without hop-count group slot",
+        span,
+    })
+}
+
+fn edge_contributor(edge: &EdgeMatch, span: SourceSpan) -> Result<HopContributor, PlannerError> {
+    edge.binding
+        .map(HopContributor::EdgeNamed)
+        .or_else(|| edge.hidden_binding.map(HopContributor::EdgeHidden))
         .ok_or(PlannerError::NotImplemented {
-            feature: "path selector over quantified edge without hop-count group slot",
+            feature: "path selector over fixed edge without edge identity slot",
             span,
         })
 }

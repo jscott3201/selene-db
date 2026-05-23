@@ -198,6 +198,10 @@ impl TailBinding {
 pub enum HopContributor {
     /// Static hop count from a fixed-length chain segment.
     Fixed(u32),
+    /// One fixed hop from a named edge binding.
+    EdgeNamed(BindingId),
+    /// One fixed hop from an anonymous edge hidden binding.
+    EdgeHidden(HiddenBindingId),
     /// Runtime hop count from a named quantified-edge group binding.
     GroupNamed(BindingId),
     /// Runtime hop count from an anonymous quantified-edge hidden binding.

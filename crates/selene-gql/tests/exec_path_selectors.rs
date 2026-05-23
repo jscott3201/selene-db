@@ -254,6 +254,42 @@ fn path_selector_keeps_repeat_inline_group_predicate_shape() {
 }
 
 #[test]
+fn shortest_selectors_default_to_trail() {
+    let node = istr("N");
+    let edge = istr("K");
+    let name = istr("name");
+    let graph = SharedGraph::new(GraphId::new(6334));
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let a = mutator
+            .create_node(
+                LabelSet::single(node),
+                props([(name, Value::String(istr("A")))]),
+            )
+            .expect("A inserts");
+        mutator
+            .create_edge(edge, a, a, props([]))
+            .expect("loop edge");
+        txn.commit().expect("fixture commits");
+    }
+    let fixture = PathSelectorFixture { graph };
+
+    assert_eq!(
+        fixture.row_count(
+            "MATCH ALL SHORTEST (a:N {name: 'A'})-[:K*2..2]->(b:N {name: 'A'}) RETURN b"
+        ),
+        0
+    );
+    assert_eq!(
+        fixture.row_count(
+            "MATCH ANY SHORTEST (a:N {name: 'A'})-[:K]->(:N {name: 'A'})-[:K]->(b:N {name: 'A'}) RETURN b"
+        ),
+        0
+    );
+}
+
+#[test]
 fn path_selector_checks_cancellation_while_filtering_rows() {
     let root = istr("Root");
     let graph = SharedGraph::new(GraphId::new(6333));

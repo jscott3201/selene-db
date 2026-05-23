@@ -1,7 +1,7 @@
 //! Path-selector wrapper operator.
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use selene_core::{NodeId, Value};
+use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
     BindingId, HiddenBindingId, HopContributor, JoinTree, PathSelector, TailBinding,
@@ -86,6 +86,9 @@ fn select_shortest(
         env.ctx
             .tx
             .check_cancellation_stride(&mut rows_since_check, 1)?;
+        if !trail_allows(row, hop_contributors, env)? {
+            continue;
+        }
         let Some(pair) = endpoint_pair(row, source_binding, final_binding, env)? else {
             continue;
         };
@@ -103,6 +106,9 @@ fn select_shortest(
         env.ctx
             .tx
             .check_cancellation_stride(&mut rows_since_check, 1)?;
+        if !trail_allows(&row, hop_contributors, env)? {
+            continue;
+        }
         let Some(pair) = endpoint_pair(&row, source_binding, final_binding, env)? else {
             continue;
         };
@@ -160,6 +166,10 @@ fn hop_count(
     for contributor in contributors {
         let value = match contributor {
             HopContributor::Fixed(count) => *count,
+            HopContributor::EdgeNamed(binding) => {
+                edge_hop_count(binding_value(row, *binding, env)?)?
+            }
+            HopContributor::EdgeHidden(hidden) => edge_hop_count(hidden_value(row, *hidden, env)?)?,
             HopContributor::GroupNamed(binding) => list_len(binding_value(row, *binding, env)?)?,
             HopContributor::GroupHidden(hidden) => list_len(hidden_value(row, *hidden, env)?)?,
         };
@@ -170,6 +180,54 @@ fn hop_count(
             })?;
     }
     Ok(total)
+}
+
+fn trail_allows(
+    row: &Binding,
+    contributors: &[HopContributor],
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
+) -> Result<bool, ExecutorError> {
+    let mut seen = FxHashSet::default();
+    for contributor in contributors {
+        match contributor {
+            HopContributor::Fixed(0) => {}
+            HopContributor::Fixed(_) => {
+                return Err(ExecutorError::ImplementationDefined {
+                    detail: "path-search trail contributor lacks edge identity",
+                });
+            }
+            HopContributor::EdgeNamed(binding) => {
+                if !insert_edge_value(binding_value(row, *binding, env)?, &mut seen)? {
+                    return Ok(false);
+                }
+            }
+            HopContributor::EdgeHidden(hidden) => {
+                if !insert_edge_value(hidden_value(row, *hidden, env)?, &mut seen)? {
+                    return Ok(false);
+                }
+            }
+            HopContributor::GroupNamed(binding) => {
+                if !insert_edge_list(binding_value(row, *binding, env)?, &mut seen)? {
+                    return Ok(false);
+                }
+            }
+            HopContributor::GroupHidden(hidden) => {
+                if !insert_edge_list(hidden_value(row, *hidden, env)?, &mut seen)? {
+                    return Ok(false);
+                }
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn edge_hop_count(value: Value) -> Result<u32, ExecutorError> {
+    match value {
+        Value::EdgeRef(_) => Ok(1),
+        _ => Err(ExecutorError::ImplementationDefined {
+            detail: "path-search fixed hop contributor is not an edge",
+        }),
+    }
 }
 
 fn list_len(value: Value) -> Result<u32, ExecutorError> {
@@ -183,6 +241,29 @@ fn list_len(value: Value) -> Result<u32, ExecutorError> {
             detail: "path-search hop contributor is not a list",
         }),
     }
+}
+
+fn insert_edge_list(value: Value, seen: &mut FxHashSet<EdgeId>) -> Result<bool, ExecutorError> {
+    let Value::List(values) = value else {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "path-search trail group contributor is not a list",
+        });
+    };
+    for value in values {
+        if !insert_edge_value(value, seen)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn insert_edge_value(value: Value, seen: &mut FxHashSet<EdgeId>) -> Result<bool, ExecutorError> {
+    let Value::EdgeRef(edge) = value else {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "path-search trail contributor is not an edge",
+        });
+    };
+    Ok(seen.insert(edge))
 }
 
 fn tail_value(
