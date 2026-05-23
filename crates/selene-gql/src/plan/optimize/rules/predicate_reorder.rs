@@ -59,7 +59,9 @@ fn reorder_tree(tree: &mut JoinTree, bindings: &[BindingDef], ctx: &OptimizeCont
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             reorder_tree(left, bindings, ctx) | reorder_tree(right, bindings, ctx)
         }
-        JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        JoinTree::PathSearch { .. } | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => {
+            false
+        }
     }
 }
 

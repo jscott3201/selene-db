@@ -18,12 +18,12 @@ pub use error::PlannerError;
 pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
-    HiddenBindingId, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount,
-    MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey, OuterBindingRef, PathPlan,
-    PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
+    HiddenBindingId, HopContributor, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree,
+    LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
+    OuterBindingRef, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry, TxOp,
-    TypedIndexBounds, YieldKind,
+    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry,
+    TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;
 pub use optimize::{

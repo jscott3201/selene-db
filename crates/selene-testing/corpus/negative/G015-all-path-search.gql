@@ -1,4 +1,0 @@
--- corpus: negative
--- feature: G015
--- expects: parse-rejected(G015)
-MATCH ALL (n:Person) RETURN n

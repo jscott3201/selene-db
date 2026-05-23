@@ -1,7 +1,11 @@
 //! Flagger feature-gating coverage.
 
-use selene_core::feature_register::FeatureId;
-use selene_gql::{EmptyProcedureRegistry, ParserError, analyze, parse, plan};
+use selene_core::{GraphId, feature_register::FeatureId};
+use selene_gql::{
+    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ParserError, TxContext,
+    analyze, execute_pattern, execute_pipeline, parse, plan,
+};
+use selene_graph::SharedGraph;
 
 #[test]
 fn union_and_otherwise_features_are_supported() {
@@ -16,15 +20,15 @@ fn group_by_feature_is_supported() {
 }
 
 #[test]
-fn path_selector_features_are_rejected_before_planning() {
-    for (source, expected) in [
-        ("MATCH ALL (n) RETURN n", FeatureId::G015),
-        ("MATCH ANY (n) RETURN n", FeatureId::G016),
-        ("MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m", FeatureId::G017),
-        ("MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m", FeatureId::G018),
+fn path_selector_features_are_supported() {
+    for source in [
+        "MATCH ALL (n) RETURN n",
+        "MATCH ANY (n) RETURN n",
+        "MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m",
+        "MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m",
     ] {
-        let error = parse(source).expect_err(source);
-        assert_feature(error, expected);
+        assert_read_plan(source);
+        assert_read_execution(source);
     }
 }
 
@@ -138,7 +142,34 @@ fn assert_feature(error: ParserError, expected: FeatureId) {
 }
 
 fn assert_read_plan(source: &str) {
+    let _ = read_plan(source);
+}
+
+fn read_plan(source: &str) -> selene_gql::ExecutionPlan {
     let statement = parse(source).expect(source);
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect(source);
-    plan(&analyzed, &EmptyProcedureRegistry).expect(source);
+    plan(&analyzed, &EmptyProcedureRegistry).expect(source)
+}
+
+fn assert_read_execution(source: &str) {
+    let plan = read_plan(source);
+    let graph = SharedGraph::new(GraphId::new(9151));
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    )
+    .with_plan_metadata(&plan.expr_ids, &plan.subqueries);
+    let input = if let Some(pattern) = &plan.pattern_plan {
+        execute_pattern(pattern, &ctx).expect(source)
+    } else {
+        BindingTable::new(
+            BindingTableSchema {
+                columns: Vec::new(),
+            },
+            vec![Binding::empty()],
+        )
+    };
+    execute_pipeline(&plan.pipeline, input, &mut ctx).expect(source);
 }

@@ -105,9 +105,9 @@ impl ExecutionPlan {
 fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
     match tree {
         JoinTree::Scan(_) => {}
-        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
-            refresh_join_tree_pipeline_op_high_water(child)
-        }
+        JoinTree::Expand { child, .. }
+        | JoinTree::Repeat { child, .. }
+        | JoinTree::PathSearch { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             refresh_join_tree_pipeline_op_high_water(left);
             refresh_join_tree_pipeline_op_high_water(right);
@@ -164,6 +164,50 @@ pub enum BindingElement {
     Alias,
 }
 
+/// Binding endpoint used by path-level operators.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TailBinding {
+    /// Named pattern binding.
+    Named(BindingId),
+    /// Executor-private hidden binding.
+    Hidden(HiddenBindingId),
+}
+
+impl TailBinding {
+    /// Return the named binding, if any.
+    #[must_use]
+    pub const fn named(self) -> Option<BindingId> {
+        match self {
+            Self::Named(binding) => Some(binding),
+            Self::Hidden(_) => None,
+        }
+    }
+
+    /// Return the hidden binding, if any.
+    #[must_use]
+    pub const fn hidden(self) -> Option<HiddenBindingId> {
+        match self {
+            Self::Named(_) => None,
+            Self::Hidden(binding) => Some(binding),
+        }
+    }
+}
+
+/// Source of one hop-count contribution for a path-search row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum HopContributor {
+    /// Static hop count from a fixed-length chain segment.
+    Fixed(u32),
+    /// One fixed hop from a named edge binding.
+    EdgeNamed(BindingId),
+    /// One fixed hop from an anonymous edge hidden binding.
+    EdgeHidden(HiddenBindingId),
+    /// Runtime hop count from a named quantified-edge group binding.
+    GroupNamed(BindingId),
+    /// Runtime hop count from an anonymous quantified-edge hidden binding.
+    GroupHidden(HiddenBindingId),
+}
+
 /// Pattern join tree.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -199,6 +243,23 @@ pub enum JoinTree {
         path_mode: PathMode,
         /// Path selector in scope for this repeat.
         selector: Option<PathSelector>,
+    },
+    /// Selector wrapper over one complete path pattern.
+    ///
+    /// The child materializes every candidate row. `PathSearch` then applies
+    /// endpoint partitioning and hop-count selection for `ANY` / `SHORTEST`
+    /// without changing the child join-tree shape.
+    PathSearch {
+        /// Selector to apply to the child path pattern.
+        selector: PathSelector,
+        /// Complete path-pattern child.
+        child: Box<JoinTree>,
+        /// Binding for the first node in the selected path.
+        source_binding: TailBinding,
+        /// Binding for the final node in the selected path.
+        final_binding: TailBinding,
+        /// Hop-count contributors in path order.
+        hop_contributors: Vec<HopContributor>,
     },
     /// Binary join between two pattern fragments.
     HashJoin {
@@ -320,6 +381,8 @@ pub struct EdgeMatch {
 pub struct RepeatEdgeMatch {
     /// Named group edge binding, or `None` for anonymous quantified edges.
     pub group_binding: Option<BindingId>,
+    /// Hidden group edge binding for anonymous quantified edges under selectors.
+    pub group_hidden_binding: Option<HiddenBindingId>,
     /// Label predicate attached to each traversed edge.
     pub label_predicate: Option<LabelExpr>,
     /// Property-map predicates evaluated against each traversed edge.
@@ -512,6 +575,7 @@ mod tests {
             })),
             edge: RepeatEdgeMatch {
                 group_binding: None,
+                group_hidden_binding: None,
                 label_predicate: None,
                 property_predicates: Vec::new(),
                 inline_predicates: Vec::new(),
@@ -535,6 +599,7 @@ mod tests {
             panic!("expected repeat");
         };
         assert_eq!(edge.group_binding, None);
+        assert_eq!(edge.group_hidden_binding, None);
         assert_eq!(edge.left_hidden_binding, Some(HiddenBindingId::new(0)));
         assert_eq!(edge.final_hidden_binding, Some(HiddenBindingId::new(1)));
         assert_eq!(min, 0);

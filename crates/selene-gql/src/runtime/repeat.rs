@@ -24,12 +24,13 @@ pub(crate) fn execute(
     selector: Option<PathSelector>,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
-    if path_mode != PathMode::Walk || selector.is_some() {
+    if path_mode != PathMode::Walk {
         return Err(ExecutorError::FeatureNotInV1_1 {
             feature: "non-WALK variable-length edge execution",
             span: edge.span,
         });
     }
+    let _ = selector;
     let Some(max) = max else {
         return Err(ExecutorError::FeatureNotInV1_1 {
             feature: "unbounded variable-length edge execution",
@@ -139,12 +140,21 @@ fn maybe_emit_path(
     )? {
         return Ok(());
     }
+    let group_value = edge_list_value(path_edges);
     if !pattern::set_binding_value(
         &mut values,
         state.pattern_plan,
         state.schema,
         state.edge.group_binding,
-        Value::List(path_edges.iter().copied().map(Value::EdgeRef).collect()),
+        group_value.clone(),
+    )? {
+        return Ok(());
+    }
+    if !pattern::set_hidden_value(
+        &mut values,
+        state.schema,
+        state.edge.group_hidden_binding,
+        group_value,
     )? {
         return Ok(());
     }
@@ -225,6 +235,10 @@ fn current_step_row(
         return Ok(None);
     }
     Ok(Some(Binding::new(values)))
+}
+
+fn edge_list_value(path_edges: &[EdgeId]) -> Value {
+    Value::List(path_edges.iter().copied().map(Value::EdgeRef).collect())
 }
 
 fn predicates_pass(

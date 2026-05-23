@@ -52,14 +52,15 @@ pub use crate::parser::{parse, parse_many, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, CompositeIndexHandle, EdgeMatch, EdgeStatistics, EmptyIndexCatalog,
-    ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, ImplDefinedCaps,
-    IndexCatalog, IndexHandle, IndexKind, IndexTarget, InsertEndpointRef, InsertSiteId, JoinTree,
-    LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OptimizeContext, OrderAccess,
-    OrderKey, OuterBindingRef, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
-    PlannedSubquery, PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem,
-    PlannerError, ProjectExpr, PropertyHistogram, PropertyInit, RepeatEdgeMatch, Rule, ScanAccess,
-    ScanKind, SubqueryKind, SubqueryRegistry, Transformed, TxOp, TypedIndexBounds,
-    TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
+    ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, HopContributor,
+    ImplDefinedCaps, IndexCatalog, IndexHandle, IndexKind, IndexTarget, InsertEndpointRef,
+    InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan,
+    OptimizeContext, OrderAccess, OrderKey, OuterBindingRef, PathPlan, PatternPlan, PipelineOp,
+    PipelineOpId, PlannedCall, PlannedSubquery, PlannedTypePropertyConstraint,
+    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram,
+    PropertyInit, RepeatEdgeMatch, Rule, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry,
+    TailBinding, Transformed, TxOp, TypedIndexBounds, TypedIndexLookup, WanderJoinSampler,
+    YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureArity, ProcedureDefaultValue, ProcedureError, ProcedureHandle,

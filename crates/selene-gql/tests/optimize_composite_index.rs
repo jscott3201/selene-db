@@ -40,7 +40,7 @@ fn optimized_one(source: &str, catalog: &MockIndexCatalog) -> selene_gql::Execut
 fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
     match tree {
         JoinTree::Scan(scan) => Some(scan),
-        JoinTree::Expand { child, .. } => first_scan(child),
+        JoinTree::Expand { child, .. } | JoinTree::PathSearch { child, .. } => first_scan(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             first_scan(left).or_else(|| first_scan(right))
         }
@@ -158,6 +158,20 @@ fn composite_index_lookup_dedupes_duplicate_property_keys() {
         tenant_residuals.is_empty() || tenant_residuals == vec![1],
         "exact duplicate residual should be absent or a redundant tenant=1 predicate, got {tenant_residuals:?}"
     );
+}
+
+#[test]
+fn composite_index_lookup_rewrites_scan_under_path_search_selector() {
+    let catalog = MockIndexCatalog::new()
+        .with_node_composite_index(istr("Doc"), vec![istr("tenant"), istr("kind")]);
+    let plan = optimized_one(
+        "MATCH ANY (n:Doc {tenant: 't1', kind: 'k'}) RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(matches!(scan.access, ScanAccess::CompositeLookup { .. }));
+    assert!(scan.property_predicates.is_empty());
 }
 
 #[test]

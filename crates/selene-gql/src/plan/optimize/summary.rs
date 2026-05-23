@@ -430,6 +430,7 @@ fn collect_scans(
                 });
             }
         }
+        JoinTree::PathSearch { child, .. } => collect_scans(child, bindings, scans),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_scans(left, bindings, scans);
             collect_scans(right, bindings, scans);
@@ -504,6 +505,9 @@ fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> S
             min,
             max.map_or_else(|| "*".to_owned(), |max| max.to_string())
         ),
+        JoinTree::PathSearch {
+            selector, child, ..
+        } => format!("{selector:?}({})", join_tree_shape(child, bindings)),
         JoinTree::HashJoin { left, right, .. } => format!(
             "HashJoin({}, {})",
             join_tree_shape(left, bindings),

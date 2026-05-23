@@ -71,6 +71,6 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, cap) | rewrite_tree(right, cap)
         }
-        JoinTree::Scan(_) | JoinTree::Subplan(_) => false,
+        JoinTree::Scan(_) | JoinTree::PathSearch { .. } | JoinTree::Subplan(_) => false,
     }
 }

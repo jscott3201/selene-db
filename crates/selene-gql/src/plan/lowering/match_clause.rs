@@ -11,6 +11,7 @@ use crate::{
     plan::{
         BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, HiddenBindingId,
         JoinTree, NodeOrEdgeScan, PathPlan, PatternPlan, PlannerError, ScanAccess, ScanKind,
+        TailBinding,
     },
 };
 
@@ -48,28 +49,6 @@ pub(super) struct EdgeLoweringContext<'a, 's> {
     pub(super) hidden: &'s mut HiddenAllocator,
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum TailBinding {
-    Named(BindingId),
-    Hidden(HiddenBindingId),
-}
-
-impl TailBinding {
-    pub(super) const fn named(self) -> Option<BindingId> {
-        match self {
-            Self::Named(binding) => Some(binding),
-            Self::Hidden(_) => None,
-        }
-    }
-
-    pub(super) const fn hidden(self) -> Option<HiddenBindingId> {
-        match self {
-            Self::Named(_) => None,
-            Self::Hidden(binding) => Some(binding),
-        }
-    }
-}
-
 #[derive(Default)]
 pub(super) struct HiddenAllocator {
     next: u32,
@@ -83,7 +62,7 @@ impl HiddenAllocator {
     }
 }
 
-use super::{expr, repeat};
+use super::{expr, path_search, repeat};
 
 /// Lower leading MATCH clauses into one pattern plan.
 pub(crate) fn lower_match_prefix(
@@ -251,6 +230,10 @@ fn lower_graph_pattern(
         ctx.binding_ids,
         ctx.hidden,
     )?);
+    let source_binding = chain_tail_binding(&current).ok_or(PlannerError::NotImplemented {
+        feature: "path selector over bindingless source node",
+        span: first.span,
+    })?;
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
             return Err(PlannerError::NotImplemented {
@@ -288,8 +271,13 @@ fn lower_graph_pattern(
                 max: Some(max),
             }) => {
                 repeat::ensure_within_max_quantifier(*max, edge.span)?;
-                let repeat_edge =
+                let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
+                if repeat_edge.group_binding.is_none()
+                    && selector_needs_repeat_group(selector, *min, *max)
+                {
+                    repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
+                }
                 JoinTree::Repeat {
                     child: Box::new(current),
                     direction: edge.direction,
@@ -297,7 +285,7 @@ fn lower_graph_pattern(
                     min: *min,
                     max: Some(*max),
                     path_mode,
-                    selector,
+                    selector: None,
                 }
             }
             Some(Quantifier::GraphPattern { max: None, .. }) => {
@@ -321,6 +309,10 @@ fn lower_graph_pattern(
                 }
             }
         };
+    }
+    if let Some(selector) = ctx.selector {
+        current =
+            path_search::wrap_in_path_search(current, selector, source_binding, pattern.span)?;
     }
     Ok((current, names))
 }
@@ -581,12 +573,6 @@ fn binding_defs(
 }
 
 fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
-    if clause.selector.is_some() {
-        return Err(PlannerError::NotImplemented {
-            feature: "MATCH path selector (SHORTEST/ALL/ANY)",
-            span: clause.span,
-        });
-    }
     if clause.match_mode.is_some() {
         return Err(PlannerError::NotImplemented {
             feature: "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
@@ -600,6 +586,16 @@ fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
         });
     }
     Ok(())
+}
+
+fn selector_needs_repeat_group(selector: Option<PathSelector>, min: u32, max: u32) -> bool {
+    selector.is_some_and(|selector| {
+        min != max
+            || matches!(
+                selector,
+                PathSelector::AllShortest | PathSelector::AnyShortest
+            )
+    })
 }
 
 fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
@@ -623,6 +619,7 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .final_binding
             .map(TailBinding::Named)
             .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::PathSearch { final_binding, .. } => Some(*final_binding),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
         }
