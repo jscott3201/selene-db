@@ -321,6 +321,10 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
             kind: "Match",
             payload: join_tree_shape(&pattern.join_tree, bindings),
         },
+        PipelineOp::OptionalMatch(pattern) => PipelineOpSummary {
+            kind: "OptionalMatch",
+            payload: join_tree_shape(&pattern.join_tree, bindings),
+        },
         PipelineOp::Call(call) => PipelineOpSummary {
             kind: "Call",
             payload: format!(
@@ -408,6 +412,7 @@ fn collect_order_access(pipeline: &[PipelineOp]) -> Vec<Option<String>> {
             | PipelineOp::GroupBy { .. }
             | PipelineOp::Distinct
             | PipelineOp::Match(_)
+            | PipelineOp::OptionalMatch(_)
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)

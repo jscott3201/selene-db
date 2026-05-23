@@ -184,7 +184,7 @@ fn collect_subqueries_in_pipeline_op(
         PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
             populate_plan_subqueries(rhs, analyzed, registry)?;
         }
-        PipelineOp::Match(pattern) => {
+        PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {
             collect_subqueries_in_pattern_plan(pattern, analyzed, registry, entries)?
         }
         PipelineOp::ExplainPlan { inner, .. } => {

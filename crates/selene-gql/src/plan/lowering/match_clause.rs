@@ -144,6 +144,32 @@ pub(crate) fn lower_match_prefix(
     }))
 }
 
+pub(super) fn lower_pipeline_match(
+    clause: &MatchClause,
+    analyzed: &AnalyzedStatement,
+    left_names: &BTreeSet<IStr>,
+) -> Result<(PatternPlan, Vec<FilterPredicate>), PlannerError> {
+    reject_unsupported_clause(clause)?;
+    let mut paths = Vec::new();
+    let mut binding_ids = BTreeSet::new();
+    let mut hidden = HiddenAllocator::default();
+    let lowered = lower_match_clause(clause, analyzed, &mut paths, &mut binding_ids, &mut hidden)?;
+    let (filters, global_filters) = if clause.optional {
+        split_optional_filters(lowered.filters, left_names, analyzed)
+    } else {
+        (lowered.filters, Vec::new())
+    };
+    Ok((
+        PatternPlan {
+            bindings: binding_defs(analyzed, &binding_ids),
+            join_tree: lowered.tree,
+            filters,
+            paths,
+        },
+        global_filters,
+    ))
+}
+
 fn lower_match_clause(
     clause: &MatchClause,
     analyzed: &AnalyzedStatement,

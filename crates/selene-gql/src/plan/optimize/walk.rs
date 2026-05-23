@@ -128,6 +128,7 @@ pub(crate) fn recurse_subplans(
             | PipelineOp::GroupBy { .. }
             | PipelineOp::Distinct
             | PipelineOp::Match(_)
+            | PipelineOp::OptionalMatch(_)
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
@@ -309,7 +310,7 @@ fn walk_pipeline_op_exprs(
         PipelineOp::Call(call) => call.args.iter_mut().fold(false, |changed, arg| {
             walk_and_sync_binding_refs_project(arg, bindings, visit) | changed
         }),
-        PipelineOp::Match(pattern) => {
+        PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {
             walk_join_tree_exprs(&mut pattern.join_tree, &pattern.bindings, visit)
         }
         PipelineOp::Mutation(mutation) => walk_mutation_exprs(mutation, bindings, visit),

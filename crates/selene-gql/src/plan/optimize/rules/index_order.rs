@@ -55,6 +55,7 @@ fn rewrite_pipeline_op(
         | PipelineOp::GroupBy { .. }
         | PipelineOp::Distinct
         | PipelineOp::Match(_)
+        | PipelineOp::OptionalMatch(_)
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
         | PipelineOp::Call(_)

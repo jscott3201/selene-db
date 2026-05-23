@@ -552,6 +552,8 @@ pub enum PipelineOp {
     Chain(Box<ExecutionPlan>),
     /// Match a graph pattern against each incoming row.
     Match(PatternPlan),
+    /// Optionally match a graph pattern against each incoming row.
+    OptionalMatch(PatternPlan),
     /// Planned procedure call.
     Call(PlannedCall),
     /// Inline `CALL { ... }` table subquery.
