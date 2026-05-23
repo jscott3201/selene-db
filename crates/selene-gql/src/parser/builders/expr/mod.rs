@@ -54,6 +54,7 @@ pub(super) fn build_value_expr(
         Rule::property_exists_expr => call::build_property_exists(pair, budget),
         Rule::exists_expr => call::build_exists(pair, budget),
         Rule::count_subquery_expr => call::build_count_subquery(pair, budget),
+        Rule::value_subquery_expr => call::build_value_subquery(pair, budget),
         Rule::case_expr => call::build_case_expr(first_child(pair)?, budget),
         Rule::simple_case | Rule::searched_case => call::build_case_expr(pair, budget),
         Rule::cast_expr => Err(not_implemented(

@@ -108,6 +108,7 @@ feature_ids! {
     GQ12 = "GQ12" => "OFFSET clause";
     GQ13 = "GQ13" => "LIMIT clause";
     GQ15 = "GQ15" => "GROUP BY clause";
+    GQ18 = "GQ18" => "Scalar value query expression";
     GQ20 = "GQ20" => "Linear query composition";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
@@ -188,6 +189,8 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG02,
     FeatureId::GG20,
     FeatureId::GG21,
+    FeatureId::GP01,
+    FeatureId::GP02,
     FeatureId::GP04,
     FeatureId::GQ03,
     FeatureId::GQ04,
@@ -199,6 +202,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ12,
     FeatureId::GQ13,
     FeatureId::GQ15,
+    FeatureId::GQ18,
     FeatureId::GQ20,
     FeatureId::GT01,
     FeatureId::GV01,
@@ -247,11 +251,9 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         "counted shortest selectors require grammar support and counted-path selector semantics",
     ),
     (
-        FeatureId::GP01,
-        "inline procedures are out of v1.0 scope; extensions use named CALL",
+        FeatureId::GP03,
+        "explicit variable-scope inline procedures are deferred from v1.1",
     ),
-    (FeatureId::GP02, "inline procedures are out of v1.0 scope"),
-    (FeatureId::GP03, "inline procedures are out of v1.0 scope"),
     (
         FeatureId::GP05,
         "procedure-local definitions require the procedure body parser; unsupported in v1.0",

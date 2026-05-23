@@ -21,8 +21,9 @@ pub use ir::{
     HiddenBindingId, HopContributor, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree,
     LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
     OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
-    PlannedSubquery, PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem,
-    ProjectExpr, PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind,
+    PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
+    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryBody, SubqueryKind,
     SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;

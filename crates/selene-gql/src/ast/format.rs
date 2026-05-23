@@ -10,10 +10,10 @@ use selene_core::IStr;
 
 use super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
 use crate::ast::{
-    EdgeDirection, EdgePattern, GraphPattern, IsCheckKind, LabelExpr, LimitValue, MatchClause,
-    NodePattern, NormalForm, NullsPolicy, OrderDirection, OrderTerm, PathMode, PatternElement,
-    ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement, TruthValue,
-    UnaryOp, ValueExpr, WithClause,
+    EdgeDirection, EdgePattern, GraphPattern, InlineProcedureCall, IsCheckKind, LabelExpr,
+    LimitValue, MatchClause, NodePattern, NormalForm, NullsPolicy, OrderDirection, OrderTerm,
+    PathMode, PatternElement, ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem,
+    Statement, TruthValue, UnaryOp, ValueExpr, WithClause,
 };
 
 use keywords::{fmt_binary, fmt_match_mode, fmt_path_mode, fmt_path_selector, fmt_set_op};
@@ -156,6 +156,7 @@ fn fmt_pipeline(out: &mut String, pipeline: &QueryPipeline) -> fmt::Result {
             crate::PipelineStatement::Return(value) => fmt_return(out, value)?,
             crate::PipelineStatement::With(value) => fmt_with(out, value)?,
             crate::PipelineStatement::Call(value) => fmt_call(out, value)?,
+            crate::PipelineStatement::CallSubquery(value) => fmt_inline_call(out, value)?,
         }
     }
     Ok(())
@@ -430,6 +431,47 @@ fn fmt_call(out: &mut String, call: &ProcedureCall) -> fmt::Result {
     Ok(())
 }
 
+fn fmt_inline_call(out: &mut String, call: &InlineProcedureCall) -> fmt::Result {
+    out.push_str("CALL ");
+    if let Some(scope) = &call.variable_scope {
+        out.push('(');
+        for (index, name) in scope.iter().enumerate() {
+            if index > 0 {
+                out.push_str(", ");
+            }
+            out.push_str(&fmt_ident(*name));
+        }
+        out.push_str(") ");
+    }
+    out.push_str("{ ");
+    fmt_pipeline(out, &call.body)?;
+    out.push_str(" }");
+    if !call.yield_items.is_empty() {
+        out.push_str(" YIELD ");
+        fmt_yield_items(out, &call.yield_items)?;
+    }
+    if call.in_transactions {
+        out.push_str(" IN TRANSACTIONS");
+    }
+    Ok(())
+}
+
+fn fmt_yield_items(out: &mut String, items: &[crate::YieldItem]) -> fmt::Result {
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push_str(", ");
+        }
+        match item.column {
+            crate::YieldColumn::Star => out.push('*'),
+            crate::YieldColumn::Named(name) => out.push_str(&fmt_ident(name)),
+        }
+        if let Some(alias) = item.alias {
+            write!(out, " AS {}", fmt_ident(alias))?;
+        }
+    }
+    Ok(())
+}
+
 fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
     match expr {
         ValueExpr::Literal(literal) => match literal {
@@ -609,6 +651,11 @@ fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
         ValueExpr::CountSubquery { pattern, .. } => {
             out.push_str("COUNT { ");
             fmt_match(out, pattern)?;
+            out.push_str(" }");
+        }
+        ValueExpr::ValueSubquery { body, .. } => {
+            out.push_str("VALUE { ");
+            fmt_pipeline(out, body)?;
             out.push_str(" }");
         }
     }

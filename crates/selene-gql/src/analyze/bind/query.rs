@@ -1,16 +1,17 @@
 //! Read-query bind handling.
 
 use crate::{
-    LetBinding, LimitValue, OrderTerm, PipelineStatement, ProcedureMutability, QueryPipeline,
-    ReturnClause, ReturnItem, UnwindStatement, ValueExpr, WithClause,
+    InlineProcedureCall, LetBinding, LimitValue, OrderTerm, PipelineStatement, ProcedureMutability,
+    QueryPipeline, ReturnClause, ReturnItem, UnwindStatement, ValueExpr, WithClause, YieldColumn,
     analyze::{
-        binding::BindingDeclKind,
+        BindingDeclKind,
         error::{AnalysisError, ConditionClause},
         types::AnalyzedType,
     },
 };
 
 use super::{BindContext, call, expr, pattern};
+use crate::analyze::scope::ScopeKind;
 
 pub(crate) fn bind_query_pipeline(
     ctx: &mut BindContext,
@@ -58,7 +59,134 @@ pub(crate) fn bind_pipeline_statement(
             call::bind_procedure_call_with_metadata(ctx, call, metadata)?;
             Ok(())
         }
+        PipelineStatement::CallSubquery(call) => bind_inline_call(ctx, call),
     }
+}
+
+fn bind_inline_call(
+    ctx: &mut BindContext,
+    call: &mut InlineProcedureCall,
+) -> Result<(), AnalysisError> {
+    if call.variable_scope.is_some() {
+        return Err(AnalysisError::NotImplemented {
+            message: "explicit variable-scope CALL subqueries require unsupported GP03".into(),
+            span: call.span,
+            hint: None,
+        });
+    }
+    if call.in_transactions {
+        return Err(AnalysisError::NotImplemented {
+            message: "CALL { ... } IN TRANSACTIONS is not supported in v1.1".into(),
+            span: call.span,
+            hint: None,
+        });
+    }
+    expr::check_query_subquery_depth(&call.body, 1)?;
+    let bind_result = ctx.with_child_scope(ScopeKind::Subquery, call.span, false, |ctx| {
+        bind_query_pipeline(ctx, &mut call.body)
+    });
+    if let Err(AnalysisError::MutatingProcedureInReadPipeline { span, .. }) = bind_result {
+        return Err(AnalysisError::NotImplemented {
+            message: "write operations inside CALL { ... } are not supported in v1.1".into(),
+            span,
+            hint: None,
+        });
+    }
+    bind_result?;
+    let outputs = inline_call_outputs(ctx, &call.body)?;
+    declare_inline_call_yields(ctx, call, &outputs)
+}
+
+#[derive(Clone)]
+struct InlineCallOutput {
+    name: selene_core::IStr,
+    ty: AnalyzedType,
+    span: crate::SourceSpan,
+}
+
+fn inline_call_outputs(
+    ctx: &BindContext,
+    body: &QueryPipeline,
+) -> Result<Vec<InlineCallOutput>, AnalysisError> {
+    let Some(return_clause) = body.statements.iter().rev().find_map(|statement| {
+        if let PipelineStatement::Return(clause) = statement {
+            Some(clause)
+        } else {
+            None
+        }
+    }) else {
+        return Ok(Vec::new());
+    };
+    if return_clause.star {
+        return Ok(Vec::new());
+    }
+    Ok(return_clause
+        .items
+        .iter()
+        .filter_map(|item| {
+            projection_name(item).map(|name| {
+                let ty = ctx
+                    .expr_id(&item.expr)
+                    .map(|id| ctx.expr_type(id).clone())
+                    .unwrap_or(AnalyzedType::Dynamic);
+                InlineCallOutput {
+                    name,
+                    ty,
+                    span: item.span,
+                }
+            })
+        })
+        .collect::<Vec<_>>())
+}
+
+fn declare_inline_call_yields(
+    ctx: &mut BindContext,
+    call: &InlineProcedureCall,
+    outputs: &[InlineCallOutput],
+) -> Result<(), AnalysisError> {
+    if call.yield_items.is_empty() {
+        return Ok(());
+    }
+    for item in &call.yield_items {
+        match item.column {
+            YieldColumn::Star => {
+                for output in outputs {
+                    ctx.declare_strict_typed(
+                        BindingDeclKind::YieldColumn,
+                        output.name,
+                        item.span,
+                        output.ty.clone(),
+                    )?;
+                }
+            }
+            YieldColumn::Named(column) => {
+                let Some(output) = outputs.iter().find(|output| output.name == column) else {
+                    return Err(AnalysisError::UnknownYieldColumn {
+                        procedure: Box::new([]),
+                        column,
+                        span: item.span,
+                    });
+                };
+                ctx.declare_strict_typed(
+                    BindingDeclKind::YieldColumn,
+                    item.alias.unwrap_or(column),
+                    output.span,
+                    output.ty.clone(),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn projection_name(item: &ReturnItem) -> Option<selene_core::IStr> {
+    item.alias.or({
+        if let ValueExpr::Variable { name, .. } = &item.expr {
+            Some(*name)
+        } else {
+            None
+        }
+    })
 }
 
 pub(crate) fn bind_return_clause(

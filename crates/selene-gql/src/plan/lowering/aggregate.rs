@@ -203,7 +203,9 @@ fn collect_aggregates(
                 collect_aggregates(result, analyzed, rewrite)?;
             }
         }
-        ValueExpr::Exists { .. } | ValueExpr::CountSubquery { .. } => {}
+        ValueExpr::Exists { .. }
+        | ValueExpr::CountSubquery { .. }
+        | ValueExpr::ValueSubquery { .. } => {}
     }
     Ok(())
 }
@@ -277,7 +279,8 @@ fn rewrite_aggregate_refs(
         | ValueExpr::Variable { .. }
         | ValueExpr::Parameter { .. }
         | ValueExpr::Exists { .. }
-        | ValueExpr::CountSubquery { .. } => value.clone(),
+        | ValueExpr::CountSubquery { .. }
+        | ValueExpr::ValueSubquery { .. } => value.clone(),
         ValueExpr::PropertyAccess { target, key, span } => ValueExpr::PropertyAccess {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
             key: *key,

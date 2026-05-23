@@ -3,8 +3,14 @@
 use selene_core::IStr;
 
 use crate::ast::{
-    call::ProcedureCall, ddl::DdlStatement, expr::ValueExpr, mutation::MutationPipeline,
-    pattern::MatchClause, span::SourceSpan, types::GqlType, util::NonEmpty,
+    call::{InlineProcedureCall, ProcedureCall},
+    ddl::DdlStatement,
+    expr::ValueExpr,
+    mutation::MutationPipeline,
+    pattern::MatchClause,
+    span::SourceSpan,
+    types::GqlType,
+    util::NonEmpty,
 };
 
 /// Top-level GQL statement.
@@ -133,6 +139,8 @@ pub enum PipelineStatement {
     With(WithClause),
     /// `CALL`.
     Call(ProcedureCall),
+    /// Inline `CALL { ... }`.
+    CallSubquery(InlineProcedureCall),
 }
 
 impl PipelineStatement {
@@ -149,6 +157,7 @@ impl PipelineStatement {
             Self::Return(value) => value.span,
             Self::With(value) => value.span,
             Self::Call(value) => value.span,
+            Self::CallSubquery(value) => value.span,
         }
     }
 }

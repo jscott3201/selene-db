@@ -114,6 +114,9 @@ pub(crate) fn recurse_subplans(
             PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
                 changed |= recurse_plan_box(rhs, visit);
             }
+            PipelineOp::CallSubquery(subquery) => {
+                changed |= recurse_plan_box(&mut subquery.body, visit);
+            }
             PipelineOp::ExplainPlan { inner, .. } => changed |= recurse_plan_box(inner, visit),
             PipelineOp::Filter(_)
             | PipelineOp::Project(_)
@@ -124,6 +127,7 @@ pub(crate) fn recurse_subplans(
             | PipelineOp::TopK { .. }
             | PipelineOp::GroupBy { .. }
             | PipelineOp::Distinct
+            | PipelineOp::Match(_)
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
@@ -305,12 +309,16 @@ fn walk_pipeline_op_exprs(
         PipelineOp::Call(call) => call.args.iter_mut().fold(false, |changed, arg| {
             walk_and_sync_binding_refs_project(arg, bindings, visit) | changed
         }),
+        PipelineOp::Match(pattern) => {
+            walk_join_tree_exprs(&mut pattern.join_tree, &pattern.bindings, visit)
+        }
         PipelineOp::Mutation(mutation) => walk_mutation_exprs(mutation, bindings, visit),
         PipelineOp::Catalog(catalog) => walk_catalog_exprs(catalog, bindings, visit),
         PipelineOp::Limit { .. }
         | PipelineOp::Distinct
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
+        | PipelineOp::CallSubquery(_)
         | PipelineOp::ExplainPlan { .. }
         | PipelineOp::Tx(_) => false,
     }
@@ -480,6 +488,7 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
         ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
             walk_match_clause(pattern, visit)
         }
+        ValueExpr::ValueSubquery { .. } => false,
     };
     visit(expr) | changed_children
 }

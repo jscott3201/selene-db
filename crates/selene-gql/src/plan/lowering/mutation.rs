@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::{expr, match_clause, not_implemented, visible_after_pattern};
+use super::{expr, match_clause, sequential_match, visible_after_pattern};
 
 /// Lower a mutation pipeline into an execution plan.
 pub(crate) fn lower_mutation(
@@ -43,11 +43,8 @@ pub(crate) fn lower_mutation(
     let mut ids = InsertSiteIdAlloc::default();
     for statement in &pipeline.statements[mutation_start..] {
         match statement {
-            MutationStatement::Match(_) => {
-                return not_implemented(
-                    "non-leading MATCH (post-pipeline-boundary pattern)",
-                    statement.span(),
-                );
+            MutationStatement::Match(clause) => {
+                sequential_match::lower(clause, analyzed, &mut ops, &mut visible)?;
             }
             MutationStatement::Filter(value) => {
                 ops.push(PipelineOp::Filter(expr::filter_predicate(value, analyzed)?));

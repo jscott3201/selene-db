@@ -51,7 +51,10 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
 }
 
 pub(crate) fn query_pipeline(pipeline: &QueryPipeline, uses: &mut Vec<FeatureUse>) {
-    for statement in &pipeline.statements {
+    for (index, statement) in pipeline.statements.iter().enumerate() {
+        if index > 0 && matches!(statement, PipelineStatement::Match(_)) {
+            record_feature(uses, FeatureId::GQ20, statement.span());
+        }
         pipeline_statement(statement, uses);
     }
 }
@@ -71,6 +74,15 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
         PipelineStatement::Return(value) => return_clause(value, uses),
         PipelineStatement::With(value) => with_clause(value, uses),
         PipelineStatement::Call(value) => call::procedure_call(value, uses),
+        PipelineStatement::CallSubquery(value) => {
+            record_feature(uses, FeatureId::GP01, value.span);
+            if value.variable_scope.is_some() {
+                record_feature(uses, FeatureId::GP03, value.span);
+            } else {
+                record_feature(uses, FeatureId::GP02, value.span);
+            }
+            query_pipeline(&value.body, uses);
+        }
     }
 }
 

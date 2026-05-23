@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: GP02
+-- expects: parse-ok
+LET seed = 0 CALL { RETURN 1 AS n } YIELD n RETURN n

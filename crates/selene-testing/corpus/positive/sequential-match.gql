@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: GQ20
+-- expects: parse-ok
+MATCH (a) MATCH (b) RETURN a, b

@@ -243,7 +243,9 @@ group_by_item   = { expr }
 // -- CALL -----------------------------------------------------------
 
 call_stmt      = { ^"CALL" ~ (call_subquery | call_procedure) }
-call_subquery  = { "{" ~ query_pipeline ~ "}" }
+call_subquery  = { variable_scope_clause? ~ "{" ~ query_pipeline ~ "}" ~ yield_clause? ~ call_transactions_clause? }
+variable_scope_clause = { "(" ~ (ident ~ ("," ~ ident)*)? ~ ")" }
+call_transactions_clause = { ^"IN" ~ ^"TRANSACTIONS" }
 call_procedure = { qualified_name ~ "(" ~ arg_list? ~ ")" ~ (yield_clause ~ yield_filter?)? }
 qualified_name = { ident ~ ("." ~ prop_ident)* }
 arg_list       = { expr ~ ("," ~ expr)* }
@@ -383,7 +385,8 @@ list_access_op = { "[" ~ expr ~ "]" }
 // -- Primary expressions (no left-recursion) ------------------------
 
 primary = {
-    count_subquery_expr
+    value_subquery_expr
+  | count_subquery_expr
   | exists_expr
   | list_iter_expr
   | all_different_expr
@@ -426,6 +429,7 @@ list_iter_where    = { ^"WHERE" ~ expr }
 
 count_subquery_expr  = { ^"COUNT" ~ "{" ~ match_stmt ~ "}" }
 exists_expr          = { not_kw? ~ ^"EXISTS" ~ "{" ~ match_stmt ~ "}" }
+value_subquery_expr  = { ^"VALUE" ~ "{" ~ query_pipeline ~ "}" }
 all_different_expr   = { ^"ALL_DIFFERENT" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
 same_expr            = { ^"SAME" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
 property_exists_expr = { ^"PROPERTY_EXISTS" ~ "(" ~ expr ~ "," ~ string_lit ~ ")" }

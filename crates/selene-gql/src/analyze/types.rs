@@ -326,6 +326,12 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             hash_match_clause(pattern, state);
             span.hash(state);
         }
+        ValueExpr::ValueSubquery { body, span } => {
+            20u8.hash(state);
+            body.span.hash(state);
+            body.statements.len().hash(state);
+            span.hash(state);
+        }
     }
 }
 

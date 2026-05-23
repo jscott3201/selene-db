@@ -107,6 +107,17 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// ISO 20.6 scalar value query expression shape violation.
+    #[error("invalid VALUE subquery shape: {message}")]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    ValueSubqueryShapeViolation {
+        /// Human-readable ISO 20.6 rule failure.
+        message: String,
+        /// Source span of the invalid VALUE subquery shape.
+        #[label("violates ISO 20.6 scalar value query expression shape")]
+        span: SourceSpan,
+    },
+
     /// Analyzer expression recursion exceeded the implementation-defined cap.
     #[error("expression nesting depth {depth} exceeds analyzer limit")]
     #[diagnostic(code(SLENE_GQL_5GQL1))]
@@ -631,6 +642,7 @@ impl AnalysisError {
             | Self::AliasReusedAsPatternBinding { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,

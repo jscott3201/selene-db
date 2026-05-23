@@ -29,7 +29,7 @@ use self::{
         eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
     },
     scalar_fns::eval_function_call,
-    subquery::{eval_count_subquery, eval_exists},
+    subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
 };
 
 /// Evaluate a value expression against one binding-table row.
@@ -109,6 +109,9 @@ pub fn evaluate(
         }
         ValueExpr::CountSubquery { span, .. } => {
             eval_count_subquery(expr, *span, binding, schema, ctx)
+        }
+        ValueExpr::ValueSubquery { span, .. } => {
+            eval_value_subquery(expr, *span, binding, schema, ctx)
         }
         ValueExpr::Like {
             operand,

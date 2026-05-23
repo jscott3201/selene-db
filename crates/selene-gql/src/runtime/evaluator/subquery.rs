@@ -9,11 +9,11 @@
 use selene_core::Value;
 
 use crate::{
-    BindingTableColumn, SourceSpan, ValueExpr,
-    plan::{OuterBindingRef, PlannedSubquery},
+    BindingTableColumn, ExecutionPlan, SourceSpan, ValueExpr,
+    plan::{OuterBindingRef, PlannedSubquery, SubqueryBody},
     runtime::{
         Binding, BindingTable, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
-        pattern,
+        pattern, plan_runner,
     },
 };
 
@@ -48,6 +48,20 @@ pub(super) fn eval_count_subquery(
     Ok(Value::Int(count))
 }
 
+pub(super) fn eval_value_subquery(
+    expr: &ValueExpr,
+    _span: SourceSpan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    let table = execute_subquery(expr, binding, schema, ctx)?;
+    let Some(row) = table.rows().first() else {
+        return Ok(Value::Null);
+    };
+    Ok(row.get(0).cloned().unwrap_or(Value::Null))
+}
+
 fn execute_subquery(
     expr: &ValueExpr,
     binding: &Binding,
@@ -55,11 +69,12 @@ fn execute_subquery(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let planned = planned_subquery(expr, ctx)?;
-    let target_schema = target_schema(planned, schema)?;
-    let Some(seed) = seed_binding(planned, binding, schema, &target_schema)? else {
-        return Ok(BindingTable::new(target_schema, Vec::new()));
-    };
-    pattern::execute_pattern_with_seed_and_schema(&planned.plan, Some(&seed), target_schema, ctx)
+    match &planned.body {
+        SubqueryBody::Pattern(plan) => {
+            execute_pattern_subquery(planned, plan, binding, schema, ctx)
+        }
+        SubqueryBody::Plan(plan) => execute_plan_subquery(planned, plan, binding, schema, ctx),
+    }
 }
 
 fn planned_subquery<'plan>(
@@ -77,6 +92,38 @@ fn planned_subquery<'plan>(
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "subquery plan missing -- analyzer/lowering bug",
         })
+}
+
+fn execute_pattern_subquery(
+    planned: &PlannedSubquery,
+    plan: &crate::PatternPlan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    let target_schema = target_schema_for_pattern(planned, plan, schema)?;
+    let Some(seed) = seed_binding(planned, binding, schema, &target_schema)? else {
+        return Ok(BindingTable::new(target_schema, Vec::new()));
+    };
+    pattern::execute_pattern_with_seed_and_schema(plan, Some(&seed), target_schema, ctx)
+}
+
+fn execute_plan_subquery(
+    planned: &PlannedSubquery,
+    plan: &ExecutionPlan,
+    binding: &Binding,
+    schema: &BindingTableSchema,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    let target_schema = target_schema_for_plan(planned, plan, schema)?;
+    let Some(seed) = seed_binding(planned, binding, schema, &target_schema)? else {
+        return Ok(BindingTable::new(target_schema, Vec::new()));
+    };
+    plan_runner::execute_plan_read_only_with_seed(
+        plan,
+        Some(BindingTable::new(target_schema, vec![seed])),
+        ctx.tx,
+    )
 }
 
 fn seed_binding(
@@ -102,13 +149,39 @@ fn seed_binding(
     Ok(Some(Binding::new(values)))
 }
 
-fn target_schema(
+fn target_schema_for_pattern(
     planned: &PlannedSubquery,
+    plan: &crate::PatternPlan,
     source_schema: &BindingTableSchema,
 ) -> Result<BindingTableSchema, ExecutorError> {
-    let mut schema = pattern::schema_for_pattern(&planned.plan);
-    for outer in &planned.outer_binding_refs {
-        if pattern::column_index(&schema, outer.name).is_some() {
+    let mut schema = pattern::schema_for_pattern(plan);
+    append_outer_bindings(&mut schema, &planned.outer_binding_refs, source_schema)?;
+    Ok(schema)
+}
+
+fn target_schema_for_plan(
+    planned: &PlannedSubquery,
+    plan: &ExecutionPlan,
+    source_schema: &BindingTableSchema,
+) -> Result<BindingTableSchema, ExecutorError> {
+    let mut schema = plan
+        .pattern_plan
+        .as_ref()
+        .map(pattern::schema_for_pattern)
+        .unwrap_or_else(|| BindingTableSchema {
+            columns: Vec::new(),
+        });
+    append_outer_bindings(&mut schema, &planned.outer_binding_refs, source_schema)?;
+    Ok(schema)
+}
+
+fn append_outer_bindings(
+    schema: &mut BindingTableSchema,
+    outer_binding_refs: &[OuterBindingRef],
+    source_schema: &BindingTableSchema,
+) -> Result<(), ExecutorError> {
+    for outer in outer_binding_refs {
+        if pattern::column_index(schema, outer.name).is_some() {
             continue;
         }
         let source_index = source_index(source_schema, outer)?;
@@ -119,7 +192,7 @@ fn target_schema(
             ty: source_column.ty.clone(),
         });
     }
-    Ok(schema)
+    Ok(())
 }
 
 fn source_index(

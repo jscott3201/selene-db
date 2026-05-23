@@ -1,8 +1,8 @@
 //! Preflight validation for read-side AST formatting.
 
 use crate::ast::{
-    EdgePattern, GqlType, GraphPattern, IsCheckKind, MatchClause, NodePattern, PatternElement,
-    ProcedureCall, QueryPipeline, ReturnClause, Statement, ValueExpr, WithClause,
+    EdgePattern, GqlType, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause, NodePattern,
+    PatternElement, ProcedureCall, QueryPipeline, ReturnClause, Statement, ValueExpr, WithClause,
 };
 
 use super::FormatError;
@@ -59,6 +59,7 @@ fn validate_pipeline(pipeline: &QueryPipeline) -> Result<(), FormatError> {
             crate::PipelineStatement::Return(value) => validate_return(value)?,
             crate::PipelineStatement::With(value) => validate_with(value)?,
             crate::PipelineStatement::Call(value) => validate_procedure_call(value)?,
+            crate::PipelineStatement::CallSubquery(value) => validate_inline_call(value)?,
         }
     }
     Ok(())
@@ -144,6 +145,10 @@ pub(super) fn validate_procedure_call(call: &ProcedureCall) -> Result<(), Format
     Ok(())
 }
 
+pub(super) fn validate_inline_call(call: &InlineProcedureCall) -> Result<(), FormatError> {
+    validate_pipeline(&call.body)
+}
+
 fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
     match expr {
         ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => Ok(()),
@@ -207,6 +212,7 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
         ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
             validate_match(pattern)
         }
+        ValueExpr::ValueSubquery { body, .. } => validate_pipeline(body),
     }
 }
 

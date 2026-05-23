@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::ast::{expr::ValueExpr, span::SourceSpan, util::NonEmpty};
+use crate::ast::{expr::ValueExpr, span::SourceSpan, statement::QueryPipeline, util::NonEmpty};
 
 /// Top-level or in-pipeline procedure call.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
@@ -13,6 +13,21 @@ pub struct ProcedureCall {
     pub args: Vec<ValueExpr>,
     /// Requested yield columns. Empty means the call discards return columns.
     pub yield_items: Vec<YieldItem>,
+    /// Source span.
+    pub span: SourceSpan,
+}
+
+/// Inline `CALL { ... }` query subquery.
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct InlineProcedureCall {
+    /// Optional explicit variable-scope names from `CALL (x, y) { ... }`.
+    pub variable_scope: Option<Vec<IStr>>,
+    /// Query body executed per input row.
+    pub body: Box<QueryPipeline>,
+    /// Requested yield columns. Empty means the call discards return columns.
+    pub yield_items: Vec<YieldItem>,
+    /// Whether the source requested `IN TRANSACTIONS`.
+    pub in_transactions: bool,
     /// Source span.
     pub span: SourceSpan,
 }

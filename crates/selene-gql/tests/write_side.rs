@@ -267,7 +267,6 @@ fn deferred_surfaces_return_not_implemented() {
         "CREATE USER alice SET PASSWORD 'pw'",
         "CREATE ROLE admin",
         "GRANT ROLE admin TO alice",
-        "CALL { RETURN 1 }",
         "FOR x IN [1,2,3] RETURN x",
     ] {
         let error = parse(source).expect_err(source);

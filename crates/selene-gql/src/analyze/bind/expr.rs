@@ -1,7 +1,7 @@
 //! Value-expression bind and type-inference handling.
 
 use crate::{
-    IsCheckKind, ValueExpr,
+    IsCheckKind, LimitValue, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
     analyze::{
         error::{AnalysisError, ConditionClause},
         infer,
@@ -9,7 +9,7 @@ use crate::{
     },
 };
 
-use super::{ANALYZER_MAX_DEPTH, BindContext, pattern};
+use super::{ANALYZER_MAX_DEPTH, BindContext, pattern, query};
 use crate::analyze::{binding::BindingUseKind, scope::ScopeKind};
 
 pub(crate) fn bind_value_expr(
@@ -18,6 +18,7 @@ pub(crate) fn bind_value_expr(
 ) -> Result<ExprId, AnalysisError> {
     if ctx.at_expr_root() {
         check_expr_depth(expr)?;
+        check_subquery_depth(expr)?;
     }
     ctx.with_expr_depth(|ctx| {
         let ty = match expr {
@@ -165,9 +166,23 @@ pub(crate) fn bind_value_expr(
                 })?;
                 AnalyzedType::Resolved(crate::GqlType::Integer)
             }
+            ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
         };
         Ok(ctx.allocate_expr(expr, ty))
     })
+}
+
+fn bind_value_subquery(
+    ctx: &mut BindContext,
+    body: &QueryPipeline,
+    span: crate::SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    validate_value_subquery_shape(body, span)?;
+    let mut body = body.clone();
+    ctx.with_child_scope(ScopeKind::Subquery, span, false, |ctx| {
+        query::bind_query_pipeline(ctx, &mut body)
+    })?;
+    Ok(AnalyzedType::DYNAMIC)
 }
 
 fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
@@ -249,10 +264,265 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
+            | ValueExpr::CountSubquery { .. }
+            | ValueExpr::ValueSubquery { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_subquery_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
+    check_expr_subquery_depth(expr, 1)
+}
+
+pub(crate) fn check_query_subquery_depth(
+    pipeline: &QueryPipeline,
+    depth: u32,
+) -> Result<(), AnalysisError> {
+    if depth > ANALYZER_MAX_DEPTH {
+        return Err(AnalysisError::RecursionLimitExceeded { depth });
+    }
+    for statement in &pipeline.statements {
+        match statement {
+            PipelineStatement::Match(clause) => {
+                for pattern in &clause.patterns {
+                    for element in &pattern.elements {
+                        match element {
+                            crate::PatternElement::Node(node) => {
+                                for (_, value) in &node.properties {
+                                    check_expr_subquery_depth(value, depth)?;
+                                }
+                                if let Some(value) = &node.inline_where {
+                                    check_expr_subquery_depth(value, depth)?;
+                                }
+                            }
+                            crate::PatternElement::Edge(edge) => {
+                                for (_, value) in &edge.properties {
+                                    check_expr_subquery_depth(value, depth)?;
+                                }
+                                if let Some(value) = &edge.inline_where {
+                                    check_expr_subquery_depth(value, depth)?;
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(value) = &clause.where_clause {
+                    check_expr_subquery_depth(value, depth)?;
+                }
+            }
+            PipelineStatement::Filter(value) => check_expr_subquery_depth(value, depth)?,
+            PipelineStatement::Let(bindings) => {
+                for binding in bindings {
+                    check_expr_subquery_depth(&binding.value, depth)?;
+                }
+            }
+            PipelineStatement::Unwind(unwind) => check_expr_subquery_depth(&unwind.source, depth)?,
+            PipelineStatement::Sorting(terms) => {
+                for term in terms {
+                    check_expr_subquery_depth(&term.expr, depth)?;
+                }
+            }
+            PipelineStatement::Return(clause) => check_return_subquery_depth(clause, depth)?,
+            PipelineStatement::With(clause) => {
+                for item in &clause.items {
+                    check_expr_subquery_depth(&item.expr, depth)?;
+                }
+                if let Some(group_by) = &clause.group_by {
+                    for value in group_by {
+                        check_expr_subquery_depth(value, depth)?;
+                    }
+                }
+                if let Some(value) = &clause.having {
+                    check_expr_subquery_depth(value, depth)?;
+                }
+                if let Some(value) = &clause.where_clause {
+                    check_expr_subquery_depth(value, depth)?;
+                }
+            }
+            PipelineStatement::Call(call) => {
+                for arg in &call.args {
+                    check_expr_subquery_depth(arg, depth)?;
+                }
+            }
+            PipelineStatement::CallSubquery(call) => {
+                check_query_subquery_depth(&call.body, depth.saturating_add(1))?;
+            }
+            PipelineStatement::Limit(_) | PipelineStatement::Offset(_) => {}
+        }
+    }
+    Ok(())
+}
+
+fn check_return_subquery_depth(clause: &ReturnClause, depth: u32) -> Result<(), AnalysisError> {
+    for item in &clause.items {
+        check_expr_subquery_depth(&item.expr, depth)?;
+    }
+    if let Some(group_by) = &clause.group_by {
+        for value in group_by {
+            check_expr_subquery_depth(value, depth)?;
+        }
+    }
+    if let Some(value) = &clause.having {
+        check_expr_subquery_depth(value, depth)?;
+    }
+    Ok(())
+}
+
+fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), AnalysisError> {
+    let mut stack = vec![(expr, depth)];
+    while let Some((expr, depth)) = stack.pop() {
+        match expr {
+            ValueExpr::PropertyAccess { target, .. } => stack.push((target, depth)),
+            ValueExpr::ListAccess { target, index, .. } => {
+                stack.push((index, depth));
+                stack.push((target, depth));
+            }
+            ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::AllDifferent { items, .. }
+            | ValueExpr::Same { items, .. } => {
+                stack.extend(items.iter().rev().map(|item| (item, depth)));
+            }
+            ValueExpr::RecordLiteral { fields, .. } => {
+                stack.extend(fields.iter().rev().map(|(_, value)| (value, depth)));
+            }
+            ValueExpr::BinaryOp { lhs, rhs, .. } => {
+                stack.push((rhs, depth));
+                stack.push((lhs, depth));
+            }
+            ValueExpr::UnaryOp { operand, .. }
+            | ValueExpr::PropertyExists {
+                target: operand, ..
+            } => stack.push((operand, depth)),
+            ValueExpr::FunctionCall { args, .. } | ValueExpr::InList { list: args, .. } => {
+                stack.extend(args.iter().rev().map(|arg| (arg, depth)));
+                if let ValueExpr::InList { operand, .. } = expr {
+                    stack.push((operand, depth));
+                }
+            }
+            ValueExpr::IsCheck { operand, kind, .. } => {
+                stack.push((operand, depth));
+                match kind {
+                    IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
+                        stack.push((value, depth));
+                    }
+                    IsCheckKind::Null
+                    | IsCheckKind::Directed
+                    | IsCheckKind::Labeled(_)
+                    | IsCheckKind::TruthValue(_)
+                    | IsCheckKind::Typed(_)
+                    | IsCheckKind::Normalized(_) => {}
+                }
+            }
+            ValueExpr::Like {
+                operand, pattern, ..
+            } => {
+                stack.push((pattern, depth));
+                stack.push((operand, depth));
+            }
+            ValueExpr::Between {
+                operand, low, high, ..
+            } => {
+                stack.push((high, depth));
+                stack.push((low, depth));
+                stack.push((operand, depth));
+            }
+            ValueExpr::Case {
+                branches,
+                else_branch,
+                ..
+            } => {
+                if let Some(value) = else_branch {
+                    stack.push((value, depth));
+                }
+                for (condition, value) in branches.iter().rev() {
+                    stack.push((value, depth));
+                    stack.push((condition, depth));
+                }
+            }
+            ValueExpr::ValueSubquery { body, .. } => {
+                check_query_subquery_depth(body, depth.saturating_add(1))?;
+            }
+            ValueExpr::Literal(_)
+            | ValueExpr::Variable { .. }
+            | ValueExpr::Parameter { .. }
+            | ValueExpr::Exists { .. }
             | ValueExpr::CountSubquery { .. } => {}
         }
     }
     Ok(())
+}
+
+fn validate_value_subquery_shape(
+    body: &QueryPipeline,
+    span: crate::SourceSpan,
+) -> Result<(), AnalysisError> {
+    let Some(return_clause) = body.statements.iter().find_map(|statement| {
+        if let PipelineStatement::Return(clause) = statement {
+            Some(clause)
+        } else {
+            None
+        }
+    }) else {
+        return Err(value_shape_error(
+            "VALUE subquery requires a RETURN clause (ISO §20.6; iso_gql_clause20.txt:1143)",
+            span,
+        ));
+    };
+    if return_clause.star || return_clause.items.len() != 1 {
+        return Err(value_shape_error(
+            "VALUE subquery RETURN must contain exactly one item (ISO §20.6; iso_gql_clause20.txt:1143)",
+            return_clause.span,
+        ));
+    }
+    if has_literal_limit_one(body) || direct_aggregate_without_group_by(return_clause) {
+        return Ok(());
+    }
+    Err(value_shape_error(
+        "VALUE subquery must use LIMIT 1 or a direct aggregate without GROUP BY (ISO §20.6; iso_gql_clause20.txt:1143)",
+        return_clause.span,
+    ))
+}
+
+fn direct_aggregate_without_group_by(clause: &ReturnClause) -> bool {
+    clause.group_by.is_none()
+        && clause.items.first().is_some_and(|item| {
+            matches!(
+                &item.expr,
+                ValueExpr::FunctionCall { name, .. } if is_aggregate_name(name.first())
+            )
+        })
+}
+
+fn has_literal_limit_one(body: &QueryPipeline) -> bool {
+    body.statements
+        .iter()
+        .any(|statement| matches!(statement, PipelineStatement::Limit(LimitValue::Count(1, _))))
+}
+
+fn is_aggregate_name(name: &selene_core::IStr) -> bool {
+    let name = name.as_str();
+    [
+        "count",
+        "sum",
+        "average",
+        "avg",
+        "min",
+        "max",
+        "collect",
+        "collect_list",
+        "stddev_pop",
+        "stddev_samp",
+    ]
+    .iter()
+    .any(|candidate| name.eq_ignore_ascii_case(candidate))
+}
+
+fn value_shape_error(message: &'static str, span: crate::SourceSpan) -> AnalysisError {
+    AnalysisError::ValueSubqueryShapeViolation {
+        message: message.to_owned(),
+        span,
+    }
 }
 
 fn reject_group_variable_property_access(
