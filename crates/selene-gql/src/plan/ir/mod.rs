@@ -210,7 +210,7 @@ pub enum HopContributor {
 }
 
 /// Source of one ordered path-mode validation contribution.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PathContributor {
     /// Node binding in binding-path order.
     Node(TailBinding),

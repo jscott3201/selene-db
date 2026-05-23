@@ -6,13 +6,12 @@ use selene_core::{IStr, Value};
 
 use crate::{
     AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
-    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind, SourceSpan,
-    SubqueryRegistry,
+    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind, SubqueryRegistry,
     analyze::ExprIdLookup,
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext},
 };
 
-use super::{evaluator, expand, hash_join, outer, scan, subplan, value_compare, wco};
+use super::{evaluator, expand, hash_join, outer, path_mode, scan, subplan, value_compare, wco};
 
 /// Execute a pattern plan and produce its initial binding table.
 pub fn execute_pattern(
@@ -109,10 +108,11 @@ pub(crate) fn walk_join_tree(
             hop_contributors,
             env,
         ),
-        JoinTree::PathModeFilter { .. } => Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "MATCH path mode (TRAIL/SIMPLE/ACYCLIC)",
-            span: SourceSpan::default(),
-        }),
+        JoinTree::PathModeFilter {
+            path_mode,
+            child,
+            path_contributors,
+        } => path_mode::execute(child, *path_mode, path_contributors, env),
         JoinTree::HashJoin {
             left,
             right,
