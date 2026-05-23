@@ -301,10 +301,26 @@ fn lower_graph_pattern(
                 });
             }
             Some(Quantifier::Questioned) => {
-                return Err(PlannerError::NotImplemented {
-                    feature: "questioned edge quantifier (?)",
+                let edge_match = edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
+                let source_binding = left_binding.ok_or(PlannerError::NotImplemented {
+                    feature: "questioned edge without source node binding",
                     span: edge.span,
-                });
+                })?;
+                let final_binding = edge_match
+                    .right_binding
+                    .map(TailBinding::Named)
+                    .or_else(|| edge_match.right_hidden_binding.map(TailBinding::Hidden))
+                    .ok_or(PlannerError::NotImplemented {
+                        feature: "questioned edge without final node binding",
+                        span: edge.span,
+                    })?;
+                JoinTree::Questioned {
+                    child: Box::new(current),
+                    direction: edge.direction,
+                    edge: edge_match,
+                    source_binding,
+                    final_binding,
+                }
             }
             None => {
                 let edge_match = edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
@@ -616,6 +632,7 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .right_binding
             .map(TailBinding::Named)
             .or_else(|| edge.right_hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::Questioned { final_binding, .. } => Some(*final_binding),
         JoinTree::Repeat { edge, .. } => edge
             .final_binding
             .map(TailBinding::Named)

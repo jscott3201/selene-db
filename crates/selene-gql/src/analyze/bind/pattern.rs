@@ -1,8 +1,8 @@
 //! Graph-pattern bind handling.
 
 use crate::{
-    EdgePattern, GqlType, GraphPattern, LabelExpr, MatchClause, NodePattern, PatternElement,
-    Quantifier,
+    EdgePattern, GqlType, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern, PathMode,
+    PathSelector, PatternElement, Quantifier,
     analyze::{
         AnalyzedType,
         binding::BindingDeclKind,
@@ -17,6 +17,7 @@ pub(crate) fn bind_match_clause(
     ctx: &mut BindContext,
     clause: &MatchClause,
 ) -> Result<(), AnalysisError> {
+    validate_unbounded_legality(clause)?;
     for pattern in &clause.patterns {
         bind_graph_pattern(ctx, pattern, PatternBindingMode::Match)?;
     }
@@ -24,6 +25,41 @@ pub(crate) fn bind_match_clause(
         expr::bind_condition(ctx, where_clause, ConditionClause::MatchWhere)?;
     }
     Ok(())
+}
+
+fn validate_unbounded_legality(clause: &MatchClause) -> Result<(), AnalysisError> {
+    let Some(span) = clause.patterns.iter().find_map(first_unbounded_edge_span) else {
+        return Ok(());
+    };
+    if clause.path_mode != PathMode::Walk
+        || is_selective(clause.selector)
+        || clause.match_mode == Some(MatchMode::DifferentEdges)
+    {
+        return Ok(());
+    }
+    Err(AnalysisError::UnboundedRequiresGate {
+        mode: clause.path_mode,
+        selector: clause.selector,
+        span,
+    })
+}
+
+fn first_unbounded_edge_span(pattern: &GraphPattern) -> Option<crate::SourceSpan> {
+    pattern.elements.iter().find_map(|element| match element {
+        PatternElement::Edge(EdgePattern {
+            quantifier: Some(Quantifier::GraphPattern { min: _, max: None }),
+            span,
+            ..
+        }) => Some(*span),
+        PatternElement::Node(_) | PatternElement::Edge(_) => None,
+    })
+}
+
+fn is_selective(selector: Option<PathSelector>) -> bool {
+    matches!(
+        selector,
+        Some(PathSelector::Any | PathSelector::AnyShortest | PathSelector::AllShortest)
+    )
 }
 
 pub(crate) fn bind_insert_graph_pattern(
@@ -156,7 +192,7 @@ fn bind_edge_pattern(
 
 fn edge_binding_type(edge: &EdgePattern, mode: PatternBindingMode) -> AnalyzedType {
     match (mode, &edge.quantifier) {
-        (PatternBindingMode::Match, Some(Quantifier::GraphPattern { max: Some(_), .. })) => {
+        (PatternBindingMode::Match, Some(Quantifier::GraphPattern { .. })) => {
             AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
         }
         _ => AnalyzedType::Resolved(GqlType::EdgeRef),

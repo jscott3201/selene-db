@@ -24,6 +24,7 @@ mod pattern;
 mod pipeline;
 mod plan_cache;
 mod plan_runner;
+mod questioned;
 mod repeat;
 mod scan;
 mod session;

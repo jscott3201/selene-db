@@ -106,6 +106,7 @@ fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
     match tree {
         JoinTree::Scan(_) => {}
         JoinTree::Expand { child, .. }
+        | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
         | JoinTree::PathSearch { child, .. }
         | JoinTree::PathModeFilter { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
@@ -203,6 +204,10 @@ pub enum HopContributor {
     EdgeNamed(BindingId),
     /// One fixed hop from an anonymous edge hidden binding.
     EdgeHidden(HiddenBindingId),
+    /// Optional hop from a named questioned edge binding.
+    QuestionedNamed(BindingId),
+    /// Optional hop from an anonymous questioned edge hidden binding.
+    QuestionedHidden(HiddenBindingId),
     /// Runtime hop count from a named quantified-edge group binding.
     GroupNamed(BindingId),
     /// Runtime hop count from an anonymous quantified-edge hidden binding.
@@ -218,6 +223,20 @@ pub enum PathContributor {
     EdgeNamed(BindingId),
     /// Fixed edge identity from an executor-private edge binding.
     EdgeHidden(HiddenBindingId),
+    /// Optional edge identity and final node from a named questioned edge binding.
+    QuestionedEdgeNamed {
+        /// Runtime binding containing either `EdgeRef` or `NULL`.
+        binding: BindingId,
+        /// Node binding on the final side when the edge is present.
+        final_binding: TailBinding,
+    },
+    /// Optional edge identity and final node from an anonymous questioned edge binding.
+    QuestionedEdgeHidden {
+        /// Runtime hidden slot containing either `EdgeRef` or `NULL`.
+        hidden: HiddenBindingId,
+        /// Node binding on the final side when the edge is present.
+        final_binding: TailBinding,
+    },
     /// Quantified edge group with enough topology to rebuild intermediate nodes.
     EdgeGroupNamed {
         /// Runtime group binding containing `LIST<EdgeRef>`.
@@ -253,11 +272,26 @@ pub enum JoinTree {
         /// Direction requested by the source pattern.
         direction: EdgeDirection,
     },
+    /// Optional single-edge expansion for ISO questioned path primary (`?`).
+    ///
+    /// The skipped row binds the edge as `NULL` and unifies the final node
+    /// with the source node. The taken row behaves like a one-hop expansion.
+    Questioned {
+        /// Input side of the expansion.
+        child: Box<JoinTree>,
+        /// Edge pattern to traverse when the optional edge is present.
+        edge: EdgeMatch,
+        /// Direction requested by the source pattern.
+        direction: EdgeDirection,
+        /// Binding for the source-side node.
+        source_binding: TailBinding,
+        /// Binding for the final node after the questioned edge.
+        final_binding: TailBinding,
+    },
     /// Bounded or future variable-length expansion across one edge pattern.
     ///
-    /// The IR carries selector and path-mode discriminants even when the current
-    /// runtime only implements `WALK` + non-selective `ALL`, so later BRIEF-133
-    /// leaves can add behaviour without changing the join-tree shape.
+    /// `max: None` represents an ISO unbounded quantifier after the analyzer's
+    /// 16.4 legality gate has authorized it.
     Repeat {
         /// Input side of the expansion.
         child: Box<JoinTree>,

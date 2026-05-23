@@ -50,6 +50,11 @@ fn reorder_tree(tree: &mut JoinTree, bindings: &[BindingDef], ctx: &OptimizeCont
                 | reorder_bucket(&mut edge.property_predicates, ctx, &scan_ctx)
                 | reorder_bucket(&mut edge.right_property_predicates, ctx, &scan_ctx)
         }
+        JoinTree::Questioned { child, edge, .. } => {
+            reorder_tree(child, bindings, ctx)
+                | reorder_bucket(&mut edge.property_predicates, ctx, &scan_ctx)
+                | reorder_bucket(&mut edge.right_property_predicates, ctx, &scan_ctx)
+        }
         JoinTree::Repeat { child, edge, .. } => {
             reorder_tree(child, bindings, ctx)
                 | reorder_bucket(&mut edge.property_predicates, ctx, &scan_ctx)

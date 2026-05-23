@@ -34,6 +34,16 @@ pub(crate) fn trail_allows_hops(
                     return Ok(false);
                 }
             }
+            HopContributor::QuestionedNamed(binding) => {
+                if !insert_optional_edge_value(row_binding_value(row, *binding, env)?, &mut seen)? {
+                    return Ok(false);
+                }
+            }
+            HopContributor::QuestionedHidden(hidden) => {
+                if !insert_optional_edge_value(row_hidden_value(row, *hidden, env)?, &mut seen)? {
+                    return Ok(false);
+                }
+            }
             HopContributor::GroupNamed(binding) => {
                 if !insert_edge_list(row_binding_value(row, *binding, env)?, &mut seen)? {
                     return Ok(false);
@@ -77,6 +87,26 @@ pub(crate) fn collect_path_nodes(
                 }
             }
             PathContributor::EdgeNamed(_) | PathContributor::EdgeHidden(_) => {}
+            PathContributor::QuestionedEdgeNamed {
+                binding,
+                final_binding,
+            } => {
+                if optional_edge_value(row_binding_value(row, binding, env)?)?.is_some()
+                    && let Some(node) = node_value(row_tail_value(row, final_binding, env)?)?
+                {
+                    nodes.push(node);
+                }
+            }
+            PathContributor::QuestionedEdgeHidden {
+                hidden,
+                final_binding,
+            } => {
+                if optional_edge_value(row_hidden_value(row, hidden, env)?)?.is_some()
+                    && let Some(node) = node_value(row_tail_value(row, final_binding, env)?)?
+                {
+                    nodes.push(node);
+                }
+            }
             PathContributor::EdgeGroupNamed {
                 binding,
                 source,
@@ -112,6 +142,16 @@ fn collect_path_edges(
             }
             PathContributor::EdgeHidden(hidden) => {
                 edges.push(edge_value(row_hidden_value(row, hidden, env)?)?);
+            }
+            PathContributor::QuestionedEdgeNamed { binding, .. } => {
+                if let Some(edge) = optional_edge_value(row_binding_value(row, binding, env)?)? {
+                    edges.push(edge);
+                }
+            }
+            PathContributor::QuestionedEdgeHidden { hidden, .. } => {
+                if let Some(edge) = optional_edge_value(row_hidden_value(row, hidden, env)?)? {
+                    edges.push(edge);
+                }
             }
             PathContributor::EdgeGroupNamed { binding, .. } => {
                 edges.extend(edge_list(row_binding_value(row, binding, env)?)?);
@@ -186,6 +226,16 @@ fn insert_edge_value(value: Value, seen: &mut FxHashSet<EdgeId>) -> Result<bool,
     Ok(seen.insert(edge_value(value)?))
 }
 
+fn insert_optional_edge_value(
+    value: Value,
+    seen: &mut FxHashSet<EdgeId>,
+) -> Result<bool, ExecutorError> {
+    let Some(edge) = optional_edge_value(value)? else {
+        return Ok(true);
+    };
+    Ok(seen.insert(edge))
+}
+
 fn edge_list(value: Value) -> Result<Vec<EdgeId>, ExecutorError> {
     let Value::List(values) = value else {
         return Err(ExecutorError::ImplementationDefined {
@@ -202,6 +252,16 @@ fn edge_value(value: Value) -> Result<EdgeId, ExecutorError> {
         });
     };
     Ok(edge)
+}
+
+fn optional_edge_value(value: Value) -> Result<Option<EdgeId>, ExecutorError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::EdgeRef(edge) => Ok(Some(edge)),
+        _ => Err(ExecutorError::ImplementationDefined {
+            detail: "path-mode questioned edge contributor is not an edge or null",
+        }),
+    }
 }
 
 fn node_value(value: Value) -> Result<Option<NodeId>, ExecutorError> {
