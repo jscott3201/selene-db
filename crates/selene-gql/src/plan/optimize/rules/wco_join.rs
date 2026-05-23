@@ -41,6 +41,7 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
         tree,
         JoinTree::Repeat { .. }
             | JoinTree::PathSearch { .. }
+            | JoinTree::PathModeFilter { .. }
             | JoinTree::WorstCaseOptimal { .. }
             | JoinTree::Subplan(_)
     ) {
@@ -69,6 +70,7 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
         JoinTree::Scan(_)
         | JoinTree::Repeat { .. }
         | JoinTree::PathSearch { .. }
+        | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => false,
     }
@@ -124,6 +126,7 @@ fn detect_cycle(
         | JoinTree::Outer { .. }
         | JoinTree::Repeat { .. }
         | JoinTree::PathSearch { .. }
+        | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
     }
@@ -162,6 +165,7 @@ fn collect_cycle_nodes(
         | JoinTree::Outer { .. }
         | JoinTree::Repeat { .. }
         | JoinTree::PathSearch { .. }
+        | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
     }

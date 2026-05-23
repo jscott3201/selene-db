@@ -55,12 +55,12 @@ pub use crate::plan::{
     ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, HopContributor,
     ImplDefinedCaps, IndexCatalog, IndexHandle, IndexKind, IndexTarget, InsertEndpointRef,
     InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan,
-    OptimizeContext, OrderAccess, OrderKey, OuterBindingRef, PathPlan, PatternPlan, PipelineOp,
-    PipelineOpId, PlannedCall, PlannedSubquery, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram,
-    PropertyInit, RepeatEdgeMatch, Rule, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry,
-    TailBinding, Transformed, TxOp, TypedIndexBounds, TypedIndexLookup, WanderJoinSampler,
-    YieldKind, optimize, plan,
+    OptimizeContext, OrderAccess, OrderKey, OuterBindingRef, PathContributor, PathPlan,
+    PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
+    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, PlannerError,
+    ProjectExpr, PropertyHistogram, PropertyInit, RepeatEdgeMatch, Rule, ScanAccess, ScanKind,
+    SubqueryKind, SubqueryRegistry, TailBinding, Transformed, TxOp, TypedIndexBounds,
+    TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureArity, ProcedureDefaultValue, ProcedureError, ProcedureHandle,

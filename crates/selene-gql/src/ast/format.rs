@@ -172,7 +172,9 @@ fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     if let Some(mode) = clause.match_mode {
         write!(out, " {}", fmt_match_mode(mode))?;
     }
-    if clause.path_mode != PathMode::Walk {
+    if clause.path_mode != PathMode::Walk
+        || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
+    {
         write!(out, " {}", fmt_path_mode(clause.path_mode))?;
     }
     out.push(' ');

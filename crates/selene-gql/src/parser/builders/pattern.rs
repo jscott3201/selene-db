@@ -23,6 +23,7 @@ pub(super) fn build_match_clause(
     let mut selector = None;
     let mut match_mode = None;
     let mut path_mode = PathMode::Walk;
+    let mut path_mode_explicit = false;
     let mut patterns = Vec::new();
     let mut where_clause = None;
 
@@ -31,7 +32,10 @@ pub(super) fn build_match_clause(
             Rule::optional_modifier => optional = true,
             Rule::path_selector => selector = Some(build_path_selector(&child)?),
             Rule::match_mode => match_mode = Some(build_match_mode(&child)?),
-            Rule::path_modifier => path_mode = build_path_mode(&child)?,
+            Rule::path_modifier => {
+                path_mode = build_path_mode(&child)?;
+                path_mode_explicit = true;
+            }
             Rule::graph_pattern_list => patterns = build_graph_pattern_list(child, budget)?,
             Rule::where_clause => where_clause = Some(expr_from_child(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected MATCH child")),
@@ -51,6 +55,7 @@ pub(super) fn build_match_clause(
         selector,
         match_mode,
         path_mode,
+        path_mode_explicit,
         patterns,
         where_clause,
         span: source_span,

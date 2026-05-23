@@ -6,7 +6,8 @@ use selene_core::{IStr, Value};
 
 use crate::{
     AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
-    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind, SubqueryRegistry,
+    FilterPredicate, GqlType, HiddenBindingId, JoinTree, PatternPlan, ScanKind, SourceSpan,
+    SubqueryRegistry,
     analyze::ExprIdLookup,
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext},
 };
@@ -108,6 +109,10 @@ pub(crate) fn walk_join_tree(
             hop_contributors,
             env,
         ),
+        JoinTree::PathModeFilter { .. } => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "MATCH path mode (TRAIL/SIMPLE/ACYCLIC)",
+            span: SourceSpan::default(),
+        }),
         JoinTree::HashJoin {
             left,
             right,
@@ -172,7 +177,9 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             );
             insert_hidden(slots, edge.final_hidden_binding, ScanKind::Node);
         }
-        JoinTree::PathSearch { child, .. } => collect_hidden_slots(child, slots),
+        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
+            collect_hidden_slots(child, slots);
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_hidden_slots(left, slots);
             collect_hidden_slots(right, slots);

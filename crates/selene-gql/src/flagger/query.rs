@@ -7,7 +7,7 @@ use crate::{
     ast::{
         pattern::{
             EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern,
-            PathSelector, PatternElement,
+            PathMode, PathSelector, PatternElement,
         },
         statement::{LetBinding, OrderTerm, UnwindStatement},
     },
@@ -108,6 +108,15 @@ pub(crate) fn with_clause(clause: &WithClause, uses: &mut Vec<FeatureUse>) {
 }
 
 pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
+    if clause.path_mode_explicit && clause.path_mode == PathMode::Walk {
+        record_feature(uses, FeatureId::G010, clause.span);
+    }
+    match clause.path_mode {
+        PathMode::Walk => {}
+        PathMode::Trail => record_feature(uses, FeatureId::G011, clause.span),
+        PathMode::Simple => record_feature(uses, FeatureId::G012, clause.span),
+        PathMode::Acyclic => record_feature(uses, FeatureId::G013, clause.span),
+    }
     if let Some(selector) = clause.selector {
         match selector {
             PathSelector::All => record_feature(uses, FeatureId::G015, clause.span),

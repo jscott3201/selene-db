@@ -164,6 +164,7 @@ pub(crate) fn walk_expand_nodes(
         JoinTree::Scan(_)
         | JoinTree::Repeat { .. }
         | JoinTree::PathSearch { .. }
+        | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => false,
         JoinTree::Expand { child, edge, .. } => {
@@ -185,7 +186,8 @@ fn recurse_join_tree_subplans(
         JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } => false,
         JoinTree::Expand { child, .. }
         | JoinTree::Repeat { child, .. }
-        | JoinTree::PathSearch { child, .. } => recurse_join_tree_subplans(child, visit),
+        | JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. } => recurse_join_tree_subplans(child, visit),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             recurse_join_tree_subplans(left, visit) | recurse_join_tree_subplans(right, visit)
         }
@@ -239,7 +241,9 @@ fn walk_join_tree_exprs(
                 | walk_predicates(&mut edge.final_property_predicates, bindings, visit);
             changed_child | changed_edge
         }
-        JoinTree::PathSearch { child, .. } => walk_join_tree_exprs(child, bindings, visit),
+        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
+            walk_join_tree_exprs(child, bindings, visit)
+        }
         JoinTree::HashJoin { left, right, .. } => {
             walk_join_tree_exprs(left, bindings, visit)
                 | walk_join_tree_exprs(right, bindings, visit)

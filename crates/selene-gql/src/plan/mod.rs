@@ -20,10 +20,10 @@ pub use ir::{
     BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
     HiddenBindingId, HopContributor, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree,
     LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
-    OuterBindingRef, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
-    PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind, SubqueryRegistry,
-    TailBinding, TxOp, TypedIndexBounds, YieldKind,
+    OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
+    PlannedSubquery, PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem,
+    ProjectExpr, PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind,
+    SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;
 pub use optimize::{

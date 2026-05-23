@@ -80,6 +80,7 @@ fn push_to_node_scan_inner(
         }
         JoinTree::Scan(_)
         | JoinTree::PathSearch { .. }
+        | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => false,
         JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {

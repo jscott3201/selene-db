@@ -62,7 +62,7 @@ impl HiddenAllocator {
     }
 }
 
-use super::{expr, path_search, repeat};
+use super::{expr, path_mode, path_search, repeat};
 
 /// Lower leading MATCH clauses into one pattern plan.
 pub(crate) fn lower_match_prefix(
@@ -274,17 +274,23 @@ fn lower_graph_pattern(
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
                 if repeat_edge.group_binding.is_none()
-                    && selector_needs_repeat_group(selector, *min, *max)
+                    && (selector_needs_repeat_group(selector, *min, *max)
+                        || path_mode != PathMode::Walk)
                 {
                     repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
                 }
+                let repeat_path_mode = if path_mode == PathMode::Walk {
+                    path_mode
+                } else {
+                    PathMode::Walk
+                };
                 JoinTree::Repeat {
                     child: Box::new(current),
                     direction: edge.direction,
                     edge: repeat_edge,
                     min: *min,
                     max: Some(*max),
-                    path_mode,
+                    path_mode: repeat_path_mode,
                     selector: None,
                 }
             }
@@ -310,6 +316,7 @@ fn lower_graph_pattern(
             }
         };
     }
+    current = path_mode::wrap_in_path_mode_filter(current, ctx.path_mode, pattern.span)?;
     if let Some(selector) = ctx.selector {
         current =
             path_search::wrap_in_path_search(current, selector, source_binding, pattern.span)?;
@@ -579,12 +586,6 @@ fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
             span: clause.span,
         });
     }
-    if clause.path_mode != PathMode::Walk {
-        return Err(PlannerError::NotImplemented {
-            feature: "MATCH path mode (TRAIL/SIMPLE/ACYCLIC)",
-            span: clause.span,
-        });
-    }
     Ok(())
 }
 
@@ -619,6 +620,7 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .final_binding
             .map(TailBinding::Named)
             .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::PathModeFilter { child, .. } => chain_tail_binding(child),
         JoinTree::PathSearch { final_binding, .. } => Some(*final_binding),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
