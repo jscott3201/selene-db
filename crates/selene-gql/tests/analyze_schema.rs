@@ -9,7 +9,9 @@ use selene_gql::{
 use selene_graph::{
     EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode,
 };
-use selene_testing::{person_company_graph_type, person_only_graph_type};
+use selene_testing::{
+    mentions_one_of_graph_type, person_company_graph_type, person_only_graph_type,
+};
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test strings fit interner")
@@ -534,4 +536,40 @@ fn schema_validation_smoke_preserves_write_set() {
     .expect("valid mutation analyzes");
     let write_set = analyzed.write_set.expect("mutation write-set");
     assert_eq!(write_set.entries.len(), 2);
+}
+
+#[test]
+fn one_of_source_endpoint_accepts_either_declared_member() {
+    // BRIEF-131e: analyzer must accept INSERT with either Document OR Comment
+    // as the MENTIONS source. `matches_node_type` does the membership check on
+    // OneOf at the analyzer layer too.
+    let graph_type = mentions_one_of_graph_type();
+    analyze_with_schema(
+        "INSERT (a:Document { title: 'T' })-[:MENTIONS]->(b:Topic { name: 'N' })",
+        &graph_type,
+    )
+    .expect("Document is in OneOf source set");
+    analyze_with_schema(
+        "INSERT (a:Comment { body: 'B' })-[:MENTIONS]->(b:Topic { name: 'N' })",
+        &graph_type,
+    )
+    .expect("Comment is in OneOf source set");
+}
+
+#[test]
+fn one_of_source_endpoint_rejects_non_member() {
+    // F11 coverage at the analyzer layer: the rendered endpoint name for an
+    // OneOf endpoint is comma-joined member node-type names (per the commit-1
+    // endpoint_name OneOf arm). The error must still surface as
+    // SchemaEdgeEndpointMismatch.
+    let graph_type = mentions_one_of_graph_type();
+    let error = schema_error(
+        "INSERT (a:Topic { name: 'N1' })-[:MENTIONS]->(b:Topic { name: 'N2' })",
+        &graph_type,
+    );
+    assert!(matches!(
+        error,
+        AnalysisError::SchemaEdgeEndpointMismatch { ref expected_source, .. }
+            if expected_source.contains("Document") && expected_source.contains("Comment")
+    ));
 }
