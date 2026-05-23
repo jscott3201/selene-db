@@ -203,6 +203,7 @@ fn collect_aggregates(
                 collect_aggregates(result, analyzed, rewrite)?;
             }
         }
+        ValueExpr::Cast { value, .. } => collect_aggregates(value, analyzed, rewrite)?,
         ValueExpr::Exists { .. }
         | ValueExpr::CountSubquery { .. }
         | ValueExpr::ValueSubquery { .. } => {}
@@ -411,6 +412,15 @@ fn rewrite_aggregate_refs(
             else_branch: else_branch
                 .as_ref()
                 .map(|result| Box::new(rewrite_aggregate_refs(result, aggregate_names, analyzed))),
+            span: *span,
+        },
+        ValueExpr::Cast {
+            value,
+            target_type,
+            span,
+        } => ValueExpr::Cast {
+            value: Box::new(rewrite_aggregate_refs(value, aggregate_names, analyzed)),
+            target_type: target_type.clone(),
             span: *span,
         },
     }

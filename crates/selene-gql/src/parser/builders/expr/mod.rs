@@ -57,10 +57,7 @@ pub(super) fn build_value_expr(
         Rule::value_subquery_expr => call::build_value_subquery(pair, budget),
         Rule::case_expr => call::build_case_expr(first_child(pair)?, budget),
         Rule::simple_case | Rule::searched_case => call::build_case_expr(pair, budget),
-        Rule::cast_expr => Err(not_implemented(
-            &pair,
-            "CAST expressions are not yet supported in v1.0",
-        )),
+        Rule::cast_expr => build_cast_expr(pair, budget),
         Rule::labels_expr => Err(not_implemented(
             &pair,
             "LABELS expressions are not yet supported in v1.0",
@@ -81,6 +78,34 @@ pub(super) fn build_value_expr(
 
 pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
     predicate::build_type_name(pair)
+}
+
+fn build_cast_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut value_pair: Option<Pair<'_, Rule>> = None;
+    let mut type_pair: Option<Pair<'_, Rule>> = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::expr => value_pair = Some(child),
+            Rule::type_name => type_pair = Some(child),
+            _ => {}
+        }
+    }
+    let value_pair = value_pair.ok_or_else(|| {
+        ParserError::syntax("CAST is missing source expression", source_span, None)
+    })?;
+    let type_pair = type_pair
+        .ok_or_else(|| ParserError::syntax("CAST is missing target type", source_span, None))?;
+    let value = build_value_expr(value_pair, budget)?;
+    let target_type = build_type_name(type_pair)?;
+    Ok(ValueExpr::Cast {
+        value: Box::new(value),
+        target_type: Box::new(target_type),
+        span: source_span,
+    })
 }
 
 pub(super) fn intern_string_literal(

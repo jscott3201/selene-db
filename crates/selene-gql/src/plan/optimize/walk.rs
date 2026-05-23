@@ -490,6 +490,7 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
             walk_match_clause(pattern, visit)
         }
         ValueExpr::ValueSubquery { .. } => false,
+        ValueExpr::Cast { value, .. } => walk_expr(value, visit),
     };
     visit(expr) | changed_children
 }

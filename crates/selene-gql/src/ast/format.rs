@@ -1,5 +1,6 @@
 //! Read-side AST pretty-printer.
 
+mod cast;
 mod keywords;
 mod preflight;
 mod type_name;
@@ -472,7 +473,7 @@ fn fmt_yield_items(out: &mut String, items: &[crate::YieldItem]) -> fmt::Result 
     Ok(())
 }
 
-fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
+pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
     match expr {
         ValueExpr::Literal(literal) => match literal {
             crate::Literal::Bool(value, _) => out.push_str(if *value { "true" } else { "false" }),
@@ -658,6 +659,9 @@ fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             fmt_pipeline(out, body)?;
             out.push_str(" }");
         }
+        ValueExpr::Cast {
+            value, target_type, ..
+        } => cast::fmt_cast(out, value, target_type)?,
     }
     Ok(())
 }

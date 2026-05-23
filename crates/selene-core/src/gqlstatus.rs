@@ -20,6 +20,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
     ("22012", "division-by-zero"),
+    ("22018", "invalid-character-value-for-cast"),
     ("2201F", "invalid-argument-for-power-function"),
     ("22G03", "invalid-value-type"),
     ("22G04", "values-not-comparable"),

@@ -128,6 +128,9 @@ fn collect_binding_refs_in_expr(
                     .map(|(binding, _, span)| (binding, span)),
             );
         }
+        ValueExpr::Cast { value, .. } => {
+            collect_binding_refs_in_expr(value, analyzed, refs)?;
+        }
     }
     Ok(())
 }

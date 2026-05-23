@@ -83,6 +83,10 @@ schemars = "1.2"
 jsonschema = { version = "0.46", default-features = false }
 semver = "1"
 serde_json = "1"
+# Runtime stack-growth shim. Used by the GQL analyzer to bound recursive
+# `bind_value_expr` against the OS default thread stack (2 MB on macOS);
+# matches the rustc / syn / serde recursion pattern.
+stacker = "0.1"
 selene-persist = { path = "crates/selene-persist", version = "1.0.0" }
 
 # Dev dependencies.

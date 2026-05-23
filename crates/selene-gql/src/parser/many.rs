@@ -421,6 +421,10 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
             rebase_span(span, offset);
             rebase_query_pipeline(body, offset);
         }
+        ValueExpr::Cast { value, span, .. } => {
+            rebase_span(span, offset);
+            rebase_value(value, offset);
+        }
     }
 }
 

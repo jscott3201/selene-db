@@ -676,3 +676,24 @@ impl SpanMax for SourceSpan {
         if self.byte_len == 0 { other } else { self }
     }
 }
+
+/// Infer the result type of an explicit `CAST(<value> AS <target_type>)`
+/// expression.
+///
+/// The analyzer reports the cast's static result type as the declared target
+/// type. Runtime validity (whether the source value can actually be cast to
+/// the target) is enforced by `runtime::evaluator::cast::eval_cast` per ISO
+/// §22; the analyzer does not pre-reject because (i) source types are often
+/// Dynamic, (ii) ISO §22 specifies a runtime error model (`22018`, `22003`,
+/// `42N01`) rather than a compile-time rejection model.
+///
+/// The `_source` and `_span` arguments are kept in the signature so future
+/// fold-time validation (e.g. CAST to `Null` as a static `42N01`) can plug in
+/// without changing call sites.
+pub(crate) fn cast(
+    target_type: &GqlType,
+    _source: &AnalyzedType,
+    _span: SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    Ok(AnalyzedType::Resolved(target_type.clone()))
+}

@@ -282,6 +282,7 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
                 walk_expr(value, visit);
             }
         }
+        ValueExpr::Cast { value, .. } => walk_expr(value, visit),
         ValueExpr::Exists { .. }
         | ValueExpr::CountSubquery { .. }
         | ValueExpr::ValueSubquery { .. } => {}

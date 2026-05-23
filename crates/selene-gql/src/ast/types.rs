@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 /// Parsed GQL type.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum GqlType {
     /// `STRING`.
@@ -87,7 +87,7 @@ pub enum GqlType {
 }
 
 /// Parsed record type.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 #[non_exhaustive]
 pub enum RecordType {
     /// Open record.

@@ -17,6 +17,16 @@ pub(crate) fn bind_value_expr(
     ctx: &mut BindContext,
     expr: &ValueExpr,
 ) -> Result<ExprId, AnalysisError> {
+    // Why: `ValueExpr` recursion fans out to one stack frame per nesting
+    // level; the depth-256 contract enforced by `check_expr_depth` is well
+    // above what macOS's 2 MB default thread stack can carry in debug
+    // builds once enum-variant sizes grow. `stacker::maybe_grow` allocates
+    // a fresh 1 MB segment whenever fewer than 64 KB remain, matching the
+    // rustc/syn/serde analyzer pattern.
+    stacker::maybe_grow(64 * 1024, 1024 * 1024, || bind_value_expr_inner(ctx, expr))
+}
+
+fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<ExprId, AnalysisError> {
     if ctx.at_expr_root() {
         check_expr_depth(expr)?;
         check_subquery_depth(expr)?;
@@ -168,6 +178,14 @@ pub(crate) fn bind_value_expr(
                 AnalyzedType::Resolved(crate::GqlType::Integer)
             }
             ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
+            ValueExpr::Cast {
+                value,
+                target_type,
+                span,
+            } => {
+                let value_id = bind_value_expr(ctx, value)?;
+                infer::cast(target_type, ctx.expr_type(value_id), *span)?
+            }
         };
         Ok(ctx.allocate_expr(expr, ty))
     })
@@ -261,6 +279,7 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
                     stack.push((condition, next));
                 }
             }
+            ValueExpr::Cast { value, .. } => stack.push((value, next)),
             ValueExpr::Literal(_)
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
@@ -455,6 +474,7 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
             ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
                 check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
             }
+            ValueExpr::Cast { value, .. } => stack.push((value, depth)),
             ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
         }
     }
