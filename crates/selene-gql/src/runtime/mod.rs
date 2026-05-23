@@ -18,6 +18,7 @@ pub(crate) mod evaluator;
 mod expand;
 mod hash_join;
 mod outer;
+mod path_search;
 mod pattern;
 mod pipeline;
 mod plan_cache;

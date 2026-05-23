@@ -2,12 +2,12 @@
 
 use crate::{
     EdgePattern,
-    plan::{PlannerError, RepeatEdgeMatch, ScanAccess},
+    plan::{PlannerError, RepeatEdgeMatch, ScanAccess, TailBinding},
 };
 
 use super::{
     expr,
-    match_clause::{EdgeLoweringContext, RightNode, TailBinding, edge_binding},
+    match_clause::{EdgeLoweringContext, RightNode, edge_binding},
 };
 
 pub(super) fn ensure_within_max_quantifier(
@@ -47,6 +47,7 @@ pub(super) fn edge_match(
         .collect();
     Ok(RepeatEdgeMatch {
         group_binding,
+        group_hidden_binding: None,
         label_predicate: edge.label_expr.clone(),
         property_predicates,
         inline_predicates,

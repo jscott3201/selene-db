@@ -78,7 +78,10 @@ fn push_to_node_scan_inner(
                 .push(pending.take().expect("pending predicate exists"));
             true
         }
-        JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        JoinTree::Scan(_)
+        | JoinTree::PathSearch { .. }
+        | JoinTree::WorstCaseOptimal { .. }
+        | JoinTree::Subplan(_) => false,
         JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
             push_to_node_scan_inner(child, binding, pending)
         }

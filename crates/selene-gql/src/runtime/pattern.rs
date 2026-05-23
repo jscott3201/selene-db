@@ -94,6 +94,20 @@ pub(crate) fn walk_join_tree(
         } => super::repeat::execute(
             child, edge, *direction, *min, *max, *path_mode, *selector, env,
         ),
+        JoinTree::PathSearch {
+            selector,
+            child,
+            source_binding,
+            final_binding,
+            hop_contributors,
+        } => super::path_search::execute(
+            child,
+            *selector,
+            *source_binding,
+            *final_binding,
+            hop_contributors,
+            env,
+        ),
         JoinTree::HashJoin {
             left,
             right,
@@ -151,8 +165,14 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
         JoinTree::Repeat { child, edge, .. } => {
             collect_hidden_slots(child, slots);
             insert_hidden(slots, edge.left_hidden_binding, ScanKind::Node);
+            insert_hidden_type(
+                slots,
+                edge.group_hidden_binding,
+                AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef))),
+            );
             insert_hidden(slots, edge.final_hidden_binding, ScanKind::Node);
         }
+        JoinTree::PathSearch { child, .. } => collect_hidden_slots(child, slots),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_hidden_slots(left, slots);
             collect_hidden_slots(right, slots);
@@ -180,6 +200,17 @@ fn insert_hidden(
             ScanKind::Edge => GqlType::EdgeRef,
         })
     });
+}
+
+fn insert_hidden_type(
+    slots: &mut BTreeMap<HiddenBindingId, AnalyzedType>,
+    hidden: Option<HiddenBindingId>,
+    ty: AnalyzedType,
+) {
+    let Some(hidden) = hidden else {
+        return;
+    };
+    slots.entry(hidden).or_insert(ty);
 }
 
 pub(crate) fn binding_index(

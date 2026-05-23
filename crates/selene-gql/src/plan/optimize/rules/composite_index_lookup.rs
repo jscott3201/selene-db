@@ -62,7 +62,9 @@ fn rewrite_tree(
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
-        JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        JoinTree::PathSearch { .. } | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => {
+            false
+        }
     }
 }
 

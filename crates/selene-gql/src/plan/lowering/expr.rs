@@ -372,6 +372,9 @@ fn collect_subqueries_in_join_tree(
                 collect_subqueries_in_expr(&predicate.expr, analyzed, entries)?;
             }
         }
+        JoinTree::PathSearch { child, .. } => {
+            collect_subqueries_in_join_tree(child, analyzed, entries)?;
+        }
         JoinTree::HashJoin { left, right, .. } => {
             collect_subqueries_in_join_tree(left, analyzed, entries)?;
             collect_subqueries_in_join_tree(right, analyzed, entries)?;
