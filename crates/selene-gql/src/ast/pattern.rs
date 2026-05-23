@@ -14,9 +14,9 @@ pub enum PathMode {
     Walk,
     /// No repeated edges.
     Trail,
-    /// No repeated nodes except allowed cycle endpoints.
-    Acyclic,
     /// No repeated nodes.
+    Acyclic,
+    /// No repeated nodes except the first and last node may be equal.
     Simple,
 }
 
@@ -149,6 +149,8 @@ pub struct MatchClause {
     pub match_mode: Option<MatchMode>,
     /// Path mode; defaults to [`PathMode::Walk`].
     pub path_mode: PathMode,
+    /// Whether the path mode was written explicitly in source.
+    pub path_mode_explicit: bool,
     /// Graph patterns.
     pub patterns: Vec<GraphPattern>,
     /// Optional statement-level `WHERE`.

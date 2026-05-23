@@ -44,6 +44,10 @@ macro_rules! feature_ids {
 }
 
 feature_ids! {
+    G010 = "G010" => "Explicit WALK keyword";
+    G011 = "G011" => "Advanced path modes: TRAIL";
+    G012 = "G012" => "Advanced path modes: SIMPLE";
+    G013 = "G013" => "Advanced path modes: ACYCLIC";
     G015 = "G015" => "All path search: explicit ALL keyword";
     G016 = "G016" => "Any path search";
     G017 = "G017" => "All shortest path search";
@@ -147,6 +151,10 @@ feature_ids! {
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
 pub const SUPPORTED_FEATURES: &[FeatureId] = &[
+    FeatureId::G010,
+    FeatureId::G011,
+    FeatureId::G012,
+    FeatureId::G013,
     FeatureId::G015,
     FeatureId::G016,
     FeatureId::G017,

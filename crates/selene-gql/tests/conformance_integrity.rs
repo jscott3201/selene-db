@@ -1,6 +1,10 @@
 //! BRIEF-125 conformance integrity regression coverage.
 
-use selene_core::{CoreError, NodeId, feature_register::FeatureId, gqlstatus_name};
+use selene_core::{
+    CoreError, NodeId,
+    feature_register::{FeatureId, NOT_SUPPORTED_RATIONALE, SUPPORTED_FEATURES},
+    gqlstatus_name,
+};
 use selene_gql::{GqlStatus, ParserError, parse};
 use selene_graph::GraphError;
 use selene_persist::PersistError;
@@ -14,6 +18,23 @@ fn unclaimed_graph_management_surfaces_emit_42n01() {
         panic!("expected UnsupportedFeature for {source:?}");
     };
     assert_eq!(feature_id, FeatureId::GC04);
+}
+
+#[test]
+fn path_mode_features_are_claimed_supported() {
+    for feature in [
+        FeatureId::G010,
+        FeatureId::G011,
+        FeatureId::G012,
+        FeatureId::G013,
+    ] {
+        assert!(SUPPORTED_FEATURES.contains(&feature));
+        assert!(
+            !NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature)
+        );
+    }
 }
 
 #[test]

@@ -172,7 +172,9 @@ fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     if let Some(mode) = clause.match_mode {
         write!(out, " {}", fmt_match_mode(mode))?;
     }
-    if clause.path_mode != PathMode::Walk {
+    if clause.path_mode != PathMode::Walk
+        || (clause.path_mode == PathMode::Walk && clause.path_mode_explicit)
+    {
         write!(out, " {}", fmt_path_mode(clause.path_mode))?;
     }
     out.push(' ');
@@ -239,7 +241,7 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
             Quantifier::GraphPattern {
                 min,
                 max: Some(max),
-            } => write!(out, "{{{min}, {max}}}")?,
+            } => write!(out, "{{{min},{max}}}")?,
             Quantifier::GraphPattern { min, max: None } => write!(out, "{{{min},}}")?,
             Quantifier::Questioned => out.push('?'),
         }

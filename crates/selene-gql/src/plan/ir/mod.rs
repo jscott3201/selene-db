@@ -107,7 +107,8 @@ fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
         JoinTree::Scan(_) => {}
         JoinTree::Expand { child, .. }
         | JoinTree::Repeat { child, .. }
-        | JoinTree::PathSearch { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
+        | JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             refresh_join_tree_pipeline_op_high_water(left);
             refresh_join_tree_pipeline_op_high_water(right);
@@ -208,6 +209,35 @@ pub enum HopContributor {
     GroupHidden(HiddenBindingId),
 }
 
+/// Source of one ordered path-mode validation contribution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PathContributor {
+    /// Node binding in binding-path order.
+    Node(TailBinding),
+    /// Fixed edge identity from a named edge binding.
+    EdgeNamed(BindingId),
+    /// Fixed edge identity from an executor-private edge binding.
+    EdgeHidden(HiddenBindingId),
+    /// Quantified edge group with enough topology to rebuild intermediate nodes.
+    EdgeGroupNamed {
+        /// Runtime group binding containing `LIST<EdgeRef>`.
+        binding: BindingId,
+        /// Node binding at the source side of the quantified segment.
+        source: TailBinding,
+        /// Direction requested by the quantified edge pattern.
+        direction: EdgeDirection,
+    },
+    /// Anonymous quantified edge group with enough topology to rebuild intermediate nodes.
+    EdgeGroupHidden {
+        /// Runtime hidden slot containing `LIST<EdgeRef>`.
+        hidden: HiddenBindingId,
+        /// Node binding at the source side of the quantified segment.
+        source: TailBinding,
+        /// Direction requested by the quantified edge pattern.
+        direction: EdgeDirection,
+    },
+}
+
 /// Pattern join tree.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
@@ -260,6 +290,19 @@ pub enum JoinTree {
         final_binding: TailBinding,
         /// Hop-count contributors in path order.
         hop_contributors: Vec<HopContributor>,
+    },
+    /// Restrictive path-mode wrapper over one complete path pattern.
+    ///
+    /// The child materializes every candidate row. `PathModeFilter` then applies
+    /// per-row binding-path validation for `TRAIL`, `SIMPLE`, or `ACYCLIC` using
+    /// the explicit ordered contributors captured during lowering.
+    PathModeFilter {
+        /// Restrictive path mode to validate.
+        path_mode: PathMode,
+        /// Complete path-pattern child.
+        child: Box<JoinTree>,
+        /// Ordered node and edge contributors in binding-path order.
+        path_contributors: Vec<PathContributor>,
     },
     /// Binary join between two pattern fragments.
     HashJoin {

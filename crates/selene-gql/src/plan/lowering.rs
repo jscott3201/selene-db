@@ -6,6 +6,7 @@ mod catalog;
 mod expr;
 mod match_clause;
 mod mutation;
+mod path_mode;
 mod path_search;
 mod repeat;
 

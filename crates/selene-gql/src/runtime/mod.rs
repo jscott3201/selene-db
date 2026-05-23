@@ -18,6 +18,7 @@ pub(crate) mod evaluator;
 mod expand;
 mod hash_join;
 mod outer;
+mod path_mode;
 mod path_search;
 mod pattern;
 mod pipeline;
@@ -32,6 +33,7 @@ mod statement;
 mod subplan;
 mod value_compare;
 mod value_key;
+mod visited_set;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};

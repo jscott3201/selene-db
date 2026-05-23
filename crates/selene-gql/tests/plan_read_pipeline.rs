@@ -265,10 +265,6 @@ fn deferred_pattern_features_have_stable_tags() {
             "MATCH DIFFERENT EDGES (n) RETURN n",
             "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
         ),
-        (
-            "MATCH SIMPLE (n) RETURN n",
-            "MATCH path mode (TRAIL/SIMPLE/ACYCLIC)",
-        ),
     ];
 
     for (source, expected) in cases {
@@ -278,6 +274,14 @@ fn deferred_pattern_features_have_stable_tags() {
             "{source} should report {expected}, got {err:?}"
         );
     }
+}
+
+#[test]
+fn restrictive_path_mode_single_node_lowers_to_filter() {
+    let plan = plan_one("MATCH SIMPLE (n) RETURN n");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+
+    assert!(matches!(pattern.join_tree, JoinTree::PathModeFilter { .. }));
 }
 
 #[test]

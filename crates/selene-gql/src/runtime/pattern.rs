@@ -11,7 +11,7 @@ use crate::{
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext},
 };
 
-use super::{evaluator, expand, hash_join, outer, scan, subplan, value_compare, wco};
+use super::{evaluator, expand, hash_join, outer, path_mode, scan, subplan, value_compare, wco};
 
 /// Execute a pattern plan and produce its initial binding table.
 pub fn execute_pattern(
@@ -108,6 +108,11 @@ pub(crate) fn walk_join_tree(
             hop_contributors,
             env,
         ),
+        JoinTree::PathModeFilter {
+            path_mode,
+            child,
+            path_contributors,
+        } => path_mode::execute(child, *path_mode, path_contributors, env),
         JoinTree::HashJoin {
             left,
             right,
@@ -172,7 +177,9 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             );
             insert_hidden(slots, edge.final_hidden_binding, ScanKind::Node);
         }
-        JoinTree::PathSearch { child, .. } => collect_hidden_slots(child, slots),
+        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
+            collect_hidden_slots(child, slots);
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_hidden_slots(left, slots);
             collect_hidden_slots(right, slots);

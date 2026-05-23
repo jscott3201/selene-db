@@ -3,7 +3,7 @@
 use selene_core::{GraphId, feature_register::FeatureId};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ParserError, TxContext,
-    analyze, execute_pattern, execute_pipeline, parse, plan,
+    analyze, execute_pattern, execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -27,6 +27,28 @@ fn path_selector_features_are_supported() {
         "MATCH ALL SHORTEST (n)-[:K]->(m) RETURN m",
         "MATCH ANY SHORTEST (n)-[:K]->(m) RETURN m",
     ] {
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+}
+
+#[test]
+fn path_mode_features_are_supported_and_recorded() {
+    for (source, expected) in [
+        ("MATCH WALK (n) RETURN n", FeatureId::G010),
+        ("MATCH TRAIL (n) RETURN n", FeatureId::G011),
+        ("MATCH SIMPLE (n) RETURN n", FeatureId::G012),
+        ("MATCH ACYCLIC (n) RETURN n", FeatureId::G013),
+    ] {
+        let statement = parse(source).expect(source);
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&expected),
+            "{source} should record {expected}, observed {observed:?}"
+        );
         assert_read_plan(source);
         assert_read_execution(source);
     }

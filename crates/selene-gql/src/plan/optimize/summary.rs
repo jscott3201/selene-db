@@ -430,7 +430,9 @@ fn collect_scans(
                 });
             }
         }
-        JoinTree::PathSearch { child, .. } => collect_scans(child, bindings, scans),
+        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
+            collect_scans(child, bindings, scans);
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_scans(left, bindings, scans);
             collect_scans(right, bindings, scans);
@@ -508,6 +510,9 @@ fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> S
         JoinTree::PathSearch {
             selector, child, ..
         } => format!("{selector:?}({})", join_tree_shape(child, bindings)),
+        JoinTree::PathModeFilter {
+            path_mode, child, ..
+        } => format!("{path_mode:?}({})", join_tree_shape(child, bindings)),
         JoinTree::HashJoin { left, right, .. } => format!(
             "HashJoin({}, {})",
             join_tree_shape(left, bindings),
