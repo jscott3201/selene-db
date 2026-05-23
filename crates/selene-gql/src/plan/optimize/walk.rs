@@ -124,6 +124,7 @@ pub(crate) fn recurse_subplans(
             | PipelineOp::TopK { .. }
             | PipelineOp::GroupBy { .. }
             | PipelineOp::Distinct
+            | PipelineOp::Match(_)
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
@@ -305,6 +306,9 @@ fn walk_pipeline_op_exprs(
         PipelineOp::Call(call) => call.args.iter_mut().fold(false, |changed, arg| {
             walk_and_sync_binding_refs_project(arg, bindings, visit) | changed
         }),
+        PipelineOp::Match(pattern) => {
+            walk_join_tree_exprs(&mut pattern.join_tree, &pattern.bindings, visit)
+        }
         PipelineOp::Mutation(mutation) => walk_mutation_exprs(mutation, bindings, visit),
         PipelineOp::Catalog(catalog) => walk_catalog_exprs(catalog, bindings, visit),
         PipelineOp::Limit { .. }
@@ -480,6 +484,7 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
         ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
             walk_match_clause(pattern, visit)
         }
+        ValueExpr::ValueSubquery { .. } => false,
     };
     visit(expr) | changed_children
 }

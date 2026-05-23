@@ -239,15 +239,13 @@ fn order_key_carries_binding_refs() {
 }
 
 #[test]
-fn non_leading_match_is_not_implemented() {
-    let err = plan_err("MATCH (a) WITH a AS x MATCH (b) RETURN x, b");
-    assert!(matches!(
-        err,
-        PlannerError::NotImplemented {
-            feature: "non-leading MATCH (post-pipeline-boundary pattern)",
-            ..
-        }
-    ));
+fn non_leading_match_lowers_to_pipeline_match() {
+    let plan = plan_one("MATCH (a) WITH a AS x MATCH (b) RETURN x, b");
+    assert!(
+        plan.pipeline
+            .iter()
+            .any(|op| matches!(op, PipelineOp::Match(_)))
+    );
 }
 
 #[test]

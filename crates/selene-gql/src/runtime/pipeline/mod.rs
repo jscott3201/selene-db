@@ -11,6 +11,7 @@ mod filter;
 mod group_by;
 mod let_op;
 mod limit;
+mod match_op;
 mod mutation;
 mod order_by;
 mod project;
@@ -118,6 +119,9 @@ pub(crate) fn execute_pipeline_with_plan(
             PipelineOp::Distinct => distinct::execute(table, ctx)?,
             PipelineOp::Union { op, rhs } => union::execute(*op, rhs, table, ctx)?,
             PipelineOp::Chain(rhs) => chain::execute(rhs, table, ctx)?,
+            PipelineOp::Match(pattern) => {
+                match_op::execute(pattern, table, ctx, expr_ids, subqueries)?
+            }
             PipelineOp::Mutation(mutation) => {
                 mutation::execute(mutation, table, ctx, expr_ids, subqueries)?
             }

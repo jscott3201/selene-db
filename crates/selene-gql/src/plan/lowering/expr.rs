@@ -246,6 +246,7 @@ fn collect_binding_refs_in_expr(
                     .map(|(binding, _, span)| (binding, span)),
             );
         }
+        ValueExpr::ValueSubquery { .. } => {}
     }
     Ok(())
 }
@@ -315,6 +316,9 @@ fn collect_subqueries_in_pipeline_op(
         }
         PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
             populate_plan_subqueries(rhs, analyzed)?;
+        }
+        PipelineOp::Match(pattern) => {
+            collect_subqueries_in_pattern_plan(pattern, analyzed, entries)?
         }
         PipelineOp::ExplainPlan { inner, .. } => populate_plan_subqueries(inner, analyzed)?,
         PipelineOp::Call(call) => {
@@ -568,6 +572,7 @@ fn collect_subqueries_in_expr(
         ValueExpr::CountSubquery { pattern, span } => {
             collect_planned_subquery(expr, SubqueryKind::Count, pattern, *span, analyzed, entries)?;
         }
+        ValueExpr::ValueSubquery { .. } => {}
     }
     Ok(())
 }

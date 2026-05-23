@@ -58,6 +58,11 @@ pub(crate) fn bind_pipeline_statement(
             call::bind_procedure_call_with_metadata(ctx, call, metadata)?;
             Ok(())
         }
+        PipelineStatement::CallSubquery(call) => Err(AnalysisError::NotImplemented {
+            message: "CALL { ... } subqueries land in BRIEF-134 commit 3".into(),
+            span: call.span,
+            hint: None,
+        }),
     }
 }
 

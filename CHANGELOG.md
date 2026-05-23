@@ -8,6 +8,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Non-leading `MATCH` clauses now lower as sequential binding-table extensions
+  in `selene-gql`, covering cross-product and correlated continuation shapes.
 - Bounded variable-length edge patterns in `selene-gql` for `WALK` matches,
   including `JoinTree::Repeat`, `LIST<EdgeRef>` group-variable binding, zero-hop
   results, per-hop edge predicates, and cancellation checks.

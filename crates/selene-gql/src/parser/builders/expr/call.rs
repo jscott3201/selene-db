@@ -10,7 +10,9 @@ use crate::{
 };
 
 use super::{Rule, build_value_expr, literal};
-use crate::parser::builders::{build_qualified_name, pattern, span, unexpected_pair};
+use crate::parser::builders::{
+    build_qualified_name, build_query_pipeline, pattern, span, unexpected_pair,
+};
 
 pub(super) enum PredicateKind {
     AllDifferent,
@@ -159,6 +161,23 @@ pub(super) fn build_count_subquery(
         })?;
     Ok(ValueExpr::CountSubquery {
         pattern: Box::new(pattern::build_match_clause(match_pair, budget)?),
+        span: source_span,
+    })
+}
+
+pub(super) fn build_value_subquery(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let body_pair = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::query_pipeline)
+        .ok_or_else(|| {
+            ParserError::syntax("VALUE subquery is missing query body", source_span, None)
+        })?;
+    Ok(ValueExpr::ValueSubquery {
+        body: Box::new(build_query_pipeline(body_pair, budget)?),
         span: source_span,
     })
 }

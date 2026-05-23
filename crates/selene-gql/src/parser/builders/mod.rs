@@ -47,7 +47,7 @@ pub(crate) fn build_statement(
             mutation::build_mutation_pipeline(program_pair, budget).map(Statement::Mutate)
         }
         Rule::ddl_statement => ddl::build_ddl_statement(program_pair, budget).map(Statement::Ddl),
-        Rule::call_stmt => call::build_top_level_call(program_pair, budget).map(Statement::Call),
+        Rule::call_stmt => call::build_top_level_call(program_pair, budget),
         Rule::explain_stmt => explain::build_explain_statement(program_pair, budget),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
@@ -171,7 +171,7 @@ fn build_pipeline_statement(
             &pair,
             "MATCH VIEW is not yet supported in v1.0",
         )),
-        Rule::call_stmt => call::build_pipeline_call(pair, budget).map(PipelineStatement::Call),
+        Rule::call_stmt => call::build_pipeline_call(pair, budget),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }
 }

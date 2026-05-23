@@ -13,7 +13,7 @@ pub mod statement;
 pub mod types;
 pub mod util;
 
-pub use call::{ProcedureCall, YieldColumn, YieldItem};
+pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{
     DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
 };

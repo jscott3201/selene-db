@@ -208,9 +208,9 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_grammar_surface_returns_not_implemented() {
-        let err = parse("CALL { RETURN 1 }").expect_err("unsupported grammar should error");
-        assert!(matches!(err, ParserError::NotImplemented { .. }));
+    fn unsupported_inline_call_returns_feature_error() {
+        let err = parse("CALL { RETURN 1 }").expect_err("unsupported feature should error");
+        assert!(matches!(err, ParserError::UnsupportedFeature { .. }));
         assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
 

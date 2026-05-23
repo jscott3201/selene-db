@@ -120,6 +120,7 @@ fn op_contains_call(op: &PipelineOp) -> bool {
         PipelineOp::Union { rhs, .. }
         | PipelineOp::Chain(rhs)
         | PipelineOp::ExplainPlan { inner: rhs, .. } => contains_call(rhs),
+        PipelineOp::Match(_) => false,
         _ => false,
     }
 }

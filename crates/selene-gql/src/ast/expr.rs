@@ -3,7 +3,8 @@
 use selene_core::IStr;
 
 use crate::ast::{
-    pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, types::GqlType, util::NonEmpty,
+    pattern::LabelExpr, pattern::MatchClause, span::SourceSpan, statement::QueryPipeline,
+    types::GqlType, util::NonEmpty,
 };
 
 /// Value expression.
@@ -206,6 +207,13 @@ pub enum ValueExpr {
         /// Source span of the full expression.
         span: SourceSpan,
     },
+    /// `VALUE { ... }` scalar value query expression.
+    ValueSubquery {
+        /// Nested query body.
+        body: Box<QueryPipeline>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
 }
 
 impl ValueExpr {
@@ -232,7 +240,8 @@ impl ValueExpr {
             | Self::PropertyExists { span, .. }
             | Self::Case { span, .. }
             | Self::Exists { span, .. }
-            | Self::CountSubquery { span, .. } => *span,
+            | Self::CountSubquery { span, .. }
+            | Self::ValueSubquery { span, .. } => *span,
         }
     }
 }

@@ -2,45 +2,106 @@
 
 use pest::iterators::Pair;
 
+use selene_core::IStr;
+
 use crate::{
-    ast::{ProcedureCall, YieldColumn, YieldItem, util::NonEmpty},
+    ast::{
+        InlineProcedureCall, PipelineStatement, ProcedureCall, QueryPipeline, Statement,
+        YieldColumn, YieldItem, util::NonEmpty,
+    },
     error::ParserError,
     parser::budget::InternerBudget,
 };
 
 use super::{
-    Rule, build_qualified_name, expr, first_child, intern_pair, not_implemented, span,
-    unexpected_pair,
+    Rule, build_qualified_name, build_query_pipeline, expr, first_child, intern_pair,
+    not_implemented, span, unexpected_pair,
 };
 
 pub(super) fn build_top_level_call(
     pair: Pair<'_, Rule>,
     budget: &mut InternerBudget,
-) -> Result<ProcedureCall, ParserError> {
-    build_call_stmt(pair, budget)
+) -> Result<Statement, ParserError> {
+    let source_span = span(&pair);
+    match build_call_stmt(pair, budget)? {
+        BuiltCall::Procedure(call) => Ok(Statement::Call(call)),
+        BuiltCall::Inline(call) => Ok(Statement::Query(QueryPipeline {
+            statements: vec![PipelineStatement::CallSubquery(call)],
+            span: source_span,
+        })),
+    }
 }
 
 pub(super) fn build_pipeline_call(
     pair: Pair<'_, Rule>,
     budget: &mut InternerBudget,
-) -> Result<ProcedureCall, ParserError> {
-    build_call_stmt(pair, budget)
+) -> Result<PipelineStatement, ParserError> {
+    match build_call_stmt(pair, budget)? {
+        BuiltCall::Procedure(call) => Ok(PipelineStatement::Call(call)),
+        BuiltCall::Inline(call) => Ok(PipelineStatement::CallSubquery(call)),
+    }
+}
+
+enum BuiltCall {
+    Procedure(ProcedureCall),
+    Inline(InlineProcedureCall),
 }
 
 fn build_call_stmt(
     pair: Pair<'_, Rule>,
     budget: &mut InternerBudget,
-) -> Result<ProcedureCall, ParserError> {
+) -> Result<BuiltCall, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_stmt);
     let inner = first_child(pair)?;
     match inner.as_rule() {
-        Rule::call_procedure => build_procedure_call(inner, budget),
-        Rule::call_subquery => Err(not_implemented(
-            &inner,
-            "CALL { ... } subquery form lands in a future brief",
-        )),
+        Rule::call_procedure => build_procedure_call(inner, budget).map(BuiltCall::Procedure),
+        Rule::call_subquery => build_inline_call(inner, budget).map(BuiltCall::Inline),
         _ => Err(unexpected_pair(inner, "expected CALL body")),
     }
+}
+
+fn build_inline_call(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<InlineProcedureCall, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::call_subquery);
+    let source_span = span(&pair);
+    let mut variable_scope = None;
+    let mut body = None;
+    let mut yield_items = Vec::new();
+    let mut in_transactions = false;
+
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::variable_scope_clause => {
+                variable_scope = Some(build_variable_scope(child, budget)?);
+            }
+            Rule::query_pipeline => body = Some(build_query_pipeline(child, budget)?),
+            Rule::yield_clause => yield_items = build_yield_items(child, budget)?,
+            Rule::call_transactions_clause => in_transactions = true,
+            _ => return Err(unexpected_pair(child, "unexpected CALL subquery child")),
+        }
+    }
+
+    Ok(InlineProcedureCall {
+        variable_scope,
+        body: Box::new(body.ok_or_else(|| {
+            ParserError::syntax("CALL subquery is missing body", source_span, None)
+        })?),
+        yield_items,
+        in_transactions,
+        span: source_span,
+    })
+}
+
+fn build_variable_scope(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Vec<IStr>, ParserError> {
+    pair.into_inner()
+        .filter(|child| child.as_rule() == Rule::ident)
+        .map(|child| intern_pair(child, budget))
+        .collect()
 }
 
 fn build_procedure_call(
@@ -85,7 +146,7 @@ fn build_procedure_call(
     })
 }
 
-fn build_yield_items(
+pub(super) fn build_yield_items(
     pair: Pair<'_, Rule>,
     budget: &mut InternerBudget,
 ) -> Result<Vec<YieldItem>, ParserError> {

@@ -23,7 +23,7 @@ pub use crate::analyze::{
     TypeMismatchContext, WriteKind, WriteSetEntry, analyze,
 };
 pub use crate::ast::{
-    call::{ProcedureCall, YieldColumn, YieldItem},
+    call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem},
     ddl::{
         DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
     },

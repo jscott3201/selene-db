@@ -1,10 +1,10 @@
 //! Span-erasing AST equality helpers.
 
 use crate::ast::{
-    DdlStatement, EdgePattern, GraphPattern, IsCheckKind, MatchClause, MutationPipeline,
-    MutationStatement, MutationTerminator, NodePattern, PatternElement, ProcedureCall,
-    QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint,
-    TypePropertyDef, ValueExpr, WithClause,
+    DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause,
+    MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
+    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement,
+    TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
 };
 
 use super::SourceSpan;
@@ -80,6 +80,7 @@ fn scrub_query_pipeline(pipeline: &mut QueryPipeline) {
             crate::PipelineStatement::Return(value) => scrub_return(value),
             crate::PipelineStatement::With(value) => scrub_with(value),
             crate::PipelineStatement::Call(value) => scrub_call(value),
+            crate::PipelineStatement::CallSubquery(value) => scrub_inline_call(value),
         }
     }
 }
@@ -286,6 +287,10 @@ fn scrub_value(value: &mut ValueExpr) {
             *span = SourceSpan::default();
             scrub_match(pattern);
         }
+        ValueExpr::ValueSubquery { body, span } => {
+            *span = SourceSpan::default();
+            scrub_query_pipeline(body);
+        }
     }
 }
 
@@ -403,6 +408,14 @@ fn scrub_call(call: &mut ProcedureCall) {
     for arg in &mut call.args {
         scrub_value(arg);
     }
+    for item in &mut call.yield_items {
+        item.span = SourceSpan::default();
+    }
+}
+
+fn scrub_inline_call(call: &mut InlineProcedureCall) {
+    call.span = SourceSpan::default();
+    scrub_query_pipeline(&mut call.body);
     for item in &mut call.yield_items {
         item.span = SourceSpan::default();
     }

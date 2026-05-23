@@ -165,6 +165,13 @@ pub(crate) fn bind_value_expr(
                 })?;
                 AnalyzedType::Resolved(crate::GqlType::Integer)
             }
+            ValueExpr::ValueSubquery { span, .. } => {
+                return Err(AnalysisError::NotImplemented {
+                    message: "VALUE { ... } subqueries land in BRIEF-134 commit 2".into(),
+                    span: *span,
+                    hint: None,
+                });
+            }
         };
         Ok(ctx.allocate_expr(expr, ty))
     })
@@ -249,7 +256,8 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
             | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. } => {}
+            | ValueExpr::CountSubquery { .. }
+            | ValueExpr::ValueSubquery { .. } => {}
         }
     }
     Ok(())

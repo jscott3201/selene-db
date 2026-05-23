@@ -9,6 +9,7 @@ mod mutation;
 mod path_mode;
 mod path_search;
 mod repeat;
+mod sequential_match;
 
 use crate::{
     GqlType, LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause,
@@ -162,10 +163,7 @@ fn lower_query_pipeline(
     while index < tail.len() {
         match &tail[index] {
             PipelineStatement::Match(clause) => {
-                return Err(PlannerError::NotImplemented {
-                    feature: "non-leading MATCH (post-pipeline-boundary pattern)",
-                    span: clause.span,
-                });
+                sequential_match::lower(clause, analyzed, &mut ops, &mut visible)?;
             }
             PipelineStatement::Filter(value) => {
                 ops.push(PipelineOp::Filter(expr::filter_predicate(value, analyzed)?));
@@ -252,6 +250,12 @@ fn lower_query_pipeline(
                 let planned = call::plan_call(call, registry, analyzed)?;
                 visible.extend(planned.yield_schema.clone());
                 ops.push(PipelineOp::Call(planned));
+            }
+            PipelineStatement::CallSubquery(call) => {
+                return Err(PlannerError::NotImplemented {
+                    feature: "CALL { ... } subquery lowering",
+                    span: call.span,
+                });
             }
         }
         index += 1;
@@ -422,13 +426,6 @@ fn empty_plan() -> ExecutionPlan {
         next_expr_id: ExprId::new(0),
         next_pipeline_op_id: crate::PipelineOpId::new(0),
     }
-}
-
-pub(super) fn not_implemented<T>(
-    feature: &'static str,
-    span: crate::SourceSpan,
-) -> Result<T, PlannerError> {
-    Err(PlannerError::NotImplemented { feature, span })
 }
 
 fn tx_plan(op: TxOp) -> ExecutionPlan {

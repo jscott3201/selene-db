@@ -543,6 +543,8 @@ pub enum PipelineOp {
     },
     /// Evaluate a NEXT block after the current plan.
     Chain(Box<ExecutionPlan>),
+    /// Match a graph pattern against each incoming row.
+    Match(PatternPlan),
     /// Planned procedure call.
     Call(PlannedCall),
     /// Mutation operation.

@@ -466,6 +466,7 @@ fn statement_kind(plan: &ExecutionPlan) -> &'static str {
 fn pipeline_statement_kind(op: &PipelineOp) -> Option<&'static str> {
     match op {
         PipelineOp::Union { .. } | PipelineOp::Chain(_) => Some("composite"),
+        PipelineOp::Match(_) => Some("query"),
         PipelineOp::Call(_) => Some("call"),
         PipelineOp::Mutation(_) => Some("mutation"),
         PipelineOp::Catalog(_) => Some("catalog"),

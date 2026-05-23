@@ -2,9 +2,9 @@
 
 use crate::{
     ast::{
-        DdlStatement, EdgePattern, GraphPattern, IsCheckKind, MatchClause, MutationPipeline,
-        MutationStatement, MutationTerminator, NodePattern, PatternElement, ProcedureCall,
-        QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
+        DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause,
+        MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
+        ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, SourceSpan, Statement,
         TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
     },
     error::ParserError,
@@ -202,6 +202,7 @@ fn rebase_query_pipeline(pipeline: &mut QueryPipeline, offset: usize) {
             crate::PipelineStatement::Return(value) => rebase_return(value, offset),
             crate::PipelineStatement::With(value) => rebase_with(value, offset),
             crate::PipelineStatement::Call(value) => rebase_call(value, offset),
+            crate::PipelineStatement::CallSubquery(value) => rebase_inline_call(value, offset),
         }
     }
 }
@@ -416,6 +417,10 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
             rebase_span(span, offset);
             rebase_match(pattern, offset);
         }
+        ValueExpr::ValueSubquery { body, span } => {
+            rebase_span(span, offset);
+            rebase_query_pipeline(body, offset);
+        }
     }
 }
 
@@ -535,6 +540,14 @@ fn rebase_call(call: &mut ProcedureCall, offset: usize) {
     for arg in &mut call.args {
         rebase_value(arg, offset);
     }
+    for item in &mut call.yield_items {
+        rebase_span(&mut item.span, offset);
+    }
+}
+
+fn rebase_inline_call(call: &mut InlineProcedureCall, offset: usize) {
+    rebase_span(&mut call.span, offset);
+    rebase_query_pipeline(&mut call.body, offset);
     for item in &mut call.yield_items {
         rebase_span(&mut item.span, offset);
     }

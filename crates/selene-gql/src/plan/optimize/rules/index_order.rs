@@ -54,6 +54,7 @@ fn rewrite_pipeline_op(
         | PipelineOp::Limit { .. }
         | PipelineOp::GroupBy { .. }
         | PipelineOp::Distinct
+        | PipelineOp::Match(_)
         | PipelineOp::Union { .. }
         | PipelineOp::Chain(_)
         | PipelineOp::Call(_)

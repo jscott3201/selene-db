@@ -110,6 +110,9 @@ pub fn evaluate(
         ValueExpr::CountSubquery { span, .. } => {
             eval_count_subquery(expr, *span, binding, schema, ctx)
         }
+        ValueExpr::ValueSubquery { .. } => Err(ExecutorError::ImplementationDefined {
+            detail: "VALUE subquery reached evaluator before BRIEF-134 commit 2 lowering",
+        }),
         ValueExpr::Like {
             operand,
             pattern,
