@@ -50,6 +50,10 @@ pub(crate) fn execute(
         steps_since_check: 0,
     };
     for row in child_rows {
+        state
+            .ctx
+            .tx
+            .check_cancellation_stride(&mut state.steps_since_check, 1)?;
         let Some(source) = source_node(edge, env.pattern, env.schema, &row)? else {
             continue;
         };
@@ -90,7 +94,7 @@ fn traverse(
             .ctx
             .tx
             .check_cancellation_stride(&mut state.steps_since_check, 1)?;
-        if !edge_step_matches(adjacent.edge_id, row, state)? {
+        if !edge_step_matches(adjacent.edge_id, row, path_edges, state)? {
             continue;
         }
         path_edges.push(adjacent.edge_id);
@@ -161,6 +165,7 @@ fn maybe_emit_path(
 fn edge_step_matches(
     edge_id: EdgeId,
     row: &Binding,
+    path_edges: &[EdgeId],
     state: &RepeatState<'_, '_, '_, '_, '_>,
 ) -> Result<bool, ExecutorError> {
     if !edge_label_matches(state.edge, edge_id, state.ctx) {
@@ -173,18 +178,53 @@ fn edge_step_matches(
         state,
     )
     .and_then(|passes| {
-        if passes {
-            pattern::filter_predicates_pass(
-                &state.edge.inline_predicates,
-                state.pattern_plan,
-                row,
-                state.schema,
-                state.ctx,
-            )
-        } else {
-            Ok(false)
+        if !passes || state.edge.inline_predicates.is_empty() {
+            return Ok(passes);
         }
+        let candidate;
+        let predicate_row = if state.edge.group_binding.is_some() {
+            candidate = current_step_row(row, path_edges, edge_id, state)?;
+            let Some(candidate) = candidate.as_ref() else {
+                return Ok(false);
+            };
+            candidate
+        } else {
+            row
+        };
+        pattern::filter_predicates_pass(
+            &state.edge.inline_predicates,
+            state.pattern_plan,
+            predicate_row,
+            state.schema,
+            state.ctx,
+        )
     })
+}
+
+fn current_step_row(
+    row: &Binding,
+    path_edges: &[EdgeId],
+    edge_id: EdgeId,
+    state: &RepeatState<'_, '_, '_, '_, '_>,
+) -> Result<Option<Binding>, ExecutorError> {
+    let mut values = row.values().to_vec();
+    values.resize(state.schema.columns.len(), Value::Null);
+    let edge_list = path_edges
+        .iter()
+        .copied()
+        .chain(std::iter::once(edge_id))
+        .map(Value::EdgeRef)
+        .collect();
+    if !pattern::set_binding_value(
+        &mut values,
+        state.pattern_plan,
+        state.schema,
+        state.edge.group_binding,
+        Value::List(edge_list),
+    )? {
+        return Ok(None);
+    }
+    Ok(Some(Binding::new(values)))
 }
 
 fn predicates_pass(

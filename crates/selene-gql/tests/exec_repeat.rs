@@ -113,6 +113,23 @@ fn repeat_evaluates_inline_predicates_per_hop() {
 }
 
 #[test]
+fn repeat_inline_predicates_see_current_group_binding() {
+    let fixture = ExecFixture::build();
+    let plan = planned("MATCH (a:Person)-[r:KNOWS*1..2 WHERE r IS NOT NULL]->(b) RETURN a, r, b");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let ctx = fixture.context_caps(&plan);
+
+    let table = execute_pattern(pattern, &ctx);
+
+    assert_eq!(node_ids_for(&table, "a"), vec![Some(1), Some(1), Some(2)]);
+    assert_eq!(node_ids_for(&table, "b"), vec![Some(2), Some(4), Some(4)]);
+    assert_eq!(
+        edge_lists_for(&table, "r"),
+        vec![Some(vec![1]), Some(vec![1, 2]), Some(vec![2])]
+    );
+}
+
+#[test]
 fn repeat_composes_under_optional_outer_join() {
     let fixture = ExecFixture::build();
     let plan =
@@ -144,6 +161,41 @@ fn repeat_checks_cancellation_during_traversal() {
             mutator
                 .create_edge(edge_label, root, target, props([]))
                 .expect("edge inserts");
+        }
+        txn.commit().expect("fixture commits");
+    }
+
+    let plan = planned("MATCH (a:Root)-[:K*1..1]->(b) RETURN b");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let caps = ImplDefinedCaps::default();
+    let token = CancellationToken::new();
+    token.cancel();
+    let ctx = TxContext::read_only(
+        graph.read(),
+        &caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    )
+    .with_plan_metadata(&plan.expr_ids, &plan.subqueries)
+    .with_resource_limits(Some(&token), None, None);
+
+    let err = selene_gql::execute_pattern(pattern, &ctx).expect_err("repeat observes token");
+
+    assert!(matches!(err, ExecutorError::Cancelled { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL2");
+}
+
+#[test]
+fn repeat_checks_cancellation_between_source_rows_without_adjacent_edges() {
+    let root_label = istr("Root");
+    let graph = SharedGraph::new(GraphId::new(6202));
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for _ in 0..1100 {
+            mutator
+                .create_node(LabelSet::single(root_label), props([]))
+                .expect("root inserts");
         }
         txn.commit().expect("fixture commits");
     }
