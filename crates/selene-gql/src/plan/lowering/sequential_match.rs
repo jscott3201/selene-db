@@ -1,5 +1,7 @@
 //! Non-leading MATCH lowering helpers.
 
+use std::collections::BTreeSet;
+
 use crate::{
     MatchClause,
     analyze::AnalyzedStatement,
@@ -14,17 +16,22 @@ pub(super) fn lower(
     ops: &mut Vec<PipelineOp>,
     visible: &mut Vec<BindingTableColumn>,
 ) -> Result<(), PlannerError> {
-    let pattern = match_clause::lower_match_prefix(&[clause], analyzed)?.ok_or(
-        PlannerError::NotImplemented {
-            feature: "empty graph pattern",
-            span: clause.span,
-        },
-    )?;
+    let left_names = visible
+        .iter()
+        .filter_map(|column| column.name)
+        .collect::<BTreeSet<_>>();
+    let (pattern, global_filters) =
+        match_clause::lower_pipeline_match(clause, analyzed, &left_names)?;
     for column in visible_after_pattern(Some(&pattern)) {
         if !visible.iter().any(|existing| existing.name == column.name) {
             visible.push(column);
         }
     }
-    ops.push(PipelineOp::Match(pattern));
+    if clause.optional {
+        ops.push(PipelineOp::OptionalMatch(pattern));
+    } else {
+        ops.push(PipelineOp::Match(pattern));
+    }
+    ops.extend(global_filters.into_iter().map(PipelineOp::Filter));
     Ok(())
 }

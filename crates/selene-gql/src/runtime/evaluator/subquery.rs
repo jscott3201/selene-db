@@ -9,7 +9,7 @@
 use selene_core::Value;
 
 use crate::{
-    BindingTableColumn, ExecutionPlan, SourceSpan, ValueExpr,
+    BindingTableColumn, ExecutionPlan, PatternPlan, PipelineOp, SourceSpan, ValueExpr,
     plan::{OuterBindingRef, PlannedSubquery, SubqueryBody},
     runtime::{
         Binding, BindingTable, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
@@ -102,9 +102,10 @@ fn execute_pattern_subquery(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let target_schema = target_schema_for_pattern(planned, plan, schema)?;
-    let Some(seed) = seed_binding(planned, binding, schema, &target_schema)? else {
+    if null_outer_binding_is_pattern_binding(planned, binding, schema, plan)? {
         return Ok(BindingTable::new(target_schema, Vec::new()));
-    };
+    }
+    let seed = seed_binding(planned, binding, schema, &target_schema)?;
     pattern::execute_pattern_with_seed_and_schema(plan, Some(&seed), target_schema, ctx)
 }
 
@@ -116,9 +117,10 @@ fn execute_plan_subquery(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     let target_schema = target_schema_for_plan(planned, plan, schema)?;
-    let Some(seed) = seed_binding(planned, binding, schema, &target_schema)? else {
+    if null_outer_binding_is_plan_pattern_binding(planned, binding, schema, plan)? {
         return Ok(BindingTable::new(target_schema, Vec::new()));
-    };
+    }
+    let seed = seed_binding(planned, binding, schema, &target_schema)?;
     plan_runner::execute_plan_read_only_with_seed(
         plan,
         Some(BindingTable::new(target_schema, vec![seed])),
@@ -131,14 +133,11 @@ fn seed_binding(
     row: &Binding,
     source_schema: &BindingTableSchema,
     target_schema: &BindingTableSchema,
-) -> Result<Option<Binding>, ExecutorError> {
+) -> Result<Binding, ExecutorError> {
     let mut values = vec![Value::Null; target_schema.columns.len()];
     for outer in &planned.outer_binding_refs {
         let source_index = source_index(source_schema, outer)?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
-        if matches!(value, Value::Null) {
-            return Ok(None);
-        }
         let target_index = pattern::column_index(target_schema, outer.name).ok_or(
             ExecutorError::ImplementationDefined {
                 detail: "subquery outer binding missing from target row",
@@ -146,7 +145,67 @@ fn seed_binding(
         )?;
         values[target_index] = value;
     }
-    Ok(Some(Binding::new(values)))
+    Ok(Binding::new(values))
+}
+
+fn null_outer_binding_is_pattern_binding(
+    planned: &PlannedSubquery,
+    row: &Binding,
+    source_schema: &BindingTableSchema,
+    pattern: &PatternPlan,
+) -> Result<bool, ExecutorError> {
+    for outer in &planned.outer_binding_refs {
+        if !pattern_binds_name(pattern, outer.name) {
+            continue;
+        }
+        let source_index = source_index(source_schema, outer)?;
+        if matches!(row.get(source_index), Some(Value::Null) | None) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn null_outer_binding_is_plan_pattern_binding(
+    planned: &PlannedSubquery,
+    row: &Binding,
+    source_schema: &BindingTableSchema,
+    plan: &ExecutionPlan,
+) -> Result<bool, ExecutorError> {
+    for outer in &planned.outer_binding_refs {
+        if !plan_binds_name(plan, outer.name) {
+            continue;
+        }
+        let source_index = source_index(source_schema, outer)?;
+        if matches!(row.get(source_index), Some(Value::Null) | None) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::IStr) -> bool {
+    plan.pattern_plan
+        .as_ref()
+        .is_some_and(|pattern| pattern_binds_name(pattern, name))
+        || plan.pipeline.iter().any(|op| op_binds_name(op, name))
+}
+
+fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
+    match op {
+        PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {
+            pattern_binds_name(pattern, name)
+        }
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::ExplainPlan { inner: rhs, .. } => plan_binds_name(rhs, name),
+        PipelineOp::CallSubquery(subquery) => plan_binds_name(&subquery.body, name),
+        _ => false,
+    }
+}
+
+fn pattern_binds_name(pattern: &PatternPlan, name: selene_core::IStr) -> bool {
+    pattern.bindings.iter().any(|binding| binding.name == name)
 }
 
 fn target_schema_for_pattern(

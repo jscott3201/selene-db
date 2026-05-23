@@ -1,7 +1,8 @@
 //! Value-expression bind and type-inference handling.
 
 use crate::{
-    IsCheckKind, LimitValue, PipelineStatement, QueryPipeline, ReturnClause, ValueExpr,
+    IsCheckKind, LimitValue, MatchClause, PipelineStatement, QueryPipeline, ReturnClause,
+    ValueExpr,
     analyze::{
         error::{AnalysisError, ConditionClause},
         infer,
@@ -285,31 +286,7 @@ pub(crate) fn check_query_subquery_depth(
     for statement in &pipeline.statements {
         match statement {
             PipelineStatement::Match(clause) => {
-                for pattern in &clause.patterns {
-                    for element in &pattern.elements {
-                        match element {
-                            crate::PatternElement::Node(node) => {
-                                for (_, value) in &node.properties {
-                                    check_expr_subquery_depth(value, depth)?;
-                                }
-                                if let Some(value) = &node.inline_where {
-                                    check_expr_subquery_depth(value, depth)?;
-                                }
-                            }
-                            crate::PatternElement::Edge(edge) => {
-                                for (_, value) in &edge.properties {
-                                    check_expr_subquery_depth(value, depth)?;
-                                }
-                                if let Some(value) = &edge.inline_where {
-                                    check_expr_subquery_depth(value, depth)?;
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Some(value) = &clause.where_clause {
-                    check_expr_subquery_depth(value, depth)?;
-                }
+                check_match_clause_subquery_depth(clause, depth)?;
             }
             PipelineStatement::Filter(value) => check_expr_subquery_depth(value, depth)?,
             PipelineStatement::Let(bindings) => {
@@ -350,6 +327,38 @@ pub(crate) fn check_query_subquery_depth(
             }
             PipelineStatement::Limit(_) | PipelineStatement::Offset(_) => {}
         }
+    }
+    Ok(())
+}
+
+fn check_match_clause_subquery_depth(
+    clause: &MatchClause,
+    depth: u32,
+) -> Result<(), AnalysisError> {
+    for pattern in &clause.patterns {
+        for element in &pattern.elements {
+            match element {
+                crate::PatternElement::Node(node) => {
+                    for (_, value) in &node.properties {
+                        check_expr_subquery_depth(value, depth)?;
+                    }
+                    if let Some(value) = &node.inline_where {
+                        check_expr_subquery_depth(value, depth)?;
+                    }
+                }
+                crate::PatternElement::Edge(edge) => {
+                    for (_, value) in &edge.properties {
+                        check_expr_subquery_depth(value, depth)?;
+                    }
+                    if let Some(value) = &edge.inline_where {
+                        check_expr_subquery_depth(value, depth)?;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(value) = &clause.where_clause {
+        check_expr_subquery_depth(value, depth)?;
     }
     Ok(())
 }
@@ -443,11 +452,10 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
             ValueExpr::ValueSubquery { body, .. } => {
                 check_query_subquery_depth(body, depth.saturating_add(1))?;
             }
-            ValueExpr::Literal(_)
-            | ValueExpr::Variable { .. }
-            | ValueExpr::Parameter { .. }
-            | ValueExpr::Exists { .. }
-            | ValueExpr::CountSubquery { .. } => {}
+            ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
+                check_match_clause_subquery_depth(pattern, depth.saturating_add(1))?;
+            }
+            ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
         }
     }
     Ok(())
@@ -457,17 +465,18 @@ fn validate_value_subquery_shape(
     body: &QueryPipeline,
     span: crate::SourceSpan,
 ) -> Result<(), AnalysisError> {
-    let Some(return_clause) = body.statements.iter().find_map(|statement| {
-        if let PipelineStatement::Return(clause) = statement {
-            Some(clause)
-        } else {
-            None
-        }
-    }) else {
+    let Some(return_index) = body
+        .statements
+        .iter()
+        .rposition(|statement| matches!(statement, PipelineStatement::Return(_)))
+    else {
         return Err(value_shape_error(
             "VALUE subquery requires a RETURN clause (ISO §20.6; iso_gql_clause20.txt:1143)",
             span,
         ));
+    };
+    let PipelineStatement::Return(return_clause) = &body.statements[return_index] else {
+        unreachable!("rposition selected a RETURN");
     };
     if return_clause.star || return_clause.items.len() != 1 {
         return Err(value_shape_error(
@@ -475,7 +484,9 @@ fn validate_value_subquery_shape(
             return_clause.span,
         ));
     }
-    if has_literal_limit_one(body) || direct_aggregate_without_group_by(return_clause) {
+    if has_effective_final_limit_one(body, return_index)
+        || direct_aggregate_without_group_by(return_clause)
+    {
         return Ok(());
     }
     Err(value_shape_error(
@@ -494,10 +505,16 @@ fn direct_aggregate_without_group_by(clause: &ReturnClause) -> bool {
         })
 }
 
-fn has_literal_limit_one(body: &QueryPipeline) -> bool {
+fn has_effective_final_limit_one(body: &QueryPipeline, return_index: usize) -> bool {
     body.statements
         .iter()
-        .any(|statement| matches!(statement, PipelineStatement::Limit(LimitValue::Count(1, _))))
+        .skip(return_index.saturating_add(1))
+        .try_fold(false, |seen_limit_one, statement| match statement {
+            PipelineStatement::Limit(limit) => Some(matches!(limit, LimitValue::Count(1, _))),
+            PipelineStatement::Offset(_) | PipelineStatement::Sorting(_) => Some(seen_limit_one),
+            _ => None,
+        })
+        .unwrap_or(false)
 }
 
 fn is_aggregate_name(name: &selene_core::IStr) -> bool {

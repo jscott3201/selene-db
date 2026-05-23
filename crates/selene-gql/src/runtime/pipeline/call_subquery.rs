@@ -3,7 +3,8 @@
 use selene_core::Value;
 
 use crate::{
-    BindingTableColumn, BindingTableSchema, PlannedTableSubquery,
+    BindingTableColumn, BindingTableSchema, ExecutionPlan, PatternPlan, PipelineOp,
+    PlannedTableSubquery,
     runtime::{Binding, BindingTable, ExecutorError, TxContext, pattern, plan_runner},
 };
 
@@ -28,9 +29,10 @@ pub(super) fn execute_read_only(
     for row in input_rows {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let target_schema = target_schema(call, &input_schema)?;
-        let Some(seed) = seed_binding(call, &row, &input_schema, &target_schema)? else {
+        if null_outer_binding_is_plan_pattern_binding(call, &row, &input_schema)? {
             continue;
-        };
+        }
+        let seed = seed_binding(call, &row, &input_schema, &target_schema)?;
         let inner = plan_runner::execute_plan_read_only_with_seed(
             &call.body,
             Some(BindingTable::new(target_schema, vec![seed])),
@@ -94,14 +96,11 @@ fn seed_binding(
     row: &Binding,
     source_schema: &BindingTableSchema,
     target_schema: &BindingTableSchema,
-) -> Result<Option<Binding>, ExecutorError> {
+) -> Result<Binding, ExecutorError> {
     let mut values = vec![Value::Null; target_schema.columns.len()];
     for outer in &call.outer_binding_refs {
         let source_index = source_index(source_schema, outer.name)?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
-        if matches!(value, Value::Null) {
-            return Ok(None);
-        }
         let target_index = pattern::column_index(target_schema, outer.name).ok_or(
             ExecutorError::ImplementationDefined {
                 detail: "CALL subquery outer binding missing from target row",
@@ -109,7 +108,48 @@ fn seed_binding(
         )?;
         values[target_index] = value;
     }
-    Ok(Some(Binding::new(values)))
+    Ok(Binding::new(values))
+}
+
+fn null_outer_binding_is_plan_pattern_binding(
+    call: &PlannedTableSubquery,
+    row: &Binding,
+    source_schema: &BindingTableSchema,
+) -> Result<bool, ExecutorError> {
+    for outer in &call.outer_binding_refs {
+        if !plan_binds_name(&call.body, outer.name) {
+            continue;
+        }
+        let source_index = source_index(source_schema, outer.name)?;
+        if matches!(row.get(source_index), Some(Value::Null) | None) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::IStr) -> bool {
+    plan.pattern_plan
+        .as_ref()
+        .is_some_and(|pattern| pattern_binds_name(pattern, name))
+        || plan.pipeline.iter().any(|op| op_binds_name(op, name))
+}
+
+fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
+    match op {
+        PipelineOp::Match(pattern) | PipelineOp::OptionalMatch(pattern) => {
+            pattern_binds_name(pattern, name)
+        }
+        PipelineOp::Union { rhs, .. }
+        | PipelineOp::Chain(rhs)
+        | PipelineOp::ExplainPlan { inner: rhs, .. } => plan_binds_name(rhs, name),
+        PipelineOp::CallSubquery(subquery) => plan_binds_name(&subquery.body, name),
+        _ => false,
+    }
+}
+
+fn pattern_binds_name(pattern: &PatternPlan, name: selene_core::IStr) -> bool {
+    pattern.bindings.iter().any(|binding| binding.name == name)
 }
 
 fn yield_indices(

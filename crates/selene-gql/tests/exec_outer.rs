@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, execute_pattern, node_ids_for, planned};
+use exec_common::{ExecFixture, execute_pattern, execute_read, node_ids_for, planned};
 use selene_core::Value;
 
 #[test]
@@ -83,4 +83,33 @@ fn outer_handles_left_with_zero_rows() {
     let table = execute_pattern(pattern, &ctx);
 
     assert!(table.is_empty());
+}
+
+#[test]
+fn non_leading_optional_match_null_extends_input_rows() {
+    let table = execute_read(
+        "MATCH (a:Person)
+         WITH a AS x
+         OPTIONAL MATCH (b:Sensor)
+         WHERE b = x
+         RETURN x, b
+         ORDER BY x.name",
+    );
+
+    assert_eq!(node_ids_for(&table, "x"), vec![Some(1), Some(2), Some(3)]);
+    assert_eq!(node_ids_for(&table, "b"), vec![None, None, None]);
+}
+
+#[test]
+fn non_leading_optional_match_global_filter_runs_after_null_extension() {
+    let table = execute_read(
+        "MATCH (a:Person)
+         WITH a AS x
+         OPTIONAL MATCH (b:Nope)
+         WHERE x.name = 'Alice'
+         RETURN x, b",
+    );
+
+    assert_eq!(node_ids_for(&table, "x"), vec![Some(1)]);
+    assert_eq!(node_ids_for(&table, "b"), vec![None]);
 }

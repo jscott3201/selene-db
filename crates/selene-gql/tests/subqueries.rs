@@ -156,6 +156,22 @@ fn null_correlated_seed_returns_empty_subquery_result() {
 }
 
 #[test]
+fn value_subquery_preserves_null_outer_binding() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL MATCH (a)-[:KNOWS]->(m:Sensor)
+         RETURN a.name AS name, VALUE { RETURN m IS NULL LIMIT 1 } AS missing_sensor
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(bool_values(&table, "missing_sensor"), [true, false, true]);
+}
+
+#[test]
 fn public_pipeline_execution_uses_attached_plan_subquery_metadata() {
     let fixture = ExecFixture::build();
     let plan = planned(
@@ -262,8 +278,24 @@ fn value_subquery_rejects_multi_item_return_as_syntax_error() {
 }
 
 #[test]
+fn value_subquery_shape_uses_final_return_clause() {
+    assert_status(
+        "RETURN VALUE { RETURN 1 AS a LIMIT 1 RETURN 1 AS a, 2 AS b LIMIT 1 } AS v",
+        "42001",
+    );
+}
+
+#[test]
 fn value_subquery_rejects_non_aggregate_without_limit_one() {
     assert_status("RETURN VALUE { RETURN 1 } AS v", "42001");
+}
+
+#[test]
+fn value_subquery_limit_one_must_bound_final_result() {
+    assert_status(
+        "RETURN VALUE { RETURN 1 LIMIT 1 UNWIND [1, 2] AS n RETURN n } AS v",
+        "42001",
+    );
 }
 
 #[test]
@@ -282,6 +314,21 @@ fn value_subquery_depth_guard_limits_nested_subqueries() {
         source.push_str(" LIMIT 1 }");
     }
     source.push_str(" AS v");
+
+    assert_status(&source, "5GQL1");
+}
+
+#[test]
+fn exists_subquery_depth_guard_visits_match_body_expressions() {
+    let mut source = String::from("RETURN EXISTS { MATCH (n) WHERE ");
+    for _ in 0..260 {
+        source.push_str("VALUE { RETURN ");
+    }
+    source.push('1');
+    for _ in 0..260 {
+        source.push_str(" LIMIT 1 }");
+    }
+    source.push_str(" = 1 } AS e");
 
     assert_status(&source, "5GQL1");
 }

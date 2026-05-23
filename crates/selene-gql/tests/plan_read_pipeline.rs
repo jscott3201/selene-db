@@ -36,6 +36,7 @@ fn variant_names(plan: &selene_gql::ExecutionPlan) -> Vec<&'static str> {
             PipelineOp::Distinct => "Distinct",
             PipelineOp::Union { .. } => "Union",
             PipelineOp::Chain(_) => "Chain",
+            PipelineOp::OptionalMatch(_) => "OptionalMatch",
             PipelineOp::Call(_) => "Call",
             PipelineOp::Mutation(_) => "Mutation",
             PipelineOp::Catalog(_) => "Catalog",
@@ -245,6 +246,16 @@ fn non_leading_match_lowers_to_pipeline_match() {
         plan.pipeline
             .iter()
             .any(|op| matches!(op, PipelineOp::Match(_)))
+    );
+}
+
+#[test]
+fn non_leading_optional_match_lowers_to_pipeline_optional_match() {
+    let plan = plan_one("MATCH (a) WITH a AS x OPTIONAL MATCH (b) RETURN x, b");
+    assert!(
+        plan.pipeline
+            .iter()
+            .any(|op| matches!(op, PipelineOp::OptionalMatch(_)))
     );
 }
 

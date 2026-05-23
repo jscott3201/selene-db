@@ -108,6 +108,11 @@ impl SubqueryRegistry {
         self.by_expr_id.get(&expr_id)
     }
 
+    /// Iterate planned subqueries in expression-id order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &PlannedSubquery> {
+        self.by_expr_id.values()
+    }
+
     /// Return true when no subqueries were planned.
     #[must_use]
     pub fn is_empty(&self) -> bool {

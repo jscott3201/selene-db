@@ -4,7 +4,7 @@ use std::{borrow::Borrow, num::NonZeroUsize, sync::Arc};
 
 use lru::LruCache;
 
-use crate::{ExecutionPlan, PipelineOp};
+use crate::{ExecutionPlan, PipelineOp, SubqueryBody};
 
 /// LRU-cached execution plans keyed by source text.
 pub struct PlanCache {
@@ -112,6 +112,10 @@ fn is_cacheable(plan: &ExecutionPlan) -> bool {
 
 fn contains_call(plan: &ExecutionPlan) -> bool {
     plan.pipeline.iter().any(op_contains_call)
+        || plan.subqueries.iter().any(|subquery| match &subquery.body {
+            SubqueryBody::Pattern(_) => false,
+            SubqueryBody::Plan(plan) => contains_call(plan),
+        })
 }
 
 fn op_contains_call(op: &PipelineOp) -> bool {
@@ -121,7 +125,7 @@ fn op_contains_call(op: &PipelineOp) -> bool {
         PipelineOp::Union { rhs, .. }
         | PipelineOp::Chain(rhs)
         | PipelineOp::ExplainPlan { inner: rhs, .. } => contains_call(rhs),
-        PipelineOp::Match(_) => false,
+        PipelineOp::Match(_) | PipelineOp::OptionalMatch(_) => false,
         _ => false,
     }
 }
@@ -170,8 +174,9 @@ mod tests {
     use super::*;
     use crate::{
         BindingTableSchema, EmptyProcedureRegistry, ExprId, ImplDefinedCaps, PipelineOpId,
-        PlannedCall, ProcedureHandle, ProcedureMutability, ProcedureOutputSchema, ProcedureTier,
-        SourceSpan, StatementCategory, analyze::analyze, parser::parse, plan::plan,
+        PlannedCall, PlannedSubquery, ProcedureHandle, ProcedureMutability, ProcedureOutputSchema,
+        ProcedureTier, SourceSpan, StatementCategory, SubqueryBody, SubqueryKind, analyze::analyze,
+        parser::parse, plan::plan,
     };
 
     fn planned(source: &str) -> Arc<ExecutionPlan> {
@@ -229,6 +234,32 @@ mod tests {
             next_expr_id: ExprId::new(0),
             next_pipeline_op_id: PipelineOpId::new(1),
         })
+    }
+
+    fn expression_subquery_call_plan() -> Arc<ExecutionPlan> {
+        let mut plan = ExecutionPlan {
+            category: StatementCategory::ReadOnly,
+            pattern_plan: None,
+            pipeline: Vec::new(),
+            output_schema: BindingTableSchema {
+                columns: Vec::new(),
+            },
+            impl_defined_caps: ImplDefinedCaps::default(),
+            expr_ids: Default::default(),
+            subqueries: Default::default(),
+            next_expr_id: ExprId::new(0),
+            next_pipeline_op_id: PipelineOpId::new(0),
+        };
+        plan.subqueries.insert(
+            ExprId::new(7),
+            PlannedSubquery {
+                kind: SubqueryKind::Value,
+                body: SubqueryBody::Plan(Box::new(call_plan().as_ref().clone())),
+                outer_binding_refs: Vec::new(),
+                span: SourceSpan::default(),
+            },
+        );
+        Arc::new(plan)
     }
 
     #[test]
@@ -313,6 +344,26 @@ mod tests {
         );
 
         assert!(cache.get("EXPLAIN CALL cache.call()", 0).is_none());
+        assert_eq!(cache.stats().misses, 1);
+    }
+
+    #[test]
+    fn cache_skips_expression_subqueries_that_contain_calls() {
+        let mut cache = PlanCache::new(NonZeroUsize::new(2).unwrap());
+        cache.insert(
+            Arc::from("RETURN VALUE { CALL cache.call() RETURN 1 LIMIT 1 } AS v"),
+            expression_subquery_call_plan(),
+            0,
+        );
+
+        assert!(
+            cache
+                .get(
+                    "RETURN VALUE { CALL cache.call() RETURN 1 LIMIT 1 } AS v",
+                    0
+                )
+                .is_none()
+        );
         assert_eq!(cache.stats().misses, 1);
     }
 }

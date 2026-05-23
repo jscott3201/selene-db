@@ -46,6 +46,48 @@ pub(super) fn execute(
     Ok(BindingTable::new(target_schema, output))
 }
 
+pub(super) fn execute_optional(
+    pattern_plan: &PatternPlan,
+    table: BindingTable,
+    ctx: &TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
+) -> Result<BindingTable, ExecutorError> {
+    let (input_schema, input_rows) = table.into_parts();
+    let target_schema = target_schema(&input_schema, pattern_plan);
+    let eval_ctx = EvalCtx {
+        tx: ctx,
+        expr_ids,
+        subqueries,
+    };
+    let mut output = Vec::new();
+    let mut rows_since_check = 0;
+
+    for row in input_rows {
+        ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
+        let seed = seed_row(&row, &input_schema, &target_schema);
+        let matched = pattern::execute_pattern_with_seed_and_schema(
+            pattern_plan,
+            Some(&seed),
+            target_schema.clone(),
+            &eval_ctx,
+        )?;
+        if matched.is_empty() {
+            output.push(seed);
+            continue;
+        }
+        for matched_row in matched.rows() {
+            let values = matched_row.values().to_vec();
+            output.push(Binding::with_insert_sites(
+                values,
+                row.insert_sites().iter().copied().collect(),
+            ));
+        }
+    }
+
+    Ok(BindingTable::new(target_schema, output))
+}
+
 fn target_schema(input: &BindingTableSchema, pattern_plan: &PatternPlan) -> BindingTableSchema {
     let mut schema = input.clone();
     for column in pattern::schema_for_pattern(pattern_plan).columns {

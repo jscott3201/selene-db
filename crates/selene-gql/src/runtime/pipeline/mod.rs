@@ -126,6 +126,9 @@ pub(crate) fn execute_pipeline_with_plan(
             PipelineOp::Match(pattern) => {
                 match_op::execute(pattern, table, ctx, expr_ids, subqueries)?
             }
+            PipelineOp::OptionalMatch(pattern) => {
+                match_op::execute_optional(pattern, table, ctx, expr_ids, subqueries)?
+            }
             PipelineOp::Mutation(mutation) => {
                 mutation::execute(mutation, table, ctx, expr_ids, subqueries)?
             }
@@ -223,6 +226,9 @@ pub(crate) fn execute_pipeline_read_only_with_plan(
             PipelineOp::Chain(rhs) => plan_runner::execute_plan_read_only(rhs, ctx)?,
             PipelineOp::Match(pattern) => {
                 match_op::execute(pattern, table, ctx, expr_ids, subqueries)?
+            }
+            PipelineOp::OptionalMatch(pattern) => {
+                match_op::execute_optional(pattern, table, ctx, expr_ids, subqueries)?
             }
             PipelineOp::ExplainPlan { inner, .. } => explain::execute(inner)?,
             PipelineOp::Call(call) => {

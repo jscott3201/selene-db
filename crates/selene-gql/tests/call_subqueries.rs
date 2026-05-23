@@ -99,6 +99,26 @@ fn call_subquery_correlates_with_outer_binding() {
 }
 
 #[test]
+fn call_subquery_preserves_null_outer_binding() {
+    let table = execute(
+        "MATCH (a:Person)
+         OPTIONAL MATCH (a)-[:KNOWS]->(m:Sensor)
+         CALL { RETURN m IS NULL AS missing_sensor LIMIT 1 } YIELD missing_sensor
+         RETURN a.name AS name, missing_sensor
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(
+        value_values(&table, "missing_sensor"),
+        vec![Value::Bool(true), Value::Bool(false), Value::Bool(true)]
+    );
+}
+
+#[test]
 fn call_subquery_without_yield_drops_outer_rows_when_inner_is_empty() {
     let table = execute(
         "MATCH (a:Person)
