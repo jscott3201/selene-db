@@ -251,29 +251,20 @@ fn non_leading_match_is_not_implemented() {
 }
 
 #[test]
-fn deferred_pattern_features_have_stable_tags() {
-    let cases = [
-        (
-            "MATCH (a)-[:K*]->(b) RETURN a",
-            "unbounded variable-length edge patterns",
-        ),
-        (
-            "MATCH (a)-[:K?]->(b) RETURN a",
-            "questioned edge quantifier (?)",
-        ),
-        (
-            "MATCH DIFFERENT EDGES (n) RETURN n",
-            "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
-        ),
-    ];
+fn lifted_quantifiers_lower_to_questioned_and_unbounded_repeat() {
+    let questioned = plan_one("MATCH (a)-[:K?]->(b) RETURN b");
+    let questioned_pattern = questioned.pattern_plan.as_ref().expect("pattern plan");
+    assert!(matches!(
+        questioned_pattern.join_tree,
+        JoinTree::Questioned { .. }
+    ));
 
-    for (source, expected) in cases {
-        let err = plan_err(source);
-        assert!(
-            matches!(err, PlannerError::NotImplemented { feature, .. } if feature == expected),
-            "{source} should report {expected}, got {err:?}"
-        );
-    }
+    let unbounded = plan_one("MATCH TRAIL (a)-[:K+]->(b) RETURN b");
+    let unbounded_pattern = unbounded.pattern_plan.as_ref().expect("pattern plan");
+    let JoinTree::PathModeFilter { child, .. } = &unbounded_pattern.join_tree else {
+        panic!("expected path-mode wrapper");
+    };
+    assert!(matches!(child.as_ref(), JoinTree::Repeat { max: None, .. }));
 }
 
 #[test]
@@ -285,8 +276,8 @@ fn restrictive_path_mode_single_node_lowers_to_filter() {
 }
 
 #[test]
-fn planner_not_implemented_errors_emit_42n01() {
-    let err = plan_err("MATCH DIFFERENT EDGES (n) RETURN n");
+fn unsupported_match_modes_emit_42n01() {
+    let err = parse("MATCH DIFFERENT EDGES (n) RETURN n").expect_err("unsupported match mode");
     assert_eq!(err.gqlstatus().as_str(), "42N01");
 }
 

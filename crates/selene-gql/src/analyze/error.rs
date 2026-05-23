@@ -3,7 +3,7 @@
 use selene_core::{IStr, LabelSet, PropertyValueType};
 
 use crate::{
-    BinaryOp, GqlStatus, GqlType, ProcedureMutability, SourceSpan,
+    BinaryOp, GqlStatus, GqlType, PathMode, PathSelector, ProcedureMutability, SourceSpan,
     analyze::binding::BindingDeclKind,
 };
 
@@ -90,6 +90,21 @@ pub enum AnalysisError {
         /// Optional implementation hint.
         #[help]
         hint: Option<String>,
+    },
+
+    /// ISO 16.4 forbids unbounded quantifiers without a restrictive or selective gate.
+    #[error(
+        "unbounded variable-length edge pattern requires a restrictive path mode, selective path selector, or DIFFERENT EDGES match mode"
+    )]
+    #[diagnostic(code(SLENE_GQL_42001))]
+    UnboundedRequiresGate {
+        /// Path mode in scope for the offending pattern.
+        mode: PathMode,
+        /// Path selector in scope for the offending pattern.
+        selector: Option<PathSelector>,
+        /// Source span of the unbounded quantifier.
+        #[label("unbounded quantifier requires an ISO 16.4 gate")]
+        span: SourceSpan,
     },
 
     /// Analyzer expression recursion exceeded the implementation-defined cap.
@@ -615,6 +630,7 @@ impl AnalysisError {
             | Self::PatternKindMismatch { .. }
             | Self::AliasReusedAsPatternBinding { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,

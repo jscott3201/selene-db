@@ -11,7 +11,9 @@ use crate::{
     runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext},
 };
 
-use super::{evaluator, expand, hash_join, outer, path_mode, scan, subplan, value_compare, wco};
+use super::{
+    evaluator, expand, hash_join, outer, path_mode, questioned, scan, subplan, value_compare, wco,
+};
 
 /// Execute a pattern plan and produce its initial binding table.
 pub fn execute_pattern(
@@ -83,6 +85,12 @@ pub(crate) fn walk_join_tree(
             edge,
             direction,
         } => expand::execute(child, edge, *direction, env),
+        JoinTree::Questioned {
+            child,
+            edge,
+            direction,
+            ..
+        } => questioned::execute(child, edge, *direction, env),
         JoinTree::Repeat {
             child,
             edge,
@@ -162,6 +170,12 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             insert_hidden(slots, scan.hidden_binding, scan.kind);
         }
         JoinTree::Expand { child, edge, .. } => {
+            collect_hidden_slots(child, slots);
+            insert_hidden(slots, edge.left_hidden_binding, ScanKind::Node);
+            insert_hidden(slots, edge.hidden_binding, ScanKind::Edge);
+            insert_hidden(slots, edge.right_hidden_binding, ScanKind::Node);
+        }
+        JoinTree::Questioned { child, edge, .. } => {
             collect_hidden_slots(child, slots);
             insert_hidden(slots, edge.left_hidden_binding, ScanKind::Node);
             insert_hidden(slots, edge.hidden_binding, ScanKind::Edge);

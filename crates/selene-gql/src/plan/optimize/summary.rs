@@ -417,6 +417,19 @@ fn collect_scans(
                 });
             }
         }
+        JoinTree::Questioned { child, edge, .. } => {
+            collect_scans(child, bindings, scans);
+            scans.push(edge_snapshot(edge, bindings));
+            if !edge.right_property_predicates.is_empty() {
+                scans.push(ScanSnapshot {
+                    binding: binding_name(edge.right_binding, bindings, "<anonymous-node>"),
+                    kind: "Node",
+                    access: "Linear",
+                    residual_predicates: edge.right_property_predicates.len(),
+                    consumed_predicates: consumed_count(&edge.right_property_predicates),
+                });
+            }
+        }
         JoinTree::Repeat { child, edge, .. } => {
             collect_scans(child, bindings, scans);
             scans.push(repeat_edge_snapshot(edge, bindings));
@@ -489,6 +502,12 @@ fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> S
         JoinTree::Scan(scan) => format!("Scan({})", binding_name(scan.binding, bindings, "_")),
         JoinTree::Expand { child, edge, .. } => format!(
             "{}->Expand({}->{})",
+            join_tree_shape(child, bindings),
+            binding_name(edge.binding, bindings, "_"),
+            binding_name(edge.right_binding, bindings, "_")
+        ),
+        JoinTree::Questioned { child, edge, .. } => format!(
+            "{}->Questioned({}->{})",
             join_tree_shape(child, bindings),
             binding_name(edge.binding, bindings, "_"),
             binding_name(edge.right_binding, bindings, "_")

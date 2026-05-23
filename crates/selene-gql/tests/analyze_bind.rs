@@ -169,6 +169,29 @@ fn analyzer_rejects_let_alias_reused_as_node_pattern() {
 }
 
 #[test]
+fn unbounded_quantifier_without_iso_gate_rejects_42001() {
+    for source in [
+        "MATCH (a)-[:K*]->(b) RETURN b",
+        "MATCH ALL (a)-[:K+]->(b) RETURN b",
+    ] {
+        let err = analyze_one(source).expect_err("unbounded quantifier requires a gate");
+        assert!(matches!(err, AnalysisError::UnboundedRequiresGate { .. }));
+        assert_eq!(err.gqlstatus().as_str(), "42001");
+    }
+}
+
+#[test]
+fn unbounded_quantifier_with_restrictive_or_selective_gate_analyzes() {
+    for source in [
+        "MATCH TRAIL (a)-[:K*]->(b) RETURN b",
+        "MATCH ANY (a)-[:K+]->(b) RETURN b",
+        "MATCH ALL SHORTEST (a)-[:K{2,}]->(b) RETURN b",
+    ] {
+        analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
+    }
+}
+
+#[test]
 fn with_projection_boundary_hides_pre_with_bindings() {
     let err = analyze_one("MATCH (n) WITH 1 AS x RETURN n").expect_err("n is hidden");
     assert!(matches!(err, AnalysisError::UndefinedReference { .. }));

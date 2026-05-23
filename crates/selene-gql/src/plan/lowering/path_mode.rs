@@ -44,6 +44,15 @@ fn collect_path_contributors(
                 span,
             )?);
         }
+        JoinTree::Questioned {
+            child,
+            edge,
+            final_binding,
+            ..
+        } => {
+            collect_path_contributors(child, span, contributors)?;
+            contributors.push(questioned_contributor(edge, *final_binding, span)?);
+        }
         JoinTree::Repeat {
             child,
             edge,
@@ -94,6 +103,29 @@ fn edge_contributor(edge: &EdgeMatch, span: SourceSpan) -> Result<PathContributo
         .or_else(|| edge.hidden_binding.map(PathContributor::EdgeHidden))
         .ok_or(PlannerError::NotImplemented {
             feature: "path mode over fixed edge without edge identity slot",
+            span,
+        })
+}
+
+fn questioned_contributor(
+    edge: &EdgeMatch,
+    final_binding: TailBinding,
+    span: SourceSpan,
+) -> Result<PathContributor, PlannerError> {
+    edge.binding
+        .map(|binding| PathContributor::QuestionedEdgeNamed {
+            binding,
+            final_binding,
+        })
+        .or_else(|| {
+            edge.hidden_binding
+                .map(|hidden| PathContributor::QuestionedEdgeHidden {
+                    hidden,
+                    final_binding,
+                })
+        })
+        .ok_or(PlannerError::NotImplemented {
+            feature: "path mode over questioned edge without edge identity slot",
             span,
         })
 }

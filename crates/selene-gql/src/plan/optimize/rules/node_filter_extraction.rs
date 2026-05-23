@@ -83,9 +83,9 @@ fn push_to_node_scan_inner(
         | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => false,
-        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
-            push_to_node_scan_inner(child, binding, pending)
-        }
+        JoinTree::Expand { child, .. }
+        | JoinTree::Questioned { child, .. }
+        | JoinTree::Repeat { child, .. } => push_to_node_scan_inner(child, binding, pending),
         JoinTree::HashJoin { left, right, .. } => {
             push_to_node_scan_inner(left, binding, pending)
                 || push_to_node_scan_inner(right, binding, pending)

@@ -44,6 +44,8 @@ macro_rules! feature_ids {
 }
 
 feature_ids! {
+    G002 = "G002" => "Different edges match mode";
+    G003 = "G003" => "Repeatable elements match mode";
     G010 = "G010" => "Explicit WALK keyword";
     G011 = "G011" => "Advanced path modes: TRAIL";
     G012 = "G012" => "Advanced path modes: SIMPLE";
@@ -54,6 +56,10 @@ feature_ids! {
     G018 = "G018" => "Any shortest path search";
     G019 = "G019" => "Counted shortest path search";
     G020 = "G020" => "Counted shortest group search";
+    G036 = "G036" => "Quantified edge pattern";
+    G037 = "G037" => "Questioned path primary";
+    G060 = "G060" => "Bounded quantified path primary";
+    G061 = "G061" => "Unbounded quantified path primary";
     G110 = "G110" => "IS DIRECTED predicate";
     G111 = "G111" => "IS LABELED predicate";
     G112 = "G112" => "IS SOURCE and IS DESTINATION predicate";
@@ -159,6 +165,10 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G016,
     FeatureId::G017,
     FeatureId::G018,
+    FeatureId::G036,
+    FeatureId::G037,
+    FeatureId::G060,
+    FeatureId::G061,
     FeatureId::G110,
     FeatureId::G111,
     FeatureId::G112,
@@ -220,6 +230,14 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 
 /// Rationale for referenced optional features not claimed in v1.0.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
+    (
+        FeatureId::G002,
+        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred from v1.1",
+    ),
+    (
+        FeatureId::G003,
+        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred from v1.1",
+    ),
     (
         FeatureId::G019,
         "counted shortest selectors require grammar support and counted-path selector semantics",

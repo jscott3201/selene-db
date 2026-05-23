@@ -6,8 +6,8 @@ use crate::{
     PipelineStatement, QueryPipeline, ReturnClause, SetOp, Statement, WithClause,
     ast::{
         pattern::{
-            EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern,
-            PathMode, PathSelector, PatternElement,
+            EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode,
+            NodePattern, PathMode, PathSelector, PatternElement, Quantifier,
         },
         statement::{LetBinding, OrderTerm, UnwindStatement},
     },
@@ -108,6 +108,12 @@ pub(crate) fn with_clause(clause: &WithClause, uses: &mut Vec<FeatureUse>) {
 }
 
 pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
+    if let Some(mode) = clause.match_mode {
+        match mode {
+            MatchMode::DifferentEdges => record_feature(uses, FeatureId::G002, clause.span),
+            MatchMode::RepeatableElements => record_feature(uses, FeatureId::G003, clause.span),
+        }
+    }
     if clause.path_mode_explicit && clause.path_mode == PathMode::Walk {
         record_feature(uses, FeatureId::G010, clause.span);
     }
@@ -159,6 +165,20 @@ fn node_pattern(pattern: &NodePattern, uses: &mut Vec<FeatureUse>) {
 fn edge_pattern(pattern: &EdgePattern, uses: &mut Vec<FeatureUse>) {
     if pattern.direction == EdgeDirection::Undirected {
         record_feature(uses, FeatureId::GH02, pattern.span);
+    }
+    if let Some(quantifier) = pattern.quantifier {
+        record_feature(uses, FeatureId::G036, pattern.span);
+        match quantifier {
+            Quantifier::GraphPattern { max: Some(_), .. } => {
+                record_feature(uses, FeatureId::G060, pattern.span);
+            }
+            Quantifier::GraphPattern { max: None, .. } => {
+                record_feature(uses, FeatureId::G061, pattern.span);
+            }
+            Quantifier::Questioned => {
+                record_feature(uses, FeatureId::G037, pattern.span);
+            }
+        }
     }
     if let Some(label_expr) = &pattern.label_expr {
         label_expression(label_expr);

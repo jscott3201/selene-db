@@ -170,6 +170,12 @@ fn hop_count(
                 edge_hop_count(binding_value(row, *binding, env)?)?
             }
             HopContributor::EdgeHidden(hidden) => edge_hop_count(hidden_value(row, *hidden, env)?)?,
+            HopContributor::QuestionedNamed(binding) => {
+                questioned_hop_count(binding_value(row, *binding, env)?)?
+            }
+            HopContributor::QuestionedHidden(hidden) => {
+                questioned_hop_count(hidden_value(row, *hidden, env)?)?
+            }
             HopContributor::GroupNamed(binding) => list_len(binding_value(row, *binding, env)?)?,
             HopContributor::GroupHidden(hidden) => list_len(hidden_value(row, *hidden, env)?)?,
         };
@@ -187,6 +193,16 @@ fn edge_hop_count(value: Value) -> Result<u32, ExecutorError> {
         Value::EdgeRef(_) => Ok(1),
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "path-search fixed hop contributor is not an edge",
+        }),
+    }
+}
+
+fn questioned_hop_count(value: Value) -> Result<u32, ExecutorError> {
+    match value {
+        Value::Null => Ok(0),
+        Value::EdgeRef(_) => Ok(1),
+        _ => Err(ExecutorError::ImplementationDefined {
+            detail: "path-search questioned hop contributor is not an edge or null",
         }),
     }
 }

@@ -32,6 +32,7 @@ fn final_binding(tree: &JoinTree, span: SourceSpan) -> Result<TailBinding, Plann
             .right_binding
             .map(TailBinding::Named)
             .or_else(|| edge.right_hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::Questioned { final_binding, .. } => Some(*final_binding),
         JoinTree::Repeat { edge, .. } => edge
             .final_binding
             .map(TailBinding::Named)
@@ -71,6 +72,10 @@ fn collect_hop_contributors(
         JoinTree::Expand { child, edge, .. } => {
             collect_hop_contributors(child, span, contributors)?;
             contributors.push(edge_contributor(edge, span)?);
+        }
+        JoinTree::Questioned { child, edge, .. } => {
+            collect_hop_contributors(child, span, contributors)?;
+            contributors.push(questioned_contributor(edge, span)?);
         }
         JoinTree::Repeat {
             child,
@@ -139,6 +144,19 @@ fn edge_contributor(edge: &EdgeMatch, span: SourceSpan) -> Result<HopContributor
         .or_else(|| edge.hidden_binding.map(HopContributor::EdgeHidden))
         .ok_or(PlannerError::NotImplemented {
             feature: "path selector over fixed edge without edge identity slot",
+            span,
+        })
+}
+
+fn questioned_contributor(
+    edge: &EdgeMatch,
+    span: SourceSpan,
+) -> Result<HopContributor, PlannerError> {
+    edge.binding
+        .map(HopContributor::QuestionedNamed)
+        .or_else(|| edge.hidden_binding.map(HopContributor::QuestionedHidden))
+        .ok_or(PlannerError::NotImplemented {
+            feature: "path selector over questioned edge without edge identity slot",
             span,
         })
 }
