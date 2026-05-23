@@ -89,6 +89,12 @@ impl<'a, 'ctx, 'g, 'plan> EvalCtx<'a, 'ctx, 'g, 'plan> {
             subqueries,
         }
     }
+
+    /// Borrow the planner/executor implementation-defined caps.
+    #[must_use]
+    pub const fn impl_defined_caps(&self) -> &'ctx ImplDefinedCaps {
+        self.tx.impl_defined_caps()
+    }
 }
 
 impl<'a, 'g> TxContext<'a, 'g> {

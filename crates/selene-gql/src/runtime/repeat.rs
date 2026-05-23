@@ -11,7 +11,7 @@ use crate::{
     runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
-use super::{pattern, scan};
+use super::{pattern, scan, visited_set};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
@@ -24,19 +24,13 @@ pub(crate) fn execute(
     selector: Option<PathSelector>,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
-    if path_mode != PathMode::Walk {
+    if path_mode != PathMode::Walk && max.is_some() {
         return Err(ExecutorError::FeatureNotInV1_1 {
             feature: "non-WALK variable-length edge execution",
             span: edge.span,
         });
     }
     let _ = selector;
-    let Some(max) = max else {
-        return Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "unbounded variable-length edge execution",
-            span: edge.span,
-        });
-    };
 
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut state = RepeatState {
@@ -44,6 +38,8 @@ pub(crate) fn execute(
         direction,
         min,
         max,
+        path_mode,
+        cap: env.ctx.impl_defined_caps().max_quantifier,
         pattern_plan: env.pattern,
         schema: env.schema,
         ctx: env.ctx,
@@ -68,7 +64,9 @@ struct RepeatState<'a, 'eval, 'ctx, 'g, 'plan> {
     edge: &'a RepeatEdgeMatch,
     direction: EdgeDirection,
     min: u32,
-    max: u32,
+    max: Option<u32>,
+    path_mode: PathMode,
+    cap: u32,
     pattern_plan: &'a PatternPlan,
     schema: &'a BindingTableSchema,
     ctx: &'a EvalCtx<'eval, 'ctx, 'g, 'plan>,
@@ -86,7 +84,7 @@ fn traverse(
     if depth >= state.min {
         maybe_emit_path(current, row, path_edges, state)?;
     }
-    if depth == state.max {
+    if state.max == Some(depth) {
         return Ok(());
     }
 
@@ -98,14 +96,42 @@ fn traverse(
         if !edge_step_matches(adjacent.edge_id, row, path_edges, state)? {
             continue;
         }
-        path_edges.push(adjacent.edge_id);
-        traverse(
+        let next_depth = depth.saturating_add(1);
+        let step = visited_set::repeat_step(
+            state.path_mode,
+            source_node(state.edge, state.pattern_plan, state.schema, row)?.ok_or(
+                ExecutorError::ImplementationDefined {
+                    detail: "repeat source binding column missing",
+                },
+            )?,
             adjacent.neighbor,
-            row,
+            adjacent.edge_id,
+            state.direction,
             path_edges,
-            depth.saturating_add(1),
-            state,
+            next_depth,
+            state.min,
+            pattern::WalkContext {
+                pattern: state.pattern_plan,
+                schema: state.schema,
+                seed: None,
+                ctx: state.ctx,
+            },
         )?;
+        let Some(step) = step else {
+            continue;
+        };
+        if state.max.is_none() && next_depth > state.cap {
+            return Err(ExecutorError::ProgramLimitExceeded {
+                detail: "max_quantifier",
+                span: state.edge.span,
+            });
+        }
+        path_edges.push(adjacent.edge_id);
+        if step.terminal {
+            maybe_emit_path(adjacent.neighbor, row, path_edges, state)?;
+        } else {
+            traverse(adjacent.neighbor, row, path_edges, next_depth, state)?;
+        }
         path_edges.pop();
     }
     Ok(())

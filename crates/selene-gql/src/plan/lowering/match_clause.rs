@@ -266,39 +266,26 @@ fn lower_graph_pattern(
             hidden: ctx.hidden,
         };
         current = match &edge.quantifier {
-            Some(Quantifier::GraphPattern {
-                min,
-                max: Some(max),
-            }) => {
-                repeat::ensure_within_max_quantifier(*max, edge.span)?;
+            Some(Quantifier::GraphPattern { min, max }) => {
+                if let Some(max) = max {
+                    repeat::ensure_within_max_quantifier(*max, edge.span)?;
+                }
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
                 if repeat_edge.group_binding.is_none()
-                    && (selector_needs_repeat_group(selector, *min, *max)
-                        || path_mode != PathMode::Walk)
+                    && repeat_needs_hidden_group(selector, path_mode, *min, *max)
                 {
                     repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
                 }
-                let repeat_path_mode = if path_mode == PathMode::Walk {
-                    path_mode
-                } else {
-                    PathMode::Walk
-                };
                 JoinTree::Repeat {
                     child: Box::new(current),
                     direction: edge.direction,
                     edge: repeat_edge,
                     min: *min,
-                    max: Some(*max),
-                    path_mode: repeat_path_mode,
+                    max: *max,
+                    path_mode: repeat_path_mode_under_filter(path_mode, *max),
                     selector: None,
                 }
-            }
-            Some(Quantifier::GraphPattern { max: None, .. }) => {
-                return Err(PlannerError::NotImplemented {
-                    feature: "unbounded variable-length edge patterns",
-                    span: edge.span,
-                });
             }
             Some(Quantifier::Questioned) => {
                 let edge_match = edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
@@ -605,14 +592,30 @@ fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
     Ok(())
 }
 
-fn selector_needs_repeat_group(selector: Option<PathSelector>, min: u32, max: u32) -> bool {
-    selector.is_some_and(|selector| {
-        min != max
-            || matches!(
-                selector,
-                PathSelector::AllShortest | PathSelector::AnyShortest
-            )
-    })
+fn repeat_needs_hidden_group(
+    selector: Option<PathSelector>,
+    path_mode: PathMode,
+    min: u32,
+    max: Option<u32>,
+) -> bool {
+    path_mode != PathMode::Walk
+        || selector.is_some_and(|selector| selector_needs_repeat_group(selector, min, max))
+}
+
+fn selector_needs_repeat_group(selector: PathSelector, min: u32, max: Option<u32>) -> bool {
+    max != Some(min)
+        || matches!(
+            selector,
+            PathSelector::AllShortest | PathSelector::AnyShortest
+        )
+}
+
+fn repeat_path_mode_under_filter(path_mode: PathMode, max: Option<u32>) -> PathMode {
+    if max.is_none() {
+        path_mode
+    } else {
+        PathMode::Walk
+    }
 }
 
 fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {

@@ -4,11 +4,50 @@ use rustc_hash::FxHashSet;
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
-    BindingId, EdgeDirection, HiddenBindingId, HopContributor, PathContributor, TailBinding,
+    BindingId, EdgeDirection, HiddenBindingId, HopContributor, PathContributor, PathMode,
+    TailBinding,
     runtime::{Binding, ExecutorError},
 };
 
 use super::pattern;
+
+pub(crate) struct RepeatStep {
+    pub(crate) terminal: bool,
+}
+
+pub(crate) fn repeat_step(
+    path_mode: PathMode,
+    source: NodeId,
+    target: NodeId,
+    edge: EdgeId,
+    direction: EdgeDirection,
+    path_edges: &[EdgeId],
+    next_depth: u32,
+    min: u32,
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
+) -> Result<Option<RepeatStep>, ExecutorError> {
+    match path_mode {
+        PathMode::Walk => Ok(Some(RepeatStep { terminal: false })),
+        PathMode::Trail => {
+            if path_edges.contains(&edge) {
+                Ok(None)
+            } else {
+                Ok(Some(RepeatStep { terminal: false }))
+            }
+        }
+        PathMode::Acyclic => {
+            let nodes = repeat_nodes(source, direction, path_edges, env)?;
+            if nodes.contains(&target) {
+                Ok(None)
+            } else {
+                Ok(Some(RepeatStep { terminal: false }))
+            }
+        }
+        PathMode::Simple => {
+            repeat_simple_step(source, target, direction, path_edges, next_depth, min, env)
+        }
+    }
+}
 
 pub(crate) fn trail_allows_hops(
     row: &Binding,
@@ -189,6 +228,43 @@ fn append_group_nodes(
         current = next;
     }
     Ok(())
+}
+
+fn repeat_simple_step(
+    source: NodeId,
+    target: NodeId,
+    direction: EdgeDirection,
+    path_edges: &[EdgeId],
+    next_depth: u32,
+    min: u32,
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
+) -> Result<Option<RepeatStep>, ExecutorError> {
+    let nodes = repeat_nodes(source, direction, path_edges, env)?;
+    if !nodes.contains(&target) {
+        return Ok(Some(RepeatStep { terminal: false }));
+    }
+    let closes_at_source =
+        target == source && nodes.iter().filter(|node| **node == source).count() == 1;
+    if closes_at_source && next_depth >= min {
+        return Ok(Some(RepeatStep { terminal: true }));
+    }
+    Ok(None)
+}
+
+fn repeat_nodes(
+    source: NodeId,
+    direction: EdgeDirection,
+    path_edges: &[EdgeId],
+    env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
+) -> Result<Vec<NodeId>, ExecutorError> {
+    let mut nodes = Vec::with_capacity(path_edges.len().saturating_add(1));
+    let mut current = source;
+    nodes.push(current);
+    for edge in path_edges {
+        current = next_node(*edge, current, direction, env)?;
+        nodes.push(current);
+    }
+    Ok(nodes)
 }
 
 fn next_node(
