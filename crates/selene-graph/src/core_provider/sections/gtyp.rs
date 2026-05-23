@@ -399,4 +399,151 @@ mod tests {
 
         assert_eq!(bytes.first(), Some(&GTYP_V3_MAGIC));
     }
+
+    #[test]
+    fn gtyp_v3_round_trips_oneof_endpoint() {
+        // BRIEF-131e: GTYP V3 magic stays at 0xB7; the appended OneOf variant
+        // rides on the existing in-place V3 evolution. Encode + decode a
+        // GraphTypeDef with an OneOf edge endpoint and assert structural
+        // equality including OneOf payload sort order.
+        let person = intern("V3OneOfPerson").unwrap();
+        let company = intern("V3OneOfCompany").unwrap();
+        let school = intern("V3OneOfSchool").unwrap();
+        let affiliated = intern("V3_AFFILIATED").unwrap();
+        let graph_type = GraphTypeDef {
+            name: intern("v3.oneof.graph").unwrap(),
+            node_types: vec![
+                NodeTypeDef {
+                    name: person,
+                    key_labels: LabelSet::single(person),
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                },
+                NodeTypeDef {
+                    name: company,
+                    key_labels: LabelSet::single(company),
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                },
+                NodeTypeDef {
+                    name: school,
+                    key_labels: LabelSet::single(school),
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                },
+            ],
+            edge_types: vec![EdgeTypeDef {
+                name: affiliated,
+                label: affiliated,
+                source_node_type: EdgeEndpointDef::NodeType(0),
+                target_node_type: EdgeEndpointDef::one_of([1, 2]),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            }],
+        };
+        let graph = SharedGraph::builder(GraphId::new(212))
+            .bound_to(graph_type.clone())
+            .unwrap()
+            .build()
+            .unwrap()
+            .read()
+            .as_ref()
+            .clone();
+
+        let bytes = encode_graph_types(&graph).unwrap();
+        assert_eq!(bytes.first(), Some(&GTYP_V3_MAGIC));
+
+        let decoded = decode_graph_types(&bytes).unwrap();
+        assert_eq!(decoded.len(), 1);
+        let decoded_graph_type = &decoded[0].1;
+        decoded_graph_type.validate_ref().unwrap();
+        let edge_type = &decoded_graph_type.edge_types[0];
+        // Pin the OneOf shape explicitly so a future variant-reorder regression
+        // surfaces here rather than as silent on-disk corruption.
+        assert_eq!(
+            edge_type.target_node_type,
+            EdgeEndpointDef::OneOf(vec![1, 2])
+        );
+        assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    }
+
+    #[test]
+    fn gtyp_v1_legacy_still_decodes_unchanged() {
+        // Q7 grounding: legacy V1 decode produces NodeType only; OneOf is
+        // structurally unreachable. This is the regression guard.
+        let person = intern("V1LegacyOneOfBlind").unwrap();
+        let knows = intern("V1_LEGACY_KNOWS").unwrap();
+        let rows = vec![(
+            0_u32,
+            GraphTypeDefV1 {
+                name: intern("v1.oneof.blind.graph").unwrap(),
+                node_types: vec![NodeTypeDefV1 {
+                    name: person,
+                    key_labels: LabelSet::single(person),
+                    properties: Vec::new(),
+                }],
+                edge_types: vec![EdgeTypeDefV1 {
+                    name: knows,
+                    label: knows,
+                    source_node_type: 0,
+                    target_node_type: 0,
+                    properties: Vec::new(),
+                }],
+            },
+        )];
+        let bytes = encode_rkyv(&rows, "CORE/GTYP").unwrap();
+        let decoded = decode_graph_types(&bytes).unwrap();
+        let edge_type = &decoded[0].1.edge_types[0];
+        assert!(
+            !matches!(edge_type.source_node_type, EdgeEndpointDef::OneOf(_)),
+            "V1 legacy must never produce OneOf"
+        );
+        assert!(
+            !matches!(edge_type.target_node_type, EdgeEndpointDef::OneOf(_)),
+            "V1 legacy must never produce OneOf"
+        );
+        assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+        assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
+    }
+
+    #[test]
+    fn gtyp_v2_legacy_still_decodes_unchanged() {
+        // Q7 grounding: legacy V2 decode produces NodeType only.
+        let person = intern("V2LegacyOneOfBlind").unwrap();
+        let knows = intern("V2_LEGACY_KNOWS").unwrap();
+        let rows = vec![(
+            0_u32,
+            GraphTypeDefV2 {
+                name: intern("v2.oneof.blind.graph").unwrap(),
+                node_types: vec![NodeTypeDefV2 {
+                    name: person,
+                    key_labels: LabelSet::single(person),
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                }],
+                edge_types: vec![EdgeTypeDefV2 {
+                    name: knows,
+                    label: knows,
+                    source_node_type: 0,
+                    target_node_type: 0,
+                    properties: Vec::new(),
+                    validation_mode: ValidationMode::Strict,
+                }],
+            },
+        )];
+        let mut bytes = vec![GTYP_V2_MAGIC];
+        bytes.extend(encode_rkyv(&rows, "CORE/GTYP").unwrap());
+        let decoded = decode_graph_types(&bytes).unwrap();
+        let edge_type = &decoded[0].1.edge_types[0];
+        assert!(
+            !matches!(edge_type.source_node_type, EdgeEndpointDef::OneOf(_)),
+            "V2 legacy must never produce OneOf"
+        );
+        assert!(
+            !matches!(edge_type.target_node_type, EdgeEndpointDef::OneOf(_)),
+            "V2 legacy must never produce OneOf"
+        );
+        assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+        assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
+    }
 }

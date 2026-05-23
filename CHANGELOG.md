@@ -8,6 +8,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `EdgeEndpointDef::OneOf` for polymorphic-enumerated edge endpoints in
+  `selene-graph` (storage `Vec<u32>`) and `selene-core` (WAL
+  `SmallVec<[NodeTypeRef; 4]>`). Catalog DDL of the form
+  `CREATE EDGE TYPE :E (FROM :A, :B TO :C)` now resolves the multi-label
+  endpoint to `OneOf([idx_A, idx_B])` when each label is a distinct single-
+  label node type. The `EdgeEndpointDef::one_of` constructor sorts, dedupes,
+  and collapses singletons to `NodeType` on both type models;
+  `GraphTypeDef::validate_ref` rejects malformed OneOf payloads (singleton,
+  unsorted, duplicated, out-of-range) as defense in depth for rkyv/serde
+  decode paths. SHOW EDGE TYPES renders OneOf endpoints as comma-joined
+  member labels (round-trippable through `parse()` + re-execute). GTYP V3
+  and WAL `EdgeTypeAddedV2` extend in place (both dev-line, born post
+  v1.0.0); legacy V1 / V2 GTYP and `EdgeTypeDefV1` WAL payloads remain
+  OneOf-blind by design and decode unchanged. Closes Mnemosyne M0-T04
+  blocker (U12).
 - Non-leading `MATCH` clauses now lower as sequential binding-table extensions
   in `selene-gql`, covering cross-product and correlated continuation shapes.
 - Scalar `VALUE { ... }` subqueries in `selene-gql`, including correlated
