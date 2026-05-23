@@ -169,8 +169,8 @@ impl GraphTypeDef {
 
         let node_type_count = self.node_types.len();
         for (index, edge_type) in self.edge_types.iter().enumerate() {
-            ensure_endpoint_index(node_type_count, edge_type.source_node_type, edge_type.name)?;
-            ensure_endpoint_index(node_type_count, edge_type.target_node_type, edge_type.name)?;
+            ensure_endpoint_index(node_type_count, &edge_type.source_node_type, edge_type.name)?;
+            ensure_endpoint_index(node_type_count, &edge_type.target_node_type, edge_type.name)?;
             ensure_unique_names(
                 "edge property",
                 edge_type.properties.iter().map(|property| property.name),
@@ -180,10 +180,10 @@ impl GraphTypeDef {
                 previous.label == edge_type.label
                     && previous
                         .source_node_type
-                        .overlaps(edge_type.source_node_type)
+                        .overlaps(&edge_type.source_node_type)
                     && previous
                         .target_node_type
-                        .overlaps(edge_type.target_node_type)
+                        .overlaps(&edge_type.target_node_type)
             }) {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
@@ -275,16 +275,20 @@ pub struct NodeTypeDef {
 }
 
 /// Edge endpoint definition.
+///
+/// `OneOf` enumerates a sorted, deduplicated set of distinct node-type indices.
+/// Construct it via [`EdgeEndpointDef::one_of`] to enforce the structural
+/// invariants (sorted, deduplicated, length >= 2 — singleton collapses to
+/// [`EdgeEndpointDef::NodeType`]). Direct struct construction is permitted for
+/// rkyv/serde decode paths but is rejected by
+/// [`GraphTypeDef::validate_ref`] as defense in depth.
 #[derive(
     Clone,
-    Copy,
     Debug,
     Deserialize,
     Eq,
     Hash,
-    Ord,
     PartialEq,
-    PartialOrd,
     rkyv::Archive,
     rkyv::Deserialize,
     rkyv::Serialize,
@@ -295,33 +299,86 @@ pub enum EdgeEndpointDef {
     Any,
     /// Require one concrete node-type index.
     NodeType(u32),
+    /// Accept any node type drawn from a sorted, deduplicated, length-≥-2 set
+    /// of concrete node-type indices.
+    OneOf(Vec<u32>),
 }
 
 impl EdgeEndpointDef {
-    /// Return true when this endpoint accepts the observed node-type index.
+    /// Construct an endpoint accepting `indices`, canonicalized.
+    ///
+    /// The input is sorted ascending and deduplicated. A single resulting
+    /// index collapses to [`EdgeEndpointDef::NodeType`] so that `Eq`/`Hash`
+    /// and rkyv byte encoding remain stable across construction paths.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the resulting set is empty; zero-label endpoints are a
+    /// caller bug and the upstream resolver must reject them before reaching
+    /// this constructor.
     #[must_use]
-    pub const fn matches_node_type(self, node_type: u32) -> bool {
-        match self {
-            Self::Any => true,
-            Self::NodeType(expected) => expected == node_type,
+    pub fn one_of(indices: impl IntoIterator<Item = u32>) -> Self {
+        let mut buf: Vec<u32> = indices.into_iter().collect();
+        buf.sort_unstable();
+        buf.dedup();
+        assert!(
+            !buf.is_empty(),
+            "EdgeEndpointDef::one_of called with empty index set"
+        );
+        match buf.len() {
+            1 => Self::NodeType(buf[0]),
+            _ => Self::OneOf(buf),
         }
     }
 
-    /// Return true when two endpoint declarations can match the same node type.
+    /// Return true when this endpoint accepts the observed node-type index.
     #[must_use]
-    pub const fn overlaps(self, other: Self) -> bool {
+    pub fn matches_node_type(&self, node_type: u32) -> bool {
+        match self {
+            Self::Any => true,
+            Self::NodeType(expected) => *expected == node_type,
+            Self::OneOf(indices) => indices.binary_search(&node_type).is_ok(),
+        }
+    }
+
+    /// Return true when two endpoint declarations can match a common node type.
+    #[must_use]
+    pub fn overlaps(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Any, _) | (_, Self::Any) => true,
             (Self::NodeType(left), Self::NodeType(right)) => left == right,
+            (Self::NodeType(index), Self::OneOf(indices))
+            | (Self::OneOf(indices), Self::NodeType(index)) => indices.binary_search(index).is_ok(),
+            (Self::OneOf(left), Self::OneOf(right)) => sorted_slices_intersect(left, right),
         }
     }
 
-    /// Return the concrete node-type index when this endpoint is not polymorphic.
+    /// Return the concrete node-type index when this endpoint resolves to
+    /// exactly one node type.
+    ///
+    /// Returns `None` for [`EdgeEndpointDef::Any`] and
+    /// [`EdgeEndpointDef::OneOf`] — callers that need to enumerate the
+    /// candidate set should match the variant explicitly or use
+    /// [`EdgeEndpointDef::node_type_indices`].
     #[must_use]
-    pub const fn node_type_index(self) -> Option<u32> {
+    pub const fn node_type_index(&self) -> Option<u32> {
         match self {
-            Self::Any => None,
-            Self::NodeType(index) => Some(index),
+            Self::Any | Self::OneOf(_) => None,
+            Self::NodeType(index) => Some(*index),
+        }
+    }
+
+    /// Return the candidate node-type indices for this endpoint.
+    ///
+    /// Returns an empty slice for [`EdgeEndpointDef::Any`], a single-element
+    /// slice borrow for [`EdgeEndpointDef::NodeType`], and the underlying
+    /// sorted index set for [`EdgeEndpointDef::OneOf`].
+    #[must_use]
+    pub fn node_type_indices(&self) -> &[u32] {
+        match self {
+            Self::Any => &[],
+            Self::NodeType(index) => std::slice::from_ref(index),
+            Self::OneOf(indices) => indices.as_slice(),
         }
     }
 }
@@ -331,8 +388,30 @@ impl fmt::Display for EdgeEndpointDef {
         match self {
             Self::Any => formatter.write_str("Any"),
             Self::NodeType(index) => write!(formatter, "{index}"),
+            Self::OneOf(indices) => {
+                formatter.write_str("OneOf(")?;
+                for (position, index) in indices.iter().enumerate() {
+                    if position > 0 {
+                        formatter.write_str(", ")?;
+                    }
+                    write!(formatter, "{index}")?;
+                }
+                formatter.write_str(")")
+            }
         }
     }
+}
+
+fn sorted_slices_intersect(left: &[u32], right: &[u32]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while i < left.len() && j < right.len() {
+        match left[i].cmp(&right[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => return true,
+        }
+    }
+    false
 }
 
 /// Edge-type element.
@@ -534,195 +613,43 @@ fn ensure_node_type_index(count: usize, index: u32, edge_name: IStr) -> GraphRes
 
 fn ensure_endpoint_index(
     count: usize,
-    endpoint: EdgeEndpointDef,
+    endpoint: &EdgeEndpointDef,
     edge_name: IStr,
 ) -> GraphResult<()> {
     match endpoint {
         EdgeEndpointDef::Any => Ok(()),
-        EdgeEndpointDef::NodeType(index) => ensure_node_type_index(count, index, edge_name),
+        EdgeEndpointDef::NodeType(index) => ensure_node_type_index(count, *index, edge_name),
+        EdgeEndpointDef::OneOf(indices) => {
+            // Defense in depth: the `EdgeEndpointDef::one_of` constructor
+            // already canonicalizes, but raw struct construction or rkyv/serde
+            // decoding can bypass it. Reject malformed OneOf payloads here so
+            // a single check at graph-type construction covers every path.
+            if indices.len() < 2 {
+                return Err(GraphError::Inconsistent {
+                    reason: format!(
+                        "edge type {edge_name} has a OneOf endpoint with {} indices; OneOf must enumerate at least two distinct node types (singletons must collapse to NodeType)",
+                        indices.len()
+                    ),
+                });
+            }
+            for window in indices.windows(2) {
+                if window[0] >= window[1] {
+                    return Err(GraphError::Inconsistent {
+                        reason: format!(
+                            "edge type {edge_name} has a OneOf endpoint that is not sorted and deduplicated ({}, {})",
+                            window[0], window[1]
+                        ),
+                    });
+                }
+            }
+            for index in indices {
+                ensure_node_type_index(count, *index, edge_name)?;
+            }
+            Ok(())
+        }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use selene_core::{PropertyValueType, intern};
-
-    use super::*;
-
-    fn label(name: &str) -> IStr {
-        intern(name).unwrap()
-    }
-
-    fn property(name: &str) -> PropertyTypeDef {
-        PropertyTypeDef {
-            name: label(name),
-            value_type: PropertyValueType::String,
-            list_element_type: None,
-            required: true,
-            default: None,
-            immutable: false,
-        }
-    }
-
-    fn valid_type() -> GraphTypeDef {
-        GraphTypeDef {
-            name: label("types.graph"),
-            node_types: vec![
-                NodeTypeDef {
-                    name: label("types.person"),
-                    key_labels: LabelSet::single(label("Person")),
-                    properties: vec![property("name")],
-                    validation_mode: ValidationMode::Strict,
-                },
-                NodeTypeDef {
-                    name: label("types.company"),
-                    key_labels: LabelSet::single(label("Company")),
-                    properties: vec![property("name")],
-                    validation_mode: ValidationMode::Strict,
-                },
-            ],
-            edge_types: vec![EdgeTypeDef {
-                name: label("types.works_at"),
-                label: label("WORKS_AT"),
-                source_node_type: EdgeEndpointDef::NodeType(0),
-                target_node_type: EdgeEndpointDef::NodeType(1),
-                properties: vec![property("since")],
-                validation_mode: ValidationMode::Strict,
-            }],
-        }
-    }
-
-    #[test]
-    fn validate_accepts_well_formed_type() {
-        assert!(valid_type().validate().is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_duplicate_node_type_names() {
-        let mut graph_type = valid_type();
-        graph_type.node_types[1].name = graph_type.node_types[0].name;
-        assert!(matches!(
-            graph_type.validate(),
-            Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node type name")
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_edge_index_out_of_range() {
-        let mut graph_type = valid_type();
-        graph_type.edge_types[0].target_node_type = EdgeEndpointDef::NodeType(99);
-        assert!(matches!(
-            graph_type.validate(),
-            Err(GraphError::Inconsistent { reason }) if reason.contains("references node type index")
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_duplicate_property_names() {
-        let mut graph_type = valid_type();
-        graph_type.node_types[0].properties.push(property("name"));
-        assert!(matches!(
-            graph_type.validate(),
-            Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node property name")
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_empty_node_label_set() {
-        let mut graph_type = valid_type();
-        graph_type.node_types[0].key_labels = LabelSet::new();
-        assert!(matches!(
-            graph_type.validate(),
-            Err(GraphError::Inconsistent { reason }) if reason.contains("empty label set")
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_duplicate_node_key_label_sets() {
-        // Two node types with identical key_labels would leave the second
-        // unreachable via find_node_type_index (first-match wins); rejecting
-        // at construction prevents silent mis-typing of edges and properties.
-        let mut graph_type = valid_type();
-        graph_type.node_types[1].key_labels = graph_type.node_types[0].key_labels.clone();
-        assert!(matches!(
-            graph_type.validate(),
-            Err(GraphError::Inconsistent { reason })
-                if reason.contains("duplicates the key_labels")
-        ));
-    }
-
-    #[test]
-    fn validate_rejects_ambiguous_overlapping_edge_endpoints() {
-        let mut graph_type = valid_type();
-        graph_type.edge_types.push(EdgeTypeDef {
-            name: label("types.works_at_any"),
-            label: label("WORKS_AT"),
-            source_node_type: EdgeEndpointDef::Any,
-            target_node_type: EdgeEndpointDef::NodeType(1),
-            properties: Vec::new(),
-            validation_mode: ValidationMode::Strict,
-        });
-
-        assert!(matches!(
-            graph_type.validate(),
-            Err(GraphError::Inconsistent { reason })
-                if reason.contains("ambiguous edge type endpoints")
-        ));
-    }
-
-    #[test]
-    fn lookup_returns_matching_elements() {
-        let graph_type = valid_type();
-        let person = LabelSet::single(label("Person"));
-        assert_eq!(
-            graph_type
-                .find_node_type(&person)
-                .map(|node_type| node_type.name),
-            Some(label("types.person"))
-        );
-        assert_eq!(graph_type.find_node_type_index(&person), Some(0));
-        assert_eq!(
-            graph_type.node_type_index_for(label("types.company")),
-            Some(1)
-        );
-        assert_eq!(
-            graph_type
-                .find_edge_type(label("WORKS_AT"), 0, 1)
-                .map(|edge_type| edge_type.name),
-            Some(label("types.works_at"))
-        );
-    }
-
-    #[test]
-    fn without_helpers_remove_named_type_without_reindexing() {
-        let graph_type = valid_type();
-
-        let without_node = graph_type
-            .without_node_type(label("types.person"))
-            .expect("node type removed");
-        assert_eq!(without_node.node_types.len(), 1);
-        assert_eq!(
-            without_node.edge_types[0].source_node_type,
-            EdgeEndpointDef::NodeType(0)
-        );
-        assert_eq!(
-            without_node.edge_types[0].target_node_type,
-            EdgeEndpointDef::NodeType(1)
-        );
-
-        let without_edge = graph_type
-            .without_edge_type(label("types.works_at"))
-            .expect("edge type removed");
-        assert!(without_edge.edge_types.is_empty());
-        assert!(graph_type.without_node_type(label("missing")).is_none());
-        assert!(graph_type.without_edge_type(label("missing")).is_none());
-    }
-
-    #[test]
-    fn rkyv_round_trips_graph_type_def() {
-        let graph_type = valid_type();
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&graph_type).unwrap();
-        let decoded = rkyv::from_bytes::<GraphTypeDef, rkyv::rancor::Error>(&bytes).unwrap();
-        assert_eq!(decoded, graph_type);
-    }
-}
+#[path = "graph_types_tests.rs"]
+mod tests;

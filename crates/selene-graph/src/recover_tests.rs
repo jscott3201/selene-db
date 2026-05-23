@@ -21,6 +21,9 @@ use crate::{
 #[path = "recover_tests/variant_tests.rs"]
 mod variant_tests;
 
+#[path = "recover_tests/oneof.rs"]
+mod oneof;
+
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

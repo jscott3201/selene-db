@@ -32,7 +32,9 @@ pub use algo_pack_corpus::{
 };
 pub use bench_fixtures::{BenchFixture, WriteCorpus};
 pub use bench_profiles::BenchProfile;
-pub use closed_graph_fixtures::{person_company_graph_type, person_only_graph_type};
+pub use closed_graph_fixtures::{
+    mentions_one_of_graph_type, person_company_graph_type, person_only_graph_type,
+};
 pub use executor_corpus::{
     ExecutorCorpus, ExecutorCorpusCategory, ExecutorCorpusEntry, ExecutorCorpusFixture,
     ExecutorCorpusProgram, ExecutorCorpusRegistry, ExecutorOperator, PHASE_A_OPERATORS,

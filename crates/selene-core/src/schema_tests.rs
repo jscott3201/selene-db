@@ -142,3 +142,70 @@ fn graph_type_id_deserialize_rejects_zero() {
     let result: Result<GraphTypeId, _> = postcard::from_bytes(&bytes);
     assert!(result.is_err());
 }
+
+#[test]
+fn wal_one_of_canonicalizes_singleton_to_node_type() {
+    let source = NodeTypeRef(istr("schema.solo"));
+    assert_eq!(
+        EdgeEndpointDef::one_of([source]),
+        EdgeEndpointDef::NodeType(source)
+    );
+}
+
+#[test]
+fn wal_one_of_dedupes() {
+    let a = NodeTypeRef(istr("schema.aaa"));
+    let b = NodeTypeRef(istr("schema.bbb"));
+    let endpoint = EdgeEndpointDef::one_of([a, b, a]);
+    match endpoint {
+        EdgeEndpointDef::OneOf(refs) => assert_eq!(refs.len(), 2),
+        other => panic!("expected OneOf, got {other:?}"),
+    }
+}
+
+#[test]
+fn postcard_round_trips_oneof_endpoint() {
+    // BRIEF-131e commit 3: WAL OneOf payload survives postcard encode/decode
+    // byte-stably. Length-2 stays inline; length-5 spills to heap; both must
+    // round-trip identically.
+    let two = EdgeEndpointDef::one_of([
+        NodeTypeRef(istr("schema.alpha")),
+        NodeTypeRef(istr("schema.beta")),
+    ]);
+    let bytes = postcard::to_allocvec(&two).unwrap();
+    let decoded: EdgeEndpointDef = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded, two);
+
+    let five = EdgeEndpointDef::one_of([
+        NodeTypeRef(istr("schema.a")),
+        NodeTypeRef(istr("schema.b")),
+        NodeTypeRef(istr("schema.c")),
+        NodeTypeRef(istr("schema.d")),
+        NodeTypeRef(istr("schema.e")),
+    ]);
+    let bytes = postcard::to_allocvec(&five).unwrap();
+    let decoded: EdgeEndpointDef = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded, five);
+    assert!(matches!(decoded, EdgeEndpointDef::OneOf(_)));
+}
+
+#[test]
+fn postcard_round_trips_any_and_node_type_after_oneof_variant_addition() {
+    // Confirm appending the OneOf variant to the WAL enum did not perturb
+    // postcard's discriminant assignment for prior variants. Encode Any and
+    // NodeType separately; the decoded payload must be bit-identical.
+    let any_bytes = postcard::to_allocvec(&EdgeEndpointDef::Any).unwrap();
+    let any: EdgeEndpointDef = postcard::from_bytes(&any_bytes).unwrap();
+    assert_eq!(any, EdgeEndpointDef::Any);
+
+    let nt = EdgeEndpointDef::NodeType(NodeTypeRef(istr("schema.legacy")));
+    let nt_bytes = postcard::to_allocvec(&nt).unwrap();
+    let decoded: EdgeEndpointDef = postcard::from_bytes(&nt_bytes).unwrap();
+    assert_eq!(decoded, nt);
+}
+
+#[test]
+#[should_panic(expected = "called with empty NodeTypeRef set")]
+fn wal_one_of_panics_on_empty_input() {
+    let _ = EdgeEndpointDef::one_of(std::iter::empty::<NodeTypeRef>());
+}

@@ -1,0 +1,408 @@
+use selene_core::{PropertyValueType, intern};
+
+use super::*;
+
+fn label(name: &str) -> IStr {
+    intern(name).unwrap()
+}
+
+fn property(name: &str) -> PropertyTypeDef {
+    PropertyTypeDef {
+        name: label(name),
+        value_type: PropertyValueType::String,
+        list_element_type: None,
+        required: true,
+        default: None,
+        immutable: false,
+    }
+}
+
+fn valid_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: label("types.graph"),
+        node_types: vec![
+            NodeTypeDef {
+                name: label("types.person"),
+                key_labels: LabelSet::single(label("Person")),
+                properties: vec![property("name")],
+                validation_mode: ValidationMode::Strict,
+            },
+            NodeTypeDef {
+                name: label("types.company"),
+                key_labels: LabelSet::single(label("Company")),
+                properties: vec![property("name")],
+                validation_mode: ValidationMode::Strict,
+            },
+        ],
+        edge_types: vec![EdgeTypeDef {
+            name: label("types.works_at"),
+            label: label("WORKS_AT"),
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(1),
+            properties: vec![property("since")],
+            validation_mode: ValidationMode::Strict,
+        }],
+    }
+}
+
+#[test]
+fn validate_accepts_well_formed_type() {
+    assert!(valid_type().validate().is_ok());
+}
+
+#[test]
+fn validate_rejects_duplicate_node_type_names() {
+    let mut graph_type = valid_type();
+    graph_type.node_types[1].name = graph_type.node_types[0].name;
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node type name")
+    ));
+}
+
+#[test]
+fn validate_rejects_edge_index_out_of_range() {
+    let mut graph_type = valid_type();
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::NodeType(99);
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason }) if reason.contains("references node type index")
+    ));
+}
+
+#[test]
+fn validate_rejects_duplicate_property_names() {
+    let mut graph_type = valid_type();
+    graph_type.node_types[0].properties.push(property("name"));
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node property name")
+    ));
+}
+
+#[test]
+fn validate_rejects_empty_node_label_set() {
+    let mut graph_type = valid_type();
+    graph_type.node_types[0].key_labels = LabelSet::new();
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason }) if reason.contains("empty label set")
+    ));
+}
+
+#[test]
+fn validate_rejects_duplicate_node_key_label_sets() {
+    // Two node types with identical key_labels would leave the second
+    // unreachable via find_node_type_index (first-match wins); rejecting
+    // at construction prevents silent mis-typing of edges and properties.
+    let mut graph_type = valid_type();
+    graph_type.node_types[1].key_labels = graph_type.node_types[0].key_labels.clone();
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("duplicates the key_labels")
+    ));
+}
+
+#[test]
+fn validate_rejects_ambiguous_overlapping_edge_endpoints() {
+    let mut graph_type = valid_type();
+    graph_type.edge_types.push(EdgeTypeDef {
+        name: label("types.works_at_any"),
+        label: label("WORKS_AT"),
+        source_node_type: EdgeEndpointDef::Any,
+        target_node_type: EdgeEndpointDef::NodeType(1),
+        properties: Vec::new(),
+        validation_mode: ValidationMode::Strict,
+    });
+
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("ambiguous edge type endpoints")
+    ));
+}
+
+#[test]
+fn lookup_returns_matching_elements() {
+    let graph_type = valid_type();
+    let person = LabelSet::single(label("Person"));
+    assert_eq!(
+        graph_type
+            .find_node_type(&person)
+            .map(|node_type| node_type.name),
+        Some(label("types.person"))
+    );
+    assert_eq!(graph_type.find_node_type_index(&person), Some(0));
+    assert_eq!(
+        graph_type.node_type_index_for(label("types.company")),
+        Some(1)
+    );
+    assert_eq!(
+        graph_type
+            .find_edge_type(label("WORKS_AT"), 0, 1)
+            .map(|edge_type| edge_type.name),
+        Some(label("types.works_at"))
+    );
+}
+
+#[test]
+fn without_helpers_remove_named_type_without_reindexing() {
+    let graph_type = valid_type();
+
+    let without_node = graph_type
+        .without_node_type(label("types.person"))
+        .expect("node type removed");
+    assert_eq!(without_node.node_types.len(), 1);
+    assert_eq!(
+        without_node.edge_types[0].source_node_type,
+        EdgeEndpointDef::NodeType(0)
+    );
+    assert_eq!(
+        without_node.edge_types[0].target_node_type,
+        EdgeEndpointDef::NodeType(1)
+    );
+
+    let without_edge = graph_type
+        .without_edge_type(label("types.works_at"))
+        .expect("edge type removed");
+    assert!(without_edge.edge_types.is_empty());
+    assert!(graph_type.without_node_type(label("missing")).is_none());
+    assert!(graph_type.without_edge_type(label("missing")).is_none());
+}
+
+#[test]
+fn rkyv_round_trips_graph_type_def() {
+    let graph_type = valid_type();
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&graph_type).unwrap();
+    let decoded = rkyv::from_bytes::<GraphTypeDef, rkyv::rancor::Error>(&bytes).unwrap();
+    assert_eq!(decoded, graph_type);
+}
+
+fn three_node_type_graph(extra_edge: Option<EdgeTypeDef>) -> GraphTypeDef {
+    let mut node_types = vec![
+        NodeTypeDef {
+            name: label("types.person"),
+            key_labels: LabelSet::single(label("Person")),
+            properties: vec![property("name")],
+            validation_mode: ValidationMode::Strict,
+        },
+        NodeTypeDef {
+            name: label("types.company"),
+            key_labels: LabelSet::single(label("Company")),
+            properties: vec![property("name")],
+            validation_mode: ValidationMode::Strict,
+        },
+        NodeTypeDef {
+            name: label("types.school"),
+            key_labels: LabelSet::single(label("School")),
+            properties: vec![property("name")],
+            validation_mode: ValidationMode::Strict,
+        },
+    ];
+    let _ = &mut node_types;
+    let mut edge_types = vec![EdgeTypeDef {
+        name: label("types.affiliated_with"),
+        label: label("AFFILIATED_WITH"),
+        source_node_type: EdgeEndpointDef::NodeType(0),
+        target_node_type: EdgeEndpointDef::one_of([1, 2]),
+        properties: Vec::new(),
+        validation_mode: ValidationMode::Strict,
+    }];
+    if let Some(extra) = extra_edge {
+        edge_types.push(extra);
+    }
+    GraphTypeDef {
+        name: label("types.graph"),
+        node_types,
+        edge_types,
+    }
+}
+
+#[test]
+fn one_of_canonicalizes_singleton_to_node_type() {
+    // Per §A.2 F6 fold: constructor collapses a singleton input to
+    // NodeType so Eq/Hash/rkyv stay stable across construction paths.
+    assert_eq!(EdgeEndpointDef::one_of([5]), EdgeEndpointDef::NodeType(5));
+    assert_eq!(
+        EdgeEndpointDef::one_of(std::iter::once(7)),
+        EdgeEndpointDef::NodeType(7)
+    );
+}
+
+#[test]
+fn one_of_sorts_and_dedupes() {
+    let endpoint = EdgeEndpointDef::one_of([3, 1, 3, 2]);
+    assert_eq!(endpoint, EdgeEndpointDef::OneOf(vec![1, 2, 3]));
+}
+
+#[test]
+fn one_of_dedupe_collapses_to_node_type_when_all_equal() {
+    // All-equal input collapses to NodeType via dedup + singleton-collapse.
+    assert_eq!(
+        EdgeEndpointDef::one_of([4, 4, 4]),
+        EdgeEndpointDef::NodeType(4)
+    );
+}
+
+#[test]
+fn matches_node_type_oneof_membership() {
+    let endpoint = EdgeEndpointDef::OneOf(vec![1, 2, 3]);
+    assert!(endpoint.matches_node_type(2));
+    assert!(endpoint.matches_node_type(1));
+    assert!(endpoint.matches_node_type(3));
+    assert!(!endpoint.matches_node_type(0));
+    assert!(!endpoint.matches_node_type(4));
+}
+
+#[test]
+fn overlaps_oneof_intersection_nonempty() {
+    let one_two = EdgeEndpointDef::OneOf(vec![1, 2]);
+    let two_three = EdgeEndpointDef::OneOf(vec![2, 3]);
+    let three_four = EdgeEndpointDef::OneOf(vec![3, 4]);
+    assert!(one_two.overlaps(&two_three));
+    assert!(!one_two.overlaps(&three_four));
+    assert!(one_two.overlaps(&EdgeEndpointDef::NodeType(2)));
+    assert!(!one_two.overlaps(&EdgeEndpointDef::NodeType(3)));
+    assert!(EdgeEndpointDef::NodeType(2).overlaps(&one_two));
+    assert!(one_two.overlaps(&EdgeEndpointDef::Any));
+    assert!(EdgeEndpointDef::Any.overlaps(&one_two));
+}
+
+#[test]
+fn validate_ref_rejects_oneof_index_out_of_range() {
+    let mut graph_type = three_node_type_graph(None);
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::OneOf(vec![1, 99]);
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason }) if reason.contains("references node type index")
+    ));
+}
+
+#[test]
+fn validate_ref_rejects_overlapping_oneof_endpoints_same_label() {
+    let extra = EdgeTypeDef {
+        name: label("types.affiliated_with_alt"),
+        label: label("AFFILIATED_WITH"),
+        source_node_type: EdgeEndpointDef::NodeType(0),
+        target_node_type: EdgeEndpointDef::OneOf(vec![2, 1]),
+        properties: Vec::new(),
+        validation_mode: ValidationMode::Strict,
+    };
+    // The first edge already declares target = OneOf([1, 2]); a second edge
+    // with the same label and an overlapping target set must be rejected.
+    // We bypass the constructor by storing `[2, 1]` unsorted to test BOTH
+    // the unsorted/dedup invariant AND the overlap check (the unsorted one
+    // is caught first by ensure_endpoint_index).
+    let graph_type = three_node_type_graph(Some(extra));
+    let result = graph_type.validate();
+    assert!(matches!(result, Err(GraphError::Inconsistent { .. })));
+    // Use the canonical sorted form for the overlap-only check.
+    let extra_sorted = EdgeTypeDef {
+        name: label("types.affiliated_with_alt"),
+        label: label("AFFILIATED_WITH"),
+        source_node_type: EdgeEndpointDef::NodeType(0),
+        target_node_type: EdgeEndpointDef::OneOf(vec![1, 2]),
+        properties: Vec::new(),
+        validation_mode: ValidationMode::Strict,
+    };
+    let graph_type = three_node_type_graph(Some(extra_sorted));
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("ambiguous edge type endpoints")
+    ));
+}
+
+#[test]
+fn validate_ref_rejects_singleton_oneof_direct_construction() {
+    // Defense in depth per §A.2 F6: the `one_of` constructor would have
+    // collapsed [5] to NodeType(5), but raw struct construction (e.g. from
+    // a corrupted rkyv decode) MUST be rejected by validate_ref.
+    let mut graph_type = three_node_type_graph(None);
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::OneOf(vec![1]);
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("OneOf must enumerate at least two")
+    ));
+}
+
+#[test]
+fn validate_ref_rejects_empty_oneof_direct_construction() {
+    let mut graph_type = three_node_type_graph(None);
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::OneOf(Vec::new());
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("OneOf must enumerate at least two")
+    ));
+}
+
+#[test]
+fn validate_ref_rejects_unsorted_oneof() {
+    let mut graph_type = three_node_type_graph(None);
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::OneOf(vec![2, 1]);
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("not sorted and deduplicated")
+    ));
+}
+
+#[test]
+fn validate_ref_rejects_duplicated_oneof() {
+    let mut graph_type = three_node_type_graph(None);
+    graph_type.edge_types[0].target_node_type = EdgeEndpointDef::OneOf(vec![1, 1, 2]);
+    assert!(matches!(
+        graph_type.validate(),
+        Err(GraphError::Inconsistent { reason })
+            if reason.contains("not sorted and deduplicated")
+    ));
+}
+
+#[test]
+fn node_type_index_returns_none_for_oneof() {
+    // §E Q5: OneOf is polymorphic; node_type_index() must return None so
+    // callers that assume `Some(_)` means "single concrete type" do not
+    // silently misroute.
+    let endpoint = EdgeEndpointDef::OneOf(vec![1, 2]);
+    assert_eq!(endpoint.node_type_index(), None);
+}
+
+#[test]
+fn node_type_indices_borrow_shape() {
+    assert!(EdgeEndpointDef::Any.node_type_indices().is_empty());
+    assert_eq!(EdgeEndpointDef::NodeType(7).node_type_indices(), &[7]);
+    assert_eq!(
+        EdgeEndpointDef::OneOf(vec![1, 2, 3]).node_type_indices(),
+        &[1, 2, 3]
+    );
+}
+
+#[test]
+fn display_oneof_renders_indices() {
+    assert_eq!(format!("{}", EdgeEndpointDef::Any), "Any");
+    assert_eq!(format!("{}", EdgeEndpointDef::NodeType(4)), "4");
+    assert_eq!(
+        format!("{}", EdgeEndpointDef::OneOf(vec![1, 2, 3])),
+        "OneOf(1, 2, 3)"
+    );
+}
+
+#[test]
+fn rkyv_round_trips_graph_type_def_with_oneof() {
+    // Verifies Q3 grounding: appending OneOf as the third variant preserves
+    // the prior discriminants (Any=0, NodeType=1) and round-trips the new
+    // variant byte-stably.
+    let graph_type = three_node_type_graph(None);
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&graph_type).unwrap();
+    let decoded = rkyv::from_bytes::<GraphTypeDef, rkyv::rancor::Error>(&bytes).unwrap();
+    assert_eq!(decoded, graph_type);
+    // Pin the OneOf shape explicitly so a future variant reorder breaks
+    // this test rather than silently corrupting on-disk data.
+    assert_eq!(
+        decoded.edge_types[0].target_node_type,
+        EdgeEndpointDef::OneOf(vec![1, 2])
+    );
+}

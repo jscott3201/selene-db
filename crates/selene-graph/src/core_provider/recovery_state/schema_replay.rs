@@ -138,8 +138,8 @@ fn runtime_edge_type_def(
     Ok(EdgeTypeDef {
         name: label,
         label: def.label,
-        source_node_type: runtime_edge_endpoint_def(graph_type, def.source_node_type, "source")?,
-        target_node_type: runtime_edge_endpoint_def(graph_type, def.target_node_type, "target")?,
+        source_node_type: runtime_edge_endpoint_def(graph_type, &def.source_node_type, "source")?,
+        target_node_type: runtime_edge_endpoint_def(graph_type, &def.target_node_type, "target")?,
         properties: runtime_properties(&def.properties)?,
         validation_mode: runtime_validation_mode(def.validation_mode),
     })
@@ -147,24 +147,44 @@ fn runtime_edge_type_def(
 
 fn runtime_edge_endpoint_def(
     graph_type: &GraphTypeDef,
-    endpoint: CoreEdgeEndpointDef,
+    endpoint: &CoreEdgeEndpointDef,
     role: &str,
 ) -> Result<EdgeEndpointDef, crate::ProviderError> {
     match endpoint {
         CoreEdgeEndpointDef::Any => Ok(EdgeEndpointDef::Any),
-        CoreEdgeEndpointDef::NodeType(node_type) => {
-            let index = graph_type
-                .find_node_type_index(&LabelSet::single(node_type.0))
-                .or_else(|| graph_type.node_type_index_for(node_type.0))
-                .ok_or_else(|| {
-                    inconsistent(format!(
-                        "WAL EdgeTypeAdded references unknown {role} node type {}",
-                        node_type.0
-                    ))
-                })?;
-            Ok(EdgeEndpointDef::NodeType(index))
+        CoreEdgeEndpointDef::NodeType(node_type) => Ok(EdgeEndpointDef::NodeType(
+            resolve_node_type_ref(graph_type, *node_type, role)?,
+        )),
+        CoreEdgeEndpointDef::OneOf(node_types) => {
+            // Resolve each WAL NodeTypeRef to a storage index via the same
+            // resilient lookup the single-NodeType arm uses. Sort + dedupe +
+            // singleton-collapse is applied AFTER resolution by passing the
+            // gathered indices through `EdgeEndpointDef::one_of`. This handles
+            // the F5 case where the recovered GraphTypeDef has node types in a
+            // different order from the original snapshot.
+            let mut indices: Vec<u32> = Vec::with_capacity(node_types.len());
+            for node_type in node_types {
+                indices.push(resolve_node_type_ref(graph_type, *node_type, role)?);
+            }
+            Ok(EdgeEndpointDef::one_of(indices))
         }
     }
+}
+
+fn resolve_node_type_ref(
+    graph_type: &GraphTypeDef,
+    node_type: selene_core::NodeTypeRef,
+    role: &str,
+) -> Result<u32, crate::ProviderError> {
+    graph_type
+        .find_node_type_index(&LabelSet::single(node_type.0))
+        .or_else(|| graph_type.node_type_index_for(node_type.0))
+        .ok_or_else(|| {
+            inconsistent(format!(
+                "WAL EdgeTypeAdded references unknown {role} node type {}",
+                node_type.0
+            ))
+        })
 }
 
 fn runtime_properties(

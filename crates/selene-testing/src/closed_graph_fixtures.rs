@@ -84,3 +84,43 @@ pub fn person_only_graph_type() -> GraphTypeDef {
     .validate()
     .expect("fixture graph type is valid")
 }
+
+/// Graph type exercising `EdgeEndpointDef::OneOf`: a `MENTIONS` edge whose
+/// source enumerates `{Document, Comment}` and whose target is the single
+/// `Topic` node type.
+#[must_use]
+pub fn mentions_one_of_graph_type() -> GraphTypeDef {
+    GraphTypeDef {
+        name: istr("fixture.mentions_one_of"),
+        node_types: vec![
+            NodeTypeDef {
+                name: istr("Document"),
+                key_labels: LabelSet::single(istr("Document")),
+                properties: vec![property("title", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
+            },
+            NodeTypeDef {
+                name: istr("Comment"),
+                key_labels: LabelSet::single(istr("Comment")),
+                properties: vec![property("body", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
+            },
+            NodeTypeDef {
+                name: istr("Topic"),
+                key_labels: LabelSet::single(istr("Topic")),
+                properties: vec![property("name", PropertyValueType::String, true)],
+                validation_mode: ValidationMode::Strict,
+            },
+        ],
+        edge_types: vec![EdgeTypeDef {
+            name: istr("Mentions"),
+            label: istr("MENTIONS"),
+            source_node_type: EdgeEndpointDef::one_of([0, 1]),
+            target_node_type: EdgeEndpointDef::NodeType(2),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
+        }],
+    }
+    .validate()
+    .expect("fixture graph type is valid")
+}

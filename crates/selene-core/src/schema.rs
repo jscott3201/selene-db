@@ -159,12 +159,49 @@ pub struct NodeKey {
 }
 
 /// Edge endpoint definition.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+///
+/// `OneOf` carries a sorted, deduplicated, length-≥-2 set of distinct
+/// [`NodeTypeRef`]s. Construct it via [`EdgeEndpointDef::one_of`] so the
+/// invariants are enforced (singleton inputs collapse to
+/// [`EdgeEndpointDef::NodeType`]). The WAL is permissive — recovery re-applies
+/// the constructor through the storage-side resolver, so direct struct
+/// construction in WAL paths is acceptable and replay canonicalizes.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum EdgeEndpointDef {
     /// Accept any declared node type at this endpoint.
     Any,
     /// Reference one concrete node type.
     NodeType(NodeTypeRef),
+    /// Reference any node type drawn from a sorted, deduplicated, length-≥-2
+    /// set of distinct node types.
+    OneOf(SmallVec<[NodeTypeRef; 4]>),
+}
+
+impl EdgeEndpointDef {
+    /// Construct an endpoint accepting `refs`, canonicalized.
+    ///
+    /// References are sorted by interned-name identity and deduplicated. A
+    /// single resulting reference collapses to [`EdgeEndpointDef::NodeType`].
+    ///
+    /// # Panics
+    ///
+    /// Panics when the resulting set is empty; zero-label endpoints are a
+    /// caller bug and the upstream resolver must reject them before reaching
+    /// this constructor.
+    #[must_use]
+    pub fn one_of(refs: impl IntoIterator<Item = NodeTypeRef>) -> Self {
+        let mut buf: SmallVec<[NodeTypeRef; 4]> = refs.into_iter().collect();
+        buf.sort_unstable_by_key(|node| node.0);
+        buf.dedup();
+        assert!(
+            !buf.is_empty(),
+            "EdgeEndpointDef::one_of called with empty NodeTypeRef set"
+        );
+        match buf.len() {
+            1 => Self::NodeType(buf[0]),
+            _ => Self::OneOf(buf),
+        }
+    }
 }
 
 /// Edge type definition.

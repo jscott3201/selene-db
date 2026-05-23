@@ -126,8 +126,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     reason: format!("node type {name} does not exist"),
                 })?;
         for edge_type in &graph_type.edge_types {
-            if endpoint_depends_on_shifted_node(edge_type.source_node_type, removed_index)
-                || endpoint_depends_on_shifted_node(edge_type.target_node_type, removed_index)
+            if endpoint_depends_on_shifted_node(&edge_type.source_node_type, removed_index)
+                || endpoint_depends_on_shifted_node(&edge_type.target_node_type, removed_index)
             {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
@@ -200,10 +200,15 @@ fn implicit_graph_type_id() -> GraphTypeId {
     GraphTypeId::new(1).expect("implicit graph type id")
 }
 
-fn endpoint_depends_on_shifted_node(endpoint: EdgeEndpointDef, removed_index: u32) -> bool {
-    endpoint
-        .node_type_index()
-        .is_some_and(|index| index >= removed_index)
+fn endpoint_depends_on_shifted_node(endpoint: &EdgeEndpointDef, removed_index: u32) -> bool {
+    // Why: node_type_index() returns None for OneOf, so the prior helper would
+    // have silently let DROP NODE TYPE succeed when an OneOf endpoint depended
+    // on the removed (or shifted) node. Walk each candidate index explicitly.
+    match endpoint {
+        EdgeEndpointDef::Any => false,
+        EdgeEndpointDef::NodeType(index) => *index >= removed_index,
+        EdgeEndpointDef::OneOf(indices) => indices.iter().any(|index| *index >= removed_index),
+    }
 }
 
 fn core_node_type_def(node_type: &NodeTypeDef) -> GraphResult<selene_core::NodeTypeDef> {
@@ -224,12 +229,12 @@ fn core_edge_type_def(
         source_node_type: core_edge_endpoint_def(
             graph_type,
             edge_type.name,
-            edge_type.source_node_type,
+            &edge_type.source_node_type,
         )?,
         target_node_type: core_edge_endpoint_def(
             graph_type,
             edge_type.name,
-            edge_type.target_node_type,
+            &edge_type.target_node_type,
         )?,
         properties: core_edge_properties(&edge_type.properties)?,
         validation_mode: core_validation_mode(edge_type.validation_mode),
@@ -239,19 +244,33 @@ fn core_edge_type_def(
 fn core_edge_endpoint_def(
     graph_type: &GraphTypeDef,
     edge_name: IStr,
-    endpoint: EdgeEndpointDef,
+    endpoint: &EdgeEndpointDef,
 ) -> GraphResult<CoreEdgeEndpointDef> {
     match endpoint {
         EdgeEndpointDef::Any => Ok(CoreEdgeEndpointDef::Any),
         EdgeEndpointDef::NodeType(index) => graph_type
             .node_types
-            .get(index as usize)
+            .get(*index as usize)
             .map(|node_type| {
                 CoreEdgeEndpointDef::NodeType(selene_core::NodeTypeRef(node_type.name))
             })
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!("edge type {edge_name} references invalid node type {index}"),
             }),
+        EdgeEndpointDef::OneOf(indices) => {
+            let mut refs: SmallVec<[selene_core::NodeTypeRef; 4]> = SmallVec::new();
+            for index in indices {
+                let node_type = graph_type.node_types.get(*index as usize).ok_or_else(|| {
+                    GraphError::Inconsistent {
+                        reason: format!(
+                            "edge type {edge_name} OneOf endpoint references invalid node type {index}"
+                        ),
+                    }
+                })?;
+                refs.push(selene_core::NodeTypeRef(node_type.name));
+            }
+            Ok(CoreEdgeEndpointDef::OneOf(refs))
+        }
     }
 }
 
