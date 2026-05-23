@@ -300,9 +300,9 @@ fn validate_edge_state<'a>(
         return Err(TypeViolation::EdgeEndpointTypeMismatch {
             id,
             label,
-            expected_source_type: expected.source_node_type,
+            expected_source_type: expected.source_node_type.clone(),
             observed_source_type: source_type,
-            expected_target_type: expected.target_node_type,
+            expected_target_type: expected.target_node_type.clone(),
             observed_target_type: target_type,
         });
     };

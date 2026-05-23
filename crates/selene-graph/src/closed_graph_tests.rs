@@ -20,6 +20,9 @@ use crate::{
 #[path = "closed_graph_tests/immutable.rs"]
 mod immutable;
 
+#[path = "closed_graph_tests/one_of.rs"]
+mod one_of;
+
 fn istr(name: &str) -> selene_core::IStr {
     intern(name).unwrap()
 }

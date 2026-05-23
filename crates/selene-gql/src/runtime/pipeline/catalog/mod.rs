@@ -485,19 +485,28 @@ fn render_edge_endpoint_clause(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDe
         || edge_type.target_node_type == EdgeEndpointDef::Any
     {
         // Partial Any has no DDL syntax; keep SHOW output parseable.
+        // OneOf endpoints ARE renderable (their member labels form a valid
+        // enumerated-FROM/TO clause), so they fall through to render_endpoint.
         return String::new();
     }
-    let source = render_endpoint(graph_type, edge_type.source_node_type);
-    let target = render_endpoint(graph_type, edge_type.target_node_type);
+    let source = render_endpoint(graph_type, &edge_type.source_node_type);
+    let target = render_endpoint(graph_type, &edge_type.target_node_type);
     format!("FROM {source} TO {target}")
 }
 
-fn render_endpoint(graph_type: &GraphTypeDef, endpoint: EdgeEndpointDef) -> String {
+fn render_endpoint(graph_type: &GraphTypeDef, endpoint: &EdgeEndpointDef) -> String {
     match endpoint {
         EdgeEndpointDef::Any => "ANY".to_owned(),
         EdgeEndpointDef::NodeType(index) => {
-            render_endpoint_label_set(&graph_type.node_types[index as usize].key_labels)
+            render_endpoint_label_set(&graph_type.node_types[*index as usize].key_labels)
         }
+        EdgeEndpointDef::OneOf(indices) => indices
+            .iter()
+            .map(|index| {
+                render_endpoint_label_set(&graph_type.node_types[*index as usize].key_labels)
+            })
+            .collect::<Vec<_>>()
+            .join(","),
     }
 }
 

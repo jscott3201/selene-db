@@ -142,3 +142,29 @@ fn graph_type_id_deserialize_rejects_zero() {
     let result: Result<GraphTypeId, _> = postcard::from_bytes(&bytes);
     assert!(result.is_err());
 }
+
+#[test]
+fn wal_one_of_canonicalizes_singleton_to_node_type() {
+    let source = NodeTypeRef(istr("schema.solo"));
+    assert_eq!(
+        EdgeEndpointDef::one_of([source]),
+        EdgeEndpointDef::NodeType(source)
+    );
+}
+
+#[test]
+fn wal_one_of_dedupes() {
+    let a = NodeTypeRef(istr("schema.aaa"));
+    let b = NodeTypeRef(istr("schema.bbb"));
+    let endpoint = EdgeEndpointDef::one_of([a, b, a]);
+    match endpoint {
+        EdgeEndpointDef::OneOf(refs) => assert_eq!(refs.len(), 2),
+        other => panic!("expected OneOf, got {other:?}"),
+    }
+}
+
+#[test]
+#[should_panic(expected = "called with empty NodeTypeRef set")]
+fn wal_one_of_panics_on_empty_input() {
+    let _ = EdgeEndpointDef::one_of(std::iter::empty::<NodeTypeRef>());
+}

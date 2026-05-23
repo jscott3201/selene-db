@@ -243,3 +243,89 @@ fn schema_change_commit_validates_full_entity_state() {
         GraphError::TypeViolation(TypeViolation::UnknownNodeLabel { .. })
     ));
 }
+
+fn person_company_school_with_oneof_edge_type() -> GraphTypeDef {
+    let person = intern("Person").unwrap();
+    let company = intern("Company").unwrap();
+    let school = intern("School").unwrap();
+    let affiliated_with = intern("AFFILIATED_WITH").unwrap();
+    GraphTypeDef {
+        name: intern("catalog.oneof.graph").unwrap(),
+        node_types: vec![
+            NodeTypeDef {
+                name: person,
+                key_labels: LabelSet::single(person),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+            NodeTypeDef {
+                name: company,
+                key_labels: LabelSet::single(company),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+            NodeTypeDef {
+                name: school,
+                key_labels: LabelSet::single(school),
+                properties: Vec::new(),
+                validation_mode: ValidationMode::Strict,
+            },
+        ],
+        edge_types: vec![EdgeTypeDef {
+            name: affiliated_with,
+            label: affiliated_with,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::one_of([1, 2]),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
+        }],
+    }
+}
+
+#[test]
+fn drop_node_type_rejects_when_oneof_endpoint_references_dropped_type() {
+    // F4 fold: endpoint_depends_on_shifted_node previously used
+    // node_type_index().is_some_and(...) which returns None for OneOf and
+    // would have silently let the drop succeed. Explicit OneOf arm rejects
+    // when any contained index >= removed_index.
+    let shared = SharedGraph::builder(GraphId::new(16))
+        .bound_to(person_company_school_with_oneof_edge_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let err = txn
+        .mutator()
+        .drop_node_type(intern("Company").unwrap())
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::Inconsistent { reason }
+            if reason.contains("would require reindexing")
+    ));
+}
+
+#[test]
+fn drop_node_type_rejects_when_oneof_endpoint_references_shifted_type() {
+    // Tail-index drop (School at index 2) still requires reindexing because
+    // OneOf([1, 2]) carries School at the tail; removing it would also shift
+    // any later indices and the helper conservatively rejects rather than
+    // rewriting OneOf payloads in place.
+    let shared = SharedGraph::builder(GraphId::new(17))
+        .bound_to(person_company_school_with_oneof_edge_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let err = txn
+        .mutator()
+        .drop_node_type(intern("School").unwrap())
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::Inconsistent { reason }
+            if reason.contains("would require reindexing")
+    ));
+}
