@@ -147,6 +147,10 @@ feature_ids! {
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
 pub const SUPPORTED_FEATURES: &[FeatureId] = &[
+    FeatureId::G015,
+    FeatureId::G016,
+    FeatureId::G017,
+    FeatureId::G018,
     FeatureId::G110,
     FeatureId::G111,
     FeatureId::G112,
@@ -209,28 +213,12 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 /// Rationale for referenced optional features not claimed in v1.0.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
-        FeatureId::G015,
-        "explicit ALL path selector parses but is not lowered by the v1.0 path planner",
-    ),
-    (
-        FeatureId::G016,
-        "ANY path selector parses but is not lowered by the v1.0 path planner",
-    ),
-    (
-        FeatureId::G017,
-        "ALL SHORTEST path selector parses but is not lowered by the v1.0 path planner",
-    ),
-    (
-        FeatureId::G018,
-        "ANY SHORTEST path selector parses but is not lowered by the v1.0 path planner",
-    ),
-    (
         FeatureId::G019,
-        "counted shortest selectors require grammar + PathSelector AST work; reclaim with the path-selector extension brief",
+        "counted shortest selectors require grammar support and counted-path selector semantics",
     ),
     (
         FeatureId::G020,
-        "counted shortest selectors require grammar + PathSelector AST work; reclaim with the path-selector extension brief",
+        "counted shortest selectors require grammar support and counted-path selector semantics",
     ),
     (
         FeatureId::GP01,

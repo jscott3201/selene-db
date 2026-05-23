@@ -1,0 +1,17 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+expression: snapshot.to_string()
+---
+fired_rules: none
+output: [a, c]
+pattern:
+  bindings: 3 [a, b, c]
+  join_tree: AnyShortest(Scan(a)->Expand(_->b)->Expand(_->c))
+  pattern_filters: 0
+  scans:
+    - a (Node): Linear residual=0 consumed=0
+    - <anonymous-edge> (Edge): Linear residual=0 consumed=0
+    - <anonymous-edge> (Edge): Linear residual=0 consumed=0
+  order_access: []
+pipeline:
+  - Project(columns=[a,c])

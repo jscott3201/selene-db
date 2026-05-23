@@ -6,21 +6,14 @@ use selene_graph::GraphError;
 use selene_persist::PersistError;
 
 #[test]
-fn removed_pattern_alpha_surfaces_emit_42n01() {
-    for (source, expected) in [
-        ("MATCH ALL (n) RETURN n", FeatureId::G015),
-        ("MATCH ANY (n) RETURN n", FeatureId::G016),
-        ("MATCH ALL SHORTEST (a)-[:K]->(b) RETURN b", FeatureId::G017),
-        ("MATCH ANY SHORTEST (a)-[:K]->(b) RETURN b", FeatureId::G018),
-        ("CREATE GRAPH demo", FeatureId::GC04),
-    ] {
-        let error = parse(source).expect_err(source);
-        assert_eq!(error.gqlstatus().as_str(), "42N01");
-        let ParserError::UnsupportedFeature { feature_id, .. } = error else {
-            panic!("expected UnsupportedFeature for {source:?}");
-        };
-        assert_eq!(feature_id, expected);
-    }
+fn unclaimed_graph_management_surfaces_emit_42n01() {
+    let source = "CREATE GRAPH demo";
+    let error = parse(source).expect_err(source);
+    assert_eq!(error.gqlstatus().as_str(), "42N01");
+    let ParserError::UnsupportedFeature { feature_id, .. } = error else {
+        panic!("expected UnsupportedFeature for {source:?}");
+    };
+    assert_eq!(feature_id, FeatureId::GC04);
 }
 
 #[test]
