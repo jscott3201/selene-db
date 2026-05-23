@@ -12,6 +12,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   in `selene-gql`, covering cross-product and correlated continuation shapes.
 - Scalar `VALUE { ... }` subqueries in `selene-gql`, including correlated
   read-query bodies, static ISO §20.6 shape checks, and empty-result `NULL`.
+- Inline `CALL { ... }` table subqueries in `selene-gql`, including implicit
+  variable-scope correlation, `YIELD`/`YIELD ... AS`, and per-row Cartesian
+  result composition.
 - Bounded variable-length edge patterns in `selene-gql` for `WALK` matches,
   including `JoinTree::Repeat`, `LIST<EdgeRef>` group-variable binding, zero-hop
   results, per-hop edge predicates, and cancellation checks.

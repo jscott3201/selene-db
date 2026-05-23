@@ -195,6 +195,9 @@ fn collect_subqueries_in_pipeline_op(
                 collect_subqueries_in_project(arg, analyzed, registry, entries)?;
             }
         }
+        PipelineOp::CallSubquery(call) => {
+            populate_plan_subqueries(&mut call.body, analyzed, registry)?;
+        }
         PipelineOp::Mutation(op) => {
             collect_subqueries_in_mutation(op, analyzed, registry, entries)?
         }
@@ -509,7 +512,7 @@ fn collect_planned_subquery(
         expr_id,
         PlannedSubquery {
             kind,
-            body: SubqueryBody::Pattern(plan),
+            body: SubqueryBody::Pattern(Box::new(plan)),
             outer_binding_refs: outer_binding_refs_in_match(pattern, span, analyzed)?,
             span,
         },

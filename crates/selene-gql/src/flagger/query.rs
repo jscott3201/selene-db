@@ -51,7 +51,10 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
 }
 
 pub(crate) fn query_pipeline(pipeline: &QueryPipeline, uses: &mut Vec<FeatureUse>) {
-    for statement in &pipeline.statements {
+    for (index, statement) in pipeline.statements.iter().enumerate() {
+        if index > 0 && matches!(statement, PipelineStatement::Match(_)) {
+            record_feature(uses, FeatureId::GQ20, statement.span());
+        }
         pipeline_statement(statement, uses);
     }
 }

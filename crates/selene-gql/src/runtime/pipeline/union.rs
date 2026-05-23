@@ -6,7 +6,7 @@ use crate::{
     BindingTableSchema, ExecutionPlan, SetOp, SourceSpan,
     runtime::{
         Binding, BindingTable, DataExceptionSubclass, ExecutorError, TxContext, execute_plan,
-        value_key::RuntimeEqKey,
+        plan_runner, value_key::RuntimeEqKey,
     },
 };
 
@@ -18,7 +18,23 @@ pub(super) fn execute(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
+    if matches!(op, SetOp::Otherwise) {
+        return execute_otherwise(rhs, table, ctx);
+    }
     let rhs_table = execute_plan(rhs, ctx)?;
+    execute_with_rhs(op, table, rhs_table, ctx)
+}
+
+pub(super) fn execute_read_only(
+    op: SetOp,
+    rhs: &ExecutionPlan,
+    table: BindingTable,
+    ctx: &TxContext<'_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    if matches!(op, SetOp::Otherwise) {
+        return execute_otherwise_read_only(rhs, table, ctx);
+    }
+    let rhs_table = plan_runner::execute_plan_read_only(rhs, ctx)?;
     execute_with_rhs(op, table, rhs_table, ctx)
 }
 
@@ -56,6 +72,40 @@ pub(super) fn execute_with_rhs(
                 Ok(BindingTable::new(schema, rows))
             }
         }
+    }
+}
+
+fn execute_otherwise(
+    rhs: &ExecutionPlan,
+    table: BindingTable,
+    ctx: &mut TxContext<'_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    let (schema, rows) = table.into_parts();
+    assert_compatible_schemas("OTHERWISE", &schema, &rhs.output_schema)?;
+    if rows.is_empty() {
+        let rhs_table = execute_plan(rhs, ctx)?;
+        assert_compatible_schemas("OTHERWISE", &schema, rhs_table.schema())?;
+        let (_, rhs_rows) = rhs_table.into_parts();
+        Ok(BindingTable::new(schema, rhs_rows))
+    } else {
+        Ok(BindingTable::new(schema, rows))
+    }
+}
+
+fn execute_otherwise_read_only(
+    rhs: &ExecutionPlan,
+    table: BindingTable,
+    ctx: &TxContext<'_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    let (schema, rows) = table.into_parts();
+    assert_compatible_schemas("OTHERWISE", &schema, &rhs.output_schema)?;
+    if rows.is_empty() {
+        let rhs_table = plan_runner::execute_plan_read_only(rhs, ctx)?;
+        assert_compatible_schemas("OTHERWISE", &schema, rhs_table.schema())?;
+        let (_, rhs_rows) = rhs_table.into_parts();
+        Ok(BindingTable::new(schema, rhs_rows))
+    } else {
+        Ok(BindingTable::new(schema, rows))
     }
 }
 

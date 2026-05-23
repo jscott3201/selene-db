@@ -2,6 +2,7 @@
 
 mod aggregate;
 mod call;
+mod call_subquery;
 mod catalog;
 mod catalog_index;
 mod chain;
@@ -131,6 +132,7 @@ pub(crate) fn execute_pipeline_with_plan(
             PipelineOp::Catalog(catalog) => catalog::execute(catalog, table, ctx)?,
             PipelineOp::ExplainPlan { inner, .. } => explain::execute(inner)?,
             PipelineOp::Call(call) => call::execute(call, table, ctx, expr_ids, subqueries)?,
+            PipelineOp::CallSubquery(call) => call_subquery::execute(call, table, ctx)?,
             PipelineOp::Tx(_) => {
                 return Err(ExecutorError::ImplementationDefined {
                     detail: "TX op surfaced inside execute_pipeline; should be dispatched at statement level",
@@ -217,10 +219,7 @@ pub(crate) fn execute_pipeline_read_only_with_plan(
                 group_by::execute(keys, aggregates, table, &eval_ctx)?
             }
             PipelineOp::Distinct => distinct::execute(table, ctx)?,
-            PipelineOp::Union { op, rhs } => {
-                let rhs_table = plan_runner::execute_plan_read_only(rhs, ctx)?;
-                union::execute_with_rhs(*op, table, rhs_table, ctx)?
-            }
+            PipelineOp::Union { op, rhs } => union::execute_read_only(*op, rhs, table, ctx)?,
             PipelineOp::Chain(rhs) => plan_runner::execute_plan_read_only(rhs, ctx)?,
             PipelineOp::Match(pattern) => {
                 match_op::execute(pattern, table, ctx, expr_ids, subqueries)?
@@ -229,6 +228,7 @@ pub(crate) fn execute_pipeline_read_only_with_plan(
             PipelineOp::Call(call) => {
                 call::execute_read_only(call, table, ctx, expr_ids, subqueries)?
             }
+            PipelineOp::CallSubquery(call) => call_subquery::execute_read_only(call, table, ctx)?,
             PipelineOp::Mutation(_) | PipelineOp::Catalog(_) | PipelineOp::Tx(_) => {
                 return Err(ExecutorError::InvalidTransactionState {
                     detail: "write pipeline op invoked from read-only subquery",

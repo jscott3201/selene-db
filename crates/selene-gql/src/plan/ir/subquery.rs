@@ -9,7 +9,7 @@ use crate::{
     analyze::{BindingId, ExprId},
 };
 
-use super::{ExecutionPlan, PatternPlan};
+use super::{BindingTableColumn, ExecutionPlan, PatternPlan};
 
 /// Planned subquery referenced by an expression ID in a containing plan.
 ///
@@ -55,9 +55,35 @@ pub enum SubqueryKind {
 #[derive(Clone, Debug)]
 pub enum SubqueryBody {
     /// Existing single-MATCH pattern body used by EXISTS/COUNT.
-    Pattern(PatternPlan),
+    Pattern(Box<PatternPlan>),
     /// Full query pipeline body used by VALUE.
     Plan(Box<ExecutionPlan>),
+}
+
+/// Planned inline `CALL { ... }` table subquery.
+#[derive(Clone, Debug)]
+pub struct PlannedTableSubquery {
+    /// Full query body executed once per input row.
+    pub body: Box<ExecutionPlan>,
+    /// Outer-scope bindings referenced by the body, sorted and deduped.
+    pub outer_binding_refs: Vec<OuterBindingRef>,
+    /// Source-to-output yield projection. Empty means preserve no inner columns.
+    pub yield_items: Vec<PlannedTableSubqueryYield>,
+    /// Columns appended to the outer binding table.
+    pub yield_schema: Vec<BindingTableColumn>,
+    /// Source span of the inline CALL.
+    pub span: SourceSpan,
+}
+
+/// One yielded column from a planned inline CALL body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PlannedTableSubqueryYield {
+    /// Column name in the inner body result.
+    pub source: IStr,
+    /// Output column name after optional `AS` rename.
+    pub output: IStr,
+    /// Source span of the yield item.
+    pub span: SourceSpan,
 }
 
 /// Plan-level registry of expression subqueries indexed by AST expression ID.
@@ -100,7 +126,7 @@ mod tests {
     fn planned_subquery() -> PlannedSubquery {
         PlannedSubquery {
             kind: SubqueryKind::Count,
-            body: SubqueryBody::Pattern(PatternPlan {
+            body: SubqueryBody::Pattern(Box::new(PatternPlan {
                 bindings: Vec::new(),
                 join_tree: JoinTree::WorstCaseOptimal {
                     intersection: Vec::new(),
@@ -108,7 +134,7 @@ mod tests {
                 },
                 filters: Vec::new(),
                 paths: Vec::new(),
-            }),
+            })),
             outer_binding_refs: Vec::new(),
             span: SourceSpan::default(),
         }

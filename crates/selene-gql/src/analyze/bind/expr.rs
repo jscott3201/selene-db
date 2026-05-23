@@ -166,17 +166,23 @@ pub(crate) fn bind_value_expr(
                 })?;
                 AnalyzedType::Resolved(crate::GqlType::Integer)
             }
-            ValueExpr::ValueSubquery { body, span } => {
-                validate_value_subquery_shape(body, *span)?;
-                let mut body = (**body).clone();
-                ctx.with_child_scope(ScopeKind::Subquery, *span, false, |ctx| {
-                    query::bind_query_pipeline(ctx, &mut body)
-                })?;
-                AnalyzedType::DYNAMIC
-            }
+            ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
         };
         Ok(ctx.allocate_expr(expr, ty))
     })
+}
+
+fn bind_value_subquery(
+    ctx: &mut BindContext,
+    body: &QueryPipeline,
+    span: crate::SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    validate_value_subquery_shape(body, span)?;
+    let mut body = body.clone();
+    ctx.with_child_scope(ScopeKind::Subquery, span, false, |ctx| {
+        query::bind_query_pipeline(ctx, &mut body)
+    })?;
+    Ok(AnalyzedType::DYNAMIC)
 }
 
 fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
@@ -269,7 +275,10 @@ fn check_subquery_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
     check_expr_subquery_depth(expr, 1)
 }
 
-fn check_query_subquery_depth(pipeline: &QueryPipeline, depth: u32) -> Result<(), AnalysisError> {
+pub(crate) fn check_query_subquery_depth(
+    pipeline: &QueryPipeline,
+    depth: u32,
+) -> Result<(), AnalysisError> {
     if depth > ANALYZER_MAX_DEPTH {
         return Err(AnalysisError::RecursionLimitExceeded { depth });
     }
@@ -361,93 +370,87 @@ fn check_return_subquery_depth(clause: &ReturnClause, depth: u32) -> Result<(), 
 }
 
 fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), AnalysisError> {
-    match expr {
-        ValueExpr::PropertyAccess { target, .. } => check_expr_subquery_depth(target, depth),
-        ValueExpr::ListAccess { target, index, .. } => {
-            check_expr_subquery_depth(target, depth)?;
-            check_expr_subquery_depth(index, depth)
-        }
-        ValueExpr::ListLiteral { items, .. }
-        | ValueExpr::AllDifferent { items, .. }
-        | ValueExpr::Same { items, .. } => {
-            for item in items {
-                check_expr_subquery_depth(item, depth)?;
+    let mut stack = vec![(expr, depth)];
+    while let Some((expr, depth)) = stack.pop() {
+        match expr {
+            ValueExpr::PropertyAccess { target, .. } => stack.push((target, depth)),
+            ValueExpr::ListAccess { target, index, .. } => {
+                stack.push((index, depth));
+                stack.push((target, depth));
             }
-            Ok(())
-        }
-        ValueExpr::RecordLiteral { fields, .. } => {
-            for (_, value) in fields {
-                check_expr_subquery_depth(value, depth)?;
+            ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::AllDifferent { items, .. }
+            | ValueExpr::Same { items, .. } => {
+                stack.extend(items.iter().rev().map(|item| (item, depth)));
             }
-            Ok(())
-        }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => {
-            check_expr_subquery_depth(lhs, depth)?;
-            check_expr_subquery_depth(rhs, depth)
-        }
-        ValueExpr::UnaryOp { operand, .. }
-        | ValueExpr::PropertyExists {
-            target: operand, ..
-        } => check_expr_subquery_depth(operand, depth),
-        ValueExpr::FunctionCall { args, .. } | ValueExpr::InList { list: args, .. } => {
-            for arg in args {
-                check_expr_subquery_depth(arg, depth)?;
+            ValueExpr::RecordLiteral { fields, .. } => {
+                stack.extend(fields.iter().rev().map(|(_, value)| (value, depth)));
             }
-            if let ValueExpr::InList { operand, .. } = expr {
-                check_expr_subquery_depth(operand, depth)?;
+            ValueExpr::BinaryOp { lhs, rhs, .. } => {
+                stack.push((rhs, depth));
+                stack.push((lhs, depth));
             }
-            Ok(())
-        }
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            check_expr_subquery_depth(operand, depth)?;
-            match kind {
-                IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-                    check_expr_subquery_depth(value, depth)
+            ValueExpr::UnaryOp { operand, .. }
+            | ValueExpr::PropertyExists {
+                target: operand, ..
+            } => stack.push((operand, depth)),
+            ValueExpr::FunctionCall { args, .. } | ValueExpr::InList { list: args, .. } => {
+                stack.extend(args.iter().rev().map(|arg| (arg, depth)));
+                if let ValueExpr::InList { operand, .. } = expr {
+                    stack.push((operand, depth));
                 }
-                IsCheckKind::Null
-                | IsCheckKind::Directed
-                | IsCheckKind::Labeled(_)
-                | IsCheckKind::TruthValue(_)
-                | IsCheckKind::Typed(_)
-                | IsCheckKind::Normalized(_) => Ok(()),
             }
-        }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            check_expr_subquery_depth(operand, depth)?;
-            check_expr_subquery_depth(pattern, depth)
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            check_expr_subquery_depth(operand, depth)?;
-            check_expr_subquery_depth(low, depth)?;
-            check_expr_subquery_depth(high, depth)
-        }
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            ..
-        } => {
-            for (condition, value) in branches {
-                check_expr_subquery_depth(condition, depth)?;
-                check_expr_subquery_depth(value, depth)?;
+            ValueExpr::IsCheck { operand, kind, .. } => {
+                stack.push((operand, depth));
+                match kind {
+                    IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
+                        stack.push((value, depth));
+                    }
+                    IsCheckKind::Null
+                    | IsCheckKind::Directed
+                    | IsCheckKind::Labeled(_)
+                    | IsCheckKind::TruthValue(_)
+                    | IsCheckKind::Typed(_)
+                    | IsCheckKind::Normalized(_) => {}
+                }
             }
-            if let Some(value) = else_branch {
-                check_expr_subquery_depth(value, depth)?;
+            ValueExpr::Like {
+                operand, pattern, ..
+            } => {
+                stack.push((pattern, depth));
+                stack.push((operand, depth));
             }
-            Ok(())
+            ValueExpr::Between {
+                operand, low, high, ..
+            } => {
+                stack.push((high, depth));
+                stack.push((low, depth));
+                stack.push((operand, depth));
+            }
+            ValueExpr::Case {
+                branches,
+                else_branch,
+                ..
+            } => {
+                if let Some(value) = else_branch {
+                    stack.push((value, depth));
+                }
+                for (condition, value) in branches.iter().rev() {
+                    stack.push((value, depth));
+                    stack.push((condition, depth));
+                }
+            }
+            ValueExpr::ValueSubquery { body, .. } => {
+                check_query_subquery_depth(body, depth.saturating_add(1))?;
+            }
+            ValueExpr::Literal(_)
+            | ValueExpr::Variable { .. }
+            | ValueExpr::Parameter { .. }
+            | ValueExpr::Exists { .. }
+            | ValueExpr::CountSubquery { .. } => {}
         }
-        ValueExpr::ValueSubquery { body, .. } => {
-            check_query_subquery_depth(body, depth.saturating_add(1))
-        }
-        ValueExpr::Literal(_)
-        | ValueExpr::Variable { .. }
-        | ValueExpr::Parameter { .. }
-        | ValueExpr::Exists { .. }
-        | ValueExpr::CountSubquery { .. } => Ok(()),
     }
+    Ok(())
 }
 
 fn validate_value_subquery_shape(

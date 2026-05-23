@@ -24,7 +24,8 @@ pub use filter::{
 };
 pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
 pub use subquery::{
-    OuterBindingRef, PlannedSubquery, SubqueryBody, SubqueryKind, SubqueryRegistry,
+    OuterBindingRef, PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
+    SubqueryBody, SubqueryKind, SubqueryRegistry,
 };
 pub use tx::TxOp;
 
@@ -93,6 +94,9 @@ impl ExecutionPlan {
             match op {
                 PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
                     rhs.refresh_pipeline_op_high_water();
+                }
+                PipelineOp::CallSubquery(subquery) => {
+                    subquery.body.refresh_pipeline_op_high_water();
                 }
                 PipelineOp::ExplainPlan { inner, .. } => inner.refresh_pipeline_op_high_water(),
                 _ => {}
@@ -492,6 +496,7 @@ pub struct RepeatEdgeMatch {
 /// subquery form, INDEX DDL via selene-pack) can add variants without
 /// breaking downstream pattern matches.
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
 pub enum PipelineOp {
     /// Retain rows satisfying a predicate.
@@ -549,6 +554,8 @@ pub enum PipelineOp {
     Match(PatternPlan),
     /// Planned procedure call.
     Call(PlannedCall),
+    /// Inline `CALL { ... }` table subquery.
+    CallSubquery(Box<PlannedTableSubquery>),
     /// Mutation operation.
     Mutation(MutationOp),
     /// Catalog operation.

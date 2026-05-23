@@ -189,6 +189,8 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG02,
     FeatureId::GG20,
     FeatureId::GG21,
+    FeatureId::GP01,
+    FeatureId::GP02,
     FeatureId::GP04,
     FeatureId::GQ03,
     FeatureId::GQ04,
@@ -249,11 +251,9 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         "counted shortest selectors require grammar support and counted-path selector semantics",
     ),
     (
-        FeatureId::GP01,
-        "inline procedures are out of v1.0 scope; extensions use named CALL",
+        FeatureId::GP03,
+        "explicit variable-scope inline procedures are deferred from v1.1",
     ),
-    (FeatureId::GP02, "inline procedures are out of v1.0 scope"),
-    (FeatureId::GP03, "inline procedures are out of v1.0 scope"),
     (
         FeatureId::GP05,
         "procedure-local definitions require the procedure body parser; unsupported in v1.0",

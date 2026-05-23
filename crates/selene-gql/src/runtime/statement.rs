@@ -468,6 +468,7 @@ fn pipeline_statement_kind(op: &PipelineOp) -> Option<&'static str> {
         PipelineOp::Union { .. } | PipelineOp::Chain(_) => Some("composite"),
         PipelineOp::Match(_) => Some("query"),
         PipelineOp::Call(_) => Some("call"),
+        PipelineOp::CallSubquery(_) => Some("call_subquery"),
         PipelineOp::Mutation(_) => Some("mutation"),
         PipelineOp::Catalog(_) => Some("catalog"),
         PipelineOp::ExplainPlan { .. } => Some("explain"),

@@ -208,10 +208,16 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_inline_call_returns_feature_error() {
-        let err = parse("CALL { RETURN 1 }").expect_err("unsupported feature should error");
-        assert!(matches!(err, ParserError::UnsupportedFeature { .. }));
-        assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    fn parse_inline_call_subquery() {
+        let query = query("CALL { RETURN 1 }");
+        assert_eq!(query.statements.len(), 1);
+        let PipelineStatement::CallSubquery(call) = &query.statements[0] else {
+            panic!("expected inline CALL subquery");
+        };
+        assert!(call.variable_scope.is_none());
+        assert!(call.yield_items.is_empty());
+        assert!(!call.in_transactions);
+        assert_eq!(call.body.statements.len(), 1);
     }
 
     #[test]

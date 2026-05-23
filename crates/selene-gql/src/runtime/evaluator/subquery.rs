@@ -181,7 +181,7 @@ fn append_outer_bindings(
     source_schema: &BindingTableSchema,
 ) -> Result<(), ExecutorError> {
     for outer in outer_binding_refs {
-        if pattern::column_index(&schema, outer.name).is_some() {
+        if pattern::column_index(schema, outer.name).is_some() {
             continue;
         }
         let source_index = source_index(source_schema, outer)?;

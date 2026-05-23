@@ -117,6 +117,7 @@ fn contains_call(plan: &ExecutionPlan) -> bool {
 fn op_contains_call(op: &PipelineOp) -> bool {
     match op {
         PipelineOp::Call(_) => true,
+        PipelineOp::CallSubquery(subquery) => contains_call(&subquery.body),
         PipelineOp::Union { rhs, .. }
         | PipelineOp::Chain(rhs)
         | PipelineOp::ExplainPlan { inner: rhs, .. } => contains_call(rhs),

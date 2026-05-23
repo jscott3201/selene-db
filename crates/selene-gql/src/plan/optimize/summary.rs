@@ -319,7 +319,7 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
         },
         PipelineOp::Match(pattern) => PipelineOpSummary {
             kind: "Match",
-            payload: join_tree_summary(&pattern.join_tree),
+            payload: join_tree_shape(&pattern.join_tree, bindings),
         },
         PipelineOp::Call(call) => PipelineOpSummary {
             kind: "Call",
@@ -336,6 +336,18 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
                     .map(yield_summary)
                     .collect::<Vec<_>>()
                     .join(",")
+            ),
+        },
+        PipelineOp::CallSubquery(call) => PipelineOpSummary {
+            kind: "CallSubquery",
+            payload: format!(
+                "yield=[{}], body={}",
+                call.yield_items
+                    .iter()
+                    .map(|item| format!("{}=>{}", item.source.as_str(), item.output.as_str()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+                PlanSnapshot::from_plan(&call.body, Vec::new()).compact()
             ),
         },
         PipelineOp::Mutation(mutation) => PipelineOpSummary {
@@ -381,6 +393,9 @@ fn collect_order_access(pipeline: &[PipelineOp]) -> Vec<Option<String>> {
             PipelineOp::TopK { keys, .. } => access.extend(keys.iter().map(order_access)),
             PipelineOp::Union { rhs, .. } | PipelineOp::Chain(rhs) => {
                 access.extend(collect_order_access(&rhs.pipeline));
+            }
+            PipelineOp::CallSubquery(call) => {
+                access.extend(collect_order_access(&call.body.pipeline));
             }
             PipelineOp::ExplainPlan { inner, .. } => {
                 access.extend(collect_order_access(&inner.pipeline));

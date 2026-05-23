@@ -13,12 +13,13 @@ mod repeat;
 mod sequential_match;
 
 use crate::{
-    GqlType, LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline, ReturnClause,
-    SourceSpan, WithClause,
+    GqlType, InlineProcedureCall, LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline,
+    ReturnClause, SourceSpan, WithClause, YieldColumn,
     analyze::{AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, ExprId, StatementCategory},
     plan::{
         BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
-        LimitAmount, PipelineOp, PlannerError, ProjectExpr, TxOp,
+        LimitAmount, PipelineOp, PlannedTableSubquery, PlannedTableSubqueryYield, PlannerError,
+        ProjectExpr, TxOp,
     },
 };
 
@@ -253,10 +254,9 @@ fn lower_query_pipeline(
                 ops.push(PipelineOp::Call(planned));
             }
             PipelineStatement::CallSubquery(call) => {
-                return Err(PlannerError::NotImplemented {
-                    feature: "CALL { ... } subquery lowering",
-                    span: call.span,
-                });
+                let planned = lower_call_subquery(call, registry, analyzed)?;
+                visible.extend(planned.yield_schema.clone());
+                ops.push(PipelineOp::CallSubquery(Box::new(planned)));
             }
         }
         index += 1;
@@ -273,6 +273,96 @@ fn lower_query_pipeline(
         next_expr_id: next_expr_id(analyzed),
         next_pipeline_op_id,
     })
+}
+
+fn lower_call_subquery(
+    call: &InlineProcedureCall,
+    registry: &dyn ProcedureRegistry,
+    analyzed: &AnalyzedStatement,
+) -> Result<PlannedTableSubquery, PlannerError> {
+    if call.variable_scope.is_some() {
+        return Err(PlannerError::NotImplemented {
+            feature: "explicit variable-scope CALL subquery (GP03)",
+            span: call.span,
+        });
+    }
+    if call.in_transactions {
+        return Err(PlannerError::NotImplemented {
+            feature: "CALL { ... } IN TRANSACTIONS",
+            span: call.span,
+        });
+    }
+    let mut body = lower_query_pipeline(&call.body, registry, analyzed)?;
+    expr::populate_plan_subqueries(&mut body, analyzed, registry)?;
+    let yield_items = table_subquery_yields(call, &body.output_schema)?;
+    let yield_schema = yield_items
+        .iter()
+        .map(|item| {
+            let column = body_column(&body.output_schema, item.source, item.span)?;
+            Ok(BindingTableColumn {
+                name: Some(item.output),
+                hidden: None,
+                ty: column.ty.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, PlannerError>>()?;
+    Ok(PlannedTableSubquery {
+        body: Box::new(body),
+        outer_binding_refs: expr::outer_binding_refs_in_span(call.body.span, analyzed)?,
+        yield_items,
+        yield_schema,
+        span: call.span,
+    })
+}
+
+fn table_subquery_yields(
+    call: &InlineProcedureCall,
+    output_schema: &BindingTableSchema,
+) -> Result<Vec<PlannedTableSubqueryYield>, PlannerError> {
+    let mut yields = Vec::new();
+    for item in &call.yield_items {
+        match item.column {
+            YieldColumn::Star => {
+                for column in output_schema
+                    .columns
+                    .iter()
+                    .filter_map(|column| column.name)
+                {
+                    yields.push(PlannedTableSubqueryYield {
+                        source: column,
+                        output: column,
+                        span: item.span,
+                    });
+                }
+            }
+            YieldColumn::Named(source) => {
+                let output = item.alias.unwrap_or(source);
+                body_column(output_schema, source, item.span)?;
+                yields.push(PlannedTableSubqueryYield {
+                    source,
+                    output,
+                    span: item.span,
+                });
+            }
+        }
+    }
+    Ok(yields)
+}
+
+fn body_column(
+    schema: &BindingTableSchema,
+    name: selene_core::IStr,
+    span: SourceSpan,
+) -> Result<&BindingTableColumn, PlannerError> {
+    schema
+        .columns
+        .iter()
+        .find(|column| column.name == Some(name))
+        .ok_or(PlannerError::ProcedureMetadataMismatch {
+            procedure: Box::new([]),
+            detail: "CALL subquery yield column missing from body output schema",
+            span,
+        })
 }
 
 pub(super) fn lower_return(
