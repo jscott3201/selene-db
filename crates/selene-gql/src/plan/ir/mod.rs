@@ -23,7 +23,9 @@ pub use filter::{
     ProjectExpr,
 };
 pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
-pub use subquery::{OuterBindingRef, PlannedSubquery, SubqueryKind, SubqueryRegistry};
+pub use subquery::{
+    OuterBindingRef, PlannedSubquery, SubqueryBody, SubqueryKind, SubqueryRegistry,
+};
 pub use tx::TxOp;
 
 /// Identifier for a pipeline op within one execution plan.

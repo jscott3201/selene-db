@@ -59,7 +59,7 @@ pub use crate::plan::{
     PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, PlannerError,
     ProjectExpr, PropertyHistogram, PropertyInit, RepeatEdgeMatch, Rule, ScanAccess, ScanKind,
-    SubqueryKind, SubqueryRegistry, TailBinding, Transformed, TxOp, TypedIndexBounds,
+    SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, Transformed, TxOp, TypedIndexBounds,
     TypedIndexLookup, WanderJoinSampler, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{

@@ -115,7 +115,8 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
             query::match_clause(pattern, uses);
         }
-        ValueExpr::ValueSubquery { body, .. } => {
+        ValueExpr::ValueSubquery { body, span } => {
+            record_feature(uses, FeatureId::GQ18, *span);
             query::query_pipeline(body, uses);
         }
     }

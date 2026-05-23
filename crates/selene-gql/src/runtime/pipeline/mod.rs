@@ -23,7 +23,10 @@ mod unwind;
 use crate::{
     PipelineOp, SubqueryRegistry,
     analyze::ExprIdLookup,
-    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, TxContext, value_key::RuntimeEqKey},
+    runtime::{
+        Binding, BindingTable, EvalCtx, ExecutorError, TxContext, plan_runner,
+        value_key::RuntimeEqKey,
+    },
 };
 
 pub(super) fn row_key(row: &Binding) -> RuntimeEqKey {
@@ -131,6 +134,105 @@ pub(crate) fn execute_pipeline_with_plan(
             PipelineOp::Tx(_) => {
                 return Err(ExecutorError::ImplementationDefined {
                     detail: "TX op surfaced inside execute_pipeline; should be dispatched at statement level",
+                });
+            }
+        };
+        ctx.check_cancellation()?;
+    }
+    Ok(table)
+}
+
+pub(crate) fn execute_pipeline_read_only_with_plan(
+    pipeline: &[PipelineOp],
+    mut table: BindingTable,
+    ctx: &TxContext<'_, '_>,
+    expr_ids: &ExprIdLookup,
+    subqueries: &SubqueryRegistry,
+) -> Result<BindingTable, ExecutorError> {
+    for op in pipeline {
+        table = match op {
+            PipelineOp::Filter(predicate) => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                filter::execute(predicate, table, &eval_ctx)?
+            }
+            PipelineOp::Project(items) => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                project::execute(items, table, &eval_ctx)?
+            }
+            PipelineOp::Let(items) => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                let_op::execute(items, table, &eval_ctx)?
+            }
+            PipelineOp::Unwind {
+                source,
+                alias,
+                span,
+            } => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                unwind::execute(source, *alias, *span, table, &eval_ctx)?
+            }
+            PipelineOp::OrderBy(keys) => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                order_by::execute(keys, table, &eval_ctx)?
+            }
+            PipelineOp::Limit { offset, count } => limit::execute(offset, count, table, ctx)?,
+            PipelineOp::TopK {
+                keys,
+                offset,
+                count,
+            } => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                top_k::execute(keys, offset, count, table, ctx, &eval_ctx)?
+            }
+            PipelineOp::GroupBy { keys, aggregates } => {
+                let eval_ctx = EvalCtx {
+                    tx: ctx,
+                    expr_ids,
+                    subqueries,
+                };
+                group_by::execute(keys, aggregates, table, &eval_ctx)?
+            }
+            PipelineOp::Distinct => distinct::execute(table, ctx)?,
+            PipelineOp::Union { op, rhs } => {
+                let rhs_table = plan_runner::execute_plan_read_only(rhs, ctx)?;
+                union::execute_with_rhs(*op, table, rhs_table, ctx)?
+            }
+            PipelineOp::Chain(rhs) => plan_runner::execute_plan_read_only(rhs, ctx)?,
+            PipelineOp::Match(pattern) => {
+                match_op::execute(pattern, table, ctx, expr_ids, subqueries)?
+            }
+            PipelineOp::ExplainPlan { inner, .. } => explain::execute(inner)?,
+            PipelineOp::Call(call) => {
+                call::execute_read_only(call, table, ctx, expr_ids, subqueries)?
+            }
+            PipelineOp::Mutation(_) | PipelineOp::Catalog(_) | PipelineOp::Tx(_) => {
+                return Err(ExecutorError::InvalidTransactionState {
+                    detail: "write pipeline op invoked from read-only subquery",
+                    span: crate::SourceSpan::default(),
                 });
             }
         };

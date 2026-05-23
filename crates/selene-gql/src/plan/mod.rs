@@ -22,7 +22,7 @@ pub use ir::{
     LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
     OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
     PlannedSubquery, PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem,
-    ProjectExpr, PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryKind,
+    ProjectExpr, PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryBody, SubqueryKind,
     SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;

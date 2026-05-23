@@ -31,6 +31,53 @@ pub(crate) fn execute_plan(
     )
 }
 
+pub(crate) fn execute_plan_read_only(
+    plan: &ExecutionPlan,
+    ctx: &TxContext<'_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    execute_plan_read_only_with_seed(plan, None, ctx)
+}
+
+pub(crate) fn execute_plan_read_only_with_seed(
+    plan: &ExecutionPlan,
+    seed: Option<BindingTable>,
+    ctx: &TxContext<'_, '_>,
+) -> Result<BindingTable, ExecutorError> {
+    let table = {
+        let eval_ctx = EvalCtx {
+            tx: ctx,
+            expr_ids: &plan.expr_ids,
+            subqueries: &plan.subqueries,
+        };
+        match (&plan.pattern_plan, seed) {
+            (Some(pattern_plan), Some(seed)) => {
+                let (schema, rows) = seed.into_parts();
+                let Some(row) = rows.first() else {
+                    return Ok(BindingTable::new(schema, Vec::new()));
+                };
+                pattern::execute_pattern_with_seed_and_schema(
+                    pattern_plan,
+                    Some(row),
+                    schema,
+                    &eval_ctx,
+                )?
+            }
+            (Some(pattern_plan), None) => {
+                pattern::execute_pattern_with_seed(pattern_plan, None, &eval_ctx)?
+            }
+            (None, Some(seed)) => seed,
+            (None, None) => seed_table(),
+        }
+    };
+    pipeline::execute_pipeline_read_only_with_plan(
+        plan.pipeline.as_slice(),
+        table,
+        ctx,
+        &plan.expr_ids,
+        &plan.subqueries,
+    )
+}
+
 pub(crate) fn seed_table() -> BindingTable {
     BindingTable::new(
         BindingTableSchema {

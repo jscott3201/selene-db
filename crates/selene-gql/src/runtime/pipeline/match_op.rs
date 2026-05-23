@@ -11,7 +11,7 @@ use crate::{
 pub(super) fn execute(
     pattern_plan: &PatternPlan,
     table: BindingTable,
-    ctx: &mut TxContext<'_, '_>,
+    ctx: &TxContext<'_, '_>,
     expr_ids: &ExprIdLookup,
     subqueries: &SubqueryRegistry,
 ) -> Result<BindingTable, ExecutorError> {

@@ -60,6 +60,30 @@ where
     }
 }
 
+pub(super) fn build_read_only<'borrow, 'ctx, 'g>(
+    call: &PlannedCall,
+    ctx: &'borrow TxContext<'ctx, 'g>,
+) -> Result<ProcedureContext<'borrow, 'g>, ExecutorError>
+where
+    'ctx: 'borrow,
+{
+    match call.tier {
+        ProcedureTier::Graph => Ok(ProcedureContext::Graph(GraphContext::new(
+            ctx.snapshot(),
+            ctx.impl_defined_caps(),
+            ctx.providers(),
+            ctx.cancellation_checker(),
+        ))),
+        ProcedureTier::Mutation => Err(ExecutorError::InvalidTransactionState {
+            detail: "GraphWrite procedure requires a write transaction",
+            span: call.span,
+        }),
+        ProcedureTier::Persist => Err(ExecutorError::ImplementationDefined {
+            detail: "persist-tier procedures not implemented in v1.0",
+        }),
+    }
+}
+
 pub(super) const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
     match mutability {
         ProcedureMutability::Read => ProcedureTier::Graph,

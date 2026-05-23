@@ -1,6 +1,7 @@
 //! Analyzed-statement to plan lowering.
 
 mod aggregate;
+mod binding_refs;
 mod call;
 mod catalog;
 mod expr;
@@ -42,7 +43,7 @@ pub fn plan(
     let mut plan = lower_statement_kind(&analyzed.statement, registry, analyzed)?;
     plan.category = analyzed.category;
     plan.expr_ids = analyzed.expr_ids.clone();
-    expr::populate_plan_subqueries(&mut plan, analyzed)?;
+    expr::populate_plan_subqueries(&mut plan, analyzed, registry)?;
     plan.refresh_pipeline_op_high_water();
     Ok(plan)
 }

@@ -108,6 +108,7 @@ feature_ids! {
     GQ12 = "GQ12" => "OFFSET clause";
     GQ13 = "GQ13" => "LIMIT clause";
     GQ15 = "GQ15" => "GROUP BY clause";
+    GQ18 = "GQ18" => "Scalar value query expression";
     GQ20 = "GQ20" => "Linear query composition";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
@@ -199,6 +200,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ12,
     FeatureId::GQ13,
     FeatureId::GQ15,
+    FeatureId::GQ18,
     FeatureId::GQ20,
     FeatureId::GT01,
     FeatureId::GV01,

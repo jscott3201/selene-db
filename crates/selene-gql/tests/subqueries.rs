@@ -50,6 +50,15 @@ fn string_values(table: &selene_gql::BindingTable, name: &str) -> Vec<String> {
         .collect()
 }
 
+fn value_values(table: &selene_gql::BindingTable, name: &str) -> Vec<Value> {
+    column_values(table, name)
+}
+
+fn assert_status(source: &str, status: &str) {
+    let err = execute_result(source).expect_err("query rejects");
+    assert_eq!(err.gqlstatus().as_str(), status);
+}
+
 #[test]
 fn exists_empty_returns_false() {
     let table = execute("RETURN EXISTS { MATCH (:Nope) } AS e");
@@ -191,6 +200,90 @@ fn count_subquery_correlates_with_outer_binding() {
         vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
     );
     assert_eq!(int_values(&table, "outgoing"), [1, 1, 0]);
+}
+
+#[test]
+fn value_subquery_returns_uncorrelated_scalar() {
+    let table = execute("RETURN VALUE { RETURN 7 LIMIT 1 } AS v");
+
+    assert_eq!(int_values(&table, "v"), vec![7]);
+}
+
+#[test]
+fn value_subquery_returns_null_for_empty_result() {
+    let table = execute("RETURN VALUE { MATCH (:Nope) RETURN 1 LIMIT 1 } AS v");
+
+    assert_eq!(value_values(&table, "v"), vec![Value::Null]);
+}
+
+#[test]
+fn value_subquery_allows_direct_aggregate_without_limit() {
+    let table = execute("RETURN VALUE { MATCH (n:Person) RETURN count(n) } AS c");
+
+    assert_eq!(int_values(&table, "c"), vec![3]);
+}
+
+#[test]
+fn value_subquery_allows_non_aggregate_with_limit_one() {
+    let table = execute("RETURN VALUE { MATCH (n:Person) RETURN n.name LIMIT 1 } AS name");
+
+    assert_eq!(string_values(&table, "name"), vec!["Alice".to_owned()]);
+}
+
+#[test]
+fn value_subquery_correlates_with_outer_binding() {
+    let table = execute(
+        "MATCH (a:Person)
+         RETURN a.name AS name,
+                VALUE { MATCH (a)-[:KNOWS]->(b) RETURN b.name LIMIT 1 } AS first_known
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    assert_eq!(
+        value_values(&table, "first_known"),
+        vec![
+            Value::String(exec_common::istr("Bob")),
+            Value::Null,
+            Value::Null
+        ]
+    );
+}
+
+#[test]
+fn value_subquery_rejects_multi_item_return_as_syntax_error() {
+    assert_status(
+        "RETURN VALUE { RETURN 1 AS a, 2 AS b LIMIT 1 } AS v",
+        "42001",
+    );
+}
+
+#[test]
+fn value_subquery_rejects_non_aggregate_without_limit_one() {
+    assert_status("RETURN VALUE { RETURN 1 } AS v", "42001");
+}
+
+#[test]
+fn value_subquery_rejects_missing_return() {
+    assert_status("RETURN VALUE { MATCH (:Person) } AS v", "42001");
+}
+
+#[test]
+fn value_subquery_depth_guard_limits_nested_subqueries() {
+    let mut source = String::from("RETURN ");
+    for _ in 0..260 {
+        source.push_str("VALUE { RETURN ");
+    }
+    source.push('1');
+    for _ in 0..260 {
+        source.push_str(" LIMIT 1 }");
+    }
+    source.push_str(" AS v");
+
+    assert_status(&source, "5GQL1");
 }
 
 #[test]

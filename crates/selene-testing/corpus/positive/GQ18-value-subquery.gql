@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: GQ18
+-- expects: parse-ok
+RETURN VALUE { RETURN 1 LIMIT 1 } AS v

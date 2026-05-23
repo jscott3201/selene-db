@@ -9,7 +9,7 @@ use crate::{
     analyze::{BindingId, ExprId},
 };
 
-use super::PatternPlan;
+use super::{ExecutionPlan, PatternPlan};
 
 /// Planned subquery referenced by an expression ID in a containing plan.
 ///
@@ -20,8 +20,8 @@ use super::PatternPlan;
 pub struct PlannedSubquery {
     /// Subquery expression kind.
     pub kind: SubqueryKind,
-    /// Lowered pattern executed for the subquery body.
-    pub plan: PatternPlan,
+    /// Lowered body executed for the subquery.
+    pub body: SubqueryBody,
     /// Outer-scope bindings referenced by the inner pattern, sorted and deduped.
     pub outer_binding_refs: Vec<OuterBindingRef>,
     /// Source span of the subquery expression.
@@ -47,6 +47,17 @@ pub enum SubqueryKind {
     },
     /// selene-db `COUNT { MATCH ... }` dialect extension.
     Count,
+    /// ISO GQL `VALUE { ... }` scalar value query expression.
+    Value,
+}
+
+/// Lowered expression-subquery body.
+#[derive(Clone, Debug)]
+pub enum SubqueryBody {
+    /// Existing single-MATCH pattern body used by EXISTS/COUNT.
+    Pattern(PatternPlan),
+    /// Full query pipeline body used by VALUE.
+    Plan(Box<ExecutionPlan>),
 }
 
 /// Plan-level registry of expression subqueries indexed by AST expression ID.
@@ -83,13 +94,13 @@ mod tests {
     use crate::{
         PatternPlan, SourceSpan,
         analyze::ExprId,
-        plan::{JoinTree, PlannedSubquery, SubqueryKind, SubqueryRegistry},
+        plan::{JoinTree, PlannedSubquery, SubqueryBody, SubqueryKind, SubqueryRegistry},
     };
 
     fn planned_subquery() -> PlannedSubquery {
         PlannedSubquery {
             kind: SubqueryKind::Count,
-            plan: PatternPlan {
+            body: SubqueryBody::Pattern(PatternPlan {
                 bindings: Vec::new(),
                 join_tree: JoinTree::WorstCaseOptimal {
                     intersection: Vec::new(),
@@ -97,7 +108,7 @@ mod tests {
                 },
                 filters: Vec::new(),
                 paths: Vec::new(),
-            },
+            }),
             outer_binding_refs: Vec::new(),
             span: SourceSpan::default(),
         }
