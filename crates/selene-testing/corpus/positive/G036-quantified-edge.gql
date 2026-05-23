@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: G036
+-- expects: parse-ok
+MATCH (a:Person)-[:KNOWS*1..2]->(b:Person) RETURN b

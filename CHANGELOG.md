@@ -16,6 +16,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Restrictive `MATCH` path modes in `selene-gql` for explicit `WALK`, `TRAIL`,
   `SIMPLE`, and `ACYCLIC`, including ordered path contributors for fixed and
   bounded variable-length path validation.
+- Wave 3 variable-length relationships are complete: unbounded edge
+  quantifiers (`*`, `+`, `{m,}`), questioned edges (`?`), and the ISO §16.4
+  legality matrix now execute in `selene-gql` with hard `max_quantifier`
+  backstops.
 - Shared `selene-gql` `CallPlanCache` for repeated top-level procedure
   `CALL` statements across short-lived sessions, with graph-id and
   schema-version keyed invalidation plus a cache-hit metric.

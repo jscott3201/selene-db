@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: G037
+-- expects: parse-ok
+MATCH (a:Person)-[r:KNOWS?]->(b:Person) RETURN r, b

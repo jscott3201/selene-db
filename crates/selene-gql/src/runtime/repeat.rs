@@ -98,18 +98,20 @@ fn traverse(
         }
         let next_depth = depth.saturating_add(1);
         let step = visited_set::repeat_step(
-            state.path_mode,
-            source_node(state.edge, state.pattern_plan, state.schema, row)?.ok_or(
-                ExecutorError::ImplementationDefined {
-                    detail: "repeat source binding column missing",
-                },
-            )?,
-            adjacent.neighbor,
-            adjacent.edge_id,
-            state.direction,
-            path_edges,
-            next_depth,
-            state.min,
+            visited_set::RepeatStepInput {
+                path_mode: state.path_mode,
+                source: source_node(state.edge, state.pattern_plan, state.schema, row)?.ok_or(
+                    ExecutorError::ImplementationDefined {
+                        detail: "repeat source binding column missing",
+                    },
+                )?,
+                target: adjacent.neighbor,
+                edge: adjacent.edge_id,
+                direction: state.direction,
+                path_edges,
+                next_depth,
+                min: state.min,
+            },
             pattern::WalkContext {
                 pattern: state.pattern_plan,
                 schema: state.schema,

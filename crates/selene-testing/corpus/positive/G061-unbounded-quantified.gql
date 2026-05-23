@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: G061
+-- expects: parse-ok
+MATCH TRAIL (a:Person)-[r:KNOWS+]->(b:Person) RETURN r, b

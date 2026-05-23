@@ -55,6 +55,43 @@ fn path_mode_features_are_supported_and_recorded() {
 }
 
 #[test]
+fn quantifier_features_are_recorded_and_match_modes_rejected() {
+    let bounded = parse("MATCH (a)-[r:K*1..2]->(b) RETURN r").expect("bounded parses");
+    let unbounded =
+        parse("MATCH TRAIL (a)-[r:K+]->(b)-[q?]->(c) RETURN r, q").expect("unbounded parses");
+    let bounded_features = feature_walk(&bounded)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+    let unbounded_features = feature_walk(&unbounded)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    for expected in [FeatureId::G036, FeatureId::G060] {
+        assert!(
+            bounded_features.contains(&expected),
+            "bounded quantifier should record {expected}, observed {bounded_features:?}"
+        );
+    }
+    for expected in [FeatureId::G036, FeatureId::G037, FeatureId::G061] {
+        assert!(
+            unbounded_features.contains(&expected),
+            "unbounded/questioned quantifier should record {expected}, observed {unbounded_features:?}"
+        );
+    }
+
+    assert_feature(
+        parse("MATCH DIFFERENT EDGES (n) RETURN n").expect_err("G002 unsupported"),
+        FeatureId::G002,
+    );
+    assert_feature(
+        parse("MATCH REPEATABLE ELEMENTS (n) RETURN n").expect_err("G003 unsupported"),
+        FeatureId::G003,
+    );
+}
+
+#[test]
 fn is_predicate_feature_family_is_supported() {
     for source in [
         "RETURN n IS DIRECTED",

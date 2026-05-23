@@ -15,37 +15,39 @@ pub(crate) struct RepeatStep {
     pub(crate) terminal: bool,
 }
 
+pub(crate) struct RepeatStepInput<'a> {
+    pub(crate) path_mode: PathMode,
+    pub(crate) source: NodeId,
+    pub(crate) target: NodeId,
+    pub(crate) edge: EdgeId,
+    pub(crate) direction: EdgeDirection,
+    pub(crate) path_edges: &'a [EdgeId],
+    pub(crate) next_depth: u32,
+    pub(crate) min: u32,
+}
+
 pub(crate) fn repeat_step(
-    path_mode: PathMode,
-    source: NodeId,
-    target: NodeId,
-    edge: EdgeId,
-    direction: EdgeDirection,
-    path_edges: &[EdgeId],
-    next_depth: u32,
-    min: u32,
+    input: RepeatStepInput<'_>,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Option<RepeatStep>, ExecutorError> {
-    match path_mode {
+    match input.path_mode {
         PathMode::Walk => Ok(Some(RepeatStep { terminal: false })),
         PathMode::Trail => {
-            if path_edges.contains(&edge) {
+            if input.path_edges.contains(&input.edge) {
                 Ok(None)
             } else {
                 Ok(Some(RepeatStep { terminal: false }))
             }
         }
         PathMode::Acyclic => {
-            let nodes = repeat_nodes(source, direction, path_edges, env)?;
-            if nodes.contains(&target) {
+            let nodes = repeat_nodes(input.source, input.direction, input.path_edges, env)?;
+            if nodes.contains(&input.target) {
                 Ok(None)
             } else {
                 Ok(Some(RepeatStep { terminal: false }))
             }
         }
-        PathMode::Simple => {
-            repeat_simple_step(source, target, direction, path_edges, next_depth, min, env)
-        }
+        PathMode::Simple => repeat_simple_step(input, env),
     }
 }
 
@@ -231,21 +233,16 @@ fn append_group_nodes(
 }
 
 fn repeat_simple_step(
-    source: NodeId,
-    target: NodeId,
-    direction: EdgeDirection,
-    path_edges: &[EdgeId],
-    next_depth: u32,
-    min: u32,
+    input: RepeatStepInput<'_>,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Option<RepeatStep>, ExecutorError> {
-    let nodes = repeat_nodes(source, direction, path_edges, env)?;
-    if !nodes.contains(&target) {
+    let nodes = repeat_nodes(input.source, input.direction, input.path_edges, env)?;
+    if !nodes.contains(&input.target) {
         return Ok(Some(RepeatStep { terminal: false }));
     }
-    let closes_at_source =
-        target == source && nodes.iter().filter(|node| **node == source).count() == 1;
-    if closes_at_source && next_depth >= min {
+    let closes_at_source = input.target == input.source
+        && nodes.iter().filter(|node| **node == input.source).count() == 1;
+    if closes_at_source && input.next_depth >= input.min {
         return Ok(Some(RepeatStep { terminal: true }));
     }
     Ok(None)

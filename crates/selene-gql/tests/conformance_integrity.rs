@@ -38,6 +38,35 @@ fn path_mode_features_are_claimed_supported() {
 }
 
 #[test]
+fn quantifier_features_are_claimed_supported() {
+    for feature in [
+        FeatureId::G036,
+        FeatureId::G037,
+        FeatureId::G060,
+        FeatureId::G061,
+    ] {
+        assert!(SUPPORTED_FEATURES.contains(&feature));
+        assert!(
+            !NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature)
+        );
+    }
+}
+
+#[test]
+fn match_mode_features_remain_rationalized_unsupported() {
+    for feature in [FeatureId::G002, FeatureId::G003] {
+        assert!(!SUPPORTED_FEATURES.contains(&feature));
+        assert!(
+            NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature)
+        );
+    }
+}
+
+#[test]
 fn sql_drift_status_remaps_are_registered() {
     assert_eq!(GqlStatus::IMPLEMENTATION_DEFINED_ERROR.as_str(), "5GQL0");
     assert_eq!(GqlStatus::IMPLEMENTATION_DEFINED_ERROR.class(), *b"5G");
