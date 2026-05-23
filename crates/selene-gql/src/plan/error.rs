@@ -94,6 +94,21 @@ pub enum PlannerError {
         #[label("interner cap exhausted")]
         span: SourceSpan,
     },
+
+    /// A planner-visible implementation-defined limit would be exceeded.
+    #[error("{limit_name} {actual} exceeds implementation-defined limit {limit}")]
+    #[diagnostic(code(SLENE_GQL_5GQL1))]
+    ProgramLimitExceeded {
+        /// Stable limit name asserted by tests.
+        limit_name: &'static str,
+        /// Configured limit.
+        limit: u32,
+        /// Requested value.
+        actual: u32,
+        /// Source span of the construct exceeding the limit.
+        #[label("limit exceeded")]
+        span: SourceSpan,
+    },
 }
 
 impl PlannerError {
@@ -109,6 +124,7 @@ impl PlannerError {
             | Self::WriteSetPatternMismatch { .. }
             | Self::ProcedureMetadataMismatch { .. }
             | Self::InternerCapExhausted { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
+            Self::ProgramLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
         }
     }
 }

@@ -12,8 +12,8 @@ use super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
 use crate::ast::{
     EdgeDirection, EdgePattern, GraphPattern, IsCheckKind, LabelExpr, LimitValue, MatchClause,
     NodePattern, NormalForm, NullsPolicy, OrderDirection, OrderTerm, PathMode, PatternElement,
-    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, Statement, TruthValue, UnaryOp,
-    ValueExpr, WithClause,
+    ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement, TruthValue,
+    UnaryOp, ValueExpr, WithClause,
 };
 
 use keywords::{fmt_binary, fmt_match_mode, fmt_path_mode, fmt_path_selector, fmt_set_op};
@@ -231,10 +231,17 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
         fmt_label_expr(out, label)?;
     }
     if let Some(quantifier) = edge.quantifier {
-        match quantifier.max {
-            Some(max) if max == quantifier.min => write!(out, "{{{max}}}")?,
-            Some(max) => write!(out, "{{{}, {max}}}", quantifier.min)?,
-            None => write!(out, "{{{},}}", quantifier.min)?,
+        match quantifier {
+            Quantifier::GraphPattern {
+                min,
+                max: Some(max),
+            } if max == min => write!(out, "{{{max}}}")?,
+            Quantifier::GraphPattern {
+                min,
+                max: Some(max),
+            } => write!(out, "{{{min}, {max}}}")?,
+            Quantifier::GraphPattern { min, max: None } => write!(out, "{{{min},}}")?,
+            Quantifier::Questioned => out.push('?'),
         }
     }
     fmt_properties(out, &edge.properties)?;

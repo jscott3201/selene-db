@@ -318,16 +318,13 @@ fn build_quantifier(pair: Pair<'_, Rule>) -> Result<Quantifier, ParserError> {
     let text = pair.as_str();
 
     if text == "*" {
-        return Ok(Quantifier { min: 0, max: None });
+        return Ok(Quantifier::GraphPattern { min: 0, max: None });
     }
     if text == "+" {
-        return Ok(Quantifier { min: 1, max: None });
+        return Ok(Quantifier::GraphPattern { min: 1, max: None });
     }
     if text == "?" {
-        return Ok(Quantifier {
-            min: 0,
-            max: Some(1),
-        });
+        return Ok(Quantifier::Questioned);
     }
 
     if let Some(range) = text.strip_prefix('*') {
@@ -362,7 +359,7 @@ fn build_quantifier(pair: Pair<'_, Rule>) -> Result<Quantifier, ParserError> {
     }
 
     let exact = parse_u32(body, source_span)?;
-    Ok(Quantifier {
+    Ok(Quantifier::GraphPattern {
         min: exact,
         max: Some(exact),
     })
@@ -385,7 +382,7 @@ fn validate_range(
             Some("ensure max >= min in `*min..max` or `{min,max}`".into()),
         ));
     }
-    Ok(Quantifier { min, max })
+    Ok(Quantifier::GraphPattern { min, max })
 }
 
 fn parse_u32(text: &str, source_span: SourceSpan) -> Result<u32, ParserError> {

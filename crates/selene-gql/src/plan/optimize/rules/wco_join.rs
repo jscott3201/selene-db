@@ -39,7 +39,7 @@ impl Rule for WcoJoin {
 fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
     if matches!(
         tree,
-        JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_)
+        JoinTree::Repeat { .. } | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_)
     ) {
         return false;
     }
@@ -63,7 +63,10 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
             rewrite_tree(left, cap) | rewrite_tree(right, cap)
         }
         JoinTree::Outer { left, .. } => rewrite_tree(left, cap),
-        JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        JoinTree::Scan(_)
+        | JoinTree::Repeat { .. }
+        | JoinTree::WorstCaseOptimal { .. }
+        | JoinTree::Subplan(_) => false,
     }
 }
 
@@ -115,6 +118,7 @@ fn detect_cycle(
         }
         JoinTree::HashJoin { .. }
         | JoinTree::Outer { .. }
+        | JoinTree::Repeat { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
     }
@@ -151,6 +155,7 @@ fn collect_cycle_nodes(
         }
         JoinTree::HashJoin { .. }
         | JoinTree::Outer { .. }
+        | JoinTree::Repeat { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
     }

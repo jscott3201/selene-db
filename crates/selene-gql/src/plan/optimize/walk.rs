@@ -161,7 +161,10 @@ pub(crate) fn walk_expand_nodes(
     visit: &mut impl FnMut(&mut EdgeMatch) -> bool,
 ) -> bool {
     match tree {
-        JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        JoinTree::Scan(_)
+        | JoinTree::Repeat { .. }
+        | JoinTree::WorstCaseOptimal { .. }
+        | JoinTree::Subplan(_) => false,
         JoinTree::Expand { child, edge, .. } => {
             let changed_child = walk_expand_nodes(child, visit);
             visit(edge) | changed_child
@@ -179,7 +182,9 @@ fn recurse_join_tree_subplans(
 ) -> bool {
     match tree {
         JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } => false,
-        JoinTree::Expand { child, .. } => recurse_join_tree_subplans(child, visit),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
+            recurse_join_tree_subplans(child, visit)
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             recurse_join_tree_subplans(left, visit) | recurse_join_tree_subplans(right, visit)
         }
@@ -224,6 +229,13 @@ fn walk_join_tree_exprs(
             let changed_child = walk_join_tree_exprs(child, bindings, visit);
             let changed_edge = walk_predicates(&mut edge.property_predicates, bindings, visit)
                 | walk_predicates(&mut edge.right_property_predicates, bindings, visit);
+            changed_child | changed_edge
+        }
+        JoinTree::Repeat { child, edge, .. } => {
+            let changed_child = walk_join_tree_exprs(child, bindings, visit);
+            let changed_edge = walk_predicates(&mut edge.property_predicates, bindings, visit)
+                | walk_predicates(&mut edge.inline_predicates, bindings, visit)
+                | walk_predicates(&mut edge.final_property_predicates, bindings, visit);
             changed_child | changed_edge
         }
         JoinTree::HashJoin { left, right, .. } => {

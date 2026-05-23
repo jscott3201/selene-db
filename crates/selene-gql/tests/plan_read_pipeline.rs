@@ -1,9 +1,9 @@
 //! BRIEF-26 read-side planner lowering tests.
 
 use selene_gql::{
-    AnalyzedStatement, BindingElement, EdgeDirection, EmptyProcedureRegistry, FilterPredicateKind,
-    JoinTree, LabelExpr, LimitAmount, PipelineOp, PlannerError, ScanKind, SetOp, SubqueryKind,
-    analyze, parse, plan,
+    AnalyzedStatement, AnalyzedType, BindingElement, EdgeDirection, EmptyProcedureRegistry,
+    FilterPredicateKind, GqlType, JoinTree, LabelExpr, LimitAmount, PipelineOp, PlannerError,
+    ScanKind, SetOp, SubqueryKind, analyze, parse, plan,
 };
 
 fn analyze_one(source: &str) -> AnalyzedStatement {
@@ -52,6 +52,14 @@ fn expand(plan: &selene_gql::ExecutionPlan) -> (&selene_gql::EdgeMatch, EdgeDire
             edge, direction, ..
         } => (edge, *direction),
         other => panic!("expected expand, got {other:?}"),
+    }
+}
+
+fn repeat(plan: &selene_gql::ExecutionPlan) -> (&selene_gql::RepeatEdgeMatch, u32, Option<u32>) {
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    match &pattern.join_tree {
+        JoinTree::Repeat { edge, min, max, .. } => (edge, *min, *max),
+        other => panic!("expected repeat, got {other:?}"),
     }
 }
 
@@ -105,6 +113,32 @@ fn direction_matrix_preserves_pattern_direction() {
 
     let undirected = plan_one("MATCH (a)-[:K]-(b) RETURN a, b");
     assert_eq!(expand(&undirected).1, EdgeDirection::Undirected);
+}
+
+#[test]
+fn bounded_quantified_edge_lowers_to_repeat_with_group_list_binding() {
+    let plan = plan_one("MATCH (a)-[r:K*1..3]->(b) RETURN r");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    let (edge, min, max) = repeat(&plan);
+    assert!(edge.group_binding.is_some());
+    assert_eq!(min, 1);
+    assert_eq!(max, Some(3));
+
+    let group = pattern
+        .bindings
+        .iter()
+        .find(|binding| binding.name.as_str() == "r")
+        .expect("group binding exposed");
+    assert_eq!(group.element, BindingElement::Edge);
+    assert_eq!(
+        group.ty,
+        AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
+    );
+    assert_eq!(plan.output_schema.columns[0].name.unwrap().as_str(), "r");
+    assert_eq!(
+        plan.output_schema.columns[0].ty,
+        AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
+    );
 }
 
 #[test]
@@ -220,8 +254,12 @@ fn non_leading_match_is_not_implemented() {
 fn deferred_pattern_features_have_stable_tags() {
     let cases = [
         (
-            "MATCH (a)-[:K*1..2]->(b) RETURN a",
-            "variable-length edge patterns (quantifier)",
+            "MATCH (a)-[:K*]->(b) RETURN a",
+            "unbounded variable-length edge patterns",
+        ),
+        (
+            "MATCH (a)-[:K?]->(b) RETURN a",
+            "questioned edge quantifier (?)",
         ),
         (
             "MATCH DIFFERENT EDGES (n) RETURN n",
@@ -246,6 +284,21 @@ fn deferred_pattern_features_have_stable_tags() {
 fn planner_not_implemented_errors_emit_42n01() {
     let err = plan_err("MATCH DIFFERENT EDGES (n) RETURN n");
     assert_eq!(err.gqlstatus().as_str(), "42N01");
+}
+
+#[test]
+fn quantifier_max_exceeding_cap_emits_program_limit() {
+    let err = plan_err("MATCH (a)-[:K*1..101]->(b) RETURN a");
+    assert!(matches!(
+        err,
+        PlannerError::ProgramLimitExceeded {
+            limit_name: "max_quantifier",
+            limit: 100,
+            actual: 101,
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
 }
 
 #[test]

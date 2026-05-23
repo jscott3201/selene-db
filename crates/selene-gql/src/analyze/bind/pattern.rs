@@ -1,8 +1,10 @@
 //! Graph-pattern bind handling.
 
 use crate::{
-    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PatternElement,
+    EdgePattern, GqlType, GraphPattern, LabelExpr, MatchClause, NodePattern, PatternElement,
+    Quantifier,
     analyze::{
+        AnalyzedType,
         binding::BindingDeclKind,
         error::{AnalysisError, ConditionClause},
         write_set::{WriteKind, property_keys},
@@ -108,8 +110,14 @@ fn bind_edge_pattern(
             PatternBindingMode::Match => BindingDeclKind::EdgePattern,
             PatternBindingMode::Insert { .. } => BindingDeclKind::InsertEdge,
         };
-        let (binding, reused) =
-            ctx.declare_or_reuse_with_labels_info(kind, name, edge.span, edge.label_expr.clone())?;
+        let ty = edge_binding_type(edge, mode);
+        let (binding, reused) = ctx.declare_or_reuse_with_labels_typed_info(
+            kind,
+            name,
+            edge.span,
+            ty,
+            edge.label_expr.clone(),
+        )?;
         if let PatternBindingMode::Insert { statement_index } = mode
             && !reused
         {
@@ -144,6 +152,15 @@ fn bind_edge_pattern(
         expr::bind_condition(ctx, where_clause, ConditionClause::InlineWhere)?;
     }
     Ok(())
+}
+
+fn edge_binding_type(edge: &EdgePattern, mode: PatternBindingMode) -> AnalyzedType {
+    match (mode, &edge.quantifier) {
+        (PatternBindingMode::Match, Some(Quantifier::GraphPattern { max: Some(_), .. })) => {
+            AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
+        }
+        _ => AnalyzedType::Resolved(GqlType::EdgeRef),
+    }
 }
 
 fn bind_label_expr(label: &LabelExpr) {

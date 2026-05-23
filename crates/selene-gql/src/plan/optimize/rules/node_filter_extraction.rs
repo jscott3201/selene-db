@@ -79,7 +79,9 @@ fn push_to_node_scan_inner(
             true
         }
         JoinTree::Scan(_) | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
-        JoinTree::Expand { child, .. } => push_to_node_scan_inner(child, binding, pending),
+        JoinTree::Expand { child, .. } | JoinTree::Repeat { child, .. } => {
+            push_to_node_scan_inner(child, binding, pending)
+        }
         JoinTree::HashJoin { left, right, .. } => {
             push_to_node_scan_inner(left, binding, pending)
                 || push_to_node_scan_inner(right, binding, pending)

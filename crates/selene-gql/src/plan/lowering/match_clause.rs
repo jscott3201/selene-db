@@ -5,7 +5,8 @@ use std::collections::BTreeSet;
 use selene_core::IStr;
 
 use crate::{
-    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PatternElement,
+    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PathSelector,
+    PatternElement, Quantifier,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
         BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, HiddenBindingId,
@@ -19,39 +20,49 @@ struct LoweredClause {
     filters: Vec<FilterPredicate>,
 }
 
-/// Predicates collected from the syntactic right-side node of an edge
-/// expansion. Bundled so they ride the `EdgeMatch` instead of leaking into
-/// the unscoped pattern filter list.
-struct RightNode {
-    binding: Option<BindingId>,
-    hidden_binding: Option<HiddenBindingId>,
-    label_predicate: Option<LabelExpr>,
-    property_predicates: Vec<FilterPredicate>,
-}
-
-struct EdgeLoweringContext<'a, 's> {
+struct GraphLoweringContext<'a, 's> {
+    path_mode: PathMode,
+    selector: Option<PathSelector>,
     analyzed: &'a AnalyzedStatement,
     filters: &'s mut Vec<FilterPredicate>,
-    names: &'s mut BTreeSet<IStr>,
+    paths: &'s mut Vec<PathPlan>,
     binding_ids: &'s mut BTreeSet<BindingId>,
     hidden: &'s mut HiddenAllocator,
 }
 
+/// Predicates collected from the syntactic right-side node of an edge
+/// expansion. Bundled so they ride the `EdgeMatch` instead of leaking into
+/// the unscoped pattern filter list.
+pub(super) struct RightNode {
+    pub(super) binding: Option<BindingId>,
+    pub(super) hidden_binding: Option<HiddenBindingId>,
+    pub(super) label_predicate: Option<LabelExpr>,
+    pub(super) property_predicates: Vec<FilterPredicate>,
+}
+
+pub(super) struct EdgeLoweringContext<'a, 's> {
+    pub(super) analyzed: &'a AnalyzedStatement,
+    pub(super) filters: &'s mut Vec<FilterPredicate>,
+    pub(super) names: &'s mut BTreeSet<IStr>,
+    pub(super) binding_ids: &'s mut BTreeSet<BindingId>,
+    pub(super) hidden: &'s mut HiddenAllocator,
+}
+
 #[derive(Clone, Copy)]
-enum TailBinding {
+pub(super) enum TailBinding {
     Named(BindingId),
     Hidden(HiddenBindingId),
 }
 
 impl TailBinding {
-    const fn named(self) -> Option<BindingId> {
+    pub(super) const fn named(self) -> Option<BindingId> {
         match self {
             Self::Named(binding) => Some(binding),
             Self::Hidden(_) => None,
         }
     }
 
-    const fn hidden(self) -> Option<HiddenBindingId> {
+    pub(super) const fn hidden(self) -> Option<HiddenBindingId> {
         match self {
             Self::Named(_) => None,
             Self::Hidden(binding) => Some(binding),
@@ -60,19 +71,19 @@ impl TailBinding {
 }
 
 #[derive(Default)]
-struct HiddenAllocator {
+pub(super) struct HiddenAllocator {
     next: u32,
 }
 
 impl HiddenAllocator {
-    fn next(&mut self) -> HiddenBindingId {
+    pub(super) fn next(&mut self) -> HiddenBindingId {
         let id = HiddenBindingId::new(self.next);
         self.next += 1;
         id
     }
 }
 
-use super::expr;
+use super::{expr, repeat};
 
 /// Lower leading MATCH clauses into one pattern plan.
 pub(crate) fn lower_match_prefix(
@@ -164,8 +175,16 @@ fn lower_match_clause(
     let mut filters = Vec::new();
     let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
     for pattern in &clause.patterns {
-        let (tree, names) =
-            lower_graph_pattern(pattern, analyzed, &mut filters, paths, binding_ids, hidden)?;
+        let mut ctx = GraphLoweringContext {
+            path_mode: clause.path_mode,
+            selector: clause.selector,
+            analyzed,
+            filters: &mut filters,
+            paths,
+            binding_ids,
+            hidden,
+        };
+        let (tree, names) = lower_graph_pattern(pattern, &mut ctx)?;
         current = Some(match current {
             None => (tree, names),
             Some((left, left_names)) => {
@@ -200,16 +219,17 @@ fn lower_match_clause(
 
 fn lower_graph_pattern(
     pattern: &GraphPattern,
-    analyzed: &AnalyzedStatement,
-    filters: &mut Vec<FilterPredicate>,
-    paths: &mut Vec<PathPlan>,
-    binding_ids: &mut BTreeSet<BindingId>,
-    hidden: &mut HiddenAllocator,
+    ctx: &mut GraphLoweringContext<'_, '_>,
 ) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
     if let Some(name) = pattern.path_binding {
-        let binding = binding_for_decl(name, pattern.span, BindingDeclKind::PathBinding, analyzed)?;
-        binding_ids.insert(binding);
-        paths.push(PathPlan {
+        let binding = binding_for_decl(
+            name,
+            pattern.span,
+            BindingDeclKind::PathBinding,
+            ctx.analyzed,
+        )?;
+        ctx.binding_ids.insert(binding);
+        ctx.paths.push(PathPlan {
             binding,
             span: pattern.span,
         });
@@ -225,11 +245,11 @@ fn lower_graph_pattern(
     let mut names = BTreeSet::new();
     let mut current = JoinTree::Scan(node_scan(
         first,
-        analyzed,
-        filters,
+        ctx.analyzed,
+        ctx.filters,
         &mut names,
-        binding_ids,
-        hidden,
+        ctx.binding_ids,
+        ctx.hidden,
     )?);
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
@@ -238,12 +258,6 @@ fn lower_graph_pattern(
                 span: pattern.span,
             });
         };
-        if edge.quantifier.is_some() {
-            return Err(PlannerError::NotImplemented {
-                feature: "variable-length edge patterns (quantifier)",
-                span: edge.span,
-            });
-        }
         let Some(PatternElement::Node(right)) = elements.next() else {
             return Err(PlannerError::NotImplemented {
                 feature: "edge without target",
@@ -251,26 +265,67 @@ fn lower_graph_pattern(
             });
         };
         let left_binding = chain_tail_binding(&current);
-        let right_node =
-            right_node_predicates(right, analyzed, filters, &mut names, binding_ids, hidden)?;
+        let right_node = right_node_predicates(
+            right,
+            ctx.analyzed,
+            ctx.filters,
+            &mut names,
+            ctx.binding_ids,
+            ctx.hidden,
+        )?;
+        let path_mode = ctx.path_mode;
+        let selector = ctx.selector;
         let mut edge_ctx = EdgeLoweringContext {
-            analyzed,
-            filters,
+            analyzed: ctx.analyzed,
+            filters: ctx.filters,
             names: &mut names,
-            binding_ids,
-            hidden,
+            binding_ids: ctx.binding_ids,
+            hidden: ctx.hidden,
         };
-        let edge_match = edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
-        current = JoinTree::Expand {
-            child: Box::new(current),
-            direction: edge.direction,
-            edge: edge_match,
+        current = match &edge.quantifier {
+            Some(Quantifier::GraphPattern {
+                min,
+                max: Some(max),
+            }) => {
+                repeat::ensure_within_max_quantifier(*max, edge.span)?;
+                let repeat_edge =
+                    repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
+                JoinTree::Repeat {
+                    child: Box::new(current),
+                    direction: edge.direction,
+                    edge: repeat_edge,
+                    min: *min,
+                    max: Some(*max),
+                    path_mode,
+                    selector,
+                }
+            }
+            Some(Quantifier::GraphPattern { max: None, .. }) => {
+                return Err(PlannerError::NotImplemented {
+                    feature: "unbounded variable-length edge patterns",
+                    span: edge.span,
+                });
+            }
+            Some(Quantifier::Questioned) => {
+                return Err(PlannerError::NotImplemented {
+                    feature: "questioned edge quantifier (?)",
+                    span: edge.span,
+                });
+            }
+            None => {
+                let edge_match = edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
+                JoinTree::Expand {
+                    child: Box::new(current),
+                    direction: edge.direction,
+                    edge: edge_match,
+                }
+            }
         };
     }
     Ok((current, names))
 }
 
-fn right_node_predicates(
+pub(super) fn right_node_predicates(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
     filters: &mut Vec<FilterPredicate>,
@@ -378,7 +433,7 @@ fn node_binding(
         .transpose()
 }
 
-fn edge_binding(
+pub(super) fn edge_binding(
     edge: &EdgePattern,
     analyzed: &AnalyzedStatement,
     names: &mut BTreeSet<IStr>,
@@ -564,6 +619,10 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .right_binding
             .map(TailBinding::Named)
             .or_else(|| edge.right_hidden_binding.map(TailBinding::Hidden)),
+        JoinTree::Repeat { edge, .. } => edge
+            .final_binding
+            .map(TailBinding::Named)
+            .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
         }

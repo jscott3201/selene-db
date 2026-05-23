@@ -83,6 +83,17 @@ pub(crate) fn walk_join_tree(
             edge,
             direction,
         } => expand::execute(child, edge, *direction, env),
+        JoinTree::Repeat {
+            child,
+            edge,
+            direction,
+            min,
+            max,
+            path_mode,
+            selector,
+        } => super::repeat::execute(
+            child, edge, *direction, *min, *max, *path_mode, *selector, env,
+        ),
         JoinTree::HashJoin {
             left,
             right,
@@ -136,6 +147,11 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             insert_hidden(slots, edge.left_hidden_binding, ScanKind::Node);
             insert_hidden(slots, edge.hidden_binding, ScanKind::Edge);
             insert_hidden(slots, edge.right_hidden_binding, ScanKind::Node);
+        }
+        JoinTree::Repeat { child, edge, .. } => {
+            collect_hidden_slots(child, slots);
+            insert_hidden(slots, edge.left_hidden_binding, ScanKind::Node);
+            insert_hidden(slots, edge.final_hidden_binding, ScanKind::Node);
         }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             collect_hidden_slots(left, slots);

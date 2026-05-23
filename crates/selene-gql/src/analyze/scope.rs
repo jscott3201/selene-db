@@ -158,12 +158,13 @@ impl BindingScopeTree {
         Ok(self.declare_unchecked(scope, kind, name, span, ty, None))
     }
 
-    pub(crate) fn declare_or_reuse_with_labels(
+    pub(crate) fn declare_or_reuse_with_labels_typed(
         &mut self,
         scope: ScopeId,
         kind: BindingDeclKind,
         name: IStr,
         span: SourceSpan,
+        ty: AnalyzedType,
         labels: Option<crate::LabelExpr>,
     ) -> Result<(BindingId, bool), AnalysisError> {
         if let Some((existing, existing_scope)) = self.resolve_with_scope(scope, name) {
@@ -198,20 +199,25 @@ impl BindingScopeTree {
                     prior_span: prior_decl.span(),
                 });
             }
+            if prior_decl.ty() != &ty {
+                return Err(AnalysisError::NotImplemented {
+                    message:
+                        "mixing scalar and group edge variables under one binding is not supported"
+                            .into(),
+                    span,
+                    hint: Some(
+                        "use different variable names for scalar edge bindings and quantified edge group variables"
+                            .into(),
+                    ),
+                });
+            }
             if !self.crosses_subquery_boundary(scope, existing_scope) {
                 self.decls[existing.get() as usize].refine_label_expr(labels);
             }
             return Ok((existing, true));
         }
         Ok((
-            self.declare_unchecked(
-                scope,
-                kind,
-                name,
-                span,
-                BindingDecl::default_type(kind),
-                labels,
-            ),
+            self.declare_unchecked(scope, kind, name, span, ty, labels),
             false,
         ))
     }

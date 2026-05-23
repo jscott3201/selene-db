@@ -69,13 +69,18 @@ pub enum EdgeDirection {
     Undirected,
 }
 
-/// Variable-length path quantifier.
+/// Edge-pattern quantifier.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct Quantifier {
-    /// Minimum number of repetitions.
-    pub min: u32,
-    /// Maximum number of repetitions, or `None` for unbounded.
-    pub max: Option<u32>,
+pub enum Quantifier {
+    /// ISO graph-pattern quantifier (`*`, `+`, `{n}`, `{m,n}`, etc.).
+    GraphPattern {
+        /// Minimum number of repetitions.
+        min: u32,
+        /// Maximum number of repetitions, or `None` for unbounded.
+        max: Option<u32>,
+    },
+    /// ISO questioned path primary (`?`), which preserves singleton exposure.
+    Questioned,
 }
 
 /// Node pattern.

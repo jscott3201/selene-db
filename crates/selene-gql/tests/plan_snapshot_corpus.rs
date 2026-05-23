@@ -259,6 +259,12 @@ fn collect_join_tree_types(tree: &JoinTree, types: &mut BTreeMap<ExprId, Analyze
             collect_filter_types(&edge.property_predicates, types);
             collect_filter_types(&edge.right_property_predicates, types);
         }
+        JoinTree::Repeat { child, edge, .. } => {
+            collect_join_tree_types(child, types);
+            collect_filter_types(&edge.property_predicates, types);
+            collect_filter_types(&edge.inline_predicates, types);
+            collect_filter_types(&edge.final_property_predicates, types);
+        }
         JoinTree::HashJoin { left, right, .. } => {
             collect_join_tree_types(left, types);
             collect_join_tree_types(right, types);
@@ -412,6 +418,12 @@ fn collect_join_tree_predicates<'a>(tree: &'a JoinTree, predicates: &mut Vec<&'a
             predicates.extend(&edge.property_predicates);
             predicates.extend(&edge.right_property_predicates);
         }
+        JoinTree::Repeat { child, edge, .. } => {
+            collect_join_tree_predicates(child, predicates);
+            predicates.extend(&edge.property_predicates);
+            predicates.extend(&edge.inline_predicates);
+            predicates.extend(&edge.final_property_predicates);
+        }
         JoinTree::HashJoin { left, right, .. } => {
             collect_join_tree_predicates(left, predicates);
             collect_join_tree_predicates(right, predicates);
@@ -470,6 +482,12 @@ fn assert_join_tree_refs(tree: &JoinTree, allowed: &BTreeSet<BindingId>, slug: &
             assert_join_tree_refs(child, allowed, slug);
             assert_pattern_filter_refs(&edge.property_predicates, allowed, slug);
             assert_pattern_filter_refs(&edge.right_property_predicates, allowed, slug);
+        }
+        JoinTree::Repeat { child, edge, .. } => {
+            assert_join_tree_refs(child, allowed, slug);
+            assert_pattern_filter_refs(&edge.property_predicates, allowed, slug);
+            assert_pattern_filter_refs(&edge.inline_predicates, allowed, slug);
+            assert_pattern_filter_refs(&edge.final_property_predicates, allowed, slug);
         }
         JoinTree::HashJoin { left, right, .. } => {
             assert_join_tree_refs(left, allowed, slug);

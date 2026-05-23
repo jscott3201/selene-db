@@ -146,6 +146,15 @@ const ENTRIES: &[PlanCorpusEntry] = &[
         registry: PlanCorpusRegistry::Empty,
     },
     PlanCorpusEntry {
+        slug: "bounded_repeat_group_edge",
+        description: "Bounded variable-length edge lowers to Repeat with a group edge binding.",
+        source: "MATCH (a)-[r:K*1..2]->(b) RETURN r",
+        category: PlanCorpusCategory::Read,
+        expected_rules: &[],
+        uses_index_catalog: false,
+        registry: PlanCorpusRegistry::Empty,
+    },
+    PlanCorpusEntry {
         slug: "range_index_order_topk",
         description: "Range index access, order hint, and TopK fusion.",
         source: "MATCH (n:Person) FILTER n.age > 30 RETURN n ORDER BY n.age LIMIT 10",
