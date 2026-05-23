@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: G010
+-- expects: parse-ok
+MATCH WALK (n:Person) RETURN n

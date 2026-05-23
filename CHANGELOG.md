@@ -13,6 +13,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   results, per-hop edge predicates, and cancellation checks.
 - `MATCH` path selectors in `selene-gql` for `ALL`, `ANY`, `ALL SHORTEST`,
   and `ANY SHORTEST` over fixed and bounded variable-length path patterns.
+- Restrictive `MATCH` path modes in `selene-gql` for explicit `WALK`, `TRAIL`,
+  `SIMPLE`, and `ACYCLIC`, including ordered path contributors for fixed and
+  bounded variable-length path validation.
 - Shared `selene-gql` `CallPlanCache` for repeated top-level procedure
   `CALL` statements across short-lived sessions, with graph-id and
   schema-version keyed invalidation plus a cache-hit metric.

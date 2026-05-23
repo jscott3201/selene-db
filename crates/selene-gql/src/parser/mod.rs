@@ -545,7 +545,7 @@ mod tests {
         );
         assert_eq!(
             crate::ast::format_read_statement(&bounded_stmt).expect("format succeeds"),
-            "MATCH (a)-[r{0, 1}]->(b)\nRETURN r"
+            "MATCH (a)-[r{0,1}]->(b)\nRETURN r"
         );
 
         let Statement::Query(question) = question_stmt else {

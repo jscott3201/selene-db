@@ -241,7 +241,7 @@ fn fmt_edge_pattern(out: &mut String, edge: &EdgePattern) -> fmt::Result {
             Quantifier::GraphPattern {
                 min,
                 max: Some(max),
-            } => write!(out, "{{{min}, {max}}}")?,
+            } => write!(out, "{{{min},{max}}}")?,
             Quantifier::GraphPattern { min, max: None } => write!(out, "{{{min},}}")?,
             Quantifier::Questioned => out.push('?'),
         }
