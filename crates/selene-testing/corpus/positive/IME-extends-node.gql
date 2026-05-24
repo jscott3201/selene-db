@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: IM_EXTENDS
+-- expects: parse-ok
+CREATE NODE TYPE :Child EXTENDS :Parent (name :: STRING)

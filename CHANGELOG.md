@@ -8,6 +8,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Implementation-defined `EXTENDS` property composition for `CREATE NODE TYPE`
+  and `CREATE EDGE TYPE` in `selene-gql`. Parent properties are flattened at
+  CREATE time, same-kind parents are required, exact-match redeclarations
+  succeed without duplication, mismatches raise `GraphTypeViolation`, and
+  feature attribution records the vendor `IM_EXTENDS` feature ID.
 - ISO/IEC 39075:2024 cluster-R string and aggregate conformance in
   `selene-gql`: §19.7 `IS [NOT] NORMALIZED`, §20.24 `NORMALIZE`, `LEFT`,
   `RIGHT`, multi-character TRIM family (GF05), explicit TRIM syntax (GF06),
