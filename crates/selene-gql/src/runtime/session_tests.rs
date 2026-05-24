@@ -74,6 +74,21 @@ fn table_parameter_replacements_share_scalar_namespace() {
 }
 
 #[test]
+fn scalar_only_materialization_borrows_parameter_map() {
+    let graph = SharedGraph::new(GraphId::new(4003));
+    let mut session = Session::new(&graph);
+    let name = admitted("x");
+    let registry = BindingTableRegistry::new();
+
+    session.bind_parameter(name, Value::Int(7));
+
+    let parameters = session.materialize_parameters(&registry);
+
+    assert!(matches!(parameters, std::borrow::Cow::Borrowed(_)));
+    assert_eq!(parameters.get(&name), Some(&Value::Int(7)));
+}
+
+#[test]
 fn materialize_parameters_registers_table_values() {
     let graph = SharedGraph::new(GraphId::new(4001));
     let mut session = Session::new(&graph);
@@ -86,6 +101,7 @@ fn materialize_parameters_registers_table_values() {
 
     let parameters = session.materialize_parameters(&registry);
 
+    assert!(matches!(parameters, std::borrow::Cow::Owned(_)));
     assert_eq!(parameters.get(&scalar), Some(&Value::Int(7)));
     let Some(Value::TableRef(id)) = parameters.get(&table) else {
         panic!("table parameter materializes as TableRef");

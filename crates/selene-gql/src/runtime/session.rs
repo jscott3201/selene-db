@@ -1,6 +1,8 @@
 //! Statement-session state for explicit transaction control.
 
-use std::{cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant};
+use std::{
+    borrow::Cow, cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant,
+};
 
 use selene_core::{CancellationToken, Change, IStr, IStrAdmissionPolicy, Value};
 use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
@@ -15,7 +17,7 @@ use crate::{
 
 /// Session-local query parameter value.
 ///
-/// Scalars are copied into each statement's parameter map directly. Table
+/// Scalar parameters are visible to statements as regular [`Value`]s. Table
 /// parameters are registered in that statement's binding-table registry and
 /// materialized as request-scoped `TableRef` values.
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +33,7 @@ pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
     pub(crate) parameters: BTreeMap<IStr, SessionParameterValue>,
+    pub(crate) scalar_parameters: BTreeMap<IStr, Value>,
     pub(crate) plan_cache: Option<PlanCache>,
     pub(crate) call_plan_cache: Option<Arc<CallPlanCache>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
@@ -42,6 +45,27 @@ pub struct Session<'g> {
     pub(crate) row_cap: Option<usize>,
     pub(crate) istr_admission_policy: IStrAdmissionPolicy,
     pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
+}
+
+pub(crate) fn materialize_parameter_values<'a>(
+    parameters: &'a BTreeMap<IStr, SessionParameterValue>,
+    scalar_parameters: &'a BTreeMap<IStr, Value>,
+    registry: &BindingTableRegistry,
+) -> Cow<'a, BTreeMap<IStr, Value>> {
+    if parameters
+        .values()
+        .all(|value| matches!(value, SessionParameterValue::Scalar(_)))
+    {
+        return Cow::Borrowed(scalar_parameters);
+    }
+
+    let mut materialized = scalar_parameters.clone();
+    for (name, value) in parameters {
+        if let SessionParameterValue::Table(table) = value {
+            materialized.insert(*name, Value::TableRef(registry.register(Arc::clone(table))));
+        }
+    }
+    Cow::Owned(materialized)
 }
 
 /// Metadata returned after committing an explicit transaction through a [`Session`].
@@ -97,6 +121,7 @@ impl<'g> Session<'g> {
             graph,
             principal: None,
             parameters: BTreeMap::new(),
+            scalar_parameters: BTreeMap::new(),
             plan_cache: None,
             call_plan_cache: None,
             active_txn: None,
@@ -118,6 +143,7 @@ impl<'g> Session<'g> {
             graph,
             principal: Some(principal),
             parameters: BTreeMap::new(),
+            scalar_parameters: BTreeMap::new(),
             plan_cache: None,
             call_plan_cache: None,
             active_txn: None,
@@ -212,6 +238,7 @@ impl<'g> Session<'g> {
     /// `None` is returned. Use [`Self::bind_table_parameter`] when callers need
     /// table-aware replacement information.
     pub fn bind_parameter(&mut self, name: IStr, value: Value) -> Option<Value> {
+        self.scalar_parameters.insert(name, value.clone());
         match self
             .parameters
             .insert(name, SessionParameterValue::Scalar(value))
@@ -230,6 +257,7 @@ impl<'g> Session<'g> {
         name: IStr,
         table: BindingTable,
     ) -> Option<SessionParameterValue> {
+        self.scalar_parameters.remove(&name);
         self.parameters
             .insert(name, SessionParameterValue::Table(Arc::new(table)))
     }
@@ -239,6 +267,7 @@ impl<'g> Session<'g> {
     /// If `name` held a table binding, the table is removed and `None` is
     /// returned.
     pub fn clear_parameter(&mut self, name: &IStr) -> Option<Value> {
+        self.scalar_parameters.remove(name);
         match self.parameters.remove(name) {
             Some(SessionParameterValue::Scalar(prior)) => Some(prior),
             Some(SessionParameterValue::Table(_)) | None => None,
@@ -248,6 +277,7 @@ impl<'g> Session<'g> {
     /// Remove all session-local query parameters.
     pub fn clear_parameters(&mut self) {
         self.parameters.clear();
+        self.scalar_parameters.clear();
     }
 
     /// Borrow the session-local query-parameter map used for statement execution.
@@ -257,22 +287,12 @@ impl<'g> Session<'g> {
         &self.parameters
     }
 
-    pub(crate) fn materialize_parameters(
-        &self,
+    #[cfg(test)]
+    pub(crate) fn materialize_parameters<'a>(
+        &'a self,
         registry: &BindingTableRegistry,
-    ) -> BTreeMap<IStr, Value> {
-        self.parameters
-            .iter()
-            .map(|(name, value)| {
-                let value = match value {
-                    SessionParameterValue::Scalar(value) => value.clone(),
-                    SessionParameterValue::Table(table) => {
-                        Value::TableRef(registry.register(Arc::clone(table)))
-                    }
-                };
-                (*name, value)
-            })
-            .collect()
+    ) -> Cow<'a, BTreeMap<IStr, Value>> {
+        materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
     }
 
     /// Enable this session's source-string plan cache with the given capacity.

@@ -247,7 +247,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         impl_defined_caps: &'a ImplDefinedCaps,
         registry: &'a dyn ProcedureRegistry,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: BTreeMap<IStr, Value>,
+        parameters: Cow<'a, BTreeMap<IStr, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -255,7 +255,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             impl_defined_caps,
             registry,
             providers,
-            parameters: Cow::Owned(parameters),
+            parameters,
             binding_tables,
             reopt_hook: None,
             plan_expr_ids: None,
@@ -277,7 +277,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
         registry: &'a dyn ProcedureRegistry,
         txn: &'a mut WriteTxn<'g>,
         providers: &'a [Arc<dyn IndexProvider>],
-        parameters: BTreeMap<IStr, Value>,
+        parameters: Cow<'a, BTreeMap<IStr, Value>>,
         binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
@@ -285,7 +285,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             impl_defined_caps,
             registry,
             providers,
-            parameters: Cow::Owned(parameters),
+            parameters,
             binding_tables,
             reopt_hook: None,
             plan_expr_ids: None,

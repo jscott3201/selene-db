@@ -5,6 +5,7 @@ use std::{rc::Rc, sync::Arc, time::Instant};
 use selene_core::{CancellationToken, Change, metrics};
 use selene_graph::CommitOutcome;
 
+use super::session::materialize_parameter_values;
 use crate::{
     ExecutionPlan, GqlStatus, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
@@ -233,7 +234,11 @@ fn execute_read_only(
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = session.materialize_parameters(&binding_tables);
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
     let (cancellation, deadline, row_cap) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let table = if let Some(txn) = session.active_txn.as_mut() {
@@ -292,7 +297,11 @@ fn execute_inside_explicit_tx(
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = session.materialize_parameters(&binding_tables);
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
     let (cancellation, deadline, row_cap) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let txn = session
@@ -335,7 +344,11 @@ fn execute_auto_commit(
     let snapshot = session.graph().read();
     let principal = session.principal();
     let binding_tables = Rc::new(BindingTableRegistry::new());
-    let parameters = session.materialize_parameters(&binding_tables);
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
     let mut txn = session.graph().begin_write();
     let (cancellation, deadline, row_cap) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
