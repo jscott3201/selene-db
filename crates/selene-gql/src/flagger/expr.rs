@@ -1,9 +1,9 @@
 //! Expression Flagger walk.
 
-use selene_core::feature_register::FeatureId;
+use selene_core::{IStr, feature_register::FeatureId};
 
 use crate::{
-    ValueExpr,
+    NonEmpty, ValueExpr,
     ast::{
         expr::{BinaryOp, IsCheckKind, Literal},
         types::{GqlType, RecordType},
@@ -56,8 +56,8 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         ValueExpr::FunctionCall {
             name, args, span, ..
         } => {
-            if name.len() == 1 && name.first().as_str().eq_ignore_ascii_case("size") {
-                record_feature(uses, FeatureId::GF13, *span);
+            if let Some(feature_id) = scalar_function_feature(name) {
+                record_feature(uses, feature_id, *span);
             }
             values(args, uses);
         }
@@ -129,6 +129,20 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
 fn values(values: &[ValueExpr], uses: &mut Vec<FeatureUse>) {
     for value in values {
         self::value(value, uses);
+    }
+}
+
+fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
+    if name.len() != 1 {
+        return None;
+    }
+    match name.first().as_str().to_ascii_lowercase().as_str() {
+        "abs" | "ceil" | "ceiling" | "floor" | "mod" | "sqrt" => Some(FeatureId::GF01),
+        "acos" | "asin" | "atan" | "cos" | "cosh" | "cot" | "degrees" | "radians" | "sin"
+        | "sinh" | "tan" | "tanh" => Some(FeatureId::GF02),
+        "exp" | "ln" | "log" | "log10" | "power" => Some(FeatureId::GF03),
+        "size" => Some(FeatureId::GF13),
+        _ => None,
     }
 }
 

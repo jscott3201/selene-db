@@ -222,16 +222,66 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
     let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
         return data_exception("power operands are not numeric", span);
     };
-    let value = lhs.powf(rhs);
+    eval_float_power(lhs, rhs, span)
+}
+
+fn eval_float_power(lhs: f64, rhs: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if lhs.is_nan() || rhs.is_nan() {
+        return finite_power_result(f64::NAN, span);
+    }
+    if lhs == 0.0 {
+        if rhs < 0.0 {
+            return invalid_power_argument("power base is zero and exponent is negative", span);
+        }
+        if rhs == 0.0 {
+            return Ok(Value::Float(1.0));
+        }
+        return Ok(Value::Float(0.0));
+    }
+    if lhs < 0.0 {
+        if !is_integral(rhs) {
+            return invalid_power_argument(
+                "power base is negative and exponent is not an integer",
+                span,
+            );
+        }
+        let magnitude = (-lhs).powf(rhs);
+        let value = if is_even_integer(rhs) {
+            magnitude
+        } else {
+            -magnitude
+        };
+        return finite_power_result(value, span);
+    }
+    finite_power_result(lhs.powf(rhs), span)
+}
+
+fn invalid_power_argument(message: &'static str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    data_exception_with(
+        DataExceptionSubclass::InvalidArgumentForPowerFunction,
+        message,
+        span,
+    )
+}
+
+fn finite_power_result(value: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
     if value.is_finite() {
         Ok(Value::Float(value))
     } else {
         data_exception_with(
-            DataExceptionSubclass::InvalidArgumentForPowerFunction,
+            DataExceptionSubclass::NumericValueOutOfRange,
             "floating-point exponentiation produced non-finite value",
             span,
         )
     }
+}
+
+fn is_integral(value: f64) -> bool {
+    value.is_finite() && value.fract() == 0.0
+}
+
+fn is_even_integer(value: f64) -> bool {
+    value.rem_euclid(2.0) == 0.0
 }
 
 fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {

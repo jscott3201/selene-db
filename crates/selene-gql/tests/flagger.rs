@@ -115,6 +115,30 @@ fn graph_predicate_functions_are_supported() {
 }
 
 #[test]
+fn gf01_numeric_functions_are_supported_and_recorded() {
+    for source in [
+        "RETURN abs(-3)",
+        "RETURN mod(7, 4)",
+        "RETURN floor(1.8)",
+        "RETURN ceil(1.2)",
+        "RETURN ceiling(1.2)",
+        "RETURN sqrt(9)",
+    ] {
+        let statement = parse(source).expect(source);
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&FeatureId::GF01),
+            "{source} should record GF01, observed {observed:?}"
+        );
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+}
+
+#[test]
 fn mutation_feature_is_supported() {
     parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation is claimed");
 }

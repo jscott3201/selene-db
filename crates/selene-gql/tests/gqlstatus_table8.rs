@@ -34,6 +34,10 @@ fn data_exception_subclasses_map_to_folded_table8_codes() {
         (DataExceptionSubclass::NumericValueOutOfRange, "22003"),
         (DataExceptionSubclass::DivisionByZero, "22012"),
         (
+            DataExceptionSubclass::InvalidArgumentForNaturalLogarithm,
+            "2201E",
+        ),
+        (
             DataExceptionSubclass::InvalidArgumentForPowerFunction,
             "2201F",
         ),

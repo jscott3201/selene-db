@@ -148,7 +148,7 @@ fn scalar_numeric_functions_dispatch() {
     let table = execute_read(
         "RETURN abs(-3) AS abs_value, ceil(1.2) AS ceil_value, floor(1.8) AS floor_value, \
          round(1.6) AS round_value, mod(7, 4) AS mod_value, sqrt(9) AS sqrt_value, \
-         power(2, 3) AS power_value",
+         power(2, 3) AS power_value, ceiling(1.2) AS ceiling_value",
     );
 
     assert_eq!(column_values(&table, "abs_value"), vec![Value::Int(3)]);
@@ -164,6 +164,18 @@ fn scalar_numeric_functions_dispatch() {
     assert_eq!(column_values(&table, "mod_value"), vec![Value::Int(3)]);
     assert_eq!(column_values(&table, "sqrt_value"), vec![Value::Float(3.0)]);
     assert_eq!(column_values(&table, "power_value"), vec![Value::Int(8)]);
+    assert_eq!(
+        column_values(&table, "ceiling_value"),
+        vec![Value::Float(2.0)]
+    );
+}
+
+#[test]
+fn ceiling_alias_returns_same_as_ceil() {
+    assert_eq!(
+        single_value("RETURN ceiling(1.2) AS value", "value"),
+        single_value("RETURN ceil(1.2) AS value", "value")
+    );
 }
 
 #[test]
@@ -303,11 +315,9 @@ fn power_negative_integer_exponent_uses_float_path() {
     );
 
     let err = execute_read_result("RETURN power(0, -1) AS value")
-        .expect_err("zero raised to a negative exponent is non-finite");
-    assert_data_exception_contains(
-        err,
-        "floating-point exponentiation produced non-finite value",
-    );
+        .expect_err("zero raised to a negative exponent is invalid");
+    assert_eq!(err.gqlstatus().as_str(), "2201F");
+    assert_data_exception_contains(err, "power base is zero and exponent is negative");
 }
 
 #[test]
