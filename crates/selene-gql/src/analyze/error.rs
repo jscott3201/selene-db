@@ -409,6 +409,8 @@ pub enum TypeMismatchContext {
     IsTypedTarget,
     /// `IS NORMALIZED` operand.
     IsNormalized,
+    /// `NORMALIZE` source operand.
+    NormalizeFunction,
     /// CASE branch result unification failed.
     CaseBranchUnification,
     /// List literal element unification failed.
@@ -457,6 +459,7 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::UnaryNot => f.write_str("operand of unary NOT"),
             Self::IsTypedTarget => f.write_str("IS TYPED target"),
             Self::IsNormalized => f.write_str("IS NORMALIZED operand"),
+            Self::NormalizeFunction => f.write_str("NORMALIZE operand"),
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),

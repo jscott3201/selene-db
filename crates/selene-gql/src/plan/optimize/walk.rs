@@ -454,6 +454,7 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
         ValueExpr::FunctionCall { args, .. } => args
             .iter_mut()
             .fold(false, |changed, arg| walk_expr(arg, visit) | changed),
+        ValueExpr::Normalize { source, .. } => walk_expr(source, visit),
         ValueExpr::IsCheck { operand, kind, .. } => {
             walk_expr(operand, visit) | walk_is_check(kind, visit)
         }

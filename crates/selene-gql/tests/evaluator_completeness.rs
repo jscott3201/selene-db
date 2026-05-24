@@ -540,7 +540,7 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
 }
 
 #[test]
-fn is_typed_and_is_normalized_scope_cut_are_explicit() {
+fn is_typed_and_is_normalized_evaluate() {
     let typed = ValueExpr::IsCheck {
         operand: Box::new(string_lit("abc")),
         kind: IsCheckKind::Typed(GqlType::String),
@@ -555,9 +555,10 @@ fn is_typed_and_is_normalized_scope_cut_are_explicit() {
         negated: false,
         span: span(),
     };
-    let err = eval(&normalized).expect_err("normalization is v1.2");
-    assert!(matches!(err, ExecutorError::FeatureNotInV1_1 { .. }));
-    assert_eq!(err.gqlstatus().as_str(), "42N01");
+    assert_eq!(
+        eval(&normalized).expect("NORMALIZED predicate evaluates"),
+        Value::Bool(true)
+    );
 }
 
 #[test]

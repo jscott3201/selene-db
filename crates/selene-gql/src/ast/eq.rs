@@ -216,6 +216,10 @@ fn scrub_value(value: &mut ValueExpr) {
                 scrub_value(arg);
             }
         }
+        ValueExpr::Normalize { source, span, .. } => {
+            *span = SourceSpan::default();
+            scrub_value(source);
+        }
         ValueExpr::IsCheck {
             operand,
             kind,

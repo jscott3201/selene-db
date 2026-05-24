@@ -396,6 +396,7 @@ primary = {
   | cast_expr
   | labels_expr
   | record_constructor
+  | normalize_expr
   | trim_expr
   | aggregate_expr
   | function_call
@@ -448,6 +449,8 @@ else_clause  = { ^"ELSE" ~ expr }
 
 cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
 labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
+
+normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
 
 // TRIM (spec section20.24): TRIM([LEADING|TRAILING|BOTH] [char] FROM source)
 trim_expr = { ^"TRIM" ~ "(" ~ trim_spec? ~ trim_char? ~ ^"FROM" ~ expr ~ ")" }

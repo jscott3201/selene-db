@@ -61,6 +61,7 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             }
             values(args, uses);
         }
+        ValueExpr::Normalize { source, .. } => self::value(source, uses),
         ValueExpr::IsCheck {
             operand,
             kind,

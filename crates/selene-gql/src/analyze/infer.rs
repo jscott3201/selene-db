@@ -116,6 +116,15 @@ pub(crate) fn is_check(
     }
 }
 
+/// Infer `NORMALIZE(<string>[, <normal form>])`.
+pub(crate) fn normalize(
+    source: &AnalyzedType,
+    source_span: SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    expect_string(source, source_span, TypeMismatchContext::NormalizeFunction)?;
+    Ok(AnalyzedType::Resolved(GqlType::String))
+}
+
 /// Infer an `IN` predicate type.
 pub(crate) fn in_list(
     operand: &AnalyzedType,
@@ -502,7 +511,9 @@ fn expect_string(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::String) => Ok(()),
+        AnalyzedType::Dynamic
+        | AnalyzedType::Resolved(GqlType::String)
+        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::String,

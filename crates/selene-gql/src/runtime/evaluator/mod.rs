@@ -96,6 +96,10 @@ pub fn evaluate(
             distinct,
             span,
         } => eval_function_call(name, args, (*star, *distinct), *span, binding, schema, ctx),
+        ValueExpr::Normalize { source, form, span } => {
+            let value = evaluate(source, binding, schema, ctx)?;
+            string_fns::eval_normalize(value, *form, *span)
+        }
         ValueExpr::Case {
             branches,
             else_branch,

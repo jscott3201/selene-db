@@ -391,6 +391,9 @@ fn collect_subqueries_in_expr(
                 collect_subqueries_in_expr(arg, analyzed, registry, entries)?;
             }
         }
+        ValueExpr::Normalize { source, .. } => {
+            collect_subqueries_in_expr(source, analyzed, registry, entries)?;
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
             collect_subqueries_in_is_check(kind, analyzed, registry, entries)?;

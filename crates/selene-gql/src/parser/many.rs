@@ -346,6 +346,10 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
                 rebase_value(arg, offset);
             }
         }
+        ValueExpr::Normalize { source, span, .. } => {
+            rebase_span(span, offset);
+            rebase_value(source, offset);
+        }
         ValueExpr::IsCheck {
             operand,
             kind,

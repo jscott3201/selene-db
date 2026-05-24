@@ -3,9 +3,10 @@
 use std::sync::Arc;
 
 use selene_core::{Record, Value};
+use unicode_normalization::UnicodeNormalization;
 
 use crate::{
-    BinaryOp, SourceSpan, ValueExpr,
+    BinaryOp, NormalForm, SourceSpan, ValueExpr,
     runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
@@ -129,6 +130,27 @@ pub(super) fn eval_string_transform(
     Ok(Value::ExternalString(Arc::from(transform(value))))
 }
 
+pub(super) fn eval_normalize(
+    value: Value,
+    form: Option<NormalForm>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if matches!(value, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let Some(value) = string_slice(&value) else {
+        return data_exception("normalize argument is not a string", span);
+    };
+    Ok(Value::ExternalString(Arc::from(normalize_string(
+        value,
+        form.unwrap_or(NormalForm::Nfc),
+    ))))
+}
+
+pub(super) fn is_normalized(value: &str, form: NormalForm) -> bool {
+    normalize_string(value, form) == value
+}
+
 pub(super) fn eval_trim(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     let value = args.into_iter().next().expect("arity checked");
     if matches!(value, Value::Null) {
@@ -193,6 +215,15 @@ pub(super) fn eval_size(args: Vec<Value>, span: SourceSpan) -> Result<Value, Exe
             };
             Ok(Value::Int(value.chars().count() as i64))
         }
+    }
+}
+
+fn normalize_string(value: &str, form: NormalForm) -> String {
+    match form {
+        NormalForm::Nfc => value.nfc().collect(),
+        NormalForm::Nfd => value.nfd().collect(),
+        NormalForm::Nfkc => value.nfkc().collect(),
+        NormalForm::Nfkd => value.nfkd().collect(),
     }
 }
 

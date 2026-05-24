@@ -561,6 +561,15 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push(')');
         }
+        ValueExpr::Normalize { source, form, .. } => {
+            out.push_str("NORMALIZE(");
+            fmt_expr(out, source)?;
+            if let Some(form) = form {
+                out.push_str(", ");
+                out.push_str(fmt_normal_form(*form));
+            }
+            out.push(')');
+        }
         ValueExpr::IsCheck {
             operand,
             kind,
@@ -696,12 +705,7 @@ fn fmt_is_check(
         IsCheckKind::Typed(ty) => write!(out, " TYPED {}", fmt_type(ty))?,
         IsCheckKind::Normalized(form) => {
             out.push(' ');
-            out.push_str(match form {
-                NormalForm::Nfc => "NFC",
-                NormalForm::Nfd => "NFD",
-                NormalForm::Nfkc => "NFKC",
-                NormalForm::Nfkd => "NFKD",
-            });
+            out.push_str(fmt_normal_form(*form));
             out.push_str(" NORMALIZED");
         }
         IsCheckKind::SourceOf(value) => {
@@ -714,6 +718,15 @@ fn fmt_is_check(
         }
     }
     Ok(())
+}
+
+fn fmt_normal_form(form: NormalForm) -> &'static str {
+    match form {
+        NormalForm::Nfc => "NFC",
+        NormalForm::Nfd => "NFD",
+        NormalForm::Nfkc => "NFKC",
+        NormalForm::Nfkd => "NFKD",
+    }
 }
 
 fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Result {

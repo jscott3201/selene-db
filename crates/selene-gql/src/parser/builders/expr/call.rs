@@ -4,7 +4,7 @@ use pest::iterators::Pair;
 use selene_core::IStr;
 
 use crate::{
-    ast::{BinaryOp, SourceSpan, ValueExpr, util::NonEmpty},
+    ast::{BinaryOp, NormalForm, SourceSpan, ValueExpr, util::NonEmpty},
     error::ParserError,
     parser::budget::InternerBudget,
 };
@@ -79,6 +79,29 @@ pub(super) fn build_aggregate_expr(
         args,
         star,
         distinct,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_normalize_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut source = None;
+    let mut form = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::expr => source = Some(build_value_expr(child, budget)?),
+            Rule::normal_form => form = Some(parse_normal_form(child.as_str())),
+            _ => return Err(unexpected_pair(child, "unexpected NORMALIZE child")),
+        }
+    }
+    Ok(ValueExpr::Normalize {
+        source: Box::new(source.ok_or_else(|| {
+            ParserError::syntax("NORMALIZE is missing source expression", source_span, None)
+        })?),
+        form,
         span: source_span,
     })
 }
@@ -312,4 +335,13 @@ fn intern_lower(pair: Pair<'_, Rule>, budget: &mut InternerBudget) -> Result<ISt
     let source_span = span(&pair);
     let canonical = pair.as_str().to_ascii_lowercase();
     budget.intern_str(&canonical, source_span, "aggregate name")
+}
+
+fn parse_normal_form(value: &str) -> NormalForm {
+    match value.to_ascii_uppercase().as_str() {
+        "NFD" => NormalForm::Nfd,
+        "NFKC" => NormalForm::Nfkc,
+        "NFKD" => NormalForm::Nfkd,
+        _ => NormalForm::Nfc,
+    }
 }

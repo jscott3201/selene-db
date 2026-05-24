@@ -70,6 +70,9 @@ fn collect_binding_refs_in_expr(
                 collect_binding_refs_in_expr(arg, analyzed, refs)?;
             }
         }
+        ValueExpr::Normalize { source, .. } => {
+            collect_binding_refs_in_expr(source, analyzed, refs)?;
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             collect_binding_refs_in_expr(operand, analyzed, refs)?;
             collect_binding_refs_in_is_check(kind, analyzed, refs)?;

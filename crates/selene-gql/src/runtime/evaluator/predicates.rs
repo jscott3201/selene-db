@@ -13,7 +13,7 @@ use crate::{
 
 use super::{
     binary_ops::{data_exception, eval_equality, eval_ordering, string_slice},
-    evaluate, property_access,
+    evaluate, property_access, string_fns,
 };
 use crate::runtime::scan;
 
@@ -70,13 +70,6 @@ pub(super) fn eval_is_check(
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    if matches!(kind, IsCheckKind::Normalized(_)) {
-        return Err(ExecutorError::FeatureNotInV1_1 {
-            feature: "IS NORMALIZED",
-            span,
-        });
-    }
-
     let operand = evaluate(operand, binding, schema, ctx)?;
     let result = match kind {
         IsCheckKind::Null => Value::Bool(matches!(operand, Value::Null)),
@@ -90,9 +83,23 @@ pub(super) fn eval_is_check(
         IsCheckKind::DestinationOf(value) => {
             eval_is_endpoint(operand, value, false, span, binding, schema, ctx)?
         }
-        IsCheckKind::Normalized(_) => unreachable!("guarded above"),
+        IsCheckKind::Normalized(form) => eval_is_normalized(operand, *form, span)?,
     };
     negate_predicate(result, negated)
+}
+
+fn eval_is_normalized(
+    operand: Value,
+    form: crate::NormalForm,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if matches!(operand, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let Some(value) = string_slice(&operand) else {
+        return data_exception("IS NORMALIZED operand is not a string", span);
+    };
+    Ok(Value::Bool(string_fns::is_normalized(value, form)))
 }
 
 pub(super) fn eval_all_different(
