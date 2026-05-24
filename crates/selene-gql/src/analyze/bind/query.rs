@@ -272,11 +272,14 @@ fn group_binding_refs(
     let mut bindings = BTreeSet::new();
     if let Some(values) = group_by {
         for value in values {
-            bindings.extend(
-                binding_refs_in_span(ctx, value.span())
-                    .into_iter()
-                    .map(|use_| use_.binding),
-            );
+            if let ValueExpr::Variable { span, .. } = value {
+                bindings.extend(
+                    binding_refs_in_span(ctx, *span)
+                        .into_iter()
+                        .filter(|use_| use_.span == *span)
+                        .map(|use_| use_.binding),
+                );
+            }
         }
     }
     bindings

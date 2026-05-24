@@ -157,6 +157,19 @@ fn percentile_independent_expression_rejects_per_row_binding_reference() {
 }
 
 #[test]
+fn percentile_independent_expression_rejects_binding_inside_complex_group_key() {
+    let statement = parse(
+        "UNWIND [1, 2] AS x \
+         RETURN x < 3 AS grouped, percentile_cont(x, x) AS p GROUP BY x < 3",
+    )
+    .expect("source parses");
+    let error = analyze(statement, &EmptyProcedureRegistry, None)
+        .expect_err("complex group key does not make x a group-key binding");
+
+    assert_eq!(error.gqlstatus(), GqlStatus::INVALID_REFERENCE);
+}
+
+#[test]
 fn percentile_runtime_errors_use_data_exception_codes() {
     let graph = SharedGraph::new(GraphId::new(13_503));
     let mut session = Session::new(&graph);
