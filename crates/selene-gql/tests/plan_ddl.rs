@@ -47,8 +47,12 @@ fn create_node_type_preserves_properties_default_and_validation() {
 
 #[test]
 fn create_edge_type_preserves_endpoints() {
-    let plan = plan_one("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person, since :: DATE)");
+    let plan = plan_one(
+        "CREATE EDGE TYPE :KNOWS EXTENDS :RELATIONSHIP (FROM :Person TO :Person, since :: DATE)",
+    );
     let CatalogOp::CreateEdgeType {
+        label,
+        extends,
         endpoints,
         properties,
         ..
@@ -56,6 +60,8 @@ fn create_edge_type_preserves_endpoints() {
     else {
         panic!("expected create edge type");
     };
+    assert_eq!(label.as_str(), "KNOWS");
+    assert_eq!(extends.expect("parent").as_str(), "RELATIONSHIP");
     let endpoints = endpoints.as_ref().expect("endpoint spec");
     assert_eq!(endpoints.from_labels[0].as_str(), "Person");
     assert_eq!(endpoints.to_labels[0].as_str(), "Person");

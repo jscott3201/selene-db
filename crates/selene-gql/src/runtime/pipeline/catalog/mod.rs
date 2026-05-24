@@ -85,12 +85,13 @@ pub(super) fn execute(
             label,
             or_replace,
             if_not_exists,
+            extends,
             endpoints,
             properties,
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, &None)?;
+            reject_create_flags(*or_replace, extends)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
                 if *if_not_exists {

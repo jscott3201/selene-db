@@ -55,6 +55,8 @@ pub enum DdlStatement {
         or_replace: bool,
         /// `IF NOT EXISTS`.
         if_not_exists: bool,
+        /// Optional parent type.
+        extends: Option<IStr>,
         /// Optional endpoint declaration.
         endpoints: Option<EdgeEndpointSpec>,
         /// Property definitions.
