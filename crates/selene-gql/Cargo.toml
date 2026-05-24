@@ -21,6 +21,7 @@ rustc-hash.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 lru.workspace = true
+stacker.workspace = true
 
 [features]
 metrics = ["selene-core/metrics"]

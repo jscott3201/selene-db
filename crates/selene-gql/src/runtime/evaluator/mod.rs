@@ -8,6 +8,7 @@
 
 mod binary_ops;
 mod case;
+mod cast;
 mod collections;
 mod predicates;
 mod scalar_fns;
@@ -140,6 +141,14 @@ pub fn evaluate(
         } => eval_list_access(target, index, *span, binding, schema, ctx),
         ValueExpr::RecordLiteral { fields, span } => {
             eval_record_literal(fields, *span, binding, schema, ctx)
+        }
+        ValueExpr::Cast {
+            value,
+            target_type,
+            span,
+        } => {
+            let evaluated = evaluate(value, binding, schema, ctx)?;
+            cast::eval_cast(evaluated, target_type, *span)
         }
     }
 }

@@ -41,6 +41,8 @@ impl GqlStatus {
     pub const NUMERIC_VALUE_OUT_OF_RANGE: Self = Self(*b"22003");
     /// Maps to GQLSTATUS 22012 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DIVISION_BY_ZERO: Self = Self(*b"22012");
+    /// Maps to GQLSTATUS 22018 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const INVALID_CHARACTER_VALUE_FOR_CAST: Self = Self(*b"22018");
     /// Maps to GQLSTATUS 2201F per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_ARGUMENT_FOR_POWER_FUNCTION: Self = Self(*b"2201F");
     /// Maps to GQLSTATUS 22G04 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -268,6 +270,7 @@ mod tests {
             (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
             (GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE, "22003", *b"22"),
             (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
+            (GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST, "22018", *b"22"),
             (
                 GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
                 "2201F",

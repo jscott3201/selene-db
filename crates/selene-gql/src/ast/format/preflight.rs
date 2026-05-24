@@ -213,6 +213,12 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             validate_match(pattern)
         }
         ValueExpr::ValueSubquery { body, .. } => validate_pipeline(body),
+        ValueExpr::Cast {
+            value, target_type, ..
+        } => {
+            validate_type(target_type)?;
+            validate_expr(value)
+        }
     }
 }
 

@@ -119,6 +119,10 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GQ18, *span);
             query::query_pipeline(body, uses);
         }
+        ValueExpr::Cast { value, span, .. } => {
+            record_feature(uses, FeatureId::GE08, *span);
+            self::value(value, uses);
+        }
     }
 }
 

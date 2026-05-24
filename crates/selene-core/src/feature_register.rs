@@ -76,6 +76,7 @@ feature_ids! {
     GE04 = "GE04" => "Parameters";
     GE05 = "GE05" => "Named parameters";
     GE07 = "GE07" => "XOR operator";
+    GE08 = "GE08" => "CAST operator";
     GF13 = "GF13" => "SIZE function";
     GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
@@ -183,6 +184,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GE04,
     FeatureId::GE05,
     FeatureId::GE07,
+    FeatureId::GE08,
     FeatureId::GF13,
     FeatureId::GH02,
     FeatureId::GG01,

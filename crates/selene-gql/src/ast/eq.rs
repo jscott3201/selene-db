@@ -291,6 +291,10 @@ fn scrub_value(value: &mut ValueExpr) {
             *span = SourceSpan::default();
             scrub_query_pipeline(body);
         }
+        ValueExpr::Cast { value, span, .. } => {
+            *span = SourceSpan::default();
+            scrub_value(value);
+        }
     }
 }
 

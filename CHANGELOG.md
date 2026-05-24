@@ -8,6 +8,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Explicit `CAST(<expr> AS <type>)` expressions in `selene-gql` per ISO/IEC
+  39075:2024 §22. New `ValueExpr::Cast { value, target_type, span }` AST
+  variant; feature `GE08` (CAST operator) is registered as supported. The
+  runtime dispatch matrix covers numeric ↔ numeric (Integer/Float), string
+  ↔ numeric (strict parse), boolean ↔ string (lowercase only), boolean ↔
+  integer (0/1), and `LIST<T>` element-wise casts. NULL → ANY returns NULL
+  per the §22 universal rule. Failure modes emit `22018`
+  (invalid-character-value-for-cast — new in the Table 8 map), `22003`
+  (numeric overflow), `22000` (boolean domain), or `42N01` for
+  intentionally unsupported source/target combinations (NODE / EDGE / PATH
+  / RECORD sources; `NULL` / `NOTHING` targets). The analyzer's
+  `bind_value_expr` recursive walker now grows the stack via
+  `stacker::maybe_grow(64K, 1MB)` so future `ValueExpr` variant additions
+  cannot reach into the 2 MB default macOS pthread stack at the depth-256
+  contract enforced by `check_expr_depth`.
 - `EdgeEndpointDef::OneOf` for polymorphic-enumerated edge endpoints in
   `selene-graph` (storage `Vec<u32>`) and `selene-core` (WAL
   `SmallVec<[NodeTypeRef; 4]>`). Catalog DDL of the form

@@ -464,6 +464,9 @@ fn collect_subqueries_in_expr(
         ValueExpr::ValueSubquery { body, span } => {
             collect_value_subquery(expr, body, *span, analyzed, registry, entries)?;
         }
+        ValueExpr::Cast { value, .. } => {
+            collect_subqueries_in_expr(value, analyzed, registry, entries)?;
+        }
     }
     Ok(())
 }

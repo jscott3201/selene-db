@@ -332,6 +332,19 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             body.statements.len().hash(state);
             span.hash(state);
         }
+        ValueExpr::Cast {
+            value,
+            target_type,
+            span,
+        } => {
+            // Hash discriminant + recursive value hash + target_type so that
+            // CAST(x AS Integer) and CAST(x AS Float) get different dedup
+            // keys. GqlType derives Hash per BRIEF-135a BF1 fold.
+            21u8.hash(state);
+            hash_value_expr(value, state);
+            target_type.hash(state);
+            span.hash(state);
+        }
     }
 }
 

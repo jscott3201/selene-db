@@ -214,6 +214,20 @@ pub enum ValueExpr {
         /// Source span of the full expression.
         span: SourceSpan,
     },
+    /// `CAST(<value> AS <target_type>)` explicit cast expression per ISO §22.
+    ///
+    /// `target_type` is boxed to keep the size of [`ValueExpr`] bounded; the
+    /// nested `GqlType::List(Box<GqlType>)` chain is otherwise heap-resident
+    /// already, and the analyzer-recursion test (`addition_statement(100)`)
+    /// stack-overflows if a non-boxed `GqlType` is added inline.
+    Cast {
+        /// Source expression being cast.
+        value: Box<ValueExpr>,
+        /// Declared target GQL type.
+        target_type: Box<GqlType>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
 }
 
 impl ValueExpr {
@@ -241,7 +255,8 @@ impl ValueExpr {
             | Self::Case { span, .. }
             | Self::Exists { span, .. }
             | Self::CountSubquery { span, .. }
-            | Self::ValueSubquery { span, .. } => *span,
+            | Self::ValueSubquery { span, .. }
+            | Self::Cast { span, .. } => *span,
         }
     }
 }
