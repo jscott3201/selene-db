@@ -1,0 +1,118 @@
+# Nightly + on-merge CI for selene-db.
+#
+# Carries gates moved off the per-PR critical path (see ci.yml header comment)
+# per CI spend triage 2026-05-24:
+#
+#   - clippy + test on macos-latest   (dev-host validation; 10x billing on PR)
+#   - parse-fuzz (1h soak)            (was 60s/PR floor; nightly soak is better
+#                                      coverage for the same workload class)
+#
+# Triggers:
+#   - schedule  06:30 UTC daily       (catches deps that didn't change between
+#                                      merges but accumulate drift over time)
+#   - push:main                       (post-merge double-check of main)
+#   - workflow_dispatch               (on-demand)
+#
+# Security notes:
+#   - No `${{ github.event.* }}` interpolations appear in any `run:` command;
+#     all such expansions are confined to `if:` conditions and `with:` action
+#     inputs. No shell-injection surface.
+
+name: nightly
+
+on:
+  schedule:
+    - cron: '30 6 * * *'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  clippy-macos:
+    name: clippy (macos-latest)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test-macos:
+    name: test (macos-latest)
+    runs-on: macos-latest
+    env:
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: cargo nextest + doctests
+        run: |
+          cargo nextest run --workspace --locked --all-features
+          cargo test --workspace --locked --all-features --doc
+
+  # Catches advisory-db drift on UNCHANGED dependencies — PR-side cargo-audit
+  # only runs on dep-manifest changes, so a vuln advisory published against a
+  # pinned dep would otherwise sit unflagged until the next dep edit. Nightly
+  # closes that gap by re-running audit against current Cargo.lock every day
+  # with a fresh advisory-db.
+  audit:
+    name: cargo-audit (advisory-db drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: advisory-db-${{ runner.os }}-
+      - run: cargo audit --color always
+
+  parse-fuzz:
+    name: parse-fuzz (1h soak)
+    # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # Cache key is content-addressed (corpus seed source) so we get cache HITs
+      # across runs instead of the prior `${{ github.run_id }}` shape which
+      # never hit the exact key.
+      - uses: actions/cache@v4
+        with:
+          path: crates/selene-gql/fuzz/corpus
+          key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql') }}
+          restore-keys: gql-fuzz-corpus-${{ runner.os }}-
+      - name: seed parse corpus
+        run: |
+          mkdir -p crates/selene-gql/fuzz/corpus/parse_gql
+          find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
+      - name: fuzz parser (1h soak)
+        working-directory: crates/selene-gql/fuzz
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=3600
