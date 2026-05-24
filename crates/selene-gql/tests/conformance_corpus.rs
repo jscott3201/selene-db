@@ -17,11 +17,15 @@ fn corpus_contracts_hold() {
                 let statement = parse(&case.source).unwrap_or_else(|error| {
                     panic!("{}: expected parse-ok, got {error:?}", case.path.display())
                 });
+                let declared_features = case.declared_features().collect::<Vec<_>>();
+                if declared_features.is_empty() {
+                    continue;
+                }
                 let observed = feature_walk(&statement)
                     .into_iter()
                     .map(|feature| feature.feature_id)
                     .collect::<BTreeSet<_>>();
-                for feature in case.declared_features() {
+                for feature in declared_features {
                     assert!(
                         observed.contains(&feature),
                         "{}: declared feature {feature} was not observed; observed {:?}",

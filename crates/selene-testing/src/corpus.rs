@@ -34,8 +34,8 @@ pub struct CorpusCase {
     pub path: PathBuf,
     /// Declared corpus kind.
     pub kind: CorpusKind,
-    /// Primary feature ID.
-    pub feature: FeatureId,
+    /// Primary feature ID, or `None` for minimum-conformance cases.
+    pub feature: Option<FeatureId>,
     /// Additional feature IDs this case covers.
     pub also_covers: Vec<FeatureId>,
     /// Expected parser outcome.
@@ -47,7 +47,9 @@ pub struct CorpusCase {
 impl CorpusCase {
     /// Return all feature IDs declared by this case.
     pub fn declared_features(&self) -> impl Iterator<Item = FeatureId> + '_ {
-        std::iter::once(self.feature).chain(self.also_covers.iter().copied())
+        self.feature
+            .into_iter()
+            .chain(self.also_covers.iter().copied())
     }
 }
 
@@ -151,7 +153,7 @@ fn parse_corpus_header(path: &Path, source: String) -> Result<CorpusCase, Corpus
         };
         match key.trim() {
             "corpus" => kind = Some(parse_kind(path, line_no, value.trim())?),
-            "feature" => feature = Some(parse_feature(path, line_no, value.trim())?),
+            "feature" => feature = Some(parse_feature_or_none(path, line_no, value.trim())?),
             "also-covers" => {
                 also_covers = parse_feature_list(path, line_no, value.trim())?;
             }
@@ -225,6 +227,17 @@ fn parse_feature_list(
         .collect()
 }
 
+fn parse_feature_or_none(
+    path: &Path,
+    line: usize,
+    value: &str,
+) -> Result<Option<FeatureId>, CorpusError> {
+    if value == "none" {
+        return Ok(None);
+    }
+    parse_feature(path, line, value).map(Some)
+}
+
 fn parse_feature(path: &Path, line: usize, value: &str) -> Result<FeatureId, CorpusError> {
     feature_id_from_str(value).ok_or_else(|| {
         header_error(
@@ -280,9 +293,20 @@ mod tests {
             "-- corpus: positive\n-- feature: GP04\n-- also-covers: GQ03, GQ15\n-- expects: parse-ok\nRETURN 1",
         );
         assert_eq!(case.kind, CorpusKind::Positive);
-        assert_eq!(case.feature, FeatureId::GP04);
+        assert_eq!(case.feature, Some(FeatureId::GP04));
         assert_eq!(case.also_covers, [FeatureId::GQ03, FeatureId::GQ15]);
         assert_eq!(case.expectation, Expectation::ParseOk);
+    }
+
+    #[test]
+    fn parses_minimum_conformance_positive_header() {
+        let case = parse("-- corpus: positive\n-- feature: none\n-- expects: parse-ok\nRETURN 1");
+        assert_eq!(case.kind, CorpusKind::Positive);
+        assert_eq!(case.feature, None);
+        assert_eq!(case.declared_features().count(), 0);
+        assert_eq!(case.expectation, Expectation::ParseOk);
+        validate_contract(Path::new("case.gql"), case.kind, case.expectation)
+            .expect("minimum positive contract validates");
     }
 
     #[test]
