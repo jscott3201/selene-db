@@ -70,6 +70,26 @@ jobs:
           cargo nextest run --workspace --locked --all-features
           cargo test --workspace --locked --all-features --doc
 
+  # Catches advisory-db drift on UNCHANGED dependencies — PR-side cargo-audit
+  # only runs on dep-manifest changes, so a vuln advisory published against a
+  # pinned dep would otherwise sit unflagged until the next dep edit. Nightly
+  # closes that gap by re-running audit against current Cargo.lock every day
+  # with a fresh advisory-db.
+  audit:
+    name: cargo-audit (advisory-db drift)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: advisory-db-${{ runner.os }}-
+      - run: cargo audit --color always
+
   parse-fuzz:
     name: parse-fuzz (1h soak)
     # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.

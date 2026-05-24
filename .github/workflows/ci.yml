@@ -11,12 +11,15 @@
 #   - basic no-secret scan via check-no-secrets.sh
 #   - THIRDPARTY.md current via check-thirdparty-current.sh (deps-changed only)
 #
-# Per CI spend triage 2026-05-24 the following moved to `nightly.yml`
+# Per CI spend triage 2026-05-24 the following live on `nightly.yml`
 # (cron + push-to-main + workflow_dispatch):
 #   - macOS clippy + test  (macos-latest is a 10x billing multiplier on private
 #     repos; dev-host validation happens via local `cargo` pre-PR)
 #   - parse-fuzz           (60s/PR floor → 1h nightly soak — better coverage,
 #     no critical-path cost on PR)
+#   - cargo-audit          (catches advisory-db drift on unchanged deps —
+#     PR-side audit is dep-change-gated, so unchanged vulnerable pins would
+#     otherwise sit unflagged. Nightly closes that gap.)
 #
 # Security notes:
 #   - No `${{ github.event.* }}` interpolations appear in any `run:` command;
