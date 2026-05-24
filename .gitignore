@@ -12,8 +12,3 @@ node_modules/
 # Canonical state lives in the MCP graph (selenedb instance); these folders
 # are working documents that don't get committed to git.
 _*/
-
-# CLAUDE.md drifts every brief merge (status line bumps). Treat it like the
-# _*/ working docs: local-only working state, canonical state in the MCP
-# graph. Fresh clones reproduce CLAUDE.md from graph + spec.
-/CLAUDE.md
