@@ -364,10 +364,7 @@ fn cast_float_nan_to_integer_returns_22018() {
         Value::Float(f64::NAN),
     );
     let status = session
-        .execute_source(
-            "RETURN CAST($nan AS INTEGER) AS v",
-            &EmptyProcedureRegistry,
-        )
+        .execute_source("RETURN CAST($nan AS INTEGER) AS v", &EmptyProcedureRegistry)
         .expect_err("NaN cast must reject at runtime")
         .gqlstatus()
         .as_str()
