@@ -315,11 +315,9 @@ fn power_negative_integer_exponent_uses_float_path() {
     );
 
     let err = execute_read_result("RETURN power(0, -1) AS value")
-        .expect_err("zero raised to a negative exponent is non-finite");
-    assert_data_exception_contains(
-        err,
-        "floating-point exponentiation produced non-finite value",
-    );
+        .expect_err("zero raised to a negative exponent is invalid");
+    assert_eq!(err.gqlstatus().as_str(), "2201F");
+    assert_data_exception_contains(err, "power base is zero and exponent is negative");
 }
 
 #[test]

@@ -213,3 +213,29 @@ fn scalar_functions_numeric_gf03_logarithmic_function_flags_are_recorded() {
         );
     }
 }
+
+#[test]
+fn scalar_functions_numeric_power_gr11_boundary_cases() {
+    let cases = [
+        ("RETURN power(0.0, 0.0) AS value", 1.0),
+        ("RETURN power(0.0, 2.0) AS value", 0.0),
+        ("RETURN power(-2.0, 2.0) AS value", 4.0),
+        ("RETURN power(-2.0, 3.0) AS value", -8.0),
+    ];
+
+    for (source, expected) in cases {
+        assert_float_near(single_value(source, "value"), expected);
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_power_gr11_invalid_argument_cases_use_2201f() {
+    assert_status("RETURN power(0.0, -1.0) AS value", "2201F");
+    assert_status("RETURN power(-2.0, 1.5) AS value", "2201F");
+}
+
+#[test]
+fn scalar_functions_numeric_power_gr11_overflow_uses_22003() {
+    assert_status("RETURN power(2.0, 1024.0) AS value", "22003");
+    assert_status("RETURN power(10.0, 400.0) AS value", "22003");
+}

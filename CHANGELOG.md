@@ -170,6 +170,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   aggregate expression per statement; sessions without a sink silently discard
   warnings.
 
+### Fixed
+
+- Align `POWER` overflow GQLSTATUS handling with ISO/IEC 39075:2024 §20.22 GR11:
+  overflow now maps to `22003` numeric-value-out-of-range, while `2201F`
+  invalid-argument-for-power-function is reserved for the zero-base negative
+  exponent and negative-base non-integral exponent cases.
+
 ### Changed
 
 - ISO GQL error-code conformance: remapped `GqlStatus` constants and
