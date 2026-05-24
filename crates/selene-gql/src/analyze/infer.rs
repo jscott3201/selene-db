@@ -125,6 +125,15 @@ pub(crate) fn normalize(
     Ok(AnalyzedType::Resolved(GqlType::String))
 }
 
+/// Infer an explicit TRIM source expression.
+pub(crate) fn trim_source(
+    source: &AnalyzedType,
+    source_span: SourceSpan,
+) -> Result<AnalyzedType, AnalysisError> {
+    expect_string(source, source_span, TypeMismatchContext::TrimSource)?;
+    Ok(AnalyzedType::Resolved(GqlType::String))
+}
+
 /// Infer an `IN` predicate type.
 pub(crate) fn in_list(
     operand: &AnalyzedType,

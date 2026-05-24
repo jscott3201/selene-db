@@ -62,6 +62,18 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             values(args, uses);
         }
         ValueExpr::Normalize { source, .. } => self::value(source, uses),
+        ValueExpr::Trim {
+            character,
+            source,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::GF06, *span);
+            if let Some(character) = character {
+                self::value(character, uses);
+            }
+            self::value(source, uses);
+        }
         ValueExpr::IsCheck {
             operand,
             kind,

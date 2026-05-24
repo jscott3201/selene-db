@@ -73,6 +73,14 @@ fn collect_binding_refs_in_expr(
         ValueExpr::Normalize { source, .. } => {
             collect_binding_refs_in_expr(source, analyzed, refs)?;
         }
+        ValueExpr::Trim {
+            character, source, ..
+        } => {
+            if let Some(character) = character {
+                collect_binding_refs_in_expr(character, analyzed, refs)?;
+            }
+            collect_binding_refs_in_expr(source, analyzed, refs)?;
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             collect_binding_refs_in_expr(operand, analyzed, refs)?;
             collect_binding_refs_in_is_check(kind, analyzed, refs)?;

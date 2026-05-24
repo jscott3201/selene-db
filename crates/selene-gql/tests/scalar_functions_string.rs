@@ -190,3 +190,44 @@ fn multi_character_trim_family_records_gf05() {
         assert_feature_recorded(source, FeatureId::GF05);
     }
 }
+
+#[test]
+fn explicit_trim_supports_both_leading_trailing_and_defaults() {
+    let cases = [
+        ("RETURN TRIM(BOTH 'x' FROM 'xxhellox') AS value", "hello"),
+        (
+            "RETURN TRIM(LEADING 'x' FROM 'xxhellox') AS value",
+            "hellox",
+        ),
+        (
+            "RETURN TRIM(TRAILING 'x' FROM 'xxhellox') AS value",
+            "xxhello",
+        ),
+        ("RETURN TRIM(FROM ' hello ') AS value", "hello"),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(external_string(single_value(source, "value")), expected);
+    }
+}
+
+#[test]
+fn explicit_trim_propagates_null_and_reports_iso_errors() {
+    for source in [
+        "RETURN TRIM(BOTH 'x' FROM null) AS value",
+        "RETURN TRIM(BOTH null FROM 'xx') AS value",
+    ] {
+        assert_eq!(
+            single_value(source, "value"),
+            Value::Null,
+            "source: {source}"
+        );
+    }
+    assert_status("RETURN TRIM(BOTH 'xy' FROM 'xyhelloxy') AS value", "22027");
+    assert_status("RETURN TRIM(BOTH 7 FROM 'abc') AS value", "22G04");
+    assert_analysis_status("RETURN TRIM(BOTH 'x' FROM 7) AS value", "22G03");
+}
+
+#[test]
+fn explicit_trim_records_gf06() {
+    assert_feature_recorded("RETURN TRIM(BOTH 'x' FROM 'xx') AS value", FeatureId::GF06);
+}

@@ -220,6 +220,18 @@ fn scrub_value(value: &mut ValueExpr) {
             *span = SourceSpan::default();
             scrub_value(source);
         }
+        ValueExpr::Trim {
+            character,
+            source,
+            span,
+            ..
+        } => {
+            *span = SourceSpan::default();
+            if let Some(character) = character {
+                scrub_value(character);
+            }
+            scrub_value(source);
+        }
         ValueExpr::IsCheck {
             operand,
             kind,

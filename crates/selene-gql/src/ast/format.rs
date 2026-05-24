@@ -3,6 +3,7 @@
 mod cast;
 mod keywords;
 mod preflight;
+mod trim;
 mod type_name;
 
 use std::fmt::{self, Write as _};
@@ -570,6 +571,12 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push(')');
         }
+        ValueExpr::Trim {
+            spec,
+            character,
+            source,
+            ..
+        } => trim::fmt_trim_expr(out, *spec, character.as_deref(), source)?,
         ValueExpr::IsCheck {
             operand,
             kind,

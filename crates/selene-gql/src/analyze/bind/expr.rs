@@ -87,6 +87,15 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let source_id = bind_value_expr(ctx, source)?;
                 infer::normalize(ctx.expr_type(source_id), source.span())?
             }
+            ValueExpr::Trim {
+                character, source, ..
+            } => {
+                if let Some(character) = character {
+                    bind_value_expr(ctx, character)?;
+                }
+                let source_id = bind_value_expr(ctx, source)?;
+                infer::trim_source(ctx.expr_type(source_id), source.span())?
+            }
             ValueExpr::IsCheck {
                 operand,
                 kind,
@@ -286,6 +295,14 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             ValueExpr::Cast { value, .. } | ValueExpr::Normalize { source: value, .. } => {
                 stack.push((value, next));
             }
+            ValueExpr::Trim {
+                character, source, ..
+            } => {
+                stack.push((source, next));
+                if let Some(character) = character {
+                    stack.push((character, next));
+                }
+            }
             ValueExpr::Literal(_)
             | ValueExpr::Variable { .. }
             | ValueExpr::Parameter { .. }
@@ -482,6 +499,14 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
             }
             ValueExpr::Cast { value, .. } => stack.push((value, depth)),
             ValueExpr::Normalize { source, .. } => stack.push((source, depth)),
+            ValueExpr::Trim {
+                character, source, ..
+            } => {
+                stack.push((source, depth));
+                if let Some(character) = character {
+                    stack.push((character, depth));
+                }
+            }
             ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
         }
     }

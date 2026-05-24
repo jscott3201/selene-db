@@ -100,6 +100,19 @@ pub fn evaluate(
             let value = evaluate(source, binding, schema, ctx)?;
             string_fns::eval_normalize(value, *form, *span)
         }
+        ValueExpr::Trim {
+            spec,
+            character,
+            source,
+            span,
+        } => {
+            let source = evaluate(source, binding, schema, ctx)?;
+            let character = character
+                .as_deref()
+                .map(|character| evaluate(character, binding, schema, ctx))
+                .transpose()?;
+            string_fns::eval_explicit_trim(source, character, (*spec).into(), *span)
+        }
         ValueExpr::Case {
             branches,
             else_branch,

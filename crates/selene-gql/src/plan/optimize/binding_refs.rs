@@ -244,6 +244,14 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
             }
         }
         ValueExpr::Normalize { source, .. } => walk_expr(source, visit),
+        ValueExpr::Trim {
+            character, source, ..
+        } => {
+            if let Some(character) = character {
+                walk_expr(character, visit);
+            }
+            walk_expr(source, visit);
+        }
         ValueExpr::IsCheck { operand, .. } => walk_expr(operand, visit),
         ValueExpr::InList { operand, list, .. } => {
             walk_expr(operand, visit);

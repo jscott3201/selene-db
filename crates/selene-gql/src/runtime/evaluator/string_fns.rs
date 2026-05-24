@@ -6,7 +6,7 @@ use selene_core::{Record, Value};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::{
-    BinaryOp, NormalForm, SourceSpan, ValueExpr,
+    BinaryOp, NormalForm, SourceSpan, TrimSpec, ValueExpr,
     runtime::{Binding, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
@@ -18,10 +18,21 @@ use super::{
     evaluate,
 };
 
+#[derive(Clone, Copy)]
 pub(super) enum TrimSide {
     Leading,
     Trailing,
     Both,
+}
+
+impl From<TrimSpec> for TrimSide {
+    fn from(value: TrimSpec) -> Self {
+        match value {
+            TrimSpec::Leading => Self::Leading,
+            TrimSpec::Trailing => Self::Trailing,
+            TrimSpec::Both => Self::Both,
+        }
+    }
 }
 
 pub(super) fn eval_fixed_args(
@@ -171,6 +182,54 @@ pub(super) fn eval_multi_char_trim(
     };
     Ok(Value::ExternalString(Arc::from(trim_by_char_set(
         source, trim_chars, side,
+    ))))
+}
+
+pub(super) fn eval_explicit_trim(
+    source: Value,
+    character: Option<Value>,
+    side: TrimSide,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if matches!(source, Value::Null)
+        || character
+            .as_ref()
+            .is_some_and(|value| matches!(value, Value::Null))
+    {
+        return Ok(Value::Null);
+    }
+    let Some(source) = string_slice(&source) else {
+        return data_exception("trim source is not a string", span);
+    };
+    let character = if let Some(character) = character {
+        let Some(character) = string_slice(&character) else {
+            return Err(data_exception_value_with(
+                DataExceptionSubclass::ValuesNotComparable,
+                "trim character is not comparable with source string",
+                span,
+            ));
+        };
+        let mut chars = character.chars();
+        let Some(value) = chars.next() else {
+            return Err(data_exception_value_with(
+                DataExceptionSubclass::TrimError,
+                "trim character must contain exactly one character",
+                span,
+            ));
+        };
+        if chars.next().is_some() {
+            return Err(data_exception_value_with(
+                DataExceptionSubclass::TrimError,
+                "trim character must contain exactly one character",
+                span,
+            ));
+        }
+        value.to_string()
+    } else {
+        " ".to_owned()
+    };
+    Ok(Value::ExternalString(Arc::from(trim_by_char_set(
+        source, &character, side,
     ))))
 }
 

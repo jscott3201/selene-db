@@ -171,6 +171,14 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
         ValueExpr::UnaryOp { operand, .. } => validate_expr(operand),
         ValueExpr::FunctionCall { args, .. } => validate_exprs(args),
         ValueExpr::Normalize { source, .. } => validate_expr(source),
+        ValueExpr::Trim {
+            character, source, ..
+        } => {
+            if let Some(character) = character {
+                validate_expr(character)?;
+            }
+            validate_expr(source)
+        }
         ValueExpr::IsCheck { operand, kind, .. } => {
             validate_expr(operand)?;
             validate_is_check(kind)

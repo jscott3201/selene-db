@@ -18,7 +18,9 @@ pub use ddl::{
     DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
 };
 pub use eq::structurally_eq;
-pub use expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr};
+pub use expr::{
+    BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr,
+};
 pub use format::{
     FormatError, format_mutate_statement, format_procedure_call, format_read_statement,
     validate_formattable,

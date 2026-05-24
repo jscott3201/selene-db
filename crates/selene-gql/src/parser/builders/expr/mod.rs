@@ -63,10 +63,7 @@ pub(super) fn build_value_expr(
             &pair,
             "LABELS expressions are not yet supported in v1.0",
         )),
-        Rule::trim_expr => Err(not_implemented(
-            &pair,
-            "TRIM expressions are not yet supported in v1.0",
-        )),
+        Rule::trim_expr => call::build_trim_expr(pair, budget),
         Rule::list_iter_expr | Rule::list_comprehension | Rule::list_quant | Rule::list_reduce => {
             Err(not_implemented(
                 &pair,

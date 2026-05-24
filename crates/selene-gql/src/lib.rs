@@ -27,7 +27,7 @@ pub use crate::ast::{
     ddl::{
         DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
     },
-    expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TruthValue, UnaryOp, ValueExpr},
+    expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr},
     format::format_procedure_call,
     mutation::{
         DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
