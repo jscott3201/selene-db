@@ -1,0 +1,8 @@
+-- corpus: positive
+-- feature: GF03
+-- expects: parse-ok
+RETURN ln(1) AS natural_log,
+       log(2, 8) AS general_log,
+       log10(100) AS common_log,
+       exp(1) AS exponential,
+       power(2, 3) AS power_value

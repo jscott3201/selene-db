@@ -8,6 +8,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ISO/IEC 39075:2024 §20.22 numeric value function clusters in `selene-gql`:
+  GF01 enhanced numeric feature registration for `ABS`, `MOD`, `FLOOR`,
+  `CEIL`/`CEILING`, and `SQRT`; GF02 trigonometric functions (`SIN`, `COS`,
+  `TAN`, `COT`, `SINH`, `COSH`, `TANH`, `ASIN`, `ACOS`, `ATAN`, `DEGREES`,
+  `RADIANS`); and GF03 logarithmic functions (`LN`, `LOG`, `LOG10`, `EXP`,
+  plus `POWER` feature claiming). `LN(<=0)` now emits GQLSTATUS `2201E`
+  invalid-argument-for-natural-logarithm.
 - Explicit `CAST(<expr> AS <type>)` expressions in `selene-gql` per ISO/IEC
   39075:2024 §22. New `ValueExpr::Cast { value, target_type, span }` AST
   variant; feature `GE08` (CAST operator) is registered as supported. The

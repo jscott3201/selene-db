@@ -121,3 +121,95 @@ fn scalar_functions_numeric_gf02_trigonometric_function_flags_are_recorded() {
         );
     }
 }
+
+#[test]
+fn scalar_functions_numeric_gf03_logarithmic_functions_return_expected_values() {
+    let cases = [
+        ("RETURN ln(1) AS value", 0.0),
+        ("RETURN ln(2.718281828459045) AS value", 1.0),
+        ("RETURN log(2, 8) AS value", 3.0),
+        ("RETURN log(10, 100) AS value", 2.0),
+        ("RETURN log10(100) AS value", 2.0),
+        ("RETURN exp(0) AS value", 1.0),
+        ("RETURN exp(1) AS value", std::f64::consts::E),
+    ];
+
+    for (source, expected) in cases {
+        assert_float_near(single_value(source, "value"), expected);
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_gf03_logarithmic_functions_propagate_null() {
+    for source in [
+        "RETURN ln(null) AS value",
+        "RETURN log(null, 8) AS value",
+        "RETURN log(2, null) AS value",
+        "RETURN log10(null) AS value",
+        "RETURN exp(null) AS value",
+        "RETURN power(null, 2) AS value",
+        "RETURN power(2, null) AS value",
+    ] {
+        assert_eq!(
+            single_value(source, "value"),
+            Value::Null,
+            "source: {source}"
+        );
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_gf03_logarithmic_functions_reject_non_numeric_arguments() {
+    for source in [
+        "RETURN ln('x') AS value",
+        "RETURN log('x', 8) AS value",
+        "RETURN log(2, 'x') AS value",
+        "RETURN log10('x') AS value",
+        "RETURN exp('x') AS value",
+        "RETURN power('x', 2) AS value",
+        "RETURN power(2, 'x') AS value",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_gf03_logarithmic_domain_errors_use_iso_statuses() {
+    assert_status("RETURN ln(0) AS value", "2201E");
+    assert_status("RETURN ln(-1) AS value", "2201E");
+    assert_status("RETURN log(1, 10) AS value", "22003");
+    assert_status("RETURN log(0, 10) AS value", "22003");
+    assert_status("RETURN log(10, 0) AS value", "22003");
+    assert_status("RETURN log10(0) AS value", "22003");
+    assert_status("RETURN exp(1000) AS value", "22003");
+}
+
+#[test]
+fn scalar_functions_numeric_gf03_logarithmic_sanity_round_trips() {
+    assert_float_near(single_value("RETURN exp(ln(2.5)) AS value", "value"), 2.5);
+    assert_float_near(
+        single_value("RETURN log10(power(10, 5)) AS value", "value"),
+        5.0,
+    );
+}
+
+#[test]
+fn scalar_functions_numeric_gf03_logarithmic_function_flags_are_recorded() {
+    for source in [
+        "RETURN ln(1) AS value",
+        "RETURN log(2, 8) AS value",
+        "RETURN log10(100) AS value",
+        "RETURN exp(1) AS value",
+        "RETURN power(2, 3) AS value",
+    ] {
+        let statement = parse(source).expect(source);
+        let features = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            features.contains(&FeatureId::GF03),
+            "{source} should record GF03, observed {features:?}"
+        );
+    }
+}

@@ -1,9 +1,9 @@
 //! Scalar function evaluation.
 //!
 //! Dispatches the v1.1 closed scalar-function set case-insensitively:
-//! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, trigonometric
-//! functions, `length`, `substring`, `upper`, `lower`, `trim`, `coalesce`,
-//! `nullif`, and `size`.
+//! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, trigonometric and
+//! logarithmic functions, `length`, `substring`, `upper`, `lower`, `trim`,
+//! `coalesce`, `nullif`, and `size`.
 //! Each function owns arity checking; `NULL` propagates except where
 //! short-circuit functions (`coalesce`, `nullif`) define different behavior.
 
@@ -139,6 +139,22 @@ pub(super) fn eval_function_call(
             span,
             f64::to_radians,
             "radian conversion result is non-finite",
+        ),
+        "ln" => eval_ln(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "log" => eval_log(
+            eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?,
+            span,
+        ),
+        "log10" => eval_log10(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "exp" => eval_exp(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
         ),
         "round" => eval_unary_numeric(
             &display_name,
@@ -324,6 +340,65 @@ fn finite_float(
             span,
         )
     }
+}
+
+fn eval_ln(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let Some(value) = eval_float_arg(args, span)? else {
+        return Ok(Value::Null);
+    };
+    if value <= 0.0 {
+        return data_exception_with(
+            DataExceptionSubclass::InvalidArgumentForNaturalLogarithm,
+            "natural logarithm argument is zero or negative",
+            span,
+        );
+    }
+    finite_float(value.ln(), "natural logarithm result is non-finite", span)
+}
+
+fn eval_log(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if args.iter().any(|value| matches!(value, Value::Null)) {
+        return Ok(Value::Null);
+    }
+    let Some(base) = numeric_to_f64(&args[0]) else {
+        return data_exception("logarithm base is not numeric", span);
+    };
+    let Some(argument) = numeric_to_f64(&args[1]) else {
+        return data_exception("logarithm argument is not numeric", span);
+    };
+    eval_log_values(base, argument, span)
+}
+
+fn eval_log10(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let Some(argument) = eval_float_arg(args, span)? else {
+        return Ok(Value::Null);
+    };
+    eval_log_values(10.0, argument, span)
+}
+
+fn eval_log_values(base: f64, argument: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if argument <= 0.0 {
+        return data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "logarithm argument is zero or negative",
+            span,
+        );
+    }
+    if base <= 0.0 || base == 1.0 {
+        return data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "logarithm base is zero, negative, or one",
+            span,
+        );
+    }
+    finite_float(argument.log(base), "logarithm result is non-finite", span)
+}
+
+fn eval_exp(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let Some(value) = eval_float_arg(args, span)? else {
+        return Ok(Value::Null);
+    };
+    finite_float(value.exp(), "exponential result is non-finite", span)
 }
 
 fn eval_sqrt(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
