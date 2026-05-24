@@ -2,8 +2,8 @@
 //!
 //! Dispatches the v1.1 closed scalar-function set case-insensitively:
 //! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, trigonometric and
-//! logarithmic functions, `element_id`, `length`, `substring`, `upper`,
-//! `lower`, `trim`, `coalesce`, `nullif`, and `size`.
+//! logarithmic functions, `element_id`, `cardinality`, `length`, `substring`,
+//! `upper`, `lower`, `trim`, `coalesce`, `nullif`, and `size`.
 //! Each function owns arity checking; `NULL` propagates except where
 //! short-circuit functions (`coalesce`, `nullif`) define different behavior.
 
@@ -177,6 +177,11 @@ pub(super) fn eval_function_call(
         "element_id" => identity_length_fns::eval_element_id(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
+        ),
+        "cardinality" => identity_length_fns::eval_cardinality(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            ctx,
         ),
         "length" => eval_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,

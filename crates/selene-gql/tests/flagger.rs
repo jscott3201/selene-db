@@ -156,6 +156,23 @@ fn element_id_function_is_supported_and_recorded() {
 }
 
 #[test]
+fn cardinality_function_is_supported_and_recorded() {
+    let source = "RETURN cardinality([1, 2, 3])";
+    let statement = parse(source).expect(source);
+    let observed = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        observed.contains(&FeatureId::GF12),
+        "{source} should record GF12, observed {observed:?}"
+    );
+    assert_read_plan(source);
+    assert_read_execution(source);
+}
+
+#[test]
 fn mutation_feature_is_supported() {
     parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation is claimed");
 }

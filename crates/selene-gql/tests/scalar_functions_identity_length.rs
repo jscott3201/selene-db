@@ -4,9 +4,23 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read, execute_read_result};
-use selene_core::{Value, feature_register::FeatureId};
-use selene_gql::{feature_walk, parse};
+use std::sync::Arc;
+
+use exec_common::{column_values, execute_read, execute_read_result, istr};
+use selene_core::{
+    EdgeDirection, EdgeId, GraphId, IStr, NodeId, Path, PathSegment, Value,
+    feature_register::FeatureId,
+};
+use selene_gql::{
+    Binding, BindingTable, BindingTableSchema, GqlType, ProcedureContext, ProcedureError,
+    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
+    ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
+    ProcedureSignature, ProcedureTier, Session, StatementOutput, feature_walk, parse,
+};
+use selene_graph::SharedGraph;
+use smallvec::smallvec;
+
+const BINDING_TABLE_WITH_ROWS: ProcedureHandle = ProcedureHandle::new(1);
 
 fn single_value(source: &str, column: &str) -> Value {
     let table = execute_read(source);
@@ -28,6 +42,100 @@ fn assert_external_id(value: Value, prefix: &str) {
         actual.starts_with(prefix),
         "expected {prefix} ID, got {actual}"
     );
+}
+
+#[derive(Debug)]
+struct BindingTableFixtureRegistry;
+
+impl ProcedureRegistry for BindingTableFixtureRegistry {
+    fn lookup(&self, name: &[IStr]) -> Option<ProcedureMetadata> {
+        if name.len() != 2
+            || name[0].as_str() != "selene_test"
+            || name[1].as_str() != "binding_table_with_rows"
+        {
+            return None;
+        }
+        Some(ProcedureMetadata::new(
+            BINDING_TABLE_WITH_ROWS,
+            ProcedureSignature::new(vec![ProcedureParameter::new(
+                istr("rows"),
+                GqlType::Integer,
+                false,
+            )]),
+            ProcedureOutputSchema {
+                columns: vec![ProcedureOutputColumn::new(istr("t"), GqlType::TableRef)],
+            },
+            ProcedureTier::Graph,
+            ProcedureMutability::Read,
+            None,
+        ))
+    }
+
+    fn execute(
+        &self,
+        handle: ProcedureHandle,
+        args: &[Value],
+        ctx: &mut ProcedureContext<'_, '_>,
+    ) -> Result<ProcedureResult, ProcedureError> {
+        assert_eq!(handle, BINDING_TABLE_WITH_ROWS);
+        let Some(Value::Int(rows)) = args.first() else {
+            return Err(ProcedureError::Internal {
+                detail: "fixture expects integer row count".to_owned(),
+            });
+        };
+        let rows = usize::try_from(*rows).map_err(|_| ProcedureError::Internal {
+            detail: "fixture row count must be non-negative".to_owned(),
+        })?;
+        let table = table_with_rows(rows);
+        let id = ctx.register_binding_table(Arc::new(table));
+        Ok(ProcedureResult {
+            rows: vec![vec![Value::TableRef(id)]],
+        })
+    }
+}
+
+fn table_with_rows(rows: usize) -> BindingTable {
+    BindingTable::new(
+        BindingTableSchema {
+            columns: Vec::new(),
+        },
+        (0..rows).map(|_| Binding::empty()).collect(),
+    )
+}
+
+fn execute_with_registry(source: &str, registry: &dyn ProcedureRegistry) -> BindingTable {
+    let graph = SharedGraph::new(GraphId::new(9200));
+    let mut session = Session::new(&graph);
+    let output = session
+        .execute_source(source, registry)
+        .expect("source executes");
+    rows_from_output(output)
+}
+
+fn rows_from_output(output: StatementOutput) -> BindingTable {
+    let StatementOutput::Rows(table) = output else {
+        panic!("RETURN should produce rows");
+    };
+    table
+}
+
+fn two_edge_path_value() -> Value {
+    Value::Path(Path {
+        graph: GraphId::new(1),
+        start: NodeId::new(1),
+        segments: smallvec![
+            PathSegment {
+                edge: EdgeId::new(1),
+                direction: EdgeDirection::Outgoing,
+                node: NodeId::new(2),
+            },
+            PathSegment {
+                edge: EdgeId::new(2),
+                direction: EdgeDirection::Outgoing,
+                node: NodeId::new(3),
+            },
+        ],
+    })
 }
 
 #[test]
@@ -89,5 +197,99 @@ fn element_id_records_g100_feature() {
     assert!(
         features.contains(&FeatureId::G100),
         "element_id should record G100, observed {features:?}"
+    );
+}
+
+#[test]
+fn cardinality_counts_lists_paths_and_records() {
+    let cases = [
+        ("RETURN cardinality([1, 2, 3]) AS value", Value::Int(3)),
+        ("RETURN cardinality([]) AS value", Value::Int(0)),
+        ("RETURN cardinality({a: 1, b: 2}) AS value", Value::Int(2)),
+    ];
+
+    for (source, expected) in cases {
+        assert_eq!(single_value(source, "value"), expected, "source: {source}");
+    }
+}
+
+#[test]
+fn cardinality_counts_path_parameter() {
+    let graph = SharedGraph::new(GraphId::new(9202));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("p"), two_edge_path_value());
+
+    let table = rows_from_output(
+        session
+            .execute_source(
+                "RETURN cardinality($p) AS value",
+                &BindingTableFixtureRegistry,
+            )
+            .expect("source executes"),
+    );
+
+    assert_eq!(column_values(&table, "value"), vec![Value::Int(5)]);
+}
+
+#[test]
+fn cardinality_counts_session_table_parameter() {
+    let graph = SharedGraph::new(GraphId::new(9201));
+    let mut session = Session::new(&graph);
+    session.bind_table_parameter(istr("t"), table_with_rows(5));
+
+    let output = session
+        .execute_source(
+            "RETURN cardinality($t) AS value",
+            &BindingTableFixtureRegistry,
+        )
+        .expect("source executes");
+    let table = rows_from_output(output);
+
+    assert_eq!(column_values(&table, "value"), vec![Value::Int(5)]);
+}
+
+#[test]
+fn cardinality_counts_call_yield_table_ref() {
+    let table = execute_with_registry(
+        "UNWIND [0] AS seed CALL selene_test.binding_table_with_rows(7) YIELD t RETURN cardinality(t) AS value",
+        &BindingTableFixtureRegistry,
+    );
+
+    assert_eq!(column_values(&table, "value"), vec![Value::Int(7)]);
+}
+
+#[test]
+fn cardinality_propagates_null_and_rejects_invalid_values() {
+    assert_eq!(
+        single_value("RETURN cardinality(null) AS value", "value"),
+        Value::Null
+    );
+
+    for source in [
+        "RETURN cardinality(1) AS value",
+        "RETURN cardinality('x') AS value",
+        "MATCH (n:Person) RETURN cardinality(n) AS value LIMIT 1",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn cardinality_rejects_wrong_arity() {
+    assert_status("RETURN cardinality() AS value", "22G03");
+    assert_status("RETURN cardinality([1], [2]) AS value", "22G03");
+}
+
+#[test]
+fn cardinality_records_gf12_feature() {
+    let statement = parse("RETURN cardinality([1, 2, 3]) AS value").expect("source parses");
+    let features = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        features.contains(&FeatureId::GF12),
+        "cardinality should record GF12, observed {features:?}"
     );
 }

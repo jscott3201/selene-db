@@ -142,6 +142,7 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
         "acos" | "asin" | "atan" | "cos" | "cosh" | "cot" | "degrees" | "radians" | "sin"
         | "sinh" | "tan" | "tanh" => Some(FeatureId::GF02),
         "exp" | "ln" | "log" | "log10" | "power" => Some(FeatureId::GF03),
+        "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
         _ => None,
     }
