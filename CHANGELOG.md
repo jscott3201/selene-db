@@ -8,6 +8,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ISO/IEC 39075:2024 §20.10 `ELEMENT_ID` (G100), §20.22 `CARDINALITY`
+  (GF12), and minimum-conformance `CHAR_LENGTH` / `CHARACTER_LENGTH` scalar
+  functions in `selene-gql`. `ELEMENT_ID` returns `ExternalString` node/edge
+  IDs; `CARDINALITY` covers binding-table references, paths, lists, and
+  records; `CHAR_LENGTH` aliases the existing Unicode scalar-counting
+  `LENGTH` implementation. Session parameters now support table bindings
+  through `Session::bind_table_parameter(...)` for binding-table-reference
+  tests and procedure output handoff.
 - ISO/IEC 39075:2024 §20.22 numeric value function clusters in `selene-gql`:
   GF01 enhanced numeric feature registration for `ABS`, `MOD`, `FLOOR`,
   `CEIL`/`CEILING`, and `SQRT`; GF02 trigonometric functions (`SIN`, `COS`,

@@ -10,6 +10,7 @@ mod binary_ops;
 mod case;
 mod cast;
 mod collections;
+mod identity_length_fns;
 mod predicates;
 mod scalar_fns;
 mod subquery;

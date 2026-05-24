@@ -1,6 +1,8 @@
 use std::{num::NonZeroUsize, thread, time::Instant};
 
-use selene_core::{GraphId, IStr, IStrAdmissionPolicy, intern_with_admission};
+use selene_core::{
+    BindingTableId, GraphId, IStr, IStrAdmissionPolicy, Value, intern_with_admission,
+};
 use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
@@ -8,10 +10,11 @@ use super::*;
 use crate::{
     analyze::analyze,
     parser::parse,
-    plan::ExecutionPlan,
     plan::plan,
+    plan::{BindingTableSchema, ExecutionPlan},
     procedure_registry::EmptyProcedureRegistry,
     runtime::statement::{StatementOutput, execute_statement},
+    runtime::{BindingTable, BindingTableRegistry},
 };
 
 fn planned(source: &str) -> ExecutionPlan {
@@ -39,6 +42,94 @@ fn empty_closed_graph(id: u64) -> SharedGraph {
         .expect("empty type validates")
         .build()
         .expect("closed graph builds")
+}
+
+fn empty_table() -> BindingTable {
+    BindingTable::empty(BindingTableSchema {
+        columns: Vec::new(),
+    })
+}
+
+#[test]
+fn table_parameter_replacements_share_scalar_namespace() {
+    let graph = SharedGraph::new(GraphId::new(4000));
+    let mut session = Session::new(&graph);
+    let name = admitted("t");
+
+    assert_eq!(session.bind_parameter(name, Value::Int(1)), None);
+    assert!(matches!(
+        session.bind_table_parameter(name, empty_table()),
+        Some(SessionParameterValue::Scalar(Value::Int(1)))
+    ));
+    assert_eq!(session.bind_parameter(name, Value::Int(2)), None);
+    assert_eq!(session.clear_parameter(&name), Some(Value::Int(2)));
+
+    assert!(session.bind_table_parameter(name, empty_table()).is_none());
+    assert_eq!(session.clear_parameter(&name), None);
+    assert!(session.parameters().is_empty());
+
+    session.bind_parameter(name, Value::Int(3));
+    session.clear_parameters();
+    assert!(session.parameters().is_empty());
+}
+
+#[test]
+fn scalar_only_materialization_borrows_parameter_map() {
+    let graph = SharedGraph::new(GraphId::new(4003));
+    let mut session = Session::new(&graph);
+    let name = admitted("x");
+    let registry = BindingTableRegistry::new();
+
+    session.bind_parameter(name, Value::Int(7));
+
+    let parameters = session.materialize_parameters(&registry);
+
+    assert!(matches!(parameters, std::borrow::Cow::Borrowed(_)));
+    assert_eq!(parameters.get(&name), Some(&Value::Int(7)));
+}
+
+#[test]
+fn materialize_parameters_registers_table_values() {
+    let graph = SharedGraph::new(GraphId::new(4001));
+    let mut session = Session::new(&graph);
+    let scalar = admitted("x");
+    let table = admitted("t");
+    let registry = BindingTableRegistry::new();
+
+    session.bind_parameter(scalar, Value::Int(7));
+    session.bind_table_parameter(table, empty_table());
+
+    let parameters = session.materialize_parameters(&registry);
+
+    assert!(matches!(parameters, std::borrow::Cow::Owned(_)));
+    assert_eq!(parameters.get(&scalar), Some(&Value::Int(7)));
+    let Some(Value::TableRef(id)) = parameters.get(&table) else {
+        panic!("table parameter materializes as TableRef");
+    };
+    assert_ne!(*id, BindingTableId::TOMBSTONE);
+    assert_eq!(
+        registry
+            .lookup(*id)
+            .expect("materialized ID resolves")
+            .row_count(),
+        0
+    );
+}
+
+#[test]
+fn statement_execution_materializes_table_parameter_refs() {
+    let graph = SharedGraph::new(GraphId::new(4002));
+    let mut session = Session::new(&graph);
+    session.bind_table_parameter(admitted("t"), empty_table());
+
+    let output = execute("RETURN $t AS t", &mut session).expect("statement executes");
+    let StatementOutput::Rows(table) = output else {
+        panic!("RETURN should produce rows");
+    };
+    let Some(Value::TableRef(id)) = table.rows()[0].get(0) else {
+        panic!("table parameter should surface as TableRef");
+    };
+    assert_ne!(*id, BindingTableId::TOMBSTONE);
 }
 
 #[test]

@@ -40,10 +40,12 @@ where
             ctx.impl_defined_caps(),
             ctx.providers(),
             ctx.cancellation_checker(),
+            ctx.binding_table_registry(),
         ))),
         ProcedureTier::Mutation => {
             let caps = ctx.impl_defined_caps();
             let cancellation = ctx.cancellation_checker();
+            let binding_tables = ctx.binding_table_registry();
             let mutator = ctx.mutator_with_span(
                 "GraphWrite procedure requires a write transaction",
                 call.span,
@@ -52,6 +54,7 @@ where
                 mutator,
                 caps,
                 cancellation,
+                binding_tables,
             )))
         }
         ProcedureTier::Persist => Err(ExecutorError::ImplementationDefined {
@@ -73,6 +76,7 @@ where
             ctx.impl_defined_caps(),
             ctx.providers(),
             ctx.cancellation_checker(),
+            ctx.binding_table_registry(),
         ))),
         ProcedureTier::Mutation => Err(ExecutorError::InvalidTransactionState {
             detail: "GraphWrite procedure requires a write transaction",

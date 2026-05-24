@@ -1,10 +1,11 @@
 //! Top-level statement executor.
 
-use std::{sync::Arc, time::Instant};
+use std::{rc::Rc, sync::Arc, time::Instant};
 
 use selene_core::{CancellationToken, Change, metrics};
 use selene_graph::CommitOutcome;
 
+use super::session::materialize_parameter_values;
 use crate::{
     ExecutionPlan, GqlStatus, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
@@ -12,8 +13,8 @@ use crate::{
     parser::parse,
     plan::plan as build_plan,
     runtime::{
-        BindingTable, CallPlanKey, ExecutorError, ExecutorWarning, Session, TxContext,
-        execute_plan, pipeline,
+        BindingTable, BindingTableRegistry, CallPlanKey, ExecutorError, ExecutorWarning, Session,
+        TxContext, execute_plan, pipeline,
     },
 };
 
@@ -232,17 +233,23 @@ fn execute_read_only(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
-    let parameters = &session.parameters;
+    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
     let (cancellation, deadline, row_cap) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let table = if let Some(txn) = session.active_txn.as_mut() {
-        let mut ctx = TxContext::write_with_parameters(
+        let mut ctx = TxContext::write_with_owned_parameters_and_registry(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             txn,
             providers,
             parameters,
+            Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
         .with_istr_admission_policy(session.istr_admission_policy)
@@ -252,12 +259,13 @@ fn execute_read_only(
         note_output_rows(plan, &ctx, table.row_count())?;
         table
     } else {
-        let mut ctx = TxContext::read_only_with_parameters(
+        let mut ctx = TxContext::read_only_with_owned_parameters_and_registry(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             providers,
             parameters,
+            Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
         .with_istr_admission_policy(session.istr_admission_policy)
@@ -288,7 +296,12 @@ fn execute_inside_explicit_tx(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
-    let parameters = &session.parameters;
+    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
     let (cancellation, deadline, row_cap) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let txn = session
@@ -297,13 +310,14 @@ fn execute_inside_explicit_tx(
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "explicit-TX path entered without active transaction",
         })?;
-    let mut ctx = TxContext::write_with_parameters(
+    let mut ctx = TxContext::write_with_owned_parameters_and_registry(
         snapshot,
         &plan.impl_defined_caps,
         registry,
         txn,
         providers,
         parameters,
+        Rc::clone(&binding_tables),
     )
     .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
     .with_istr_admission_policy(session.istr_admission_policy)
@@ -329,18 +343,24 @@ fn execute_auto_commit(
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let principal = session.principal();
+    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
     let mut txn = session.graph().begin_write();
-    let parameters = session.parameters();
     let (cancellation, deadline, row_cap) = resource_limits(session);
     let warning_sink = session.warning_sink.as_ref();
     let result = {
-        let mut ctx = TxContext::write_with_parameters(
+        let mut ctx = TxContext::write_with_owned_parameters_and_registry(
             snapshot,
             &plan.impl_defined_caps,
             registry,
             &mut txn,
             providers,
             parameters,
+            Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
         .with_istr_admission_policy(session.istr_admission_policy)

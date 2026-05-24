@@ -183,7 +183,8 @@ fn scalar_string_and_collection_functions_dispatch() {
     let table = execute_read(
         "RETURN length('abc') AS len, substring('abcdef', 2, 3) AS sub, upper('ab') AS up, \
          lower('AB') AS low, trim(' x ') AS trimmed, coalesce(null, 'x') AS co, \
-         nullif('x', 'x') AS nf, size([1, 2, 3]) AS sz",
+         nullif('x', 'x') AS nf, size([1, 2, 3]) AS sz, \
+         char_length('café') AS char_len, character_length('日本') AS character_len",
     );
 
     assert_eq!(column_values(&table, "len"), vec![Value::Int(3)]);
@@ -206,6 +207,8 @@ fn scalar_string_and_collection_functions_dispatch() {
     assert_eq!(column_values(&table, "co"), vec![Value::String(istr("x"))]);
     assert_eq!(column_values(&table, "nf"), vec![Value::Null]);
     assert_eq!(column_values(&table, "sz"), vec![Value::Int(3)]);
+    assert_eq!(column_values(&table, "char_len"), vec![Value::Int(4)]);
+    assert_eq!(column_values(&table, "character_len"), vec![Value::Int(2)]);
 }
 
 #[test]

@@ -1,0 +1,7 @@
+-- corpus: positive
+-- feature: G100
+-- expects: parse-ok
+MATCH (n)-[e]->(m)
+RETURN element_id(n) AS node_id,
+       element_id(e) AS edge_id,
+       element_id(m) = element_id(m) AS stable_id
