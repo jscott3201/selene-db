@@ -22,6 +22,7 @@ thiserror.workspace = true
 tracing.workspace = true
 lru.workspace = true
 stacker.workspace = true
+uuid.workspace = true
 
 [features]
 metrics = ["selene-core/metrics"]

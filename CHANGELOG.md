@@ -8,6 +8,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Implementation-defined first-class UUID support in `selene-gql`: `UUID`
+  type names and literals, `uuid_v4()`, `uuid_v7()`, `uuid('<string>')`,
+  `CAST(... AS UUID)`, UUID typed-index routing, and `CAST(UUID AS STRING)`
+  rendering through `ExternalString`. Feature attribution records the vendor
+  `IM_UUID` feature ID.
 - ISO/IEC 39075:2024 §20.10 `ELEMENT_ID` (G100), §20.22 `CARDINALITY`
   (GF12), and minimum-conformance `CHAR_LENGTH` / `CHARACTER_LENGTH` scalar
   functions in `selene-gql`. `ELEMENT_ID` returns `ExternalString` node/edge

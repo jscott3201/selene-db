@@ -81,11 +81,22 @@ fn build_literal_child(
         Rule::int_lit => parse_i64(child.as_str(), child_span),
         Rule::float_lit => parse_f64(child.as_str(), child_span),
         Rule::string_lit => parse_string(child.as_str(), child_span, budget),
+        Rule::uuid_lit => parse_uuid_lit(child, child_span),
         _ => Err(not_implemented(
             &child,
             "literal builder lands in a later brief",
         )),
     }
+}
+
+fn parse_uuid_lit(pair: Pair<'_, Rule>, source_span: SourceSpan) -> Result<Literal, ParserError> {
+    let string_pair = first_child(pair)?;
+    let value = parse_string_text(string_pair.as_str(), span(&string_pair))?;
+    uuid::Uuid::parse_str(&value)
+        .map(|uuid| Literal::Uuid(uuid, source_span))
+        .map_err(|error| {
+            ParserError::syntax(format!("invalid UUID literal: {error}"), source_span, None)
+        })
 }
 
 fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
@@ -150,13 +161,17 @@ fn parse_string(
     span: SourceSpan,
     budget: &mut InternerBudget,
 ) -> Result<Literal, ParserError> {
+    let value = parse_string_text(text, span)?;
+    let interned = budget.intern_str(&value, span, "string literal")?;
+    Ok(Literal::String(interned, span))
+}
+
+fn parse_string_text(text: &str, span: SourceSpan) -> Result<String, ParserError> {
     let inner = text
         .strip_prefix('\'')
         .and_then(|value| value.strip_suffix('\''))
         .ok_or_else(|| ParserError::syntax("string literal is missing quotes", span, None))?;
-    let value = decode_single_quoted(inner, span)?;
-    let interned = budget.intern_str(&value, span, "string literal")?;
-    Ok(Literal::String(interned, span))
+    decode_single_quoted(inner, span)
 }
 
 fn decode_single_quoted(inner: &str, span: SourceSpan) -> Result<String, ParserError> {

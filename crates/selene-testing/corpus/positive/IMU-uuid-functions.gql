@@ -1,0 +1,4 @@
+-- corpus: positive
+-- feature: IM_UUID
+-- expects: parse-ok
+RETURN uuid_v4() AS generated, uuid('018f1b6d-7b89-7cc0-9f40-2c6f8d4df101') AS parsed

@@ -21,6 +21,8 @@ use crate::{
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
+use super::uuid_fns::parse_uuid_string;
+
 /// Evaluate an explicit CAST.
 ///
 /// `value` is the already-evaluated source value; `target_type` is the
@@ -96,6 +98,7 @@ pub(super) fn eval_cast(
         GqlType::Float | GqlType::Float64 | GqlType::Float32 => cast_to_float(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
+        GqlType::Uuid => cast_to_uuid(value, span),
         GqlType::List(element_type) => cast_to_list(value, element_type, span),
         other => Err(ExecutorError::FeatureNotInV1_1 {
             feature: cast_to_type_feature(other),
@@ -163,6 +166,7 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         Value::Float(f) => format_float(f),
         Value::String(s) => s.as_str().to_owned(),
         Value::ExternalString(s) => s.as_ref().to_owned(),
+        Value::Uuid(v) => v.to_string(),
         _ => {
             return Err(ExecutorError::FeatureNotInV1_1 {
                 feature: "CAST source not supported for STRING target",
@@ -177,6 +181,18 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
     // user-driven allocations get the unbounded path, not the bounded
     // interner.
     Ok(Value::ExternalString(rendered.into()))
+}
+
+fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match value {
+        Value::Uuid(v) => Ok(Value::Uuid(v)),
+        Value::String(s) => parse_uuid_string(s.as_str(), span).map(Value::Uuid),
+        Value::ExternalString(s) => parse_uuid_string(s.as_ref(), span).map(Value::Uuid),
+        _ => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "CAST source not supported for UUID target",
+            span,
+        }),
+    }
 }
 
 fn cast_to_list(

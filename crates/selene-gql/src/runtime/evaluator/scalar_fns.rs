@@ -4,7 +4,7 @@
 //! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, trigonometric and
 //! logarithmic functions, `element_id`, `cardinality`, `length`, `char_length`,
 //! `character_length`, `substring`, `upper`, `lower`, `trim`, `coalesce`,
-//! `nullif`, and `size`.
+//! `nullif`, `size`, and implementation-defined UUID functions.
 //! Each function owns arity checking; `NULL` propagates except where
 //! short-circuit functions (`coalesce`, `nullif`) define different behavior.
 
@@ -22,7 +22,7 @@ use super::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
         eval_binary, eval_equality, numeric_to_f64, string_slice,
     },
-    evaluate, identity_length_fns,
+    evaluate, identity_length_fns, uuid_fns,
 };
 
 pub(super) fn eval_function_call(
@@ -212,6 +212,28 @@ pub(super) fn eval_function_call(
             span,
         ),
         "size" => eval_size(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "uuid_v4" => uuid_fns::eval_uuid_v4(eval_fixed_args(
+            &display_name,
+            args,
+            0,
+            span,
+            binding,
+            schema,
+            ctx,
+        )?),
+        "uuid_v7" => uuid_fns::eval_uuid_v7(eval_fixed_args(
+            &display_name,
+            args,
+            0,
+            span,
+            binding,
+            schema,
+            ctx,
+        )?),
+        "uuid" => uuid_fns::eval_uuid(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),

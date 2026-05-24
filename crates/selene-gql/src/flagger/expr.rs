@@ -119,9 +119,14 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GQ18, *span);
             query::query_pipeline(body, uses);
         }
-        ValueExpr::Cast { value, span, .. } => {
+        ValueExpr::Cast {
+            value,
+            target_type,
+            span,
+        } => {
             record_feature(uses, FeatureId::GE08, *span);
             self::value(value, uses);
+            gql_type(target_type, *span, uses);
         }
     }
 }
@@ -144,6 +149,7 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
         "exp" | "ln" | "log" | "log10" | "power" => Some(FeatureId::GF03),
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
+        "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
         _ => None,
     }
 }
@@ -151,6 +157,7 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
 fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
     match value {
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
+        Literal::Uuid(_, span) => record_feature(uses, FeatureId::IM_UUID, *span),
         Literal::String(_, _) | Literal::Bool(_, _) | Literal::Integer(_, _) | Literal::Null(_) => {
         }
     }
@@ -178,6 +185,7 @@ fn is_check(kind: &IsCheckKind, span: crate::SourceSpan, uses: &mut Vec<FeatureU
 
 pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
     match ty {
+        GqlType::Uuid => record_feature(uses, FeatureId::IM_UUID, span),
         GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
         GqlType::Uint8 => {
             record_feature(uses, FeatureId::GV01, span);

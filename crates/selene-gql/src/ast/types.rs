@@ -50,6 +50,8 @@ pub enum GqlType {
     Float64,
     /// Byte-string type.
     Bytes,
+    /// `UUID`.
+    Uuid,
     /// `BINARY`.
     Binary,
     /// `VARBINARY`.

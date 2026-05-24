@@ -381,6 +381,11 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
             4u8.hash(state);
             span.hash(state);
         }
+        Literal::Uuid(value, span) => {
+            5u8.hash(state);
+            value.hash(state);
+            span.hash(state);
+        }
     }
 }
 
@@ -546,6 +551,7 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::TableRef => 34u8.hash(state),
         GqlType::Null => 35u8.hash(state),
         GqlType::Nothing => 36u8.hash(state),
+        GqlType::Uuid => 37u8.hash(state),
     }
 }
 

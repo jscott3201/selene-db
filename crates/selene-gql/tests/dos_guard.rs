@@ -36,6 +36,14 @@ fn return_string_literals(prefix: &str, count: usize) -> String {
     format!("RETURN {items}")
 }
 
+fn return_uuid_literals(count: usize) -> String {
+    let items = (0..count)
+        .map(|index| format!("UUID '00000000-0000-4000-8000-{index:012x}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("RETURN {items}")
+}
+
 #[test]
 fn within_budget_parse_succeeds() {
     let source = return_identifiers(&unique_prefix("within"), LIMIT);
@@ -60,6 +68,12 @@ fn string_literals_count_against_budget() {
         error,
         ParserError::InternerBudgetExceeded { limit: 8192, .. }
     ));
+}
+
+#[test]
+fn uuid_literals_do_not_count_against_string_budget() {
+    let source = return_uuid_literals(LIMIT + 1);
+    parse(&source).expect("UUID literals are not interned string literals");
 }
 
 #[test]

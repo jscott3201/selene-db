@@ -374,6 +374,8 @@ pub enum Literal {
     Float(f64, SourceSpan),
     /// Interned string literal.
     String(IStr, SourceSpan),
+    /// UUID literal.
+    Uuid(uuid::Uuid, SourceSpan),
     /// Null literal.
     Null(SourceSpan),
 }
@@ -387,6 +389,7 @@ impl Literal {
             | Self::Integer(_, span)
             | Self::Float(_, span)
             | Self::String(_, span)
+            | Self::Uuid(_, span)
             | Self::Null(span) => *span,
         }
     }

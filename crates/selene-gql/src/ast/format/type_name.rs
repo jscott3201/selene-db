@@ -24,6 +24,7 @@ pub(super) fn fmt_type(ty: &GqlType) -> String {
         GqlType::Float32 => "FLOAT32".to_owned(),
         GqlType::Float64 => "FLOAT64".to_owned(),
         GqlType::Bytes => "BYTES".to_owned(),
+        GqlType::Uuid => "UUID".to_owned(),
         GqlType::Binary => "BYTES".to_owned(),
         GqlType::VarBinary => "BYTES".to_owned(),
         GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),

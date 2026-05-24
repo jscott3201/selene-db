@@ -43,6 +43,7 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
         Literal::Integer(_, _) => Some(IndexKind::Integer),
         Literal::Float(_, _) => Some(IndexKind::Float),
         Literal::String(_, _) => Some(IndexKind::String),
+        Literal::Uuid(_, _) => Some(IndexKind::Uuid),
         Literal::Bool(_, _) | Literal::Null(_) => None,
     }
 }

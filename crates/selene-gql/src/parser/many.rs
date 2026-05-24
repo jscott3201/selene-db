@@ -300,6 +300,7 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
             | crate::Literal::Integer(_, span)
             | crate::Literal::Float(_, span)
             | crate::Literal::String(_, span)
+            | crate::Literal::Uuid(_, span)
             | crate::Literal::Null(span) => rebase_span(span, offset),
         },
         ValueExpr::Variable { span, .. } | ValueExpr::Parameter { span, .. } => {

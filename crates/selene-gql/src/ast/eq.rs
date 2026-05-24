@@ -170,6 +170,7 @@ fn scrub_value(value: &mut ValueExpr) {
             | crate::Literal::Integer(_, span)
             | crate::Literal::Float(_, span)
             | crate::Literal::String(_, span)
+            | crate::Literal::Uuid(_, span)
             | crate::Literal::Null(span) => *span = SourceSpan::default(),
         },
         ValueExpr::Variable { span, .. } | ValueExpr::Parameter { span, .. } => {
