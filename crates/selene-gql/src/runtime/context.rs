@@ -1,17 +1,19 @@
 //! Executor transaction context.
 
 use std::{
+    borrow::Cow,
     cell::{Cell, RefCell},
     collections::BTreeMap,
     fmt,
+    rc::Rc,
     sync::Arc,
     time::Instant,
 };
 
 use rustc_hash::FxHashSet;
 use selene_core::{
-    CancellationCause, CancellationChecker, CancellationToken, IStr, IStrAdmissionPolicy, Value,
-    metrics,
+    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr,
+    IStrAdmissionPolicy, Value, metrics,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
@@ -20,7 +22,7 @@ use crate::{
     analyze::ExprIdLookup,
     plan::SubqueryRegistry,
     plan::{ImplDefinedCaps, PipelineOpId},
-    runtime::{ExecutorError, ExecutorWarning, WarningSink},
+    runtime::{BindingTable, BindingTableRegistry, ExecutorError, ExecutorWarning, WarningSink},
 };
 
 /// Adaptive re-optimization hook reserved for future executor phases.
@@ -46,7 +48,8 @@ pub struct TxContext<'a, 'g> {
     impl_defined_caps: &'a ImplDefinedCaps,
     registry: &'a dyn ProcedureRegistry,
     providers: &'a [Arc<dyn IndexProvider>],
-    parameters: &'a BTreeMap<IStr, Value>,
+    parameters: Cow<'a, BTreeMap<IStr, Value>>,
+    binding_tables: Rc<BindingTableRegistry>,
     reopt_hook: Option<&'a dyn AdaptiveOptimizer>,
     plan_expr_ids: Option<&'a ExprIdLookup>,
     plan_subqueries: Option<&'a SubqueryRegistry>,
@@ -127,7 +130,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             impl_defined_caps,
             registry,
             providers,
-            parameters,
+            parameters: Cow::Borrowed(parameters),
+            binding_tables: Rc::new(BindingTableRegistry::new()),
             reopt_hook: None,
             plan_expr_ids: None,
             plan_subqueries: None,
@@ -174,7 +178,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
             impl_defined_caps,
             registry,
             providers,
-            parameters,
+            parameters: Cow::Borrowed(parameters),
+            binding_tables: Rc::new(BindingTableRegistry::new()),
             reopt_hook: Some(reopt_hook),
             plan_expr_ids: None,
             plan_subqueries: None,
@@ -221,7 +226,67 @@ impl<'a, 'g> TxContext<'a, 'g> {
             impl_defined_caps,
             registry,
             providers,
-            parameters,
+            parameters: Cow::Borrowed(parameters),
+            binding_tables: Rc::new(BindingTableRegistry::new()),
+            reopt_hook: None,
+            plan_expr_ids: None,
+            plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
+            result_rows_emitted: Cell::new(0),
+            write_txn: Some(txn),
+        }
+    }
+
+    pub(crate) fn read_only_with_owned_parameters_and_registry(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: BTreeMap<IStr, Value>,
+        binding_tables: Rc<BindingTableRegistry>,
+    ) -> Self {
+        Self {
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            parameters: Cow::Owned(parameters),
+            binding_tables,
+            reopt_hook: None,
+            plan_expr_ids: None,
+            plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            istr_admission_policy: IStrAdmissionPolicy::Reject,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
+            result_rows_emitted: Cell::new(0),
+            write_txn: None,
+        }
+    }
+
+    pub(crate) fn write_with_owned_parameters_and_registry(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        txn: &'a mut WriteTxn<'g>,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: BTreeMap<IStr, Value>,
+        binding_tables: Rc<BindingTableRegistry>,
+    ) -> Self {
+        Self {
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            parameters: Cow::Owned(parameters),
+            binding_tables,
             reopt_hook: None,
             plan_expr_ids: None,
             plan_subqueries: None,
@@ -460,8 +525,25 @@ impl<'a, 'g> TxContext<'a, 'g> {
 
     /// Borrow the session-local query parameters visible to this statement.
     #[must_use]
-    pub const fn parameters(&self) -> &'a BTreeMap<IStr, Value> {
-        self.parameters
+    pub fn parameters(&self) -> &BTreeMap<IStr, Value> {
+        self.parameters.as_ref()
+    }
+
+    /// Clone the per-statement binding-table registry handle.
+    #[must_use]
+    pub(crate) fn binding_table_registry(&self) -> Rc<BindingTableRegistry> {
+        Rc::clone(&self.binding_tables)
+    }
+
+    /// Register a binding table in this statement's request-scoped registry.
+    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+        self.binding_tables.register(table)
+    }
+
+    /// Look up a binding table from this statement's request-scoped registry.
+    #[must_use]
+    pub fn binding_table_for(&self, id: BindingTableId) -> Option<Arc<BindingTable>> {
+        self.binding_tables.lookup(id)
     }
 
     /// Borrow the adaptive optimizer hook, when one was supplied.

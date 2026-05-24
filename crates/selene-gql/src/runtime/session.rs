@@ -8,16 +8,29 @@ use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
 use crate::{
     GqlStatus, SourceSpan,
     runtime::{
-        CallPlanCache, ExecutorError, ExecutorWarning, PlanCache, PlanCacheStats, WarningSink,
-        WriteOutcome,
+        BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
+        PlanCache, PlanCacheStats, WarningSink, WriteOutcome,
     },
 };
+
+/// Session-local query parameter value.
+///
+/// Scalars are copied into each statement's parameter map directly. Table
+/// parameters are registered in that statement's binding-table registry and
+/// materialized as request-scoped `TableRef` values.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SessionParameterValue {
+    /// Scalar query parameter value.
+    Scalar(Value),
+    /// Binding-table query parameter value.
+    Table(Arc<BindingTable>),
+}
 
 /// Caller-owned executor session bound to one shared graph.
 pub struct Session<'g> {
     graph: &'g SharedGraph,
     principal: Option<Arc<[u8]>>,
-    pub(crate) parameters: BTreeMap<IStr, Value>,
+    pub(crate) parameters: BTreeMap<IStr, SessionParameterValue>,
     pub(crate) plan_cache: Option<PlanCache>,
     pub(crate) call_plan_cache: Option<Arc<CallPlanCache>>,
     pub(crate) active_txn: Option<WriteTxn<'g>>,
@@ -194,13 +207,42 @@ impl<'g> Session<'g> {
     /// Runtime positions that require a specific type validate strictly; for
     /// example, `LIMIT $n` accepts only non-negative integer values and returns
     /// [`ExecutorError::InvalidParameterType`] for mismatches.
+    ///
+    /// If `name` previously held a table binding, the table is replaced and
+    /// `None` is returned. Use [`Self::bind_table_parameter`] when callers need
+    /// table-aware replacement information.
     pub fn bind_parameter(&mut self, name: IStr, value: Value) -> Option<Value> {
-        self.parameters.insert(name, value)
+        match self
+            .parameters
+            .insert(name, SessionParameterValue::Scalar(value))
+        {
+            Some(SessionParameterValue::Scalar(prior)) => Some(prior),
+            Some(SessionParameterValue::Table(_)) | None => None,
+        }
     }
 
-    /// Remove one session-local query parameter and return its prior value.
+    /// Bind or replace a session-local query parameter with a binding table.
+    ///
+    /// The table is stored at session scope and materialized into a fresh
+    /// request-scoped table reference for each statement execution.
+    pub fn bind_table_parameter(
+        &mut self,
+        name: IStr,
+        table: BindingTable,
+    ) -> Option<SessionParameterValue> {
+        self.parameters
+            .insert(name, SessionParameterValue::Table(Arc::new(table)))
+    }
+
+    /// Remove one session-local query parameter and return its prior scalar value.
+    ///
+    /// If `name` held a table binding, the table is removed and `None` is
+    /// returned.
     pub fn clear_parameter(&mut self, name: &IStr) -> Option<Value> {
-        self.parameters.remove(name)
+        match self.parameters.remove(name) {
+            Some(SessionParameterValue::Scalar(prior)) => Some(prior),
+            Some(SessionParameterValue::Table(_)) | None => None,
+        }
     }
 
     /// Remove all session-local query parameters.
@@ -210,8 +252,27 @@ impl<'g> Session<'g> {
 
     /// Borrow the session-local query-parameter map used for statement execution.
     #[must_use]
-    pub(crate) fn parameters(&self) -> &BTreeMap<IStr, Value> {
+    #[cfg(test)]
+    pub(crate) fn parameters(&self) -> &BTreeMap<IStr, SessionParameterValue> {
         &self.parameters
+    }
+
+    pub(crate) fn materialize_parameters(
+        &self,
+        registry: &BindingTableRegistry,
+    ) -> BTreeMap<IStr, Value> {
+        self.parameters
+            .iter()
+            .map(|(name, value)| {
+                let value = match value {
+                    SessionParameterValue::Scalar(value) => value.clone(),
+                    SessionParameterValue::Table(table) => {
+                        Value::TableRef(registry.register(Arc::clone(table)))
+                    }
+                };
+                (*name, value)
+            })
+            .collect()
     }
 
     /// Enable this session's source-string plan cache with the given capacity.

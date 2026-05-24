@@ -1,11 +1,11 @@
 //! Procedure execution context tiers.
 
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
-use selene_core::CancellationChecker;
+use selene_core::{BindingTableId, CancellationChecker};
 use selene_graph::{IndexProvider, Mutator, ProviderTag, SeleneGraph};
 
-use crate::{ImplDefinedCaps, ProcedureTier};
+use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
 
 /// Read-tier procedure context.
 pub struct GraphContext<'a> {
@@ -13,20 +13,23 @@ pub struct GraphContext<'a> {
     caps: &'a ImplDefinedCaps,
     providers: &'a [Arc<dyn IndexProvider>],
     cancellation: CancellationChecker<'a>,
+    binding_tables: Rc<BindingTableRegistry>,
 }
 
 impl<'a> GraphContext<'a> {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         snapshot: &'a SeleneGraph,
         caps: &'a ImplDefinedCaps,
         providers: &'a [Arc<dyn IndexProvider>],
         cancellation: CancellationChecker<'a>,
+        binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
             snapshot,
             caps,
             providers,
             cancellation,
+            binding_tables,
         }
     }
 
@@ -56,6 +59,11 @@ impl<'a> GraphContext<'a> {
     pub const fn cancellation_checker(&self) -> CancellationChecker<'a> {
         self.cancellation
     }
+
+    /// Register a binding table for this procedure call's statement.
+    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+        self.binding_tables.register(table)
+    }
 }
 
 /// Mutation-tier procedure context.
@@ -63,18 +71,21 @@ pub struct MutationContext<'a, 'g> {
     mutator: Mutator<'a, 'g>,
     caps: &'a ImplDefinedCaps,
     cancellation: CancellationChecker<'a>,
+    binding_tables: Rc<BindingTableRegistry>,
 }
 
 impl<'a, 'g> MutationContext<'a, 'g> {
-    pub(crate) const fn new(
+    pub(crate) fn new(
         mutator: Mutator<'a, 'g>,
         caps: &'a ImplDefinedCaps,
         cancellation: CancellationChecker<'a>,
+        binding_tables: Rc<BindingTableRegistry>,
     ) -> Self {
         Self {
             mutator,
             caps,
             cancellation,
+            binding_tables,
         }
     }
 
@@ -82,7 +93,12 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     #[cfg(any(test, feature = "test-harness"))]
     #[must_use]
     pub fn for_test(mutator: Mutator<'a, 'g>, caps: &'a ImplDefinedCaps) -> Self {
-        Self::new(mutator, caps, CancellationChecker::disabled())
+        Self::new(
+            mutator,
+            caps,
+            CancellationChecker::disabled(),
+            Rc::new(BindingTableRegistry::new()),
+        )
     }
 
     /// Borrow the transaction-local working graph.
@@ -113,6 +129,11 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     pub const fn cancellation_checker(&self) -> CancellationChecker<'a> {
         self.cancellation
     }
+
+    /// Register a binding table for this procedure call's statement.
+    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+        self.binding_tables.register(table)
+    }
 }
 
 /// Tier-tagged procedure context passed through [`crate::ProcedureRegistry`].
@@ -131,6 +152,14 @@ impl ProcedureContext<'_, '_> {
         match self {
             Self::Graph(_) => ProcedureTier::Graph,
             Self::Mutation(_) => ProcedureTier::Mutation,
+        }
+    }
+
+    /// Register a binding table for the currently executing procedure call.
+    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+        match self {
+            Self::Graph(ctx) => ctx.register_binding_table(table),
+            Self::Mutation(ctx) => ctx.register_binding_table(table),
         }
     }
 }
