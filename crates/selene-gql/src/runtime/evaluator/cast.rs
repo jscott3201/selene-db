@@ -96,6 +96,10 @@ pub(super) fn eval_cast(
         GqlType::Float | GqlType::Float64 | GqlType::Float32 => cast_to_float(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
+        GqlType::Uuid => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "CAST AS UUID (BRIEF-135c C4)",
+            span,
+        }),
         GqlType::List(element_type) => cast_to_list(value, element_type, span),
         other => Err(ExecutorError::FeatureNotInV1_1 {
             feature: cast_to_type_feature(other),

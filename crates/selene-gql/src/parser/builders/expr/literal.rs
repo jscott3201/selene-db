@@ -81,11 +81,24 @@ fn build_literal_child(
         Rule::int_lit => parse_i64(child.as_str(), child_span),
         Rule::float_lit => parse_f64(child.as_str(), child_span),
         Rule::string_lit => parse_string(child.as_str(), child_span, budget),
+        Rule::uuid_lit => parse_uuid_lit(child, child_span, budget),
         _ => Err(not_implemented(
             &child,
             "literal builder lands in a later brief",
         )),
     }
+}
+
+fn parse_uuid_lit(
+    pair: Pair<'_, Rule>,
+    span: SourceSpan,
+    budget: &mut InternerBudget,
+) -> Result<Literal, ParserError> {
+    let string_pair = first_child(pair)?;
+    let value = parse_string_pair(string_pair, budget)?;
+    uuid::Uuid::parse_str(value.as_str())
+        .map(|uuid| Literal::Uuid(uuid, span))
+        .map_err(|error| ParserError::syntax(format!("invalid UUID literal: {error}"), span, None))
 }
 
 fn parse_i64(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {

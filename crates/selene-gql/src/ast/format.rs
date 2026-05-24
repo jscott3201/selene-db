@@ -480,6 +480,7 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Integer(value, _) => write!(out, "{value}")?,
             crate::Literal::Float(value, _) => write!(out, "{value}")?,
             crate::Literal::String(value, _) => write!(out, "'{}'", escape_string(value.as_str()))?,
+            crate::Literal::Uuid(value, _) => write!(out, "UUID '{value}'")?,
             crate::Literal::Null(_) => out.push_str("null"),
         },
         ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(*name)),

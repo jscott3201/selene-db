@@ -63,6 +63,7 @@ fn fold_unary(op: UnaryOp, operand: &ValueExpr, span: SourceSpan) -> Option<Valu
         (UnaryOp::Not, _)
         | (UnaryOp::Negate, Literal::Bool(_, _))
         | (UnaryOp::Negate, Literal::String(_, _))
+        | (UnaryOp::Negate, Literal::Uuid(_, _))
         | (UnaryOp::Negate, Literal::Null(_)) => None,
     }
 }

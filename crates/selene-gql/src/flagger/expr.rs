@@ -151,8 +151,11 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
 fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
     match value {
         Literal::Float(_, span) => record_feature(uses, FeatureId::GA01, *span),
-        Literal::String(_, _) | Literal::Bool(_, _) | Literal::Integer(_, _) | Literal::Null(_) => {
-        }
+        Literal::String(_, _)
+        | Literal::Bool(_, _)
+        | Literal::Integer(_, _)
+        | Literal::Uuid(_, _)
+        | Literal::Null(_) => {}
     }
 }
 
@@ -178,7 +181,7 @@ fn is_check(kind: &IsCheckKind, span: crate::SourceSpan, uses: &mut Vec<FeatureU
 
 pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
     match ty {
-        GqlType::String | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
+        GqlType::String | GqlType::Uuid | GqlType::Boolean | GqlType::Integer | GqlType::Float => {}
         GqlType::Uint8 => {
             record_feature(uses, FeatureId::GV01, span);
             record_feature(uses, FeatureId::GV09, span);

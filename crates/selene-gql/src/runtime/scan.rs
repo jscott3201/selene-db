@@ -483,6 +483,7 @@ fn literal_value(literal: &Literal) -> Value {
         Literal::Integer(value, _) => Value::Int(*value),
         Literal::Float(value, _) => Value::Float(*value),
         Literal::String(value, _) => Value::String(*value),
+        Literal::Uuid(value, _) => Value::Uuid(*value),
         Literal::Null(_) => Value::Null,
     }
 }

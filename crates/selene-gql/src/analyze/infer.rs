@@ -22,6 +22,7 @@ pub(crate) fn literal(literal: &Literal) -> AnalyzedType {
         Literal::Integer(..) => AnalyzedType::Resolved(GqlType::Integer),
         Literal::Float(..) => AnalyzedType::Resolved(GqlType::Float),
         Literal::String(..) => AnalyzedType::Resolved(GqlType::String),
+        Literal::Uuid(..) => AnalyzedType::Resolved(GqlType::Uuid),
         Literal::Null(..) => AnalyzedType::Resolved(GqlType::Null),
     }
 }
@@ -622,6 +623,7 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Float32
         | GqlType::Float64
         | GqlType::Bytes
+        | GqlType::Uuid
         | GqlType::Binary
         | GqlType::VarBinary
         | GqlType::ZonedDateTime

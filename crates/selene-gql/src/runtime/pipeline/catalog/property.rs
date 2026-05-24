@@ -85,6 +85,10 @@ fn property_default_value(
             feature: "floating-point DEFAULT literals",
             span,
         }),
+        Literal::Uuid(_, _) => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "UUID DEFAULT literals",
+            span,
+        }),
     }
 }
 
@@ -186,6 +190,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::Float32 => PropertyValueType::Float32,
         GqlType::Decimal => PropertyValueType::Decimal,
         GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => PropertyValueType::Bytes,
+        GqlType::Uuid => PropertyValueType::Uuid,
         GqlType::ZonedDateTime => PropertyValueType::ZonedDateTime,
         GqlType::LocalDateTime => PropertyValueType::LocalDateTime,
         GqlType::Date => PropertyValueType::Date,
