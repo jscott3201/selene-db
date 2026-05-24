@@ -4,9 +4,10 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read, execute_read_result};
-use selene_core::{Value, feature_register::FeatureId};
-use selene_gql::{feature_walk, parse};
+use exec_common::{column_values, execute_read, execute_read_result, istr};
+use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_gql::{EmptyProcedureRegistry, Session, feature_walk, parse};
+use selene_graph::SharedGraph;
 
 const EPSILON: f64 = 1e-12;
 const PI: f64 = std::f64::consts::PI;
@@ -31,6 +32,62 @@ fn assert_float_near(value: Value, expected: f64) {
 fn assert_status(source: &str, expected: &str) {
     let err = execute_read_result(source).expect_err("query should fail");
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
+}
+
+#[test]
+fn scalar_functions_numeric_gf01_enhanced_numeric_functions_return_expected_values() {
+    let cases = [
+        ("RETURN abs(-3) AS value", Value::Int(3)),
+        ("RETURN mod(7, 4) AS value", Value::Int(3)),
+        ("RETURN floor(1.8) AS value", Value::Float(1.0)),
+        ("RETURN ceil(1.2) AS value", Value::Float(2.0)),
+        ("RETURN ceiling(1.2) AS value", Value::Float(2.0)),
+        ("RETURN sqrt(9) AS value", Value::Float(3.0)),
+    ];
+
+    for (source, expected) in cases {
+        assert_eq!(single_value(source, "value"), expected, "source: {source}");
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_gf01_enhanced_numeric_functions_propagate_null() {
+    for source in [
+        "RETURN abs(null) AS value",
+        "RETURN mod(null, 4) AS value",
+        "RETURN mod(7, null) AS value",
+        "RETURN floor(null) AS value",
+        "RETURN ceil(null) AS value",
+        "RETURN ceiling(null) AS value",
+        "RETURN sqrt(null) AS value",
+    ] {
+        assert_eq!(
+            single_value(source, "value"),
+            Value::Null,
+            "source: {source}"
+        );
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_gf01_enhanced_numeric_functions_reject_non_numeric_arguments() {
+    for source in [
+        "RETURN abs('x') AS value",
+        "RETURN mod('x', 4) AS value",
+        "RETURN mod(7, 'x') AS value",
+        "RETURN floor('x') AS value",
+        "RETURN ceil('x') AS value",
+        "RETURN ceiling('x') AS value",
+        "RETURN sqrt('x') AS value",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn scalar_functions_numeric_gf01_enhanced_numeric_domain_errors_use_iso_statuses() {
+    assert_status("RETURN sqrt(-1) AS value", "22003");
+    assert_status("RETURN mod(7, 0) AS value", "22012");
 }
 
 #[test]
@@ -238,4 +295,17 @@ fn scalar_functions_numeric_power_gr11_invalid_argument_cases_use_2201f() {
 fn scalar_functions_numeric_power_gr11_overflow_uses_22003() {
     assert_status("RETURN power(2.0, 1024.0) AS value", "22003");
     assert_status("RETURN power(10.0, 400.0) AS value", "22003");
+}
+
+#[test]
+fn scalar_functions_numeric_power_zero_base_rejects_nan_exponent() {
+    let graph = SharedGraph::new(GraphId::new(13_521));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("nan"), Value::Float(f64::NAN));
+
+    let err = session
+        .execute_source("RETURN power(0, $nan) AS value", &EmptyProcedureRegistry)
+        .expect_err("NaN exponent should reject");
+
+    assert_eq!(err.gqlstatus().as_str(), "22003");
 }

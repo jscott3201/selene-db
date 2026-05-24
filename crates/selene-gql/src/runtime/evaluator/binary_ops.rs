@@ -226,6 +226,9 @@ fn eval_power(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Executo
 }
 
 fn eval_float_power(lhs: f64, rhs: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
+    if lhs.is_nan() || rhs.is_nan() {
+        return finite_power_result(f64::NAN, span);
+    }
     if lhs == 0.0 {
         if rhs < 0.0 {
             return invalid_power_argument("power base is zero and exponent is negative", span);
