@@ -463,9 +463,12 @@ record_constructor = { ^"RECORD"? ~ "{" ~ record_field ~ ("," ~ record_field)* ~
 record_field = { prop_ident ~ ":" ~ expr }
 
 // Aggregates with optional DISTINCT (spec section20.9)
-aggregate_expr  = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
+aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
+general_aggregate_expr = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
+binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ expr ~ "," ~ expr ~ ")" }
 aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST" | ^"COLLECT"
                   | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG" | ^"MIN" | ^"MAX" }
+binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
 
 function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }

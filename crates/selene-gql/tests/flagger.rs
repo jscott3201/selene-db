@@ -173,6 +173,37 @@ fn cardinality_function_is_supported_and_recorded() {
 }
 
 #[test]
+fn gf10_iso_aggregate_functions_are_recorded_without_collect_alias() {
+    for source in [
+        "UNWIND [1, 2] AS x RETURN stddev_pop(x)",
+        "UNWIND [1, 2] AS x RETURN stddev_samp(x)",
+        "UNWIND [1, 2] AS x RETURN collect_list(x)",
+    ] {
+        let statement = parse(source).expect(source);
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&FeatureId::GF10),
+            "{source} should record GF10, observed {observed:?}"
+        );
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+
+    let collect_alias = parse("UNWIND [1, 2] AS x RETURN collect(x)").expect("collect parses");
+    let observed = feature_walk(&collect_alias)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.contains(&FeatureId::GF10),
+        "non-ISO collect alias must stay unattributed, observed {observed:?}"
+    );
+}
+
+#[test]
 fn mutation_feature_is_supported() {
     parse("MATCH (n) SET n.active = true RETURN n").expect("GD01 mutation is claimed");
 }

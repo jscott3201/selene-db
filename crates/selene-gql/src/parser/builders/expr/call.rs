@@ -63,7 +63,9 @@ pub(super) fn build_aggregate_expr(
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::aggregate_op => name = Some(intern_lower(child, budget)?),
+            Rule::aggregate_op | Rule::binary_aggregate_op => {
+                name = Some(intern_lower(child, budget)?)
+            }
             Rule::distinct_kw => distinct = true,
             Rule::star => star = true,
             Rule::expr => args.push(build_value_expr(child, budget)?),

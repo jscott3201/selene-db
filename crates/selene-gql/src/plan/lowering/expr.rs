@@ -637,6 +637,8 @@ const AGGREGATE_NAMES: &[&str] = &[
     "avg",
     "min",
     "max",
+    "percentile_cont",
+    "percentile_disc",
 ];
 
 /// Return aggregate metadata when `expr` is a recognised aggregate call.

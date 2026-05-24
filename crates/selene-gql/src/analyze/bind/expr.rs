@@ -582,6 +582,8 @@ fn is_aggregate_name(name: &selene_core::IStr) -> bool {
         "collect_list",
         "stddev_pop",
         "stddev_samp",
+        "percentile_cont",
+        "percentile_disc",
     ]
     .iter()
     .any(|candidate| name.eq_ignore_ascii_case(candidate))

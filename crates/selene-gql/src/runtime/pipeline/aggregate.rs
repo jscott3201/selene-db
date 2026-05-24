@@ -226,6 +226,17 @@ fn classify(aggregate: &Aggregate) -> Result<AggregateFn, ExecutorError> {
             })
         };
     }
+    if matches!(name, "percentile_cont" | "percentile_disc") {
+        return if aggregate.args.len() == 2 && !aggregate.distinct {
+            Err(ExecutorError::ImplementationDefined {
+                detail: "PERCENTILE aggregates are not yet implemented",
+            })
+        } else {
+            Err(ExecutorError::ImplementationDefined {
+                detail: "PERCENTILE aggregate arity not implemented",
+            })
+        };
+    }
     if aggregate.args.len() != 1 {
         return Err(ExecutorError::ImplementationDefined {
             detail: "aggregate arity not implemented",
