@@ -19,6 +19,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("01N01", "validation-mode-relaxed-write"),
     ("22000", "data-exception"),
     ("22003", "numeric-value-out-of-range"),
+    ("22011", "substring-error"),
     ("22012", "division-by-zero"),
     ("22018", "invalid-character-value-for-cast"),
     ("2201E", "invalid-argument-for-natural-logarithm"),
@@ -83,6 +84,11 @@ mod tests {
             gqlstatus_name("2201E"),
             Some("invalid-argument-for-natural-logarithm")
         );
+    }
+
+    #[test]
+    fn gqlstatus_22011_round_trip() {
+        assert_eq!(gqlstatus_name("22011"), Some("substring-error"));
     }
 
     #[test]

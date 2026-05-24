@@ -4,7 +4,7 @@
 
 mod exec_common;
 
-use exec_common::{column_values, execute_read};
+use exec_common::{column_values, execute_read, execute_read_result};
 use selene_core::Value;
 use selene_gql::{EmptyProcedureRegistry, analyze, parse};
 
@@ -18,6 +18,11 @@ fn single_value(source: &str, column: &str) -> Value {
 fn assert_analysis_status(source: &str, expected: &str) {
     let statement = parse(source).expect("source parses");
     let err = analyze(statement, &EmptyProcedureRegistry, None).expect_err("query should fail");
+    assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
+}
+
+fn assert_status(source: &str, expected: &str) {
+    let err = execute_read_result(source).expect_err("query should fail");
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
@@ -95,4 +100,37 @@ fn is_normalized_evaluates_forms_and_preserves_unknown() {
 #[test]
 fn is_normalized_rejects_non_string_operand() {
     assert_analysis_status("RETURN 7 IS NORMALIZED AS value", "22G03");
+}
+
+#[test]
+fn left_and_right_return_unicode_prefixes_and_suffixes() {
+    let cases = [
+        ("RETURN left('café', 3) AS value", "caf"),
+        ("RETURN right('café', 2) AS value", "fé"),
+        ("RETURN left('日本語', 2) AS value", "日本"),
+        ("RETURN right('日本語', 99) AS value", "日本語"),
+    ];
+    for (source, expected) in cases {
+        assert_eq!(external_string(single_value(source, "value")), expected);
+    }
+}
+
+#[test]
+fn left_and_right_propagate_nulls_and_reject_bad_lengths() {
+    for source in [
+        "RETURN left(null, 1) AS value",
+        "RETURN left('abc', null) AS value",
+        "RETURN right(null, 1) AS value",
+        "RETURN right('abc', null) AS value",
+    ] {
+        assert_eq!(
+            single_value(source, "value"),
+            Value::Null,
+            "source: {source}"
+        );
+    }
+    assert_status("RETURN left('abc', -1) AS value", "22011");
+    assert_status("RETURN right('abc', -1) AS value", "22011");
+    assert_status("RETURN left('abc', 'x') AS value", "22G03");
+    assert_status("RETURN right(7, 1) AS value", "22G03");
 }

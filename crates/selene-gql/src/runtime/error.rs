@@ -14,6 +14,8 @@ pub enum DataExceptionSubclass {
     DataException,
     /// Numeric value out of range (`22003`).
     NumericValueOutOfRange,
+    /// Substring error (`22011`).
+    SubstringError,
     /// Division by zero (`22012`).
     DivisionByZero,
     /// Invalid argument for natural logarithm (`2201E`).
@@ -45,6 +47,7 @@ impl DataExceptionSubclass {
         match self {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
+            Self::SubstringError => GqlStatus::SUBSTRING_ERROR,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
             Self::InvalidArgumentForNaturalLogarithm => {
                 GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM
@@ -440,5 +443,18 @@ impl ExecutorError {
             message: message.into(),
             span,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DataExceptionSubclass;
+
+    #[test]
+    fn substring_error_subclass_maps_to_22011() {
+        assert_eq!(
+            DataExceptionSubclass::SubstringError.gqlstatus().as_str(),
+            "22011"
+        );
     }
 }

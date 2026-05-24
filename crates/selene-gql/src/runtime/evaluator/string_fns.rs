@@ -115,6 +115,30 @@ pub(super) fn eval_substring(args: Vec<Value>, span: SourceSpan) -> Result<Value
     Ok(Value::ExternalString(Arc::from(value)))
 }
 
+pub(super) fn eval_left_right(
+    args: Vec<Value>,
+    span: SourceSpan,
+    from_right: bool,
+) -> Result<Value, ExecutorError> {
+    let source = &args[0];
+    let count = &args[1];
+    if matches!(source, Value::Null) || matches!(count, Value::Null) {
+        return Ok(Value::Null);
+    }
+    let Some(source) = string_slice(source) else {
+        return data_exception("LEFT/RIGHT source is not a string", span);
+    };
+    let count = substring_count(count, span)?;
+    let chars: Vec<char> = source.chars().collect();
+    let value: String = if from_right {
+        let start = chars.len().saturating_sub(count);
+        chars[start..].iter().copied().collect()
+    } else {
+        chars.iter().take(count).copied().collect()
+    };
+    Ok(Value::ExternalString(Arc::from(value)))
+}
+
 pub(super) fn eval_string_transform(
     args: Vec<Value>,
     span: SourceSpan,
@@ -224,6 +248,25 @@ fn normalize_string(value: &str, form: NormalForm) -> String {
         NormalForm::Nfd => value.nfd().collect(),
         NormalForm::Nfkc => value.nfkc().collect(),
         NormalForm::Nfkd => value.nfkd().collect(),
+    }
+}
+
+fn substring_count(value: &Value, span: SourceSpan) -> Result<usize, ExecutorError> {
+    match value {
+        Value::Int(value) if *value >= 0 => Ok(*value as usize),
+        Value::Int(_) => Err(data_exception_value_with(
+            DataExceptionSubclass::SubstringError,
+            "substring length is negative",
+            span,
+        )),
+        Value::Uint(value) => usize::try_from(*value).map_err(|_| {
+            data_exception_value_with(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "integer argument is too large",
+                span,
+            )
+        }),
+        _ => data_exception("substring length is not an integer", span),
     }
 }
 
