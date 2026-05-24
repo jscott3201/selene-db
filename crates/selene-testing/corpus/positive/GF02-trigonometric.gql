@@ -1,0 +1,12 @@
+-- corpus: positive
+-- feature: GF02
+-- expects: parse-ok
+RETURN sin(0) AS sine,
+       cos(0) AS cosine,
+       tan(0) AS tangent,
+       cot(1) AS cotangent,
+       asin(0) AS arcsine,
+       acos(1) AS arccosine,
+       atan(0) AS arctangent,
+       degrees(3.141592653589793) AS degrees_value,
+       radians(180) AS radians_value

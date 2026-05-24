@@ -1,8 +1,9 @@
 //! Scalar function evaluation.
 //!
 //! Dispatches the v1.1 closed scalar-function set case-insensitively:
-//! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, `length`,
-//! `substring`, `upper`, `lower`, `trim`, `coalesce`, `nullif`, and `size`.
+//! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, trigonometric
+//! functions, `length`, `substring`, `upper`, `lower`, `trim`, `coalesce`,
+//! `nullif`, and `size`.
 //! Each function owns arity checking; `NULL` propagates except where
 //! short-circuit functions (`coalesce`, `nullif`) define different behavior.
 
@@ -70,6 +71,74 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::floor,
+        ),
+        "sin" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::sin,
+            "trigonometric result is non-finite",
+        ),
+        "cos" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::cos,
+            "trigonometric result is non-finite",
+        ),
+        "tan" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::tan,
+            "trigonometric result is non-finite",
+        ),
+        "cot" => eval_cot(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
+        "sinh" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::sinh,
+            "trigonometric result is non-finite",
+        ),
+        "cosh" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::cosh,
+            "trigonometric result is non-finite",
+        ),
+        "tanh" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::tanh,
+            "trigonometric result is non-finite",
+        ),
+        "asin" => eval_inverse_trig(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::asin,
+        ),
+        "acos" => eval_inverse_trig(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::acos,
+        ),
+        "atan" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::atan,
+            "trigonometric result is non-finite",
+        ),
+        "degrees" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::to_degrees,
+            "degree conversion result is non-finite",
+        ),
+        "radians" => eval_unary_float(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+            f64::to_radians,
+            "radian conversion result is non-finite",
         ),
         "round" => eval_unary_numeric(
             &display_name,
@@ -183,6 +252,77 @@ fn eval_unary_numeric(
                 )
             }
         }
+    }
+}
+
+fn eval_unary_float(
+    args: Vec<Value>,
+    span: SourceSpan,
+    op: fn(f64) -> f64,
+    non_finite_message: &'static str,
+) -> Result<Value, ExecutorError> {
+    let Some(value) = eval_float_arg(args, span)? else {
+        return Ok(Value::Null);
+    };
+    finite_float(op(value), non_finite_message, span)
+}
+
+fn eval_inverse_trig(
+    args: Vec<Value>,
+    span: SourceSpan,
+    op: fn(f64) -> f64,
+) -> Result<Value, ExecutorError> {
+    let Some(value) = eval_float_arg(args, span)? else {
+        return Ok(Value::Null);
+    };
+    if !(-1.0..=1.0).contains(&value) {
+        return data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "inverse trigonometric argument is outside [-1, 1]",
+            span,
+        );
+    }
+    finite_float(op(value), "trigonometric result is non-finite", span)
+}
+
+fn eval_cot(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    let Some(value) = eval_float_arg(args, span)? else {
+        return Ok(Value::Null);
+    };
+    let tangent = value.tan();
+    if !tangent.is_finite() || tangent == 0.0 {
+        return data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "cotangent divisor is zero or non-finite",
+            span,
+        );
+    }
+    finite_float(1.0 / tangent, "cotangent result is non-finite", span)
+}
+
+fn eval_float_arg(args: Vec<Value>, span: SourceSpan) -> Result<Option<f64>, ExecutorError> {
+    let value = args.into_iter().next().expect("arity checked");
+    if matches!(value, Value::Null) {
+        return Ok(None);
+    }
+    numeric_to_f64(&value)
+        .ok_or_else(|| data_exception_value("numeric function argument is not numeric", span))
+        .map(Some)
+}
+
+fn finite_float(
+    value: f64,
+    non_finite_message: &'static str,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    if value.is_finite() {
+        Ok(Value::Float(value))
+    } else {
+        data_exception_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            non_finite_message,
+            span,
+        )
     }
 }
 

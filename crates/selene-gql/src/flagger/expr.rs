@@ -138,6 +138,8 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
     }
     match name.first().as_str().to_ascii_lowercase().as_str() {
         "abs" | "ceil" | "ceiling" | "floor" | "mod" | "sqrt" => Some(FeatureId::GF01),
+        "acos" | "asin" | "atan" | "cos" | "cosh" | "cot" | "degrees" | "radians" | "sin"
+        | "sinh" | "tan" | "tanh" => Some(FeatureId::GF02),
         "size" => Some(FeatureId::GF13),
         _ => None,
     }
