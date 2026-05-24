@@ -293,3 +293,59 @@ fn cardinality_records_gf12_feature() {
         "cardinality should record GF12, observed {features:?}"
     );
 }
+
+#[test]
+fn char_length_counts_unicode_scalars_and_alias_matches() {
+    let cases = [
+        ("RETURN char_length('') AS value", Value::Int(0)),
+        ("RETURN char_length('cafe') AS value", Value::Int(4)),
+        ("RETURN char_length('café') AS value", Value::Int(4)),
+        ("RETURN char_length('日本') AS value", Value::Int(2)),
+        ("RETURN CHARACTER_LENGTH('abc') AS value", Value::Int(3)),
+    ];
+
+    for (source, expected) in cases {
+        assert_eq!(single_value(source, "value"), expected, "source: {source}");
+    }
+
+    assert_eq!(
+        single_value("RETURN char_length('selene') AS value", "value"),
+        single_value("RETURN character_length('selene') AS value", "value")
+    );
+}
+
+#[test]
+fn char_length_propagates_null_and_rejects_invalid_values() {
+    assert_eq!(
+        single_value("RETURN char_length(null) AS value", "value"),
+        Value::Null
+    );
+
+    for source in [
+        "RETURN char_length(1) AS value",
+        "RETURN char_length([1]) AS value",
+        "MATCH (n:Person) RETURN character_length(n) AS value LIMIT 1",
+    ] {
+        assert_status(source, "22G03");
+    }
+}
+
+#[test]
+fn char_length_rejects_wrong_arity() {
+    assert_status("RETURN char_length() AS value", "22G03");
+    assert_status("RETURN character_length('a', 'b') AS value", "22G03");
+}
+
+#[test]
+fn char_length_has_no_optional_feature_attribution() {
+    let statement = parse("RETURN char_length('abc') AS value").expect("source parses");
+    let features = feature_walk(&statement)
+        .into_iter()
+        .map(|feature| feature.feature_id)
+        .collect::<Vec<_>>();
+
+    assert!(
+        features.is_empty(),
+        "char_length should not record an optional feature, observed {features:?}"
+    );
+}

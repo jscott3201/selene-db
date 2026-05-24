@@ -1,0 +1,5 @@
+-- corpus: positive
+-- feature: none
+-- expects: parse-ok
+RETURN char_length('cafe') AS ascii_len,
+       character_length('abc') AS alias_len
