@@ -60,6 +60,7 @@ feature_ids! {
     G037 = "G037" => "Questioned path primary";
     G060 = "G060" => "Bounded quantified path primary";
     G061 = "G061" => "Unbounded quantified path primary";
+    G100 = "G100" => "ELEMENT_ID function";
     G110 = "G110" => "IS DIRECTED predicate";
     G111 = "G111" => "IS LABELED predicate";
     G112 = "G112" => "IS SOURCE and IS DESTINATION predicate";
@@ -174,6 +175,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G037,
     FeatureId::G060,
     FeatureId::G061,
+    FeatureId::G100,
     FeatureId::G110,
     FeatureId::G111,
     FeatureId::G112,

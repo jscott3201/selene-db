@@ -2,8 +2,8 @@
 //!
 //! Dispatches the v1.1 closed scalar-function set case-insensitively:
 //! `abs`, `ceil`, `floor`, `round`, `mod`, `sqrt`, `power`, trigonometric and
-//! logarithmic functions, `length`, `substring`, `upper`, `lower`, `trim`,
-//! `coalesce`, `nullif`, and `size`.
+//! logarithmic functions, `element_id`, `length`, `substring`, `upper`,
+//! `lower`, `trim`, `coalesce`, `nullif`, and `size`.
 //! Each function owns arity checking; `NULL` propagates except where
 //! short-circuit functions (`coalesce`, `nullif`) define different behavior.
 
@@ -21,7 +21,7 @@ use super::{
         data_exception, data_exception_value, data_exception_value_with, data_exception_with,
         eval_binary, eval_equality, numeric_to_f64, string_slice,
     },
-    evaluate,
+    evaluate, identity_length_fns,
 };
 
 pub(super) fn eval_function_call(
@@ -174,6 +174,10 @@ pub(super) fn eval_function_call(
             let args = eval_fixed_args(&display_name, args, 2, span, binding, schema, ctx)?;
             eval_binary(BinaryOp::Power, args[0].clone(), args[1].clone(), span)
         }
+        "element_id" => identity_length_fns::eval_element_id(
+            eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
+            span,
+        ),
         "length" => eval_length(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
