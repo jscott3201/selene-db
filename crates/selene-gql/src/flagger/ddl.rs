@@ -33,6 +33,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             }
         }
         DdlStatement::CreateNodeType {
+            extends,
             or_replace,
             if_not_exists,
             properties,
@@ -44,9 +45,13 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC03, *span);
             }
+            if extends.is_some() {
+                record_feature(uses, FeatureId::IM_EXTENDS, *span);
+            }
             property_defs(properties, uses);
         }
         DdlStatement::CreateEdgeType {
+            extends,
             or_replace,
             if_not_exists,
             properties,
@@ -57,6 +62,9 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             type_ddl(*span, uses);
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC03, *span);
+            }
+            if extends.is_some() {
+                record_feature(uses, FeatureId::IM_EXTENDS, *span);
             }
             property_defs(properties, uses);
         }
