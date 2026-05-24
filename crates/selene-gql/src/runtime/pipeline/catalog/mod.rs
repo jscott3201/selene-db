@@ -1,5 +1,6 @@
 //! Catalog DDL pipeline operator.
 
+mod compose;
 mod endpoints;
 mod property;
 
@@ -10,6 +11,7 @@ use selene_graph::{
 };
 
 use self::{
+    compose::{compose_edge_properties, compose_node_properties},
     endpoints::resolve_endpoints,
     property::{property_defs, render_property_value_type},
 };
@@ -47,7 +49,7 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, extends)?;
+            reject_or_replace(*or_replace)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             if node_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
                 if *if_not_exists {
@@ -62,6 +64,17 @@ pub(super) fn execute(
             let indexes = inline_index_specs(properties)?;
             validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
             let properties = property_defs(properties, true)?;
+            let properties = if let Some(parent) = extends {
+                compose_node_properties(
+                    &closed_graph_type(ctx.snapshot(), *span)?,
+                    *label,
+                    *parent,
+                    properties,
+                    *span,
+                )?
+            } else {
+                properties
+            };
             {
                 let mut mutator =
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?;
@@ -91,7 +104,7 @@ pub(super) fn execute(
             validation_mode,
             span,
         } => {
-            reject_create_flags(*or_replace, extends)?;
+            reject_or_replace(*or_replace)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
                 if *if_not_exists {
@@ -110,6 +123,11 @@ pub(super) fn execute(
                 .transpose()?
                 .unwrap_or((EdgeEndpointDef::Any, EdgeEndpointDef::Any));
             let properties = property_defs(properties, false)?;
+            let properties = if let Some(parent) = extends {
+                compose_edge_properties(&graph_type, *label, *parent, properties, *span)?
+            } else {
+                properties
+            };
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(
                     *label,
@@ -159,15 +177,10 @@ pub(super) fn execute(
     }
 }
 
-fn reject_create_flags(or_replace: bool, extends: &Option<IStr>) -> Result<(), ExecutorError> {
+fn reject_or_replace(or_replace: bool) -> Result<(), ExecutorError> {
     if or_replace {
         return Err(ExecutorError::ImplementationDefined {
             detail: "OR REPLACE not implemented for catalog DDL",
-        });
-    }
-    if extends.is_some() {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "EXTENDS not implemented for catalog DDL",
         });
     }
     Ok(())
