@@ -118,6 +118,17 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// A reference is syntactically resolved but not valid in this expression context.
+    #[error("invalid reference: {message}")]
+    #[diagnostic(code(SLENE_GQL_42002))]
+    InvalidReference {
+        /// Human-readable rule failure.
+        message: String,
+        /// Source span of the invalid reference.
+        #[label("invalid reference here")]
+        span: SourceSpan,
+    },
+
     /// Analyzer expression recursion exceeded the implementation-defined cap.
     #[error("expression nesting depth {depth} exceeds analyzer limit")]
     #[diagnostic(code(SLENE_GQL_5GQL1))]
@@ -409,6 +420,10 @@ pub enum TypeMismatchContext {
     IsTypedTarget,
     /// `IS NORMALIZED` operand.
     IsNormalized,
+    /// `NORMALIZE` source operand.
+    NormalizeFunction,
+    /// Explicit TRIM source operand.
+    TrimSource,
     /// CASE branch result unification failed.
     CaseBranchUnification,
     /// List literal element unification failed.
@@ -457,6 +472,8 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::UnaryNot => f.write_str("operand of unary NOT"),
             Self::IsTypedTarget => f.write_str("IS TYPED target"),
             Self::IsNormalized => f.write_str("IS NORMALIZED operand"),
+            Self::NormalizeFunction => f.write_str("NORMALIZE operand"),
+            Self::TrimSource => f.write_str("TRIM source operand"),
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),
@@ -643,6 +660,7 @@ impl AnalysisError {
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,

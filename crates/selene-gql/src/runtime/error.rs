@@ -14,12 +14,16 @@ pub enum DataExceptionSubclass {
     DataException,
     /// Numeric value out of range (`22003`).
     NumericValueOutOfRange,
+    /// Substring error (`22011`).
+    SubstringError,
     /// Division by zero (`22012`).
     DivisionByZero,
     /// Invalid argument for natural logarithm (`2201E`).
     InvalidArgumentForNaturalLogarithm,
     /// Invalid argument for power function (`2201F`).
     InvalidArgumentForPowerFunction,
+    /// Trim error (`22027`).
+    TrimError,
     /// Invalid character value for cast (`22018`).
     InvalidCharacterValueForCast,
     /// Invalid value type (`22G03`).
@@ -45,11 +49,13 @@ impl DataExceptionSubclass {
         match self {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
+            Self::SubstringError => GqlStatus::SUBSTRING_ERROR,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
             Self::InvalidArgumentForNaturalLogarithm => {
                 GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM
             }
             Self::InvalidArgumentForPowerFunction => GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
+            Self::TrimError => GqlStatus::TRIM_ERROR,
             Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
@@ -440,5 +446,26 @@ impl ExecutorError {
             message: message.into(),
             span,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DataExceptionSubclass;
+
+    #[test]
+    fn substring_error_subclass_maps_to_22011() {
+        assert_eq!(
+            DataExceptionSubclass::SubstringError.gqlstatus().as_str(),
+            "22011"
+        );
+    }
+
+    #[test]
+    fn trim_error_subclass_maps_to_22027() {
+        assert_eq!(
+            DataExceptionSubclass::TrimError.gqlstatus().as_str(),
+            "22027"
+        );
     }
 }

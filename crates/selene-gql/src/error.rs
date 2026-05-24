@@ -39,6 +39,8 @@ impl GqlStatus {
     pub const DATA_EXCEPTION: Self = Self(*b"22000");
     /// Maps to GQLSTATUS 22003 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NUMERIC_VALUE_OUT_OF_RANGE: Self = Self(*b"22003");
+    /// Maps to GQLSTATUS 22011 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const SUBSTRING_ERROR: Self = Self(*b"22011");
     /// Maps to GQLSTATUS 22012 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DIVISION_BY_ZERO: Self = Self(*b"22012");
     /// Maps to GQLSTATUS 22018 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -47,6 +49,8 @@ impl GqlStatus {
     pub const INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM: Self = Self(*b"2201E");
     /// Maps to GQLSTATUS 2201F per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_ARGUMENT_FOR_POWER_FUNCTION: Self = Self(*b"2201F");
+    /// Maps to GQLSTATUS 22027 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const TRIM_ERROR: Self = Self(*b"22027");
     /// Maps to GQLSTATUS 22G04 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const VALUES_NOT_COMPARABLE: Self = Self(*b"22G04");
     /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -271,6 +275,7 @@ mod tests {
             (GqlStatus::DATATYPE_MISMATCH, "22G03", *b"22"),
             (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
             (GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE, "22003", *b"22"),
+            (GqlStatus::SUBSTRING_ERROR, "22011", *b"22"),
             (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
             (GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST, "22018", *b"22"),
             (
@@ -283,6 +288,7 @@ mod tests {
                 "2201F",
                 *b"22",
             ),
+            (GqlStatus::TRIM_ERROR, "22027", *b"22"),
             (GqlStatus::VALUES_NOT_COMPARABLE, "22G04", *b"22"),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
             (

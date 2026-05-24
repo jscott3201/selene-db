@@ -226,6 +226,27 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             distinct.hash(state);
             span.hash(state);
         }
+        ValueExpr::Normalize { source, form, span } => {
+            22u8.hash(state);
+            hash_value_expr(source, state);
+            form.hash(state);
+            span.hash(state);
+        }
+        ValueExpr::Trim {
+            spec,
+            character,
+            source,
+            span,
+        } => {
+            23u8.hash(state);
+            spec.hash(state);
+            character.is_some().hash(state);
+            if let Some(character) = character {
+                hash_value_expr(character, state);
+            }
+            hash_value_expr(source, state);
+            span.hash(state);
+        }
         ValueExpr::IsCheck {
             operand,
             kind,

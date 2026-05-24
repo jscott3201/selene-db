@@ -8,6 +8,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ISO/IEC 39075:2024 cluster-R string and aggregate conformance in
+  `selene-gql`: §19.7 `IS [NOT] NORMALIZED`, §20.24 `NORMALIZE`, `LEFT`,
+  `RIGHT`, multi-character TRIM family (GF05), explicit TRIM syntax (GF06),
+  GF10 attribution for ISO `STDDEV_POP` / `STDDEV_SAMP` / `COLLECT_LIST`, and
+  GF11 `PERCENTILE_CONT` / `PERCENTILE_DISC` binary aggregates. New substring
+  and trim data exceptions emit ISO Table 8 `22011` and `22027`; string
+  results preserve the `ExternalString` DoS invariant. SQL-only drift
+  (`REPLACE`, `LPAD`, `RPAD`, `POSITION`, `SIGN`, `RAND`) remains out of
+  scope.
 - Implementation-defined first-class UUID support in `selene-gql`: `UUID`
   type names and literals, `uuid_v4()`, `uuid_v7()`, `uuid('<string>')`,
   `CAST(... AS UUID)`, UUID typed-index routing, and `CAST(UUID AS STRING)`

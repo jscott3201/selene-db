@@ -204,6 +204,15 @@ fn collect_aggregates(
             }
         }
         ValueExpr::Cast { value, .. } => collect_aggregates(value, analyzed, rewrite)?,
+        ValueExpr::Normalize { source, .. } => collect_aggregates(source, analyzed, rewrite)?,
+        ValueExpr::Trim {
+            character, source, ..
+        } => {
+            if let Some(character) = character {
+                collect_aggregates(character, analyzed, rewrite)?;
+            }
+            collect_aggregates(source, analyzed, rewrite)?;
+        }
         ValueExpr::Exists { .. }
         | ValueExpr::CountSubquery { .. }
         | ValueExpr::ValueSubquery { .. } => {}
@@ -421,6 +430,24 @@ fn rewrite_aggregate_refs(
         } => ValueExpr::Cast {
             value: Box::new(rewrite_aggregate_refs(value, aggregate_names, analyzed)),
             target_type: target_type.clone(),
+            span: *span,
+        },
+        ValueExpr::Normalize { source, form, span } => ValueExpr::Normalize {
+            source: Box::new(rewrite_aggregate_refs(source, aggregate_names, analyzed)),
+            form: *form,
+            span: *span,
+        },
+        ValueExpr::Trim {
+            spec,
+            character,
+            source,
+            span,
+        } => ValueExpr::Trim {
+            spec: *spec,
+            character: character.as_ref().map(|character| {
+                Box::new(rewrite_aggregate_refs(character, aggregate_names, analyzed))
+            }),
+            source: Box::new(rewrite_aggregate_refs(source, aggregate_names, analyzed)),
             span: *span,
         },
     }

@@ -13,6 +13,7 @@ mod collections;
 mod identity_length_fns;
 mod predicates;
 mod scalar_fns;
+mod string_fns;
 mod subquery;
 mod uuid_fns;
 
@@ -95,6 +96,23 @@ pub fn evaluate(
             distinct,
             span,
         } => eval_function_call(name, args, (*star, *distinct), *span, binding, schema, ctx),
+        ValueExpr::Normalize { source, form, span } => {
+            let value = evaluate(source, binding, schema, ctx)?;
+            string_fns::eval_normalize(value, *form, *span)
+        }
+        ValueExpr::Trim {
+            spec,
+            character,
+            source,
+            span,
+        } => {
+            let source = evaluate(source, binding, schema, ctx)?;
+            let character = character
+                .as_deref()
+                .map(|character| evaluate(character, binding, schema, ctx))
+                .transpose()?;
+            string_fns::eval_explicit_trim(source, character, (*spec).into(), *span)
+        }
         ValueExpr::Case {
             branches,
             else_branch,

@@ -1,0 +1,5 @@
+-- corpus: positive
+-- feature: none
+-- expects: parse-ok
+RETURN left('café', 3) AS prefix,
+       right('café', 2) AS suffix

@@ -1,10 +1,13 @@
 //! Read-query bind handling.
 
+use std::collections::BTreeSet;
+
 use crate::{
     InlineProcedureCall, LetBinding, LimitValue, OrderTerm, PipelineStatement, ProcedureMutability,
-    QueryPipeline, ReturnClause, ReturnItem, UnwindStatement, ValueExpr, WithClause, YieldColumn,
+    QueryPipeline, ReturnClause, ReturnItem, SourceSpan, UnwindStatement, ValueExpr, WithClause,
+    YieldColumn,
     analyze::{
-        BindingDeclKind,
+        BindingDeclKind, BindingId, ScopeId,
         error::{AnalysisError, ConditionClause},
         types::AnalyzedType,
     },
@@ -229,6 +232,7 @@ fn bind_return_inputs(
     group_by: Option<&[ValueExpr]>,
     having: Option<&ValueExpr>,
 ) -> Result<(), AnalysisError> {
+    let row_scope = ctx.current_scope();
     for item in items {
         expr::bind_value_expr(ctx, &item.expr)?;
     }
@@ -240,7 +244,241 @@ fn bind_return_inputs(
     if let Some(value) = having {
         expr::bind_condition(ctx, value, ConditionClause::Having)?;
     }
+    validate_percentile_independent_refs(ctx, row_scope, items, group_by, having)?;
     Ok(())
+}
+
+fn validate_percentile_independent_refs(
+    ctx: &BindContext<'_>,
+    row_scope: ScopeId,
+    items: &[ReturnItem],
+    group_by: Option<&[ValueExpr]>,
+    having: Option<&ValueExpr>,
+) -> Result<(), AnalysisError> {
+    let group_bindings = group_binding_refs(ctx, group_by);
+    for item in items {
+        validate_percentile_independent_refs_in_expr(ctx, row_scope, &group_bindings, &item.expr)?;
+    }
+    if let Some(having) = having {
+        validate_percentile_independent_refs_in_expr(ctx, row_scope, &group_bindings, having)?;
+    }
+    Ok(())
+}
+
+fn group_binding_refs(
+    ctx: &BindContext<'_>,
+    group_by: Option<&[ValueExpr]>,
+) -> BTreeSet<BindingId> {
+    let mut bindings = BTreeSet::new();
+    if let Some(values) = group_by {
+        for value in values {
+            if let ValueExpr::Variable { span, .. } = value {
+                bindings.extend(
+                    binding_refs_in_span(ctx, *span)
+                        .into_iter()
+                        .filter(|use_| use_.span == *span)
+                        .map(|use_| use_.binding),
+                );
+            }
+        }
+    }
+    bindings
+}
+
+fn validate_percentile_independent_refs_in_expr(
+    ctx: &BindContext<'_>,
+    row_scope: ScopeId,
+    group_bindings: &BTreeSet<BindingId>,
+    value: &ValueExpr,
+) -> Result<(), AnalysisError> {
+    let mut stack = vec![value];
+    while let Some(value) = stack.pop() {
+        match value {
+            ValueExpr::FunctionCall { name, args, .. }
+                if name.len() == 1
+                    && matches!(name.first().as_str(), "percentile_cont" | "percentile_disc") =>
+            {
+                if let Some(independent) = args.get(1) {
+                    validate_percentile_independent_arg(
+                        ctx,
+                        row_scope,
+                        group_bindings,
+                        independent,
+                    )?;
+                }
+                if let Some(dependent) = args.first() {
+                    stack.push(dependent);
+                }
+            }
+            ValueExpr::PropertyAccess { target, .. }
+            | ValueExpr::UnaryOp {
+                operand: target, ..
+            }
+            | ValueExpr::PropertyExists { target, .. }
+            | ValueExpr::Cast { value: target, .. }
+            | ValueExpr::Normalize { source: target, .. } => stack.push(target),
+            ValueExpr::ListAccess { target, index, .. } => {
+                stack.push(index);
+                stack.push(target);
+            }
+            ValueExpr::ListLiteral { items, .. }
+            | ValueExpr::AllDifferent { items, .. }
+            | ValueExpr::Same { items, .. }
+            | ValueExpr::FunctionCall { args: items, .. } => {
+                stack.extend(items.iter());
+            }
+            ValueExpr::RecordLiteral { fields, .. } => {
+                stack.extend(fields.iter().map(|(_, field)| field));
+            }
+            ValueExpr::BinaryOp { lhs, rhs, .. } => {
+                stack.push(rhs);
+                stack.push(lhs);
+            }
+            ValueExpr::IsCheck { operand, kind, .. } => {
+                stack.push(operand);
+                match kind {
+                    crate::IsCheckKind::SourceOf(value)
+                    | crate::IsCheckKind::DestinationOf(value) => stack.push(value),
+                    crate::IsCheckKind::Null
+                    | crate::IsCheckKind::Directed
+                    | crate::IsCheckKind::Labeled(_)
+                    | crate::IsCheckKind::TruthValue(_)
+                    | crate::IsCheckKind::Typed(_)
+                    | crate::IsCheckKind::Normalized(_) => {}
+                }
+            }
+            ValueExpr::InList { operand, list, .. } => {
+                stack.extend(list.iter());
+                stack.push(operand);
+            }
+            ValueExpr::Like {
+                operand, pattern, ..
+            } => {
+                stack.push(pattern);
+                stack.push(operand);
+            }
+            ValueExpr::Between {
+                operand, low, high, ..
+            } => {
+                stack.push(high);
+                stack.push(low);
+                stack.push(operand);
+            }
+            ValueExpr::Case {
+                branches,
+                else_branch,
+                ..
+            } => {
+                if let Some(value) = else_branch {
+                    stack.push(value);
+                }
+                for (condition, result) in branches {
+                    stack.push(result);
+                    stack.push(condition);
+                }
+            }
+            ValueExpr::Trim {
+                character, source, ..
+            } => {
+                stack.push(source);
+                if let Some(character) = character {
+                    stack.push(character);
+                }
+            }
+            ValueExpr::Literal(_)
+            | ValueExpr::Variable { .. }
+            | ValueExpr::Parameter { .. }
+            | ValueExpr::Exists { .. }
+            | ValueExpr::CountSubquery { .. }
+            | ValueExpr::ValueSubquery { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn validate_percentile_independent_arg(
+    ctx: &BindContext<'_>,
+    row_scope: ScopeId,
+    group_bindings: &BTreeSet<BindingId>,
+    independent: &ValueExpr,
+) -> Result<(), AnalysisError> {
+    for reference in binding_refs_in_span(ctx, independent.span()) {
+        if group_bindings.contains(&reference.binding)
+            || binding_declared_outside_current_subquery(ctx, row_scope, reference.binding)
+        {
+            continue;
+        }
+        return Err(AnalysisError::InvalidReference {
+            message: "PERCENTILE independent expression cannot reference a per-row binding unless that binding is part of GROUP BY".to_owned(),
+            span: reference.span,
+        });
+    }
+    Ok(())
+}
+
+fn binding_refs_in_span(
+    ctx: &BindContext<'_>,
+    span: SourceSpan,
+) -> Vec<crate::analyze::BindingUse> {
+    ctx.references
+        .iter()
+        .filter(|reference| span_contains(span, reference.span))
+        .cloned()
+        .collect()
+}
+
+fn binding_declared_outside_current_subquery(
+    ctx: &BindContext<'_>,
+    row_scope: ScopeId,
+    binding: BindingId,
+) -> bool {
+    let Some(subquery_scope) = nearest_subquery_scope(ctx, row_scope) else {
+        return false;
+    };
+    let Some(declaration_scope) = declaration_scope(ctx, binding) else {
+        return false;
+    };
+    !scope_is_descendant_of(ctx, declaration_scope, subquery_scope)
+}
+
+fn nearest_subquery_scope(ctx: &BindContext<'_>, scope: ScopeId) -> Option<ScopeId> {
+    let mut cursor = Some(scope);
+    while let Some(scope_id) = cursor {
+        let scope = ctx.scopes.scope(scope_id)?;
+        if scope.kind == ScopeKind::Subquery {
+            return Some(scope_id);
+        }
+        cursor = scope.parent;
+    }
+    None
+}
+
+fn declaration_scope(ctx: &BindContext<'_>, binding: BindingId) -> Option<ScopeId> {
+    ctx.scopes
+        .scopes()
+        .iter()
+        .enumerate()
+        .find_map(|(index, scope)| {
+            scope
+                .locals
+                .contains(&binding)
+                .then(|| ScopeId::new(index as u32))
+        })
+}
+
+fn scope_is_descendant_of(ctx: &BindContext<'_>, scope: ScopeId, ancestor: ScopeId) -> bool {
+    let mut cursor = Some(scope);
+    while let Some(scope_id) = cursor {
+        if scope_id == ancestor {
+            return true;
+        }
+        cursor = ctx.scopes.scope(scope_id).and_then(|scope| scope.parent);
+    }
+    false
+}
+
+fn span_contains(outer: SourceSpan, inner: SourceSpan) -> bool {
+    outer.byte_offset <= inner.byte_offset && inner.end() <= outer.end()
 }
 
 fn declare_projection_items(

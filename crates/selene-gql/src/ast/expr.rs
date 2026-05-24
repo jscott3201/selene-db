@@ -214,6 +214,26 @@ pub enum ValueExpr {
         /// Source span of the full expression.
         span: SourceSpan,
     },
+    /// `NORMALIZE(<source>[, <normal form>])` Unicode normalization expression.
+    Normalize {
+        /// Source string expression.
+        source: Box<ValueExpr>,
+        /// Optional normalization form; omitted form defaults to NFC.
+        form: Option<NormalForm>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
+    /// Explicit `TRIM([LEADING|TRAILING|BOTH] [char] FROM source)` expression.
+    Trim {
+        /// Trim direction.
+        spec: TrimSpec,
+        /// Optional trim character expression; omitted character defaults to space.
+        character: Option<Box<ValueExpr>>,
+        /// Source string expression.
+        source: Box<ValueExpr>,
+        /// Source span of the full expression.
+        span: SourceSpan,
+    },
     /// `CAST(<value> AS <target_type>)` explicit cast expression per ISO §22.
     ///
     /// `target_type` is boxed to keep the size of [`ValueExpr`] bounded; the
@@ -256,6 +276,8 @@ impl ValueExpr {
             | Self::Exists { span, .. }
             | Self::CountSubquery { span, .. }
             | Self::ValueSubquery { span, .. }
+            | Self::Normalize { span, .. }
+            | Self::Trim { span, .. }
             | Self::Cast { span, .. } => *span,
         }
     }
@@ -360,6 +382,17 @@ pub enum NormalForm {
     Nfkc,
     /// NFKD.
     Nfkd,
+}
+
+/// Explicit TRIM direction.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum TrimSpec {
+    /// Trim leading characters.
+    Leading,
+    /// Trim trailing characters.
+    Trailing,
+    /// Trim both leading and trailing characters.
+    Both,
 }
 
 /// Literal expression.

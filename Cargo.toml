@@ -54,6 +54,7 @@ lasso = { version = "0.7", features = ["multi-threaded"] }
 jiff = { version = "0.2", features = ["serde"] }
 rust_decimal = { version = "1.42", default-features = false, features = ["std", "serde"] }
 uuid = { version = "1.23", features = ["v4", "v7", "serde"] }
+unicode-normalization = "0.1"
 smallvec = { version = "1", features = ["const_generics", "serde", "union"] }
 bytes = "1.10"
 serde = { version = "1.0", features = ["derive", "rc"] }

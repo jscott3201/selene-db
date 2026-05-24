@@ -4,12 +4,12 @@ use pest::iterators::Pair;
 use selene_core::IStr;
 
 use crate::{
-    ast::{BinaryOp, SourceSpan, ValueExpr, util::NonEmpty},
+    ast::{BinaryOp, NormalForm, SourceSpan, TrimSpec, ValueExpr, util::NonEmpty},
     error::ParserError,
     parser::budget::InternerBudget,
 };
 
-use super::{Rule, build_value_expr, literal};
+use super::{Rule, build_value_expr, first_child, literal};
 use crate::parser::builders::{
     build_qualified_name, build_query_pipeline, pattern, span, unexpected_pair,
 };
@@ -63,7 +63,9 @@ pub(super) fn build_aggregate_expr(
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::aggregate_op => name = Some(intern_lower(child, budget)?),
+            Rule::aggregate_op | Rule::binary_aggregate_op => {
+                name = Some(intern_lower(child, budget)?)
+            }
             Rule::distinct_kw => distinct = true,
             Rule::star => star = true,
             Rule::expr => args.push(build_value_expr(child, budget)?),
@@ -79,6 +81,63 @@ pub(super) fn build_aggregate_expr(
         args,
         star,
         distinct,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_normalize_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut source = None;
+    let mut form = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::expr => source = Some(build_value_expr(child, budget)?),
+            Rule::normal_form => form = Some(parse_normal_form(child.as_str())),
+            _ => return Err(unexpected_pair(child, "unexpected NORMALIZE child")),
+        }
+    }
+    Ok(ValueExpr::Normalize {
+        source: Box::new(source.ok_or_else(|| {
+            ParserError::syntax("NORMALIZE is missing source expression", source_span, None)
+        })?),
+        form,
+        span: source_span,
+    })
+}
+
+pub(super) fn build_trim_expr(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<ValueExpr, ParserError> {
+    let source_span = span(&pair);
+    let mut spec = TrimSpec::Both;
+    let mut values = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::trim_spec => spec = parse_trim_spec(child.as_str()),
+            Rule::expr => values.push(build_value_expr(child, budget)?),
+            Rule::trim_char => values.push(build_value_expr(first_child(child)?, budget)?),
+            _ => return Err(unexpected_pair(child, "unexpected TRIM child")),
+        }
+    }
+    let source = values.pop().ok_or_else(|| {
+        ParserError::syntax("TRIM is missing source expression", source_span, None)
+    })?;
+    let character = values.pop().map(Box::new);
+    if !values.is_empty() {
+        return Err(ParserError::syntax(
+            "TRIM has too many value expressions",
+            source_span,
+            None,
+        ));
+    }
+    Ok(ValueExpr::Trim {
+        spec,
+        character,
+        source: Box::new(source),
         span: source_span,
     })
 }
@@ -312,4 +371,21 @@ fn intern_lower(pair: Pair<'_, Rule>, budget: &mut InternerBudget) -> Result<ISt
     let source_span = span(&pair);
     let canonical = pair.as_str().to_ascii_lowercase();
     budget.intern_str(&canonical, source_span, "aggregate name")
+}
+
+fn parse_normal_form(value: &str) -> NormalForm {
+    match value.to_ascii_uppercase().as_str() {
+        "NFD" => NormalForm::Nfd,
+        "NFKC" => NormalForm::Nfkc,
+        "NFKD" => NormalForm::Nfkd,
+        _ => NormalForm::Nfc,
+    }
+}
+
+fn parse_trim_spec(value: &str) -> TrimSpec {
+    match value.to_ascii_uppercase().as_str() {
+        "LEADING" => TrimSpec::Leading,
+        "TRAILING" => TrimSpec::Trailing,
+        _ => TrimSpec::Both,
+    }
 }

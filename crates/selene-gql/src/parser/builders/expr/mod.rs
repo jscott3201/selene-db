@@ -45,7 +45,8 @@ pub(super) fn build_value_expr(
             span: source_span,
         }),
         Rule::function_call => call::build_function_call(pair, budget),
-        Rule::aggregate_expr => call::build_aggregate_expr(pair, budget),
+        Rule::normalize_expr => call::build_normalize_expr(pair, budget),
+        Rule::aggregate_expr => call::build_aggregate_expr(first_child(pair)?, budget),
         Rule::paren_expr => build_value_expr(first_child(pair)?, budget),
         Rule::all_different_expr => {
             call::build_expr_list_predicate(pair, call::PredicateKind::AllDifferent, budget)
@@ -62,10 +63,7 @@ pub(super) fn build_value_expr(
             &pair,
             "LABELS expressions are not yet supported in v1.0",
         )),
-        Rule::trim_expr => Err(not_implemented(
-            &pair,
-            "TRIM expressions are not yet supported in v1.0",
-        )),
+        Rule::trim_expr => call::build_trim_expr(pair, budget),
         Rule::list_iter_expr | Rule::list_comprehension | Rule::list_quant | Rule::list_reduce => {
             Err(not_implemented(
                 &pair,

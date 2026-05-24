@@ -404,6 +404,18 @@ mod tests {
                 ..
             } if args.len() == 1
         ));
+
+        let percentile = only_item("RETURN percentile_cont(n, 0.5)").expr;
+        assert!(matches!(
+            percentile,
+            ValueExpr::FunctionCall {
+                ref name,
+                star: false,
+                distinct: false,
+                ref args,
+                ..
+            } if name.len() == 1 && name.first().as_str() == "percentile_cont" && args.len() == 2
+        ));
     }
 
     #[test]

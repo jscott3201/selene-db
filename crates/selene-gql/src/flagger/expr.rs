@@ -59,7 +59,23 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             if let Some(feature_id) = scalar_function_feature(name) {
                 record_feature(uses, feature_id, *span);
             }
+            if let Some(feature_id) = aggregate_function_feature(name) {
+                record_feature(uses, feature_id, *span);
+            }
             values(args, uses);
+        }
+        ValueExpr::Normalize { source, .. } => self::value(source, uses),
+        ValueExpr::Trim {
+            character,
+            source,
+            span,
+            ..
+        } => {
+            record_feature(uses, FeatureId::GF06, *span);
+            if let Some(character) = character {
+                self::value(character, uses);
+            }
+            self::value(source, uses);
         }
         ValueExpr::IsCheck {
             operand,
@@ -147,9 +163,21 @@ fn scalar_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
         "acos" | "asin" | "atan" | "cos" | "cosh" | "cot" | "degrees" | "radians" | "sin"
         | "sinh" | "tan" | "tanh" => Some(FeatureId::GF02),
         "exp" | "ln" | "log" | "log10" | "power" => Some(FeatureId::GF03),
+        "btrim" | "ltrim" | "rtrim" => Some(FeatureId::GF05),
         "cardinality" => Some(FeatureId::GF12),
         "size" => Some(FeatureId::GF13),
         "uuid" | "uuid_v4" | "uuid_v7" => Some(FeatureId::IM_UUID),
+        _ => None,
+    }
+}
+
+fn aggregate_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
+    if name.len() != 1 {
+        return None;
+    }
+    match name.first().as_str().to_ascii_lowercase().as_str() {
+        "stddev_pop" | "stddev_samp" | "collect_list" => Some(FeatureId::GF10),
+        "percentile_cont" | "percentile_disc" => Some(FeatureId::GF11),
         _ => None,
     }
 }

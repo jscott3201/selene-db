@@ -396,6 +396,7 @@ primary = {
   | cast_expr
   | labels_expr
   | record_constructor
+  | normalize_expr
   | trim_expr
   | aggregate_expr
   | function_call
@@ -449,6 +450,8 @@ else_clause  = { ^"ELSE" ~ expr }
 cast_expr     = { ^"CAST" ~ "(" ~ expr ~ ^"AS" ~ type_name ~ ")" }
 labels_expr   = { ^"LABELS" ~ "(" ~ expr ~ ")" }
 
+normalize_expr = { ^"NORMALIZE" ~ "(" ~ expr ~ ("," ~ normal_form)? ~ ")" }
+
 // TRIM (spec section20.24): TRIM([LEADING|TRAILING|BOTH] [char] FROM source)
 trim_expr = { ^"TRIM" ~ "(" ~ trim_spec? ~ trim_char? ~ ^"FROM" ~ expr ~ ")" }
 trim_spec = { ^"LEADING" | ^"TRAILING" | ^"BOTH" }
@@ -460,9 +463,12 @@ record_constructor = { ^"RECORD"? ~ "{" ~ record_field ~ ("," ~ record_field)* ~
 record_field = { prop_ident ~ ":" ~ expr }
 
 // Aggregates with optional DISTINCT (spec section20.9)
-aggregate_expr  = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
+aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
+general_aggregate_expr = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
+binary_aggregate_expr  = { binary_aggregate_op ~ "(" ~ expr ~ "," ~ expr ~ ")" }
 aggregate_op    = { ^"STDDEV_SAMP" | ^"STDDEV_POP" | ^"COLLECT_LIST" | ^"COLLECT"
                   | ^"COUNT" | ^"SUM" | ^"AVERAGE" | ^"AVG" | ^"MIN" | ^"MAX" }
+binary_aggregate_op = { ^"PERCENTILE_CONT" | ^"PERCENTILE_DISC" }
 star            = { "*" }
 
 function_call   = { qualified_name ~ "(" ~ arg_list? ~ ")" }
