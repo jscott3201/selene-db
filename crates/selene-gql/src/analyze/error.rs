@@ -118,6 +118,17 @@ pub enum AnalysisError {
         span: SourceSpan,
     },
 
+    /// A reference is syntactically resolved but not valid in this expression context.
+    #[error("invalid reference: {message}")]
+    #[diagnostic(code(SLENE_GQL_42002))]
+    InvalidReference {
+        /// Human-readable rule failure.
+        message: String,
+        /// Source span of the invalid reference.
+        #[label("invalid reference here")]
+        span: SourceSpan,
+    },
+
     /// Analyzer expression recursion exceeded the implementation-defined cap.
     #[error("expression nesting depth {depth} exceeds analyzer limit")]
     #[diagnostic(code(SLENE_GQL_5GQL1))]
@@ -649,6 +660,7 @@ impl AnalysisError {
             Self::NotImplemented { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::UnboundedRequiresGate { .. } => GqlStatus::SYNTAX_ERROR,
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
+            Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
             Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,

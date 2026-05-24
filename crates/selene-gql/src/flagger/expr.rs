@@ -177,6 +177,7 @@ fn aggregate_function_feature(name: &NonEmpty<IStr>) -> Option<FeatureId> {
     }
     match name.first().as_str().to_ascii_lowercase().as_str() {
         "stddev_pop" | "stddev_samp" | "collect_list" => Some(FeatureId::GF10),
+        "percentile_cont" | "percentile_disc" => Some(FeatureId::GF11),
         _ => None,
     }
 }

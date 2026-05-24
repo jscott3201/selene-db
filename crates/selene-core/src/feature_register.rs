@@ -84,6 +84,7 @@ feature_ids! {
     GF05 = "GF05" => "Multi-character TRIM function";
     GF06 = "GF06" => "Explicit TRIM function";
     GF10 = "GF10" => "Advanced aggregate functions: general set functions";
+    GF11 = "GF11" => "Advanced aggregate functions: binary set functions";
     GF12 = "GF12" => "CARDINALITY function";
     GF13 = "GF13" => "SIZE function";
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
@@ -201,6 +202,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GF05,
     FeatureId::GF06,
     FeatureId::GF10,
+    FeatureId::GF11,
     FeatureId::GF12,
     FeatureId::GF13,
     FeatureId::IM_UUID,

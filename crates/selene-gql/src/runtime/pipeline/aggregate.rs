@@ -33,6 +33,18 @@ impl AggregateSlot {
         if matches!(self.state, AggregateState::CountStar { .. }) {
             return self.state.observe(None, self.aggregate.span);
         }
+        if self.state.needs_percentile() {
+            let arg = self
+                .aggregate
+                .args
+                .get(1)
+                .ok_or(ExecutorError::ImplementationDefined {
+                    detail: "PERCENTILE independent argument missing",
+                })?;
+            let value = evaluator::evaluate(&arg.expr, row, schema, ctx)?;
+            let percentile = percentile_value(value, self.aggregate.span)?;
+            self.state.set_percentile(percentile);
+        }
         let arg = self
             .aggregate
             .args
@@ -79,18 +91,47 @@ enum AggregateFn {
     Min,
     Max,
     Collect,
+    PercentileCont,
+    PercentileDisc,
 }
 
 enum AggregateState {
-    Count { count: u64 },
-    CountStar { count: u64 },
-    Sum { sum: Option<NumericSum> },
-    Avg { sum: Option<NumericSum>, count: u64 },
-    StddevPop { stats: Welford },
-    StddevSamp { stats: Welford },
-    Min { value: Option<Value> },
-    Max { value: Option<Value> },
-    Collect { values: Vec<Value> },
+    Count {
+        count: u64,
+    },
+    CountStar {
+        count: u64,
+    },
+    Sum {
+        sum: Option<NumericSum>,
+    },
+    Avg {
+        sum: Option<NumericSum>,
+        count: u64,
+    },
+    StddevPop {
+        stats: Welford,
+    },
+    StddevSamp {
+        stats: Welford,
+    },
+    Min {
+        value: Option<Value>,
+    },
+    Max {
+        value: Option<Value>,
+    },
+    Collect {
+        values: Vec<Value>,
+    },
+    PercentileCont {
+        values: Vec<f64>,
+        percentile: Option<Option<f64>>,
+    },
+    PercentileDisc {
+        values: Vec<Value>,
+        percentile: Option<Option<f64>>,
+    },
 }
 
 impl AggregateState {
@@ -112,11 +153,43 @@ impl AggregateState {
             AggregateFn::Min => Self::Min { value: None },
             AggregateFn::Max => Self::Max { value: None },
             AggregateFn::Collect => Self::Collect { values: Vec::new() },
+            AggregateFn::PercentileCont => Self::PercentileCont {
+                values: Vec::new(),
+                percentile: None,
+            },
+            AggregateFn::PercentileDisc => Self::PercentileDisc {
+                values: Vec::new(),
+                percentile: None,
+            },
         }
     }
 
     fn skips_null(&self) -> bool {
         !matches!(self, Self::CountStar { .. } | Self::Collect { .. })
+    }
+
+    fn needs_percentile(&self) -> bool {
+        matches!(
+            self,
+            Self::PercentileCont {
+                percentile: None,
+                ..
+            } | Self::PercentileDisc {
+                percentile: None,
+                ..
+            }
+        )
+    }
+
+    fn set_percentile(&mut self, next: Option<f64>) {
+        match self {
+            Self::PercentileCont { percentile, .. } | Self::PercentileDisc { percentile, .. }
+                if percentile.is_none() =>
+            {
+                *percentile = Some(next);
+            }
+            _ => {}
+        }
     }
 
     fn observe(&mut self, value: Option<Value>, span: SourceSpan) -> Result<(), ExecutorError> {
@@ -158,6 +231,21 @@ impl AggregateState {
                 })?);
                 Ok(())
             }
+            Self::PercentileCont { values, .. } => {
+                let value = value.ok_or(ExecutorError::ImplementationDefined {
+                    detail: "aggregate value missing",
+                })?;
+                values.push(numeric_sum_to_f64(numeric_value(value, span)?, span)?);
+                Ok(())
+            }
+            Self::PercentileDisc { values, .. } => {
+                let value = value.ok_or(ExecutorError::ImplementationDefined {
+                    detail: "aggregate value missing",
+                })?;
+                numeric_value(value.clone(), span)?;
+                values.push(value);
+                Ok(())
+            }
         }
     }
 
@@ -170,6 +258,12 @@ impl AggregateState {
             Self::StddevSamp { stats } => stddev_samp_to_value(stats, span),
             Self::Min { value } | Self::Max { value } => Ok(value.unwrap_or(Value::Null)),
             Self::Collect { values } => Ok(Value::List(values)),
+            Self::PercentileCont { values, percentile } => {
+                percentile_cont_to_value(values, percentile, span)
+            }
+            Self::PercentileDisc { values, percentile } => {
+                percentile_disc_to_value(values, percentile, span)
+            }
         }
     }
 }
@@ -227,14 +321,15 @@ fn classify(aggregate: &Aggregate) -> Result<AggregateFn, ExecutorError> {
         };
     }
     if matches!(name, "percentile_cont" | "percentile_disc") {
-        return if aggregate.args.len() == 2 && !aggregate.distinct {
-            Err(ExecutorError::ImplementationDefined {
-                detail: "PERCENTILE aggregates are not yet implemented",
-            })
-        } else {
-            Err(ExecutorError::ImplementationDefined {
+        if aggregate.args.len() != 2 || aggregate.distinct {
+            return Err(ExecutorError::ImplementationDefined {
                 detail: "PERCENTILE aggregate arity not implemented",
-            })
+            });
+        }
+        return match name {
+            "percentile_cont" => Ok(AggregateFn::PercentileCont),
+            "percentile_disc" => Ok(AggregateFn::PercentileDisc),
+            _ => unreachable!("matches! limited percentile names"),
         };
     }
     if aggregate.args.len() != 1 {
@@ -328,6 +423,22 @@ fn numeric_value(value: Value, span: SourceSpan) -> Result<NumericSum, ExecutorE
     }
 }
 
+fn percentile_value(value: Value, span: SourceSpan) -> Result<Option<f64>, ExecutorError> {
+    if matches!(value, Value::Null) {
+        return Ok(None);
+    }
+    let percentile = numeric_sum_to_f64(numeric_value(value, span)?, span)?;
+    if (0.0..=1.0).contains(&percentile) {
+        Ok(Some(percentile))
+    } else {
+        Err(data_exception_value(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "PERCENTILE independent value must be between 0 and 1",
+            span,
+        ))
+    }
+}
+
 fn numeric_sum_to_f64(value: NumericSum, span: SourceSpan) -> Result<f64, ExecutorError> {
     match value {
         NumericSum::Int(value) => i64_to_f64_exact(value).ok_or_else(|| {
@@ -368,6 +479,54 @@ fn stddev_samp_to_value(stats: Welford, span: SourceSpan) -> Result<Value, Execu
         return Ok(Value::Null);
     }
     finite_float((stats.m2 / (stats.count - 1) as f64).sqrt(), span).map(Value::Float)
+}
+
+fn percentile_cont_to_value(
+    mut values: Vec<f64>,
+    percentile: Option<Option<f64>>,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(Some(percentile)) = percentile else {
+        return Ok(Value::Null);
+    };
+    if values.is_empty() {
+        return Ok(Value::Null);
+    }
+    values.sort_by(f64::total_cmp);
+    if values.len() == 1 {
+        return finite_float(values[0], span).map(Value::Float);
+    }
+    let index = 1.0 + percentile * (values.len() as f64 - 1.0);
+    let floor = index.floor();
+    let ceil = index.ceil();
+    let floor_value = values[floor as usize - 1];
+    let ceil_value = values[ceil as usize - 1];
+    let value = if floor == ceil {
+        floor_value
+    } else {
+        (ceil - index) * floor_value + (index - floor) * ceil_value
+    };
+    finite_float(value, span).map(Value::Float)
+}
+
+fn percentile_disc_to_value(
+    mut values: Vec<Value>,
+    percentile: Option<Option<f64>>,
+    _span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let Some(Some(percentile)) = percentile else {
+        return Ok(Value::Null);
+    };
+    if values.is_empty() {
+        return Ok(Value::Null);
+    }
+    values.sort_by(|lhs, rhs| {
+        value_compare::compare_non_null(lhs, rhs)
+            .expect("PERCENTILE_DISC values are validated as comparable numeric values")
+    });
+    let index = 1.0 + percentile * (values.len() as f64 - 1.0);
+    let rounded = index.round_ties_even().clamp(1.0, values.len() as f64);
+    Ok(values[rounded as usize - 1].clone())
 }
 
 fn finite_float(value: f64, span: SourceSpan) -> Result<f64, ExecutorError> {
