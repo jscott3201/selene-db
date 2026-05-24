@@ -1,15 +1,22 @@
-# Baseline CI for selene-db.
+# Baseline CI for selene-db (PR + on-demand).
 #
 # Implements the gates from CLAUDE.md hard rules:
 #   - cargo fmt --all --check
 #   - cargo clippy --all-targets -- -D warnings (pedantic + nursery via
 #     workspace [lints] section, NOT command line)
-#   - cargo test --workspace
-#   - cargo deny check bans licenses sources
-#   - cargo audit
+#   - cargo nextest run --workspace + cargo test --doc (doctest coverage)
+#   - cargo deny check bans licenses sources                (deps-changed only)
+#   - cargo audit                                           (deps-changed only)
 #   - file-size cap (700 LOC) via check-file-size.sh
 #   - basic no-secret scan via check-no-secrets.sh
-#   - THIRDPARTY.md current via check-thirdparty-current.sh
+#   - THIRDPARTY.md current via check-thirdparty-current.sh (deps-changed only)
+#
+# Per CI spend triage 2026-05-24 the following moved to `nightly.yml`
+# (cron + push-to-main + workflow_dispatch):
+#   - macOS clippy + test  (macos-latest is a 10x billing multiplier on private
+#     repos; dev-host validation happens via local `cargo` pre-PR)
+#   - parse-fuzz           (60s/PR floor → 1h nightly soak — better coverage,
+#     no critical-path cost on PR)
 #
 # Security notes:
 #   - No `${{ github.event.* }}` interpolations appear in any `run:` command;
@@ -36,8 +43,33 @@ env:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  # Detect which file groups changed. Dep-validation jobs (cargo-deny,
+  # cargo-audit, third-party attribution) gate on `outputs.deps` so they
+  # only run when dependency manifests changed — the uncommon case.
+  changes:
+    name: detect changes
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      deps: ${{ steps.filter.outputs.deps }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            deps:
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'crates/*/Cargo.toml'
+              - 'crates/*/fuzz/Cargo.toml'
+              - 'deny.toml'
+              - 'about.hbs'
+              - 'about.toml'
+
   fmt:
     name: fmt
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
@@ -56,16 +88,13 @@ jobs:
           fi
 
   clippy:
-    name: clippy (${{ matrix.os }})
-    # Matrix runs on both Linux (CI host) and macOS (dev host) since we ship to both
-    # per project_post_m5f_priorities. matrix.os values are workflow-defined constants
-    # (not user input), so no command-injection surface here.
+    name: clippy (ubuntu-latest)
+    # Linux-only on PR. macOS clippy runs on `nightly.yml` (scheduled +
+    # push-to-main + workflow_dispatch) since macos-latest is a 10x billing
+    # multiplier on private repos and dev-host validation happens via local
+    # `cargo clippy` pre-PR. Per CI spend triage 2026-05-24.
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -81,14 +110,13 @@ jobs:
           fi
 
   test:
-    name: test (${{ matrix.os }})
-    # Linux + macOS matrix per project_post_m5f_priorities (Windows is out of scope).
+    name: test (ubuntu-latest)
+    # Linux-only on PR per CI spend triage 2026-05-24 (see clippy job comment).
+    # Uses cargo-nextest for unit/integration tests (faster parallel scheduler)
+    # and a separate `cargo test --doc` pass for the two crates that ship
+    # doctests (selene-vector, selene-pack) — nextest does not run doctests.
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     env:
       # Drop debuginfo from the `cargo test` build graph. The whole graph
       # (workspace + deps) builds under the `test` profile, so this strips
@@ -99,42 +127,25 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: cargo nextest + doctests
         run: |
           if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
             echo "No workspace packages yet; tests start once crate manifests land."
           else
-            cargo test --workspace --locked --all-features
+            cargo nextest run --workspace --locked --all-features
+            cargo test --workspace --locked --all-features --doc
           fi
-
-  parse-fuzz:
-    name: parse-fuzz
-    # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-fuzz
-      - uses: actions/cache@v4
-        with:
-          path: crates/selene-gql/fuzz/corpus
-          key: gql-fuzz-corpus-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: gql-fuzz-corpus-${{ runner.os }}-
-      - name: seed parse corpus
-        run: |
-          mkdir -p crates/selene-gql/fuzz/corpus/parse_gql
-          find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
-      - name: fuzz parser
-        working-directory: crates/selene-gql/fuzz
-        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=60
 
   deny:
     name: cargo-deny
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    needs: changes
+    # Skip when no dependency manifests changed (the common case for source-only PRs).
+    if: |
+      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -154,7 +165,14 @@ jobs:
 
   audit:
     name: cargo-audit
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    needs: changes
+    # Skip when no dependency manifests changed (the common case for source-only PRs).
+    # Note: advisory-db drift is caught by the nightly workflow since advisories
+    # can land for unchanged deps; this PR-side check is a "don't introduce a new
+    # vulnerable dep" gate.
+    if: |
+      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -210,7 +228,12 @@ jobs:
 
   thirdparty-current:
     name: third-party attribution current
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    needs: changes
+    # Skip when no dependency manifests changed; THIRDPARTY.md only drifts
+    # when Cargo.lock changes (cargo-about is deterministic given the lockfile).
+    if: |
+      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
