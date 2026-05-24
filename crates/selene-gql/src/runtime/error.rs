@@ -22,6 +22,8 @@ pub enum DataExceptionSubclass {
     InvalidArgumentForNaturalLogarithm,
     /// Invalid argument for power function (`2201F`).
     InvalidArgumentForPowerFunction,
+    /// Trim error (`22027`).
+    TrimError,
     /// Invalid character value for cast (`22018`).
     InvalidCharacterValueForCast,
     /// Invalid value type (`22G03`).
@@ -53,6 +55,7 @@ impl DataExceptionSubclass {
                 GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM
             }
             Self::InvalidArgumentForPowerFunction => GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
+            Self::TrimError => GqlStatus::TRIM_ERROR,
             Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
@@ -455,6 +458,14 @@ mod tests {
         assert_eq!(
             DataExceptionSubclass::SubstringError.gqlstatus().as_str(),
             "22011"
+        );
+    }
+
+    #[test]
+    fn trim_error_subclass_maps_to_22027() {
+        assert_eq!(
+            DataExceptionSubclass::TrimError.gqlstatus().as_str(),
+            "22027"
         );
     }
 }

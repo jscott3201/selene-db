@@ -198,6 +198,21 @@ pub(super) fn eval_function_call(
             span,
             true,
         ),
+        "btrim" => string_fns::eval_multi_char_trim(
+            eval_range_args(&display_name, args, 1..=2, span, binding, schema, ctx)?,
+            span,
+            string_fns::TrimSide::Both,
+        ),
+        "ltrim" => string_fns::eval_multi_char_trim(
+            eval_range_args(&display_name, args, 1..=2, span, binding, schema, ctx)?,
+            span,
+            string_fns::TrimSide::Leading,
+        ),
+        "rtrim" => string_fns::eval_multi_char_trim(
+            eval_range_args(&display_name, args, 1..=2, span, binding, schema, ctx)?,
+            span,
+            string_fns::TrimSide::Trailing,
+        ),
         "upper" => string_fns::eval_string_transform(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,

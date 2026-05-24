@@ -49,6 +49,8 @@ impl GqlStatus {
     pub const INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM: Self = Self(*b"2201E");
     /// Maps to GQLSTATUS 2201F per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_ARGUMENT_FOR_POWER_FUNCTION: Self = Self(*b"2201F");
+    /// Maps to GQLSTATUS 22027 per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const TRIM_ERROR: Self = Self(*b"22027");
     /// Maps to GQLSTATUS 22G04 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const VALUES_NOT_COMPARABLE: Self = Self(*b"22G04");
     /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -286,6 +288,7 @@ mod tests {
                 "2201F",
                 *b"22",
             ),
+            (GqlStatus::TRIM_ERROR, "22027", *b"22"),
             (GqlStatus::VALUES_NOT_COMPARABLE, "22G04", *b"22"),
             (GqlStatus::LIST_ELEMENT_ERROR, "22G0C", *b"22"),
             (

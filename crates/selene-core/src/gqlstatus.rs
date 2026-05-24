@@ -24,6 +24,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22018", "invalid-character-value-for-cast"),
     ("2201E", "invalid-argument-for-natural-logarithm"),
     ("2201F", "invalid-argument-for-power-function"),
+    ("22027", "trim-error"),
     ("22G03", "invalid-value-type"),
     ("22G04", "values-not-comparable"),
     ("22G0C", "list-element-error"),
@@ -89,6 +90,11 @@ mod tests {
     #[test]
     fn gqlstatus_22011_round_trip() {
         assert_eq!(gqlstatus_name("22011"), Some("substring-error"));
+    }
+
+    #[test]
+    fn gqlstatus_22027_round_trip() {
+        assert_eq!(gqlstatus_name("22027"), Some("trim-error"));
     }
 
     #[test]

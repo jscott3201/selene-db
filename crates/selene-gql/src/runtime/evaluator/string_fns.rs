@@ -18,6 +18,12 @@ use super::{
     evaluate,
 };
 
+pub(super) enum TrimSide {
+    Leading,
+    Trailing,
+    Both,
+}
+
 pub(super) fn eval_fixed_args(
     name: &str,
     args: &[ValueExpr],
@@ -137,6 +143,35 @@ pub(super) fn eval_left_right(
         chars.iter().take(count).copied().collect()
     };
     Ok(Value::ExternalString(Arc::from(value)))
+}
+
+pub(super) fn eval_multi_char_trim(
+    args: Vec<Value>,
+    span: SourceSpan,
+    side: TrimSide,
+) -> Result<Value, ExecutorError> {
+    let source = &args[0];
+    if matches!(source, Value::Null) {
+        return Ok(Value::Null);
+    }
+    if args
+        .get(1)
+        .is_some_and(|trim_chars| matches!(trim_chars, Value::Null))
+    {
+        return Ok(Value::Null);
+    }
+    let Some(source) = string_slice(source) else {
+        return data_exception("trim source is not a string", span);
+    };
+    let trim_chars = if let Some(trim_chars) = args.get(1) {
+        string_slice(trim_chars)
+            .ok_or_else(|| data_exception_value("trim characters are not a string", span))?
+    } else {
+        " "
+    };
+    Ok(Value::ExternalString(Arc::from(trim_by_char_set(
+        source, trim_chars, side,
+    ))))
 }
 
 pub(super) fn eval_string_transform(
@@ -268,6 +303,28 @@ fn substring_count(value: &Value, span: SourceSpan) -> Result<usize, ExecutorErr
         }),
         _ => data_exception("substring length is not an integer", span),
     }
+}
+
+fn trim_by_char_set(source: &str, trim_chars: &str, side: TrimSide) -> String {
+    let chars: Vec<char> = source.chars().collect();
+    let trims = |candidate: char| trim_chars.chars().any(|trim| trim == candidate);
+    let start = if matches!(side, TrimSide::Leading | TrimSide::Both) {
+        chars
+            .iter()
+            .position(|candidate| !trims(*candidate))
+            .unwrap_or(chars.len())
+    } else {
+        0
+    };
+    let end = if matches!(side, TrimSide::Trailing | TrimSide::Both) {
+        chars
+            .iter()
+            .rposition(|candidate| !trims(*candidate))
+            .map_or(start, |index| index.saturating_add(1))
+    } else {
+        chars.len()
+    };
+    chars[start..end].iter().copied().collect()
 }
 
 fn non_negative_usize(
