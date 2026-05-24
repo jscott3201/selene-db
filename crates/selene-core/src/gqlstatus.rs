@@ -21,6 +21,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("22003", "numeric-value-out-of-range"),
     ("22012", "division-by-zero"),
     ("22018", "invalid-character-value-for-cast"),
+    ("2201E", "invalid-argument-for-natural-logarithm"),
     ("2201F", "invalid-argument-for-power-function"),
     ("22G03", "invalid-value-type"),
     ("22G04", "values-not-comparable"),
@@ -74,6 +75,14 @@ mod tests {
         for &(code, name) in ALL_GQLSTATUS_NAMES {
             assert_eq!(gqlstatus_name(code), Some(name));
         }
+    }
+
+    #[test]
+    fn gqlstatus_2201e_round_trip() {
+        assert_eq!(
+            gqlstatus_name("2201E"),
+            Some("invalid-argument-for-natural-logarithm")
+        );
     }
 
     #[test]

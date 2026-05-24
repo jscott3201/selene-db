@@ -16,6 +16,8 @@ pub enum DataExceptionSubclass {
     NumericValueOutOfRange,
     /// Division by zero (`22012`).
     DivisionByZero,
+    /// Invalid argument for natural logarithm (`2201E`).
+    InvalidArgumentForNaturalLogarithm,
     /// Invalid argument for power function (`2201F`).
     InvalidArgumentForPowerFunction,
     /// Invalid character value for cast (`22018`).
@@ -44,6 +46,9 @@ impl DataExceptionSubclass {
             Self::DataException => GqlStatus::DATA_EXCEPTION,
             Self::NumericValueOutOfRange => GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE,
             Self::DivisionByZero => GqlStatus::DIVISION_BY_ZERO,
+            Self::InvalidArgumentForNaturalLogarithm => {
+                GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM
+            }
             Self::InvalidArgumentForPowerFunction => GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
             Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,

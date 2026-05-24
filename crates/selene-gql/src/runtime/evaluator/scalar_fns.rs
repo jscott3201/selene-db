@@ -59,7 +59,7 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
-        "ceil" => eval_unary_numeric(
+        "ceil" | "ceiling" => eval_unary_numeric(
             &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
