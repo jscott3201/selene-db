@@ -13,6 +13,7 @@ mod collections;
 mod identity_length_fns;
 mod predicates;
 mod scalar_fns;
+mod string_fns;
 mod subquery;
 mod uuid_fns;
 
