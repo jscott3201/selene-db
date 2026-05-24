@@ -260,6 +260,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Float32, G::Float32)
             | (P::Decimal, G::Decimal)
             | (P::String, G::String)
+            | (P::Uuid, G::Uuid)
             | (P::Bytes, G::Bytes | G::Binary | G::VarBinary)
             | (P::List, G::List(_))
             | (P::Record, G::Record(RecordType::Open))
@@ -369,6 +370,10 @@ mod tests {
             PropertyValueType::Null,
             &GqlType::Null
         ));
+        assert!(property_type_compatible(
+            PropertyValueType::Uuid,
+            &GqlType::Uuid
+        ));
         assert!(!property_type_compatible(
             PropertyValueType::Uuid,
             &GqlType::String
@@ -411,6 +416,11 @@ mod tests {
                 PropertyValueType::String,
                 GqlType::String,
                 Value::String(intern_with_admission("schema.type.string").unwrap().0),
+            ),
+            (
+                PropertyValueType::Uuid,
+                GqlType::Uuid,
+                Value::Uuid(uuid::Uuid::nil()),
             ),
             (
                 PropertyValueType::Bytes,
