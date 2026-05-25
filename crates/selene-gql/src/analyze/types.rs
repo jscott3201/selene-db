@@ -164,9 +164,20 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             name.hash(state);
             span.hash(state);
         }
-        ValueExpr::Parameter { name, span, .. } => {
+        ValueExpr::Parameter {
+            name,
+            declared_type,
+            span,
+        } => {
             2u8.hash(state);
             name.hash(state);
+            match declared_type {
+                Some(ty) => {
+                    1u8.hash(state);
+                    hash_gql_type(ty, state);
+                }
+                None => 0u8.hash(state),
+            }
             span.hash(state);
         }
         ValueExpr::PropertyAccess { target, key, span } => {
