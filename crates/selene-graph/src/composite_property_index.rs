@@ -265,3 +265,7 @@ fn warn_rejected(
 const fn is_null(value: &Value) -> bool {
     matches!(value, Value::Null)
 }
+
+#[cfg(test)]
+#[path = "composite_property_index_tests.rs"]
+mod tests;
