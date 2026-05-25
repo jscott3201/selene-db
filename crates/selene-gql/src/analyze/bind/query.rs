@@ -526,7 +526,7 @@ fn bind_sorting(ctx: &mut BindContext, terms: &[OrderTerm]) -> Result<(), Analys
 
 fn bind_limit_value(value: &LimitValue) {
     match value {
-        LimitValue::Count(..) | LimitValue::Parameter(..) => {}
+        LimitValue::Count(..) | LimitValue::Parameter { .. } => {}
     }
 }
 

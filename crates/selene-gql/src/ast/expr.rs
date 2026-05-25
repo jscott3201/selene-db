@@ -24,6 +24,8 @@ pub enum ValueExpr {
     Parameter {
         /// Interned parameter name without the leading `$`.
         name: IStr,
+        /// Optional inline declared parameter type.
+        declared_type: Option<GqlType>,
         /// Source span of the parameter reference.
         span: SourceSpan,
     },

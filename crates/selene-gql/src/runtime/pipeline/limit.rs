@@ -25,7 +25,7 @@ pub(super) fn resolve_amount(
 ) -> Result<u64, ExecutorError> {
     match amount {
         LimitAmount::Literal(value) => Ok(*value),
-        LimitAmount::Parameter { name, span } => match ctx.parameters().get(name) {
+        LimitAmount::Parameter { name, span, .. } => match ctx.parameters().get(name) {
             Some(value) => parameter_amount(*name, *span, value),
             None => Err(ExecutorError::UnboundParameter {
                 name: *name,

@@ -13,7 +13,7 @@ use selene_core::IStr;
 
 use crate::{
     ast::{
-        LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
+        GqlType, LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
         QueryPipeline, ReturnClause, ReturnItem, SetOp, SourceSpan, Statement, UnwindStatement,
         WithClause, util::NonEmpty,
     },
@@ -392,12 +392,12 @@ fn build_limit_or_offset(
                 ParserError::syntax(format!("invalid LIMIT/OFFSET: {error}"), span(&inner), None)
             }),
         Rule::typed_param_ref => {
-            let param = first_child(inner)?;
-            let value_span = span(&param);
-            Ok(LimitValue::Parameter(
-                intern_param(param, budget)?,
-                value_span,
-            ))
+            let (name, declared_type, span) = build_typed_param_ref(inner, budget)?;
+            Ok(LimitValue::Parameter {
+                name,
+                declared_type,
+                span,
+            })
         }
         _ => Err(unexpected_pair(inner, "expected LIMIT/OFFSET value")),
     }
@@ -597,6 +597,31 @@ pub(super) fn intern_param(
     let source_span = span(&pair);
     let text = pair.as_str().strip_prefix('$').unwrap_or(pair.as_str());
     budget.intern_str(text, source_span, "parameter")
+}
+
+pub(super) fn build_typed_param_ref(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<(IStr, Option<GqlType>, SourceSpan), ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::typed_param_ref);
+    let source_span = span(&pair);
+    let mut name = None;
+    let mut declared_type = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::param_ref => name = Some(intern_param(child, budget)?),
+            Rule::type_name => declared_type = Some(expr::build_type_name(child)?),
+            _ => return Err(unexpected_pair(child, "unexpected typed parameter child")),
+        }
+    }
+    let name = name.ok_or_else(|| {
+        ParserError::syntax(
+            "typed parameter reference is missing name",
+            source_span,
+            None,
+        )
+    })?;
+    Ok((name, declared_type, source_span))
 }
 
 pub(super) fn decode_ident_like(text: &str) -> String {

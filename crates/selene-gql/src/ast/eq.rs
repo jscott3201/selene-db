@@ -72,9 +72,8 @@ fn scrub_query_pipeline(pipeline: &mut QueryPipeline) {
             }
             crate::PipelineStatement::Limit(value) | crate::PipelineStatement::Offset(value) => {
                 match value {
-                    crate::LimitValue::Count(_, span) | crate::LimitValue::Parameter(_, span) => {
-                        *span = SourceSpan::default();
-                    }
+                    crate::LimitValue::Count(_, span)
+                    | crate::LimitValue::Parameter { span, .. } => *span = SourceSpan::default(),
                 }
             }
             crate::PipelineStatement::Return(value) => scrub_return(value),

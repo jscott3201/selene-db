@@ -12,7 +12,10 @@ use crate::{
     parser::budget::InternerBudget,
 };
 
-use super::{Rule, first_child, intern_pair, intern_param, not_implemented, span, unexpected_pair};
+use super::{
+    Rule, build_typed_param_ref, first_child, intern_pair, intern_param, not_implemented, span,
+    unexpected_pair,
+};
 
 pub(super) fn build_value_expr(
     pair: Pair<'_, Rule>,
@@ -42,9 +45,17 @@ pub(super) fn build_value_expr(
         }),
         Rule::param_ref => Ok(ValueExpr::Parameter {
             name: intern_param(pair, budget)?,
+            declared_type: None,
             span: source_span,
         }),
-        Rule::typed_param_ref => build_value_expr(first_child(pair)?, budget),
+        Rule::typed_param_ref => {
+            let (name, declared_type, span) = build_typed_param_ref(pair, budget)?;
+            Ok(ValueExpr::Parameter {
+                name,
+                declared_type,
+                span,
+            })
+        }
         Rule::function_call => call::build_function_call(pair, budget),
         Rule::normalize_expr => call::build_normalize_expr(pair, budget),
         Rule::aggregate_expr => call::build_aggregate_expr(first_child(pair)?, budget),

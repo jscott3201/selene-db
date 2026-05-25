@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 use crate::{
-    NullsPolicy, OrderDirection, SourceSpan, ValueExpr,
+    GqlType, NullsPolicy, OrderDirection, SourceSpan, ValueExpr,
     analyze::{AnalyzedType, BindingId, ExprId},
 };
 
@@ -11,6 +11,7 @@ use super::OrderAccess;
 
 /// Limit or offset value carried to execution time.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub enum LimitAmount {
     /// Literal row count.
     Literal(u64),
@@ -18,6 +19,8 @@ pub enum LimitAmount {
     Parameter {
         /// Interned parameter name without the leading `$`.
         name: IStr,
+        /// Optional inline declared parameter type.
+        declared_type: Option<GqlType>,
         /// Source span of the parameter reference.
         span: SourceSpan,
     },

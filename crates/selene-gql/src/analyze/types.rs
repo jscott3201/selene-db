@@ -164,7 +164,7 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             name.hash(state);
             span.hash(state);
         }
-        ValueExpr::Parameter { name, span } => {
+        ValueExpr::Parameter { name, span, .. } => {
             2u8.hash(state);
             name.hash(state);
             span.hash(state);

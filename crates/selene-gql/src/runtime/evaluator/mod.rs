@@ -79,7 +79,7 @@ pub fn evaluate(
             .map(|item| evaluate(item, binding, schema, ctx))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::List),
-        ValueExpr::Parameter { name, span } => {
+        ValueExpr::Parameter { name, span, .. } => {
             ctx.tx
                 .parameters()
                 .get(name)

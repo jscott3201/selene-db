@@ -209,7 +209,7 @@ fn rebase_query_pipeline(pipeline: &mut QueryPipeline, offset: usize) {
 
 fn rebase_limit(value: &mut crate::LimitValue, offset: usize) {
     match value {
-        crate::LimitValue::Count(_, span) | crate::LimitValue::Parameter(_, span) => {
+        crate::LimitValue::Count(_, span) | crate::LimitValue::Parameter { span, .. } => {
             rebase_span(span, offset);
         }
     }

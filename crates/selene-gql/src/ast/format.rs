@@ -395,7 +395,7 @@ fn fmt_order(out: &mut String, terms: &[OrderTerm]) -> fmt::Result {
 fn fmt_limit(out: &mut String, value: &LimitValue) -> fmt::Result {
     match value {
         LimitValue::Count(value, _) => write!(out, "{value}"),
-        LimitValue::Parameter(name, _) => write!(out, "${}", fmt_ident(*name)),
+        LimitValue::Parameter { name, .. } => write!(out, "${}", fmt_ident(*name)),
     }
 }
 
