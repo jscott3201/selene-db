@@ -215,7 +215,7 @@ nulls_order   = { ^"NULLS" ~ (^"FIRST" | ^"LAST") }
 
 offset_stmt   = { (^"OFFSET" | ^"SKIP") ~ limit_value }
 limit_stmt    = { ^"LIMIT" ~ limit_value }
-limit_value   = { param_ref | uint }
+limit_value   = { typed_param_ref | uint }
 
 // -- RETURN ---------------------------------------------------------
 
@@ -402,7 +402,7 @@ primary = {
   | function_call
   | paren_expr
   | literal
-  | param_ref
+  | typed_param_ref
   | var_ref
 }
 
@@ -436,6 +436,7 @@ same_expr            = { ^"SAME" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
 property_exists_expr = { ^"PROPERTY_EXISTS" ~ "(" ~ expr ~ "," ~ string_lit ~ ")" }
 
 param_ref = @{ "$" ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
+typed_param_ref = { param_ref }
 
 // Simple CASE: CASE expr WHEN val THEN result ... END
 // Searched CASE: CASE WHEN condition THEN result ... END

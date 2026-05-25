@@ -44,6 +44,7 @@ pub(super) fn build_value_expr(
             name: intern_param(pair, budget)?,
             span: source_span,
         }),
+        Rule::typed_param_ref => build_value_expr(first_child(pair)?, budget),
         Rule::function_call => call::build_function_call(pair, budget),
         Rule::normalize_expr => call::build_normalize_expr(pair, budget),
         Rule::aggregate_expr => call::build_aggregate_expr(first_child(pair)?, budget),

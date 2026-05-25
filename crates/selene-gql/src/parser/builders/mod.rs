@@ -391,10 +391,11 @@ fn build_limit_or_offset(
             .map_err(|error| {
                 ParserError::syntax(format!("invalid LIMIT/OFFSET: {error}"), span(&inner), None)
             }),
-        Rule::param_ref => {
-            let value_span = span(&inner);
+        Rule::typed_param_ref => {
+            let param = first_child(inner)?;
+            let value_span = span(&param);
             Ok(LimitValue::Parameter(
-                intern_param(inner, budget)?,
+                intern_param(param, budget)?,
                 value_span,
             ))
         }
