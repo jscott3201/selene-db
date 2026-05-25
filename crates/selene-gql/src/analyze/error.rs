@@ -457,6 +457,8 @@ pub enum TypeMismatchContext {
         /// Zero-based positional argument index.
         position: usize,
     },
+    /// `LIMIT` / `OFFSET` parameter type declaration cannot produce an amount.
+    LimitAmount,
 }
 
 impl std::fmt::Display for TypeMismatchContext {
@@ -495,6 +497,7 @@ impl std::fmt::Display for TypeMismatchContext {
                 write!(f, "argument {position} ({parameter}) of ")?;
                 fmt_qualified_name(f, procedure)
             }
+            Self::LimitAmount => f.write_str("LIMIT/OFFSET parameter"),
         }
     }
 }
@@ -549,6 +552,8 @@ pub enum ExpectedType {
     Comparable,
     /// List or string type.
     ListOrString,
+    /// Non-negative integer amount.
+    LimitAmount,
     /// One specific GQL type.
     Specific(GqlType),
 }
@@ -561,6 +566,7 @@ impl std::fmt::Display for ExpectedType {
             Self::String => f.write_str("string"),
             Self::Comparable => f.write_str("comparable"),
             Self::ListOrString => f.write_str("list or string"),
+            Self::LimitAmount => f.write_str("non-negative integer"),
             Self::Specific(ty) => write!(f, "{ty:?}"),
         }
     }

@@ -5,9 +5,9 @@ use std::{collections::HashMap, num::NonZeroUsize, sync::Arc, thread};
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
-    ExecutionPlan, ExecutorError, GqlStatus, GqlType, LimitValue, OptimizeContext,
-    PipelineStatement, Session, Statement, StatementOutput, ValueExpr, analyze, execute_statement,
-    optimize, parse, plan,
+    ExecutionPlan, ExecutorError, ExpectedType, GqlStatus, GqlType, LimitValue, OptimizeContext,
+    PipelineStatement, Session, Statement, StatementOutput, TypeMismatchContext, ValueExpr,
+    analyze, execute_statement, optimize, parse, plan,
 };
 use selene_graph::SharedGraph;
 use serde_json::Value as JsonValue;
@@ -246,6 +246,30 @@ fn typed_parameter_conflicts_cross_value_and_limit_surfaces() {
 }
 
 #[test]
+fn typed_limit_parameter_rejects_unsatisfiable_declared_types_at_analysis() {
+    for source in [
+        "RETURN 1 AS n LIMIT $rows :: STRING",
+        "RETURN 1 AS n OFFSET $rows :: FLOAT",
+    ] {
+        let err = analyze(
+            parse(source).expect("source parses"),
+            &EmptyProcedureRegistry,
+            None,
+        )
+        .expect_err("unsatisfiable LIMIT/OFFSET declaration rejects");
+        assert!(matches!(
+            err,
+            AnalysisError::TypeMismatch {
+                context: TypeMismatchContext::LimitAmount,
+                expected: ExpectedType::LimitAmount,
+                ..
+            }
+        ));
+        assert_eq!(err.gqlstatus(), GqlStatus::DATATYPE_MISMATCH);
+    }
+}
+
+#[test]
 fn typed_parameter_runtime_rejects_bare_reference_inherited_from_declaration() {
     let graph = SharedGraph::new(GraphId::new(4120));
     let mut session = Session::new(&graph);
@@ -288,6 +312,28 @@ fn typed_parameter_runtime_accepts_and_rejects_declared_value_type() {
             actual: "STRING",
             ..
         } if name.as_str() == "id" && expected == "INTEGER"
+    ));
+}
+
+#[test]
+fn typed_parameter_runtime_rejects_mismatched_list_elements() {
+    let graph = SharedGraph::new(GraphId::new(4122));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(
+        istr("vals"),
+        Value::List(vec![Value::Int(1), Value::String(istr("bad"))]),
+    );
+
+    let err = execute(&mut session, "RETURN $vals :: LIST<INT> AS vals")
+        .expect_err("typed list parameter rejects mismatched element");
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidParameterType {
+            name,
+            ref expected,
+            actual: "LIST",
+            ..
+        } if name.as_str() == "vals" && expected == "LIST<INTEGER>"
     ));
 }
 
