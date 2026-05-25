@@ -138,7 +138,7 @@ jobs:
           if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
             echo "No workspace packages yet; tests start once crate manifests land."
           else
-            cargo nextest run --workspace --locked --all-features
+            cargo nextest run --workspace --locked --all-features --profile ci
             cargo test --workspace --locked --all-features --doc
           fi
 
