@@ -151,7 +151,15 @@ pub enum AnalysisError {
         #[label("incompatible type")]
         span: SourceSpan,
     },
-
+    /// Conflicting inline types were declared for one parameter.
+    #[error("conflicting declared types for parameter ${name}")]
+    #[diagnostic(code(SLENE_GQL_22G03))]
+    ConflictingParameterTypes {
+        /// Name without the leading `$`.
+        name: IStr,
+        /// Conflicts in encounter order.
+        declarations: Vec<(GqlType, SourceSpan)>,
+    },
     /// Procedure name was not registered.
     #[error("unknown procedure: {}", display_qualified_name(name))]
     #[diagnostic(code(SLENE_GQL_42N04))]
@@ -647,7 +655,6 @@ impl std::fmt::Display for PatternElementKind {
         })
     }
 }
-
 impl AnalysisError {
     /// Return this error's ISO GQLSTATUS code.
     #[must_use]
@@ -662,7 +669,9 @@ impl AnalysisError {
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
-            Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
+            Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {
+                GqlStatus::DATATYPE_MISMATCH
+            }
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,
             Self::WrongArgumentCount { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownYieldColumn { .. } => GqlStatus::UNDEFINED_REFERENCE,

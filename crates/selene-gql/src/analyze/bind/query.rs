@@ -20,6 +20,7 @@ pub(crate) fn bind_query_pipeline(
     ctx: &mut BindContext,
     pipeline: &mut QueryPipeline,
 ) -> Result<(), AnalysisError> {
+    super::parameters::validate_parameter_declarations(pipeline)?;
     for statement in &mut pipeline.statements {
         bind_pipeline_statement(ctx, statement)?;
     }

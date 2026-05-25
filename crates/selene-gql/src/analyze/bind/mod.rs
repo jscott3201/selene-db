@@ -4,6 +4,7 @@ pub(crate) mod call;
 pub(crate) mod ddl;
 pub(crate) mod expr;
 pub(crate) mod mutation;
+pub(crate) mod parameters;
 pub(crate) mod pattern;
 pub(crate) mod query;
 pub(crate) mod transaction;
@@ -30,6 +31,7 @@ pub(crate) fn bind_statement(
     mut stmt: Statement,
     registry: &dyn ProcedureRegistry,
 ) -> Result<AnalyzedStatement, AnalysisError> {
+    parameters::validate_statement_parameter_declarations(&stmt)?;
     let mut ctx = BindContext::new(stmt.span(), registry);
     let bind_result = (|| -> Result<(), AnalysisError> {
         match &mut stmt {
