@@ -4,7 +4,7 @@ use selene_core::{Change, IStr, SchemaChange, SchemaPropertyIndexKind};
 use smallvec::SmallVec;
 
 use crate::graph::{CompositePropertyIndexEntry, composite_property_key};
-use crate::{CompositeTypedIndex, GraphError, GraphResult, Mutator, TypedIndexKind};
+use crate::{GraphError, GraphResult, Mutator, TypedIndexKind};
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Register a durable node composite-property index with optional catalog name.
@@ -31,13 +31,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             return Err(GraphError::CompositePropertyIndexAlreadyExists { label, properties });
         }
         let graph_id = self.txn.read().graph_id();
+        let index = crate::composite_property_index::build_composite_property_index(
+            self.txn.read(),
+            label,
+            properties.clone(),
+            kinds.clone(),
+        )?;
         self.txn.guard_mut().composite_property_index.insert(
             (label, key),
-            CompositePropertyIndexEntry::new(
-                CompositeTypedIndex::new(kinds.clone()),
-                properties.clone(),
-                name,
-            ),
+            CompositePropertyIndexEntry::new(index, properties.clone(), name),
         );
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,

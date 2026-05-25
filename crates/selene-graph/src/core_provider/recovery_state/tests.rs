@@ -144,6 +144,8 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_property_index_dropped),
     schema_intent!(noop intent_pack_lifecycle, PACK_LIFECYCLE_NOOP),
     schema_intent!(apply intent_property_index_created_named),
+    schema_intent!(apply intent_composite_property_index_created),
+    schema_intent!(apply intent_composite_property_index_dropped),
 ];
 
 fn intent_graph_created() -> SchemaChange {
@@ -268,6 +270,31 @@ fn intent_property_index_created_named() -> SchemaChange {
     }
 }
 
+fn intent_composite_property_index_created() -> SchemaChange {
+    SchemaChange::CompositePropertyIndexCreated {
+        label: intern("IntentCompositeIndexedNode").unwrap(),
+        properties: smallvec![
+            intern("intentCompositeA").unwrap(),
+            intern("intentCompositeB").unwrap()
+        ],
+        kinds: smallvec![
+            SchemaPropertyIndexKind::I64,
+            SchemaPropertyIndexKind::String
+        ],
+        name: Some(intern("intent_composite_index").unwrap()),
+    }
+}
+
+fn intent_composite_property_index_dropped() -> SchemaChange {
+    SchemaChange::CompositePropertyIndexDropped {
+        label: intern("IntentCompositeIndexedNode").unwrap(),
+        properties: smallvec![
+            intern("intentCompositeA").unwrap(),
+            intern("intentCompositeB").unwrap()
+        ],
+    }
+}
+
 fn intent_pack_lifecycle() -> SchemaChange {
     SchemaChange::ProcedurePackLifecycle {
         event: PackLifecycleEvent::Activated {
@@ -289,7 +316,8 @@ fn drive_handler_and_observe(change: SchemaChange) -> Intent {
         Err(_) => Intent::Reject(UNSUPPORTED_CORE_RECOVERY),
         Ok(())
             if !state.pending_schema_changes.is_empty()
-                || !state.pending_property_index_changes.is_empty() =>
+                || !state.pending_property_index_changes.is_empty()
+                || !state.pending_composite_property_index_changes.is_empty() =>
         {
             Intent::Apply
         }
@@ -330,7 +358,7 @@ fn noop_intent(change: &SchemaChange) -> Intent {
 #[test]
 fn recovery_intent_table_covers_every_schema_change_variant() {
     let mut seen = std::collections::BTreeSet::new();
-    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 16);
+    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 18);
 
     for (factory, expected_intent) in SCHEMA_CHANGE_INTENT {
         let change = factory();

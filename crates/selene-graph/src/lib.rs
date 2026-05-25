@@ -13,6 +13,7 @@
 
 pub mod adjacency;
 pub mod chunked_vec;
+pub(crate) mod composite_property_index;
 pub mod composite_typed_index;
 pub mod core_provider;
 pub mod durable_provider;
