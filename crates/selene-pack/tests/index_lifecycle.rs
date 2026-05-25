@@ -258,6 +258,49 @@ fn created_index_with_i64_kind_is_picked_by_optimizer_on_next_plan() {
 }
 
 #[test]
+fn created_composite_index_is_picked_by_optimizer_in_declaration_order() {
+    let graph = SharedGraph::new(GraphId::new(42_110));
+    let person = istr("Person");
+    let tenant = istr("tenant");
+    let kind = istr("kind");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_composite_property_index_named(
+                person,
+                [tenant, kind].into_iter().collect(),
+                [TypedIndexKind::String, TypedIndexKind::String]
+                    .into_iter()
+                    .collect(),
+                Some(istr("person_tenant_kind_idx")),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let statement =
+        parse("MATCH (n:Person) WHERE n.kind = 'person' AND n.tenant = 't1' RETURN n").unwrap();
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).unwrap();
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).unwrap();
+    let catalog = LiveIndexCatalog { graph: &graph };
+    let ctx = OptimizeContext::default().with_index_catalog(&catalog);
+    let optimized = optimize(plan, &ctx);
+    let scan = first_scan(&optimized.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::CompositeLookup {
+        ref properties,
+        ref keys,
+        ..
+    } = scan.access
+    else {
+        panic!("expected composite lookup, got {:?}", scan.access);
+    };
+    assert_eq!(properties, &vec![tenant, kind]);
+    assert_eq!(keys[0].0, tenant);
+    assert_eq!(keys[1].0, kind);
+}
+
+#[test]
 fn create_index_with_unknown_kind_returns_invalid_argument() {
     let registry = ProcedurePackRegistry::with_builtins().unwrap();
     let graph = SharedGraph::new(GraphId::new(42109));
@@ -555,11 +598,21 @@ impl IndexCatalog for LiveIndexCatalog<'_> {
 
     fn composite_index(
         &self,
-        _target: IndexTarget,
-        _label: IStr,
-        _properties: &[IStr],
+        target: IndexTarget,
+        label: IStr,
+        properties: &[IStr],
     ) -> Option<CompositeIndexHandle> {
-        None
+        if target != IndexTarget::Node {
+            return None;
+        }
+        let mut canonical = properties.to_vec();
+        canonical.sort_unstable();
+        let graph = self.graph.read();
+        let entry = graph.composite_property_index_entry_for(&label, &canonical)?;
+        Some(CompositeIndexHandle::new(
+            IndexHandle::new(2),
+            entry.declared_properties.iter().copied().collect(),
+        ))
     }
 }
 

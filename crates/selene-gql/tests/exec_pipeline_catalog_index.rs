@@ -218,8 +218,6 @@ fn create_index_rejects_deferred_or_invalid_shapes_with_precise_errors() {
     .unwrap();
     run_ddl(&graph, "CREATE EDGE TYPE :Likes (score :: INT)").unwrap();
 
-    let composite = graph_type_violation(&graph, "CREATE INDEX composite ON :Sensor(ts, value)");
-    assert!(composite.contains("BRIEF-140b"));
     let edge = graph_type_violation(&graph, "CREATE INDEX edge_idx ON :Likes(score)");
     assert!(edge.contains("BRIEF-140c"));
     let missing_label = graph_type_violation(&graph, "CREATE INDEX missing_idx ON :Missing(ts)");

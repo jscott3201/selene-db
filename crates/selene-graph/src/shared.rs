@@ -149,6 +149,7 @@ impl SharedGraph {
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
+        crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
             // Why: GraphMeta is publicly constructible, so SharedGraph::from_graph
             // can land a malformed bound_type that bypassed builder().bound_to()'s

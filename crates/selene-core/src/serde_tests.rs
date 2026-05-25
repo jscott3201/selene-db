@@ -319,6 +319,25 @@ fn schema_change_postcard_round_trip() {
             kind: SchemaPropertyIndexKind::I64,
             name: Some(istr("serde.schema.index.name")),
         },
+        SchemaChange::CompositePropertyIndexCreated {
+            label: node_label,
+            properties: smallvec![
+                istr("serde.schema.indexed.a"),
+                istr("serde.schema.indexed.b")
+            ],
+            kinds: smallvec![
+                SchemaPropertyIndexKind::I64,
+                SchemaPropertyIndexKind::String
+            ],
+            name: Some(istr("serde.schema.composite.index.name")),
+        },
+        SchemaChange::CompositePropertyIndexDropped {
+            label: node_label,
+            properties: smallvec![
+                istr("serde.schema.indexed.a"),
+                istr("serde.schema.indexed.b")
+            ],
+        },
         SchemaChange::NodeTypeAddedV2 {
             graph_type: graph_type_id,
             label: istr("serde.schema.node.v2"),

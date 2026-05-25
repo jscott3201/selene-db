@@ -13,6 +13,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Composite-property node indexes across `selene-graph`, `selene-core`,
+  `selene-persist`, `selene-gql`, and `selene-pack`: `CREATE INDEX <name> ON
+  :Label(a, b, c)` now registers durable tuple indexes, maintains them across
+  node create/update/delete commits, recovers them from WAL plus CORE/CPIX
+  snapshots, wires optimizer composite lookups to storage-backed execution, and
+  includes pack verification coverage. Query-planner composite lookup substrate
+  was already present; edge-property and SHOW INDEX aggregation remain split
+  into BRIEF-140c/140d.
 - Implementation-defined named index DDL in `selene-gql`: `CREATE INDEX <name>
   ON :Label(property)` and `DROP INDEX <name>` now execute for single-property
   node indexes, infer the storage index kind from the declared property type,

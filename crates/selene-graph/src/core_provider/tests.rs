@@ -19,6 +19,8 @@ use crate::graph::PropertyIndexEntry;
 use crate::typed_index::TypedIndex;
 use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
+#[path = "tests/cpix.rs"]
+mod cpix;
 #[path = "tests/gtyp.rs"]
 mod gtyp;
 

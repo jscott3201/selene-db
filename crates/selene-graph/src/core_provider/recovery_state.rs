@@ -6,16 +6,18 @@ use std::sync::{Arc, OnceLock};
 use selene_core::{
     Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
 };
+use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
-    EdgeRow, MetaPayload, NodeRow, SchemaEntry, SchemaKey, decode_edges, decode_graph_types,
-    decode_meta, decode_nodes, decode_schemas,
+    CompositeSchemaEntry, CompositeSchemaKey, EdgeRow, MetaPayload, NodeRow, SchemaEntry,
+    SchemaKey, decode_composite_schemas, decode_edges, decode_graph_types, decode_meta,
+    decode_nodes, decode_schemas,
 };
 use crate::core_provider::{
-    CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB, inconsistent,
-    invalid_payload,
+    CORE_CPIX_SUB, CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB,
+    inconsistent, invalid_payload,
 };
-use crate::graph::{GraphMeta, PropertyIndexEntry, SeleneGraph};
+use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
 use crate::store::{edge_row_index, node_row_index};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
@@ -29,9 +31,11 @@ pub(crate) struct RecoveryState {
     graph_types: BTreeMap<u32, Arc<GraphTypeDef>>,
     pending_schema_changes: Vec<SchemaChange>,
     pending_property_index_changes: Vec<PendingIndex>,
+    pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
+    composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     sequence: u64,
 }
 
@@ -48,6 +52,20 @@ enum PendingIndex {
     Drop {
         label: IStr,
         property: IStr,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PendingCompositeIndex {
+    Create {
+        label: IStr,
+        properties: SmallVec<[IStr; 4]>,
+        kinds: SmallVec<[TypedIndexKind; 4]>,
+        name: Option<IStr>,
+    },
+    Drop {
+        label: IStr,
+        properties: SmallVec<[IStr; 4]>,
     },
 }
 
@@ -87,6 +105,9 @@ impl RecoveryState {
             }
             CORE_SCMA_SUB => {
                 self.schemas = decode_schemas(bytes)?.into_iter().collect();
+            }
+            CORE_CPIX_SUB => {
+                self.composite_schemas = decode_composite_schemas(bytes)?;
             }
             _ => {
                 return Err(invalid_payload(format!("unknown CORE sub-tag {sub_tag}")));
@@ -194,6 +215,13 @@ impl RecoveryState {
                         let pending = pending_property_index_change(change)
                             .expect("property-index variants map to pending recovery intent");
                         self.pending_property_index_changes.push(pending);
+                    }
+                    SchemaChange::CompositePropertyIndexCreated { .. }
+                    | SchemaChange::CompositePropertyIndexDropped { .. } => {
+                        let pending = pending_composite_property_index_change(change).expect(
+                            "composite property-index variants map to pending recovery intent",
+                        );
+                        self.pending_composite_property_index_changes.push(pending);
                     }
                     SchemaChange::ProcedurePackLifecycle { .. } => {
                         // Procedure-pack lifecycle changes are pure audit history.
@@ -329,7 +357,25 @@ impl RecoveryState {
                 PropertyIndexEntry::new(TypedIndex::new(entry.kind), entry.name),
             );
         }
+        for (key, entry) in self.composite_schemas {
+            let properties = SmallVec::from_iter(key.properties);
+            let kinds = SmallVec::from_iter(entry.kinds);
+            let canonical_key = crate::graph::composite_property_key(&properties);
+            graph.composite_property_index.insert(
+                (key.label, canonical_key),
+                CompositePropertyIndexEntry::new(
+                    crate::CompositeTypedIndex::new(kinds),
+                    properties,
+                    entry.name,
+                ),
+            );
+        }
+        crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
         replay_property_index_changes(&mut graph, &self.pending_property_index_changes)?;
+        replay_composite_property_index_changes(
+            &mut graph,
+            &self.pending_composite_property_index_changes,
+        )?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
             crate::type_validator::validate_entity_state(&graph, type_def).map_err(|error| {
                 crate::GraphError::Provider(inconsistent(format!(
@@ -393,6 +439,63 @@ fn replay_property_index_changes(
             }
             PendingIndex::Drop { label, property } => {
                 graph.property_index.remove(&(label, property));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn pending_composite_property_index_change(change: &SchemaChange) -> Option<PendingCompositeIndex> {
+    match change {
+        SchemaChange::CompositePropertyIndexCreated {
+            label,
+            properties,
+            kinds,
+            name,
+        } => Some(PendingCompositeIndex::Create {
+            label: *label,
+            properties: properties.clone(),
+            kinds: kinds.iter().copied().map(typed_kind_from).collect(),
+            name: *name,
+        }),
+        SchemaChange::CompositePropertyIndexDropped { label, properties } => {
+            Some(PendingCompositeIndex::Drop {
+                label: *label,
+                properties: properties.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn replay_composite_property_index_changes(
+    graph: &mut SeleneGraph,
+    changes: &[PendingCompositeIndex],
+) -> crate::GraphResult<()> {
+    for change in changes {
+        match change {
+            PendingCompositeIndex::Create {
+                label,
+                properties,
+                kinds,
+                name,
+            } => {
+                let index =
+                    crate::composite_property_index::build_composite_property_index_lenient(
+                        graph,
+                        *label,
+                        properties.clone(),
+                        kinds.clone(),
+                    )?;
+                let key = crate::graph::composite_property_key(properties);
+                graph.composite_property_index.insert(
+                    (*label, key),
+                    CompositePropertyIndexEntry::new(index, properties.clone(), *name),
+                );
+            }
+            PendingCompositeIndex::Drop { label, properties } => {
+                let key = crate::graph::composite_property_key(properties);
+                graph.composite_property_index.remove(&(*label, key));
             }
         }
     }

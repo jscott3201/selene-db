@@ -15,7 +15,8 @@ use selene_persist::{RecoveryError, RecoveryProvider, RecoveryResult, WalWriter}
 
 use crate::core_provider::recovery_state::RecoveryState;
 use crate::core_provider::sections::{
-    encode_edges, encode_graph_types, encode_meta, encode_nodes, encode_schemas,
+    encode_composite_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
+    encode_schemas,
 };
 use crate::durable_provider::DurableProvider;
 use crate::error::GraphResult;
@@ -34,6 +35,8 @@ pub const CORE_NODE_SUB: [u8; 4] = *b"NODE";
 pub const CORE_EDGE_SUB: [u8; 4] = *b"EDGE";
 /// Core schema subsection tag under [`CORE_PROVIDER_TAG`].
 pub const CORE_SCMA_SUB: [u8; 4] = *b"SCMA";
+/// Core composite-property-index schema subsection tag under [`CORE_PROVIDER_TAG`].
+pub const CORE_CPIX_SUB: [u8; 4] = *b"CPIX";
 
 const CORE_SUB_TAGS: &[SubTag] = &[
     SubTag(CORE_GTYP_SUB),
@@ -41,6 +44,7 @@ const CORE_SUB_TAGS: &[SubTag] = &[
     SubTag(CORE_NODE_SUB),
     SubTag(CORE_EDGE_SUB),
     SubTag(CORE_SCMA_SUB),
+    SubTag(CORE_CPIX_SUB),
 ];
 
 /// Shared provider implementation for live snapshots and recovery replay.
@@ -164,6 +168,7 @@ impl CoreProvider {
                     CORE_NODE_SUB => encode_nodes(&graph),
                     CORE_EDGE_SUB => encode_edges(&graph),
                     CORE_SCMA_SUB => encode_schemas(&graph),
+                    CORE_CPIX_SUB => encode_composite_schemas(&graph),
                     _ => Err(invalid_sub_tag(sub_tag)),
                 }
             }

@@ -1,5 +1,7 @@
 //! Runtime helpers for named property-index DDL.
 
+use std::collections::BTreeSet;
+
 use selene_core::{IStr, PropertyValueType};
 use selene_graph::{GraphTypeDef, NodeTypeDef, TypedIndexKind};
 
@@ -10,8 +12,19 @@ use crate::{
 };
 
 use super::super::catalog_index::{
-    lookup_index_entries, render_index_name, resolve_drop_index_matches,
+    DropTarget, lookup_index_entries, render_drop_target, resolve_drop_index_matches,
 };
+
+pub(super) enum IndexPath {
+    Single {
+        property: IStr,
+        kind: TypedIndexKind,
+    },
+    Composite {
+        properties: Vec<IStr>,
+        kinds: Vec<TypedIndexKind>,
+    },
+}
 
 pub(super) fn create_index_plan(
     ctx: &TxContext<'_, '_>,
@@ -20,8 +33,7 @@ pub(super) fn create_index_plan(
     properties: &[IStr],
     if_not_exists: bool,
     span: SourceSpan,
-) -> Result<Option<(IStr, TypedIndexKind)>, ExecutorError> {
-    let property = single_index_property(properties, span)?;
+) -> Result<Option<IndexPath>, ExecutorError> {
     let graph = ctx.snapshot();
     let graph_type = graph
         .meta
@@ -34,8 +46,27 @@ pub(super) fn create_index_plan(
             span,
         })?;
     let node_type = index_node_type(graph_type, label, span)?;
-    let kind = index_kind_for_property(node_type, label, property, span)?;
-    let report = lookup_index_entries(graph, name, label, property);
+    let path = dispatch_index_properties(node_type, label, properties, span)?;
+    match path {
+        IndexPath::Single { property, kind } => {
+            create_single_index_plan(graph, name, label, property, kind, if_not_exists, span)
+        }
+        IndexPath::Composite { properties, kinds } => {
+            create_composite_index_plan(graph, name, label, properties, kinds, if_not_exists, span)
+        }
+    }
+}
+
+fn create_single_index_plan(
+    graph: &selene_graph::SeleneGraph,
+    name: IStr,
+    label: IStr,
+    property: IStr,
+    kind: TypedIndexKind,
+    if_not_exists: bool,
+    span: SourceSpan,
+) -> Result<Option<IndexPath>, ExecutorError> {
+    let report = lookup_index_entries(graph, name, label, &[property]);
     if !report.other_name_matches.is_empty() {
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
@@ -43,31 +74,89 @@ pub(super) fn create_index_plan(
             span,
         });
     }
-    if let Some(existing_name) = report.same_pair {
+    if let Some(existing_name) = report.same_pair_name {
         if if_not_exists {
             return Ok(None);
         }
-        let existing = render_index_name(label, property, existing_name);
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing)?,
+            name: intern_runtime(&existing_name)?,
             span,
         });
     }
-    Ok(Some((property, kind)))
+    Ok(Some(IndexPath::Single { property, kind }))
 }
 
-fn single_index_property(properties: &[IStr], span: SourceSpan) -> Result<IStr, ExecutorError> {
+fn dispatch_index_properties(
+    node_type: &NodeTypeDef,
+    label: IStr,
+    properties: &[IStr],
+    span: SourceSpan,
+) -> Result<IndexPath, ExecutorError> {
     match properties {
-        [property] => Ok(*property),
-        _ => Err(ExecutorError::GraphTypeViolation {
-            message: format!(
-                "CREATE INDEX on {} properties -- composite-property indexes ship in BRIEF-140b; today only single-property is supported",
-                properties.len()
-            ),
+        [] => Err(ExecutorError::GraphTypeViolation {
+            message: "CREATE INDEX requires at least one property".to_owned(),
             span,
         }),
+        [property] => Ok(IndexPath::Single {
+            property: *property,
+            kind: index_kind_for_property(node_type, label, *property, span)?,
+        }),
+        _ => {
+            let kinds = properties
+                .iter()
+                .map(|property| index_kind_for_property(node_type, label, *property, span))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(IndexPath::Composite {
+                properties: properties.to_vec(),
+                kinds,
+            })
+        }
     }
+}
+
+fn create_composite_index_plan(
+    graph: &selene_graph::SeleneGraph,
+    name: IStr,
+    label: IStr,
+    properties: Vec<IStr>,
+    kinds: Vec<TypedIndexKind>,
+    if_not_exists: bool,
+    span: SourceSpan,
+) -> Result<Option<IndexPath>, ExecutorError> {
+    let duplicates = duplicate_properties(&properties);
+    if !duplicates.is_empty() {
+        return Err(ExecutorError::GraphTypeViolation {
+            message: format!(
+                "composite index property list contains duplicates: {}",
+                duplicates
+                    .iter()
+                    .map(|property| property.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            span,
+        });
+    }
+    let report = lookup_index_entries(graph, name, label, &properties);
+    if !report.other_name_matches.is_empty() {
+        return Err(ExecutorError::DuplicateObject {
+            kind: "index",
+            name,
+            span,
+        });
+    }
+    if let Some(existing_name) = report.same_pair_name {
+        if if_not_exists {
+            return Ok(None);
+        }
+        return Err(ExecutorError::DuplicateObject {
+            kind: "index",
+            name: intern_runtime(&existing_name)?,
+            span,
+        });
+    }
+    Ok(Some(IndexPath::Composite { properties, kinds }))
 }
 
 fn index_node_type(
@@ -133,7 +222,7 @@ pub(super) fn resolve_drop_index(
     name: IStr,
     if_exists: bool,
     span: SourceSpan,
-) -> Result<Option<(IStr, IStr)>, ExecutorError> {
+) -> Result<Option<DropTarget>, ExecutorError> {
     let matches = resolve_drop_index_matches(graph, name);
     match matches.as_slice() {
         [] if if_exists => Ok(None),
@@ -141,7 +230,7 @@ pub(super) fn resolve_drop_index(
             message: format!("index '{}' does not exist", name.as_str()),
             span,
         }),
-        [pair] => Ok(Some(*pair)),
+        [pair] => Ok(Some(pair.clone())),
         pairs => Err(ExecutorError::GraphTypeViolation {
             message: format!(
                 "index '{}' is ambiguous: matches {} entries across pairs {}",
@@ -154,10 +243,21 @@ pub(super) fn resolve_drop_index(
     }
 }
 
-fn render_index_pair_list(pairs: &[(IStr, IStr)]) -> String {
+fn render_index_pair_list(pairs: &[DropTarget]) -> String {
     pairs
         .iter()
-        .map(|(label, property)| format!(":{}({})", label.as_str(), property.as_str()))
+        .map(render_drop_target)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn duplicate_properties(properties: &[IStr]) -> Vec<IStr> {
+    let mut seen = BTreeSet::new();
+    let mut duplicates = Vec::new();
+    for property in properties {
+        if !seen.insert(*property) && !duplicates.contains(property) {
+            duplicates.push(*property);
+        }
+    }
+    duplicates
 }

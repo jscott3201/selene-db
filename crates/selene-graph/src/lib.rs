@@ -13,6 +13,8 @@
 
 pub mod adjacency;
 pub mod chunked_vec;
+pub(crate) mod composite_property_index;
+pub mod composite_typed_index;
 pub mod core_provider;
 pub mod durable_provider;
 pub mod error;
@@ -32,13 +34,16 @@ pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
 pub use chunked_vec::ChunkedVec;
+pub use composite_typed_index::{
+    CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,
+};
 pub use core_provider::{
     CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_PROVIDER_TAG, CORE_SCMA_SUB,
     CoreProvider, DurableState,
 };
 pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
-pub use graph::{GraphMeta, SeleneGraph};
+pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph};
 pub use graph_types::{
     EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
     PropertyElementType, PropertyTypeDef, ValidationMode,

@@ -1,6 +1,7 @@
 //! Typed mutation funnel per spec 03 section 4.3.
 
 mod catalog;
+mod composite_property_index;
 mod property_index;
 
 use std::collections::BTreeSet;
@@ -62,6 +63,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             insert_node_labels(&mut graph.idx_label, row as u32, &labels);
             crate::property_index::apply_node_create(
                 &mut graph.property_index,
+                &labels,
+                &props,
+                row as u32,
+            );
+            crate::composite_property_index::apply_node_create(
+                &mut graph.composite_property_index,
                 &labels,
                 &props,
                 row as u32,
@@ -201,6 +208,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_props,
                 row as u32,
             );
+            crate::composite_property_index::apply_node_update(
+                &mut graph.composite_property_index,
+                &old_labels,
+                &old_props,
+                &new_labels,
+                &new_props,
+                row as u32,
+            );
         }
 
         self.txn.changes.push(Change::NodeUpdated {
@@ -263,6 +278,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             remove_node_labels(&mut graph.idx_label, row as u32, &labels);
             crate::property_index::apply_node_delete(
                 &mut graph.property_index,
+                &labels,
+                &props,
+                row as u32,
+            );
+            crate::composite_property_index::apply_node_delete(
+                &mut graph.composite_property_index,
                 &labels,
                 &props,
                 row as u32,

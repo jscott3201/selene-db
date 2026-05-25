@@ -80,7 +80,9 @@ fn candidate_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec<u
         ScanAccess::BitmapUnion { property, keys, .. } => {
             bitmap_union_rows(scan, *property, keys, ctx)
         }
-        ScanAccess::CompositeLookup { keys, .. } => composite_lookup_rows(scan, keys, ctx),
+        ScanAccess::CompositeLookup {
+            properties, keys, ..
+        } => composite_lookup_rows(scan, properties, keys, ctx),
     }
 }
 
@@ -227,6 +229,48 @@ fn union_property_eq(
 }
 
 fn composite_lookup_rows(
+    scan: &NodeOrEdgeScan,
+    properties: &[IStr],
+    keys: &[(IStr, Literal)],
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Vec<u32> {
+    if scan.kind != ScanKind::Node {
+        return linear_rows_filtered_by_composite(scan, keys, ctx);
+    }
+    let Some(label) = single_label(&scan.label_predicate) else {
+        return linear_rows_filtered_by_composite(scan, keys, ctx);
+    };
+    let Some(values) = composite_lookup_values(properties, keys) else {
+        return linear_rows_filtered_by_composite(scan, keys, ctx);
+    };
+    if let Some(index) = ctx
+        .tx
+        .snapshot()
+        .composite_property_index_for(&label, properties)
+    {
+        let refs = values.iter().collect::<Vec<_>>();
+        if let Ok(key) = index.key_from_values(&refs) {
+            return index
+                .lookup_key(&key)
+                .map(|bitmap| bitmap.iter().collect())
+                .unwrap_or_default();
+        }
+    }
+    linear_rows_filtered_by_composite(scan, keys, ctx)
+}
+
+fn composite_lookup_values(properties: &[IStr], keys: &[(IStr, Literal)]) -> Option<Vec<Value>> {
+    properties
+        .iter()
+        .map(|property| {
+            keys.iter()
+                .find(|(key, _)| key == property)
+                .map(|(_, literal)| literal_value(literal))
+        })
+        .collect()
+}
+
+fn linear_rows_filtered_by_composite(
     scan: &NodeOrEdgeScan,
     keys: &[(IStr, Literal)],
     ctx: &EvalCtx<'_, '_, '_, '_>,

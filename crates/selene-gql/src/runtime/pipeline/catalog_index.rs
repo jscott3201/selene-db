@@ -2,6 +2,7 @@
 
 use selene_core::IStr;
 use selene_graph::TypedIndexKind;
+use smallvec::SmallVec;
 
 use super::catalog::intern_runtime;
 use crate::{
@@ -16,8 +17,20 @@ pub(super) struct InlineIndexSpec {
 }
 
 pub(super) struct IndexConflictReport {
-    pub(super) same_pair: Option<Option<IStr>>,
-    pub(super) other_name_matches: Vec<(IStr, IStr)>,
+    pub(super) same_pair_name: Option<String>,
+    pub(super) other_name_matches: Vec<DropTarget>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum DropTarget {
+    Single {
+        label: IStr,
+        property: IStr,
+    },
+    Composite {
+        label: IStr,
+        properties: SmallVec<[IStr; 4]>,
+    },
 }
 
 pub(super) fn inline_index_specs(
@@ -48,6 +61,13 @@ pub(super) fn validate_index_name_collisions(
         .iter_property_index_entries()
         .map(|(label, property, _, name)| render_index_name(label, property, name))
         .collect::<Vec<_>>();
+    used.extend(
+        graph
+            .iter_composite_property_index_entries()
+            .map(|(label, properties, _, name)| {
+                render_composite_index_name(label, &properties, name)
+            }),
+    );
     for index in indexes {
         let rendered = render_index_name(label, index.property, index.name);
         if used.iter().any(|name| name == &rendered) {
@@ -67,21 +87,43 @@ pub(super) fn lookup_index_entries(
     graph: &selene_graph::SeleneGraph,
     ident: IStr,
     label: IStr,
-    property: IStr,
+    properties: &[IStr],
 ) -> IndexConflictReport {
-    let mut same_pair = None;
+    let mut same_pair_name = None;
     let mut other_name_matches = Vec::new();
     for (entry_label, entry_property, _, entry_name) in graph.iter_property_index_entries() {
-        if entry_label == label && entry_property == property {
-            same_pair = Some(entry_name);
+        if entry_label == label && properties == [entry_property] {
+            same_pair_name = Some(render_index_name(entry_label, entry_property, entry_name));
             continue;
         }
         if render_index_name(entry_label, entry_property, entry_name) == ident.as_str() {
-            other_name_matches.push((entry_label, entry_property));
+            other_name_matches.push(DropTarget::Single {
+                label: entry_label,
+                property: entry_property,
+            });
+        }
+    }
+    for (entry_label, entry_properties, _, entry_name) in
+        graph.iter_composite_property_index_entries()
+    {
+        if entry_label == label && same_property_set(&entry_properties, properties) {
+            same_pair_name = Some(render_composite_index_name(
+                entry_label,
+                &entry_properties,
+                entry_name,
+            ));
+            continue;
+        }
+        if render_composite_index_name(entry_label, &entry_properties, entry_name) == ident.as_str()
+        {
+            other_name_matches.push(DropTarget::Composite {
+                label: entry_label,
+                properties: entry_properties,
+            });
         }
     }
     IndexConflictReport {
-        same_pair,
+        same_pair_name,
         other_name_matches,
     }
 }
@@ -89,14 +131,22 @@ pub(super) fn lookup_index_entries(
 pub(super) fn resolve_drop_index_matches(
     graph: &selene_graph::SeleneGraph,
     ident: IStr,
-) -> Vec<(IStr, IStr)> {
-    graph
+) -> Vec<DropTarget> {
+    let mut matches = graph
         .iter_property_index_entries()
         .filter_map(|(label, property, _, name)| {
             (render_index_name(label, property, name) == ident.as_str())
-                .then_some((label, property))
+                .then_some(DropTarget::Single { label, property })
         })
-        .collect()
+        .collect::<Vec<_>>();
+    matches.extend(graph.iter_composite_property_index_entries().filter_map(
+        |(label, properties, _, name)| {
+            (render_composite_index_name(label, &properties, name) == ident.as_str())
+                .then_some(DropTarget::Composite { label, properties })
+        },
+    ));
+    matches.sort_by_key(render_drop_target);
+    matches
 }
 
 fn gql_type_to_index_kind(
@@ -129,6 +179,16 @@ pub(super) fn render_index_name(label: IStr, property: IStr, explicit: Option<IS
         .unwrap_or_else(|| render_auto_index_name(label, property))
 }
 
+pub(super) fn render_composite_index_name(
+    label: IStr,
+    properties: &[IStr],
+    explicit: Option<IStr>,
+) -> String {
+    explicit
+        .map(|name| name.as_str().to_owned())
+        .unwrap_or_else(|| render_composite_auto_index_name(label, properties))
+}
+
 fn render_auto_index_name(label: IStr, property: IStr) -> String {
     let label = label.as_str();
     let property = property.as_str();
@@ -139,6 +199,44 @@ fn render_auto_index_name(label: IStr, property: IStr) -> String {
         property.len(),
         property
     )
+}
+
+fn render_composite_auto_index_name(label: IStr, properties: &[IStr]) -> String {
+    let label = label.as_str();
+    let mut rendered = format!("idx:{}:{}:c{}", label.len(), label, properties.len());
+    for property in properties {
+        let property = property.as_str();
+        rendered.push_str(&format!(":{}:{}", property.len(), property));
+    }
+    rendered
+}
+
+pub(super) fn render_drop_target(target: &DropTarget) -> String {
+    match target {
+        DropTarget::Single { label, property } => {
+            format!(":{}({})", label.as_str(), property.as_str())
+        }
+        DropTarget::Composite { label, properties } => format!(
+            ":{}({})",
+            label.as_str(),
+            properties
+                .iter()
+                .map(|property| property.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn same_property_set(lhs: &[IStr], rhs: &[IStr]) -> bool {
+    if lhs.len() != rhs.len() {
+        return false;
+    }
+    let mut lhs = lhs.to_vec();
+    let mut rhs = rhs.to_vec();
+    lhs.sort_unstable();
+    rhs.sort_unstable();
+    lhs == rhs
 }
 
 pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
