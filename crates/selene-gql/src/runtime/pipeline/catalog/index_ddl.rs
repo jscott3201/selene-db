@@ -13,6 +13,17 @@ use super::super::catalog_index::{
     lookup_index_entries, render_index_name, resolve_drop_index_matches,
 };
 
+pub(super) enum IndexPath {
+    Single {
+        property: IStr,
+        kind: TypedIndexKind,
+    },
+    Composite {
+        properties: Vec<IStr>,
+        kinds: Vec<TypedIndexKind>,
+    },
+}
+
 pub(super) fn create_index_plan(
     ctx: &TxContext<'_, '_>,
     name: IStr,
@@ -20,8 +31,7 @@ pub(super) fn create_index_plan(
     properties: &[IStr],
     if_not_exists: bool,
     span: SourceSpan,
-) -> Result<Option<(IStr, TypedIndexKind)>, ExecutorError> {
-    let property = single_index_property(properties, span)?;
+) -> Result<Option<IndexPath>, ExecutorError> {
     let graph = ctx.snapshot();
     let graph_type = graph
         .meta
@@ -34,7 +44,26 @@ pub(super) fn create_index_plan(
             span,
         })?;
     let node_type = index_node_type(graph_type, label, span)?;
-    let kind = index_kind_for_property(node_type, label, property, span)?;
+    let path = dispatch_index_properties(node_type, label, properties, span)?;
+    match path {
+        IndexPath::Single { property, kind } => {
+            create_single_index_plan(graph, name, label, property, kind, if_not_exists, span)
+        }
+        IndexPath::Composite { properties, kinds } => {
+            create_composite_index_plan(name, label, properties, kinds, if_not_exists, span)
+        }
+    }
+}
+
+fn create_single_index_plan(
+    graph: &selene_graph::SeleneGraph,
+    name: IStr,
+    label: IStr,
+    property: IStr,
+    kind: TypedIndexKind,
+    if_not_exists: bool,
+    span: SourceSpan,
+) -> Result<Option<IndexPath>, ExecutorError> {
     let report = lookup_index_entries(graph, name, label, property);
     if !report.other_name_matches.is_empty() {
         return Err(ExecutorError::DuplicateObject {
@@ -54,20 +83,52 @@ pub(super) fn create_index_plan(
             span,
         });
     }
-    Ok(Some((property, kind)))
+    Ok(Some(IndexPath::Single { property, kind }))
 }
 
-fn single_index_property(properties: &[IStr], span: SourceSpan) -> Result<IStr, ExecutorError> {
+fn dispatch_index_properties(
+    node_type: &NodeTypeDef,
+    label: IStr,
+    properties: &[IStr],
+    span: SourceSpan,
+) -> Result<IndexPath, ExecutorError> {
     match properties {
-        [property] => Ok(*property),
-        _ => Err(ExecutorError::GraphTypeViolation {
-            message: format!(
-                "CREATE INDEX on {} properties -- composite-property indexes ship in BRIEF-140b; today only single-property is supported",
-                properties.len()
-            ),
+        [] => Err(ExecutorError::GraphTypeViolation {
+            message: "CREATE INDEX requires at least one property".to_owned(),
             span,
         }),
+        [property] => Ok(IndexPath::Single {
+            property: *property,
+            kind: index_kind_for_property(node_type, label, *property, span)?,
+        }),
+        _ => {
+            let kinds = properties
+                .iter()
+                .map(|property| index_kind_for_property(node_type, label, *property, span))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(IndexPath::Composite {
+                properties: properties.to_vec(),
+                kinds,
+            })
+        }
     }
+}
+
+fn create_composite_index_plan(
+    _name: IStr,
+    _label: IStr,
+    properties: Vec<IStr>,
+    _kinds: Vec<TypedIndexKind>,
+    _if_not_exists: bool,
+    span: SourceSpan,
+) -> Result<Option<IndexPath>, ExecutorError> {
+    Err(ExecutorError::GraphTypeViolation {
+        message: format!(
+            "CREATE INDEX on {} properties -- composite path not yet wired; C5 lands the executor",
+            properties.len()
+        ),
+        span,
+    })
 }
 
 fn index_node_type(

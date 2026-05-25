@@ -14,7 +14,7 @@ use selene_graph::{
 use self::{
     compose::{compose_edge_properties, compose_node_properties},
     endpoints::resolve_endpoints,
-    index_ddl::{create_index_plan, resolve_drop_index},
+    index_ddl::{IndexPath, create_index_plan, resolve_drop_index},
     property::{property_defs, render_property_value_type},
 };
 use super::catalog_index::{
@@ -180,14 +180,19 @@ pub(super) fn execute(
             span,
         } => {
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let Some((property, kind)) =
+            let Some(index_path) =
                 create_index_plan(ctx, *name, *label, properties, *if_not_exists, *span)?
             else {
                 return Ok(table);
             };
-            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .create_property_index_named(*label, property, kind, Some(*name))
-                .map_err(|source| catalog_graph_error(source, *span))?;
+            match index_path {
+                IndexPath::Single { property, kind } => {
+                    ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                        .create_property_index_named(*label, property, kind, Some(*name))
+                        .map_err(|source| catalog_graph_error(source, *span))?;
+                }
+                IndexPath::Composite { .. } => unreachable!("composite stub returns an error"),
+            }
             Ok(table)
         }
         CatalogOp::DropIndex {
