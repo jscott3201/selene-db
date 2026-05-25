@@ -11,11 +11,20 @@ use crate::{
     TypePropertyConstraint, UnwindStatement, ValueExpr, analyze::error::AnalysisError,
 };
 
-pub(crate) fn validate_statement_parameter_declarations(
-    statement: &Statement,
+pub(super) type DeclarationMap = BTreeMap<IStr, (GqlType, SourceSpan)>;
+
+pub(crate) fn apply_statement_parameter_declarations(
+    statement: &mut Statement,
 ) -> Result<(), AnalysisError> {
     let mut declarations = BTreeMap::new();
-    collect_statement_parameter_declarations(statement, &mut declarations)
+    collect_statement_parameter_declarations(statement, &mut declarations)?;
+    if !declarations.is_empty() {
+        super::parameter_inheritance::inherit_statement_parameter_declarations(
+            statement,
+            &declarations,
+        );
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_parameter_declarations(
@@ -27,7 +36,7 @@ pub(crate) fn validate_parameter_declarations(
 
 fn collect_statement_parameter_declarations(
     statement: &Statement,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     match statement {
         Statement::Query(pipeline) => {
@@ -62,7 +71,7 @@ fn collect_statement_parameter_declarations(
 
 fn collect_pipeline_parameter_declarations(
     pipeline: &QueryPipeline,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     for statement in &pipeline.statements {
         match statement {
@@ -113,7 +122,7 @@ fn collect_pipeline_parameter_declarations(
 
 fn collect_mutation_parameter_declarations(
     pipeline: &MutationPipeline,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     for statement in &pipeline.statements {
         match statement {
@@ -154,7 +163,7 @@ fn collect_mutation_parameter_declarations(
 
 fn collect_ddl_parameter_declarations(
     statement: &DdlStatement,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     match statement {
         DdlStatement::CreateNodeType { properties, .. }
@@ -183,7 +192,7 @@ fn collect_ddl_parameter_declarations(
 
 fn collect_return_parameter_declarations(
     clause: &ReturnClause,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     collect_projection_parameter_declarations(
         &clause.items,
@@ -197,7 +206,7 @@ fn collect_projection_parameter_declarations(
     items: &[ReturnItem],
     group_by: Option<&[ValueExpr]>,
     having: Option<&ValueExpr>,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     for item in items {
         collect_value_parameter_declarations(&item.expr, declarations)?;
@@ -215,7 +224,7 @@ fn collect_projection_parameter_declarations(
 
 fn collect_call_parameter_declarations(
     call: &ProcedureCall,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     for arg in &call.args {
         collect_value_parameter_declarations(arg, declarations)?;
@@ -225,7 +234,7 @@ fn collect_call_parameter_declarations(
 
 fn collect_match_clause_parameter_declarations(
     clause: &MatchClause,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     for pattern in &clause.patterns {
         collect_graph_pattern_parameter_declarations(pattern, declarations)?;
@@ -238,7 +247,7 @@ fn collect_match_clause_parameter_declarations(
 
 fn collect_graph_pattern_parameter_declarations(
     pattern: &crate::GraphPattern,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     for element in &pattern.elements {
         match element {
@@ -265,7 +274,7 @@ fn collect_graph_pattern_parameter_declarations(
 
 fn collect_limit_parameter_declarations(
     value: &LimitValue,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     if let LimitValue::Parameter {
         name,
@@ -280,7 +289,7 @@ fn collect_limit_parameter_declarations(
 
 fn collect_value_parameter_declarations(
     value: &ValueExpr,
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
 ) -> Result<(), AnalysisError> {
     let mut stack = vec![value];
     while let Some(value) = stack.pop() {
@@ -379,7 +388,7 @@ fn collect_value_parameter_declarations(
 }
 
 fn record_parameter_declaration(
-    declarations: &mut BTreeMap<IStr, (GqlType, SourceSpan)>,
+    declarations: &mut DeclarationMap,
     name: IStr,
     declared_type: &GqlType,
     span: SourceSpan,
