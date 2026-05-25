@@ -106,6 +106,11 @@ impl CompositeTypedIndex {
         self.entries.values().map(RoaringBitmap::len).sum()
     }
 
+    /// Iterate composite-key buckets and their matching row bitmaps.
+    pub fn entries(&self) -> impl Iterator<Item = (&CompositeKey, &RoaringBitmap)> {
+        self.entries.iter()
+    }
+
     /// Insert `row` under the composite key formed from `values`.
     pub fn insert(&mut self, values: &[&Value], row: u32) -> Result<(), CompositeIndexValueError> {
         let key = self.key_from_values(values)?;

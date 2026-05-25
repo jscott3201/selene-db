@@ -8,6 +8,7 @@ use selene_gql::{
     ProcedureResult, ProcedureTier,
 };
 use selene_graph::{AdjacencyEntry, NotNanF64, SeleneGraph, TypedIndex};
+use selene_graph::{CompositeKey, CompositeKeyComponent, CompositeTypedIndex};
 
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
 
@@ -204,6 +205,37 @@ fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResult {
             }
         }
     }
+    for ((label, _), entry) in &snapshot.composite_property_index {
+        indexed_rows += entry.index.cardinality();
+        for row in snapshot.live_nodes() {
+            let Some(labels) = snapshot.node_store.labels.get(row as usize) else {
+                issues += 1;
+                continue;
+            };
+            if !labels.contains(label) {
+                continue;
+            }
+            let Some(properties) = snapshot.node_store.properties.get(row as usize) else {
+                issues += 1;
+                continue;
+            };
+            let Some(values) = composite_property_values(properties, &entry.declared_properties)
+            else {
+                continue;
+            };
+            let Ok(key) = entry.index.key_from_values(&values) else {
+                continue;
+            };
+            expected_rows += 1;
+            if !entry
+                .index
+                .lookup_key(&key)
+                .is_some_and(|bitmap| bitmap.contains(row))
+            {
+                issues += 1;
+            }
+        }
+    }
 
     if indexed_rows != expected_rows {
         issues += indexed_rows.abs_diff(expected_rows) as usize;
@@ -372,6 +404,20 @@ fn check_typed_index_value_range(snapshot: &SeleneGraph) -> CheckResult {
             }
         }
     }
+    for ((label, _), entry) in &snapshot.composite_property_index {
+        for (bucket, row) in composite_index_entries(&entry.index) {
+            checked += 1;
+            if !indexed_composite_row_matches(
+                snapshot,
+                *label,
+                &entry.declared_properties,
+                row,
+                &bucket,
+            ) {
+                issues += 1;
+            }
+        }
+    }
 
     CheckResult::new(
         issues,
@@ -401,6 +447,13 @@ fn check_roaring_bitmap_density(snapshot: &SeleneGraph) -> CheckResult {
     }
     for entry in snapshot.property_index.values() {
         for (_bucket, row) in typed_index_entries(&entry.index) {
+            if !live_node_row(snapshot, row) {
+                issues += 1;
+            }
+        }
+    }
+    for entry in snapshot.composite_property_index.values() {
+        for (_bucket, row) in composite_index_entries(&entry.index) {
             if !live_node_row(snapshot, row) {
                 issues += 1;
             }
@@ -466,6 +519,14 @@ fn push_index_entries(
     entries.extend(rows.map(|row| (key.clone(), row)));
 }
 
+fn composite_index_entries(index: &CompositeTypedIndex) -> Vec<(CompositeKey, u32)> {
+    let mut entries = Vec::new();
+    for (key, bitmap) in index.entries() {
+        entries.extend(bitmap.iter().map(|row| (key.clone(), row)));
+    }
+    entries
+}
+
 fn indexed_property_row_matches(
     snapshot: &SeleneGraph,
     label: IStr,
@@ -491,6 +552,42 @@ fn indexed_property_row_matches(
     bucket_matches_value(bucket, value)
 }
 
+fn indexed_composite_row_matches(
+    snapshot: &SeleneGraph,
+    label: IStr,
+    properties: &[IStr],
+    row: u32,
+    bucket: &CompositeKey,
+) -> bool {
+    if !live_node_row(snapshot, row) || bucket.len() != properties.len() {
+        return false;
+    }
+    let Some(labels) = snapshot.node_store.labels.get(row as usize) else {
+        return false;
+    };
+    if !labels.contains(&label) {
+        return false;
+    }
+    let Some(row_properties) = snapshot.node_store.properties.get(row as usize) else {
+        return false;
+    };
+    properties.iter().zip(bucket).all(|(property, component)| {
+        row_properties
+            .get(property)
+            .is_some_and(|value| component_matches_value(component, value))
+    })
+}
+
+fn composite_property_values<'a>(
+    row_properties: &'a selene_core::PropertyMap,
+    properties: &[IStr],
+) -> Option<Vec<&'a Value>> {
+    properties
+        .iter()
+        .map(|property| row_properties.get(property))
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 enum IndexedValue {
     I64(i64),
@@ -513,6 +610,22 @@ fn bucket_matches_value(bucket: IndexedValue, value: &Value) -> bool {
             expected == *actual
         }
         (IndexedValue::Uuid(expected), Value::Uuid(actual)) => expected == actual.to_string(),
+        _ => false,
+    }
+}
+
+fn component_matches_value(component: &CompositeKeyComponent, value: &Value) -> bool {
+    match (component, value) {
+        (CompositeKeyComponent::I64(expected), Value::Int(actual)) => expected == actual,
+        (CompositeKeyComponent::F64(expected), Value::Float(actual)) => {
+            NotNanF64::new(*actual).is_ok_and(|actual| actual == *expected)
+        }
+        (CompositeKeyComponent::String(expected), Value::String(actual)) => expected == actual,
+        (CompositeKeyComponent::Date(expected), Value::Date(actual)) => expected == actual,
+        (CompositeKeyComponent::LocalDateTime(expected), Value::LocalDateTime(actual)) => {
+            expected == actual
+        }
+        (CompositeKeyComponent::Uuid(expected), Value::Uuid(actual)) => expected == actual,
         _ => false,
     }
 }
@@ -545,183 +658,4 @@ impl CheckResult {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use selene_core::{GraphId, LabelSet, PropertyMap, intern};
-    use selene_graph::SharedGraph;
-
-    use super::*;
-
-    fn istr(value: &str) -> IStr {
-        intern(value).expect("test string interns")
-    }
-
-    fn graph_with_one_indexed_node() -> SeleneGraph {
-        let graph = SharedGraph::new(GraphId::new(121_301));
-        let label = istr("Person");
-        let age = istr("age");
-        let mut props = PropertyMap::new();
-        props.set(age, Value::Int(42)).unwrap();
-        let mut txn = graph.begin_write();
-        txn.mutator()
-            .create_node(LabelSet::single(label), props)
-            .expect("node created");
-        txn.mutator()
-            .create_property_index(label, age, selene_graph::TypedIndexKind::I64)
-            .expect("index created");
-        txn.commit().expect("seed commit succeeds");
-        graph.read().as_ref().clone()
-    }
-
-    fn graph_with_one_edge() -> SeleneGraph {
-        let graph = SharedGraph::new(GraphId::new(121_302));
-        let label = istr("Person");
-        let edge_label = istr("KNOWS");
-        let mut txn = graph.begin_write();
-        let source = txn
-            .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
-            .expect("source created");
-        let target = txn
-            .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
-            .expect("target created");
-        txn.mutator()
-            .create_edge(edge_label, source, target, PropertyMap::new())
-            .expect("edge created");
-        txn.commit().expect("seed commit succeeds");
-        graph.read().as_ref().clone()
-    }
-
-    fn status_for(result: &ProcedureResult, check: &str) -> String {
-        let row = result
-            .rows
-            .iter()
-            .find(|row| matches!(&row[0], Value::String(name) if name.as_str() == check))
-            .unwrap_or_else(|| panic!("{check} row exists"));
-        let Value::String(status) = &row[1] else {
-            panic!("{check} status is a string");
-        };
-        status.as_str().to_owned()
-    }
-
-    #[test]
-    fn corrupted_label_bitmap_reports_inconsistent_row_without_rebuild() {
-        let mut graph = graph_with_one_indexed_node();
-        graph
-            .idx_label
-            .get_mut(&istr("Person"))
-            .expect("label index exists")
-            .insert(10);
-
-        let result = verify_snapshot(&graph, false).expect("verification rows");
-        assert_eq!(
-            status_for(&result, "label_index_cardinality"),
-            "inconsistent"
-        );
-    }
-
-    #[test]
-    fn property_index_coverage_reports_extra_live_row_bucket() {
-        let mut graph = graph_with_one_indexed_node();
-        let label = istr("Person");
-        let age = istr("age");
-        let entry = graph
-            .property_index
-            .get_mut(&(label, age))
-            .expect("property index exists");
-        let index = Arc::make_mut(&mut entry.index);
-        let TypedIndex::I64(map) = index else {
-            panic!("test index is i64");
-        };
-        map.entry(99).or_default().insert(0);
-
-        let result = verify_snapshot(&graph, false).expect("verification rows");
-
-        assert_eq!(
-            status_for(&result, "property_index_coverage"),
-            "inconsistent"
-        );
-    }
-
-    #[test]
-    fn adjacency_symmetry_reports_live_edge_missing_from_both_maps() {
-        let mut graph = graph_with_one_edge();
-        graph.adjacency_out.clear();
-        graph.adjacency_in.clear();
-
-        let result = verify_snapshot(&graph, false).expect("verification rows");
-
-        assert_eq!(status_for(&result, "adjacency_symmetry"), "inconsistent");
-    }
-
-    #[test]
-    fn adjacency_symmetry_reports_label_drift_in_both_maps() {
-        let mut graph = graph_with_one_edge();
-        let wrong_label = istr("LIKES");
-        let source = NodeId::new(1);
-        let target = NodeId::new(2);
-        graph
-            .adjacency_out
-            .get_mut(&source)
-            .expect("source adjacency exists")
-            .edges[0]
-            .label = wrong_label;
-        graph
-            .adjacency_in
-            .get_mut(&target)
-            .expect("target adjacency exists")
-            .edges[0]
-            .label = wrong_label;
-
-        let result = verify_snapshot(&graph, false).expect("verification rows");
-
-        assert_eq!(status_for(&result, "adjacency_symmetry"), "inconsistent");
-    }
-
-    #[test]
-    fn typed_index_value_range_reports_live_row_in_wrong_bucket() {
-        let mut graph = graph_with_one_indexed_node();
-        let label = istr("Person");
-        let age = istr("age");
-        let entry = graph
-            .property_index
-            .get_mut(&(label, age))
-            .expect("property index exists");
-        let index = Arc::make_mut(&mut entry.index);
-        let TypedIndex::I64(map) = index else {
-            panic!("test index is i64");
-        };
-        map.entry(99).or_default().insert(0);
-
-        let result = verify_snapshot(&graph, true).expect("verification rows");
-
-        assert_eq!(
-            status_for(&result, "typed_index_value_range"),
-            "inconsistent"
-        );
-    }
-
-    #[test]
-    fn deep_check_reports_stale_property_index_bitmap_row() {
-        let mut graph = graph_with_one_indexed_node();
-        let label = istr("Person");
-        let age = istr("age");
-        let entry = graph
-            .property_index
-            .get_mut(&(label, age))
-            .expect("property index exists");
-        let index = Arc::make_mut(&mut entry.index);
-        let TypedIndex::I64(map) = index else {
-            panic!("test index is i64");
-        };
-        map.entry(99).or_default().insert(99);
-
-        let result = verify_snapshot(&graph, true).expect("verification rows");
-        assert_eq!(
-            status_for(&result, "roaring_bitmap_density"),
-            "inconsistent"
-        );
-    }
-}
+mod tests;
