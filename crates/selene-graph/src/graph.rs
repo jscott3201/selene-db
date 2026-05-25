@@ -8,10 +8,12 @@ use imbl::HashMap;
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
+use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
@@ -41,6 +43,47 @@ impl PropertyIndexEntry {
         self.index.kind()
     }
 }
+
+/// Registered built-in composite-property index metadata.
+#[derive(Clone, Debug)]
+pub struct CompositePropertyIndexEntry {
+    /// Index data for the `(label, properties...)` registration.
+    pub index: Arc<CompositeTypedIndex>,
+    /// Indexed properties in declaration order.
+    pub declared_properties: SmallVec<[IStr; 4]>,
+    /// Optional explicit catalog name. `None` means the name is derived at render time.
+    pub name: Option<IStr>,
+}
+
+impl CompositePropertyIndexEntry {
+    /// Construct a composite index entry.
+    #[must_use]
+    pub fn new(
+        index: CompositeTypedIndex,
+        declared_properties: SmallVec<[IStr; 4]>,
+        name: Option<IStr>,
+    ) -> Self {
+        Self {
+            index: Arc::new(index),
+            declared_properties,
+            name,
+        }
+    }
+
+    /// Return the registered component kinds in declaration order.
+    #[must_use]
+    pub fn kinds(&self) -> SmallVec<[TypedIndexKind; 4]> {
+        self.index.kinds().iter().copied().collect()
+    }
+}
+
+/// Owned row returned when iterating composite property-index registrations.
+pub type CompositePropertyIndexEntryRow = (
+    IStr,
+    SmallVec<[IStr; 4]>,
+    SmallVec<[TypedIndexKind; 4]>,
+    Option<IStr>,
+);
 
 /// Snapshot metadata.
 #[derive(
@@ -85,6 +128,9 @@ pub struct SeleneGraph {
     pub idx_edge_label: HashMap<IStr, RoaringBitmap>,
     /// Per-`(label, property)` node value indexes. See spec 03 section 5.2.
     pub property_index: FxHashMap<(IStr, IStr), PropertyIndexEntry>,
+    /// Per-`(label, properties...)` node composite value indexes.
+    pub composite_property_index:
+        FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>,
 }
 
 impl SeleneGraph {
@@ -106,6 +152,7 @@ impl SeleneGraph {
             idx_label: HashMap::new(),
             idx_edge_label: HashMap::new(),
             property_index: FxHashMap::default(),
+            composite_property_index: FxHashMap::default(),
         }
     }
 
@@ -248,10 +295,38 @@ impl SeleneGraph {
             .map(|entry| Arc::clone(&entry.index))
     }
 
+    /// Return a clone of the registered composite index.
+    #[must_use]
+    pub fn composite_property_index_for(
+        &self,
+        label: &IStr,
+        properties: &[IStr],
+    ) -> Option<Arc<CompositeTypedIndex>> {
+        self.composite_property_index_entry_for(label, properties)
+            .map(|entry| Arc::clone(&entry.index))
+    }
+
+    /// Return composite index metadata for a property set.
+    #[must_use]
+    pub fn composite_property_index_entry_for(
+        &self,
+        label: &IStr,
+        properties: &[IStr],
+    ) -> Option<&CompositePropertyIndexEntry> {
+        let key = composite_property_key(properties);
+        self.composite_property_index.get(&(*label, key))
+    }
+
     /// Number of distinct `(label, property)` indexes currently registered.
     #[must_use]
     pub fn property_index_count(&self) -> usize {
         self.property_index.len()
+    }
+
+    /// Number of distinct `(label, properties...)` indexes currently registered.
+    #[must_use]
+    pub fn composite_property_index_count(&self) -> usize {
+        self.composite_property_index.len()
     }
 
     /// Iterate built-in property indexes as owned `(label, property, kind)` tuples.
@@ -272,6 +347,22 @@ impl SeleneGraph {
         self.property_index
             .iter()
             .map(|((label, property), entry)| (*label, *property, entry.kind(), entry.name))
+    }
+
+    /// Iterate built-in composite property indexes with optional explicit catalog names.
+    pub fn iter_composite_property_index_entries(
+        &self,
+    ) -> impl Iterator<Item = CompositePropertyIndexEntryRow> + '_ {
+        self.composite_property_index
+            .iter()
+            .map(|((label, _), entry)| {
+                (
+                    *label,
+                    entry.declared_properties.clone(),
+                    entry.kinds(),
+                    entry.name,
+                )
+            })
     }
 
     /// Return rows matching `value` under a registered property index.
@@ -340,6 +431,12 @@ impl SeleneGraph {
     }
 }
 
+pub(crate) fn composite_property_key(properties: &[IStr]) -> SmallVec<[IStr; 4]> {
+    let mut key: SmallVec<[IStr; 4]> = properties.iter().copied().collect();
+    key.sort();
+    key
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,9 +450,11 @@ mod tests {
         assert_eq!(graph.label_count(), 0);
         assert_eq!(graph.edge_label_count(), 0);
         assert_eq!(graph.property_index_count(), 0);
+        assert_eq!(graph.composite_property_index_count(), 0);
         assert!(graph.idx_label.is_empty());
         assert!(graph.idx_edge_label.is_empty());
         assert!(graph.property_index.is_empty());
+        assert!(graph.composite_property_index.is_empty());
         assert_eq!(graph.meta.generation, 0);
         assert_eq!(graph.meta.next_node_id, 1);
         assert_eq!(graph.meta.next_edge_id, 1);
