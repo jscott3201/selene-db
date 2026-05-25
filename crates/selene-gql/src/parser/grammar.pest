@@ -436,7 +436,7 @@ same_expr            = { ^"SAME" ~ "(" ~ expr ~ ("," ~ expr)+ ~ ")" }
 property_exists_expr = { ^"PROPERTY_EXISTS" ~ "(" ~ expr ~ "," ~ string_lit ~ ")" }
 
 param_ref = @{ "$" ~ (LETTER | "_") ~ (LETTER | NUMBER | "_")* }
-typed_param_ref = { param_ref }
+typed_param_ref = { param_ref ~ ("::" ~ type_name)? }
 
 // Simple CASE: CASE expr WHEN val THEN result ... END
 // Searched CASE: CASE WHEN condition THEN result ... END
