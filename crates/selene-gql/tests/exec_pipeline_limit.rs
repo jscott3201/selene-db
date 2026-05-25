@@ -79,6 +79,7 @@ fn limit_parameter_without_binding_is_unbound() {
         &[PipelineOp::Limit {
             offset: LimitAmount::Parameter {
                 name: intern("rows").expect("interns"),
+                declared_type: None,
                 span: Default::default(),
             },
             count: LimitAmount::Literal(1),
