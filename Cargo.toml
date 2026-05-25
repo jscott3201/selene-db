@@ -113,3 +113,10 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 debug = true
+
+[profile.dev]
+# Line tables only — backtraces stay resolvable, full DWARF dropped.
+# Per CI's CARGO_PROFILE_TEST_DEBUG=0 posture, with the small concession
+# that dev builds keep line numbers for ergonomic panic reports.
+debug = "line-tables-only"
+incremental = true
