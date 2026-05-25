@@ -18,6 +18,7 @@
 //! `(label.as_str(), property.as_str())`; decode re-sorts to the receiver's
 //! local handle order before duplicate validation.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use rkyv::{
@@ -266,6 +267,46 @@ struct SchemaEntryV2 {
 
 const SCMA_V2_MAGIC: u8 = 0xA5;
 
+/// Identity for an entry in the composite-property-index snapshot section.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct CompositeSchemaKey {
+    /// Node label the composite registration applies to.
+    pub label: IStr,
+    /// Properties in declaration order.
+    pub properties: Vec<IStr>,
+}
+
+/// Persisted shape of a composite-property-index registration.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct CompositeSchemaEntry {
+    /// Indexable value kinds in declaration order.
+    pub kinds: Vec<TypedIndexKind>,
+    /// Optional explicit catalog name for the composite property index.
+    pub name: Option<IStr>,
+}
+
 pub(super) fn encode_meta(
     meta: &GraphMeta,
     sequence: u64,
@@ -442,6 +483,93 @@ fn decode_schema_v2(bytes: &[u8]) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate
 fn schema_wire_cmp<V>(lhs: &(SchemaKey, V), rhs: &(SchemaKey, V)) -> std::cmp::Ordering {
     (lhs.0.label.as_str(), lhs.0.property.as_str())
         .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
+}
+
+pub(super) fn encode_composite_schemas(
+    graph: &SeleneGraph,
+) -> Result<Vec<u8>, crate::ProviderError> {
+    let mut rows: Vec<(CompositeSchemaKey, CompositeSchemaEntry)> = graph
+        .composite_property_index
+        .iter()
+        .map(|((label, _), entry)| {
+            (
+                CompositeSchemaKey {
+                    label: *label,
+                    properties: entry.declared_properties.iter().copied().collect(),
+                },
+                CompositeSchemaEntry {
+                    kinds: entry.kinds().iter().copied().collect(),
+                    name: entry.name,
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(composite_schema_wire_cmp);
+    encode_rkyv(&rows, "CORE/CPIX")
+}
+
+pub(super) fn decode_composite_schemas(
+    bytes: &[u8],
+) -> Result<Vec<(CompositeSchemaKey, CompositeSchemaEntry)>, crate::ProviderError> {
+    let mut rows: Vec<(CompositeSchemaKey, CompositeSchemaEntry)> =
+        decode_rkyv(bytes, "CORE/CPIX")?;
+    validate_composite_schema_rows(&rows)?;
+    rows.sort_unstable_by(|lhs, rhs| lhs.0.cmp(&rhs.0));
+    Ok(rows)
+}
+
+fn composite_schema_wire_cmp(
+    lhs: &(CompositeSchemaKey, CompositeSchemaEntry),
+    rhs: &(CompositeSchemaKey, CompositeSchemaEntry),
+) -> std::cmp::Ordering {
+    lhs.0
+        .label
+        .as_str()
+        .cmp(rhs.0.label.as_str())
+        .then_with(|| {
+            lhs.0
+                .properties
+                .iter()
+                .map(|property| property.as_str())
+                .cmp(rhs.0.properties.iter().map(|property| property.as_str()))
+        })
+}
+
+fn validate_composite_schema_rows(
+    rows: &[(CompositeSchemaKey, CompositeSchemaEntry)],
+) -> Result<(), crate::ProviderError> {
+    let mut seen = BTreeSet::new();
+    for (key, entry) in rows {
+        if key.properties.is_empty() {
+            return Err(invalid_payload(format!(
+                "CORE/CPIX row for label {} has no properties",
+                key.label
+            )));
+        }
+        if key.properties.len() != entry.kinds.len() {
+            return Err(invalid_payload(format!(
+                "CORE/CPIX row for label {} has {} properties but {} kinds",
+                key.label,
+                key.properties.len(),
+                entry.kinds.len()
+            )));
+        }
+        let mut canonical = key.properties.clone();
+        canonical.sort_unstable();
+        if canonical.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(invalid_payload(format!(
+                "CORE/CPIX row for label {} repeats a property",
+                key.label
+            )));
+        }
+        if !seen.insert((key.label, canonical)) {
+            return Err(invalid_payload(format!(
+                "CORE/CPIX rows contain duplicate composite registration for label {}",
+                key.label
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub(super) fn ensure_section_within_cap(

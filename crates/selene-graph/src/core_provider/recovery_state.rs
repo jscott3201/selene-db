@@ -9,12 +9,13 @@ use selene_core::{
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
-    EdgeRow, MetaPayload, NodeRow, SchemaEntry, SchemaKey, decode_edges, decode_graph_types,
-    decode_meta, decode_nodes, decode_schemas,
+    CompositeSchemaEntry, CompositeSchemaKey, EdgeRow, MetaPayload, NodeRow, SchemaEntry,
+    SchemaKey, decode_composite_schemas, decode_edges, decode_graph_types, decode_meta,
+    decode_nodes, decode_schemas,
 };
 use crate::core_provider::{
-    CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB, inconsistent,
-    invalid_payload,
+    CORE_CPIX_SUB, CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_SCMA_SUB,
+    inconsistent, invalid_payload,
 };
 use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
@@ -34,6 +35,7 @@ pub(crate) struct RecoveryState {
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
+    composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     sequence: u64,
 }
 
@@ -103,6 +105,9 @@ impl RecoveryState {
             }
             CORE_SCMA_SUB => {
                 self.schemas = decode_schemas(bytes)?.into_iter().collect();
+            }
+            CORE_CPIX_SUB => {
+                self.composite_schemas = decode_composite_schemas(bytes)?;
             }
             _ => {
                 return Err(invalid_payload(format!("unknown CORE sub-tag {sub_tag}")));
@@ -352,6 +357,20 @@ impl RecoveryState {
                 PropertyIndexEntry::new(TypedIndex::new(entry.kind), entry.name),
             );
         }
+        for (key, entry) in self.composite_schemas {
+            let properties = SmallVec::from_iter(key.properties);
+            let kinds = SmallVec::from_iter(entry.kinds);
+            let canonical_key = crate::graph::composite_property_key(&properties);
+            graph.composite_property_index.insert(
+                (key.label, canonical_key),
+                CompositePropertyIndexEntry::new(
+                    crate::CompositeTypedIndex::new(kinds),
+                    properties,
+                    entry.name,
+                ),
+            );
+        }
+        crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
         replay_property_index_changes(&mut graph, &self.pending_property_index_changes)?;
         replay_composite_property_index_changes(
             &mut graph,

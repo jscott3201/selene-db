@@ -90,7 +90,6 @@ pub(crate) fn build_composite_property_index_lenient(
 }
 
 /// Rebuild every registered composite property index from graph columns.
-#[allow(dead_code)]
 pub(crate) fn rebuild_composite_property_indexes(
     graph: &mut crate::SeleneGraph,
 ) -> GraphResult<()> {
