@@ -306,6 +306,18 @@ mod tests {
         assert_ne!(arg_shape, arg_value);
         assert_ne!(yield_order, yield_order_reversed);
         assert_ne!(key("CALL cache.echo() YIELD out"), yield_alias);
+        assert_ne!(
+            key("CALL cache.echo($p)"),
+            key("CALL cache.echo($p :: INT)")
+        );
+        assert_ne!(
+            key("CALL cache.echo($p :: INT)"),
+            key("CALL cache.echo($p :: STRING)")
+        );
+        assert_eq!(
+            key("CALL cache.echo($p :: INT)").canonical_source(),
+            "CALL cache.echo($p :: INTEGER)"
+        );
 
         let statement =
             parse("CALL cache.echo(1 + 2, $p) YIELD out AS alias").expect("source parses");

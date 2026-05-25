@@ -13,6 +13,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Vendor `IM_TYPED_PARAMS` inline typed parameter declarations in
+  `selene-gql`: `$id :: TYPE` is now parsed at expression and LIMIT/OFFSET
+  parameter sites, typed by the analyzer, validated against bound session
+  values at runtime, formatted into CALL cache canonicalization, and attributed
+  by the Flagger. This closes the BRIEF-115 declared-parameter scope cut as a
+  selene-db extension; ISO §22.1 external typed bindings remain the standard
+  contract for future strict-ISO work. Public AST/IR note:
+  `LimitValue::Parameter` changed from tuple to struct shape and
+  `#[non_exhaustive]` was added to both `LimitValue` and `LimitAmount`.
 - Composite-property node indexes across `selene-graph`, `selene-core`,
   `selene-persist`, `selene-gql`, and `selene-pack`: `CREATE INDEX <name> ON
   :Label(a, b, c)` now registers durable tuple indexes, maintains them across

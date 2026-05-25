@@ -19,6 +19,7 @@ pub(crate) mod evaluator;
 mod expand;
 mod hash_join;
 mod outer;
+mod parameter_type;
 mod path_mode;
 mod path_search;
 mod pattern;

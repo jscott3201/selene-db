@@ -151,7 +151,15 @@ pub enum AnalysisError {
         #[label("incompatible type")]
         span: SourceSpan,
     },
-
+    /// Conflicting inline types were declared for one parameter.
+    #[error("conflicting declared types for parameter ${name}")]
+    #[diagnostic(code(SLENE_GQL_22G03))]
+    ConflictingParameterTypes {
+        /// Name without the leading `$`.
+        name: IStr,
+        /// Conflicts in encounter order.
+        declarations: Vec<(GqlType, SourceSpan)>,
+    },
     /// Procedure name was not registered.
     #[error("unknown procedure: {}", display_qualified_name(name))]
     #[diagnostic(code(SLENE_GQL_42N04))]
@@ -449,6 +457,8 @@ pub enum TypeMismatchContext {
         /// Zero-based positional argument index.
         position: usize,
     },
+    /// `LIMIT` / `OFFSET` parameter type declaration cannot produce an amount.
+    LimitAmount,
 }
 
 impl std::fmt::Display for TypeMismatchContext {
@@ -487,6 +497,7 @@ impl std::fmt::Display for TypeMismatchContext {
                 write!(f, "argument {position} ({parameter}) of ")?;
                 fmt_qualified_name(f, procedure)
             }
+            Self::LimitAmount => f.write_str("LIMIT/OFFSET parameter"),
         }
     }
 }
@@ -541,6 +552,8 @@ pub enum ExpectedType {
     Comparable,
     /// List or string type.
     ListOrString,
+    /// Non-negative integer amount.
+    LimitAmount,
     /// One specific GQL type.
     Specific(GqlType),
 }
@@ -553,6 +566,7 @@ impl std::fmt::Display for ExpectedType {
             Self::String => f.write_str("string"),
             Self::Comparable => f.write_str("comparable"),
             Self::ListOrString => f.write_str("list or string"),
+            Self::LimitAmount => f.write_str("non-negative integer"),
             Self::Specific(ty) => write!(f, "{ty:?}"),
         }
     }
@@ -647,7 +661,6 @@ impl std::fmt::Display for PatternElementKind {
         })
     }
 }
-
 impl AnalysisError {
     /// Return this error's ISO GQLSTATUS code.
     #[must_use]
@@ -662,7 +675,9 @@ impl AnalysisError {
             Self::ValueSubqueryShapeViolation { .. } => GqlStatus::SYNTAX_ERROR,
             Self::InvalidReference { .. } => GqlStatus::INVALID_REFERENCE,
             Self::RecursionLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
-            Self::TypeMismatch { .. } => GqlStatus::DATATYPE_MISMATCH,
+            Self::TypeMismatch { .. } | Self::ConflictingParameterTypes { .. } => {
+                GqlStatus::DATATYPE_MISMATCH
+            }
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,
             Self::WrongArgumentCount { .. } => GqlStatus::DATATYPE_MISMATCH,
             Self::UnknownYieldColumn { .. } => GqlStatus::UNDEFINED_REFERENCE,

@@ -282,6 +282,27 @@ fn normalized_predicate_has_no_feature_id_and_stays_unflagged() {
     parse("RETURN n IS NORMALIZED").expect("NORMALIZED has no feature ID");
 }
 
+#[test]
+fn typed_parameter_feature_is_recorded_for_value_and_limit_surfaces() {
+    let typed_value = feature_walk(&parse("RETURN $id :: INT").expect("source parses"))
+        .into_iter()
+        .filter(|feature| feature.feature_id == FeatureId::IM_TYPED_PARAMS)
+        .count();
+    assert_eq!(typed_value, 1);
+
+    let typed_limit =
+        feature_walk(&parse("MATCH (n) RETURN n LIMIT $count :: INT").expect("source parses"))
+            .into_iter()
+            .filter(|feature| feature.feature_id == FeatureId::IM_TYPED_PARAMS)
+            .count();
+    assert_eq!(typed_limit, 1);
+
+    let bare_value = feature_walk(&parse("RETURN $id").expect("source parses"))
+        .into_iter()
+        .any(|feature| feature.feature_id == FeatureId::IM_TYPED_PARAMS);
+    assert!(!bare_value);
+}
+
 fn assert_feature(error: ParserError, expected: FeatureId) {
     let ParserError::UnsupportedFeature { feature_id, .. } = error else {
         panic!("expected UnsupportedFeature, got {error:?}");

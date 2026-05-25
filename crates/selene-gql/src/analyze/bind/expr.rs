@@ -38,7 +38,9 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let binding = ctx.resolve(*name, *span, BindingUseKind::Variable)?;
                 ctx.binding_type(binding)
             }
-            ValueExpr::Parameter { .. } => AnalyzedType::Dynamic,
+            ValueExpr::Parameter { declared_type, .. } => declared_type
+                .clone()
+                .map_or(AnalyzedType::Dynamic, AnalyzedType::Resolved),
             ValueExpr::PropertyAccess { target, span, .. } => {
                 let target_id = bind_value_expr(ctx, target)?;
                 reject_group_variable_property_access(ctx.expr_type(target_id), *span)?;

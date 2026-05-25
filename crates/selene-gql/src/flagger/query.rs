@@ -3,7 +3,7 @@
 use selene_core::feature_register::FeatureId;
 
 use crate::{
-    PipelineStatement, QueryPipeline, ReturnClause, SetOp, Statement, WithClause,
+    LimitValue, PipelineStatement, QueryPipeline, ReturnClause, SetOp, Statement, WithClause,
     ast::{
         pattern::{
             EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode,
@@ -69,8 +69,14 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
         PipelineStatement::Let(values) => let_bindings(values, uses),
         PipelineStatement::Unwind(value) => unwind(value, uses),
         PipelineStatement::Sorting(values) => order_terms(values, uses),
-        PipelineStatement::Limit(value) => record_feature(uses, FeatureId::GQ13, value.span()),
-        PipelineStatement::Offset(value) => record_feature(uses, FeatureId::GQ12, value.span()),
+        PipelineStatement::Limit(value) => {
+            record_feature(uses, FeatureId::GQ13, value.span());
+            limit_value(value, uses);
+        }
+        PipelineStatement::Offset(value) => {
+            record_feature(uses, FeatureId::GQ12, value.span());
+            limit_value(value, uses);
+        }
         PipelineStatement::Return(value) => return_clause(value, uses),
         PipelineStatement::With(value) => with_clause(value, uses),
         PipelineStatement::Call(value) => call::procedure_call(value, uses),
@@ -83,6 +89,17 @@ pub(crate) fn pipeline_statement(statement: &PipelineStatement, uses: &mut Vec<F
             }
             query_pipeline(&value.body, uses);
         }
+    }
+}
+
+fn limit_value(value: &LimitValue, uses: &mut Vec<FeatureUse>) {
+    if let LimitValue::Parameter {
+        declared_type: Some(_),
+        span,
+        ..
+    } = value
+    {
+        record_feature(uses, FeatureId::IM_TYPED_PARAMS, *span);
     }
 }
 

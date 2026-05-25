@@ -90,6 +90,7 @@ feature_ids! {
     IM_UUID = "IM_UUID" => "selene-db UUID extension";
     IM_EXTENDS = "IM_EXTENDS" => "selene-db EXTENDS type composition extension";
     IM_INDEX_DDL = "IM_INDEX_DDL" => "selene-db named index DDL extension";
+    IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
     GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
@@ -210,6 +211,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::IM_UUID,
     FeatureId::IM_EXTENDS,
     FeatureId::IM_INDEX_DDL,
+    FeatureId::IM_TYPED_PARAMS,
     FeatureId::GH02,
     FeatureId::GG01,
     FeatureId::GG02,

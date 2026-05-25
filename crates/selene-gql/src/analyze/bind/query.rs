@@ -3,12 +3,12 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    InlineProcedureCall, LetBinding, LimitValue, OrderTerm, PipelineStatement, ProcedureMutability,
-    QueryPipeline, ReturnClause, ReturnItem, SourceSpan, UnwindStatement, ValueExpr, WithClause,
-    YieldColumn,
+    GqlType, InlineProcedureCall, LetBinding, LimitValue, OrderTerm, PipelineStatement,
+    ProcedureMutability, QueryPipeline, ReturnClause, ReturnItem, SourceSpan, UnwindStatement,
+    ValueExpr, WithClause, YieldColumn,
     analyze::{
         BindingDeclKind, BindingId, ScopeId,
-        error::{AnalysisError, ConditionClause},
+        error::{AnalysisError, ConditionClause, ExpectedType, TypeMismatchContext},
         types::AnalyzedType,
     },
 };
@@ -20,6 +20,7 @@ pub(crate) fn bind_query_pipeline(
     ctx: &mut BindContext,
     pipeline: &mut QueryPipeline,
 ) -> Result<(), AnalysisError> {
+    super::parameters::validate_parameter_declarations(pipeline)?;
     for statement in &mut pipeline.statements {
         bind_pipeline_statement(ctx, statement)?;
     }
@@ -40,8 +41,7 @@ pub(crate) fn bind_pipeline_statement(
         PipelineStatement::Unwind(unwind) => bind_unwind(ctx, unwind),
         PipelineStatement::Sorting(terms) => bind_sorting(ctx, terms),
         PipelineStatement::Limit(value) | PipelineStatement::Offset(value) => {
-            bind_limit_value(value);
-            Ok(())
+            bind_limit_value(value)
         }
         PipelineStatement::Return(clause) => bind_return_clause(ctx, clause),
         PipelineStatement::With(clause) => bind_with_clause(ctx, clause),
@@ -524,10 +524,38 @@ fn bind_sorting(ctx: &mut BindContext, terms: &[OrderTerm]) -> Result<(), Analys
     Ok(())
 }
 
-fn bind_limit_value(value: &LimitValue) {
+fn bind_limit_value(value: &LimitValue) -> Result<(), AnalysisError> {
     match value {
-        LimitValue::Count(..) | LimitValue::Parameter(..) => {}
+        LimitValue::Count(..) => Ok(()),
+        LimitValue::Parameter {
+            declared_type: Some(declared_type),
+            span,
+            ..
+        } if !is_limit_amount_type(declared_type) => Err(AnalysisError::TypeMismatch {
+            context: TypeMismatchContext::LimitAmount,
+            expected: ExpectedType::LimitAmount,
+            found: declared_type.clone(),
+            span: *span,
+        }),
+        LimitValue::Parameter { .. } => Ok(()),
     }
+}
+
+fn is_limit_amount_type(ty: &GqlType) -> bool {
+    matches!(
+        ty,
+        GqlType::Integer
+            | GqlType::Int8
+            | GqlType::Int16
+            | GqlType::Int32
+            | GqlType::Int64
+            | GqlType::SmallInt
+            | GqlType::BigInt
+            | GqlType::Uint8
+            | GqlType::Uint16
+            | GqlType::Uint32
+            | GqlType::Uint64
+    )
 }
 
 fn projection_item_type(ctx: &BindContext, item: &ReturnItem) -> AnalyzedType {

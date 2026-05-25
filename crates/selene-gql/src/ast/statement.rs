@@ -220,11 +220,19 @@ pub enum NullsPolicy {
 
 /// `LIMIT` / `OFFSET` value.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[non_exhaustive]
 pub enum LimitValue {
     /// Literal count.
     Count(u64, SourceSpan),
-    /// Parameter name.
-    Parameter(IStr, SourceSpan),
+    /// Parameter reference.
+    Parameter {
+        /// Interned parameter name without the leading `$`.
+        name: IStr,
+        /// Optional inline declared parameter type.
+        declared_type: Option<GqlType>,
+        /// Source span of the parameter reference.
+        span: SourceSpan,
+    },
 }
 
 impl LimitValue {
@@ -232,7 +240,7 @@ impl LimitValue {
     #[must_use]
     pub const fn span(&self) -> SourceSpan {
         match self {
-            Self::Count(_, span) | Self::Parameter(_, span) => *span,
+            Self::Count(_, span) | Self::Parameter { span, .. } => *span,
         }
     }
 }

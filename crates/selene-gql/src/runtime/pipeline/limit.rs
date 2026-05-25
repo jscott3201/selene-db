@@ -1,6 +1,6 @@
 use crate::{
     LimitAmount, SourceSpan,
-    runtime::{BindingTable, ExecutorError, TxContext},
+    runtime::{BindingTable, ExecutorError, TxContext, parameter_type},
 };
 use selene_core::{IStr, Value};
 
@@ -25,8 +25,17 @@ pub(super) fn resolve_amount(
 ) -> Result<u64, ExecutorError> {
     match amount {
         LimitAmount::Literal(value) => Ok(*value),
-        LimitAmount::Parameter { name, span } => match ctx.parameters().get(name) {
-            Some(value) => parameter_amount(*name, *span, value),
+        LimitAmount::Parameter {
+            name,
+            declared_type,
+            span,
+        } => match ctx.parameters().get(name) {
+            Some(value) => {
+                if let Some(declared_type) = declared_type {
+                    parameter_type::validate_declared_type(*name, value, declared_type, *span)?;
+                }
+                parameter_amount(*name, *span, value)
+            }
             None => Err(ExecutorError::UnboundParameter {
                 name: *name,
                 span: *span,
@@ -47,7 +56,7 @@ fn parameter_amount(name: IStr, span: SourceSpan, value: &Value) -> Result<u64, 
 fn invalid_parameter_type(name: IStr, span: SourceSpan, actual: &'static str) -> ExecutorError {
     ExecutorError::InvalidParameterType {
         name,
-        expected: "non-negative integer",
+        expected: "non-negative integer".into(),
         actual,
         span,
     }
