@@ -48,7 +48,9 @@ const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
         | DdlStatement::CreateNodeType { .. }
         | DdlStatement::CreateEdgeType { .. }
         | DdlStatement::DropNodeType { .. }
-        | DdlStatement::DropEdgeType { .. } => StatementCategory::CatalogModifying,
+        | DdlStatement::DropEdgeType { .. }
+        | DdlStatement::CreateIndex { .. }
+        | DdlStatement::DropIndex { .. } => StatementCategory::CatalogModifying,
     }
 }
 

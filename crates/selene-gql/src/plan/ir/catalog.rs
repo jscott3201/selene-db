@@ -83,6 +83,28 @@ pub enum CatalogOp {
         /// Source span.
         span: SourceSpan,
     },
+    /// Create a named property index.
+    CreateIndex {
+        /// Catalog index name.
+        name: IStr,
+        /// Node label.
+        label: IStr,
+        /// Property names in source order.
+        properties: Vec<IStr>,
+        /// Whether `IF NOT EXISTS` was requested.
+        if_not_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// Drop a named property index.
+    DropIndex {
+        /// Catalog index name.
+        name: IStr,
+        /// Whether `IF EXISTS` was requested.
+        if_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// Show node types.
     ShowNodeTypes(SourceSpan),
     /// Show edge types.

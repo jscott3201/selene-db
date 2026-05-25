@@ -79,6 +79,9 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
                 record_feature(uses, FeatureId::GC03, *span);
             }
         }
+        DdlStatement::CreateIndex { span, .. } | DdlStatement::DropIndex { span, .. } => {
+            record_feature(uses, FeatureId::IM_INDEX_DDL, *span);
+        }
         DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
             type_ddl(*span, uses);
         }

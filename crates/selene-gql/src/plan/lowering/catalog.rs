@@ -93,6 +93,28 @@ pub(crate) fn lower_ddl(
             if_exists: *if_exists,
             span: *span,
         },
+        DdlStatement::CreateIndex {
+            name,
+            label,
+            properties,
+            if_not_exists,
+            span,
+        } => CatalogOp::CreateIndex {
+            name: *name,
+            label: *label,
+            properties: properties.clone(),
+            if_not_exists: *if_not_exists,
+            span: *span,
+        },
+        DdlStatement::DropIndex {
+            name,
+            if_exists,
+            span,
+        } => CatalogOp::DropIndex {
+            name: *name,
+            if_exists: *if_exists,
+            span: *span,
+        },
         DdlStatement::ShowNodeTypes(span) => CatalogOp::ShowNodeTypes(*span),
         DdlStatement::ShowEdgeTypes(span) => CatalogOp::ShowEdgeTypes(*span),
         DdlStatement::ShowIndexes(span) => CatalogOp::ShowIndexes(*span),

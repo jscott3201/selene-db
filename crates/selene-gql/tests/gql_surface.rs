@@ -8,9 +8,10 @@ use std::sync::{
 use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, IStr, Value, intern};
 use selene_gql::{
-    BindingTable, EmptyProcedureRegistry, ProcedureContext, ProcedureError, ProcedureHandle,
-    ProcedureMetadata, ProcedureMutability, ProcedureOutputSchema, ProcedureRegistry,
-    ProcedureResult, ProcedureSignature, ProcedureTier, Session, StatementOutput, parse,
+    BindingTable, CatalogOp, EmptyProcedureRegistry, PipelineOp, ProcedureContext, ProcedureError,
+    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputSchema,
+    ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier, Session,
+    StatementOutput, analyze, parse, plan,
 };
 use selene_graph::{IndexProvider, SharedGraph};
 use selene_pack::ProcedurePackRegistry;
@@ -215,14 +216,30 @@ fn feature_status_procedure_returns_supported_rows() {
 }
 
 #[test]
-fn create_index_rejection_names_follow_up_storage_dependency() {
-    let error = parse("CREATE INDEX sensor_ts ON :Sensor(timestamp)")
-        .expect_err("named CREATE INDEX is still rejected");
+fn create_index_surface_parses_and_preserves_planner_fields() {
+    let statement = parse("CREATE INDEX sensor_ts ON :Sensor(timestamp)").expect("DDL parses");
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("DDL analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("DDL plans");
+    let [
+        PipelineOp::Catalog(CatalogOp::CreateIndex {
+            name,
+            label,
+            properties,
+            ..
+        }),
+    ] = plan.pipeline.as_slice()
+    else {
+        panic!("expected CREATE INDEX catalog op");
+    };
 
-    assert!(
-        error
-            .to_string()
-            .contains("storage-layer named-index support")
+    assert_eq!(name.as_str(), "sensor_ts");
+    assert_eq!(label.as_str(), "Sensor");
+    assert_eq!(
+        properties
+            .iter()
+            .map(|property| property.as_str())
+            .collect::<Vec<_>>(),
+        ["timestamp"]
     );
 }
 

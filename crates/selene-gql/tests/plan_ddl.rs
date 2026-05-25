@@ -89,6 +89,44 @@ fn drop_type_and_show_type_plans() {
 }
 
 #[test]
+fn create_index_plan_preserves_name_label_properties_and_if_not_exists() {
+    let plan = plan_one("CREATE INDEX IF NOT EXISTS sensor_ts_idx ON :Sensor(ts, value)");
+    let CatalogOp::CreateIndex {
+        name,
+        label,
+        properties,
+        if_not_exists,
+        ..
+    } = catalog_op(&plan)
+    else {
+        panic!("expected create index");
+    };
+    assert_eq!(name.as_str(), "sensor_ts_idx");
+    assert_eq!(label.as_str(), "Sensor");
+    assert_eq!(
+        properties
+            .iter()
+            .map(|property| property.as_str())
+            .collect::<Vec<_>>(),
+        ["ts", "value"]
+    );
+    assert!(*if_not_exists);
+}
+
+#[test]
+fn drop_index_plan_preserves_name_and_if_exists() {
+    let plan = plan_one("DROP INDEX IF EXISTS sensor_ts_idx");
+    let CatalogOp::DropIndex {
+        name, if_exists, ..
+    } = catalog_op(&plan)
+    else {
+        panic!("expected drop index");
+    };
+    assert_eq!(name.as_str(), "sensor_ts_idx");
+    assert!(*if_exists);
+}
+
+#[test]
 fn all_property_constraints_lower() {
     let plan = plan_one(
         "CREATE NODE TYPE :Sensor \

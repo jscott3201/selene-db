@@ -202,6 +202,39 @@ fn parse_indexed_constraint_with_explicit_name() {
 }
 
 #[test]
+fn parse_named_index_ddl() {
+    let DdlStatement::CreateIndex {
+        name,
+        label,
+        properties,
+        if_not_exists,
+        ..
+    } = parse_ddl("CREATE INDEX IF NOT EXISTS sensor_ts_idx ON :Sensor(ts, value)")
+    else {
+        panic!("expected CREATE INDEX");
+    };
+    assert_eq!(name.as_str(), "sensor_ts_idx");
+    assert_eq!(label.as_str(), "Sensor");
+    assert_eq!(
+        properties
+            .iter()
+            .map(|property| property.as_str())
+            .collect::<Vec<_>>(),
+        ["ts", "value"]
+    );
+    assert!(if_not_exists);
+
+    let DdlStatement::DropIndex {
+        name, if_exists, ..
+    } = parse_ddl("DROP INDEX IF EXISTS sensor_ts_idx")
+    else {
+        panic!("expected DROP INDEX");
+    };
+    assert_eq!(name.as_str(), "sensor_ts_idx");
+    assert!(if_exists);
+}
+
+#[test]
 fn parse_top_level_call_variants() {
     let Statement::Call(call) = parse("CALL pkg.fn(1, 'hello') YIELD col1").expect("CALL parses")
     else {
@@ -269,7 +302,6 @@ fn deferred_surfaces_return_not_implemented() {
         "CREATE TRIGGER trig AFTER INSERT ON :Person EXECUTE SET n.x = 1",
         "CREATE MATERIALIZED VIEW v AS MATCH (n) RETURN n",
         "CREATE PROCEDURE pkg.fn() { RETURN 1 }",
-        "CREATE INDEX idx ON :Person (name)",
         "CREATE USER alice SET PASSWORD 'pw'",
         "CREATE ROLE admin",
         "GRANT ROLE admin TO alice",

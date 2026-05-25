@@ -8,6 +8,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Implementation-defined named index DDL in `selene-gql`: `CREATE INDEX <name>
+  ON :Label(property)` and `DROP INDEX <name>` now execute for single-property
+  node indexes, infer the storage index kind from the declared property type,
+  resolve drops by catalog name, enforce DDL-level name uniqueness, and record
+  the vendor `IM_INDEX_DDL` feature ID. Composite-property indexes, edge-property
+  indexes, and `SHOW INDEXES` provider aggregation remain split into BRIEF-140b
+  through BRIEF-140d.
 - Implementation-defined `EXTENDS` property composition for `CREATE NODE TYPE`
   and `CREATE EDGE TYPE` in `selene-gql`. Parent properties are flattened at
   CREATE time, same-kind parents are required, exact-match redeclarations
