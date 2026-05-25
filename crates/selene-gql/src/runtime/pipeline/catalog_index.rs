@@ -15,6 +15,11 @@ pub(super) struct InlineIndexSpec {
     pub(super) span: SourceSpan,
 }
 
+pub(super) struct IndexConflictReport {
+    pub(super) same_pair: Option<Option<IStr>>,
+    pub(super) other_name_matches: Vec<(IStr, IStr)>,
+}
+
 pub(super) fn inline_index_specs(
     properties: &[PlannedTypePropertyDef],
 ) -> Result<Vec<InlineIndexSpec>, ExecutorError> {
@@ -56,6 +61,42 @@ pub(super) fn validate_index_name_collisions(
         used.push(rendered);
     }
     Ok(())
+}
+
+pub(super) fn lookup_index_entries(
+    graph: &selene_graph::SeleneGraph,
+    ident: IStr,
+    label: IStr,
+    property: IStr,
+) -> IndexConflictReport {
+    let mut same_pair = None;
+    let mut other_name_matches = Vec::new();
+    for (entry_label, entry_property, _, entry_name) in graph.iter_property_index_entries() {
+        if entry_label == label && entry_property == property {
+            same_pair = Some(entry_name);
+            continue;
+        }
+        if render_index_name(entry_label, entry_property, entry_name) == ident.as_str() {
+            other_name_matches.push((entry_label, entry_property));
+        }
+    }
+    IndexConflictReport {
+        same_pair,
+        other_name_matches,
+    }
+}
+
+pub(super) fn resolve_drop_index_matches(
+    graph: &selene_graph::SeleneGraph,
+    ident: IStr,
+) -> Vec<(IStr, IStr)> {
+    graph
+        .iter_property_index_entries()
+        .filter_map(|(label, property, _, name)| {
+            (render_index_name(label, property, name) == ident.as_str())
+                .then_some((label, property))
+        })
+        .collect()
 }
 
 fn gql_type_to_index_kind(

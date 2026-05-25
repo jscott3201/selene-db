@@ -2,6 +2,7 @@
 
 mod compose;
 mod endpoints;
+mod index_ddl;
 mod property;
 
 use selene_core::{IStr, LabelSet, Value, intern_with_admission};
@@ -13,6 +14,7 @@ use selene_graph::{
 use self::{
     compose::{compose_edge_properties, compose_node_properties},
     endpoints::resolve_endpoints,
+    index_ddl::{create_index_plan, resolve_drop_index},
     property::{property_defs, render_property_value_type},
 };
 use super::catalog_index::{
@@ -170,10 +172,39 @@ pub(super) fn execute(
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
-        CatalogOp::CreateIndex { .. } | CatalogOp::DropIndex { .. } => {
-            Err(ExecutorError::ImplementationDefined {
-                detail: "named index DDL runtime executor ships in BRIEF-140a C1",
-            })
+        CatalogOp::CreateIndex {
+            name,
+            label,
+            properties,
+            if_not_exists,
+            span,
+        } => {
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let Some((property, kind)) =
+                create_index_plan(ctx, *name, *label, properties, *if_not_exists, *span)?
+            else {
+                return Ok(table);
+            };
+            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                .create_property_index_named(*label, property, kind, Some(*name))
+                .map_err(|source| catalog_graph_error(source, *span))?;
+            Ok(table)
+        }
+        CatalogOp::DropIndex {
+            name,
+            if_exists,
+            span,
+        } => {
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            let Some((label, property)) =
+                resolve_drop_index(ctx.snapshot(), *name, *if_exists, *span)?
+            else {
+                return Ok(table);
+            };
+            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                .drop_property_index(label, property)
+                .map_err(|source| catalog_graph_error(source, *span))?;
+            Ok(table)
         }
         CatalogOp::ShowNodeTypes(_) => show_node_types(ctx),
         CatalogOp::ShowEdgeTypes(_) => show_edge_types(ctx),
