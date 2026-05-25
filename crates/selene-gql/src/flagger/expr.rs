@@ -16,9 +16,16 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
     match value {
         ValueExpr::Literal(value) => literal(value, uses),
         ValueExpr::Variable { .. } => {}
-        ValueExpr::Parameter { span, .. } => {
+        ValueExpr::Parameter {
+            declared_type,
+            span,
+            ..
+        } => {
             record_feature(uses, FeatureId::GE04, *span);
             record_feature(uses, FeatureId::GE05, *span);
+            if declared_type.is_some() {
+                record_feature(uses, FeatureId::IM_TYPED_PARAMS, *span);
+            }
         }
         ValueExpr::PropertyAccess { target, .. } => self::value(target, uses),
         ValueExpr::ListAccess { target, index, .. } => {
