@@ -17,7 +17,7 @@ pub(super) struct InlineIndexSpec {
 }
 
 pub(super) struct IndexConflictReport {
-    pub(super) same_pair: Option<Option<IStr>>,
+    pub(super) same_pair_name: Option<String>,
     pub(super) other_name_matches: Vec<DropTarget>,
 }
 
@@ -89,11 +89,11 @@ pub(super) fn lookup_index_entries(
     label: IStr,
     properties: &[IStr],
 ) -> IndexConflictReport {
-    let mut same_pair = None;
+    let mut same_pair_name = None;
     let mut other_name_matches = Vec::new();
     for (entry_label, entry_property, _, entry_name) in graph.iter_property_index_entries() {
         if entry_label == label && properties == [entry_property] {
-            same_pair = Some(entry_name);
+            same_pair_name = Some(render_index_name(entry_label, entry_property, entry_name));
             continue;
         }
         if render_index_name(entry_label, entry_property, entry_name) == ident.as_str() {
@@ -107,7 +107,11 @@ pub(super) fn lookup_index_entries(
         graph.iter_composite_property_index_entries()
     {
         if entry_label == label && same_property_set(&entry_properties, properties) {
-            same_pair = Some(entry_name);
+            same_pair_name = Some(render_composite_index_name(
+                entry_label,
+                &entry_properties,
+                entry_name,
+            ));
             continue;
         }
         if render_composite_index_name(entry_label, &entry_properties, entry_name) == ident.as_str()
@@ -119,7 +123,7 @@ pub(super) fn lookup_index_entries(
         }
     }
     IndexConflictReport {
-        same_pair,
+        same_pair_name,
         other_name_matches,
     }
 }

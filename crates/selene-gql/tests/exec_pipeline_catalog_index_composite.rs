@@ -227,6 +227,32 @@ fn create_drop_and_same_property_set_idempotency_paths_work() {
 }
 
 #[test]
+fn same_property_set_duplicate_reports_existing_unnamed_declaration_order() {
+    let graph = empty_closed_graph(14_107);
+    create_sensor_type(&graph);
+    let sensor = istr("Sensor");
+    let ts = istr("ts");
+    let location = istr("location");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_composite_property_index_named(
+                sensor,
+                smallvec![ts, location],
+                smallvec![TypedIndexKind::I64, TypedIndexKind::String],
+                None,
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    assert_eq!(
+        duplicate_name(&graph, "CREATE INDEX requested ON :Sensor(location, ts)").as_str(),
+        "idx:6:Sensor:c2:2:ts:8:location"
+    );
+}
+
+#[test]
 fn create_composite_rejects_duplicate_unsupported_and_edge_labels() {
     let graph = empty_closed_graph(14_102);
     create_sensor_type(&graph);

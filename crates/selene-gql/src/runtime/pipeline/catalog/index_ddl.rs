@@ -12,8 +12,7 @@ use crate::{
 };
 
 use super::super::catalog_index::{
-    DropTarget, lookup_index_entries, render_composite_index_name, render_drop_target,
-    render_index_name, resolve_drop_index_matches,
+    DropTarget, lookup_index_entries, render_drop_target, resolve_drop_index_matches,
 };
 
 pub(super) enum IndexPath {
@@ -75,14 +74,13 @@ fn create_single_index_plan(
             span,
         });
     }
-    if let Some(existing_name) = report.same_pair {
+    if let Some(existing_name) = report.same_pair_name {
         if if_not_exists {
             return Ok(None);
         }
-        let existing = render_index_name(label, property, existing_name);
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing)?,
+            name: intern_runtime(&existing_name)?,
             span,
         });
     }
@@ -148,14 +146,13 @@ fn create_composite_index_plan(
             span,
         });
     }
-    if let Some(existing_name) = report.same_pair {
+    if let Some(existing_name) = report.same_pair_name {
         if if_not_exists {
             return Ok(None);
         }
-        let existing = render_composite_index_name(label, &properties, existing_name);
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
-            name: intern_runtime(&existing)?,
+            name: intern_runtime(&existing_name)?,
             span,
         });
     }
