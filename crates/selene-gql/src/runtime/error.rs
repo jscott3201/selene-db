@@ -1,6 +1,9 @@
 //! Executor diagnostics and GQLSTATUS mapping.
 
-use std::time::{Duration, Instant};
+use std::{
+    borrow::Cow,
+    time::{Duration, Instant},
+};
 
 use selene_core::IStr;
 
@@ -194,7 +197,7 @@ pub enum ExecutorError {
         /// Parameter name without the leading `$`.
         name: IStr,
         /// Human-readable expected type.
-        expected: &'static str,
+        expected: Cow<'static, str>,
         /// Human-readable actual type.
         actual: &'static str,
         /// Source span requiring the parameter.

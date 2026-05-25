@@ -606,10 +606,14 @@ pub(super) fn build_typed_param_ref(
     debug_assert_eq!(pair.as_rule(), Rule::typed_param_ref);
     let source_span = span(&pair);
     let mut name = None;
+    let mut param_span = None;
     let mut declared_type = None;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::param_ref => name = Some(intern_param(child, budget)?),
+            Rule::param_ref => {
+                param_span = Some(span(&child));
+                name = Some(intern_param(child, budget)?);
+            }
             Rule::type_name => declared_type = Some(expr::build_type_name(child)?),
             _ => return Err(unexpected_pair(child, "unexpected typed parameter child")),
         }
@@ -621,6 +625,11 @@ pub(super) fn build_typed_param_ref(
             None,
         )
     })?;
+    let source_span = if declared_type.is_some() {
+        source_span
+    } else {
+        param_span.unwrap_or(source_span)
+    };
     Ok((name, declared_type, source_span))
 }
 

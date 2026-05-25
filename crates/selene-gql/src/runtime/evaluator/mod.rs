@@ -79,16 +79,11 @@ pub fn evaluate(
             .map(|item| evaluate(item, binding, schema, ctx))
             .collect::<Result<Vec<_>, _>>()
             .map(Value::List),
-        ValueExpr::Parameter { name, span, .. } => {
-            ctx.tx
-                .parameters()
-                .get(name)
-                .cloned()
-                .ok_or(ExecutorError::UnboundParameter {
-                    name: *name,
-                    span: *span,
-                })
-        }
+        ValueExpr::Parameter {
+            name,
+            declared_type,
+            span,
+        } => resolve_parameter(*name, declared_type.as_ref(), *span, ctx),
         ValueExpr::FunctionCall {
             name,
             args,
@@ -220,6 +215,24 @@ fn lookup_variable(
             name: name.as_str().to_owned(),
             span,
         })
+}
+
+fn resolve_parameter(
+    name: selene_core::IStr,
+    declared_type: Option<&crate::GqlType>,
+    span: SourceSpan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Value, ExecutorError> {
+    let value = ctx
+        .tx
+        .parameters()
+        .get(&name)
+        .cloned()
+        .ok_or(ExecutorError::UnboundParameter { name, span })?;
+    if let Some(declared_type) = declared_type {
+        crate::runtime::parameter_type::validate_declared_type(name, &value, declared_type, span)?;
+    }
+    Ok(value)
 }
 
 pub(super) fn property_access(

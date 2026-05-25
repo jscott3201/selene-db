@@ -135,10 +135,10 @@ fn limit_parameter_negative_rejected() {
     assert!(matches!(
         err,
         ExecutorError::InvalidParameterType {
-            expected: "non-negative integer",
+            ref expected,
             actual: "negative integer",
             ..
-        }
+        } if expected == "non-negative integer"
     ));
     assert_eq!(err.gqlstatus(), GqlStatus::INVALID_PROCEDURE_ARGUMENT);
 }
@@ -155,10 +155,10 @@ fn limit_parameter_non_integer_rejected() {
     assert!(matches!(
         err,
         ExecutorError::InvalidParameterType {
-            expected: "non-negative integer",
+            ref expected,
             actual: "string",
             ..
-        }
+        } if expected == "non-negative integer"
     ));
 }
 
