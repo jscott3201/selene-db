@@ -54,6 +54,8 @@ pub enum CatalogOp {
         or_replace: bool,
         /// Whether `IF NOT EXISTS` was requested.
         if_not_exists: bool,
+        /// Optional parent type.
+        extends: Option<IStr>,
         /// Optional endpoint declaration.
         endpoints: Option<EdgeEndpointSpec>,
         /// Property definitions.

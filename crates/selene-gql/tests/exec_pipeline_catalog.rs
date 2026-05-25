@@ -663,9 +663,8 @@ fn drop_nonexistent_node_type_returns_data_exception() {
 }
 
 #[test]
-fn phase_a_flags_and_constraints_are_deferred() {
+fn or_replace_catalog_ddl_is_deferred() {
     let graph = empty_closed_graph(3714);
-    let mut cases = Vec::new();
 
     let mut or_replace = planned("CREATE NODE TYPE :Person ()");
     if let PipelineOp::Catalog(CatalogOp::CreateNodeType { or_replace, .. }) =
@@ -673,20 +672,23 @@ fn phase_a_flags_and_constraints_are_deferred() {
     {
         *or_replace = true;
     }
-    cases.push(or_replace);
 
-    let mut extends = planned("CREATE NODE TYPE :Person ()");
-    if let PipelineOp::Catalog(CatalogOp::CreateNodeType { extends, .. }) = &mut extends.pipeline[0]
-    {
-        *extends = Some(istr("Entity"));
-    }
-    cases.push(extends);
+    let err = run_write(&graph, &or_replace).expect_err("OR REPLACE is deferred");
+    assert!(matches!(err, ExecutorError::ImplementationDefined { .. }));
+}
 
-    cases.push(planned("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)"));
-    for plan in cases {
-        let err = run_write(&graph, &plan).expect_err("phase A surface is deferred");
-        assert!(matches!(err, ExecutorError::ImplementationDefined { .. }));
-    }
+#[test]
+fn unique_property_constraint_is_deferred() {
+    let graph = empty_closed_graph(3714);
+    let plan = planned("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)");
+
+    let err = run_write(&graph, &plan).expect_err("UNIQUE property constraint is deferred");
+    assert!(matches!(
+        err,
+        ExecutorError::ImplementationDefined {
+            detail: "type property constraint not implemented",
+        }
+    ));
 }
 
 #[test]

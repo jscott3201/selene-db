@@ -137,13 +137,19 @@ fn parse_type_ddl() {
 #[test]
 fn parse_edge_type_and_show_ddl() {
     let DdlStatement::CreateEdgeType {
+        label,
+        extends,
         endpoints,
         properties,
         ..
-    } = parse_ddl("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person, since :: DATE)")
+    } = parse_ddl(
+        "CREATE EDGE TYPE :KNOWS EXTENDS :RELATIONSHIP (FROM :Person TO :Person, since :: DATE)",
+    )
     else {
         panic!("expected CREATE EDGE TYPE");
     };
+    assert_eq!(label.as_str(), "KNOWS");
+    assert_eq!(extends.expect("parent").as_str(), "RELATIONSHIP");
     let endpoints = endpoints.expect("endpoint spec");
     assert_eq!(endpoints.from_labels[0].as_str(), "Person");
     assert_eq!(properties[0].gql_type, GqlType::Date);

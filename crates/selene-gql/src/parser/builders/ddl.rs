@@ -155,6 +155,7 @@ fn build_create_edge_type(
 ) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
     let mut label = None;
+    let mut extends = None;
     let mut or_replace = false;
     let mut if_not_exists = false;
     let mut endpoints = None;
@@ -165,7 +166,8 @@ fn build_create_edge_type(
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident => label = Some(intern_pair(child, budget)?),
+            Rule::ident if label.is_none() => label = Some(intern_pair(child, budget)?),
+            Rule::ident => extends = Some(intern_pair(child, budget)?),
             Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child, budget)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child, budget)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
@@ -179,6 +181,7 @@ fn build_create_edge_type(
         })?,
         or_replace,
         if_not_exists,
+        extends,
         endpoints,
         properties,
         validation_mode,

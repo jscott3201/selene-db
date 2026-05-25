@@ -96,6 +96,15 @@ impl GraphTypeDef {
             .find(|edge_type| edge_type.label == label)
     }
 
+    /// Return the edge-type index matching `name`.
+    #[must_use]
+    pub fn edge_type_index_for(&self, name: IStr) -> Option<u32> {
+        self.edge_types
+            .iter()
+            .position(|edge_type| edge_type.name == name)
+            .and_then(|index| u32::try_from(index).ok())
+    }
+
     /// Return a copy with the named node type removed.
     ///
     /// Edge endpoint indexes are intentionally not rewritten. Callers that

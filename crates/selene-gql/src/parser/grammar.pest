@@ -61,7 +61,7 @@ create_node_type = {
 }
 create_edge_type = {
     ^"CREATE" ~ or_replace? ~ ^"EDGE" ~ ^"TYPE" ~ if_not_exists? ~
-    ":" ~ ident ~
+    ":" ~ ident ~ (^"EXTENDS" ~ ":" ~ ident)? ~
     "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
