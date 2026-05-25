@@ -6,6 +6,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Chore
+
+- Local test invocation aligned with CI (nextest + line-tables-only debug +
+  `.config/nextest.toml`). See CLAUDE.md Build & test.
+
 ### Added
 
 - Implementation-defined named index DDL in `selene-gql`: `CREATE INDEX <name>
