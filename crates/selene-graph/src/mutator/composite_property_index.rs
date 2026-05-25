@@ -85,6 +85,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 }
 
 fn validate_shape(properties: &[IStr], kinds: &[TypedIndexKind]) -> Result<(), GraphError> {
+    if properties.len() < 2 {
+        return Err(GraphError::Inconsistent {
+            reason: "composite index requires at least two properties".to_owned(),
+        });
+    }
     if properties.len() != kinds.len() {
         return Err(GraphError::Inconsistent {
             reason: format!(
@@ -117,5 +122,55 @@ const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
         TypedIndexKind::Date => SchemaPropertyIndexKind::Date,
         TypedIndexKind::LocalDateTime => SchemaPropertyIndexKind::LocalDateTime,
         TypedIndexKind::Uuid => SchemaPropertyIndexKind::Uuid,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::{GraphId, intern};
+    use smallvec::smallvec;
+
+    use crate::{GraphError, SharedGraph, TypedIndexKind};
+
+    #[test]
+    fn create_composite_property_index_rejects_empty_property_list() {
+        let shared = SharedGraph::new(GraphId::new(140_201));
+        let mut txn = shared.begin_write();
+        let err = txn
+            .mutator()
+            .create_composite_property_index_named(
+                intern("CompositeShape").unwrap(),
+                smallvec![],
+                smallvec![],
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            GraphError::Inconsistent { reason }
+                if reason == "composite index requires at least two properties"
+        ));
+    }
+
+    #[test]
+    fn create_composite_property_index_rejects_single_property_list() {
+        let shared = SharedGraph::new(GraphId::new(140_202));
+        let mut txn = shared.begin_write();
+        let err = txn
+            .mutator()
+            .create_composite_property_index_named(
+                intern("CompositeShape").unwrap(),
+                smallvec![intern("only").unwrap()],
+                smallvec![TypedIndexKind::I64],
+                None,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            GraphError::Inconsistent { reason }
+                if reason == "composite index requires at least two properties"
+        ));
     }
 }

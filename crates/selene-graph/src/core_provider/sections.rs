@@ -540,9 +540,9 @@ fn validate_composite_schema_rows(
 ) -> Result<(), crate::ProviderError> {
     let mut seen = BTreeSet::new();
     for (key, entry) in rows {
-        if key.properties.is_empty() {
+        if key.properties.len() < 2 {
             return Err(invalid_payload(format!(
-                "CORE/CPIX row for label {} has no properties",
+                "CORE/CPIX row for label {} has fewer than two properties",
                 key.label
             )));
         }

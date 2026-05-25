@@ -83,3 +83,26 @@ fn decode_rejects_duplicate_canonical_property_sets() {
 
     assert!(result.is_err());
 }
+
+#[test]
+fn decode_rejects_single_property_composite_registration() {
+    let label = intern("core.cpix.single").unwrap();
+    let only = intern("only").unwrap();
+    let rows = vec![(
+        CompositeSchemaKey {
+            label,
+            properties: vec![only],
+        },
+        CompositeSchemaEntry {
+            kinds: vec![TypedIndexKind::I64],
+            name: None,
+        },
+    )];
+    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+        .unwrap()
+        .into_vec();
+
+    let result = decode_composite_schemas(&bytes);
+
+    assert!(result.is_err());
+}
