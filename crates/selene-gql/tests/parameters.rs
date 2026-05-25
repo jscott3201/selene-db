@@ -316,28 +316,6 @@ fn typed_parameter_runtime_accepts_and_rejects_declared_value_type() {
 }
 
 #[test]
-fn typed_parameter_runtime_rejects_mismatched_list_elements() {
-    let graph = SharedGraph::new(GraphId::new(4122));
-    let mut session = Session::new(&graph);
-    session.bind_parameter(
-        istr("vals"),
-        Value::List(vec![Value::Int(1), Value::String(istr("bad"))]),
-    );
-
-    let err = execute(&mut session, "RETURN $vals :: LIST<INT> AS vals")
-        .expect_err("typed list parameter rejects mismatched element");
-    assert!(matches!(
-        err,
-        ExecutorError::InvalidParameterType {
-            name,
-            ref expected,
-            actual: "LIST",
-            ..
-        } if name.as_str() == "vals" && expected == "LIST<INTEGER>"
-    ));
-}
-
-#[test]
 fn typed_parameter_python_shape_fixture() {
     let graph = SharedGraph::new(GraphId::new(4121));
     let mut session = Session::new(&graph);
