@@ -316,7 +316,9 @@ fn noop_intent(change: &SchemaChange) -> Intent {
         | SchemaChange::RecordTypeAdded { .. }
         | SchemaChange::PropertyIndexCreated { .. }
         | SchemaChange::PropertyIndexDropped { .. }
-        | SchemaChange::PropertyIndexCreatedNamed { .. } => {
+        | SchemaChange::PropertyIndexCreatedNamed { .. }
+        | SchemaChange::CompositePropertyIndexCreated { .. }
+        | SchemaChange::CompositePropertyIndexDropped { .. } => {
             panic!(
                 "{} is not a no-op schema-change intent",
                 super::schema_replay::schema_change_variant(change)

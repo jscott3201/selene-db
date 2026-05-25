@@ -2,6 +2,7 @@
 
 use selene_core::{CoreError, EdgeId, IStr, NodeId};
 use selene_persist::PersistError;
+use smallvec::SmallVec;
 
 use crate::index_provider::ProviderError;
 use crate::type_validator::TypeViolation;
@@ -103,6 +104,16 @@ pub enum GraphError {
         observed: &'static str,
     },
 
+    /// A composite property index already exists for this `(label, properties...)`.
+    #[error("composite property index already exists for ({label}, {properties:?})")]
+    #[diagnostic(code(SLENE_G_010))]
+    CompositePropertyIndexAlreadyExists {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed property keys in declaration order.
+        properties: SmallVec<[IStr; 4]>,
+    },
+
     /// A closed graph mutation violates its bound graph type.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -145,7 +156,8 @@ impl GraphError {
             Self::Inconsistent { .. } => "5GQL0",
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
-            | Self::IndexValueRejected { .. } => "22G03",
+            | Self::IndexValueRejected { .. }
+            | Self::CompositePropertyIndexAlreadyExists { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",

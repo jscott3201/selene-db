@@ -106,7 +106,9 @@ fn apply_schema_change(
         }
         SchemaChange::PropertyIndexCreated { .. }
         | SchemaChange::PropertyIndexDropped { .. }
-        | SchemaChange::PropertyIndexCreatedNamed { .. } => {
+        | SchemaChange::PropertyIndexCreatedNamed { .. }
+        | SchemaChange::CompositePropertyIndexCreated { .. }
+        | SchemaChange::CompositePropertyIndexDropped { .. } => {
             // Why: property-index intent is queued by apply_change and replayed
             // after primary node/edge rows materialize.
         }
@@ -345,6 +347,8 @@ pub(super) fn schema_change_variant(change: &SchemaChange) -> &'static str {
         SchemaChange::PropertyIndexDropped { .. } => "PropertyIndexDropped",
         SchemaChange::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
         SchemaChange::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
+        SchemaChange::CompositePropertyIndexCreated { .. } => "CompositePropertyIndexCreated",
+        SchemaChange::CompositePropertyIndexDropped { .. } => "CompositePropertyIndexDropped",
     }
 }
 

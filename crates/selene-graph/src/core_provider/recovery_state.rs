@@ -210,7 +210,9 @@ impl RecoveryState {
                     | SchemaChange::GraphDropped { .. }
                     | SchemaChange::GraphTypeCreated { .. }
                     | SchemaChange::GraphTypeDropped { .. }
-                    | SchemaChange::RecordTypeAdded { .. } => {
+                    | SchemaChange::RecordTypeAdded { .. }
+                    | SchemaChange::CompositePropertyIndexCreated { .. }
+                    | SchemaChange::CompositePropertyIndexDropped { .. } => {
                         return Err(schema_replay::unsupported_schema_recovery(change));
                     }
                 }

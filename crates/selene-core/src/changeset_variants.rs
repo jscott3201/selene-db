@@ -171,6 +171,25 @@ impl SchemaChange {
                 NodeTypeRef(changeset_variant_istr("schema.all.node")),
             ),
         },
+        || Self::CompositePropertyIndexCreated {
+            label: changeset_variant_istr("schema.all.node"),
+            properties: SmallVec::from_vec(vec![
+                changeset_variant_istr("schema.all.property.a"),
+                changeset_variant_istr("schema.all.property.b"),
+            ]),
+            kinds: SmallVec::from_vec(vec![
+                SchemaPropertyIndexKind::I64,
+                SchemaPropertyIndexKind::String,
+            ]),
+            name: Some(changeset_variant_istr("schema.all.composite.index")),
+        },
+        || Self::CompositePropertyIndexDropped {
+            label: changeset_variant_istr("schema.all.node"),
+            properties: SmallVec::from_vec(vec![
+                changeset_variant_istr("schema.all.property.a"),
+                changeset_variant_istr("schema.all.property.b"),
+            ]),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -198,6 +217,8 @@ impl SchemaChange {
             Self::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
             Self::NodeTypeAddedV2 { .. } => "NodeTypeAddedV2",
             Self::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
+            Self::CompositePropertyIndexCreated { .. } => "CompositePropertyIndexCreated",
+            Self::CompositePropertyIndexDropped { .. } => "CompositePropertyIndexDropped",
         }
     }
 }
