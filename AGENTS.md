@@ -130,13 +130,18 @@ If the in-tree `_design/milestone-log.md` view drifts from the graph, regenerate
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked --all-features
+cargo nextest run --workspace --locked --all-features --profile default
+cargo test --workspace --locked --all-features --doc
 cargo deny check bans licenses sources
 cargo audit -d /private/tmp/selene-advisory-db
 bash .github/scripts/check-file-size.sh
 bash .github/scripts/check-no-secrets.sh
 bash .github/scripts/check-thirdparty-current.sh
 cargo +nightly fuzz run parse_gql -- -max_total_time=60
+
+# Optional local speed knobs:
+# CARGO_PROFILE_TEST_DEBUG=0 mirrors CI's stripped test debuginfo.
+# PROPTEST_CASES=64 shortens inner-loop runs for the two 256-case proptests.
 
 # Benchmarks: serialized runner only. PR CI checks invocation hygiene
 # but does not execute benchmarks; run Criterion locally.
