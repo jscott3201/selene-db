@@ -9,6 +9,9 @@ slow-timeout = { period = "5s", terminate-after = 12 }
 retries = 1
 
 [profile.ci]
+# CI runners are slower than local M-series machines on corpus-style tests.
+slow-timeout = { period = "5s", terminate-after = 24 }
+
 # CI must not hide flakes behind retries.
 retries = 0
 
