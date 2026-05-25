@@ -1,6 +1,7 @@
 //! Read-side AST pretty-printer.
 
 mod cast;
+mod is_check;
 mod keywords;
 mod preflight;
 mod trim;
@@ -12,12 +13,13 @@ use selene_core::IStr;
 
 use super::format_ident::{escape_string, fmt_call_segment, fmt_ident};
 use crate::ast::{
-    EdgeDirection, EdgePattern, GraphPattern, InlineProcedureCall, IsCheckKind, LabelExpr,
-    LimitValue, MatchClause, NodePattern, NormalForm, NullsPolicy, OrderDirection, OrderTerm,
-    PathMode, PatternElement, ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem,
-    Statement, TruthValue, UnaryOp, ValueExpr, WithClause,
+    EdgeDirection, EdgePattern, GqlType, GraphPattern, InlineProcedureCall, LabelExpr, LimitValue,
+    MatchClause, NodePattern, NullsPolicy, OrderDirection, OrderTerm, PathMode, PatternElement,
+    ProcedureCall, Quantifier, QueryPipeline, ReturnClause, ReturnItem, Statement, UnaryOp,
+    ValueExpr, WithClause,
 };
 
+use is_check::{fmt_is_check, fmt_normal_form};
 use keywords::{fmt_binary, fmt_match_mode, fmt_path_mode, fmt_path_selector, fmt_set_op};
 pub use preflight::validate_formattable;
 use type_name::fmt_type;
@@ -395,7 +397,11 @@ fn fmt_order(out: &mut String, terms: &[OrderTerm]) -> fmt::Result {
 fn fmt_limit(out: &mut String, value: &LimitValue) -> fmt::Result {
     match value {
         LimitValue::Count(value, _) => write!(out, "{value}"),
-        LimitValue::Parameter { name, .. } => write!(out, "${}", fmt_ident(*name)),
+        LimitValue::Parameter {
+            name,
+            declared_type,
+            ..
+        } => fmt_parameter(out, *name, declared_type.as_ref()),
     }
 }
 
@@ -485,7 +491,11 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Null(_) => out.push_str("null"),
         },
         ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(*name)),
-        ValueExpr::Parameter { name, .. } => write!(out, "${}", fmt_ident(*name))?,
+        ValueExpr::Parameter {
+            name,
+            declared_type,
+            ..
+        } => fmt_parameter(out, *name, declared_type.as_ref())?,
         ValueExpr::PropertyAccess { target, key, .. } => {
             fmt_expr(out, target)?;
             write!(out, ".{}", fmt_ident(*key))?;
@@ -683,57 +693,12 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
     Ok(())
 }
 
-fn fmt_is_check(
-    out: &mut String,
-    operand: &ValueExpr,
-    kind: &IsCheckKind,
-    negated: bool,
-) -> fmt::Result {
-    fmt_expr(out, operand)?;
-    out.push_str(" IS");
-    if negated {
-        out.push_str(" NOT");
-    }
-    match kind {
-        IsCheckKind::Null => out.push_str(" NULL"),
-        IsCheckKind::Directed => out.push_str(" DIRECTED"),
-        IsCheckKind::Labeled(label) => {
-            out.push_str(" LABELED ");
-            fmt_label_expr(out, label)?;
-        }
-        IsCheckKind::TruthValue(value) => {
-            out.push(' ');
-            out.push_str(match value {
-                TruthValue::True => "TRUE",
-                TruthValue::False => "FALSE",
-                TruthValue::Unknown => "UNKNOWN",
-            });
-        }
-        IsCheckKind::Typed(ty) => write!(out, " TYPED {}", fmt_type(ty))?,
-        IsCheckKind::Normalized(form) => {
-            out.push(' ');
-            out.push_str(fmt_normal_form(*form));
-            out.push_str(" NORMALIZED");
-        }
-        IsCheckKind::SourceOf(value) => {
-            out.push_str(" SOURCE OF ");
-            fmt_expr(out, value)?;
-        }
-        IsCheckKind::DestinationOf(value) => {
-            out.push_str(" DESTINATION OF ");
-            fmt_expr(out, value)?;
-        }
+fn fmt_parameter(out: &mut String, name: IStr, declared_type: Option<&GqlType>) -> fmt::Result {
+    write!(out, "${}", fmt_ident(name))?;
+    if let Some(declared_type) = declared_type {
+        write!(out, " :: {}", fmt_type(declared_type))?;
     }
     Ok(())
-}
-
-fn fmt_normal_form(form: NormalForm) -> &'static str {
-    match form {
-        NormalForm::Nfc => "NFC",
-        NormalForm::Nfd => "NFD",
-        NormalForm::Nfkc => "NFKC",
-        NormalForm::Nfkd => "NFKD",
-    }
 }
 
 fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Result {
