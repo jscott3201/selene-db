@@ -170,6 +170,11 @@ pub(super) fn execute(
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
+        CatalogOp::CreateIndex { .. } | CatalogOp::DropIndex { .. } => {
+            Err(ExecutorError::ImplementationDefined {
+                detail: "named index DDL runtime executor ships in BRIEF-140a C1",
+            })
+        }
         CatalogOp::ShowNodeTypes(_) => show_node_types(ctx),
         CatalogOp::ShowEdgeTypes(_) => show_edge_types(ctx),
         CatalogOp::ShowIndexes(_) => show_indexes(ctx),

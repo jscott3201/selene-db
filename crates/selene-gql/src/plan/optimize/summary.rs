@@ -1,5 +1,7 @@
 //! Test-harness plan snapshot summaries.
 
+mod catalog_summary;
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     fmt,
@@ -9,13 +11,14 @@ use crate::{
     LabelExpr,
     analyze::BindingId,
     plan::{
-        Aggregate, BindingDef, BindingTableColumn, CatalogOp, EdgeMatch, ExecutionPlan,
-        FilterPredicate, JoinTree, MutationOp, NodeOrEdgeScan, OrderAccess, OrderKey, PipelineOp,
-        PlannedYieldItem, RepeatEdgeMatch, ScanAccess, ScanKind, TxOp, YieldKind,
+        Aggregate, BindingDef, BindingTableColumn, EdgeMatch, ExecutionPlan, FilterPredicate,
+        JoinTree, MutationOp, NodeOrEdgeScan, OrderAccess, OrderKey, PipelineOp, PlannedYieldItem,
+        RepeatEdgeMatch, ScanAccess, ScanKind, TxOp, YieldKind,
     },
 };
 
 use super::{DEFAULT_RULES, OptimizeContext, RULE_NAMES, Rule};
+use catalog_summary::catalog_summary;
 
 /// Optimize a plan and return a deterministic summary for snapshot tests.
 #[must_use]
@@ -695,37 +698,6 @@ fn mutation_summary(mutation: &MutationOp) -> String {
             format!("op=RemoveLabel(label={})", label.as_str())
         }
         MutationOp::DeleteTarget { mode, .. } => format!("op=DeleteTarget(mode={mode:?})"),
-    }
-}
-
-fn catalog_summary(catalog: &CatalogOp) -> String {
-    match catalog {
-        CatalogOp::CreateGraph { name, .. } => format!("op=CreateGraph(name={})", name.as_str()),
-        CatalogOp::DropGraph { name, .. } => format!("op=DropGraph(name={})", name.as_str()),
-        CatalogOp::CreateNodeType {
-            label, properties, ..
-        } => format!(
-            "op=CreateNodeType(label={}, props={})",
-            label.as_str(),
-            properties.len()
-        ),
-        CatalogOp::CreateEdgeType {
-            label, properties, ..
-        } => format!(
-            "op=CreateEdgeType(label={}, props={})",
-            label.as_str(),
-            properties.len()
-        ),
-        CatalogOp::DropNodeType { label, .. } => {
-            format!("op=DropNodeType(label={})", label.as_str())
-        }
-        CatalogOp::DropEdgeType { label, .. } => {
-            format!("op=DropEdgeType(label={})", label.as_str())
-        }
-        CatalogOp::ShowNodeTypes(_) => "op=ShowNodeTypes".to_owned(),
-        CatalogOp::ShowEdgeTypes(_) => "op=ShowEdgeTypes".to_owned(),
-        CatalogOp::ShowIndexes(_) => "op=ShowIndexes".to_owned(),
-        CatalogOp::ShowProcedures(_) => "op=ShowProcedures".to_owned(),
     }
 }
 

@@ -86,6 +86,28 @@ pub enum DdlStatement {
         /// Source span.
         span: SourceSpan,
     },
+    /// `CREATE INDEX`.
+    CreateIndex {
+        /// Catalog index name.
+        name: IStr,
+        /// Node label, stored without the source `:` prefix.
+        label: IStr,
+        /// Property names in source order.
+        properties: Vec<IStr>,
+        /// `IF NOT EXISTS`.
+        if_not_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `DROP INDEX`.
+    DropIndex {
+        /// Catalog index name.
+        name: IStr,
+        /// `IF EXISTS`.
+        if_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `SHOW NODE TYPES`.
     ShowNodeTypes(SourceSpan),
     /// `SHOW EDGE TYPES`.
@@ -110,6 +132,8 @@ impl DdlStatement {
             | Self::CreateEdgeType { span, .. }
             | Self::DropNodeType { span, .. }
             | Self::DropEdgeType { span, .. }
+            | Self::CreateIndex { span, .. }
+            | Self::DropIndex { span, .. }
             | Self::ShowNodeTypes(span)
             | Self::ShowEdgeTypes(span)
             | Self::ShowIndexes(span)

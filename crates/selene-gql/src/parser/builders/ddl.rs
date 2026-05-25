@@ -44,14 +44,8 @@ pub(super) fn build_ddl_statement(
             &inner,
             "procedures are registered through selene-pack, not via DDL",
         )),
-        Rule::create_index => Err(not_implemented(
-            &inner,
-            "named CREATE INDEX DDL requires storage-layer named-index support - landing in a follow-up brief; use `CALL selene.create_index('Label', 'property', 'kind')` today",
-        )),
-        Rule::drop_index => Err(not_implemented(
-            &inner,
-            "named DROP INDEX DDL requires storage-layer named-index support - landing in a follow-up brief; use `CALL selene.drop_index('Label', 'property')` today",
-        )),
+        Rule::create_index => build_create_index(inner, budget),
+        Rule::drop_index => build_drop_index(inner, budget),
         Rule::create_user
         | Rule::drop_user
         | Rule::create_role
@@ -107,6 +101,72 @@ fn build_drop_graph(
     Ok(DdlStatement::DropGraph {
         name: name
             .ok_or_else(|| ParserError::syntax("DROP GRAPH is missing name", source_span, None))?,
+        if_exists,
+        span: source_span,
+    })
+}
+
+fn build_create_index(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let mut if_not_exists = false;
+    let mut idents = Vec::new();
+
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::if_not_exists => if_not_exists = true,
+            Rule::ident => idents.push(intern_pair(child, budget)?),
+            _ => return Err(unexpected_pair(child, "unexpected CREATE INDEX child")),
+        }
+    }
+
+    let mut idents = idents.into_iter();
+    let name = idents.next().ok_or_else(|| {
+        ParserError::syntax("CREATE INDEX is missing index name", source_span, None)
+    })?;
+    let label = idents.next().ok_or_else(|| {
+        ParserError::syntax("CREATE INDEX is missing target label", source_span, None)
+    })?;
+    let properties = idents.collect::<Vec<_>>();
+    if properties.is_empty() {
+        return Err(ParserError::syntax(
+            "CREATE INDEX is missing property name",
+            source_span,
+            None,
+        ));
+    }
+
+    Ok(DdlStatement::CreateIndex {
+        name,
+        label,
+        properties,
+        if_not_exists,
+        span: source_span,
+    })
+}
+
+fn build_drop_index(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let mut name = None;
+    let mut if_exists = false;
+
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::if_exists => if_exists = true,
+            Rule::ident => name = Some(intern_pair(child, budget)?),
+            _ => return Err(unexpected_pair(child, "unexpected DROP INDEX child")),
+        }
+    }
+
+    Ok(DdlStatement::DropIndex {
+        name: name.ok_or_else(|| {
+            ParserError::syntax("DROP INDEX is missing index name", source_span, None)
+        })?,
         if_exists,
         span: source_span,
     })

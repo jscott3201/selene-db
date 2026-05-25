@@ -382,7 +382,9 @@ fn scrub_ddl(statement: &mut DdlStatement) {
         DdlStatement::CreateGraph { span, .. }
         | DdlStatement::DropGraph { span, .. }
         | DdlStatement::DropNodeType { span, .. }
-        | DdlStatement::DropEdgeType { span, .. } => *span = SourceSpan::default(),
+        | DdlStatement::DropEdgeType { span, .. }
+        | DdlStatement::CreateIndex { span, .. }
+        | DdlStatement::DropIndex { span, .. } => *span = SourceSpan::default(),
         DdlStatement::CreateNodeType {
             properties, span, ..
         }

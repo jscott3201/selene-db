@@ -381,6 +381,8 @@ fn walk_catalog_exprs(
         | CatalogOp::DropGraph { .. }
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
+        | CatalogOp::CreateIndex { .. }
+        | CatalogOp::DropIndex { .. }
         | CatalogOp::ShowNodeTypes(_)
         | CatalogOp::ShowEdgeTypes(_)
         | CatalogOp::ShowIndexes(_)
