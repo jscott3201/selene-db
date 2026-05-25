@@ -555,11 +555,21 @@ impl IndexCatalog for LiveIndexCatalog<'_> {
 
     fn composite_index(
         &self,
-        _target: IndexTarget,
-        _label: IStr,
-        _properties: &[IStr],
+        target: IndexTarget,
+        label: IStr,
+        properties: &[IStr],
     ) -> Option<CompositeIndexHandle> {
-        None
+        if target != IndexTarget::Node {
+            return None;
+        }
+        let mut canonical = properties.to_vec();
+        canonical.sort_unstable();
+        let graph = self.graph.read();
+        let entry = graph.composite_property_index_entry_for(&label, &canonical)?;
+        Some(CompositeIndexHandle::new(
+            IndexHandle::new(2),
+            entry.declared_properties.iter().copied().collect(),
+        ))
     }
 }
 

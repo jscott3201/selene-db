@@ -8,8 +8,9 @@ mod property;
 use selene_core::{IStr, LabelSet, Value, intern_with_admission};
 use selene_graph::{
     EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
-    ValidationMode as GraphValidationMode,
+    TypedIndexKind, ValidationMode as GraphValidationMode,
 };
+use smallvec::SmallVec;
 
 use self::{
     compose::{compose_edge_properties, compose_node_properties},
@@ -18,7 +19,8 @@ use self::{
     property::{property_defs, render_property_value_type},
 };
 use super::catalog_index::{
-    inline_index_specs, render_index_kind, render_index_name, validate_index_name_collisions,
+    DropTarget, inline_index_specs, render_index_kind, render_index_name,
+    validate_index_name_collisions,
 };
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, GqlType, ProcedureMetadata,
@@ -191,7 +193,18 @@ pub(super) fn execute(
                         .create_property_index_named(*label, property, kind, Some(*name))
                         .map_err(|source| catalog_graph_error(source, *span))?;
                 }
-                IndexPath::Composite { .. } => unreachable!("composite stub returns an error"),
+                IndexPath::Composite { properties, kinds } => {
+                    let properties = properties.into_iter().collect::<SmallVec<[IStr; 4]>>();
+                    let kinds = kinds.into_iter().collect::<SmallVec<[TypedIndexKind; 4]>>();
+                    ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                        .create_composite_property_index_named(
+                            *label,
+                            properties,
+                            kinds,
+                            Some(*name),
+                        )
+                        .map_err(|source| catalog_graph_error(source, *span))?;
+                }
             }
             Ok(table)
         }
@@ -201,14 +214,21 @@ pub(super) fn execute(
             span,
         } => {
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let Some((label, property)) =
-                resolve_drop_index(ctx.snapshot(), *name, *if_exists, *span)?
-            else {
+            let Some(target) = resolve_drop_index(ctx.snapshot(), *name, *if_exists, *span)? else {
                 return Ok(table);
             };
-            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .drop_property_index(label, property)
-                .map_err(|source| catalog_graph_error(source, *span))?;
+            match target {
+                DropTarget::Single { label, property } => {
+                    ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                        .drop_property_index(label, property)
+                        .map_err(|source| catalog_graph_error(source, *span))?;
+                }
+                DropTarget::Composite { label, properties } => {
+                    ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                        .drop_composite_property_index(label, properties)
+                        .map_err(|source| catalog_graph_error(source, *span))?;
+                }
+            }
             Ok(table)
         }
         CatalogOp::ShowNodeTypes(_) => show_node_types(ctx),
