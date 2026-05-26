@@ -140,20 +140,23 @@ fn replay_wal(
         ) {
             continue;
         }
-        for change in &entry.changes {
-            for provider in registry.iter() {
-                let tag = provider.provider_tag();
-                provider
-                    .on_change(change)
-                    .map_err(|source| PersistError::ProviderFailed {
-                        provider: tag,
-                        sub: None,
-                        source,
-                    })?;
-                providers_invoked.insert(tag);
-            }
-            outcome.wal_changes_applied = outcome.wal_changes_applied.saturating_add(1);
+        if entry.changes.is_empty() {
+            continue;
         }
+        for provider in registry.iter() {
+            let tag = provider.provider_tag();
+            provider
+                .on_changes(&entry.changes)
+                .map_err(|source| PersistError::ProviderFailed {
+                    provider: tag,
+                    sub: None,
+                    source,
+                })?;
+            providers_invoked.insert(tag);
+        }
+        outcome.wal_changes_applied = outcome
+            .wal_changes_applied
+            .saturating_add(entry.changes.len() as u64);
     }
     Ok(())
 }

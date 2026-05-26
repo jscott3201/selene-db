@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use selene_core::{Change, GraphId};
+use selene_core::{Change, ChangeKindSet, GraphId};
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult,
     WalConfig, WalWriter,
@@ -14,7 +14,9 @@ use crate::change_subscriber::ChangeSubscriber;
 use crate::core_provider::CoreProvider;
 use crate::graph_types::GraphTypeDef;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
-use crate::shared::{validate_unique_provider_tags, validate_unique_subscriber_tags};
+use crate::shared::{
+    subscriber_tag_checked, validate_unique_provider_tags, validate_unique_subscriber_tags,
+};
 use crate::{GraphResult, SharedGraph};
 
 impl SharedGraph {
@@ -174,10 +176,19 @@ impl RecoveryProvider for IndexAndChangeRecoveryProvider {
     }
 
     fn on_change(&self, change: &Change) -> RecoveryResult<()> {
-        self.provider.on_change(change).map_err(recovery_error)?;
+        self.on_changes(std::slice::from_ref(change))
+    }
+
+    fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
+        for change in changes {
+            self.provider.on_change(change).map_err(recovery_error)?;
+        }
         for subscriber in &self.subscribers {
-            if subscriber.change_kinds().contains(change.kind()) {
-                subscriber.on_change(change).map_err(recovery_error)?;
+            let (tag, kinds) = recovery_subscriber_filter(subscriber)?;
+            for change in changes {
+                if kinds.contains(change.kind()) {
+                    recovery_subscriber_on_change(subscriber, tag, change)?;
+                }
             }
         }
         Ok(())
@@ -202,8 +213,9 @@ fn register_combined_recovery_providers(
 ) -> GraphResult<()> {
     let mut subscribers_by_tag = BTreeMap::<ProviderTag, Vec<Arc<dyn ChangeSubscriber>>>::new();
     for subscriber in subscribers {
+        let tag = subscriber_tag_checked(subscriber, "change subscriber recovery setup")?;
         subscribers_by_tag
-            .entry(subscriber.subscriber_tag())
+            .entry(tag)
             .or_default()
             .push(Arc::clone(subscriber));
     }
@@ -229,6 +241,41 @@ fn register_combined_recovery_providers(
 
 fn recovery_error(error: ProviderError) -> RecoveryError {
     Box::new(error)
+}
+
+fn recovery_subscriber_filter(
+    subscriber: &Arc<dyn ChangeSubscriber>,
+) -> RecoveryResult<(ProviderTag, ChangeKindSet)> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        (subscriber.subscriber_tag(), subscriber.change_kinds())
+    }))
+    .map_err(|payload| {
+        recovery_error(ProviderError::Inconsistent {
+            reason: format!(
+                "change subscriber tag/filter lookup panicked during recovery replay: {}",
+                crate::panic_payload::describe(&payload)
+            ),
+        })
+    })
+}
+
+fn recovery_subscriber_on_change(
+    subscriber: &Arc<dyn ChangeSubscriber>,
+    tag: ProviderTag,
+    change: &Change,
+) -> RecoveryResult<()> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        subscriber.on_change(change)
+    })) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(recovery_error(error)),
+        Err(payload) => Err(recovery_error(ProviderError::Inconsistent {
+            reason: format!(
+                "change subscriber {tag} on_change panicked during recovery replay: {}",
+                crate::panic_payload::describe(&payload)
+            ),
+        })),
+    }
 }
 
 #[cfg(test)]

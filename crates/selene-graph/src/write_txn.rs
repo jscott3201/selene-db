@@ -296,7 +296,7 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
             })) {
                 Ok(tag) => tag,
                 Err(payload) => {
-                    let payload = describe_panic_payload(&payload);
+                    let payload = crate::panic_payload::describe(&payload);
                     tracing::error!(
                         provider_tag = %SENTINEL_PROVIDER_TAG,
                         ?change,
@@ -328,7 +328,7 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
                     );
                 }
                 Err(panic_payload) => {
-                    let payload = describe_panic_payload(&panic_payload);
+                    let payload = crate::panic_payload::describe(&panic_payload);
                     tracing::error!(
                         provider_tag = %tag,
                         ?change,
@@ -354,7 +354,7 @@ fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Chan
         })) {
             Ok(parts) => parts,
             Err(payload) => {
-                let payload = describe_panic_payload(&payload);
+                let payload = crate::panic_payload::describe(&payload);
                 tracing::error!(
                     subscriber_tag = %SENTINEL_PROVIDER_TAG,
                     payload = %payload,
@@ -384,7 +384,7 @@ fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Chan
                     );
                 }
                 Err(panic_payload) => {
-                    let payload = describe_panic_payload(&panic_payload);
+                    let payload = crate::panic_payload::describe(&panic_payload);
                     tracing::error!(
                         subscriber_tag = %tag,
                         ?change,
@@ -401,16 +401,6 @@ fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Chan
 /// own `provider_tag()` method panicked, so log filters keyed on the field
 /// name still match.
 const SENTINEL_PROVIDER_TAG: &str = "<unknown>";
-
-fn describe_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_owned()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "<non-string panic payload>".to_owned()
-    }
-}
 
 #[cfg(test)]
 mod tests;

@@ -577,7 +577,7 @@ pub(crate) fn validate_unique_subscriber_tags(
 ) -> GraphResult<()> {
     let mut seen = std::collections::BTreeSet::new();
     for subscriber in subscribers {
-        let tag = subscriber.subscriber_tag();
+        let tag = subscriber_tag_checked(subscriber, "change subscriber validation")?;
         if !seen.insert(tag) {
             return Err(GraphError::Provider(ProviderError::Inconsistent {
                 reason: format!("duplicate change subscriber tag {tag}"),
@@ -596,7 +596,7 @@ pub(crate) fn validate_subscriber_tags_match_providers(
         .map(|provider| provider.provider_tag())
         .collect::<std::collections::BTreeSet<_>>();
     for subscriber in subscribers {
-        let tag = subscriber.subscriber_tag();
+        let tag = subscriber_tag_checked(subscriber, "change subscriber validation")?;
         if !provider_tags.contains(&tag) {
             return Err(GraphError::Provider(ProviderError::Inconsistent {
                 reason: format!("change subscriber tag {tag} has no matching provider"),
@@ -604,6 +604,22 @@ pub(crate) fn validate_subscriber_tags_match_providers(
         }
     }
     Ok(())
+}
+
+pub(crate) fn subscriber_tag_checked(
+    subscriber: &Arc<dyn ChangeSubscriber>,
+    context: &'static str,
+) -> GraphResult<ProviderTag> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| subscriber.subscriber_tag())).map_err(
+        |payload| {
+            GraphError::Provider(ProviderError::Inconsistent {
+                reason: format!(
+                    "{context}: change subscriber tag lookup panicked: {}",
+                    crate::panic_payload::describe(&payload)
+                ),
+            })
+        },
+    )
 }
 
 #[cfg(test)]

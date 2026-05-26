@@ -24,6 +24,7 @@ pub mod graph_types;
 pub mod id_allocator;
 pub mod index_provider;
 pub mod mutator;
+pub(crate) mod panic_payload;
 pub(crate) mod property_index;
 mod recover;
 pub(crate) mod reentry;
