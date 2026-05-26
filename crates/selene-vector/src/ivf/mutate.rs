@@ -138,7 +138,7 @@ fn insert_validated(
     Ok(())
 }
 
-fn apply_delete(index: &mut IvfIndex, node_id: NodeId) {
+pub(super) fn apply_delete(index: &mut IvfIndex, node_id: NodeId) {
     let before_deferred = index.unassigned_buffer.len();
     index.unassigned_buffer.retain(|row| row.node_id != node_id);
     let removed_deferred = before_deferred - index.unassigned_buffer.len();

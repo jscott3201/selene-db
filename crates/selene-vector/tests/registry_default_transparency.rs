@@ -3,11 +3,11 @@
 use std::sync::Arc;
 
 use selene_core::{Change, NodeId, intern};
-use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
+use selene_graph::{ChangeSubscriber, IndexProvider, ProviderError, ProviderTag, SubTag};
 use selene_vector::{
     Catalog, DistanceMetric, HnswConfig, HnswIndexRegistry, HnswProvider, IvfConfig,
     IvfIndexRegistry, IvfProvider, PqParams, VectorIvfUpsertV1, VectorOp, VectorUpsertPayloadV1,
-    encode_hnsw_config, encode_ivf_config,
+    encode_hnsw_config, encode_ivf_config, encode_named_payload,
 };
 
 #[test]
@@ -29,12 +29,8 @@ fn hnsw_registry_snapshot_and_wal_replay_match_singleton() {
     let registry = HnswIndexRegistry::new(hnsw_config()).expect("registry builds");
     let change = hnsw_change(1, [1.0, 0.0, 0.0, 0.0]);
 
-    direct
-        .on_change(&change)
-        .expect("direct WAL replay applies");
-    registry
-        .on_change(&change)
-        .expect("registry WAL replay applies");
+    IndexProvider::on_change(&direct, &change).expect("direct WAL replay applies");
+    IndexProvider::on_change(&registry, &change).expect("registry WAL replay applies");
 
     assert_eq!(
         direct
@@ -68,12 +64,8 @@ fn ivf_registry_snapshot_and_wal_replay_match_singleton() {
     let registry = IvfIndexRegistry::new(ivf_config()).expect("registry builds");
     let change = ivf_change(1, [1.0, 0.0, 0.0, 0.0]);
 
-    direct
-        .on_change(&change)
-        .expect("direct WAL replay applies");
-    registry
-        .on_change(&change)
-        .expect("registry WAL replay applies");
+    IndexProvider::on_change(&direct, &change).expect("direct WAL replay applies");
+    IndexProvider::on_change(&registry, &change).expect("registry WAL replay applies");
 
     assert_eq!(
         direct.ivf_stats().expect("direct stats succeed"),
@@ -95,6 +87,52 @@ fn ivf_registry_snapshot_and_wal_replay_match_singleton() {
             .ivf_stats()
             .expect("recovered stats succeed")
     );
+}
+
+#[test]
+fn hnsw_registry_subscriber_tombstones_all_named_indexes() {
+    let hnsw = Arc::new(HnswIndexRegistry::new(hnsw_config()).expect("HNSW registry builds"));
+    let ivf = Arc::new(IvfIndexRegistry::new(ivf_config()).expect("IVF registry builds"));
+    Catalog::from_registries(Arc::clone(&hnsw), ivf)
+        .create_hnsw_index("episodes", hnsw_config())
+        .expect("named HNSW creates");
+    IndexProvider::on_change(&*hnsw, &hnsw_change(1, [1.0, 0.0, 0.0, 0.0]))
+        .expect("default upsert applies");
+    IndexProvider::on_change(
+        &*hnsw,
+        &hnsw_named_change("episodes", 1, [1.0, 0.0, 0.0, 0.0]),
+    )
+    .expect("named upsert applies");
+
+    ChangeSubscriber::on_change(&*hnsw, &Change::NodeDeleted { id: NodeId::new(1) })
+        .expect("subscriber delete applies");
+
+    for (_name, provider) in hnsw.entries() {
+        let rows = provider
+            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
+            .expect("search succeeds");
+        assert!(rows.is_empty());
+    }
+}
+
+#[test]
+fn ivf_registry_subscriber_tombstones_all_named_indexes() {
+    let hnsw = Arc::new(HnswIndexRegistry::new(hnsw_config()).expect("HNSW registry builds"));
+    let ivf = Arc::new(IvfIndexRegistry::new(ivf_config()).expect("IVF registry builds"));
+    Catalog::from_registries(hnsw, Arc::clone(&ivf))
+        .create_ivf_index("staged", ivf_config())
+        .expect("named IVF creates");
+    IndexProvider::on_change(&*ivf, &ivf_change(1, [1.0, 0.0, 0.0, 0.0]))
+        .expect("default upsert applies");
+    IndexProvider::on_change(&*ivf, &ivf_named_change("staged", 1, [1.0, 0.0, 0.0, 0.0]))
+        .expect("named upsert applies");
+
+    ChangeSubscriber::on_change(&*ivf, &Change::NodeDeleted { id: NodeId::new(1) })
+        .expect("subscriber delete applies");
+
+    for (_name, provider) in ivf.entries() {
+        assert_eq!(provider.snapshot().len(), 0);
+    }
 }
 
 #[test]
@@ -209,6 +247,22 @@ fn hnsw_change(raw: u64, vector: [f32; 4]) -> Change {
     }
 }
 
+fn hnsw_named_change(index_name: &str, raw: u64, vector: [f32; 4]) -> Change {
+    let payload = VectorUpsertPayloadV1 {
+        op: VectorOp::Insert,
+        node_id: NodeId::new(raw),
+        vector: vector.to_vec(),
+        max_layer: 0,
+    }
+    .encode()
+    .expect("VECU payload encodes");
+    let named = encode_named_payload(index_name, payload).expect("named payload encodes");
+    Change::IndexExtensionEvent {
+        provider: intern("selene-vector").expect("provider name interns"),
+        payload: Arc::from(named.into_boxed_slice()),
+    }
+}
+
 fn ivf_change(raw: u64, vector: [f32; 4]) -> Change {
     let payload = VectorIvfUpsertV1 {
         op: VectorOp::Insert,
@@ -220,6 +274,21 @@ fn ivf_change(raw: u64, vector: [f32; 4]) -> Change {
     Change::IndexExtensionEvent {
         provider: intern("selene-vector-ivf").expect("provider name interns"),
         payload: Arc::from(payload.into_boxed_slice()),
+    }
+}
+
+fn ivf_named_change(index_name: &str, raw: u64, vector: [f32; 4]) -> Change {
+    let payload = VectorIvfUpsertV1 {
+        op: VectorOp::Insert,
+        node_id: NodeId::new(raw),
+        vector: vector.to_vec(),
+    }
+    .encode()
+    .expect("VIVF payload encodes");
+    let named = encode_named_payload(index_name, payload).expect("named payload encodes");
+    Change::IndexExtensionEvent {
+        provider: intern("selene-vector-ivf").expect("provider name interns"),
+        payload: Arc::from(named.into_boxed_slice()),
     }
 }
 

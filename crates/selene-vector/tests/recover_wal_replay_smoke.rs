@@ -8,10 +8,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use common::graph_summary;
-use selene_core::{Change, GraphId, HlcTimestamp, NodeId, Origin, intern};
+use selene_core::{
+    Change, ChangeKind, ChangeKindSet, GraphId, HlcTimestamp, LabelSet, NodeId, Origin,
+    PropertyMap, intern,
+};
 use selene_graph::{
-    DEFAULT_WAL_FILE_NAME, GraphError, IndexProvider, ProviderError, ProviderTag, SharedGraph,
-    SubTag, SyncPolicy, WalConfig,
+    ChangeSubscriber, DEFAULT_WAL_FILE_NAME, GraphError, IndexProvider, ProviderError, ProviderTag,
+    SharedGraph, SubTag, SyncPolicy, WalConfig,
 };
 use selene_persist::{SectionCompression, SnapshotBuilder, SnapshotConfig, WalWriter};
 use selene_vector::{
@@ -90,6 +93,32 @@ impl IndexProvider for WalAppendingProvider {
 
     fn declared_sub_tags(&self) -> &[SubTag] {
         &[]
+    }
+}
+
+struct FailingSubscriber {
+    tag: ProviderTag,
+}
+
+impl FailingSubscriber {
+    const fn new(tag: ProviderTag) -> Self {
+        Self { tag }
+    }
+}
+
+impl ChangeSubscriber for FailingSubscriber {
+    fn subscriber_tag(&self) -> ProviderTag {
+        self.tag
+    }
+
+    fn change_kinds(&self) -> ChangeKindSet {
+        ChangeKindSet::EMPTY.with(ChangeKind::NodeDeleted)
+    }
+
+    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
+        Err(ProviderError::Inconsistent {
+            reason: "synthetic vector subscriber failure".to_owned(),
+        })
     }
 }
 
@@ -179,8 +208,264 @@ fn commit_extension_event(graph: &SharedGraph, provider: &str, payload: Arc<[u8]
     txn.commit().expect("extension event commits");
 }
 
+fn create_nodes(graph: &SharedGraph, count: u64) {
+    let mut txn = graph.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        for raw in 1..=count {
+            let id = mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("node create succeeds");
+            assert_eq!(id, NodeId::new(raw));
+        }
+    }
+    txn.commit().expect("node create commit succeeds");
+}
+
+fn delete_graph_node(graph: &SharedGraph, id: NodeId) {
+    let mut txn = graph.begin_write();
+    txn.mutator().delete_node(id).expect("node delete succeeds");
+    txn.commit().expect("node delete commit succeeds");
+}
+
+fn train_ivf(provider: &IvfProvider) {
+    provider.write_section(SubTag(*b"CQNT")).unwrap();
+    provider.write_section(SubTag(*b"IPQB")).unwrap();
+    provider.write_section(SubTag(*b"POST")).unwrap();
+}
+
+fn commit_hnsw_vectors(graph: &SharedGraph, count: u64) {
+    for raw in 1..=count {
+        commit_extension_event(
+            graph,
+            "selene-vector",
+            hnsw_payload(NodeId::new(raw), vec![raw as f32, 0.0, 0.0, 0.0], 0),
+        );
+    }
+}
+
+fn commit_ivf_vectors(graph: &SharedGraph, count: u64) {
+    for raw in 1..=count {
+        commit_extension_event(
+            graph,
+            "selene-vector-ivf",
+            ivf_payload(NodeId::new(raw), vec![raw as f32, raw as f32]),
+        );
+    }
+}
+
 fn index_provider<T: IndexProvider>(provider: &Arc<T>) -> Arc<dyn IndexProvider> {
     provider.clone()
+}
+
+fn change_subscriber<T: ChangeSubscriber>(subscriber: &Arc<T>) -> Arc<dyn ChangeSubscriber> {
+    subscriber.clone()
+}
+
+#[test]
+fn runtime_hnsw_subscriber_tombstones_deleted_node() {
+    let provider = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let graph = SharedGraph::builder(GraphId::new(9330))
+        .with_provider(index_provider(&provider))
+        .with_change_subscriber(change_subscriber(&provider))
+        .build()
+        .unwrap();
+    create_nodes(&graph, 5);
+    commit_hnsw_vectors(&graph, 5);
+    assert!(
+        provider
+            .search(&[2.0, 0.0, 0.0, 0.0], 5, Some(8), None, None)
+            .unwrap()
+            .iter()
+            .any(|(id, _)| *id == NodeId::new(2))
+    );
+
+    delete_graph_node(&graph, NodeId::new(2));
+
+    let results = provider
+        .search(&[2.0, 0.0, 0.0, 0.0], 5, Some(8), None, None)
+        .unwrap();
+    assert!(!results.iter().any(|(id, _)| *id == NodeId::new(2)));
+}
+
+#[test]
+fn runtime_ivf_subscriber_tombstones_deleted_node() {
+    let provider = Arc::new(IvfProvider::new(ivf_config()).unwrap());
+    let graph = SharedGraph::builder(GraphId::new(9331))
+        .with_provider(index_provider(&provider))
+        .with_change_subscriber(change_subscriber(&provider))
+        .build()
+        .unwrap();
+    create_nodes(&graph, 256);
+    commit_ivf_vectors(&graph, 256);
+    train_ivf(&provider);
+    assert!(
+        provider
+            .search(&[2.0, 2.0], 256, Some(4), None, None)
+            .unwrap()
+            .iter()
+            .any(|(id, _)| *id == NodeId::new(2))
+    );
+
+    delete_graph_node(&graph, NodeId::new(2));
+
+    let results = provider
+        .search(&[2.0, 2.0], 256, Some(4), None, None)
+        .unwrap();
+    assert!(!results.iter().any(|(id, _)| *id == NodeId::new(2)));
+}
+
+#[test]
+fn recovery_wal_replay_subscribers_tombstone_deleted_node() {
+    let dir = temp_dir("subscriber-wal-delete");
+    let graph_id = GraphId::new(9332);
+    let live_hnsw = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let live_ivf = Arc::new(IvfProvider::new(ivf_config()).unwrap());
+    let wal = Arc::new(WalAppendingProvider::new(&dir.join(DEFAULT_WAL_FILE_NAME)));
+    let graph = SharedGraph::builder(graph_id)
+        .with_provider(index_provider(&live_hnsw))
+        .with_change_subscriber(change_subscriber(&live_hnsw))
+        .with_provider(index_provider(&live_ivf))
+        .with_change_subscriber(change_subscriber(&live_ivf))
+        .with_provider(wal.clone())
+        .build()
+        .unwrap();
+    create_nodes(&graph, 256);
+    commit_hnsw_vectors(&graph, 5);
+    commit_ivf_vectors(&graph, 256);
+    wal.flush();
+    let snapshot_seq = wal.last_sequence();
+    write_snapshot(&dir, &graph, snapshot_seq);
+    wal.rotate(snapshot_seq);
+
+    delete_graph_node(&graph, NodeId::new(2));
+    wal.flush();
+    drop(graph);
+    drop(wal);
+
+    let recovered_hnsw = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let recovered_ivf = Arc::new(IvfProvider::new(ivf_config()).unwrap());
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        graph_id,
+        vec![
+            index_provider(&recovered_hnsw),
+            index_provider(&recovered_ivf),
+        ],
+        vec![
+            change_subscriber(&recovered_hnsw),
+            change_subscriber(&recovered_ivf),
+        ],
+    )
+    .unwrap();
+
+    let hnsw_results = recovered_hnsw
+        .search(&[2.0, 0.0, 0.0, 0.0], 5, Some(8), None, None)
+        .unwrap();
+    let ivf_results = recovered_ivf
+        .search(&[2.0, 2.0], 256, Some(4), None, None)
+        .unwrap();
+    assert!(!hnsw_results.iter().any(|(id, _)| *id == NodeId::new(2)));
+    assert!(!ivf_results.iter().any(|(id, _)| *id == NodeId::new(2)));
+    assert!(!recovered.read().is_node_alive(NodeId::new(2)));
+    drop(recovered);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recovery_snapshot_rebuild_preserves_vector_tombstones() {
+    let dir = temp_dir("subscriber-snapshot-delete");
+    let graph_id = GraphId::new(9333);
+    let live_hnsw = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let live_ivf = Arc::new(IvfProvider::new(ivf_config()).unwrap());
+    let wal = Arc::new(WalAppendingProvider::new(&dir.join(DEFAULT_WAL_FILE_NAME)));
+    let graph = SharedGraph::builder(graph_id)
+        .with_provider(index_provider(&live_hnsw))
+        .with_change_subscriber(change_subscriber(&live_hnsw))
+        .with_provider(index_provider(&live_ivf))
+        .with_change_subscriber(change_subscriber(&live_ivf))
+        .with_provider(wal.clone())
+        .build()
+        .unwrap();
+    create_nodes(&graph, 256);
+    commit_hnsw_vectors(&graph, 5);
+    commit_ivf_vectors(&graph, 256);
+    delete_graph_node(&graph, NodeId::new(2));
+    wal.flush();
+    let snapshot_seq = wal.last_sequence();
+    write_snapshot(&dir, &graph, snapshot_seq);
+    wal.rotate(snapshot_seq);
+    drop(graph);
+    drop(wal);
+
+    let recovered_hnsw = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let recovered_ivf = Arc::new(IvfProvider::new(ivf_config()).unwrap());
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        graph_id,
+        vec![
+            index_provider(&recovered_hnsw),
+            index_provider(&recovered_ivf),
+        ],
+        vec![
+            change_subscriber(&recovered_hnsw),
+            change_subscriber(&recovered_ivf),
+        ],
+    )
+    .unwrap();
+
+    let hnsw_results = recovered_hnsw
+        .search(&[2.0, 0.0, 0.0, 0.0], 5, Some(8), None, None)
+        .unwrap();
+    let ivf_results = recovered_ivf
+        .search(&[2.0, 2.0], 256, Some(4), None, None)
+        .unwrap();
+    assert!(!hnsw_results.iter().any(|(id, _)| *id == NodeId::new(2)));
+    assert!(!ivf_results.iter().any(|(id, _)| *id == NodeId::new(2)));
+    assert!(!recovered.read().is_node_alive(NodeId::new(2)));
+    drop(recovered);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recovery_subscriber_error_fails_vector_recovery() {
+    let dir = temp_dir("subscriber-error");
+    let graph_id = GraphId::new(9334);
+    let live_hnsw = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let wal = Arc::new(WalAppendingProvider::new(&dir.join(DEFAULT_WAL_FILE_NAME)));
+    let graph = SharedGraph::builder(graph_id)
+        .with_provider(index_provider(&live_hnsw))
+        .with_provider(wal.clone())
+        .build()
+        .unwrap();
+    create_nodes(&graph, 1);
+    delete_graph_node(&graph, NodeId::new(1));
+    wal.flush();
+    drop(graph);
+    drop(wal);
+
+    let recovered_hnsw = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
+    let failing: Arc<dyn ChangeSubscriber> =
+        Arc::new(FailingSubscriber::new(ProviderTag(*b"VECT")));
+    let err = match SharedGraph::recover_with_providers(
+        &dir,
+        graph_id,
+        vec![index_provider(&recovered_hnsw)],
+        vec![failing],
+    ) {
+        Ok(_) => panic!("subscriber error should fail recovery"),
+        Err(error) => error,
+    };
+
+    let GraphError::Persist(selene_persist::PersistError::ProviderFailed { source, .. }) = &err
+    else {
+        panic!("expected provider failure, got {err:?}");
+    };
+    assert!(
+        format!("{source}").contains("synthetic vector subscriber failure"),
+        "unexpected subscriber error: {source}"
+    );
+    let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
