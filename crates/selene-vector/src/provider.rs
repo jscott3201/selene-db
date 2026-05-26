@@ -5,8 +5,8 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use roaring::RoaringBitmap;
-use selene_core::{Change, NodeId};
-use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
+use selene_core::{Change, ChangeKind, ChangeKindSet, NodeId};
+use selene_graph::{ChangeSubscriber, IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use crate::builder::{apply_bulk_delete, apply_bulk_upsert, apply_upsert};
 use crate::payload::{EventKind, decode_event, split_named_payload};
@@ -19,6 +19,9 @@ use crate::{
 };
 
 pub(crate) const PROVIDER_NAME: &str = "selene-vector";
+const SUBSCRIBED_KINDS: ChangeKindSet = ChangeKindSet::EMPTY
+    .with(ChangeKind::NodeDeleted)
+    .with(ChangeKind::EdgeDeleted);
 
 /// Stateful vector index provider registered under the `VECT` provider tag.
 ///
@@ -122,6 +125,23 @@ impl HnswProvider {
         Ok(None)
     }
 
+    /// Tombstone `node_id` in the published HNSW graph.
+    ///
+    /// Missing nodes are treated as successful no-ops by the underlying HNSW
+    /// deletion primitive.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VectorError`] when the HNSW tombstone operation cannot preserve
+    /// graph invariants.
+    pub fn delete_node(&self, node_id: NodeId) -> Result<(), VectorError> {
+        let prev = self.state.load_full();
+        let mut next = prev.clone_for_mutation();
+        hnsw::delete::tombstone_node(&mut next, node_id)?;
+        self.state.store(Arc::new(next));
+        Ok(())
+    }
+
     /// Apply a single upsert payload through the same code path as
     /// [`Self::on_change`], but return the underlying [`VectorError`] instead
     /// of wrapping it into [`ProviderError`]. Test-harness only — exposes a
@@ -136,6 +156,29 @@ impl HnswProvider {
         let next = apply_upsert(&prev, payload, &self.config)?;
         self.state.store(Arc::new(next));
         Ok(())
+    }
+}
+
+impl ChangeSubscriber for HnswProvider {
+    fn subscriber_tag(&self) -> ProviderTag {
+        self.provider_tag()
+    }
+
+    fn change_kinds(&self) -> ChangeKindSet {
+        SUBSCRIBED_KINDS
+    }
+
+    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
+        match change {
+            Change::NodeDeleted { id } => self.delete_node(*id).map_err(delete_err),
+            Change::EdgeDeleted { .. }
+            | Change::NodeCreated { .. }
+            | Change::NodeUpdated { .. }
+            | Change::EdgeCreated { .. }
+            | Change::EdgeUpdated { .. }
+            | Change::SchemaChanged { .. }
+            | Change::IndexExtensionEvent { .. } => Ok(()),
+        }
     }
 }
 
@@ -466,5 +509,11 @@ fn section_encode_err(err: VectorError) -> ProviderError {
 fn unknown_sub_tag(sub_tag: SubTag) -> ProviderError {
     ProviderError::InvalidPayload {
         reason: format!("unknown selene-vector sub_tag {sub_tag}"),
+    }
+}
+
+fn delete_err(error: VectorError) -> ProviderError {
+    ProviderError::InvalidPayload {
+        reason: format!("selene-vector delete_node: {error:?}: {error}"),
     }
 }

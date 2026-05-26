@@ -35,6 +35,23 @@ pub trait RecoveryProvider: Send + Sync {
     ///
     /// Returns provider-owned errors when the change cannot be applied.
     fn on_change(&self, change: &Change) -> RecoveryResult<()>;
+
+    /// Deliver one committed WAL entry as a batch.
+    ///
+    /// The default implementation preserves the historical per-change contract
+    /// by calling [`Self::on_change`] for every change in entry order.
+    /// Providers that need commit-level ordering can override this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns provider-owned errors when any change in the batch cannot be
+    /// applied.
+    fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
+        for change in changes {
+            self.on_change(change)?;
+        }
+        Ok(())
+    }
 }
 
 /// Recovery-time provider lookup table.

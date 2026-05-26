@@ -4,12 +4,13 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use roaring::RoaringBitmap;
-use selene_core::{Change, NodeId};
-use selene_graph::{IndexProvider, ProviderError, ProviderTag, SubTag};
+use selene_core::{Change, ChangeKind, ChangeKindSet, NodeId};
+use selene_graph::{ChangeSubscriber, IndexProvider, ProviderError, ProviderTag, SubTag};
 
 use super::coarse::CoarseQuantizer;
 use super::mutate::{
-    IvfEventKind, apply_bulk_delete, apply_bulk_insert, apply_payload, decode_ivf_event,
+    IvfEventKind, apply_bulk_delete, apply_bulk_insert, apply_delete, apply_payload,
+    decode_ivf_event,
 };
 use super::train::{append_encoded, train};
 use super::validate::{
@@ -22,6 +23,10 @@ use crate::snapshot::cqnt::{CqntBodyV1, decode_cqnt, encode_cqnt};
 use crate::snapshot::ipqb::{IpqbBodyV1, decode_ipqb, encode_ipqb};
 use crate::snapshot::post::{PostBodyV1, decode_post, encode_post};
 use crate::{DistanceMetric, IvfConfig, VectorError, snapshot};
+
+const SUBSCRIBED_KINDS: ChangeKindSet = ChangeKindSet::EMPTY
+    .with(ChangeKind::NodeDeleted)
+    .with(ChangeKind::EdgeDeleted);
 
 /// Stateful vector index provider registered under the `IVFP` provider tag.
 pub struct IvfProvider {
@@ -122,6 +127,52 @@ impl IvfProvider {
             }));
         }
         Ok(None)
+    }
+
+    /// Tombstone `node_id` in the published IVF-PQ index.
+    ///
+    /// Missing nodes are treated as successful no-ops by the underlying mutate
+    /// helper.
+    ///
+    /// # Errors
+    ///
+    /// This method currently cannot fail, but returns [`VectorError`] to match
+    /// the HNSW provider's deletion surface.
+    pub fn delete_node(&self, node_id: NodeId) -> Result<(), VectorError> {
+        let prev = self.state.load_full();
+        let mut next = (*prev).clone();
+        apply_delete(&mut next, node_id);
+        self.state.store(Arc::new(next));
+        Ok(())
+    }
+}
+
+impl ChangeSubscriber for IvfProvider {
+    fn subscriber_tag(&self) -> ProviderTag {
+        self.provider_tag()
+    }
+
+    fn change_kinds(&self) -> ChangeKindSet {
+        SUBSCRIBED_KINDS
+    }
+
+    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
+        match change {
+            Change::NodeDeleted { id } => self.delete_node(*id).map_err(delete_err),
+            Change::EdgeDeleted { .. }
+            | Change::NodeCreated { .. }
+            | Change::NodeUpdated { .. }
+            | Change::EdgeCreated { .. }
+            | Change::EdgeUpdated { .. }
+            | Change::SchemaChanged { .. }
+            | Change::IndexExtensionEvent { .. } => Ok(()),
+        }
+    }
+}
+
+fn delete_err(error: VectorError) -> ProviderError {
+    ProviderError::InvalidPayload {
+        reason: format!("selene-vector-ivf delete_node: {error:?}: {error}"),
     }
 }
 

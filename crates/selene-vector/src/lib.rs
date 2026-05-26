@@ -40,6 +40,7 @@ pub mod procedures;
 pub mod provider;
 pub(crate) mod quantize;
 pub mod registry;
+mod registry_subscribers;
 pub(crate) mod snapshot;
 #[cfg(any(test, feature = "test-harness"))]
 pub mod snapshot_summary;

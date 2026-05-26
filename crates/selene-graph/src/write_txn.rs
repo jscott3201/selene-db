@@ -10,6 +10,7 @@ use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
 use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
+use crate::change_subscriber::ChangeSubscriber;
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
@@ -52,6 +53,7 @@ pub struct WriteTxn<'g> {
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
+    pub(crate) subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
     pub(crate) changes: Vec<Change>,
     pub(crate) warnings: Vec<CommitWarning>,
@@ -64,6 +66,7 @@ impl<'g> WriteTxn<'g> {
         schema_version: Arc<AtomicU64>,
         allocator: MutexGuard<'g, IdAllocator>,
         providers: Vec<Arc<dyn IndexProvider>>,
+        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
     ) -> Self {
         let pre_txn = Some(Arc::clone(&*guard));
@@ -74,6 +77,7 @@ impl<'g> WriteTxn<'g> {
             pre_txn,
             allocator,
             providers,
+            subscribers,
             durable_providers,
             changes: Vec::new(),
             warnings: Vec::new(),
@@ -103,16 +107,17 @@ impl<'g> WriteTxn<'g> {
 
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
-    /// Registered index providers are notified after the new graph snapshot is
-    /// published, **with the write lock and allocator mutex still held**, so
-    /// that two concurrent commits cannot interleave their `on_change`
-    /// callbacks (the per-graph serialization contract from Spec 06).
+    /// Registered index providers and change subscribers are notified after the
+    /// new graph snapshot is published, **with the write lock and allocator
+    /// mutex still held**, so that two concurrent commits cannot interleave
+    /// their `on_change` callbacks (the per-graph serialization contract from
+    /// Spec 06).
     /// Same-thread re-entrant
     /// provider calls into `SharedGraph::begin_write()` are detected via a
     /// thread-local fanout counter and panic with a clear message; the
-    /// outer `std::panic::catch_unwind` in `notify_providers` catches those
-    /// panics (along with provider-internal panics and returned errors) so
-    /// a single misbehaving provider can never abort the writer thread.
+    /// outer fan-out boundary catches those panics (along with callback-internal
+    /// panics and returned errors) so a single misbehaving provider or
+    /// subscriber can never abort the writer thread.
     /// Cross-thread re-entry (a provider waiting on a spawned worker that
     /// calls `begin_write`) is documented misuse — see `reentry.rs` and
     /// the `IndexProvider` rustdoc.
@@ -207,6 +212,9 @@ impl<'g> WriteTxn<'g> {
         {
             let _fanout_guard = crate::reentry::FanoutGuard::enter();
             notify_providers(&self.providers, &changes);
+            if !self.subscribers.is_empty() {
+                notify_subscribers(&self.subscribers, &changes);
+            }
         }
 
         metrics::counter_inc(metrics::COMMITS_TOTAL);
@@ -288,7 +296,7 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
             })) {
                 Ok(tag) => tag,
                 Err(payload) => {
-                    let payload = describe_panic_payload(&payload);
+                    let payload = crate::panic_payload::describe(&payload);
                     tracing::error!(
                         provider_tag = %SENTINEL_PROVIDER_TAG,
                         ?change,
@@ -320,7 +328,7 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
                     );
                 }
                 Err(panic_payload) => {
-                    let payload = describe_panic_payload(&panic_payload);
+                    let payload = crate::panic_payload::describe(&panic_payload);
                     tracing::error!(
                         provider_tag = %tag,
                         ?change,
@@ -333,20 +341,66 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
     }
 }
 
+/// Fan out committed changes to subscribers after filtering by declared kind.
+#[tracing::instrument(
+    name = "selene.graph.notify_subscribers",
+    skip(subscribers, changes),
+    fields(subscriber_count = subscribers.len(), change_count = changes.len())
+)]
+fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Change]) {
+    for subscriber in subscribers {
+        let (tag, kinds) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            (subscriber.subscriber_tag(), subscriber.change_kinds())
+        })) {
+            Ok(parts) => parts,
+            Err(payload) => {
+                let payload = crate::panic_payload::describe(&payload);
+                tracing::error!(
+                    subscriber_tag = %SENTINEL_PROVIDER_TAG,
+                    payload = %payload,
+                    "change subscriber tag/filter lookup panicked after graph commit; \
+                     skipping subscriber",
+                );
+                continue;
+            }
+        };
+
+        for change in changes {
+            if !kinds.contains(change.kind()) {
+                continue;
+            }
+
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                subscriber.on_change(change)
+            }));
+            match outcome {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(
+                        subscriber_tag = %tag,
+                        error = %error,
+                        ?change,
+                        "change subscriber on_change failed after graph commit; continuing",
+                    );
+                }
+                Err(panic_payload) => {
+                    let payload = crate::panic_payload::describe(&panic_payload);
+                    tracing::error!(
+                        subscriber_tag = %tag,
+                        ?change,
+                        payload = %payload,
+                        "change subscriber on_change panicked after graph commit; continuing",
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Sentinel value emitted on the `provider_tag` field when the provider's
 /// own `provider_tag()` method panicked, so log filters keyed on the field
 /// name still match.
 const SENTINEL_PROVIDER_TAG: &str = "<unknown>";
-
-fn describe_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
-    if let Some(s) = payload.downcast_ref::<&'static str>() {
-        (*s).to_owned()
-    } else if let Some(s) = payload.downcast_ref::<String>() {
-        s.clone()
-    } else {
-        "<non-string panic payload>".to_owned()
-    }
-}
 
 #[cfg(test)]
 mod tests;
