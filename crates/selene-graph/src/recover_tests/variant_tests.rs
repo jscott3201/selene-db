@@ -182,6 +182,79 @@ fn recover_from_wal_only_replays_edge_updated() {
 }
 
 #[test]
+fn recover_from_wal_only_replays_removed_variants() {
+    let dir = temp_dir("removed-variants");
+    let graph_id = GraphId::new(703);
+    let shared = SharedGraph::new(graph_id);
+    let base = intern("recover.remove.base").unwrap();
+    let removed_label = intern("recover.remove.label").unwrap();
+    let node_prop = intern("recover.remove.node_prop").unwrap();
+    let edge_prop = intern("recover.remove.edge_prop").unwrap();
+    let edge_label = intern("recover.remove.edge").unwrap();
+    let outcome = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let left = mutator
+            .create_node(
+                LabelSet::from_iter([base, removed_label]),
+                PropertyMap::from_pairs([(node_prop, Value::Int(1))]).unwrap(),
+            )
+            .unwrap();
+        let right = mutator
+            .create_node(LabelSet::single(base), PropertyMap::new())
+            .unwrap();
+        let edge = mutator
+            .create_edge(
+                edge_label,
+                left,
+                right,
+                PropertyMap::from_pairs([(edge_prop, Value::Int(2))]).unwrap(),
+            )
+            .unwrap();
+        mutator.remove_node_property(left, node_prop).unwrap();
+        mutator.remove_node_label(left, removed_label).unwrap();
+        mutator.remove_edge_property(edge, edge_prop).unwrap();
+        txn.commit().unwrap()
+    };
+    append_wal(&dir, 0, &outcome.changes);
+
+    let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    let snapshot = recovered.read();
+    assert!(
+        snapshot
+            .node_properties(NodeId::new(1))
+            .unwrap()
+            .get(&node_prop)
+            .is_none()
+    );
+    assert!(
+        !snapshot
+            .node_labels(NodeId::new(1))
+            .unwrap()
+            .contains(&removed_label)
+    );
+    assert!(
+        snapshot
+            .edge_properties(EdgeId::new(1))
+            .unwrap()
+            .get(&edge_prop)
+            .is_none()
+    );
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [
+            Change::NodeCreated { .. },
+            Change::NodeCreated { .. },
+            Change::EdgeCreated { .. },
+            Change::NodePropertyRemoved { .. },
+            Change::NodeLabelRemoved { .. },
+            Change::EdgePropertyRemoved { .. }
+        ]
+    ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_from_wal_only_replays_edge_deleted() {
     let dir = temp_dir("edge-deleted");
     let shared = SharedGraph::new(GraphId::new(703));

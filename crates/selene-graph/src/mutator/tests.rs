@@ -1,9 +1,12 @@
 use proptest::prelude::*;
 use roaring::RoaringBitmap;
-use selene_core::{Change, GraphId, PredefinedValueType, Value, ValueType, intern};
+use selene_core::{
+    Change, GraphId, PredefinedValueType, PropertyValueType, Value, ValueType, intern,
+};
 
 use super::*;
 use crate::SharedGraph;
+use crate::graph_types::{NodeTypeDef, ValidationMode};
 use crate::store::node_row_index;
 
 fn empty_node(mutator: &mut Mutator<'_, '_>) -> NodeId {
@@ -362,6 +365,179 @@ fn update_edge_updates_properties() {
         shared.read().edge_properties(edge).unwrap().get(&prop),
         Some(&Value::String(prop))
     );
+}
+
+#[test]
+fn remove_node_property_removes_value_and_emits_change() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    let (id, prop) = {
+        let mut mutator = txn.mutator();
+        let prop = intern("node.remove.prop").unwrap();
+        let id = mutator
+            .create_node(
+                LabelSet::new(),
+                PropertyMap::from_pairs([(prop, Value::Int(7))]).unwrap(),
+            )
+            .unwrap();
+        mutator.remove_node_property(id, prop).unwrap();
+        assert!(
+            mutator
+                .read()
+                .node_properties(id)
+                .unwrap()
+                .get(&prop)
+                .is_none()
+        );
+        (id, prop)
+    };
+    let outcome = txn.commit().unwrap();
+    assert_eq!(
+        outcome.changes[1],
+        Change::NodePropertyRemoved { id, property: prop }
+    );
+    assert!(
+        shared
+            .read()
+            .node_properties(id)
+            .unwrap()
+            .get(&prop)
+            .is_none()
+    );
+}
+
+#[test]
+fn remove_node_property_absent_is_noop() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        let id = empty_node(&mut mutator);
+        mutator
+            .remove_node_property(id, intern("node.remove.absent").unwrap())
+            .unwrap();
+    }
+    let outcome = txn.commit().unwrap();
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { .. }]
+    ));
+}
+
+#[test]
+fn remove_node_label_updates_index_and_emits_change() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    let (id, label) = {
+        let mut mutator = txn.mutator();
+        let label = intern("node.remove.label").unwrap();
+        let id = mutator
+            .create_node(LabelSet::single(label), PropertyMap::new())
+            .unwrap();
+        mutator.remove_node_label(id, label).unwrap();
+        assert!(mutator.read().nodes_with_label(&label).is_none());
+        (id, label)
+    };
+    let outcome = txn.commit().unwrap();
+    assert_eq!(outcome.changes[1], Change::NodeLabelRemoved { id, label });
+    assert!(shared.read().nodes_with_label(&label).is_none());
+}
+
+#[test]
+fn remove_edge_property_removes_value_and_emits_change() {
+    let shared = SharedGraph::new(GraphId::new(1));
+    let mut txn = shared.begin_write();
+    let (edge, prop) = {
+        let mut mutator = txn.mutator();
+        let left = empty_node(&mut mutator);
+        let right = empty_node(&mut mutator);
+        let prop = intern("edge.remove.prop").unwrap();
+        let edge = mutator
+            .create_edge(
+                intern("edge.remove").unwrap(),
+                left,
+                right,
+                PropertyMap::from_pairs([(prop, Value::Int(9))]).unwrap(),
+            )
+            .unwrap();
+        mutator.remove_edge_property(edge, prop).unwrap();
+        assert!(
+            mutator
+                .read()
+                .edge_properties(edge)
+                .unwrap()
+                .get(&prop)
+                .is_none()
+        );
+        (edge, prop)
+    };
+    let outcome = txn.commit().unwrap();
+    assert_eq!(
+        outcome.changes.last(),
+        Some(&Change::EdgePropertyRemoved {
+            id: edge,
+            property: prop,
+        })
+    );
+    assert!(
+        shared
+            .read()
+            .edge_properties(edge)
+            .unwrap()
+            .get(&prop)
+            .is_none()
+    );
+}
+
+#[test]
+fn remove_node_property_rejects_immutable_property() {
+    let serial = intern("node.remove.immutable.serial").unwrap();
+    let person = intern("node.remove.immutable.person").unwrap();
+    let graph_type = GraphTypeDef {
+        name: intern("node.remove.immutable.graph").unwrap(),
+        node_types: vec![NodeTypeDef {
+            name: person,
+            key_labels: LabelSet::single(person),
+            properties: vec![PropertyTypeDef {
+                name: serial,
+                value_type: PropertyValueType::String,
+                list_element_type: None,
+                required: false,
+                default: None,
+                immutable: true,
+            }],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(1))
+        .bound_to(graph_type)
+        .unwrap()
+        .build()
+        .unwrap();
+    let mut txn = shared.begin_write();
+    let id = txn
+        .mutator()
+        .create_node(
+            LabelSet::single(person),
+            PropertyMap::from_pairs([(serial, Value::String(serial))]).unwrap(),
+        )
+        .unwrap();
+    txn.commit().unwrap();
+
+    let mut txn = shared.begin_write();
+    let err = txn
+        .mutator()
+        .remove_node_property(id, serial)
+        .expect_err("immutable property removal is rejected");
+    assert!(matches!(
+        err,
+        GraphError::TypeViolation(TypeViolation::ImmutablePropertyUpdate {
+            entity_id,
+            property,
+            ..
+        }) if entity_id == EntityId::Node(id) && property == serial
+    ));
 }
 
 proptest! {

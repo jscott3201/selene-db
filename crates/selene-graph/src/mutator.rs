@@ -3,6 +3,7 @@
 mod catalog;
 mod composite_property_index;
 mod property_index;
+mod remove;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

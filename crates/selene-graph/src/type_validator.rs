@@ -202,6 +202,41 @@ pub fn validate_change(
             )?;
             Ok(warnings)
         }
+        Change::NodePropertyRemoved { id, property } => {
+            if !graph.is_node_alive(*id) {
+                return Ok(Vec::new());
+            }
+            let (node_type_index, warnings) = validate_node_state(*id, graph, type_def)?;
+            let node_type = &type_def.node_types[node_type_index as usize];
+            reject_if_immutable(
+                EntityId::Node(*id),
+                node_type.name,
+                &node_type.properties,
+                *property,
+            )?;
+            Ok(warnings)
+        }
+        Change::EdgePropertyRemoved { id, property } => {
+            if !graph.is_edge_alive(*id) {
+                return Ok(Vec::new());
+            }
+            let (edge_type, warnings) = validate_edge_state(*id, graph, type_def)?;
+            reject_if_immutable(
+                EntityId::Edge(*id),
+                edge_type.name,
+                &edge_type.properties,
+                *property,
+            )?;
+            Ok(warnings)
+        }
+        Change::NodeLabelRemoved { id, .. } => {
+            if !graph.is_node_alive(*id) {
+                return Ok(Vec::new());
+            }
+            let (_, mut warnings) = validate_node_state(*id, graph, type_def)?;
+            warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
+            Ok(warnings)
+        }
         Change::NodeDeleted { .. }
         | Change::EdgeDeleted { .. }
         | Change::SchemaChanged { .. }
