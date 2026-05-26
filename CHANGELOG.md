@@ -13,6 +13,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ChangeSubscriber` and `ChangeKindSet` for runtime and recovery fan-out in
+  `selene-graph`. Vector providers now tombstone derived vector state on
+  `Change::NodeDeleted`, closing Seam A from the 2026-05-26 deletion +
+  reclamation audit and planting D25.
 - Vendor `IM_TYPED_PARAMS` inline typed parameter declarations in
   `selene-gql`: `$id :: TYPE` is now parsed at expression and LIMIT/OFFSET
   parameter sites, typed by the analyzer, validated against bound session
