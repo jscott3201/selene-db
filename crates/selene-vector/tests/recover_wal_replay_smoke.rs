@@ -213,9 +213,13 @@ fn recover_replays_index_extension_event_to_hnsw_provider() {
     drop(wal);
 
     let replay_provider = Arc::new(HnswProvider::new(hnsw_config()).unwrap());
-    let recovered =
-        SharedGraph::recover_with_providers(&dir, graph_id, vec![index_provider(&replay_provider)])
-            .unwrap();
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        graph_id,
+        vec![index_provider(&replay_provider)],
+        Vec::new(),
+    )
+    .unwrap();
     assert_eq!(recovered.read().node_count(), 0);
     assert!(
         recovered
@@ -262,9 +266,13 @@ fn recover_replays_index_extension_event_to_ivf_provider() {
     drop(wal);
 
     let replay_provider = Arc::new(IvfProvider::new(ivf_config()).unwrap());
-    let recovered =
-        SharedGraph::recover_with_providers(&dir, graph_id, vec![index_provider(&replay_provider)])
-            .unwrap();
+    let recovered = SharedGraph::recover_with_providers(
+        &dir,
+        graph_id,
+        vec![index_provider(&replay_provider)],
+        Vec::new(),
+    )
+    .unwrap();
     assert_eq!(recovered.read().node_count(), 0);
     assert!(
         recovered
@@ -342,6 +350,7 @@ fn recover_with_providers_applies_vector_snapshot_sections_and_post_snapshot_wal
             index_provider(&recovered_hnsw),
             index_provider(&recovered_ivf),
         ],
+        Vec::new(),
     )
     .unwrap();
 
@@ -388,6 +397,7 @@ fn recover_with_providers_rejects_duplicate_provider_tags() {
         &dir,
         GraphId::new(9322),
         vec![index_provider(&first), index_provider(&second)],
+        Vec::new(),
     ) {
         Ok(_) => panic!("duplicate provider tags should fail"),
         Err(error) => error,

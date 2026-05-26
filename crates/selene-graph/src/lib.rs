@@ -12,6 +12,7 @@
 #![deny(missing_docs)]
 
 pub mod adjacency;
+pub mod change_subscriber;
 pub mod chunked_vec;
 pub(crate) mod composite_property_index;
 pub mod composite_typed_index;
@@ -33,6 +34,7 @@ pub mod typed_index;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
+pub use change_subscriber::ChangeSubscriber;
 pub use chunked_vec::ChunkedVec;
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,

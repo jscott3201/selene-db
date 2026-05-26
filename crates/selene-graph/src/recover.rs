@@ -1,5 +1,6 @@
 //! SharedGraph recovery helpers backed by selene-persist.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -9,10 +10,11 @@ use selene_persist::{
     WalConfig, WalWriter,
 };
 
+use crate::change_subscriber::ChangeSubscriber;
 use crate::core_provider::CoreProvider;
 use crate::graph_types::GraphTypeDef;
-use crate::index_provider::{IndexProvider, ProviderError, SubTag};
-use crate::shared::validate_unique_provider_tags;
+use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
+use crate::shared::{validate_unique_provider_tags, validate_unique_subscriber_tags};
 use crate::{GraphResult, SharedGraph};
 
 impl SharedGraph {
@@ -28,26 +30,30 @@ impl SharedGraph {
     /// snapshot disagrees with `graph_id` or declares a closed binding, or
     /// graph errors when the recovered state cannot be materialized.
     pub fn recover(dir: &Path, graph_id: GraphId) -> GraphResult<Self> {
-        Self::recover_inner(dir, graph_id, None, Vec::new())
+        Self::recover_inner(dir, graph_id, None, Vec::new(), Vec::new())
     }
 
     /// Recover an open (GG01) shared graph with extension index providers.
     ///
     /// Each supplied provider participates in snapshot-section recovery and WAL
     /// replay, then remains attached to the returned graph so future commits
-    /// route to the same provider set.
+    /// route to the same provider set. Subscribers whose tags match a provider
+    /// receive filtered WAL changes during replay and remain attached for
+    /// runtime commits.
     ///
     /// # Errors
     ///
     /// Returns persistence errors, [`crate::GraphError::Provider`] when provider
-    /// tags are duplicated or recovered provider state is inconsistent, or graph
-    /// errors when the recovered state cannot be materialized.
+    /// tags are duplicated, subscriber tags are duplicated or unmatched, or
+    /// recovered provider state is inconsistent, or graph errors when the
+    /// recovered state cannot be materialized.
     pub fn recover_with_providers(
         dir: &Path,
         graph_id: GraphId,
         providers: Vec<Arc<dyn IndexProvider>>,
+        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     ) -> GraphResult<Self> {
-        Self::recover_inner(dir, graph_id, None, providers)
+        Self::recover_inner(dir, graph_id, None, providers, subscribers)
     }
 
     /// Recover a closed (GG02) shared graph bound to `bound_type`.
@@ -73,29 +79,44 @@ impl SharedGraph {
         graph_id: GraphId,
         bound_type: GraphTypeDef,
     ) -> GraphResult<Self> {
-        Self::recover_inner(dir, graph_id, Some(Arc::new(bound_type)), Vec::new())
+        Self::recover_inner(
+            dir,
+            graph_id,
+            Some(Arc::new(bound_type)),
+            Vec::new(),
+            Vec::new(),
+        )
     }
 
     /// Recover a closed (GG02) shared graph with extension index providers.
     ///
     /// This is the provider-aware counterpart to [`SharedGraph::recover_closed`].
     /// Recovery validates the caller-supplied `bound_type`, rebuilds the supplied
-    /// index providers from snapshot sections and WAL replay, and returns a live
-    /// WAL-backed graph with those providers still attached.
+    /// index providers from snapshot sections and WAL replay, fans matching
+    /// subscribers during WAL replay, and returns a live WAL-backed graph with
+    /// those providers and subscribers still attached.
     ///
     /// # Errors
     ///
     /// Returns persistence errors, [`crate::GraphError::Provider`] on provider
-    /// tag duplication or type drift, [`crate::GraphError::TypeViolation`] when
-    /// recovered entities don't conform to `bound_type`, or graph errors when
-    /// the recovered state cannot be materialized.
+    /// tag duplication, subscriber tag duplication or mismatch, or type drift,
+    /// [`crate::GraphError::TypeViolation`] when recovered entities don't
+    /// conform to `bound_type`, or graph errors when the recovered state cannot
+    /// be materialized.
     pub fn recover_closed_with_providers(
         dir: &Path,
         graph_id: GraphId,
         bound_type: GraphTypeDef,
         providers: Vec<Arc<dyn IndexProvider>>,
+        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     ) -> GraphResult<Self> {
-        Self::recover_inner(dir, graph_id, Some(Arc::new(bound_type)), providers)
+        Self::recover_inner(
+            dir,
+            graph_id,
+            Some(Arc::new(bound_type)),
+            providers,
+            subscribers,
+        )
     }
 
     fn recover_inner(
@@ -103,13 +124,15 @@ impl SharedGraph {
         graph_id: GraphId,
         expected_bound_type: Option<Arc<GraphTypeDef>>,
         providers: Vec<Arc<dyn IndexProvider>>,
+        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     ) -> GraphResult<Self> {
         let core = CoreProvider::new_for_recovery();
         validate_recovery_provider_tags(&core, &providers)?;
+        validate_unique_subscriber_tags(&subscribers)?;
         let mut registry = ProviderRegistry::new();
         let provider: Arc<dyn RecoveryProvider> = core.clone();
         registry.register(provider)?;
-        register_index_recovery_providers(&mut registry, &providers)?;
+        register_combined_recovery_providers(&mut registry, &providers, &subscribers)?;
         let outcome = selene_persist::recover(dir, &registry)?;
         let mut graph = core.finish_recovery(graph_id, expected_bound_type)?;
         // The committed graph generation must reflect every change that was
@@ -124,15 +147,22 @@ impl SharedGraph {
         // would lose every post-recovery change even though the feature
         // advertises live WAL durability.
         let writer = WalWriter::open(&dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())?;
-        Self::from_graph_with_core_and_durables(graph, providers, Vec::new(), Some(writer))
+        Self::from_graph_with_core_and_durables(
+            graph,
+            providers,
+            subscribers,
+            Vec::new(),
+            Some(writer),
+        )
     }
 }
 
-struct IndexRecoveryProvider {
+struct IndexAndChangeRecoveryProvider {
     provider: Arc<dyn IndexProvider>,
+    subscribers: Vec<Arc<dyn ChangeSubscriber>>,
 }
 
-impl RecoveryProvider for IndexRecoveryProvider {
+impl RecoveryProvider for IndexAndChangeRecoveryProvider {
     fn provider_tag(&self) -> [u8; 4] {
         self.provider.provider_tag().0
     }
@@ -144,7 +174,13 @@ impl RecoveryProvider for IndexRecoveryProvider {
     }
 
     fn on_change(&self, change: &Change) -> RecoveryResult<()> {
-        self.provider.on_change(change).map_err(recovery_error)
+        self.provider.on_change(change).map_err(recovery_error)?;
+        for subscriber in &self.subscribers {
+            if subscriber.change_kinds().contains(change.kind()) {
+                subscriber.on_change(change).map_err(recovery_error)?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -159,15 +195,34 @@ fn validate_recovery_provider_tags(
     validate_unique_provider_tags(&all_providers)
 }
 
-fn register_index_recovery_providers(
+fn register_combined_recovery_providers(
     registry: &mut ProviderRegistry,
     providers: &[Arc<dyn IndexProvider>],
+    subscribers: &[Arc<dyn ChangeSubscriber>],
 ) -> GraphResult<()> {
+    let mut subscribers_by_tag = BTreeMap::<ProviderTag, Vec<Arc<dyn ChangeSubscriber>>>::new();
+    for subscriber in subscribers {
+        subscribers_by_tag
+            .entry(subscriber.subscriber_tag())
+            .or_default()
+            .push(Arc::clone(subscriber));
+    }
+
     for provider in providers {
-        let recovery_provider: Arc<dyn RecoveryProvider> = Arc::new(IndexRecoveryProvider {
-            provider: Arc::clone(provider),
-        });
+        let subscribers = subscribers_by_tag
+            .remove(&provider.provider_tag())
+            .unwrap_or_default();
+        let recovery_provider: Arc<dyn RecoveryProvider> =
+            Arc::new(IndexAndChangeRecoveryProvider {
+                provider: Arc::clone(provider),
+                subscribers,
+            });
         registry.register(recovery_provider)?;
+    }
+    if let Some((tag, _)) = subscribers_by_tag.into_iter().next() {
+        return Err(crate::GraphError::Provider(ProviderError::Inconsistent {
+            reason: format!("change subscriber tag {tag} has no matching provider"),
+        }));
     }
     Ok(())
 }
