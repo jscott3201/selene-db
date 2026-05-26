@@ -22,18 +22,24 @@ pub enum ChangeKind {
     SchemaChanged = 6,
     /// [`Change::IndexExtensionEvent`].
     IndexExtensionEvent = 7,
+    /// [`Change::NodePropertyRemoved`].
+    NodePropertyRemoved = 8,
+    /// [`Change::EdgePropertyRemoved`].
+    EdgePropertyRemoved = 9,
+    /// [`Change::NodeLabelRemoved`].
+    NodeLabelRemoved = 10,
 }
 
 /// Bit-set over [`ChangeKind`] discriminants.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct ChangeKindSet(u8);
+pub struct ChangeKindSet(u16);
 
 impl ChangeKindSet {
     /// Empty filter set.
     pub const EMPTY: Self = Self(0);
 
     /// Filter set containing every currently defined [`ChangeKind`].
-    pub const ALL: Self = Self(0b1111_1111);
+    pub const ALL: Self = Self(0b0000_0111_1111_1111);
 
     /// Return true when `kind` is present in this set.
     #[must_use]
@@ -67,12 +73,15 @@ impl Change {
             Self::EdgeDeleted { .. } => ChangeKind::EdgeDeleted,
             Self::SchemaChanged { .. } => ChangeKind::SchemaChanged,
             Self::IndexExtensionEvent { .. } => ChangeKind::IndexExtensionEvent,
+            Self::NodePropertyRemoved { .. } => ChangeKind::NodePropertyRemoved,
+            Self::EdgePropertyRemoved { .. } => ChangeKind::EdgePropertyRemoved,
+            Self::NodeLabelRemoved { .. } => ChangeKind::NodeLabelRemoved,
         }
     }
 }
 
-const fn kind_bit(kind: ChangeKind) -> u8 {
-    1_u8 << (kind as u8)
+const fn kind_bit(kind: ChangeKind) -> u16 {
+    1_u16 << (kind as u8)
 }
 
 #[cfg(test)]
@@ -95,6 +104,9 @@ mod tests {
             ChangeKind::EdgeDeleted,
             ChangeKind::SchemaChanged,
             ChangeKind::IndexExtensionEvent,
+            ChangeKind::NodePropertyRemoved,
+            ChangeKind::EdgePropertyRemoved,
+            ChangeKind::NodeLabelRemoved,
         ];
         assert_eq!(Change::VARIANT_COUNT, expected.len());
 
@@ -120,6 +132,10 @@ mod tests {
         assert!(combined.contains(ChangeKind::NodeDeleted));
         assert!(combined.contains(ChangeKind::EdgeDeleted));
         assert!(!combined.contains(ChangeKind::EdgeCreated));
+        assert!(ChangeKindSet::ALL.contains(ChangeKind::NodePropertyRemoved));
+        assert!(ChangeKindSet::ALL.contains(ChangeKind::EdgePropertyRemoved));
+        assert!(ChangeKindSet::ALL.contains(ChangeKind::NodeLabelRemoved));
+        assert_eq!(ChangeKindSet::ALL.0, 0b0000_0111_1111_1111);
     }
 
     #[test]

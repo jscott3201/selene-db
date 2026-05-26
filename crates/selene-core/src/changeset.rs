@@ -20,6 +20,8 @@ use crate::{
 /// A graph, schema, or extension-provider change carried by the WAL.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+// Invariant: serde+postcard tag stability - append new variants, never insert.
+// Reordering corrupts WAL files written under prior tag layouts.
 pub enum Change {
     /// Node creation.
     NodeCreated {
@@ -86,6 +88,27 @@ pub enum Change {
         provider: IStr,
         /// Provider-owned payload bytes.
         payload: Arc<[u8]>,
+    },
+    /// Node property removal.
+    NodePropertyRemoved {
+        /// Updated node ID.
+        id: NodeId,
+        /// Removed property key.
+        property: IStr,
+    },
+    /// Edge property removal.
+    EdgePropertyRemoved {
+        /// Updated edge ID.
+        id: EdgeId,
+        /// Removed property key.
+        property: IStr,
+    },
+    /// Node label removal.
+    NodeLabelRemoved {
+        /// Updated node ID.
+        id: NodeId,
+        /// Removed label.
+        label: IStr,
     },
 }
 
@@ -609,7 +632,7 @@ mod tests {
 
     #[test]
     fn change_all_covers_every_variant() {
-        assert_eq!(Change::VARIANT_COUNT, 8);
+        assert_eq!(Change::VARIANT_COUNT, 11);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Change::ALL {
