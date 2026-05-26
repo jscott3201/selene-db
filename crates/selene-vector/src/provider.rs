@@ -174,8 +174,11 @@ impl ChangeSubscriber for HnswProvider {
             Change::EdgeDeleted { .. }
             | Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
+            | Change::NodePropertyRemoved { .. }
+            | Change::NodeLabelRemoved { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
+            | Change::EdgePropertyRemoved { .. }
             | Change::SchemaChanged { .. }
             | Change::IndexExtensionEvent { .. } => Ok(()),
         }
@@ -288,9 +291,12 @@ impl IndexProvider for HnswProvider {
             // No-op: the HNSW provider only replays extension-owned WAL events.
             Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
+            | Change::NodePropertyRemoved { .. }
             | Change::NodeDeleted { .. }
+            | Change::NodeLabelRemoved { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
+            | Change::EdgePropertyRemoved { .. }
             | Change::EdgeDeleted { .. }
             | Change::SchemaChanged { .. } => return Ok(()),
         };
