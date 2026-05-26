@@ -3,7 +3,7 @@
 use selene_core::{IStr, intern};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, BindingId, DeleteMode, ElementKind, EmptyProcedureRegistry,
-    GqlType, LabelExpr, MutationWriteSet, ProcedureMutability, ProcedureOutputColumn,
+    GqlStatus, GqlType, LabelExpr, MutationWriteSet, ProcedureMutability, ProcedureOutputColumn,
     ProcedureRegistry, SourceSpan, StatementCategory, WriteKind, analyze, parse,
 };
 use selene_testing::MockProcedureRegistry;
@@ -333,6 +333,14 @@ fn remove_label_writeset_records_label() {
     };
     assert_eq!(element, ElementKind::Node);
     assert_eq!(label.as_str(), "Tagged");
+}
+
+#[test]
+fn remove_edge_label_rejects_at_analyzer() {
+    let error = analyze_one("MATCH ()-[r:REL]->() REMOVE r :REL").expect_err("edge label removal");
+
+    assert!(matches!(error, AnalysisError::NotImplemented { .. }));
+    assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
 }
 
 #[test]

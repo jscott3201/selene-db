@@ -322,7 +322,6 @@ fn execute_remove_property(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let diff = property_diff([], [key], span)?;
     let mut rows_since_check = 0;
     for row in table.rows() {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
@@ -330,14 +329,14 @@ fn execute_remove_property(
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
                     ctx.mutator()?
-                        .update_node(id, label_diff([], [], span)?, diff.clone())
+                        .remove_node_property(id, key)
                         .map_err(|source| graph_mutation(source, span))?;
                 }
             }
             ElementKind::Edge => {
                 if let Some(id) = target_edge(row, target_column_index, span)? {
                     ctx.mutator()?
-                        .update_edge(id, diff.clone())
+                        .remove_edge_property(id, key)
                         .map_err(|source| graph_mutation(source, span))?;
                 }
             }
@@ -357,7 +356,6 @@ fn execute_remove_label(
     table: BindingTable,
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let diff = label_diff([], [label], span)?;
     let mut rows_since_check = 0;
     for row in table.rows() {
         ctx.check_cancellation_stride(&mut rows_since_check, 1)?;
@@ -365,7 +363,7 @@ fn execute_remove_label(
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
                     ctx.mutator()?
-                        .update_node(id, diff.clone(), property_diff([], [], span)?)
+                        .remove_node_label(id, label)
                         .map_err(|source| graph_mutation(source, span))?;
                 }
             }

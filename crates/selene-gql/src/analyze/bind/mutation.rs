@@ -1,7 +1,8 @@
 //! Mutation-pipeline bind handling.
 
 use crate::{
-    DeleteStatement, MutationPipeline, MutationStatement, MutationTerminator, RemoveItem, SetItem,
+    DeleteStatement, ElementKind, MutationPipeline, MutationStatement, MutationTerminator,
+    RemoveItem, SetItem,
     analyze::{
         binding::BindingUseKind,
         error::{AnalysisError, ConditionClause},
@@ -149,6 +150,14 @@ fn bind_remove_items(
             } => {
                 let target = ctx.resolve(*target, *span, BindingUseKind::RemoveTarget)?;
                 let element = ctx.element_kind(target);
+                if matches!(element, ElementKind::Edge) {
+                    return Err(AnalysisError::NotImplemented {
+                        message: "REMOVE label on edge is not supported; edge labels are immutable"
+                            .to_owned(),
+                        span: *span,
+                        hint: None,
+                    });
+                }
                 ctx.record_write(
                     statement_index,
                     *span,
