@@ -203,9 +203,12 @@ fn provider_label(change: &Change) -> &'static str {
         Change::NodeDeleted { .. } => "provider:delete",
         Change::IndexExtensionEvent { .. } => "provider:event",
         Change::NodeUpdated { .. }
+        | Change::NodePropertyRemoved { .. }
         | Change::EdgeCreated { .. }
         | Change::EdgeUpdated { .. }
+        | Change::EdgePropertyRemoved { .. }
         | Change::EdgeDeleted { .. }
+        | Change::NodeLabelRemoved { .. }
         | Change::SchemaChanged { .. } => "provider:other",
     }
 }

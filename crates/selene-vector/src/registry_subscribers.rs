@@ -32,8 +32,11 @@ impl ChangeSubscriber for HnswIndexRegistry {
             Change::EdgeDeleted { .. }
             | Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
+            | Change::NodePropertyRemoved { .. }
+            | Change::NodeLabelRemoved { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
+            | Change::EdgePropertyRemoved { .. }
             | Change::SchemaChanged { .. }
             | Change::IndexExtensionEvent { .. } => Ok(()),
         }
@@ -62,8 +65,11 @@ impl ChangeSubscriber for IvfIndexRegistry {
             Change::EdgeDeleted { .. }
             | Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
+            | Change::NodePropertyRemoved { .. }
+            | Change::NodeLabelRemoved { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
+            | Change::EdgePropertyRemoved { .. }
             | Change::SchemaChanged { .. }
             | Change::IndexExtensionEvent { .. } => Ok(()),
         }

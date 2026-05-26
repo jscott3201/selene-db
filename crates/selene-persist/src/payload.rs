@@ -89,6 +89,14 @@ mod tests {
             (1_u64..10_000).prop_map(|id| Change::NodeDeleted {
                 id: NodeId::new(id),
             }),
+            (1_u64..10_000).prop_map(move |id| Change::NodePropertyRemoved {
+                id: NodeId::new(id),
+                property: prop,
+            }),
+            (1_u64..10_000).prop_map(move |id| Change::NodeLabelRemoved {
+                id: NodeId::new(id),
+                label: node_label,
+            }),
             (1_u64..10_000, 1_u64..10_000).prop_map(move |(id, target)| Change::EdgeCreated {
                 id: EdgeId::new(id),
                 label: edge_label,
@@ -98,6 +106,10 @@ mod tests {
             }),
             (1_u64..10_000).prop_map(|id| Change::EdgeDeleted {
                 id: EdgeId::new(id),
+            }),
+            (1_u64..10_000).prop_map(move |id| Change::EdgePropertyRemoved {
+                id: EdgeId::new(id),
+                property: prop,
             }),
             proptest::collection::vec(any::<u8>(), 0..512).prop_map(change),
         ]

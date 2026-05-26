@@ -199,6 +199,18 @@ impl RecoveryState {
                 let row = require_live_edge(&mut self.edges, *id)?;
                 row.alive = false;
             }
+            Change::NodePropertyRemoved { id, property } => {
+                let row = require_live_node(&mut self.nodes, *id)?;
+                row.properties.remove(property);
+            }
+            Change::EdgePropertyRemoved { id, property } => {
+                let row = require_live_edge(&mut self.edges, *id)?;
+                row.properties.remove(property);
+            }
+            Change::NodeLabelRemoved { id, label } => {
+                let row = require_live_node(&mut self.nodes, *id)?;
+                row.labels.remove(label);
+            }
             Change::SchemaChanged { change, .. } => {
                 match change {
                     SchemaChange::NodeTypeAdded { .. }

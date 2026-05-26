@@ -468,16 +468,17 @@ fn validates_edge_set_and_remove_when_edge_label_is_unique() {
 }
 
 #[test]
-fn rejects_remove_required_edge_label() {
+fn rejects_edge_label_remove_before_schema_validation() {
     let graph_type = person_company_graph_type();
     let error = schema_error(
         "MATCH (a:Person)-[r:WORKS_AT]->(b:Company) REMOVE r :WORKS_AT",
         &graph_type,
     );
-    assert!(matches!(
-        error,
-        AnalysisError::SchemaRequiredEdgeLabelRemoved { .. }
-    ));
+    assert!(matches!(error, AnalysisError::NotImplemented { .. }));
+    assert_eq!(
+        error.gqlstatus(),
+        selene_gql::GqlStatus::FEATURE_NOT_SUPPORTED
+    );
 }
 
 #[test]

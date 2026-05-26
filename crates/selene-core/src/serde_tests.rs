@@ -176,6 +176,14 @@ fn change_postcard_round_trip() {
             properties_diff: PropertyDiff::new([(property, Value::Null)], []).unwrap(),
         },
         Change::NodeDeleted { id: NodeId::new(1) },
+        Change::NodePropertyRemoved {
+            id: NodeId::new(1),
+            property,
+        },
+        Change::NodeLabelRemoved {
+            id: NodeId::new(1),
+            label,
+        },
         Change::EdgeCreated {
             id: EdgeId::new(1),
             label,
@@ -188,6 +196,10 @@ fn change_postcard_round_trip() {
             properties_diff: PropertyDiff::new([(property, Value::Bool(true))], []).unwrap(),
         },
         Change::EdgeDeleted { id: EdgeId::new(1) },
+        Change::EdgePropertyRemoved {
+            id: EdgeId::new(1),
+            property,
+        },
         Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::GraphTypeCreated {
@@ -202,6 +214,21 @@ fn change_postcard_round_trip() {
     for change in changes {
         rt(&change);
     }
+}
+
+#[test]
+fn pre_147_node_updated_wire_blob_still_decodes() {
+    let bytes = [1_u8, 1, 0, 0, 0, 0];
+    let decoded: Change = postcard::from_bytes(&bytes).unwrap();
+
+    assert_eq!(
+        decoded,
+        Change::NodeUpdated {
+            id: NodeId::new(1),
+            labels_diff: LabelDiff::new([], []).unwrap(),
+            properties_diff: PropertyDiff::new([], []).unwrap(),
+        }
+    );
 }
 
 #[test]

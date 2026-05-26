@@ -47,6 +47,18 @@ impl Change {
             provider: changeset_variant_istr("change.all.provider"),
             payload: Arc::from([0_u8]),
         },
+        || Self::NodePropertyRemoved {
+            id: NodeId::new(1),
+            property: changeset_variant_istr("change.all.node_property_removed"),
+        },
+        || Self::EdgePropertyRemoved {
+            id: EdgeId::new(1),
+            property: changeset_variant_istr("change.all.edge_property_removed"),
+        },
+        || Self::NodeLabelRemoved {
+            id: NodeId::new(1),
+            label: changeset_variant_istr("change.all.node_label_removed"),
+        },
     ];
 
     /// Number of known [`Change`] variants in this build.
@@ -64,6 +76,9 @@ impl Change {
             Self::EdgeDeleted { .. } => "EdgeDeleted",
             Self::SchemaChanged { .. } => "SchemaChanged",
             Self::IndexExtensionEvent { .. } => "IndexExtensionEvent",
+            Self::NodePropertyRemoved { .. } => "NodePropertyRemoved",
+            Self::EdgePropertyRemoved { .. } => "EdgePropertyRemoved",
+            Self::NodeLabelRemoved { .. } => "NodeLabelRemoved",
         }
     }
 }

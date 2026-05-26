@@ -13,6 +13,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Dedicated `Change::NodePropertyRemoved`, `Change::EdgePropertyRemoved`, and
+  `Change::NodeLabelRemoved` variants. GQL `REMOVE` now emits these variants
+  instead of drop-only `NodeUpdated`/`EdgeUpdated` diffs, while direct mutator
+  update APIs retain their existing diff contract. This widens `ChangeKindSet`
+  to `u16` and preserves postcard tag stability by appending the variants.
 - `ChangeSubscriber` and `ChangeKindSet` for runtime and recovery fan-out in
   `selene-graph`. Vector providers now tombstone derived vector state on
   `Change::NodeDeleted`, closing Seam A from the 2026-05-26 deletion +
