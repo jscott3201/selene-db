@@ -135,6 +135,11 @@ pub(crate) fn walk_join_tree(
         } => outer::execute(left, right, key, right_filters, env),
         JoinTree::WorstCaseOptimal { intersection, .. } => wco::execute_phase_a(intersection, env),
         JoinTree::Subplan(plan) => subplan::execute(plan, env.schema, env.seed, env.ctx),
+        // The runtime executor for DisjunctiveScan lands in Commit 2.
+        // Until then no rule emits the variant, so this arm is unreachable.
+        JoinTree::DisjunctiveScan { .. } => {
+            unreachable!("DisjunctiveScan executor lands in BRIEF-155 Commit 2")
+        }
     }
 }
 
@@ -204,6 +209,11 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             }
         }
         JoinTree::Subplan(_) => {}
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            for branch in branches {
+                insert_hidden(slots, branch.hidden_binding, branch.kind);
+            }
+        }
     }
 }
 

@@ -91,5 +91,10 @@ fn push_to_node_scan_inner(
                 || push_to_node_scan_inner(right, binding, pending)
         }
         JoinTree::Outer { left, .. } => push_to_node_scan_inner(left, binding, pending),
+        // node_filter_extraction runs at slot 3 (before disjunctive_label_expansion
+        // at slot 5), so DisjunctiveScan never appears in this rule's traversal in
+        // practice. Defensive `false` matches WorstCaseOptimal arm semantics: the
+        // pushdown stops at this leaf shape rather than rewriting per-branch.
+        JoinTree::DisjunctiveScan { .. } => false,
     }
 }

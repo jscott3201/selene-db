@@ -3,11 +3,13 @@
 use selene_core::IStr;
 
 use crate::plan::{
-    BindingDef, ExecutionPlan, FilterPredicate, JoinTree, ScanAccess, ScanKind,
-    optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
+    BindingDef, ExecutionPlan, JoinTree, ScanAccess, ScanKind,
+    optimize::{OptimizeContext, Rule, Transformed, walk},
 };
 
-use super::index_helpers::{compatible_value, single_label};
+use super::index_helpers::{
+    EqualityCandidate, compatible_value, equality_candidates, single_label,
+};
 
 /// Rewrite multi-property equality predicates to composite index access.
 ///
@@ -66,6 +68,14 @@ fn rewrite_tree(
             rewrite_tree(child, bindings, catalog)
         }
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        // Walk each per-label branch; downstream index rules apply
+        // independently per branch (the rule that emits DisjunctiveScan
+        // runs at slot 5 — before this rule at slot 6).
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            branches.iter_mut().fold(false, |changed, branch| {
+                rewrite_scan(branch, bindings, catalog) | changed
+            })
+        }
     }
 }
 
@@ -168,57 +178,7 @@ fn find_composite_match(
     None
 }
 
-#[derive(Clone)]
-struct EqualityCandidate<'a> {
-    index: usize,
-    key: IStr,
-    value: &'a crate::ValueExpr,
-}
-
-fn equality_candidates<'a>(
-    predicates: &'a [FilterPredicate],
-    bindings: &'a [BindingDef],
-) -> Vec<EqualityCandidate<'a>> {
-    let mut candidates = Vec::new();
-    for (index, pred) in predicates.iter().enumerate() {
-        let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
-            continue;
-        };
-        let binding_id = matched.binding;
-        let Some(binding_def) = bindings
-            .iter()
-            .find(|binding| binding.binding == binding_id)
-        else {
-            continue;
-        };
-        if binding_def.element != crate::BindingElement::Node {
-            continue;
-        }
-        if candidates
-            .iter()
-            .any(|candidate: &EqualityCandidate<'_>| candidate.key == matched.key)
-        {
-            continue;
-        }
-        let binding_refs::PropertyPredicateShape::Equality(value) = matched.shape else {
-            continue;
-        };
-        // Accept either a literal or a parameter slot. Per-component kind
-        // checks (literal kind, typed-parameter compatibility) happen in
-        // `rewrite_scan` once we know the composite's per-column IndexKinds.
-        if binding_refs::literal(value).is_none() && binding_refs::parameter(value).is_none() {
-            continue;
-        }
-        candidates.push(EqualityCandidate {
-            index,
-            key: matched.key,
-            value,
-        });
-    }
-    candidates
-}
-
-fn remove_indices(predicates: &mut Vec<FilterPredicate>, indices: &[usize]) {
+fn remove_indices(predicates: &mut Vec<crate::FilterPredicate>, indices: &[usize]) {
     let mut cursor = 0usize;
     predicates.retain(|_| {
         let remove = indices.binary_search(&cursor).is_ok();

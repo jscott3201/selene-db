@@ -1,7 +1,9 @@
 //! Shared helpers for index-aware optimizer rules.
 
+use selene_core::IStr;
+
 use crate::{
-    GqlType, LabelExpr, Literal, ValueExpr,
+    FilterPredicate, GqlType, LabelExpr, Literal, ValueExpr,
     analyze::BindingId,
     plan::{BindingDef, BindingElement, IndexKey, IndexKind, IndexTarget, optimize::binding_refs},
 };
@@ -76,6 +78,77 @@ pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<Ind
         declared_type: param.declared_type.cloned(),
         span: param.span,
     })
+}
+
+/// One equality-shaped property predicate against a node binding.
+///
+/// Carries the candidate's `property_predicates` index, the property key, and
+/// a borrow of the equality value (literal or parameter) so the caller can
+/// downstream-validate the value against an index kind via [`compatible_value`].
+///
+/// Lifted from `composite_index_lookup.rs` so both the composite-index rule
+/// and the disjunctive-label-expansion applicability gate (BRIEF-155) can
+/// share the equality-candidate collection logic.
+#[derive(Clone)]
+pub(super) struct EqualityCandidate<'a> {
+    /// Position of the candidate within the scan's `property_predicates`.
+    pub(super) index: usize,
+    /// Property key the equality predicate references.
+    pub(super) key: IStr,
+    /// Equality value (literal or parameter slot).
+    pub(super) value: &'a ValueExpr,
+}
+
+/// Collect the equality-shaped node-binding predicates from a scan's
+/// `property_predicates`.
+///
+/// Filters down to:
+/// - bindings of [`BindingElement::Node`] (composite indexes are node-only at HEAD).
+/// - shape [`binding_refs::PropertyPredicateShape::Equality`].
+/// - value either a literal or a parameter slot.
+/// - per-key dedup — only the first predicate per property key is kept (any
+///   further equalities on the same key stay residual).
+pub(super) fn equality_candidates<'a>(
+    predicates: &'a [FilterPredicate],
+    bindings: &'a [BindingDef],
+) -> Vec<EqualityCandidate<'a>> {
+    let mut candidates: Vec<EqualityCandidate<'a>> = Vec::new();
+    for (index, pred) in predicates.iter().enumerate() {
+        let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
+            continue;
+        };
+        let binding_id = matched.binding;
+        let Some(binding_def) = bindings
+            .iter()
+            .find(|binding| binding.binding == binding_id)
+        else {
+            continue;
+        };
+        if binding_def.element != BindingElement::Node {
+            continue;
+        }
+        if candidates
+            .iter()
+            .any(|candidate| candidate.key == matched.key)
+        {
+            continue;
+        }
+        let binding_refs::PropertyPredicateShape::Equality(value) = matched.shape else {
+            continue;
+        };
+        // Accept either a literal or a parameter slot. Per-component kind
+        // checks (literal kind, typed-parameter compatibility) happen in the
+        // caller once the per-column IndexKind is known.
+        if binding_refs::literal(value).is_none() && binding_refs::parameter(value).is_none() {
+            continue;
+        }
+        candidates.push(EqualityCandidate {
+            index,
+            key: matched.key,
+            value,
+        });
+    }
+    candidates
 }
 
 /// Return whether a typed parameter declaration is compatible with the

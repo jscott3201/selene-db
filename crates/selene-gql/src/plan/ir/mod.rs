@@ -126,6 +126,9 @@ fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
             }
         }
         JoinTree::Subplan(plan) => plan.refresh_pipeline_op_high_water(),
+        // DisjunctiveScan branches are NodeOrEdgeScans, which never carry
+        // nested pipeline ops; same shape as the `Scan(_)` arm.
+        JoinTree::DisjunctiveScan { .. } => {}
     }
 }
 
@@ -375,6 +378,40 @@ pub enum JoinTree {
     },
     /// Nested subplan placeholder.
     Subplan(Box<ExecutionPlan>),
+    /// Per-label sub-scans wrapping a flat-disjunctive-label pattern.
+    ///
+    /// Emitted by the `disjunctive_label_expansion` optimizer rule when a node
+    /// scan carries a flat `LabelExpr::Disjunction([Single, Single, …])` label
+    /// expression and at least one per-label branch has an applicable typed,
+    /// composite, or in-list index. Each branch is a clone of the original
+    /// scan with `label_predicate = Some(LabelExpr::Single(L_i))`, allowing the
+    /// downstream index-selection rules (`composite_index_lookup`,
+    /// `in_list_optimization`, `range_index_scan`) to set per-branch
+    /// `ScanAccess` independently.
+    ///
+    /// Runtime executes each branch via the standard `scan_pattern` entry and
+    /// concatenates the per-branch `Binding` rows with `UNION ALL` semantics
+    /// (no dedup; a node carrying labels A AND B appears in both branches'
+    /// candidate sets, matching the manual `MATCH (n:A) UNION ALL MATCH (n:B)`
+    /// behaviour). Per-branch label filtering applies via the existing
+    /// `label_matches_scan` machinery against each branch's single-label
+    /// predicate.
+    DisjunctiveScan {
+        /// Per-label sub-scans, each with `label_predicate =
+        /// Some(LabelExpr::Single(L_i))` and a clone of the original scan's
+        /// property predicates + bindings.
+        ///
+        /// `Vec`, not `Vec2OrMore`, because the source
+        /// `LabelExpr::Disjunction(Vec2OrMore<LabelExpr>)` already guarantees
+        /// `≥ 2` branches at construction time.
+        branches: Vec<NodeOrEdgeScan>,
+        /// The original scan, retained for EXPLAIN diagnostics and to preserve
+        /// the original disjunctive `label_predicate` for post-commit walks.
+        /// Carries the same `binding` / `hidden_binding` IDs that the branches
+        /// inherit, so downstream pipeline ops resolve `(n)` against the
+        /// unioned binding table consistently.
+        scan_anchor: NodeOrEdgeScan,
+    },
 }
 
 /// Planner-selected hash-join build side.

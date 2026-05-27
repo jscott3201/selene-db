@@ -288,6 +288,12 @@ fn collect_subqueries_in_join_tree(
         JoinTree::Subplan(plan) => {
             populate_plan_subqueries(plan, analyzed, registry)?;
         }
+        JoinTree::DisjunctiveScan { .. } => {
+            // DisjunctiveScan is emitted by the disjunctive_label_expansion
+            // optimizer rule (post-lowering); subquery collection runs over
+            // freshly-lowered plans only.
+            unreachable!("DisjunctiveScan is rule-emitted post-lowering")
+        }
     }
     Ok(())
 }
