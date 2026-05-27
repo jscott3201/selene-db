@@ -352,6 +352,34 @@ MATCH (p:Person) WHERE p.country = 'AU' RETURN p.name
 | `INTERSECT`, `INTERSECT ALL`, `INTERSECT DISTINCT` | Parses; analyzer rejects (`GQ06`, `GQ07` not claimed). |
 | `OTHERWISE` | Parses; analyzer rejects (`GQ09` not claimed). |
 
+### `LIMIT` precedence under `UNION ALL`
+
+`LIMIT N` is a pipeline statement that attaches to the `query_pipeline`
+it sits within. In a composite query (`A UNION ALL B`), `... B LIMIT N`
+limits arm `B` only; arm `A` runs unlimited and the union concatenates
+`A`'s rows with up to `N` rows from `B`. To limit the union total, wrap
+the composite in a `CALL { ... }` table subquery and apply `LIMIT` to
+the outer pipeline.
+
+```gql
+-- Per-arm: arm A runs unlimited, arm B is capped at 10
+MATCH (a:Person {country: 'NZ'}) RETURN a.name
+UNION ALL
+MATCH (b:Person {country: 'AU'}) RETURN b.name LIMIT 10
+
+-- Union-total: wrap the composite, LIMIT applies to the merged result
+CALL {
+  MATCH (a:Person {country: 'NZ'}) RETURN a.name AS name
+  UNION ALL
+  MATCH (b:Person {country: 'AU'}) RETURN b.name AS name
+}
+RETURN name LIMIT 10
+```
+
+This is a syntactic consequence of how `composite_query` parses
+`set_op` between `query_pipeline` arms: a trailing `LIMIT` is absorbed
+into the last arm's `pipeline_statement+` rather than the union.
+
 ### Chained `NEXT`
 
 ```gql

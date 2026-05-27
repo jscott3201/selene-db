@@ -1,4 +1,29 @@
 //! Set-composition pipeline operator.
+//!
+//! # `LIMIT` precedence under `UNION ALL`
+//!
+//! `LIMIT N` is a pipeline statement that **statically attaches to the
+//! `query_pipeline` arm it sits within** — *not* a planner-level fanout
+//! over the union. Per `grammar.pest:99,125-126`, a `composite_query`
+//! alternates `set_op` between `query_pipeline` productions; a trailing
+//! `LIMIT N` is absorbed into the last arm's `pipeline_statement+` rather
+//! than the surrounding union. To limit the union total, wrap the
+//! composite in a `CALL { ... }` table subquery and apply `LIMIT` to the
+//! outer pipeline. See `docs/gql-reference.md` §4 "Set composition" for
+//! the user-facing description.
+//!
+//! Two empirical regression fixtures in
+//! `crates/selene-gql/tests/exec_pipeline_union.rs` pin this behaviour:
+//!
+//! - `union_of_populated_and_empty_returns_populated` —
+//!   `RETURN 1 AS n UNION ALL RETURN 2 AS n LIMIT 0` returns `[1]`. The
+//!   `LIMIT 0` clamps arm B only; arm A is unaffected.
+//! - `union_rhs_pipeline_op_id_high_water_consistent_after_executor_runs`
+//!   — `RETURN 1 AS n LIMIT 1 UNION ALL RETURN 2 AS n LIMIT 1` returns
+//!   `[1, 2]`, confirming each arm carries its own LIMIT.
+//! - `three_arm_union_with_middle_limit_is_per_arm_static_attachment`
+//!   (added in BRIEF-155) — `A UNION ALL B LIMIT N UNION ALL C` limits
+//!   only arm B; arms A and C run unlimited.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
