@@ -9,9 +9,11 @@
 //! BitmapUnion, CompositeLookup, plus the linear fallback used when the
 //! index is unavailable).
 
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
+use selene_gql::plan::optimize::optimize_summary;
 use selene_gql::{
     BindingTable, EmptyProcedureRegistry, ExecutionPlan, ExecutorError, IndexKind, OptimizeContext,
     Session, StatementOutput, analyze, execute_statement, optimize, parse, plan as build_plan,
@@ -271,6 +273,76 @@ fn parameterized_in_list_null_binding_drops_that_branch() {
             .expect("partial-null in-list executes"),
     );
     assert_eq!(collect_id_column(&table), vec![1]);
+}
+
+#[test]
+fn explain_renders_parameter_slot_as_dollar_name() {
+    // BRIEF-154 bar 9: EXPLAIN summary surfaces parameter slots readably as
+    // `$name`, not raw `Debug`. Pins the new `bounds=…` detail surface.
+    let (_graph, catalog) = person_graph_with_name_index();
+    let statement =
+        parse("MATCH (n:Person) WHERE n.name = $symbol RETURN n.id").expect("test source parses");
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("analyzes");
+    let plan = build_plan(&analyzed, &EmptyProcedureRegistry).expect("plans");
+    let summary = optimize_summary(
+        plan,
+        &OptimizeContext::default().with_index_catalog(&catalog),
+    );
+    let display = summary.to_string();
+    assert!(
+        display.contains("TypedIndexRange [bounds=Equality($symbol)]"),
+        "expected `TypedIndexRange [bounds=Equality($symbol)]` in summary, got:\n{display}",
+    );
+}
+
+#[test]
+fn explain_renders_literal_with_kind_and_value() {
+    // BRIEF-154 bar 9 (literal leg): the `[bounds=…]` rendering for inline
+    // literals carries the kind tag + display value (e.g. `STRING 'alice'`).
+    let (_graph, catalog) = person_graph_with_name_index();
+    let statement =
+        parse("MATCH (n:Person) WHERE n.name = 'alice' RETURN n.id").expect("test source parses");
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("analyzes");
+    let plan = build_plan(&analyzed, &EmptyProcedureRegistry).expect("plans");
+    let summary = optimize_summary(
+        plan,
+        &OptimizeContext::default().with_index_catalog(&catalog),
+    );
+    let display = summary.to_string();
+    assert!(
+        display.contains("TypedIndexRange [bounds=Equality(STRING 'alice')]"),
+        "expected literal-rendered bounds detail in summary, got:\n{display}",
+    );
+}
+
+#[test]
+fn session_plan_cache_hits_across_parameter_value_changes() {
+    // BRIEF-154 bar 5: same source-text + two different `$name` values →
+    // PlanCacheStats reports one miss + one hit. Verifies `IndexKey::Parameter`
+    // remains a stable per-source-text value for cache keying.
+    let (graph, _catalog) = person_graph_with_name_index();
+    let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
+    let source = "MATCH (n:Person) WHERE n.name = $name RETURN n.id AS id";
+
+    session.bind_parameter(istr("name"), Value::String(istr("alice")));
+    let table = rows(
+        session
+            .execute_source(source, &EmptyProcedureRegistry)
+            .expect("first execute"),
+    );
+    assert_eq!(collect_id_column(&table), vec![1]);
+
+    session.bind_parameter(istr("name"), Value::String(istr("eve")));
+    let table = rows(
+        session
+            .execute_source(source, &EmptyProcedureRegistry)
+            .expect("second execute"),
+    );
+    assert_eq!(collect_id_column(&table), vec![5]);
+
+    let stats = session.plan_cache_stats().expect("cache enabled");
+    assert_eq!(stats.misses, 1);
+    assert_eq!(stats.hits, 1);
 }
 
 #[test]

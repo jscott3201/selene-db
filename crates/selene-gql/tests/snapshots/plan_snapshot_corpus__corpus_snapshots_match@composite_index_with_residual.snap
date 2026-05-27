@@ -9,7 +9,7 @@ pattern:
   join_tree: Scan(n)
   pattern_filters: 0
   scans:
-    - n (Node): CompositeLookup residual=1 consumed=0
+    - n (Node): CompositeLookup [bounds=Composite [tenant=STRING 'X', kind=STRING 'Y']] residual=1 consumed=0
   order_access: []
 pipeline:
   - Project(columns=[n])
