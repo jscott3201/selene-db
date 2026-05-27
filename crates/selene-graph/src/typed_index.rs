@@ -1,4 +1,30 @@
 //! Built-in per-`(label, property)` value index. See spec 03 section 5.2.
+//!
+//! # Caller classes (BRIEF-153)
+//!
+//! `typed_key_admit` and `typed_key_lookup` split the `Value`→`TypedKey`
+//! conversion into three caller classes, each chosen at every call site:
+//!
+//! - **Write side** ([`TypedIndex::insert`], [`TypedIndex::remove`]):
+//!   `typed_key_admit`. Cap exhaustion surfaces as
+//!   [`TypedIndexValueError::AdmissionFailed`] and the mutator promotes it
+//!   to a hard [`crate::error::GraphError::IndexAdmissionExhausted`]
+//!   (GQLSTATUS `5GQL1`).
+//! - **Read side** ([`TypedIndex::lookup_eq`], the per-type closures in
+//!   [`TypedIndex::lookup_range`]): `typed_key_lookup`. Returning
+//!   `Ok(None)` for `STRING` content that is not in the pool renders as an
+//!   empty result; the read path MUST NOT admit a new `IStr` just to probe.
+//! - **Diff side** ([`TypedIndex::values_share_key`]): `typed_key_lookup`,
+//!   with `Ok(None)` falling through to [`raw_value_same`] so the diff
+//!   path never charges admission against a no-op update. If the values
+//!   genuinely differ, the resulting remove+insert pair admits through the
+//!   write path.
+//!
+//! See `selene_core::value::Value::ExternalString` rustdoc for the
+//! variant-strict storage carve-out this enables.
+//!
+//! The same three-helper split is mirrored in
+//! [`crate::composite_typed_index`] for composite indexes.
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -7,7 +33,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
-use selene_core::{IStr, Value};
+use selene_core::{CoreError, IStr, Value};
 use serde::{Deserialize, Serialize};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
@@ -159,10 +185,7 @@ impl TypedIndex {
     /// Insert `row` into the bitmap for `value`.
     pub(crate) fn insert(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (
-            self,
-            typed_key(value).map_err(|err| err.with_expected(expected_kind))?,
-        ) {
+        match (self, typed_key_admit(value, expected_kind)?) {
             (Self::I64(index), TypedKey::I64(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
@@ -200,10 +223,7 @@ impl TypedIndex {
     /// is pruned from the inner map.
     pub(crate) fn remove(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (
-            self,
-            typed_key(value).map_err(|err| err.with_expected(expected_kind))?,
-        ) {
+        match (self, typed_key_admit(value, expected_kind)?) {
             (Self::I64(index), TypedKey::I64(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -236,9 +256,31 @@ impl TypedIndex {
     }
 
     /// Return the rows matching `value` exactly.
+    ///
+    /// Returns `None` for kind-mismatched values (callers fall back to a
+    /// runtime scan). For a [`Self::String`] index probed with a
+    /// [`Value::ExternalString`] whose content is not in the global
+    /// [`IStr`] pool, returns `Some(empty)` — kind matches, content can't
+    /// possibly be in the index, no admission. For any other kind the
+    /// `Ok(None)` case is treated as kind-mismatch (return `None`) so the
+    /// caller drops to a linear scan; under open-graph drift a row whose
+    /// stored value is `Value::String("foo")` would otherwise be lost from
+    /// an I64 index probed with `Value::ExternalString("foo")`.
     #[must_use]
     pub(crate) fn lookup_eq(&self, value: &Value) -> Option<Cow<'_, RoaringBitmap>> {
-        match (self, typed_key(value).ok()?) {
+        let key = match typed_key_lookup(value) {
+            Ok(Some(key)) => key,
+            // Only String-kind indexes treat "ExternalString content not in
+            // the pool" as a definitive empty result. Other index kinds drop
+            // to scan fallback so open-graph drift remains discoverable via
+            // cross-variant `value_compare`.
+            Ok(None) if matches!(self, Self::String(_)) => {
+                return Some(Cow::Owned(RoaringBitmap::new()));
+            }
+            Ok(None) => return None,
+            Err(_) => return None,
+        };
+        match (self, key) {
             (Self::I64(index), TypedKey::I64(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::F64(index), TypedKey::F64(key)) => Some(cow_or_empty(index.get(&key))),
             (Self::String(index), TypedKey::String(key)) => Some(cow_or_empty(index.get(&key))),
@@ -259,23 +301,25 @@ impl TypedIndex {
     {
         match self {
             Self::I64(index) => {
-                let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::I64(key)) => Some(key),
-                    _ => None,
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::I64(key)) => Some(key),
+                let start =
+                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
+                        Ok(Some(TypedKey::I64(key))) => Some(key),
+                        _ => None,
+                    })?;
+                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
+                    Ok(Some(TypedKey::I64(key))) => Some(key),
                     _ => None,
                 })?;
                 Some(range_union(index, &start, &end))
             }
             Self::F64(index) => {
-                let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::F64(key)) => Some(key),
-                    _ => None,
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::F64(key)) => Some(key),
+                let start =
+                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
+                        Ok(Some(TypedKey::F64(key))) => Some(key),
+                        _ => None,
+                    })?;
+                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
+                    Ok(Some(TypedKey::F64(key))) => Some(key),
                     _ => None,
                 })?;
                 Some(range_union(index, &start, &end))
@@ -285,34 +329,37 @@ impl TypedIndex {
             // secondary index exists.
             Self::String(_) => None,
             Self::Date(index) => {
-                let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::Date(key)) => Some(key),
-                    _ => None,
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::Date(key)) => Some(key),
+                let start =
+                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
+                        Ok(Some(TypedKey::Date(key))) => Some(key),
+                        _ => None,
+                    })?;
+                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
+                    Ok(Some(TypedKey::Date(key))) => Some(key),
                     _ => None,
                 })?;
                 Some(range_union(index, &start, &end))
             }
             Self::LocalDateTime(index) => {
-                let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::LocalDateTime(key)) => Some(key),
-                    _ => None,
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::LocalDateTime(key)) => Some(key),
+                let start =
+                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
+                        Ok(Some(TypedKey::LocalDateTime(key))) => Some(key),
+                        _ => None,
+                    })?;
+                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
+                    Ok(Some(TypedKey::LocalDateTime(key))) => Some(key),
                     _ => None,
                 })?;
                 Some(range_union(index, &start, &end))
             }
             Self::Uuid(index) => {
-                let start = bound_to_key(range.start_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::Uuid(key)) => Some(key),
-                    _ => None,
-                })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key(value) {
-                    Ok(TypedKey::Uuid(key)) => Some(key),
+                let start =
+                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
+                        Ok(Some(TypedKey::Uuid(key))) => Some(key),
+                        _ => None,
+                    })?;
+                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
+                    Ok(Some(TypedKey::Uuid(key))) => Some(key),
                     _ => None,
                 })?;
                 Some(range_union(index, &start, &end))
@@ -350,26 +397,45 @@ impl TypedIndex {
     /// Return true when two values address the same key in this index.
     ///
     /// This lets update maintenance avoid touching an index when a mutation
-    /// changed unrelated node columns.
+    /// changed unrelated node columns. Uses [`typed_key_lookup`] (no
+    /// admission); when either side cannot be resolved through the existing
+    /// IStr pool the diff falls through to [`raw_value_same`] so we never
+    /// admit just to compare keys. If raw values differ the update path
+    /// fires remove+insert, which then admit through [`typed_key_admit`].
     pub(crate) fn values_share_key(&self, lhs: &Value, rhs: &Value) -> bool {
-        match (self, typed_key(lhs), typed_key(rhs)) {
-            (Self::I64(_), Ok(TypedKey::I64(lhs)), Ok(TypedKey::I64(rhs))) => lhs == rhs,
-            (Self::F64(_), Ok(TypedKey::F64(lhs)), Ok(TypedKey::F64(rhs))) => lhs == rhs,
-            (Self::String(_), Ok(TypedKey::String(lhs)), Ok(TypedKey::String(rhs))) => lhs == rhs,
-            (Self::Date(_), Ok(TypedKey::Date(lhs)), Ok(TypedKey::Date(rhs))) => lhs == rhs,
+        match (self, typed_key_lookup(lhs), typed_key_lookup(rhs)) {
+            (Self::I64(_), Ok(Some(TypedKey::I64(lhs))), Ok(Some(TypedKey::I64(rhs)))) => {
+                lhs == rhs
+            }
+            (Self::F64(_), Ok(Some(TypedKey::F64(lhs))), Ok(Some(TypedKey::F64(rhs)))) => {
+                lhs == rhs
+            }
+            (Self::String(_), Ok(Some(TypedKey::String(lhs))), Ok(Some(TypedKey::String(rhs)))) => {
+                lhs == rhs
+            }
+            (Self::Date(_), Ok(Some(TypedKey::Date(lhs))), Ok(Some(TypedKey::Date(rhs)))) => {
+                lhs == rhs
+            }
             (
                 Self::LocalDateTime(_),
-                Ok(TypedKey::LocalDateTime(lhs)),
-                Ok(TypedKey::LocalDateTime(rhs)),
+                Ok(Some(TypedKey::LocalDateTime(lhs))),
+                Ok(Some(TypedKey::LocalDateTime(rhs))),
             ) => lhs == rhs,
-            (Self::Uuid(_), Ok(TypedKey::Uuid(lhs)), Ok(TypedKey::Uuid(rhs))) => lhs == rhs,
+            (Self::Uuid(_), Ok(Some(TypedKey::Uuid(lhs))), Ok(Some(TypedKey::Uuid(rhs)))) => {
+                lhs == rhs
+            }
             _ => raw_value_same(lhs, rhs),
         }
     }
 }
 
 /// Internal value-admission error for index mutation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// `Clone + Copy + Eq + PartialEq` are intentionally NOT derived: the
+/// `AdmissionFailed` variant carries [`selene_core::CoreError`] which is a
+/// `Diagnostic`-bearing source-error type and is non-`Copy`/`Clone` by
+/// design.
+#[derive(Debug)]
 pub(crate) enum TypedIndexValueError {
     /// Value kind did not match the index kind.
     KindMismatch {
@@ -383,31 +449,39 @@ pub(crate) enum TypedIndexValueError {
         /// The index kind being updated.
         expected_kind: TypedIndexKind,
     },
+    /// A [`Value::ExternalString`] could not be admitted to the global
+    /// [`IStr`] pool for use as a `STRING`-kind index key (typically because
+    /// the pool reached [`selene_core::MAX_INTERNED_STRINGS`]).
+    ///
+    /// Per D20 and the BRIEF-153 carve-out, DDL `INDEXED` is the user's
+    /// consent to admit a column's content to the pool; cap exhaustion at
+    /// that boundary is a hard error rather than a silent skip. The
+    /// mutator promotes this to [`crate::error::GraphError::IndexAdmissionExhausted`].
+    AdmissionFailed {
+        /// The index kind being updated (always [`TypedIndexKind::String`]
+        /// today; future non-STRING admissions could broaden this).
+        expected_kind: TypedIndexKind,
+        /// Underlying admission failure source.
+        reason: CoreError,
+    },
 }
 
 impl TypedIndexValueError {
-    fn with_expected(self, expected_kind: TypedIndexKind) -> Self {
-        match self {
-            Self::KindMismatch { observed, .. } => Self::KindMismatch {
-                expected_kind,
-                observed,
-            },
-            Self::NaN { .. } => Self::NaN { expected_kind },
-        }
-    }
-
     /// Return the expected index kind.
-    pub(crate) const fn expected_kind(self) -> TypedIndexKind {
+    pub(crate) fn expected_kind(&self) -> TypedIndexKind {
         match self {
-            Self::KindMismatch { expected_kind, .. } | Self::NaN { expected_kind } => expected_kind,
+            Self::KindMismatch { expected_kind, .. }
+            | Self::NaN { expected_kind }
+            | Self::AdmissionFailed { expected_kind, .. } => *expected_kind,
         }
     }
 
     /// Return the observed value description.
-    pub(crate) const fn observed(self) -> &'static str {
+    pub(crate) fn observed(&self) -> &'static str {
         match self {
             Self::KindMismatch { observed, .. } => observed,
             Self::NaN { .. } => "NaN",
+            Self::AdmissionFailed { .. } => "ExternalString",
         }
     }
 }
@@ -435,7 +509,38 @@ impl TypedKey {
     }
 }
 
-fn typed_key(value: &Value) -> Result<TypedKey, TypedIndexValueError> {
+/// Write-side coercion of `value` into a [`TypedKey`].
+///
+/// [`Value::ExternalString`] admission is **gated on `expected_kind` being
+/// [`TypedIndexKind::String`]**. Probing a non-STRING index with an
+/// `ExternalString` would otherwise grow the global [`IStr`] pool just
+/// for the outer `match (self, key)` to reject it on kind mismatch — a
+/// DoS amplifier near pool-cap exhaustion (BRIEF-153 fix-cycle C3). For
+/// any other (kind, value) pair the function routes through the
+/// non-admitting body. Cap exhaustion on the admit branch surfaces as
+/// [`TypedIndexValueError::AdmissionFailed`], which the mutator promotes
+/// to [`crate::error::GraphError::IndexAdmissionExhausted`].
+fn typed_key_admit(
+    value: &Value,
+    expected_kind: TypedIndexKind,
+) -> Result<TypedKey, TypedIndexValueError> {
+    if let Value::ExternalString(content) = value {
+        if expected_kind == TypedIndexKind::String {
+            return match selene_core::intern(content.as_ref()) {
+                Ok(interned) => Ok(TypedKey::String(interned)),
+                Err(reason) => Err(TypedIndexValueError::AdmissionFailed {
+                    expected_kind: TypedIndexKind::String,
+                    reason,
+                }),
+            };
+        }
+        // Non-STRING target — short-circuit BEFORE admitting so the global
+        // pool never grows on a kind-mismatched probe.
+        return Err(TypedIndexValueError::KindMismatch {
+            expected_kind,
+            observed: "ExternalString",
+        });
+    }
     match value {
         Value::Int(value) => Ok(TypedKey::I64(*value)),
         Value::Float(value) => NotNanF64::new(*value)
@@ -447,6 +552,37 @@ fn typed_key(value: &Value) -> Result<TypedKey, TypedIndexValueError> {
         Value::Date(value) => Ok(TypedKey::Date(*value)),
         Value::LocalDateTime(value) => Ok(TypedKey::LocalDateTime(*value)),
         Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
+        _ => Err(TypedIndexValueError::KindMismatch {
+            expected_kind,
+            observed: observed_value_kind(value),
+        }),
+    }
+}
+
+/// Read-side coercion of `value` into a [`TypedKey`] **without admitting
+/// new strings to the global [`IStr`] pool**.
+///
+/// Returns `Ok(None)` when `value` is a [`Value::ExternalString`] whose
+/// content is not yet in the pool — because no row could be keyed on that
+/// content, callers render this as an empty result rather than admitting
+/// just to probe. `Ok(Some(_))` matches [`typed_key_admit`] for all
+/// already-admissible inputs. `Err` retains the kind-mismatch / NaN
+/// semantics from the admit path.
+fn typed_key_lookup(value: &Value) -> Result<Option<TypedKey>, TypedIndexValueError> {
+    match value {
+        Value::Int(value) => Ok(Some(TypedKey::I64(*value))),
+        Value::Float(value) => NotNanF64::new(*value)
+            .map(|key| Some(TypedKey::F64(key)))
+            .map_err(|NotNanError| TypedIndexValueError::NaN {
+                expected_kind: TypedIndexKind::F64,
+            }),
+        Value::String(value) => Ok(Some(TypedKey::String(*value))),
+        Value::ExternalString(value) => {
+            Ok(selene_core::lookup(value.as_ref()).map(TypedKey::String))
+        }
+        Value::Date(value) => Ok(Some(TypedKey::Date(*value))),
+        Value::LocalDateTime(value) => Ok(Some(TypedKey::LocalDateTime(*value))),
+        Value::Uuid(value) => Ok(Some(TypedKey::Uuid(*value))),
         _ => Err(TypedIndexValueError::KindMismatch {
             expected_kind: TypedIndexKind::I64,
             observed: observed_value_kind(value),

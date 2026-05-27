@@ -21,15 +21,16 @@ pub(crate) fn apply_node_create(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for label in labels.iter().copied() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            insert_commit(indexes, label, *property, value, row);
+            insert_commit(indexes, label, *property, value, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_delete(
@@ -37,15 +38,16 @@ pub(crate) fn apply_node_delete(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for label in labels.iter().copied() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            remove_commit(indexes, label, *property, value, row);
+            remove_commit(indexes, label, *property, value, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_update(
@@ -55,7 +57,7 @@ pub(crate) fn apply_node_update(
     new_labels: &LabelSet,
     new_props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     // Iterate only registered indexes whose `(label, property)` is reachable
     // from this update — i.e., the label appears on either side and the
     // property exists on either side. Index-count grows independently of
@@ -69,12 +71,13 @@ pub(crate) fn apply_node_update(
             continue;
         }
         if let Some(value) = old_value {
-            remove_commit(indexes, label, property, value, row);
+            remove_commit(indexes, label, property, value, row)?;
         }
         if let Some(value) = new_value {
-            insert_commit(indexes, label, property, value, row);
+            insert_commit(indexes, label, property, value, row)?;
         }
     }
+    Ok(())
 }
 
 /// Return the set of registered `(label, property)` keys that this update
@@ -176,9 +179,13 @@ fn build_property_index_inner(
         }
         match index.insert(value, row) {
             Ok(()) => {}
-            Err(err) => match policy {
-                BuildPolicy::Strict => return Err(index_rejection(label, property, err)),
-                BuildPolicy::Lenient => warn_rejected("rebuild", label, property, row, err),
+            Err(err) => match (&err, policy) {
+                (TypedIndexValueError::AdmissionFailed { .. }, _) | (_, BuildPolicy::Strict) => {
+                    return Err(index_rejection(label, property, err));
+                }
+                (_, BuildPolicy::Lenient) => {
+                    warn_rejected("rebuild", label, property, row, &err);
+                }
             },
         }
     }
@@ -239,12 +246,13 @@ fn insert_commit(
     property: IStr,
     value: &Value,
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Some(index) = indexes.get_mut(&(label, property))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
     {
-        warn_rejected("insert", label, property, row, err);
+        return demote_or_promote(label, property, row, "insert", err);
     }
+    Ok(())
 }
 
 fn remove_commit(
@@ -253,20 +261,55 @@ fn remove_commit(
     property: IStr,
     value: &Value,
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Some(index) = indexes.get_mut(&(label, property))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
     {
-        warn_rejected("remove", label, property, row, err);
+        return demote_or_promote(label, property, row, "remove", err);
+    }
+    Ok(())
+}
+
+/// Commit-path branching for [`TypedIndexValueError`]: `AdmissionFailed`
+/// surfaces as a hard [`GraphError::IndexAdmissionExhausted`] (BRIEF-153 —
+/// DDL `INDEXED` is the user's consent for STRING admission, cap exhaustion
+/// at that boundary cannot be silently dropped). Other variants
+/// (`KindMismatch`, `NaN`) keep the legacy `warn_rejected` lenient skip
+/// because open-graph kind drift remains recoverable per the module
+/// rustdoc.
+fn demote_or_promote(
+    label: IStr,
+    property: IStr,
+    row: u32,
+    op: &'static str,
+    err: TypedIndexValueError,
+) -> GraphResult<()> {
+    match err {
+        TypedIndexValueError::AdmissionFailed { .. } => Err(index_rejection(label, property, err)),
+        TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
+            warn_rejected(op, label, property, row, &err);
+            Ok(())
+        }
     }
 }
 
 fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> GraphError {
-    GraphError::IndexValueRejected {
-        label,
-        property,
-        expected_kind: err.expected_kind(),
-        observed: err.observed(),
+    match err {
+        TypedIndexValueError::AdmissionFailed { reason, .. } => {
+            GraphError::IndexAdmissionExhausted {
+                label,
+                property,
+                source: reason,
+            }
+        }
+        TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
+            GraphError::IndexValueRejected {
+                label,
+                property,
+                expected_kind: err.expected_kind(),
+                observed: err.observed(),
+            }
+        }
     }
 }
 
@@ -275,7 +318,7 @@ fn warn_rejected(
     label: IStr,
     property: IStr,
     row: u32,
-    err: TypedIndexValueError,
+    err: &TypedIndexValueError,
 ) {
     tracing::warn!(
         op,

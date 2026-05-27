@@ -16,12 +16,13 @@ pub(crate) fn apply_node_create(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for (label, entry) in indexes_for_labels(indexes, labels) {
         if let Some(values) = indexable_values(props, &entry.declared_properties) {
-            insert_commit(label, entry, &values, row);
+            insert_commit(label, entry, &values, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_delete(
@@ -29,12 +30,13 @@ pub(crate) fn apply_node_delete(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for (label, entry) in indexes_for_labels(indexes, labels) {
         if let Some(values) = indexable_values(props, &entry.declared_properties) {
-            remove_commit(label, entry, &values, row);
+            remove_commit(label, entry, &values, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_update(
@@ -44,7 +46,7 @@ pub(crate) fn apply_node_update(
     new_labels: &LabelSet,
     new_props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for ((label, _), entry) in indexes.iter_mut() {
         if !old_labels.contains(label) && !new_labels.contains(label) {
             continue;
@@ -61,12 +63,13 @@ pub(crate) fn apply_node_update(
             continue;
         }
         if let Some(values) = old_values {
-            remove_commit(*label, entry, &values, row);
+            remove_commit(*label, entry, &values, row)?;
         }
         if let Some(values) = new_values {
-            insert_commit(*label, entry, &values, row);
+            insert_commit(*label, entry, &values, row)?;
         }
     }
+    Ok(())
 }
 
 /// Build a composite property index strictly.
@@ -156,9 +159,14 @@ fn build_composite_property_index_inner(
         };
         match index.insert(&values, row) {
             Ok(()) => {}
-            Err(err) => match policy {
-                BuildPolicy::Strict => return Err(index_rejection(label, &properties, err)),
-                BuildPolicy::Lenient => warn_rejected("rebuild", label, &properties, row, err),
+            Err(err) => match (&err, policy) {
+                (CompositeIndexValueError::ComponentAdmissionFailed { .. }, _)
+                | (_, BuildPolicy::Strict) => {
+                    return Err(index_rejection(label, &properties, err));
+                }
+                (_, BuildPolicy::Lenient) => {
+                    warn_rejected("rebuild", label, &properties, row, &err);
+                }
             },
         }
     }
@@ -203,10 +211,11 @@ fn insert_commit(
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).insert(values, row) {
-        warn_rejected("insert", label, &entry.declared_properties, row, err);
+        return demote_or_promote(label, &entry.declared_properties, row, "insert", err);
     }
+    Ok(())
 }
 
 fn remove_commit(
@@ -214,9 +223,37 @@ fn remove_commit(
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).remove(values, row) {
-        warn_rejected("remove", label, &entry.declared_properties, row, err);
+        return demote_or_promote(label, &entry.declared_properties, row, "remove", err);
+    }
+    Ok(())
+}
+
+/// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
+/// single-key helper in [`crate::property_index`]. Only
+/// `ComponentAdmissionFailed` promotes to a hard
+/// [`GraphError::IndexAdmissionExhausted`]; `Component` (kind mismatch)
+/// AND `ArityMismatch` retain the pre-BRIEF-153 commit-path semantics of
+/// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
+/// separately via [`index_rejection`] under the strict policy (BRIEF-153
+/// fix-cycle R1).
+fn demote_or_promote(
+    label: IStr,
+    properties: &[IStr],
+    row: u32,
+    op: &'static str,
+    err: CompositeIndexValueError,
+) -> GraphResult<()> {
+    match err {
+        CompositeIndexValueError::ComponentAdmissionFailed { .. } => {
+            Err(index_rejection(label, properties, err))
+        }
+        CompositeIndexValueError::Component { .. }
+        | CompositeIndexValueError::ArityMismatch { .. } => {
+            warn_rejected(op, label, properties, row, &err);
+            Ok(())
+        }
     }
 }
 
@@ -242,6 +279,22 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             expected_kind,
             observed,
         },
+        // BRIEF-153: IStr-pool admission failure surfaces as the dedicated
+        // hard-error variant so the underlying CoreError chain (count, max)
+        // reaches the caller — `IndexValueRejected.observed` has no slot
+        // for it.
+        CompositeIndexValueError::ComponentAdmissionFailed {
+            index,
+            expected_kind: _,
+            reason,
+        } => GraphError::IndexAdmissionExhausted {
+            label,
+            property: properties
+                .get(index)
+                .copied()
+                .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
+            source: reason,
+        },
     }
 }
 
@@ -250,7 +303,7 @@ fn warn_rejected(
     label: IStr,
     properties: &[IStr],
     row: u32,
-    err: CompositeIndexValueError,
+    err: &CompositeIndexValueError,
 ) {
     tracing::warn!(
         op,

@@ -11,6 +11,37 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Local test invocation aligned with CI (nextest + line-tables-only debug +
   `.config/nextest.toml`). See CLAUDE.md Build & test.
 
+### Changed
+
+- `selene-graph::CompositeIndexValueError` is now `#[non_exhaustive]` and no
+  longer derives `Clone/Copy/Eq/PartialEq`. New `ComponentAdmissionFailed
+  { index, expected_kind, reason: selene_core::CoreError }` variant carries
+  the IStr-pool cap-exceeded source from STRING-component admission
+  failures during composite index commit/build. Downstream `match` arms
+  must add a wildcard fallback. The single-key
+  `selene-graph::TypedIndexValueError` (crate-private) underwent an
+  equivalent shape change. (BRIEF-153)
+- `selene-graph::GraphError`: new `IndexAdmissionExhausted { label,
+  property, source: CoreError }` variant (diagnostic code `SLENE_G_018`)
+  for IStr-pool admission failures at the property-index commit boundary.
+  Maps to GQLSTATUS `5GQL1`. The enum is already `#[non_exhaustive]`, so
+  this addition is semver-safe. (BRIEF-153)
+- `selene-graph::CompositeTypedIndex::key_from_values` is replaced by
+  `key_from_values_admit` (write/maintenance path; admits new
+  `Value::ExternalString` content into the global `IStr` pool when the
+  component kind is `STRING`) and `key_from_values_lookup` (read path;
+  returns `Ok(None)` instead of admitting). The GQL `composite_lookup_rows`
+  and the `selene.verify` builtin now use the lookup variant to close a
+  read-path admission DoS. (BRIEF-153)
+- `Value::ExternalString` may now be admitted to the global `IStr` pool
+  **only at the property-index commit boundary** when the column is
+  declared `INDEXED` (single or composite, `STRING` kind). The stored
+  property value remains the `ExternalString` variant; only the secondary
+  index key space sees the admitted handle. DDL `INDEXED` is the user's
+  consent for this carve-out from variant-strict storage; cap exhaustion
+  now surfaces as a hard `IndexAdmissionExhausted` error instead of a
+  silent skip. (BRIEF-153)
+
 ### Added
 
 - Dedicated `Change::NodePropertyRemoved`, `Change::EdgePropertyRemoved`, and

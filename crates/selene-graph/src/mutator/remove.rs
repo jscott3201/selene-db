@@ -45,7 +45,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &labels,
                 &new_props,
                 row as u32,
-            );
+            )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
                 &labels,
@@ -53,7 +53,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &labels,
                 &new_props,
                 row as u32,
-            );
+            )?;
         }
         self.txn
             .changes
@@ -130,7 +130,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_labels,
                 &props,
                 row as u32,
-            );
+            )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
                 &old_labels,
@@ -138,7 +138,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_labels,
                 &props,
                 row as u32,
-            );
+            )?;
         }
         self.txn
             .changes
