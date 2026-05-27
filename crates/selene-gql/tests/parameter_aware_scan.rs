@@ -346,6 +346,78 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
 }
 
 #[test]
+fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
+    // BRIEF-154 PR #175 F1 (Codex P1): with parameter-bearing range bounds
+    // the plan-time `range_satisfiable` guard is skipped (it gates on
+    // literal-literal pairs only). Forwarding `$lo > $hi` to
+    // `BTreeMap::range` would std::panic — the runtime guard installed in
+    // `typed_index_rows` after `resolve_bounds` must short-circuit to an
+    // empty result.
+    let (graph, _catalog) = person_graph_with_name_index();
+    // Build a graph with an INT-typed `age` index so we can exercise a
+    // numeric range with inverted parameter bounds.
+    let label = istr("Person");
+    let age_key = istr("age");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for age in [20_i64, 35, 50] {
+            mutator
+                .create_node(
+                    LabelSet::single(label),
+                    props([(istr("id"), Value::Int(age)), (age_key, Value::Int(age))]),
+                )
+                .expect("age node inserts");
+        }
+        txn.commit().expect("seed commits");
+    }
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_property_index(label, age_key, TypedIndexKind::I64)
+            .expect("age index registers");
+        txn.commit().expect("index commit");
+    }
+    let catalog = MockIndexCatalog::new()
+        .with_node_typed_index(label, istr("name"), IndexKind::String)
+        .with_node_typed_index(label, age_key, IndexKind::Integer);
+    let plan = Arc::new(optimized_plan(
+        "MATCH (n:Person) WHERE n.age > $lo AND n.age < $hi RETURN n.id AS id",
+        &catalog,
+    ));
+
+    // $lo > $hi → unsatisfiable. Must return empty without panicking.
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("lo"), Value::Int(100));
+    session.bind_parameter(istr("hi"), Value::Int(0));
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("inverted range executes without panicking"),
+    );
+    assert!(table.rows().is_empty());
+
+    // Boundary case: $lo == $hi with both exclusive (`> AND <`) also empty.
+    session.bind_parameter(istr("lo"), Value::Int(35));
+    session.bind_parameter(istr("hi"), Value::Int(35));
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("equal-bound exclusive range executes"),
+    );
+    assert!(table.rows().is_empty());
+
+    // Sanity: $lo < $hi still works.
+    session.bind_parameter(istr("lo"), Value::Int(0));
+    session.bind_parameter(istr("hi"), Value::Int(100));
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("valid range executes"),
+    );
+    let mut ids = collect_id_column(&table);
+    ids.sort();
+    assert_eq!(ids, vec![20, 35, 50]);
+}
+
+#[test]
 fn plan_arc_is_reusable_across_parameter_value_changes() {
     // BRIEF-154 bar 5 spirit: the same optimized plan (with parameter slots
     // in its IR) executes correctly across different parameter bindings.

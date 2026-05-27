@@ -11,7 +11,9 @@ use crate::{
     runtime::{Binding, BindingTableSchema, ExecutorError},
 };
 
-use super::scan_resolve::{IndexKeyOutcome, ResolvedBounds, resolve_bounds, resolve_index_key};
+use super::scan_resolve::{
+    IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bounds, resolve_index_key,
+};
 use super::{EvalCtx, evaluator, pattern, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
@@ -137,6 +139,15 @@ fn typed_index_rows(
     let Some(resolved) = resolve_bounds(bounds, kind, ctx)? else {
         return Ok(Vec::new());
     };
+    // Plan-time `range_satisfiable` only gates literal-literal pairs; for
+    // parameter-bearing ranges the resolved values may be unsatisfiable
+    // (`$lo > $hi`, or `$lo == $hi` with both exclusive). Forwarding those
+    // to `nodes_with_property_range` → `BTreeMap::range` would std::panic.
+    // Mirror the plan-time guard against the resolved values and bail to
+    // an empty result on unsatisfiable (Codex PR #175 F1).
+    if !range_satisfiable_runtime(&resolved) {
+        return Ok(Vec::new());
+    }
     if scan.kind != ScanKind::Node {
         return Ok(linear_rows_filtered_by_resolved_bounds(
             scan, property, &resolved, ctx,

@@ -5,11 +5,13 @@
 //! of `runtime/scan.rs` to keep that file under the 700 LOC cap; logic and
 //! cross-references unchanged.
 
+use std::cmp::Ordering;
+
 use selene_core::{IStr, Value};
 
 use crate::{
     IndexKey, IndexKind, Literal, SourceSpan, TypedIndexBounds,
-    runtime::{EvalCtx, ExecutorError, parameter_type},
+    runtime::{EvalCtx, ExecutorError, parameter_type, value_compare},
 };
 
 /// Result of resolving an [`IndexKey`] against bound parameters.
@@ -40,6 +42,42 @@ pub(super) enum ResolvedBounds {
         hi: Value,
         hi_inclusive: bool,
     },
+}
+
+/// Runtime-side mirror of the plan-time `range_satisfiable` check on a
+/// `ResolvedBounds`. Returns `false` when the index probe would attempt
+/// `start > end` (or `start == end` with both bounds exclusive) — both of
+/// which std::panic inside `BTreeMap::range` if forwarded to
+/// `lookup_range` → `range_union` (see `selene-graph::typed_index`).
+///
+/// `Range`-shaped bounds need this guard for parameter-bearing probes that
+/// skip the plan-time literal-only `range_satisfiable` at
+/// `range_index_scan.rs::bounds_for_property`. Equality / single-sided
+/// (`>`, `>=`, `<`, `<=`) bounds always probe a valid `BTreeMap::range`
+/// half-line, so this returns `true` for them.
+///
+/// Cross-kind or otherwise non-orderable pairs (e.g. one side resolves to
+/// `Value::Null`, `Value::NaN`, or a kind that does not implement
+/// `compare_non_null`) return `false` so the caller treats them like any
+/// other unsatisfiable range — empty result, no panic.
+pub(super) fn range_satisfiable_runtime(resolved: &ResolvedBounds) -> bool {
+    let ResolvedBounds::Range {
+        lo,
+        lo_inclusive,
+        hi,
+        hi_inclusive,
+    } = resolved
+    else {
+        return true;
+    };
+    let Some(ordering) = value_compare::compare_non_null(lo, hi) else {
+        return false;
+    };
+    match ordering {
+        Ordering::Less => true,
+        Ordering::Greater => false,
+        Ordering::Equal => *lo_inclusive && *hi_inclusive,
+    }
 }
 
 /// Resolve a single [`IndexKey`] into a probe value or an empty-result
