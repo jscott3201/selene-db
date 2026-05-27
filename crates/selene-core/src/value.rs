@@ -58,6 +58,19 @@ pub enum Value {
     /// [`PartialEq`] even if their underlying `&str` content matches. `Value`
     /// equality is variant-strict; GQL string-content equality is handled by
     /// executor comparison logic.
+    ///
+    /// # Indexed-column admission carve-out (BRIEF-153)
+    ///
+    /// When a `Value::ExternalString` is stored on a column declared
+    /// `INDEXED` (single or composite, `STRING` kind), the property-index
+    /// commit path admits the content into the global [`IStr`] pool to
+    /// produce the secondary-index key. This is the only carve-out from
+    /// variant-strict storage: the stored property value in the row's
+    /// `PropertyMap` remains `ExternalString`; only the index key space
+    /// sees the admitted `IStr` form. DDL `INDEXED` is the user's explicit
+    /// consent for this admission. Cap exhaustion at the boundary surfaces
+    /// as `GraphError::IndexAdmissionExhausted` (GQLSTATUS `5GQL1`), not a
+    /// silent skip.
     ExternalString(#[serde(with = "serde_arc_str")] Arc<str>),
     /// Byte-string value.
     Bytes(Arc<[u8]>),

@@ -1,4 +1,30 @@
 //! Built-in per-`(label, property)` value index. See spec 03 section 5.2.
+//!
+//! # Caller classes (BRIEF-153)
+//!
+//! `typed_key_admit` and `typed_key_lookup` split the `Value`→`TypedKey`
+//! conversion into three caller classes, each chosen at every call site:
+//!
+//! - **Write side** ([`TypedIndex::insert`], [`TypedIndex::remove`]):
+//!   `typed_key_admit`. Cap exhaustion surfaces as
+//!   [`TypedIndexValueError::AdmissionFailed`] and the mutator promotes it
+//!   to a hard [`crate::error::GraphError::IndexAdmissionExhausted`]
+//!   (GQLSTATUS `5GQL1`).
+//! - **Read side** ([`TypedIndex::lookup_eq`], the per-type closures in
+//!   [`TypedIndex::lookup_range`]): `typed_key_lookup`. Returning
+//!   `Ok(None)` for `STRING` content that is not in the pool renders as an
+//!   empty result; the read path MUST NOT admit a new `IStr` just to probe.
+//! - **Diff side** ([`TypedIndex::values_share_key`]): `typed_key_lookup`,
+//!   with `Ok(None)` falling through to [`raw_value_same`] so the diff
+//!   path never charges admission against a no-op update. If the values
+//!   genuinely differ, the resulting remove+insert pair admits through the
+//!   write path.
+//!
+//! See `selene_core::value::Value::ExternalString` rustdoc for the
+//! variant-strict storage carve-out this enables.
+//!
+//! The same three-helper split is mirrored in
+//! [`crate::composite_typed_index`] for composite indexes.
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
