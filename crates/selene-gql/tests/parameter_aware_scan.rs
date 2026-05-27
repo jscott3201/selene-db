@@ -346,6 +346,51 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
 }
 
 #[test]
+fn range_with_external_string_parameter_finds_rows_via_linear_fallback() {
+    // BRIEF-154 PR #175 F4 (Codex P1): the BRIEF-153 ExternalString
+    // lookup-coerce carve-out is only valid for *equality* probes
+    // (`nodes_with_property_eq` is variant-strict). STRING range probes
+    // return `None` from `lookup_range` by design (IStr ordering is
+    // admission-order, not lexicographic — see
+    // `selene-graph::typed_index`), falling back to a linear scan where
+    // `value_compare::compare_non_null` handles cross-variant
+    // `String` / `ExternalString` lexicographic comparison natively.
+    //
+    // Pre-fix: `resolve_index_key` short-circuited any unpoolable
+    // `Value::ExternalString` against `IndexKind::String` to `EmptyResult`,
+    // including range probes — zeroing out queries that the linear
+    // fallback would have matched. The fix gates the carve-out on
+    // `ProbeShape::Equality`.
+    let (graph, catalog) = person_graph_with_name_index();
+    let plan = Arc::new(optimized_plan(
+        "MATCH (n:Person) WHERE n.name > $lo AND n.name < $hi RETURN n.id AS id",
+        &catalog,
+    ));
+    let mut session = Session::new(&graph);
+    // Bind range endpoints as unpooled ExternalString that bracket the
+    // seeded names alphabetically. Pre-fix this would short-circuit to
+    // empty; the linear fallback compares lexicographically against the
+    // indexed `Value::String` rows.
+    session.bind_parameter(
+        istr("lo"),
+        Value::ExternalString(Arc::from("a-unpooled-sentinel-1")),
+    );
+    session.bind_parameter(
+        istr("hi"),
+        Value::ExternalString(Arc::from("z-unpooled-sentinel-1")),
+    );
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("string range with external-string parameter executes"),
+    );
+    let mut ids = collect_id_column(&table);
+    ids.sort();
+    // All 5 seeded names ("alice", "bob", "cara", "dave", "eve") sort
+    // alphabetically between the bracket tokens.
+    assert_eq!(ids, vec![1, 2, 3, 4, 5]);
+}
+
+#[test]
 fn equality_after_range_keeps_range_as_residual_filter() {
     // BRIEF-154 PR #175 F3 (Codex P1): pre-fix, `WHERE n.age > 10 AND n.age = $p`
     // had both predicates removed from `property_predicates`, so the executor

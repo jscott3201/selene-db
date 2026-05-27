@@ -12,7 +12,8 @@ use crate::{
 };
 
 use super::scan_resolve::{
-    IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bounds, resolve_index_key,
+    IndexKeyOutcome, ProbeShape, ResolvedBounds, range_satisfiable_runtime, resolve_bounds,
+    resolve_index_key,
 };
 use super::{EvalCtx, evaluator, pattern, value_compare};
 
@@ -229,16 +230,23 @@ fn union_property_eq(
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BTreeSet<u32>, ExecutorError> {
-    // Pre-resolve all keys once: parameter slots resolve to concrete Values,
+    // Pre-resolve all keys once: parameter slots resolve to concrete Values
+    // under `ProbeShape::Equality` (BitmapUnion fans out variant-strict
+    // equality probes — same shape contract as `Equality(IndexKey)`).
     // `IndexKeyOutcome::EmptyResult` slots (NULL binding or unpoolable
     // ExternalString) drop out of the union per BRIEF-154 §B.3. A loud
     // `InvalidParameterType` propagates immediately.
     let mut resolved_keys: Vec<Value> = Vec::with_capacity(keys.len());
     for key in keys {
-        match resolve_index_key(key, kind, ctx)? {
+        match resolve_index_key(key, kind, ProbeShape::Equality, ctx)? {
             IndexKeyOutcome::Value(value) => resolved_keys.push(value),
             IndexKeyOutcome::EmptyResult => {}
         }
+    }
+    // P3 short-circuit: if every key resolved to EmptyResult, the union is
+    // empty by construction — no need to scan rows looking for matches.
+    if resolved_keys.is_empty() && !keys.is_empty() {
+        return Ok(BTreeSet::new());
     }
     if scan.kind != ScanKind::Node {
         return Ok(linear_rows(scan.kind, ctx)
@@ -354,7 +362,11 @@ fn resolve_composite_values(
             // can't probe the composite at all.
             return Ok(None);
         };
-        match resolve_index_key(key, *kind, ctx)? {
+        // Composite probes via `composite_property_index_for` →
+        // `key_from_values_lookup` are variant-strict on each component
+        // (BRIEF-153 carve-out is built into the lookup path), so every
+        // component is `ProbeShape::Equality`.
+        match resolve_index_key(key, *kind, ProbeShape::Equality, ctx)? {
             IndexKeyOutcome::Value(value) => out.push(value),
             IndexKeyOutcome::EmptyResult => return Ok(None),
         }

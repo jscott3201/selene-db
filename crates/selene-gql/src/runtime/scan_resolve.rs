@@ -14,6 +14,24 @@ use crate::{
     runtime::{EvalCtx, ExecutorError, parameter_type, value_compare},
 };
 
+/// Whether a probe site expects an exact-equality value or a comparison
+/// boundary value. Gates the BRIEF-153 `Value::ExternalString` lookup-coerce
+/// carve-out in [`resolve_index_key`]: only `Equality` benefits from
+/// short-circuiting unpoolable ExternalString to `EmptyResult`, because
+/// `nodes_with_property_eq` is variant-strict. `Range` boundaries fall
+/// through to the linear-fallback path (STRING indexes return `None` from
+/// `lookup_range` by design — see `selene-graph::typed_index`), where
+/// `value_compare` handles cross-variant `String`/`ExternalString`
+/// lexicographic comparison natively (Codex PR #175 F4).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ProbeShape {
+    /// Exact-equality probe (`Equality`, `BitmapUnion` key, `CompositeLookup`
+    /// component).
+    Equality,
+    /// Comparison-boundary probe (`>`, `>=`, `<`, `<=`, `Range` endpoint).
+    Range,
+}
+
 /// Result of resolving an [`IndexKey`] against bound parameters.
 pub(super) enum IndexKeyOutcome {
     /// Concrete probe value.
@@ -98,6 +116,7 @@ pub(super) fn range_satisfiable_runtime(resolved: &ResolvedBounds) -> bool {
 pub(super) fn resolve_index_key(
     key: &IndexKey,
     expected_kind: IndexKind,
+    probe_shape: ProbeShape,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<IndexKeyOutcome, ExecutorError> {
     match key {
@@ -119,12 +138,22 @@ pub(super) fn resolve_index_key(
             if matches!(raw, Value::Null) {
                 return Ok(IndexKeyOutcome::EmptyResult);
             }
-            // BRIEF-153 read-side carve-out for STRING-indexed columns:
-            // ExternalString must NOT enter the global pool from the
-            // read path. If the content is already admitted, coerce to
-            // a poolable Value::String for downstream variant-strict
-            // probes; otherwise empty out without admitting.
-            if matches!(expected_kind, IndexKind::String)
+            // BRIEF-153 read-side carve-out for STRING-indexed EQUALITY
+            // probes: ExternalString must NOT enter the global pool from
+            // the read path. If the content is already admitted, coerce to
+            // a poolable Value::String for variant-strict
+            // `nodes_with_property_eq`; otherwise empty out without
+            // admitting. Range / comparison probes deliberately skip this
+            // carve-out — STRING ranges fall back to the linear scan path
+            // (selene-graph::typed_index::lookup_range returns None for
+            // Self::String — IStr ordering is admission-order, not
+            // lexicographic), where `value_compare::compare_non_null`
+            // handles cross-variant `String`/`ExternalString` comparison
+            // natively. Short-circuiting Range to `EmptyResult` here would
+            // zero out rows the linear fallback would have matched
+            // (Codex PR #175 F4).
+            if probe_shape == ProbeShape::Equality
+                && matches!(expected_kind, IndexKind::String)
                 && let Value::ExternalString(arc) = &raw
             {
                 return Ok(match selene_core::lookup(arc.as_ref()) {
@@ -151,39 +180,40 @@ pub(super) fn resolve_bounds(
     expected_kind: IndexKind,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Option<ResolvedBounds>, ExecutorError> {
-    let resolve_one = |key: &IndexKey| -> Result<Option<Value>, ExecutorError> {
-        match resolve_index_key(key, expected_kind, ctx)? {
-            IndexKeyOutcome::Value(value) => Ok(Some(value)),
-            IndexKeyOutcome::EmptyResult => Ok(None),
-        }
-    };
+    let resolve_one =
+        |key: &IndexKey, probe_shape: ProbeShape| -> Result<Option<Value>, ExecutorError> {
+            match resolve_index_key(key, expected_kind, probe_shape, ctx)? {
+                IndexKeyOutcome::Value(value) => Ok(Some(value)),
+                IndexKeyOutcome::EmptyResult => Ok(None),
+            }
+        };
     Ok(Some(match bounds {
         TypedIndexBounds::Equality(key) => {
-            let Some(value) = resolve_one(key)? else {
+            let Some(value) = resolve_one(key, ProbeShape::Equality)? else {
                 return Ok(None);
             };
             ResolvedBounds::Equality(value)
         }
         TypedIndexBounds::GreaterThan(key) => {
-            let Some(value) = resolve_one(key)? else {
+            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
                 return Ok(None);
             };
             ResolvedBounds::GreaterThan(value)
         }
         TypedIndexBounds::GreaterEqual(key) => {
-            let Some(value) = resolve_one(key)? else {
+            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
                 return Ok(None);
             };
             ResolvedBounds::GreaterEqual(value)
         }
         TypedIndexBounds::LessThan(key) => {
-            let Some(value) = resolve_one(key)? else {
+            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
                 return Ok(None);
             };
             ResolvedBounds::LessThan(value)
         }
         TypedIndexBounds::LessEqual(key) => {
-            let Some(value) = resolve_one(key)? else {
+            let Some(value) = resolve_one(key, ProbeShape::Range)? else {
                 return Ok(None);
             };
             ResolvedBounds::LessEqual(value)
@@ -194,10 +224,10 @@ pub(super) fn resolve_bounds(
             hi,
             hi_inclusive,
         } => {
-            let Some(lo_value) = resolve_one(lo)? else {
+            let Some(lo_value) = resolve_one(lo, ProbeShape::Range)? else {
                 return Ok(None);
             };
-            let Some(hi_value) = resolve_one(hi)? else {
+            let Some(hi_value) = resolve_one(hi, ProbeShape::Range)? else {
                 return Ok(None);
             };
             ResolvedBounds::Range {
