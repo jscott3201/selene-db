@@ -135,10 +135,35 @@ pub(crate) fn walk_join_tree(
         } => outer::execute(left, right, key, right_filters, env),
         JoinTree::WorstCaseOptimal { intersection, .. } => wco::execute_phase_a(intersection, env),
         JoinTree::Subplan(plan) => subplan::execute(plan, env.schema, env.seed, env.ctx),
-        // The runtime executor for DisjunctiveScan lands in Commit 2.
-        // Until then no rule emits the variant, so this arm is unreachable.
-        JoinTree::DisjunctiveScan { .. } => {
-            unreachable!("DisjunctiveScan executor lands in BRIEF-155 Commit 2")
+        // Iterate each per-label branch and concatenate the resulting
+        // `Binding` rows. No dedup — `UNION ALL` semantics. A node carrying
+        // labels A AND B appears in both branch-A and branch-B candidate
+        // rows, matching the manual `MATCH (n:A) ... UNION ALL MATCH (n:B)`
+        // form a user would otherwise write (BRIEF-155 Q11). The per-branch
+        // `label_predicate = Some(LabelExpr::Single(L_i))` makes each
+        // branch's `label_matches_scan` filter behave like a single-label
+        // scan, so post-scan label filtering is correct for free.
+        //
+        // `scan_anchor` is intentionally unused at execute time — it carries
+        // the original disjunctive `label_predicate` for EXPLAIN diagnostics
+        // and IR round-trips, but the runtime decision-making lives in the
+        // branches' per-branch `ScanAccess` (selected by the rule passes at
+        // slots 6/7/8).
+        JoinTree::DisjunctiveScan {
+            branches,
+            scan_anchor: _,
+        } => {
+            let mut rows = Vec::new();
+            for branch in branches {
+                rows.extend(scan::scan_pattern(
+                    branch,
+                    env.pattern,
+                    env.schema,
+                    env.seed,
+                    env.ctx,
+                )?);
+            }
+            Ok(rows)
         }
     }
 }
