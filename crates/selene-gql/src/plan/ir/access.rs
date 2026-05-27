@@ -85,32 +85,6 @@ pub enum IndexKey {
     },
 }
 
-impl IndexKey {
-    /// Borrow the inner literal, panicking on parameter slots.
-    ///
-    /// Bridges runtime sites that have not yet been rewired through
-    /// [`crate::runtime::scan::resolve_index_key`] (Commit 4). The optimizer
-    /// rules never emit [`IndexKey::Parameter`] until Commit 2, so until then
-    /// `Parameter` is genuinely unreachable on the runtime path. Callers MUST
-    /// be migrated to the parameter-aware resolver before the rules start
-    /// emitting parameter slots; the `unreachable!` is a guardrail, not a
-    /// supported pattern.
-    #[must_use]
-    pub fn literal_for_pre_param_path(&self) -> &Literal {
-        match self {
-            Self::Literal(literal) => literal,
-            Self::Parameter { name, .. } => {
-                unreachable!(
-                    "IndexKey::Parameter ${} reached a runtime site that has not been \
-                     rewired through resolve_index_key; this site must be migrated to \
-                     parameter-aware resolution before the optimizer emits Parameter slots",
-                    name.as_str(),
-                )
-            }
-        }
-    }
-}
-
 /// Bounds for a typed index lookup.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]

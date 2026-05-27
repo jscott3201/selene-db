@@ -62,6 +62,10 @@ name = "evaluator_completeness"
 required-features = ["test-harness"]
 
 [[test]]
+name = "parameter_aware_scan"
+required-features = ["test-harness"]
+
+[[test]]
 name = "metrics_emit_under_feature"
 required-features = ["metrics"]
 
