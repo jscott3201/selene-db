@@ -5,7 +5,7 @@ use crate::plan::{
     optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
 };
 
-use super::index_helpers::{literal_matches_kind, single_label};
+use super::index_helpers::{compatible_value, single_label};
 
 const SMALL_IN_LIST_LIMIT: usize = 16;
 
@@ -88,19 +88,25 @@ fn rewrite_scan(
         };
         let property = matched.key;
         let mut keys = Vec::with_capacity(items.len());
+        let mut has_literal = false;
+        let mut has_parameter = false;
         let mut all_match = true;
         for item in items {
-            let Some(literal) = binding_refs::literal(item) else {
+            let Some(index_key) = compatible_value(item, lookup.kind) else {
                 all_match = false;
                 break;
             };
-            if !literal_matches_kind(literal, lookup.kind) {
-                all_match = false;
-                break;
+            match &index_key {
+                IndexKey::Literal(_) => has_literal = true,
+                IndexKey::Parameter { .. } => has_parameter = true,
             }
-            keys.push(IndexKey::Literal(literal.clone()));
+            keys.push(index_key);
         }
-        if !all_match {
+        // BRIEF-154 Q3: keep the list homogeneous in v1.1. All-literal or
+        // all-parameter InLists fire BitmapUnion; mixed lists fall back to
+        // Linear (the runtime would otherwise need per-key dispatch and the
+        // brief defers that to a future revisit).
+        if !all_match || (has_literal && has_parameter) {
             continue;
         }
         scan.property_predicates.remove(index);

@@ -260,6 +260,90 @@ fn composite_index_lookup_bails_above_cap() {
 }
 
 #[test]
+fn composite_lookup_admits_parameter_slots_per_component() {
+    // BRIEF-154 bar 3: parameterized composite equality fires.
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Doc"),
+        vec![
+            (istr("tenant"), selene_gql::IndexKind::String),
+            (istr("kind"), selene_gql::IndexKind::String),
+        ],
+    );
+    let plan = optimized_one(
+        "MATCH (n:Doc) WHERE n.tenant = $a AND n.kind = $b RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::CompositeLookup { keys, .. } = &scan.access else {
+        panic!("expected composite lookup, got {:?}", scan.access);
+    };
+    assert_eq!(keys.len(), 2);
+    for (_, index_key) in keys {
+        assert!(
+            matches!(index_key, IndexKey::Parameter { .. }),
+            "expected parameter key in composite probe, got {index_key:?}"
+        );
+    }
+}
+
+#[test]
+fn composite_lookup_admits_mixed_literal_and_parameter() {
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Doc"),
+        vec![
+            (istr("tenant"), selene_gql::IndexKind::String),
+            (istr("kind"), selene_gql::IndexKind::String),
+        ],
+    );
+    let plan = optimized_one(
+        "MATCH (n:Doc) WHERE n.tenant = 't1' AND n.kind = $kind RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::CompositeLookup { keys, .. } = &scan.access else {
+        panic!("expected composite lookup, got {:?}", scan.access);
+    };
+    let tenant_key = keys
+        .iter()
+        .find(|(property, _)| *property == istr("tenant"))
+        .map(|(_, key)| key);
+    let kind_key = keys
+        .iter()
+        .find(|(property, _)| *property == istr("kind"))
+        .map(|(_, key)| key);
+    assert!(matches!(tenant_key, Some(IndexKey::Literal(_))));
+    assert!(matches!(kind_key, Some(IndexKey::Parameter { .. })));
+}
+
+#[test]
+fn composite_lookup_typed_param_incompatibility_falls_back_to_linear() {
+    // BRIEF-154 §B.2 F7: typed parameter declared with an incompatible type
+    // for its component column aborts the rewrite. The rule produces no
+    // CompositeLookup; the residual predicates remain for linear evaluation.
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Doc"),
+        vec![
+            (istr("tenant"), selene_gql::IndexKind::String),
+            (istr("kind"), selene_gql::IndexKind::String),
+        ],
+    );
+    let plan = optimized_one(
+        "MATCH (n:Doc) WHERE n.tenant = $tenant :: INTEGER AND n.kind = 'k' RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(
+        matches!(scan.access, ScanAccess::Linear),
+        "expected linear fallback for typed-incompatible composite param, got {:?}",
+        scan.access
+    );
+    assert_eq!(scan.property_predicates.len(), 2);
+}
+
+#[test]
 fn sentinel_composite_index_snapshot() {
     let catalog = MockIndexCatalog::new().with_node_composite_index(
         istr("Doc"),

@@ -3,8 +3,8 @@
 use selene_core::{IStr, intern};
 use selene_gql::plan::optimize::rules::InListOptimization;
 use selene_gql::{
-    EmptyProcedureRegistry, ExecutionPlan, FilterPredicate, IndexKind, JoinTree, NodeOrEdgeScan,
-    PipelineOp, Rule, ScanAccess, analyze, optimize, parse, plan,
+    EmptyProcedureRegistry, ExecutionPlan, FilterPredicate, IndexKey, IndexKind, JoinTree,
+    NodeOrEdgeScan, PipelineOp, Rule, ScanAccess, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
@@ -123,6 +123,78 @@ fn leaves_large_in_list_unchanged() {
     let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
 
     assert!(matches!(scan.access, ScanAccess::Linear));
+    assert_eq!(scan.property_predicates.len(), 1);
+}
+
+#[test]
+fn all_parameter_in_list_fires_bitmap_union() {
+    // BRIEF-154 bar 4: `WHERE n.x IN [$a, $b, $c]` plans as BitmapUnion with
+    // all-parameter keys.
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        istr("Person"),
+        istr("email"),
+        IndexKind::String,
+    );
+    let plan = optimized_one(
+        "MATCH (p:Person) WHERE p.email IN [$a, $b, $c] RETURN p",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    let ScanAccess::BitmapUnion { keys, .. } = &scan.access else {
+        panic!("expected bitmap union, got {:?}", scan.access);
+    };
+    assert_eq!(keys.len(), 3);
+    for key in keys {
+        assert!(
+            matches!(key, IndexKey::Parameter { .. }),
+            "expected parameter key, got {key:?}"
+        );
+    }
+    assert!(scan.property_predicates.is_empty());
+}
+
+#[test]
+fn mixed_literal_and_parameter_in_list_falls_back_to_linear() {
+    // BRIEF-154 Q3: mixed-shape InLists fall back to Linear in v1.1; the
+    // homogeneous bar keeps runtime dispatch trivial.
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        istr("Person"),
+        istr("email"),
+        IndexKind::String,
+    );
+    let plan = optimized_one(
+        "MATCH (p:Person) WHERE p.email IN [$a, 'bob@example.com'] RETURN p",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(
+        matches!(scan.access, ScanAccess::Linear),
+        "expected linear fallback for mixed InList, got {:?}",
+        scan.access
+    );
+    assert_eq!(scan.property_predicates.len(), 1);
+}
+
+#[test]
+fn in_list_typed_param_incompatibility_falls_back_to_linear() {
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        istr("Person"),
+        istr("email"),
+        IndexKind::String,
+    );
+    let plan = optimized_one(
+        "MATCH (p:Person) WHERE p.email IN [$a :: INTEGER, $b :: INTEGER] RETURN p",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+
+    assert!(
+        matches!(scan.access, ScanAccess::Linear),
+        "expected linear fallback for typed-incompatible InList params, got {:?}",
+        scan.access
+    );
     assert_eq!(scan.property_predicates.len(), 1);
 }
 

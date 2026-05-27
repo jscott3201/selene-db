@@ -9,9 +9,7 @@ use crate::{
     },
 };
 
-use super::index_helpers::{
-    gql_type_compatible_with_index_kind, literal_matches_kind, single_label,
-};
+use super::index_helpers::{compatible_value, single_label};
 
 /// Rewrite property equality/range predicates to typed index access.
 pub struct RangeIndexScan;
@@ -330,31 +328,6 @@ fn range_satisfiable(lo: &Literal, lo_inclusive: bool, hi: &Literal, hi_inclusiv
         std::cmp::Ordering::Greater => false,
         std::cmp::Ordering::Equal => lo_inclusive && hi_inclusive,
     }
-}
-
-/// Resolve `value` to an [`IndexKey`] admissible for the given index kind.
-///
-/// Literal-side values are kind-checked at plan time via
-/// [`literal_matches_kind`]. Parameter-side values are admitted when either
-/// untyped (deferred to the execute-time probe per BRIEF-154 §B.5) or
-/// typed-compatible (`gql_type_compatible_with_index_kind`). Typed
-/// incompatibility falls through to `None` so the caller can fall back to a
-/// linear scan per Q5.
-fn compatible_value(value: &crate::ValueExpr, kind: crate::IndexKind) -> Option<IndexKey> {
-    if let Some(literal) = binding_refs::literal(value) {
-        return literal_matches_kind(literal, kind).then(|| IndexKey::Literal(literal.clone()));
-    }
-    let param = binding_refs::parameter(value)?;
-    if let Some(declared) = param.declared_type
-        && !gql_type_compatible_with_index_kind(declared, kind)
-    {
-        return None;
-    }
-    Some(IndexKey::Parameter {
-        name: param.name,
-        declared_type: param.declared_type.cloned(),
-        span: param.span,
-    })
 }
 
 fn binding_is_node(bindings: &[BindingDef], binding_id: crate::BindingId) -> bool {

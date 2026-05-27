@@ -3,11 +3,11 @@
 use selene_core::IStr;
 
 use crate::plan::{
-    BindingDef, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess, ScanKind,
+    BindingDef, ExecutionPlan, FilterPredicate, JoinTree, ScanAccess, ScanKind,
     optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
 };
 
-use super::index_helpers::single_label;
+use super::index_helpers::{compatible_value, single_label};
 
 /// Rewrite multi-property equality predicates to composite index access.
 ///
@@ -92,13 +92,22 @@ fn rewrite_scan(
     else {
         return false;
     };
+    // BRIEF-154 §B.2 F7: resolve each component value against its per-column
+    // IndexKind. Literals get plan-time kind-checked via `compatible_value`'s
+    // literal branch; typed-declared parameters get gated by
+    // `gql_type_compatible_with_index_kind`. Any per-component failure
+    // (mismatched literal kind, typed-incompatible parameter) aborts the
+    // rewrite so the executor falls back to Linear evaluation.
     let mut keys = Vec::with_capacity(composite.properties.len());
-    for (property, _kind) in &composite.properties {
+    for (property, kind) in &composite.properties {
         let candidate = candidates
             .iter()
             .find(|candidate| candidate.key == *property)
             .expect("matched property is present in candidate set");
-        keys.push((*property, IndexKey::Literal(candidate.literal.clone())));
+        let Some(index_key) = compatible_value(candidate.value, *kind) else {
+            return false;
+        };
+        keys.push((*property, index_key));
     }
     let mut consumed_indices = consumed_indices;
     consumed_indices.sort_unstable();
@@ -160,16 +169,16 @@ fn find_composite_match(
 }
 
 #[derive(Clone)]
-struct EqualityCandidate {
+struct EqualityCandidate<'a> {
     index: usize,
     key: IStr,
-    literal: crate::Literal,
+    value: &'a crate::ValueExpr,
 }
 
-fn equality_candidates(
-    predicates: &[FilterPredicate],
-    bindings: &[BindingDef],
-) -> Vec<EqualityCandidate> {
+fn equality_candidates<'a>(
+    predicates: &'a [FilterPredicate],
+    bindings: &'a [BindingDef],
+) -> Vec<EqualityCandidate<'a>> {
     let mut candidates = Vec::new();
     for (index, pred) in predicates.iter().enumerate() {
         let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
@@ -187,23 +196,23 @@ fn equality_candidates(
         }
         if candidates
             .iter()
-            .any(|candidate: &EqualityCandidate| candidate.key == matched.key)
+            .any(|candidate: &EqualityCandidate<'_>| candidate.key == matched.key)
         {
             continue;
         }
-        let binding_literal = match matched.shape {
-            binding_refs::PropertyPredicateShape::Equality(value) => {
-                let Some(literal) = binding_refs::literal(value) else {
-                    continue;
-                };
-                literal
-            }
-            _ => continue,
+        let binding_refs::PropertyPredicateShape::Equality(value) = matched.shape else {
+            continue;
         };
+        // Accept either a literal or a parameter slot. Per-component kind
+        // checks (literal kind, typed-parameter compatibility) happen in
+        // `rewrite_scan` once we know the composite's per-column IndexKinds.
+        if binding_refs::literal(value).is_none() && binding_refs::parameter(value).is_none() {
+            continue;
+        }
         candidates.push(EqualityCandidate {
             index,
             key: matched.key,
-            literal: binding_literal.clone(),
+            value,
         });
     }
     candidates

@@ -1,9 +1,9 @@
 //! Shared helpers for index-aware optimizer rules.
 
 use crate::{
-    GqlType, LabelExpr, Literal,
+    GqlType, LabelExpr, Literal, ValueExpr,
     analyze::BindingId,
-    plan::{BindingDef, BindingElement, IndexKind, IndexTarget},
+    plan::{BindingDef, BindingElement, IndexKey, IndexKind, IndexTarget, optimize::binding_refs},
 };
 
 /// Return the single label carried by a label expression.
@@ -51,6 +51,31 @@ pub(super) fn literal_index_kind(literal: &Literal) -> Option<IndexKind> {
 /// Return whether a literal can be served by an index kind.
 pub(super) fn literal_matches_kind(literal: &Literal, kind: IndexKind) -> bool {
     literal_index_kind(literal) == Some(kind)
+}
+
+/// Resolve `value` to an [`IndexKey`] admissible for the given index kind.
+///
+/// Literal-side values are kind-checked at plan time via
+/// [`literal_matches_kind`]. Parameter-side values are admitted when either
+/// untyped (deferred to the execute-time probe per BRIEF-154 §B.5) or
+/// typed-compatible per [`gql_type_compatible_with_index_kind`]. Typed
+/// incompatibility falls through to `None` so the caller can fall back to a
+/// linear scan per Q5.
+pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<IndexKey> {
+    if let Some(literal) = binding_refs::literal(value) {
+        return literal_matches_kind(literal, kind).then(|| IndexKey::Literal(literal.clone()));
+    }
+    let param = binding_refs::parameter(value)?;
+    if let Some(declared) = param.declared_type
+        && !gql_type_compatible_with_index_kind(declared, kind)
+    {
+        return None;
+    }
+    Some(IndexKey::Parameter {
+        name: param.name,
+        declared_type: param.declared_type.cloned(),
+        span: param.span,
+    })
 }
 
 /// Return whether a typed parameter declaration is compatible with the
