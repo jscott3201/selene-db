@@ -16,6 +16,47 @@ pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::ISt
     }
 }
 
+/// Return the flat list of single labels carried by a `Disjunction` label
+/// expression, or `None` if the expression is not a flat disjunction of
+/// singles (or is anything other than `Disjunction`).
+///
+/// IMPORTANT — idempotency contract: this helper returns `None` for
+/// `LabelExpr::Single`. The `disjunctive_label_expansion` rule wraps a
+/// `Disjunction` into a `JoinTree::DisjunctiveScan`; after expansion, every
+/// branch's `label_predicate` is `Some(LabelExpr::Single(L_i))`. If this
+/// helper returned `Some(vec![L])` for `Single(L)`, the rule would
+/// re-fire on every branch in the next optimizer iteration, looping until
+/// `max_optimizer_iterations` caps with a wrong plan. Returning `None`
+/// makes the rule a no-op on already-expanded branches.
+///
+/// Returns `None` for:
+/// - `LabelExpr::Single(_)` (idempotency — see above; also the
+///   single-label-MATCH case the rule should never re-shape).
+/// - `LabelExpr::Conjunction(..)` (intersection semantics; out of scope).
+/// - `LabelExpr::Negation(..)` (complement semantics; out of scope).
+/// - `LabelExpr::Wildcard` (matches any label; expansion would be infinite).
+/// - `None` (no label predicate; nothing to expand).
+/// - `Disjunction` whose parts contain any non-`Single` inner branch
+///   (`A|B&C`, `A|!B`, etc. — F10 fold).
+///
+/// `LabelExpr::Disjunction` wraps `Vec2OrMore<LabelExpr>`
+/// (`ast/util.rs:142-201`), so a returned `Some(parts)` always has
+/// `parts.len() >= 2` — no empty/1-element edge case to handle.
+pub(super) fn flat_disjunction_singles(
+    label: &Option<LabelExpr>,
+) -> Option<Vec<selene_core::IStr>> {
+    let Some(LabelExpr::Disjunction(parts)) = label else {
+        return None;
+    };
+    parts
+        .iter()
+        .map(|part| match part {
+            LabelExpr::Single(label) => Some(*label),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Return the target kind for a binding element.
 pub(super) fn target_for_element(element: BindingElement) -> Option<IndexTarget> {
     match element {
