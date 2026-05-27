@@ -53,15 +53,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         {
             let graph = self.txn.guard_mut();
             ensure_node_rows(graph, row);
-            if row == graph.node_store.len() {
-                graph.node_store.labels.push(labels.clone());
-                graph.node_store.properties.push(props.clone());
-            } else {
-                graph.node_store.labels.set(row, labels.clone());
-                graph.node_store.properties.set(row, props.clone());
-            }
-            graph.node_store.alive.insert(row as u32);
-            insert_node_labels(&mut graph.idx_label, row as u32, &labels);
+            // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
+            // mutating row state so a cap-exhaustion error rolls back
+            // cleanly with no half-written row. Index updates only touch
+            // their own maps; node_store stays untouched if any admission
+            // fails. The txn boundary publishes everything atomically on
+            // commit, so a partial-index publication is impossible.
             crate::property_index::apply_node_create(
                 &mut graph.property_index,
                 &labels,
@@ -74,6 +71,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &props,
                 row as u32,
             )?;
+            if row == graph.node_store.len() {
+                graph.node_store.labels.push(labels.clone());
+                graph.node_store.properties.push(props.clone());
+            } else {
+                graph.node_store.labels.set(row, labels.clone());
+                graph.node_store.properties.set(row, props.clone());
+            }
+            graph.node_store.alive.insert(row as u32);
+            insert_node_labels(&mut graph.idx_label, row as u32, &labels);
         }
         self.txn.changes.push(Change::NodeCreated {
             id,
@@ -188,19 +194,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         let mut props = old_props.clone();
         apply_property_diff(&mut props, &props_diff)?;
 
-        // Now atomic in the working graph: write columns, then update indexes.
+        // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
+        // mutating row state so a cap-exhaustion error rolls back cleanly
+        // with no half-written row.
         let new_labels = labels.clone();
         let new_props = props.clone();
         {
             let graph = self.txn.guard_mut();
-            graph.node_store.labels.set(row, labels);
-            graph.node_store.properties.set(row, props);
-            for label in labels_diff.added.iter().copied() {
-                insert_index_row(&mut graph.idx_label, label, row as u32);
-            }
-            for label in labels_diff.removed.iter() {
-                remove_index_row(&mut graph.idx_label, label, row as u32);
-            }
             crate::property_index::apply_node_update(
                 &mut graph.property_index,
                 &old_labels,
@@ -217,6 +217,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_props,
                 row as u32,
             )?;
+            graph.node_store.labels.set(row, labels);
+            graph.node_store.properties.set(row, props);
+            for label in labels_diff.added.iter().copied() {
+                insert_index_row(&mut graph.idx_label, label, row as u32);
+            }
+            for label in labels_diff.removed.iter() {
+                remove_index_row(&mut graph.idx_label, label, row as u32);
+            }
         }
 
         self.txn.changes.push(Change::NodeUpdated {
