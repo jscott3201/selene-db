@@ -232,6 +232,15 @@ pub enum CompositeIndexValueError {
 
 /// Build a composite key from ordered component kinds and values, admitting
 /// new `STRING`-component content into the global [`IStr`] pool when needed.
+///
+/// Runs two passes (BRIEF-153 fix-cycle C4): pass 1 validates **every**
+/// component's kind via the non-admitting [`component_from_value_lookup`]
+/// helper, so a kind mismatch on a later component cannot trigger an
+/// admission on an earlier `STRING` component. Pass 2 admits and builds
+/// the key only when pass 1 cleared. Without this split, the tuple
+/// `(ExternalString("x"), Date("bad"))` against `(STRING, I64)` would
+/// admit `"x"` to the pool and then error on component 1 — a pool growth
+/// DoS amplifier near cap exhaustion.
 pub(crate) fn composite_key_from_values_admit(
     kinds: &[TypedIndexKind],
     values: &[&Value],
@@ -242,6 +251,23 @@ pub(crate) fn composite_key_from_values_admit(
             observed: values.len(),
         });
     }
+    // Pass 1 — admission-free kind check. `Ok(Some(_))` and `Ok(None)`
+    // both indicate the value's kind is compatible with the component
+    // kind (Ok(None) means a STRING component with unpooled
+    // ExternalString content; the kind matches, only admission is
+    // deferred).
+    for (index, (kind, value)) in kinds.iter().zip(values).enumerate() {
+        if let Err(source) = component_from_value_lookup(*kind, value) {
+            return Err(CompositeIndexValueError::Component {
+                index,
+                expected_kind: source.expected_kind(),
+                observed: source.observed(),
+            });
+        }
+    }
+    // Pass 2 — admit and build the key. Admission errors now surface
+    // intact via `ComponentAdmissionFailed`; kind mismatches are
+    // impossible because pass 1 cleared them.
     kinds
         .iter()
         .zip(values)
@@ -386,7 +412,7 @@ fn raw_value_same(lhs: &Value, rhs: &Value) -> bool {
 mod tests {
     use std::sync::Arc;
 
-    use selene_core::lookup;
+    use selene_core::{intern, lookup};
     use smallvec::smallvec;
 
     use super::*;
@@ -435,6 +461,38 @@ mod tests {
 
         assert!(result.is_none());
         assert!(lookup(probe).is_none());
+    }
+
+    #[test]
+    fn composite_key_admit_does_not_admit_when_later_component_kind_mismatches() {
+        // BRIEF-153 fix-cycle C4: two-pass admission. The tuple's later
+        // component is kind-mismatched, so the earlier STRING component's
+        // ExternalString content MUST NOT be admitted to the global pool.
+        let kinds: SmallVec<[TypedIndexKind; 4]> =
+            smallvec![TypedIndexKind::String, TypedIndexKind::I64];
+        let probe = "composite_admit.left_to_right.unique-never-pooled";
+        assert!(lookup(probe).is_none());
+        let location = Value::ExternalString(Arc::<str>::from(probe));
+        // Component 1 is kind-mismatched — a String value bound to an I64
+        // index component triggers `KindMismatch` on the second component.
+        let bad = Value::String(intern("composite_admit.left_to_right.bad").unwrap());
+        let refs: Vec<&Value> = vec![&location, &bad];
+
+        let err = composite_key_from_values_admit(&kinds, &refs)
+            .expect_err("tuple kind mismatch on later component rejects whole tuple");
+
+        assert!(matches!(
+            err,
+            CompositeIndexValueError::Component {
+                index: 1,
+                expected_kind: TypedIndexKind::I64,
+                observed: "String",
+            }
+        ));
+        assert!(
+            lookup(probe).is_none(),
+            "pass-1 kind check must run before any STRING admission"
+        );
     }
 
     #[test]

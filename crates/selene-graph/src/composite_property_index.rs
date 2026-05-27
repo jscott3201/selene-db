@@ -231,10 +231,13 @@ fn remove_commit(
 }
 
 /// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
-/// single-key helper in [`crate::property_index`]. `ComponentAdmissionFailed`
-/// surfaces as [`GraphError::IndexAdmissionExhausted`]; `Component` (kind
-/// mismatch) and `ArityMismatch` keep their existing lenient / inconsistent
-/// shapes.
+/// single-key helper in [`crate::property_index`]. Only
+/// `ComponentAdmissionFailed` promotes to a hard
+/// [`GraphError::IndexAdmissionExhausted`]; `Component` (kind mismatch)
+/// AND `ArityMismatch` retain the pre-BRIEF-153 commit-path semantics of
+/// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
+/// separately via [`index_rejection`] under the strict policy (BRIEF-153
+/// fix-cycle R1).
 fn demote_or_promote(
     label: IStr,
     properties: &[IStr],
@@ -243,11 +246,11 @@ fn demote_or_promote(
     err: CompositeIndexValueError,
 ) -> GraphResult<()> {
     match err {
-        CompositeIndexValueError::ComponentAdmissionFailed { .. }
-        | CompositeIndexValueError::ArityMismatch { .. } => {
+        CompositeIndexValueError::ComponentAdmissionFailed { .. } => {
             Err(index_rejection(label, properties, err))
         }
-        CompositeIndexValueError::Component { .. } => {
+        CompositeIndexValueError::Component { .. }
+        | CompositeIndexValueError::ArityMismatch { .. } => {
             warn_rejected(op, label, properties, row, &err);
             Ok(())
         }
