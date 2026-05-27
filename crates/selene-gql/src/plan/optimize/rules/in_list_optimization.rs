@@ -113,6 +113,7 @@ fn rewrite_scan(
         scan.access = ScanAccess::BitmapUnion {
             handle: lookup.handle,
             property,
+            kind: lookup.kind,
             keys,
         };
         return true;

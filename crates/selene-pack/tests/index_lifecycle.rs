@@ -295,7 +295,10 @@ fn created_composite_index_is_picked_by_optimizer_in_declaration_order() {
     else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![tenant, kind]);
+    assert_eq!(
+        properties,
+        &vec![(tenant, IndexKind::String), (kind, IndexKind::String)],
+    );
     assert_eq!(keys[0].0, tenant);
     assert_eq!(keys[1].0, kind);
 }

@@ -6,11 +6,12 @@ use std::ops::Bound::{Excluded, Included, Unbounded};
 use selene_core::{EdgeId, IStr, LabelSet, NodeId, Value};
 
 use crate::{
-    FilterPredicate, FilterPredicateKind, IndexKey, LabelExpr, Literal, NodeOrEdgeScan,
+    FilterPredicate, FilterPredicateKind, IndexKey, IndexKind, LabelExpr, NodeOrEdgeScan,
     PatternPlan, ScanAccess, ScanKind, TypedIndexBounds,
     runtime::{Binding, BindingTableSchema, ExecutorError},
 };
 
+use super::scan_resolve::{IndexKeyOutcome, ResolvedBounds, resolve_bounds, resolve_index_key};
 use super::{EvalCtx, evaluator, pattern, value_compare};
 
 /// Execute one `JoinTree::Scan` against the transaction snapshot.
@@ -35,7 +36,7 @@ pub(crate) fn scan_entities(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Vec<(Value, Binding)>, ExecutorError> {
     let mut rows = Vec::new();
-    for row in candidate_rows(scan, ctx) {
+    for row in candidate_rows(scan, ctx)? {
         if !label_matches_scan(scan, row, ctx) {
             continue;
         }
@@ -70,16 +71,25 @@ fn binding_for_scan(
     Ok(Some(Binding::new(values)))
 }
 
-fn candidate_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec<u32> {
+fn candidate_rows(
+    scan: &NodeOrEdgeScan,
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Vec<u32>, ExecutorError> {
     match &scan.access {
-        ScanAccess::Linear => linear_rows(scan.kind, ctx),
-        ScanAccess::LabelIndex { .. } => label_index_rows(scan, ctx),
+        ScanAccess::Linear => Ok(linear_rows(scan.kind, ctx)),
+        ScanAccess::LabelIndex { .. } => Ok(label_index_rows(scan, ctx)),
         ScanAccess::TypedIndexRange {
-            property, bounds, ..
-        } => typed_index_rows(scan, *property, bounds, ctx),
-        ScanAccess::BitmapUnion { property, keys, .. } => {
-            bitmap_union_rows(scan, *property, keys, ctx)
-        }
+            property,
+            kind,
+            bounds,
+            ..
+        } => typed_index_rows(scan, *property, *kind, bounds, ctx),
+        ScanAccess::BitmapUnion {
+            property,
+            kind,
+            keys,
+            ..
+        } => bitmap_union_rows(scan, *property, *kind, keys, ctx),
         ScanAccess::CompositeLookup {
             properties, keys, ..
         } => composite_lookup_rows(scan, properties, keys, ctx),
@@ -116,200 +126,262 @@ fn label_index_rows(scan: &NodeOrEdgeScan, ctx: &EvalCtx<'_, '_, '_, '_>) -> Vec
 fn typed_index_rows(
     scan: &NodeOrEdgeScan,
     property: IStr,
+    kind: IndexKind,
     bounds: &TypedIndexBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Vec<u32> {
+) -> Result<Vec<u32>, ExecutorError> {
+    // Pre-resolve every IndexKey in the bounds against the bound parameters
+    // up front (BRIEF-154 §B.3). `None` means at least one slot resolved to
+    // `IndexKeyOutcome::EmptyResult` — short-circuit the whole probe to an
+    // empty result without erroring.
+    let Some(resolved) = resolve_bounds(bounds, kind, ctx)? else {
+        return Ok(Vec::new());
+    };
     if scan.kind != ScanKind::Node {
-        return linear_rows_filtered_by_bounds(scan, property, bounds, ctx);
+        return Ok(linear_rows_filtered_by_resolved_bounds(
+            scan, property, &resolved, ctx,
+        ));
     }
     let Some(label) = single_label(&scan.label_predicate) else {
-        return linear_rows_filtered_by_bounds(scan, property, bounds, ctx);
+        return Ok(linear_rows_filtered_by_resolved_bounds(
+            scan, property, &resolved, ctx,
+        ));
     };
-    // Pre-Commit-4 bridge: optimizer rules never emit `IndexKey::Parameter`
-    // yet, so every key reaches this site as `Literal`. Commit 4 will replace
-    // these `literal_for_pre_param_path()` calls with `resolve_index_key`
-    // against `&EvalCtx` parameters.
-    let value = |key: &IndexKey| literal_value(key.literal_for_pre_param_path());
-    let indexed_rows = match bounds {
-        TypedIndexBounds::Equality(key) => ctx
+    let indexed_rows = match &resolved {
+        ResolvedBounds::Equality(value) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_eq(&label, &property, &value(key))
+            .nodes_with_property_eq(&label, &property, value)
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::GreaterThan(key) => ctx
+        ResolvedBounds::GreaterThan(value) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Excluded(value(key)), Unbounded))
+            .nodes_with_property_range(&label, &property, (Excluded(value.clone()), Unbounded))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::GreaterEqual(key) => ctx
+        ResolvedBounds::GreaterEqual(value) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Included(value(key)), Unbounded))
+            .nodes_with_property_range(&label, &property, (Included(value.clone()), Unbounded))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::LessThan(key) => ctx
+        ResolvedBounds::LessThan(value) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Unbounded, Excluded(value(key))))
+            .nodes_with_property_range(&label, &property, (Unbounded, Excluded(value.clone())))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::LessEqual(key) => ctx
+        ResolvedBounds::LessEqual(value) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Unbounded, Included(value(key))))
+            .nodes_with_property_range(&label, &property, (Unbounded, Included(value.clone())))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::Range {
+        ResolvedBounds::Range {
             lo,
             lo_inclusive,
             hi,
             hi_inclusive,
         } => {
-            let lo = if *lo_inclusive {
-                Included(value(lo))
+            let lo_bound = if *lo_inclusive {
+                Included(lo.clone())
             } else {
-                Excluded(value(lo))
+                Excluded(lo.clone())
             };
-            let hi = if *hi_inclusive {
-                Included(value(hi))
+            let hi_bound = if *hi_inclusive {
+                Included(hi.clone())
             } else {
-                Excluded(value(hi))
+                Excluded(hi.clone())
             };
             ctx.tx
                 .snapshot()
-                .nodes_with_property_range(&label, &property, (lo, hi))
+                .nodes_with_property_range(&label, &property, (lo_bound, hi_bound))
                 .map(|rows| rows.iter().collect::<Vec<_>>())
         }
     };
-    indexed_rows.unwrap_or_else(|| linear_rows_filtered_by_bounds(scan, property, bounds, ctx))
+    Ok(indexed_rows
+        .unwrap_or_else(|| linear_rows_filtered_by_resolved_bounds(scan, property, &resolved, ctx)))
 }
 
 fn bitmap_union_rows(
     scan: &NodeOrEdgeScan,
     property: IStr,
+    kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Vec<u32> {
-    union_property_eq(scan, property, keys, ctx)
+) -> Result<Vec<u32>, ExecutorError> {
+    Ok(union_property_eq(scan, property, kind, keys, ctx)?
         .into_iter()
-        .collect()
+        .collect())
 }
 
 fn union_property_eq(
     scan: &NodeOrEdgeScan,
     property: IStr,
+    kind: IndexKind,
     keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> BTreeSet<u32> {
+) -> Result<BTreeSet<u32>, ExecutorError> {
+    // Pre-resolve all keys once: parameter slots resolve to concrete Values,
+    // `IndexKeyOutcome::EmptyResult` slots (NULL binding or unpoolable
+    // ExternalString) drop out of the union per BRIEF-154 §B.3. A loud
+    // `InvalidParameterType` propagates immediately.
+    let mut resolved_keys: Vec<Value> = Vec::with_capacity(keys.len());
+    for key in keys {
+        match resolve_index_key(key, kind, ctx)? {
+            IndexKeyOutcome::Value(value) => resolved_keys.push(value),
+            IndexKeyOutcome::EmptyResult => {}
+        }
+    }
     if scan.kind != ScanKind::Node {
-        return linear_rows(scan.kind, ctx)
+        return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
-            .filter(|row| property_matches_any(scan.kind, *row, property, keys, ctx))
-            .collect();
+            .filter(|row| {
+                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+            })
+            .collect());
     }
     let Some(label) = single_label(&scan.label_predicate) else {
-        return linear_rows(scan.kind, ctx)
+        return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
-            .filter(|row| property_matches_any(scan.kind, *row, property, keys, ctx))
-            .collect();
+            .filter(|row| {
+                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+            })
+            .collect());
     };
     let mut rows = BTreeSet::new();
     let mut used_index = false;
-    for key in keys {
-        let literal = key.literal_for_pre_param_path();
-        if let Some(matches) =
-            ctx.tx
-                .snapshot()
-                .nodes_with_property_eq(&label, &property, &literal_value(literal))
+    for value in &resolved_keys {
+        if let Some(matches) = ctx
+            .tx
+            .snapshot()
+            .nodes_with_property_eq(&label, &property, value)
         {
             used_index = true;
             rows.extend(matches.iter());
         }
     }
     if used_index {
-        rows
+        Ok(rows)
     } else {
-        linear_rows(scan.kind, ctx)
+        Ok(linear_rows(scan.kind, ctx)
             .into_iter()
-            .filter(|row| property_matches_any(scan.kind, *row, property, keys, ctx))
-            .collect()
+            .filter(|row| {
+                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+            })
+            .collect())
     }
 }
 
 fn composite_lookup_rows(
     scan: &NodeOrEdgeScan,
-    properties: &[IStr],
+    properties: &[(IStr, IndexKind)],
     keys: &[(IStr, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Vec<u32> {
+) -> Result<Vec<u32>, ExecutorError> {
+    // Resolve once at scan-entry: every key is matched to its declared kind
+    // (per BRIEF-154 §B.2 F7/F17). Any EmptyResult short-circuits the whole
+    // probe to an empty result; errors propagate.
+    let Some(resolved_values) = resolve_composite_values(properties, keys, ctx)? else {
+        return Ok(Vec::new());
+    };
     if scan.kind != ScanKind::Node {
-        return linear_rows_filtered_by_composite(scan, keys, ctx);
+        return Ok(linear_rows_filtered_by_resolved_composite(
+            scan,
+            properties,
+            &resolved_values,
+            ctx,
+        ));
     }
     let Some(label) = single_label(&scan.label_predicate) else {
-        return linear_rows_filtered_by_composite(scan, keys, ctx);
+        return Ok(linear_rows_filtered_by_resolved_composite(
+            scan,
+            properties,
+            &resolved_values,
+            ctx,
+        ));
     };
-    let Some(values) = composite_lookup_values(properties, keys) else {
-        return linear_rows_filtered_by_composite(scan, keys, ctx);
-    };
+    let property_keys: Vec<IStr> = properties.iter().map(|(property, _)| *property).collect();
     if let Some(index) = ctx
         .tx
         .snapshot()
-        .composite_property_index_for(&label, properties)
+        .composite_property_index_for(&label, &property_keys)
     {
-        let refs = values.iter().collect::<Vec<_>>();
+        let refs = resolved_values.iter().collect::<Vec<_>>();
         // Read-path MUST NOT admit new strings into the IStr pool (BRIEF-153);
         // an unpoolable `Value::ExternalString` component proves no indexed
         // row could match, so render as empty without admission.
         match index.key_from_values_lookup(&refs) {
             Ok(Some(key)) => {
-                return index
+                return Ok(index
                     .lookup_key(&key)
                     .map(|bitmap| bitmap.iter().collect())
-                    .unwrap_or_default();
+                    .unwrap_or_default());
             }
-            Ok(None) => return Vec::new(),
+            Ok(None) => return Ok(Vec::new()),
             Err(_) => {}
         }
     }
-    linear_rows_filtered_by_composite(scan, keys, ctx)
+    Ok(linear_rows_filtered_by_resolved_composite(
+        scan,
+        properties,
+        &resolved_values,
+        ctx,
+    ))
 }
 
-fn composite_lookup_values(properties: &[IStr], keys: &[(IStr, IndexKey)]) -> Option<Vec<Value>> {
-    properties
-        .iter()
-        .map(|property| {
-            keys.iter()
-                .find(|(key, _)| key == property)
-                .map(|(_, key)| literal_value(key.literal_for_pre_param_path()))
-        })
-        .collect()
-}
-
-fn linear_rows_filtered_by_composite(
-    scan: &NodeOrEdgeScan,
+/// Resolve a composite probe's per-component keys against bound parameters.
+///
+/// Returns `Ok(None)` when any component resolved to `EmptyResult` (NULL
+/// parameter binding, unpoolable ExternalString against a STRING component).
+/// Returns `Ok(Some(values))` with `values` aligned to `properties` order.
+fn resolve_composite_values(
+    properties: &[(IStr, IndexKind)],
     keys: &[(IStr, IndexKey)],
+    ctx: &EvalCtx<'_, '_, '_, '_>,
+) -> Result<Option<Vec<Value>>, ExecutorError> {
+    let mut out = Vec::with_capacity(properties.len());
+    for (property, kind) in properties {
+        let Some((_, key)) = keys.iter().find(|(name, _)| name == property) else {
+            // Optimizer guarantees property/key alignment; if it diverges we
+            // can't probe the composite at all.
+            return Ok(None);
+        };
+        match resolve_index_key(key, *kind, ctx)? {
+            IndexKeyOutcome::Value(value) => out.push(value),
+            IndexKeyOutcome::EmptyResult => return Ok(None),
+        }
+    }
+    Ok(Some(out))
+}
+
+fn linear_rows_filtered_by_resolved_composite(
+    scan: &NodeOrEdgeScan,
+    properties: &[(IStr, IndexKind)],
+    values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
         .filter(|row| {
-            keys.iter().all(|(property, key)| {
-                let literal = key.literal_for_pre_param_path();
-                property_value(scan.kind, *row, *property, ctx)
-                    .is_some_and(|value| value_eq_non_null(value, &literal_value(literal)))
-            })
+            properties
+                .iter()
+                .zip(values.iter())
+                .all(|((property, _), expected)| {
+                    property_value(scan.kind, *row, *property, ctx)
+                        .is_some_and(|value| value_eq_non_null(value, expected))
+                })
         })
         .collect()
 }
 
-fn linear_rows_filtered_by_bounds(
+fn linear_rows_filtered_by_resolved_bounds(
     scan: &NodeOrEdgeScan,
     property: IStr,
-    bounds: &TypedIndexBounds,
+    resolved: &ResolvedBounds,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
         .filter(|row| {
             property_value(scan.kind, *row, property, ctx)
-                .is_some_and(|value| value_matches_bounds(value, bounds))
+                .is_some_and(|value| value_matches_resolved_bounds(value, resolved))
         })
         .collect()
 }
@@ -449,18 +521,17 @@ fn entity_value(kind: ScanKind, row: u32) -> Value {
     }
 }
 
-fn property_matches_any(
+fn property_matches_any_resolved(
     kind: ScanKind,
     row: u32,
     property: IStr,
-    keys: &[IndexKey],
+    values: &[Value],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> bool {
     property_value(kind, row, property, ctx).is_some_and(|value| {
-        keys.iter().any(|key| {
-            let literal = key.literal_for_pre_param_path();
-            value_eq_non_null(value, &literal_value(literal))
-        })
+        values
+            .iter()
+            .any(|expected| value_eq_non_null(value, expected))
     })
 }
 
@@ -484,38 +555,33 @@ fn property_value<'a>(
     }
 }
 
-fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
-    // Pre-Commit-4 bridge: optimizer rules emit only `IndexKey::Literal` for
-    // now. Commit 4 introduces Q12's scan-entry pre-resolution that hands this
-    // function a `&[Value]` aligned with bounds; today we destructure straight
-    // through `literal_for_pre_param_path()`.
-    let lit = |key: &IndexKey| literal_value(key.literal_for_pre_param_path());
-    match bounds {
-        TypedIndexBounds::Equality(key) => value_eq_non_null(value, &lit(key)),
-        TypedIndexBounds::GreaterThan(key) => {
-            value_compare::compare_non_null(value, &lit(key)) == Some(std::cmp::Ordering::Greater)
+fn value_matches_resolved_bounds(value: &Value, resolved: &ResolvedBounds) -> bool {
+    match resolved {
+        ResolvedBounds::Equality(expected) => value_eq_non_null(value, expected),
+        ResolvedBounds::GreaterThan(expected) => {
+            value_compare::compare_non_null(value, expected) == Some(std::cmp::Ordering::Greater)
         }
-        TypedIndexBounds::GreaterEqual(key) => matches!(
-            value_compare::compare_non_null(value, &lit(key)),
+        ResolvedBounds::GreaterEqual(expected) => matches!(
+            value_compare::compare_non_null(value, expected),
             Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
         ),
-        TypedIndexBounds::LessThan(key) => {
-            value_compare::compare_non_null(value, &lit(key)) == Some(std::cmp::Ordering::Less)
+        ResolvedBounds::LessThan(expected) => {
+            value_compare::compare_non_null(value, expected) == Some(std::cmp::Ordering::Less)
         }
-        TypedIndexBounds::LessEqual(key) => matches!(
-            value_compare::compare_non_null(value, &lit(key)),
+        ResolvedBounds::LessEqual(expected) => matches!(
+            value_compare::compare_non_null(value, expected),
             Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
         ),
-        TypedIndexBounds::Range {
+        ResolvedBounds::Range {
             lo,
             lo_inclusive,
             hi,
             hi_inclusive,
         } => {
-            let Some(lo_order) = value_compare::compare_non_null(value, &lit(lo)) else {
+            let Some(lo_order) = value_compare::compare_non_null(value, lo) else {
                 return false;
             };
-            let Some(hi_order) = value_compare::compare_non_null(value, &lit(hi)) else {
+            let Some(hi_order) = value_compare::compare_non_null(value, hi) else {
                 return false;
             };
             let lo_ok = if *lo_inclusive {
@@ -536,17 +602,6 @@ fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
             };
             lo_ok && hi_ok
         }
-    }
-}
-
-fn literal_value(literal: &Literal) -> Value {
-    match literal {
-        Literal::Bool(value, _) => Value::Bool(*value),
-        Literal::Integer(value, _) => Value::Int(*value),
-        Literal::Float(value, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(*value),
-        Literal::Uuid(value, _) => Value::Uuid(*value),
-        Literal::Null(_) => Value::Null,
     }
 }
 

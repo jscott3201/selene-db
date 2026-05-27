@@ -136,7 +136,13 @@ fn composite_lookup_uses_declaration_order() {
     else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![istr("tenant"), istr("kind")]);
+    assert_eq!(
+        properties,
+        &vec![
+            (istr("tenant"), selene_gql::IndexKind::String),
+            (istr("kind"), selene_gql::IndexKind::String),
+        ]
+    );
     assert_eq!(keys[0].0, istr("tenant"));
     assert_eq!(keys[1].0, istr("kind"));
     assert!(scan.property_predicates.is_empty());
@@ -165,7 +171,13 @@ fn composite_index_lookup_dedupes_duplicate_property_keys() {
     else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![istr("tenant"), istr("year")]);
+    assert_eq!(
+        properties,
+        &vec![
+            (istr("tenant"), selene_gql::IndexKind::Integer),
+            (istr("year"), selene_gql::IndexKind::Integer),
+        ]
+    );
     assert_eq!(composite_key_integer(keys, istr("tenant")), Some(1));
     assert_eq!(composite_key_integer(keys, istr("year")), Some(2024));
 
@@ -218,7 +230,13 @@ fn composite_index_lookup_keeps_conflicting_duplicates_in_residual() {
     else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![istr("tenant"), istr("year")]);
+    assert_eq!(
+        properties,
+        &vec![
+            (istr("tenant"), selene_gql::IndexKind::Integer),
+            (istr("year"), selene_gql::IndexKind::Integer),
+        ]
+    );
     assert_eq!(composite_key_integer(keys, istr("tenant")), Some(1));
     assert_eq!(composite_key_integer(keys, istr("year")), Some(2024));
     assert_eq!(residual_integers(scan, istr("tenant")), vec![2]);
@@ -366,7 +384,7 @@ fn sentinel_composite_index_snapshot() {
             "access=composite\nproperties={}\nkeys={}\nresidual_filters={}",
             properties
                 .iter()
-                .map(|property| property.as_str())
+                .map(|(property, _kind)| property.as_str())
                 .collect::<Vec<_>>()
                 .join(","),
             keys.len(),

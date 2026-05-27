@@ -39,6 +39,10 @@ pub enum ScanAccess {
         handle: IndexHandle,
         /// Indexed property key.
         property: IStr,
+        /// Typed-index value kind. Carried so runtime parameter resolution
+        /// can run the BRIEF-154 §B.3 F4 ExternalString carve-out and the
+        /// F12 IndexKind-mismatch loud error path against bound values.
+        kind: IndexKind,
         /// Lookup keys; each is either an inline literal or a parameter slot.
         keys: Vec<IndexKey>,
     },
@@ -46,8 +50,12 @@ pub enum ScanAccess {
     CompositeLookup {
         /// Opaque catalog handle for the selected composite index.
         handle: IndexHandle,
-        /// Indexed properties in declaration order.
-        properties: Vec<IStr>,
+        /// Indexed properties in declaration order paired with kinds. The
+        /// per-component IndexKind feeds runtime parameter resolution
+        /// (BRIEF-154 §B.3 + F17) — Commit 1 already widened
+        /// `CompositeIndexHandle.properties`, this carries the same shape
+        /// into the executable plan IR.
+        properties: Vec<(IStr, IndexKind)>,
         /// Lookup keys in declaration order; each is literal-or-parameter.
         keys: Vec<(IStr, IndexKey)>,
     },

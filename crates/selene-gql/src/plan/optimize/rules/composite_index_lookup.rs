@@ -115,7 +115,7 @@ fn rewrite_scan(
     remove_indices(&mut scan.property_predicates, &consumed_indices);
     scan.access = ScanAccess::CompositeLookup {
         handle: composite.handle,
-        properties: composite.property_keys(),
+        properties: composite.properties,
         keys,
     };
     true

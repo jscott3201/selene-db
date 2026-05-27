@@ -326,11 +326,12 @@ fn optimized_composite_lookup_executes_against_live_storage() {
     let ScanAccess::CompositeLookup { properties, .. } = &scan.access else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![istr("ts"), istr("location")]);
+    let property_keys: Vec<IStr> = properties.iter().map(|(property, _)| *property).collect();
+    assert_eq!(property_keys, vec![istr("ts"), istr("location")]);
     assert_eq!(
         graph
             .read()
-            .composite_property_index_for(&istr("Sensor"), properties)
+            .composite_property_index_for(&istr("Sensor"), &property_keys)
             .unwrap()
             .cardinality(),
         2

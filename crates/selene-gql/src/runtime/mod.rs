@@ -29,6 +29,7 @@ mod plan_runner;
 mod questioned;
 mod repeat;
 mod scan;
+mod scan_resolve;
 mod session;
 #[cfg(any(test, feature = "test-harness"))]
 mod snapshot_summary;
