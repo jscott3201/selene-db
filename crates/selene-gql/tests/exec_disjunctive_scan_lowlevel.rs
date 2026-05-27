@@ -72,7 +72,9 @@ fn execute_with_branches(
 fn disjunctive_scan_executor_concatenates_branches() {
     // The ExecFixture has 3 Persons (Alice, Bob, Cara), 1 Sensor, and 2
     // Counters. A `(n:Person)|(n:Sensor)` expansion should return
-    // 3 + 1 = 4 candidate rows (UNION ALL, no dedup).
+    // 3 + 1 = 4 candidate rows. The JoinTree-level NodeId dedup (PR #177
+    // C1) is a no-op here because no fixture node carries BOTH Person and
+    // Sensor labels — branches yield disjoint NodeId sets.
     let fixture = ExecFixture::build();
     let person = fixture.person;
     let sensor = fixture.sensor;
@@ -124,10 +126,15 @@ fn disjunctive_scan_executor_per_branch_label_filter() {
 }
 
 #[test]
-fn disjunctive_scan_executor_multi_label_node_double_counts() {
+fn disjunctive_scan_executor_dedups_multi_label_node() {
     // Build a tiny fresh graph with a single node carrying labels A AND B,
-    // then run a `(n:A)|(n:B)` disjunction and confirm Q11 / `[[feedback_
-    // wave3_quality_bar]]` no-dedup semantics: the node appears twice.
+    // then run a `(n:A)|(n:B)` disjunction. PR #177 Codex C1: the
+    // `JoinTree::DisjunctiveScan` executor arm dedups branch outputs by
+    // `NodeId`, so a node carrying labels A AND B appears EXACTLY ONCE
+    // in the unioned binding table — matching the unexpanded
+    // `LabelExpr::Disjunction(any(...))` semantics, preserving the
+    // catalog-present vs catalog-absent invariant for COUNT / LIMIT /
+    // aggregates.
     let label_a = istr_local("Alpha");
     let label_b = istr_local("Beta");
     let label_c = istr_local("Gamma");
@@ -168,14 +175,34 @@ fn disjunctive_scan_executor_multi_label_node_double_counts() {
     let table = execute_pattern_plan(plan.pattern_plan.as_ref().unwrap(), &ctx)
         .expect("disjunctive pattern executes");
 
-    // 3 nodes total: AB, A-only, B-only.
+    // 3 nodes total: AB (multi-label), A-only, B-only.
     // Alpha branch matches AB + A-only = 2 rows.
     // Beta branch matches AB + B-only = 2 rows.
-    // UNION ALL with no dedup → 4 rows; AB appears twice.
-    assert_eq!(table.rows().len(), 4, "expected AB-twice + A + B = 4 rows");
+    // After NodeId dedup at JoinTree::DisjunctiveScan → 3 rows; AB
+    // appears exactly once (matching the unexpanded baseline).
+    assert_eq!(
+        table.rows().len(),
+        3,
+        "expected AB + A + B = 3 deduped rows; got {}",
+        table.rows().len()
+    );
+
+    // Every NodeId must appear at most once after dedup.
+    let mut seen = std::collections::BTreeSet::new();
+    for row in table.rows() {
+        if let Some(Value::NodeRef(id)) = row.values().first() {
+            assert!(
+                seen.insert(id.get()),
+                "NodeId {} appeared more than once; dedup at \
+                 JoinTree::DisjunctiveScan must collapse multi-label rows",
+                id.get()
+            );
+        }
+    }
+    assert_eq!(seen.len(), 3, "exactly 3 distinct NodeIds in the deduped row set");
 
     // Sanity: the Gamma label does NOT appear; this only matters if the rule
-    // accidentally added a third branch. `count_rows == 4` already pins this,
+    // accidentally added a third branch. `count_rows == 3` already pins this,
     // but assert label_c stays unused.
     let _ = label_c;
 }

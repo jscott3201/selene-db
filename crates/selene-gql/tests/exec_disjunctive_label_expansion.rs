@@ -3,14 +3,20 @@
 //!
 //! Validates:
 //! - Row-set equivalence with the manual `UNION ALL` rewrite (the ariadne
-//!   workaround) — acceptance bar #6.
+//!   workaround) on a single-label fixture — acceptance bar #6. Multi-label
+//!   nodes diverge from manual UNION ALL by design (see PR #177 C1 below);
+//!   this test exercises the no-multi-label case where the two forms agree.
 //! - Composition with BRIEF-154 parameterized index selection (acceptance
 //!   bar #7).
 //! - Composition with BRIEF-153 STRING-index ExternalString carve-out.
 //! - Downstream LIMIT / ORDER BY / GROUP BY — the union happens at
 //!   JoinTree level, so the pipeline operates on the unioned binding
 //!   table, not per branch.
-//! - Q11 multi-label-node-double-counts via the rule-emitted plan path.
+//! - Q11 / PR #177 C1: multi-label nodes dedup at the
+//!   `JoinTree::DisjunctiveScan` executor arm so the rule-firing path
+//!   matches the unexpanded `LabelExpr::Disjunction(any(...))` semantics
+//!   (one row per node), preserving the catalog-present vs catalog-absent
+//!   invariant for COUNT / LIMIT / aggregates.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -339,13 +345,24 @@ fn composition_with_downstream_group_by() {
 }
 
 // ---------------------------------------------------------------------------
-// Q11 — multi-label node appears in multiple branches via rule path
+// Q11 / PR #177 C1 — multi-label nodes dedup at the JoinTree level so the
+// rule-firing path matches the unexpanded `LabelExpr::Disjunction(any)`
+// semantics — same query + same data => same rows out, regardless of
+// whether the optimizer rule fired.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn multi_label_node_appears_in_multiple_branches() {
-    // Sanity check Q11 again via the rule-emitted plan path (not the
-    // hand-built DisjunctiveScan from Commit 2's low-level test).
+fn multi_label_node_dedups_at_disjunctive_scan_join_tree_level() {
+    // A node carrying labels A AND B would otherwise appear once per
+    // branch (the unfixed BRIEF-155 shipped that as Q11 "UNION ALL"
+    // semantics). PR #177 Codex C1 caught that this changes COUNT /
+    // LIMIT / aggregates observably based on whether the
+    // disjunctive-label-expansion rule fired (catalog-present) vs the
+    // unexpanded baseline (catalog-absent). The fix dedups at the
+    // `JoinTree::DisjunctiveScan` executor arm so the union-then-dedup'd
+    // binding table matches the unexpanded
+    // `LabelExpr::Disjunction(any(...))` semantics, which visit each node
+    // once.
     let person = istr("Multi1Person");
     let robot = istr("Multi1Robot");
     let email = istr("email");
@@ -385,8 +402,10 @@ fn multi_label_node_appears_in_multiple_branches() {
     let mut session = Session::new(&graph);
     let table = rows(execute_optimized(&mut session, &plan).expect("multi-label executes"));
 
-    // 3 rows: hybrid via Person branch, hybrid via Robot branch, Person-only.
-    assert_eq!(table.rows().len(), 3);
+    // 2 rows post-dedup: the multi-label `hybrid` node appears ONCE
+    // (deduped across the Person and Robot branches), plus the
+    // Person-only `hybrid` node.
+    assert_eq!(table.rows().len(), 2);
 
     let ids = node_ref_ids(&table);
     let mut counts: BTreeMap<u64, usize> = BTreeMap::new();
@@ -394,7 +413,112 @@ fn multi_label_node_appears_in_multiple_branches() {
         *counts.entry(id).or_default() += 1;
     }
     assert!(
-        counts.values().any(|count| *count == 2),
-        "hybrid (Person+Robot) node must appear twice across disjunction branches"
+        counts.values().all(|count| *count == 1),
+        "every node id must appear exactly once after JoinTree-level dedup; got counts {counts:?}"
+    );
+    assert_eq!(
+        counts.len(),
+        2,
+        "two distinct nodes match (multi-label hybrid + Person-only hybrid)"
+    );
+}
+
+#[test]
+fn catalog_present_vs_absent_produces_identical_row_set() {
+    // PR #177 Codex C1 invariant: same query + same data over two
+    // catalogs (one whose per-label typed indexes make the
+    // disjunctive-label-expansion rule fire, one without any indexes
+    // that leaves the scan as the unexpanded
+    // `LabelExpr::Disjunction(any)` baseline) MUST yield identical row
+    // sets. Without the JoinTree-level dedup at
+    // `JoinTree::DisjunctiveScan`, a multi-label node appears once per
+    // matching branch in the expanded plan and exactly once in the
+    // unexpanded baseline — directly observable via COUNT / LIMIT /
+    // aggregates.
+    let person = istr("InvPerson");
+    let robot = istr("InvRobot");
+    let email = istr("email");
+
+    let graph = SharedGraph::new(GraphId::new(1552));
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        // Two multi-label nodes (both Person+Robot) + one Person-only +
+        // one Robot-only. Multi-label nodes are the dedup-sensitive
+        // case — without dedup the expanded plan double-counts them.
+        for tag in ["alpha", "beta"] {
+            mutator
+                .create_node(
+                    LabelSet::from_iter([person, robot]),
+                    props([(email, Value::String(istr(tag)))]),
+                )
+                .expect("multi-label node inserts");
+        }
+        mutator
+            .create_node(
+                LabelSet::single(person),
+                props([(email, Value::String(istr("gamma")))]),
+            )
+            .expect("Person-only node inserts");
+        mutator
+            .create_node(
+                LabelSet::single(robot),
+                props([(email, Value::String(istr("delta")))]),
+            )
+            .expect("Robot-only node inserts");
+        txn.commit().expect("fixture commits");
+    }
+    // Storage indexes are needed for the rule's downstream
+    // `composite_index_lookup` / `range_index_scan` / `in_list_optimization`
+    // passes (slots 6/7/8) to materialize the index access at runtime.
+    // They live on the graph regardless of which catalog the optimizer
+    // sees, so they are not load-bearing for the catalog-present vs
+    // catalog-absent comparison — the comparison is driven by the
+    // optimizer-time `MockIndexCatalog`.
+    graph
+        .create_property_index(person, email, TypedIndexKind::String)
+        .expect("Person.email index builds");
+    graph
+        .create_property_index(robot, email, TypedIndexKind::String)
+        .expect("Robot.email index builds");
+
+    // Catalog WITH per-label indexes — rule fires, plan becomes
+    // `JoinTree::DisjunctiveScan { branches: [Person, Robot] }`.
+    let catalog_with_indexes = MockIndexCatalog::new()
+        .with_node_typed_index(person, email, selene_gql::IndexKind::String)
+        .with_node_typed_index(robot, email, selene_gql::IndexKind::String);
+    // Catalog WITHOUT — rule's `any_branch_has_applicable_index` gate
+    // returns false, plan stays as the unexpanded `JoinTree::Scan` with
+    // `LabelExpr::Disjunction([Person, Robot])`.
+    let catalog_without_indexes = MockIndexCatalog::new();
+
+    let query = "MATCH (n:InvPerson|InvRobot) RETURN n";
+    let plan_with = optimized(query, &catalog_with_indexes);
+    let plan_without = optimized(query, &catalog_without_indexes);
+
+    let mut session = Session::new(&graph);
+    let with_rows =
+        rows(execute_optimized(&mut session, &plan_with).expect("with-catalog executes"));
+    let without_rows =
+        rows(execute_optimized(&mut session, &plan_without).expect("without-catalog executes"));
+
+    let mut with_ids = node_ref_ids(&with_rows);
+    let mut without_ids = node_ref_ids(&without_rows);
+    with_ids.sort_unstable();
+    without_ids.sort_unstable();
+    assert_eq!(
+        with_ids, without_ids,
+        "catalog-present vs catalog-absent plans must yield identical row sets — \
+         the JoinTree-level dedup at DisjunctiveScan preserves query semantics across \
+         optimizer rule firing"
+    );
+    // Sanity: 4 distinct nodes total (alpha + beta multi-label, gamma
+    // Person-only, delta Robot-only). Without the dedup fix, the
+    // catalog-present plan would emit 6 rows (alpha+beta counted twice
+    // each via Person and Robot branches).
+    assert_eq!(
+        with_ids.len(),
+        4,
+        "exactly 4 distinct nodes match `(n:InvPerson|InvRobot)`"
     );
 }
