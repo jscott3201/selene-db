@@ -252,7 +252,11 @@ fn planner_routes_uuid_literal_equality_to_uuid_typed_index() {
     };
     assert_eq!(*kind, IndexKind::Uuid);
     assert!(
-        matches!(bounds, TypedIndexBounds::Equality(Literal::Uuid(value, _)) if *value == expected),
+        matches!(
+            bounds,
+            TypedIndexBounds::Equality(selene_gql::IndexKey::Literal(Literal::Uuid(value, _)))
+                if *value == expected
+        ),
         "expected UUID equality bounds, got {bounds:?}"
     );
 }

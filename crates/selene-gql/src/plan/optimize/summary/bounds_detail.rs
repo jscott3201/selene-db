@@ -1,0 +1,90 @@
+//! `bounds=…` rendering for indexed-scan access summaries.
+//!
+//! Produces the new EXPLAIN detail surface introduced by BRIEF-154 §C.1 #7:
+//! literals render with their kind tag (`STRING 'foo'`), parameter slots
+//! render as `$name` (matches the GQL source form). Lives in a sibling
+//! module so `plan/optimize/summary.rs` stays under the 700 LOC file cap.
+//!
+//! Output is intended for human EXPLAIN consumption and the snapshot-harness
+//! goldens; it is NOT a stable wire format.
+//!
+//! Examples:
+//! - `TypedIndexRange[bounds=Equality(STRING 'foo')]`
+//! - `TypedIndexRange[bounds=Range([INTEGER 10 .. $upper))]`
+//! - `BitmapUnion[bounds=Keys [STRING 'alice', $b]]`
+//! - `CompositeLookup[bounds=Composite [tenant=STRING 't1', kind=$k]]`
+
+use selene_core::IStr;
+
+use crate::{IndexKey, Literal, ScanAccess, TypedIndexBounds};
+
+/// Render the bounds-detail string for a [`ScanAccess`], or `None` for access
+/// variants that do not carry parameter-shaped probe keys (Linear / LabelIndex).
+pub(super) fn bounds_detail_for_access(access: &ScanAccess) -> Option<String> {
+    match access {
+        ScanAccess::TypedIndexRange { bounds, .. } => Some(render_bounds(bounds)),
+        ScanAccess::BitmapUnion { keys, .. } => Some(render_bitmap_union_keys(keys)),
+        ScanAccess::CompositeLookup { keys, .. } => Some(render_composite_keys(keys)),
+        ScanAccess::Linear | ScanAccess::LabelIndex { .. } => None,
+    }
+}
+
+fn render_bounds(bounds: &TypedIndexBounds) -> String {
+    match bounds {
+        TypedIndexBounds::Equality(key) => format!("Equality({})", render_index_key(key)),
+        TypedIndexBounds::GreaterThan(key) => format!("GreaterThan({})", render_index_key(key)),
+        TypedIndexBounds::GreaterEqual(key) => format!("GreaterEqual({})", render_index_key(key)),
+        TypedIndexBounds::LessThan(key) => format!("LessThan({})", render_index_key(key)),
+        TypedIndexBounds::LessEqual(key) => format!("LessEqual({})", render_index_key(key)),
+        TypedIndexBounds::Range {
+            lo,
+            lo_inclusive,
+            hi,
+            hi_inclusive,
+        } => format!(
+            "Range({}{} .. {}{})",
+            if *lo_inclusive { "[" } else { "(" },
+            render_index_key(lo),
+            render_index_key(hi),
+            if *hi_inclusive { "]" } else { ")" },
+        ),
+    }
+}
+
+fn render_bitmap_union_keys(keys: &[IndexKey]) -> String {
+    format!(
+        "Keys [{}]",
+        keys.iter()
+            .map(render_index_key)
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+fn render_composite_keys(keys: &[(IStr, IndexKey)]) -> String {
+    format!(
+        "Composite [{}]",
+        keys.iter()
+            .map(|(property, key)| format!("{}={}", property.as_str(), render_index_key(key)))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+}
+
+fn render_index_key(key: &IndexKey) -> String {
+    match key {
+        IndexKey::Literal(literal) => render_literal(literal),
+        IndexKey::Parameter { name, .. } => format!("${}", name.as_str()),
+    }
+}
+
+fn render_literal(literal: &Literal) -> String {
+    match literal {
+        Literal::Bool(value, _) => format!("BOOLEAN {value}"),
+        Literal::Integer(value, _) => format!("INTEGER {value}"),
+        Literal::Float(value, _) => format!("FLOAT {value}"),
+        Literal::String(value, _) => format!("STRING '{}'", value.as_str()),
+        Literal::Uuid(value, _) => format!("UUID '{value}'"),
+        Literal::Null(_) => "NULL".to_owned(),
+    }
+}

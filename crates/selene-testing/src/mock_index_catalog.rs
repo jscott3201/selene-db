@@ -38,8 +38,16 @@ impl MockIndexCatalog {
     }
 
     /// Register a node composite-property index.
+    ///
+    /// Each `(property, kind)` pair pins the typed-index kind reported through
+    /// the catalog so parameter-aware composite probes (BRIEF-154) can perform
+    /// per-component plan-time compatibility checks.
     #[must_use]
-    pub fn with_node_composite_index(mut self, label: IStr, properties: Vec<IStr>) -> Self {
+    pub fn with_node_composite_index(
+        mut self,
+        label: IStr,
+        properties: Vec<(IStr, IndexKind)>,
+    ) -> Self {
         self.insert_composite_index(IndexTarget::Node, label, properties);
         self
     }
@@ -63,9 +71,15 @@ impl MockIndexCatalog {
         self.labels.insert((target, label), handle);
     }
 
-    fn insert_composite_index(&mut self, target: IndexTarget, label: IStr, properties: Vec<IStr>) {
+    fn insert_composite_index(
+        &mut self,
+        target: IndexTarget,
+        label: IStr,
+        properties: Vec<(IStr, IndexKind)>,
+    ) {
         let handle = self.next_handle();
-        let mut key_properties = properties.clone();
+        let mut key_properties: Vec<IStr> =
+            properties.iter().map(|(property, _)| *property).collect();
         key_properties.sort();
         self.composites.insert(
             (target, label, key_properties),

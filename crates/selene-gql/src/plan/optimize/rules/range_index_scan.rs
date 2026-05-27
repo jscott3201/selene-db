@@ -3,13 +3,13 @@
 use crate::{
     BinaryOp, Literal,
     plan::{
-        BindingDef, ExecutionPlan, FilterPredicate, JoinTree, ScanAccess, ScanKind,
+        BindingDef, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess, ScanKind,
         TypedIndexBounds,
         optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
     },
 };
 
-use super::index_helpers::{literal_matches_kind, single_label};
+use super::index_helpers::{compatible_value, single_label};
 
 /// Rewrite property equality/range predicates to typed index access.
 pub struct RangeIndexScan;
@@ -134,9 +134,9 @@ fn bounds_for_property(
     first_index: usize,
     kind: crate::IndexKind,
 ) -> Option<(TypedIndexBounds, Vec<usize>)> {
-    let mut equality = None;
-    let mut lower: Option<(Literal, bool)> = None;
-    let mut upper: Option<(Literal, bool)> = None;
+    let mut equality: Option<IndexKey> = None;
+    let mut lower: Option<(IndexKey, bool)> = None;
+    let mut upper: Option<(IndexKey, bool)> = None;
     let mut consumed = Vec::new();
 
     for (index, pred) in predicates.iter().enumerate().skip(first_index) {
@@ -148,29 +148,54 @@ fn bounds_for_property(
         }
         match matched.shape {
             binding_refs::PropertyPredicateShape::Equality(value) => {
-                let literal = compatible_literal(value, kind)?;
-                equality = Some(literal.clone());
-                consumed.push(index);
+                let key = compatible_value(value, kind)?;
+                equality = Some(key);
+                // Equality is the tighter probe — promote it to the index
+                // bound, but leave any previously-accumulated range bounds
+                // (`> 10` etc.) as residual predicates the executor still
+                // enforces. Pre-PR-#175 this `consumed` carried the prior
+                // range-bound indices alongside the equality, silently
+                // dropping the range filter when the equality fired second
+                // (Codex PR #175 F3). The bug pre-existed for literal
+                // equality too; parameter equality made it observable.
+                consumed = vec![index];
+                lower = None;
+                upper = None;
                 break;
             }
             binding_refs::PropertyPredicateShape::Comparison { op, value } => {
-                let literal = compatible_literal(value, kind)?;
-                let candidate = (literal.clone(), matches!(op, BinaryOp::Ge | BinaryOp::Le));
-                let tightened = match op {
+                let key = compatible_value(value, kind)?;
+                let candidate = (key, matches!(op, BinaryOp::Ge | BinaryOp::Le));
+                let outcome = match op {
                     BinaryOp::Gt | BinaryOp::Ge => tighten_lower(lower.take(), candidate),
                     BinaryOp::Lt | BinaryOp::Le => tighten_upper(upper.take(), candidate),
                     _ => continue,
-                }?;
-                match op {
-                    BinaryOp::Gt | BinaryOp::Ge => lower = Some(tightened),
-                    BinaryOp::Lt | BinaryOp::Le => upper = Some(tightened),
-                    _ => unreachable!("guarded above"),
+                };
+                match outcome {
+                    TightenOutcome::Bound(bound) => {
+                        match op {
+                            BinaryOp::Gt | BinaryOp::Ge => lower = Some(bound),
+                            BinaryOp::Lt | BinaryOp::Le => upper = Some(bound),
+                            _ => unreachable!("guarded above"),
+                        }
+                        consumed.push(index);
+                    }
+                    TightenOutcome::KeepExisting(existing) => {
+                        match op {
+                            BinaryOp::Gt | BinaryOp::Ge => lower = Some(existing),
+                            BinaryOp::Lt | BinaryOp::Le => upper = Some(existing),
+                            _ => unreachable!("guarded above"),
+                        }
+                        // Don't consume the candidate predicate; leave it as
+                        // residual so the executor still enforces it. The
+                        // index probe uses the existing bound.
+                    }
+                    TightenOutcome::Reject => return None,
                 }
-                consumed.push(index);
             }
             binding_refs::PropertyPredicateShape::Between { low, high } => {
-                let low = compatible_literal(low, kind)?.clone();
-                let high = compatible_literal(high, kind)?.clone();
+                let low = compatible_value(low, kind)?;
+                let high = compatible_value(high, kind)?;
                 return Some((
                     TypedIndexBounds::Range {
                         lo: low,
@@ -185,15 +210,19 @@ fn bounds_for_property(
         }
     }
 
-    if let Some(literal) = equality {
-        return Some((TypedIndexBounds::Equality(literal), consumed));
+    if let Some(key) = equality {
+        return Some((TypedIndexBounds::Equality(key), consumed));
     }
     match (lower, upper) {
         (Some((lo, lo_inclusive)), Some((hi, hi_inclusive))) => {
             // Contradictory bounds (lo > hi, or lo == hi with both exclusive) make the
-            // range empty; refuse the rewrite so the executor evaluates the predicates
-            // linearly and we don't paper over a possibly-buggy executor range path.
-            if !range_satisfiable(&lo, lo_inclusive, &hi, hi_inclusive) {
+            // range empty; refuse the rewrite when both sides are concrete literals so
+            // the executor evaluates the predicates linearly and we don't paper over a
+            // possibly-buggy executor range path. Parameter-bearing ranges defer the
+            // satisfiability check to runtime.
+            if let (IndexKey::Literal(lo_lit), IndexKey::Literal(hi_lit)) = (&lo, &hi)
+                && !range_satisfiable(lo_lit, lo_inclusive, hi_lit, hi_inclusive)
+            {
                 return None;
             }
             Some((
@@ -206,49 +235,82 @@ fn bounds_for_property(
                 consumed,
             ))
         }
-        (Some((literal, false)), None) => Some((TypedIndexBounds::GreaterThan(literal), consumed)),
-        (Some((literal, true)), None) => Some((TypedIndexBounds::GreaterEqual(literal), consumed)),
-        (None, Some((literal, false))) => Some((TypedIndexBounds::LessThan(literal), consumed)),
-        (None, Some((literal, true))) => Some((TypedIndexBounds::LessEqual(literal), consumed)),
+        (Some((key, false)), None) => Some((TypedIndexBounds::GreaterThan(key), consumed)),
+        (Some((key, true)), None) => Some((TypedIndexBounds::GreaterEqual(key), consumed)),
+        (None, Some((key, false))) => Some((TypedIndexBounds::LessThan(key), consumed)),
+        (None, Some((key, true))) => Some((TypedIndexBounds::LessEqual(key), consumed)),
         (None, None) => None,
     }
 }
 
-/// Combine two lower bounds, returning the tighter (higher) one, or `None`
-/// if the literals can't be ordered (e.g., NaN). Inclusive/exclusive ties go
-/// to the exclusive bound (it strictly excludes more rows).
-fn tighten_lower(
-    existing: Option<(Literal, bool)>,
-    candidate: (Literal, bool),
-) -> Option<(Literal, bool)> {
-    let Some(existing) = existing else {
-        return Some(candidate);
-    };
-    let ordering = compare_literals(&existing.0, &candidate.0)?;
-    Some(match ordering {
-        std::cmp::Ordering::Less => candidate,
-        std::cmp::Ordering::Greater => existing,
-        std::cmp::Ordering::Equal => {
-            // Same literal; exclusive (false) wins because it filters one more value.
-            (existing.0, existing.1 && candidate.1)
-        }
-    })
+/// Outcome of folding a new range bound against an existing one.
+enum TightenOutcome {
+    /// Use this bound as the new lower/upper and consume the candidate
+    /// predicate.
+    Bound((IndexKey, bool)),
+    /// Keep the existing bound; do NOT consume the candidate predicate. This
+    /// arises when the candidate is a parameter slot and the existing bound is
+    /// a literal (or vice versa) — plan-time tightening is impossible across
+    /// the literal/parameter boundary, so the index probe uses the existing
+    /// bound and the candidate stays as a residual filter.
+    KeepExisting((IndexKey, bool)),
+    /// Refuse the rewrite entirely; only fires for un-orderable literal pairs
+    /// (e.g. NaN floats).
+    Reject,
 }
 
-/// Combine two upper bounds, returning the tighter (lower) one.
-fn tighten_upper(
-    existing: Option<(Literal, bool)>,
-    candidate: (Literal, bool),
-) -> Option<(Literal, bool)> {
+/// Combine two lower bounds. Literal-literal pairs apply the existing
+/// tightening rule (higher bound wins; exclusive wins on ties). Any pair
+/// involving a parameter slot keeps the existing bound — the candidate stays
+/// in the residual filter because runtime can't compare across the
+/// literal/parameter boundary.
+fn tighten_lower(
+    existing: Option<(IndexKey, bool)>,
+    candidate: (IndexKey, bool),
+) -> TightenOutcome {
     let Some(existing) = existing else {
-        return Some(candidate);
+        return TightenOutcome::Bound(candidate);
     };
-    let ordering = compare_literals(&existing.0, &candidate.0)?;
-    Some(match ordering {
-        std::cmp::Ordering::Less => existing,
-        std::cmp::Ordering::Greater => candidate,
-        std::cmp::Ordering::Equal => (existing.0, existing.1 && candidate.1),
-    })
+    match (&existing.0, &candidate.0) {
+        (IndexKey::Literal(existing_lit), IndexKey::Literal(candidate_lit)) => {
+            let Some(ordering) = compare_literals(existing_lit, candidate_lit) else {
+                return TightenOutcome::Reject;
+            };
+            TightenOutcome::Bound(match ordering {
+                std::cmp::Ordering::Less => candidate,
+                std::cmp::Ordering::Greater => existing,
+                std::cmp::Ordering::Equal => {
+                    // Same literal; exclusive (false) wins because it filters
+                    // one more value.
+                    (existing.0, existing.1 && candidate.1)
+                }
+            })
+        }
+        _ => TightenOutcome::KeepExisting(existing),
+    }
+}
+
+/// Combine two upper bounds (symmetric counterpart of [`tighten_lower`]).
+fn tighten_upper(
+    existing: Option<(IndexKey, bool)>,
+    candidate: (IndexKey, bool),
+) -> TightenOutcome {
+    let Some(existing) = existing else {
+        return TightenOutcome::Bound(candidate);
+    };
+    match (&existing.0, &candidate.0) {
+        (IndexKey::Literal(existing_lit), IndexKey::Literal(candidate_lit)) => {
+            let Some(ordering) = compare_literals(existing_lit, candidate_lit) else {
+                return TightenOutcome::Reject;
+            };
+            TightenOutcome::Bound(match ordering {
+                std::cmp::Ordering::Less => existing,
+                std::cmp::Ordering::Greater => candidate,
+                std::cmp::Ordering::Equal => (existing.0, existing.1 && candidate.1),
+            })
+        }
+        _ => TightenOutcome::KeepExisting(existing),
+    }
 }
 
 /// Compare two literals of the same kind. Returns `None` when the literals
@@ -276,11 +338,6 @@ fn range_satisfiable(lo: &Literal, lo_inclusive: bool, hi: &Literal, hi_inclusiv
         std::cmp::Ordering::Greater => false,
         std::cmp::Ordering::Equal => lo_inclusive && hi_inclusive,
     }
-}
-
-fn compatible_literal(value: &crate::ValueExpr, kind: crate::IndexKind) -> Option<&Literal> {
-    let literal = binding_refs::literal(value)?;
-    literal_matches_kind(literal, kind).then_some(literal)
 }
 
 fn binding_is_node(bindings: &[BindingDef], binding_id: crate::BindingId) -> bool {

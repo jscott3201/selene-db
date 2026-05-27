@@ -311,8 +311,13 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
 #[test]
 fn optimized_composite_lookup_executes_against_live_storage() {
     let graph = seeded_sensor_graph(14_105, true);
-    let catalog = MockIndexCatalog::new()
-        .with_node_composite_index(istr("Sensor"), vec![istr("ts"), istr("location")]);
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Sensor"),
+        vec![
+            (istr("ts"), selene_gql::IndexKind::Integer),
+            (istr("location"), selene_gql::IndexKind::String),
+        ],
+    );
     let plan = optimized(
         "MATCH (s:Sensor) WHERE s.location = 'north' AND s.ts = 1 RETURN s.value AS value",
         &catalog,
@@ -321,11 +326,12 @@ fn optimized_composite_lookup_executes_against_live_storage() {
     let ScanAccess::CompositeLookup { properties, .. } = &scan.access else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![istr("ts"), istr("location")]);
+    let property_keys: Vec<IStr> = properties.iter().map(|(property, _)| *property).collect();
+    assert_eq!(property_keys, vec![istr("ts"), istr("location")]);
     assert_eq!(
         graph
             .read()
-            .composite_property_index_for(&istr("Sensor"), properties)
+            .composite_property_index_for(&istr("Sensor"), &property_keys)
             .unwrap()
             .cardinality(),
         2
@@ -339,8 +345,13 @@ fn optimized_composite_lookup_executes_against_live_storage() {
 #[test]
 fn optimized_composite_lookup_falls_back_when_storage_is_absent() {
     let graph = seeded_sensor_graph(14_106, false);
-    let catalog = MockIndexCatalog::new()
-        .with_node_composite_index(istr("Sensor"), vec![istr("ts"), istr("location")]);
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Sensor"),
+        vec![
+            (istr("ts"), selene_gql::IndexKind::Integer),
+            (istr("location"), selene_gql::IndexKind::String),
+        ],
+    );
     let plan = optimized(
         "MATCH (s:Sensor) WHERE s.location = 'north' AND s.ts = 1 RETURN s.value AS value",
         &catalog,

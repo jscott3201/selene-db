@@ -9,7 +9,7 @@ pattern:
   join_tree: Scan(p)
   pattern_filters: 0
   scans:
-    - p (Node): BitmapUnion residual=0 consumed=0
+    - p (Node): BitmapUnion [bounds=Keys [STRING 'alice@example.com', STRING 'bob@example.com']] residual=0 consumed=0
   order_access: []
 pipeline:
   - Project(columns=[p])

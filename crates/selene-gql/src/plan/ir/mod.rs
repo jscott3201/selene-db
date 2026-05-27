@@ -15,7 +15,7 @@ use crate::{
     analyze::{AnalyzedType, BindingId, ExprId, ExprIdLookup, StatementCategory},
 };
 
-pub use access::{NodeIdOrdering, OrderAccess, ScanAccess, TypedIndexBounds};
+pub use access::{IndexKey, NodeIdOrdering, OrderAccess, ScanAccess, TypedIndexBounds};
 pub use call::{PlannedCall, PlannedYieldItem, YieldKind};
 pub use catalog::{CatalogOp, PlannedTypePropertyConstraint, PlannedTypePropertyDef};
 pub use filter::{

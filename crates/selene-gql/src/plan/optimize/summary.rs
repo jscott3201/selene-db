@@ -1,5 +1,6 @@
 //! Test-harness plan snapshot summaries.
 
+mod bounds_detail;
 mod catalog_summary;
 
 use std::{
@@ -18,6 +19,7 @@ use crate::{
 };
 
 use super::{DEFAULT_RULES, OptimizeContext, RULE_NAMES, Rule};
+use bounds_detail::bounds_detail_for_access;
 use catalog_summary::catalog_summary;
 
 /// Optimize a plan and return a deterministic summary for snapshot tests.
@@ -83,6 +85,13 @@ pub struct ScanSnapshot {
     pub residual_predicates: usize,
     /// Predicates marked as consumed by an index-aware rule.
     pub consumed_predicates: usize,
+    /// Bounds-detail string for the three indexed-scan access paths
+    /// (`TypedIndexRange` / `BitmapUnion` / `CompositeLookup`), or `None` for
+    /// access variants that do not carry probe keys (`Linear`, `LabelIndex`).
+    /// Renders literals as `KIND value` and parameter slots as `$name`; see
+    /// [`bounds_detail`] for the canonical format. Additive field — existing
+    /// `#[non_exhaustive]` callers continue to compile by ignoring it.
+    pub bounds_detail: Option<String>,
 }
 
 impl PlanSnapshot {
@@ -147,12 +156,18 @@ impl fmt::Display for PlanSnapshot {
                 writeln!(f, "    - none")?;
             } else {
                 for scan in &pattern.scans {
+                    let bounds_suffix = scan
+                        .bounds_detail
+                        .as_deref()
+                        .map(|detail| format!(" [bounds={detail}]"))
+                        .unwrap_or_default();
                     writeln!(
                         f,
-                        "    - {} ({}): {} residual={} consumed={}",
+                        "    - {} ({}): {}{} residual={} consumed={}",
                         scan.binding,
                         scan.kind,
                         scan.access,
+                        bounds_suffix,
                         scan.residual_predicates,
                         scan.consumed_predicates
                     )?;
@@ -442,6 +457,7 @@ fn collect_scans(
                     access: "Linear",
                     residual_predicates: edge.right_property_predicates.len(),
                     consumed_predicates: consumed_count(&edge.right_property_predicates),
+                    bounds_detail: None,
                 });
             }
         }
@@ -455,6 +471,7 @@ fn collect_scans(
                     access: "Linear",
                     residual_predicates: edge.right_property_predicates.len(),
                     consumed_predicates: consumed_count(&edge.right_property_predicates),
+                    bounds_detail: None,
                 });
             }
         }
@@ -468,6 +485,7 @@ fn collect_scans(
                     access: "Linear",
                     residual_predicates: edge.final_property_predicates.len(),
                     consumed_predicates: consumed_count(&edge.final_property_predicates),
+                    bounds_detail: None,
                 });
             }
         }
@@ -498,6 +516,7 @@ fn scan_snapshot(scan: &NodeOrEdgeScan, bindings: &BTreeMap<BindingId, String>) 
         access: scan_access(&scan.access),
         residual_predicates: scan.property_predicates.len(),
         consumed_predicates: consumed_count(&scan.property_predicates),
+        bounds_detail: bounds_detail_for_access(&scan.access),
     }
 }
 
@@ -508,6 +527,7 @@ fn edge_snapshot(edge: &EdgeMatch, bindings: &BTreeMap<BindingId, String>) -> Sc
         access: scan_access(&edge.access),
         residual_predicates: edge.property_predicates.len(),
         consumed_predicates: consumed_count(&edge.property_predicates),
+        bounds_detail: bounds_detail_for_access(&edge.access),
     }
 }
 
@@ -522,6 +542,7 @@ fn repeat_edge_snapshot(
         residual_predicates: edge.property_predicates.len() + edge.inline_predicates.len(),
         consumed_predicates: consumed_count(&edge.property_predicates)
             + consumed_count(&edge.inline_predicates),
+        bounds_detail: bounds_detail_for_access(&edge.access),
     }
 }
 

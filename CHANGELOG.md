@@ -13,6 +13,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `selene-gql::ScanAccess::TypedIndexRange` / `BitmapUnion` /
+  `CompositeLookup` now carry `IndexKey { Literal, Parameter }` in their key
+  slots (was bare `Literal`). Parameterized equality + range + InList
+  predicates now select the typed-index access path at plan time; runtime
+  resolves parameter slots at probe time via `resolve_index_key`. Unblocks
+  indexed-lookup acceleration for parameterized queries that previously
+  fell back to linear scan. `ScanAccess::BitmapUnion` gains a `kind:
+  IndexKind` field; `ScanAccess::CompositeLookup.properties` widens to
+  `Vec<(IStr, IndexKind)>` (mirrors
+  `CompositeIndexHandle.properties`) — both feed the runtime parameter
+  resolver's `expected_kind`. NULL-bound parameters return empty rows
+  (3VL parity with inline `WHERE n.x = NULL`); ExternalString-bound
+  parameters against STRING indexes are coerced via `selene_core::lookup`
+  with the BRIEF-153 unpoolable carve-out; wrong-kind and unbound
+  parameters error loud (`ExecutorError::InvalidParameterType` /
+  `UnboundParameter`, GQLSTATUS `22G03` per ISO §23.1 Table 8). EXPLAIN
+  summaries gain a new `[bounds=…]` detail surface across all three
+  indexed-scan access paths (literals render with kind tag + value;
+  parameters render as `$name`). Additive `ScanSnapshot.bounds_detail:
+  Option<String>` field carries the formatted detail without breaking
+  existing `#[non_exhaustive]` callers. (BRIEF-154)
 - `selene-graph::CompositeIndexValueError` is now `#[non_exhaustive]` and no
   longer derives `Clone/Copy/Eq/PartialEq`. New `ComponentAdmissionFailed
   { index, expected_kind, reason: selene_core::CoreError }` variant carries

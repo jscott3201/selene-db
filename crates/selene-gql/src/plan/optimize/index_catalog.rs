@@ -81,15 +81,24 @@ impl TypedIndexLookup {
 pub struct CompositeIndexHandle {
     /// Opaque catalog handle.
     pub handle: IndexHandle,
-    /// Indexed properties in declaration order.
-    pub properties: Vec<IStr>,
+    /// Indexed properties in declaration order, paired with their typed-index
+    /// kinds. The kinds enable per-component plan-time compatibility checks
+    /// when admitting parameter slots into composite-index probes
+    /// (BRIEF-154 §B.2 F7/F17 folds).
+    pub properties: Vec<(IStr, IndexKind)>,
 }
 
 impl CompositeIndexHandle {
     /// Construct composite-index lookup metadata.
     #[must_use]
-    pub fn new(handle: IndexHandle, properties: Vec<IStr>) -> Self {
+    pub fn new(handle: IndexHandle, properties: Vec<(IStr, IndexKind)>) -> Self {
         Self { handle, properties }
+    }
+
+    /// Return the property keys in declaration order, dropping the kind column.
+    #[must_use]
+    pub fn property_keys(&self) -> Vec<IStr> {
+        self.properties.iter().map(|(key, _)| *key).collect()
     }
 }
 

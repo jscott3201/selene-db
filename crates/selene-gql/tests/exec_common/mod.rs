@@ -154,7 +154,13 @@ impl ExecFixture {
             .with_node_typed_index(self.person, self.email, selene_gql::IndexKind::String)
             .with_node_typed_index(self.person, self.tenant, selene_gql::IndexKind::String)
             .with_node_typed_index(self.person, self.kind, selene_gql::IndexKind::String)
-            .with_node_composite_index(self.person, vec![self.tenant, self.kind])
+            .with_node_composite_index(
+                self.person,
+                vec![
+                    (self.tenant, selene_gql::IndexKind::String),
+                    (self.kind, selene_gql::IndexKind::String),
+                ],
+            )
     }
 }
 

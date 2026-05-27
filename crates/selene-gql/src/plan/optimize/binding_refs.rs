@@ -3,10 +3,30 @@
 use selene_core::IStr;
 
 use crate::{
-    BinaryOp, Literal, ValueExpr,
+    BinaryOp, GqlType, Literal, SourceSpan, ValueExpr,
     analyze::BindingId,
     plan::{BindingDef, FilterPredicate, FilterPredicateKind},
 };
+
+/// Parameter reference borrowed out of a [`ValueExpr::Parameter`] node.
+///
+/// Mirrors the shape index-aware optimizer rules need when admitting parameter
+/// slots into typed-index / composite-index / bitmap-union access paths
+/// (BRIEF-154 §B.2). The `declared_type` borrow lets call sites run plan-time
+/// typed-incompatibility checks without cloning [`GqlType`].
+#[derive(Clone, Copy, Debug)]
+// Commit 1 lands the helper surface; Commit 2 wires the first caller
+// (`compatible_value` in `range_index_scan`). Until then the struct is
+// dead-code from the compiler's perspective.
+#[allow(dead_code)]
+pub(crate) struct ParameterRef<'a> {
+    /// Parameter name without the leading `$`.
+    pub name: IStr,
+    /// Optional declared type from a `$id :: TYPE` annotation (BRIEF-137).
+    pub declared_type: Option<&'a GqlType>,
+    /// Source span of the parameter reference.
+    pub span: SourceSpan,
+}
 
 /// Property predicate shape recognized by index-aware optimizer rules.
 #[derive(Clone, Debug)]
@@ -121,6 +141,33 @@ pub(crate) fn literal(expr: &ValueExpr) -> Option<&Literal> {
         return None;
     };
     (!matches!(literal, Literal::Null(_))).then_some(literal)
+}
+
+/// Return `expr` as a parameter reference, borrowing the inline
+/// `declared_type` so callers may run plan-time typed-incompatibility checks
+/// without cloning.
+///
+/// `binding_refs::parameter` is intentionally permissive about NULL parameter
+/// declarations: untyped slots (the BRIEF-115 baseline) and typed slots
+/// (BRIEF-137 `$id :: TYPE`) are both returned. Plan-time and execute-time
+/// validation lives in the optimizer rules and runtime resolver respectively.
+// Commit 1 lands the helper; Commit 2 wires the first caller. Allow the
+// `dead_code` warning until then so `-D warnings` clippy stays green.
+#[allow(dead_code)]
+pub(crate) fn parameter(expr: &ValueExpr) -> Option<ParameterRef<'_>> {
+    let ValueExpr::Parameter {
+        name,
+        declared_type,
+        span,
+    } = expr
+    else {
+        return None;
+    };
+    Some(ParameterRef {
+        name: *name,
+        declared_type: declared_type.as_ref(),
+        span: *span,
+    })
 }
 
 fn match_property_expr<'a>(

@@ -6,7 +6,9 @@ use exec_common::{
     ExecFixture, LARGE_COUNTER_B, execute_pattern, node_ids, optimized, planned,
     set_first_scan_access,
 };
-use selene_gql::{IndexHandle, IndexKind, Literal, ScanAccess, SourceSpan, TypedIndexBounds};
+use selene_gql::{
+    IndexHandle, IndexKey, IndexKind, Literal, ScanAccess, SourceSpan, TypedIndexBounds,
+};
 
 #[test]
 fn typed_index_range_scan_uses_bounds_and_residuals() {
@@ -67,10 +69,10 @@ fn typed_index_fallback_equality_preserves_integer_precision() {
             handle: IndexHandle::new(9_001),
             property: fixture.count,
             kind: IndexKind::Integer,
-            bounds: TypedIndexBounds::Equality(Literal::Integer(
+            bounds: TypedIndexBounds::Equality(IndexKey::Literal(Literal::Integer(
                 LARGE_COUNTER_B,
                 SourceSpan::new(0, 1),
-            )),
+            ))),
         },
     );
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");

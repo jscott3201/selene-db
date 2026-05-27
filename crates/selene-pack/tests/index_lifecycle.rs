@@ -295,7 +295,10 @@ fn created_composite_index_is_picked_by_optimizer_in_declaration_order() {
     else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    assert_eq!(properties, &vec![tenant, kind]);
+    assert_eq!(
+        properties,
+        &vec![(tenant, IndexKind::String), (kind, IndexKind::String)],
+    );
     assert_eq!(keys[0].0, tenant);
     assert_eq!(keys[1].0, kind);
 }
@@ -609,10 +612,17 @@ impl IndexCatalog for LiveIndexCatalog<'_> {
         canonical.sort_unstable();
         let graph = self.graph.read();
         let entry = graph.composite_property_index_entry_for(&label, &canonical)?;
-        Some(CompositeIndexHandle::new(
-            IndexHandle::new(2),
-            entry.declared_properties.iter().copied().collect(),
-        ))
+        let kinds = entry.kinds();
+        // BRIEF-154 §B.2 (F7/F17): per-component IndexKind enables parameter-aware
+        // composite probes. Map storage-level TypedIndexKind to the optimizer's
+        // IndexKind for each declared property, in declaration order.
+        let properties: Vec<(IStr, IndexKind)> = entry
+            .declared_properties
+            .iter()
+            .zip(kinds.iter())
+            .map(|(property, kind)| (*property, index_kind_from(*kind)))
+            .collect();
+        Some(CompositeIndexHandle::new(IndexHandle::new(2), properties))
     }
 }
 
