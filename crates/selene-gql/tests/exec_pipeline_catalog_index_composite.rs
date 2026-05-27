@@ -311,8 +311,13 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
 #[test]
 fn optimized_composite_lookup_executes_against_live_storage() {
     let graph = seeded_sensor_graph(14_105, true);
-    let catalog = MockIndexCatalog::new()
-        .with_node_composite_index(istr("Sensor"), vec![istr("ts"), istr("location")]);
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Sensor"),
+        vec![
+            (istr("ts"), selene_gql::IndexKind::Integer),
+            (istr("location"), selene_gql::IndexKind::String),
+        ],
+    );
     let plan = optimized(
         "MATCH (s:Sensor) WHERE s.location = 'north' AND s.ts = 1 RETURN s.value AS value",
         &catalog,
@@ -339,8 +344,13 @@ fn optimized_composite_lookup_executes_against_live_storage() {
 #[test]
 fn optimized_composite_lookup_falls_back_when_storage_is_absent() {
     let graph = seeded_sensor_graph(14_106, false);
-    let catalog = MockIndexCatalog::new()
-        .with_node_composite_index(istr("Sensor"), vec![istr("ts"), istr("location")]);
+    let catalog = MockIndexCatalog::new().with_node_composite_index(
+        istr("Sensor"),
+        vec![
+            (istr("ts"), selene_gql::IndexKind::Integer),
+            (istr("location"), selene_gql::IndexKind::String),
+        ],
+    );
     let plan = optimized(
         "MATCH (s:Sensor) WHERE s.location = 'north' AND s.ts = 1 RETURN s.value AS value",
         &catalog,

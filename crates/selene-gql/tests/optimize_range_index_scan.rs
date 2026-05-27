@@ -2,8 +2,8 @@
 
 use selene_core::{IStr, intern};
 use selene_gql::{
-    EmptyProcedureRegistry, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess, TypedIndexBounds,
-    analyze, optimize, parse, plan,
+    EmptyProcedureRegistry, IndexKey, IndexKind, JoinTree, NodeOrEdgeScan, ScanAccess,
+    TypedIndexBounds, analyze, optimize, parse, plan,
 };
 use selene_testing::MockIndexCatalog;
 
@@ -142,8 +142,8 @@ fn duplicate_lower_bounds_keep_the_tightest() {
     let ScanAccess::TypedIndexRange { bounds, .. } = &scan.access else {
         panic!("expected typed-index range, got {:?}", scan.access);
     };
-    let TypedIndexBounds::GreaterThan(literal) = bounds else {
-        panic!("expected GreaterThan bound, got {bounds:?}");
+    let TypedIndexBounds::GreaterThan(IndexKey::Literal(literal)) = bounds else {
+        panic!("expected GreaterThan literal bound, got {bounds:?}");
     };
     assert!(
         matches!(literal, selene_gql::Literal::Integer(10, _)),
@@ -163,8 +163,8 @@ fn duplicate_upper_bounds_keep_the_tightest() {
     let ScanAccess::TypedIndexRange { bounds, .. } = &scan.access else {
         panic!("expected typed-index range, got {:?}", scan.access);
     };
-    let TypedIndexBounds::LessThan(literal) = bounds else {
-        panic!("expected LessThan bound, got {bounds:?}");
+    let TypedIndexBounds::LessThan(IndexKey::Literal(literal)) = bounds else {
+        panic!("expected LessThan literal bound, got {bounds:?}");
     };
     assert!(matches!(literal, selene_gql::Literal::Integer(50, _)));
     assert!(scan.property_predicates.is_empty());

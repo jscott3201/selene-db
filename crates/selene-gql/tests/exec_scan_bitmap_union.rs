@@ -6,7 +6,7 @@ use exec_common::{
     ExecFixture, LARGE_COUNTER_B, execute_pattern, istr, node_ids, optimized, planned,
     set_first_scan_access,
 };
-use selene_gql::{IndexHandle, Literal, ScanAccess, SourceSpan};
+use selene_gql::{IndexHandle, IndexKey, Literal, ScanAccess, SourceSpan};
 
 #[test]
 fn bitmap_union_scan_returns_small_in_list_matches() {
@@ -40,7 +40,10 @@ fn bitmap_union_fallback_in_list_preserves_integer_precision() {
         ScanAccess::BitmapUnion {
             handle: IndexHandle::new(9_002),
             property: fixture.count,
-            keys: vec![Literal::Integer(LARGE_COUNTER_B, SourceSpan::new(0, 1))],
+            keys: vec![IndexKey::Literal(Literal::Integer(
+                LARGE_COUNTER_B,
+                SourceSpan::new(0, 1),
+            ))],
         },
     );
     let pattern = plan.pattern_plan.as_ref().expect("pattern plan");

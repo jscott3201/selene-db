@@ -609,10 +609,17 @@ impl IndexCatalog for LiveIndexCatalog<'_> {
         canonical.sort_unstable();
         let graph = self.graph.read();
         let entry = graph.composite_property_index_entry_for(&label, &canonical)?;
-        Some(CompositeIndexHandle::new(
-            IndexHandle::new(2),
-            entry.declared_properties.iter().copied().collect(),
-        ))
+        let kinds = entry.kinds();
+        // BRIEF-154 §B.2 (F7/F17): per-component IndexKind enables parameter-aware
+        // composite probes. Map storage-level TypedIndexKind to the optimizer's
+        // IndexKind for each declared property, in declaration order.
+        let properties: Vec<(IStr, IndexKind)> = entry
+            .declared_properties
+            .iter()
+            .zip(kinds.iter())
+            .map(|(property, kind)| (*property, index_kind_from(*kind)))
+            .collect();
+        Some(CompositeIndexHandle::new(IndexHandle::new(2), properties))
     }
 }
 

@@ -18,8 +18,8 @@ pub use error::PlannerError;
 pub use ir::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
     BuildSide, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate, FilterPredicateKind,
-    HiddenBindingId, HopContributor, ImplDefinedCaps, InsertEndpointRef, InsertSiteId, JoinTree,
-    LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
+    HiddenBindingId, HopContributor, ImplDefinedCaps, IndexKey, InsertEndpointRef, InsertSiteId,
+    JoinTree, LimitAmount, MutationOp, NodeIdOrdering, NodeOrEdgeScan, OrderAccess, OrderKey,
     OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
     PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,

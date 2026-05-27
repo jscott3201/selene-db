@@ -78,7 +78,13 @@ impl ExecutorCorpus {
             .with_node_typed_index(person, istr("email"), IndexKind::String)
             .with_node_typed_index(person, istr("kind"), IndexKind::String)
             .with_node_typed_index(person, istr("tenant"), IndexKind::String)
-            .with_node_composite_index(person, vec![istr("tenant"), istr("kind")])
+            .with_node_composite_index(
+                person,
+                vec![
+                    (istr("tenant"), IndexKind::String),
+                    (istr("kind"), IndexKind::String),
+                ],
+            )
     }
 
     #[must_use]

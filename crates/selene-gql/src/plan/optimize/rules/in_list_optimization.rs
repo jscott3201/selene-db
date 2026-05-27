@@ -1,7 +1,7 @@
 //! Small `IN` list typed-index optimization.
 
 use crate::plan::{
-    BindingDef, ExecutionPlan, JoinTree, ScanAccess, ScanKind,
+    BindingDef, ExecutionPlan, IndexKey, JoinTree, ScanAccess, ScanKind,
     optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
 };
 
@@ -98,7 +98,7 @@ fn rewrite_scan(
                 all_match = false;
                 break;
             }
-            keys.push(literal.clone());
+            keys.push(IndexKey::Literal(literal.clone()));
         }
         if !all_match {
             continue;

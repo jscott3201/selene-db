@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 use crate::plan::{
-    BindingDef, ExecutionPlan, FilterPredicate, JoinTree, ScanAccess, ScanKind,
+    BindingDef, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess, ScanKind,
     optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
 };
 
@@ -93,12 +93,12 @@ fn rewrite_scan(
         return false;
     };
     let mut keys = Vec::with_capacity(composite.properties.len());
-    for property in &composite.properties {
+    for (property, _kind) in &composite.properties {
         let candidate = candidates
             .iter()
             .find(|candidate| candidate.key == *property)
             .expect("matched property is present in candidate set");
-        keys.push((*property, candidate.literal.clone()));
+        keys.push((*property, IndexKey::Literal(candidate.literal.clone())));
     }
     let mut consumed_indices = consumed_indices;
     consumed_indices.sort_unstable();
@@ -106,7 +106,7 @@ fn rewrite_scan(
     remove_indices(&mut scan.property_predicates, &consumed_indices);
     scan.access = ScanAccess::CompositeLookup {
         handle: composite.handle,
-        properties: composite.properties,
+        properties: composite.property_keys(),
         keys,
     };
     true
@@ -140,7 +140,7 @@ fn find_composite_match(
                 let consumed: Vec<usize> = composite
                     .properties
                     .iter()
-                    .map(|property| {
+                    .map(|(property, _kind)| {
                         candidates
                             .iter()
                             .find(|candidate| candidate.key == *property)

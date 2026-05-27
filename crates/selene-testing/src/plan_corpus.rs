@@ -82,7 +82,13 @@ impl PlanCorpus {
             .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
             .with_node_typed_index(istr("Person"), istr("email"), IndexKind::String)
             .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
-            .with_node_composite_index(istr("Purchase"), vec![istr("tenant"), istr("kind")])
+            .with_node_composite_index(
+                istr("Purchase"),
+                vec![
+                    (istr("tenant"), IndexKind::String),
+                    (istr("kind"), IndexKind::String),
+                ],
+            )
     }
 
     /// Standard deterministic procedure registry used by CALL corpus entries.

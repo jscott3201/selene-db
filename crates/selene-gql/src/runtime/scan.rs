@@ -6,8 +6,8 @@ use std::ops::Bound::{Excluded, Included, Unbounded};
 use selene_core::{EdgeId, IStr, LabelSet, NodeId, Value};
 
 use crate::{
-    FilterPredicate, FilterPredicateKind, LabelExpr, Literal, NodeOrEdgeScan, PatternPlan,
-    ScanAccess, ScanKind, TypedIndexBounds,
+    FilterPredicate, FilterPredicateKind, IndexKey, LabelExpr, Literal, NodeOrEdgeScan,
+    PatternPlan, ScanAccess, ScanKind, TypedIndexBounds,
     runtime::{Binding, BindingTableSchema, ExecutorError},
 };
 
@@ -125,32 +125,36 @@ fn typed_index_rows(
     let Some(label) = single_label(&scan.label_predicate) else {
         return linear_rows_filtered_by_bounds(scan, property, bounds, ctx);
     };
-    let value = |literal: &Literal| literal_value(literal);
+    // Pre-Commit-4 bridge: optimizer rules never emit `IndexKey::Parameter`
+    // yet, so every key reaches this site as `Literal`. Commit 4 will replace
+    // these `literal_for_pre_param_path()` calls with `resolve_index_key`
+    // against `&EvalCtx` parameters.
+    let value = |key: &IndexKey| literal_value(key.literal_for_pre_param_path());
     let indexed_rows = match bounds {
-        TypedIndexBounds::Equality(literal) => ctx
+        TypedIndexBounds::Equality(key) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_eq(&label, &property, &value(literal))
+            .nodes_with_property_eq(&label, &property, &value(key))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::GreaterThan(literal) => ctx
+        TypedIndexBounds::GreaterThan(key) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Excluded(value(literal)), Unbounded))
+            .nodes_with_property_range(&label, &property, (Excluded(value(key)), Unbounded))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::GreaterEqual(literal) => ctx
+        TypedIndexBounds::GreaterEqual(key) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Included(value(literal)), Unbounded))
+            .nodes_with_property_range(&label, &property, (Included(value(key)), Unbounded))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::LessThan(literal) => ctx
+        TypedIndexBounds::LessThan(key) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Unbounded, Excluded(value(literal))))
+            .nodes_with_property_range(&label, &property, (Unbounded, Excluded(value(key))))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
-        TypedIndexBounds::LessEqual(literal) => ctx
+        TypedIndexBounds::LessEqual(key) => ctx
             .tx
             .snapshot()
-            .nodes_with_property_range(&label, &property, (Unbounded, Included(value(literal))))
+            .nodes_with_property_range(&label, &property, (Unbounded, Included(value(key))))
             .map(|rows| rows.iter().collect::<Vec<_>>()),
         TypedIndexBounds::Range {
             lo,
@@ -180,7 +184,7 @@ fn typed_index_rows(
 fn bitmap_union_rows(
     scan: &NodeOrEdgeScan,
     property: IStr,
-    keys: &[Literal],
+    keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     union_property_eq(scan, property, keys, ctx)
@@ -191,7 +195,7 @@ fn bitmap_union_rows(
 fn union_property_eq(
     scan: &NodeOrEdgeScan,
     property: IStr,
-    keys: &[Literal],
+    keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> BTreeSet<u32> {
     if scan.kind != ScanKind::Node {
@@ -209,10 +213,11 @@ fn union_property_eq(
     let mut rows = BTreeSet::new();
     let mut used_index = false;
     for key in keys {
+        let literal = key.literal_for_pre_param_path();
         if let Some(matches) =
             ctx.tx
                 .snapshot()
-                .nodes_with_property_eq(&label, &property, &literal_value(key))
+                .nodes_with_property_eq(&label, &property, &literal_value(literal))
         {
             used_index = true;
             rows.extend(matches.iter());
@@ -231,7 +236,7 @@ fn union_property_eq(
 fn composite_lookup_rows(
     scan: &NodeOrEdgeScan,
     properties: &[IStr],
-    keys: &[(IStr, Literal)],
+    keys: &[(IStr, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     if scan.kind != ScanKind::Node {
@@ -266,26 +271,27 @@ fn composite_lookup_rows(
     linear_rows_filtered_by_composite(scan, keys, ctx)
 }
 
-fn composite_lookup_values(properties: &[IStr], keys: &[(IStr, Literal)]) -> Option<Vec<Value>> {
+fn composite_lookup_values(properties: &[IStr], keys: &[(IStr, IndexKey)]) -> Option<Vec<Value>> {
     properties
         .iter()
         .map(|property| {
             keys.iter()
                 .find(|(key, _)| key == property)
-                .map(|(_, literal)| literal_value(literal))
+                .map(|(_, key)| literal_value(key.literal_for_pre_param_path()))
         })
         .collect()
 }
 
 fn linear_rows_filtered_by_composite(
     scan: &NodeOrEdgeScan,
-    keys: &[(IStr, Literal)],
+    keys: &[(IStr, IndexKey)],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Vec<u32> {
     linear_rows(scan.kind, ctx)
         .into_iter()
         .filter(|row| {
-            keys.iter().all(|(property, literal)| {
+            keys.iter().all(|(property, key)| {
+                let literal = key.literal_for_pre_param_path();
                 property_value(scan.kind, *row, *property, ctx)
                     .is_some_and(|value| value_eq_non_null(value, &literal_value(literal)))
             })
@@ -447,12 +453,14 @@ fn property_matches_any(
     kind: ScanKind,
     row: u32,
     property: IStr,
-    keys: &[Literal],
+    keys: &[IndexKey],
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> bool {
     property_value(kind, row, property, ctx).is_some_and(|value| {
-        keys.iter()
-            .any(|key| value_eq_non_null(value, &literal_value(key)))
+        keys.iter().any(|key| {
+            let literal = key.literal_for_pre_param_path();
+            value_eq_non_null(value, &literal_value(literal))
+        })
     })
 }
 
@@ -477,22 +485,25 @@ fn property_value<'a>(
 }
 
 fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
+    // Pre-Commit-4 bridge: optimizer rules emit only `IndexKey::Literal` for
+    // now. Commit 4 introduces Q12's scan-entry pre-resolution that hands this
+    // function a `&[Value]` aligned with bounds; today we destructure straight
+    // through `literal_for_pre_param_path()`.
+    let lit = |key: &IndexKey| literal_value(key.literal_for_pre_param_path());
     match bounds {
-        TypedIndexBounds::Equality(literal) => value_eq_non_null(value, &literal_value(literal)),
-        TypedIndexBounds::GreaterThan(literal) => {
-            value_compare::compare_non_null(value, &literal_value(literal))
-                == Some(std::cmp::Ordering::Greater)
+        TypedIndexBounds::Equality(key) => value_eq_non_null(value, &lit(key)),
+        TypedIndexBounds::GreaterThan(key) => {
+            value_compare::compare_non_null(value, &lit(key)) == Some(std::cmp::Ordering::Greater)
         }
-        TypedIndexBounds::GreaterEqual(literal) => matches!(
-            value_compare::compare_non_null(value, &literal_value(literal)),
+        TypedIndexBounds::GreaterEqual(key) => matches!(
+            value_compare::compare_non_null(value, &lit(key)),
             Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)
         ),
-        TypedIndexBounds::LessThan(literal) => {
-            value_compare::compare_non_null(value, &literal_value(literal))
-                == Some(std::cmp::Ordering::Less)
+        TypedIndexBounds::LessThan(key) => {
+            value_compare::compare_non_null(value, &lit(key)) == Some(std::cmp::Ordering::Less)
         }
-        TypedIndexBounds::LessEqual(literal) => matches!(
-            value_compare::compare_non_null(value, &literal_value(literal)),
+        TypedIndexBounds::LessEqual(key) => matches!(
+            value_compare::compare_non_null(value, &lit(key)),
             Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
         ),
         TypedIndexBounds::Range {
@@ -501,10 +512,10 @@ fn value_matches_bounds(value: &Value, bounds: &TypedIndexBounds) -> bool {
             hi,
             hi_inclusive,
         } => {
-            let Some(lo_order) = value_compare::compare_non_null(value, &literal_value(lo)) else {
+            let Some(lo_order) = value_compare::compare_non_null(value, &lit(lo)) else {
                 return false;
             };
-            let Some(hi_order) = value_compare::compare_non_null(value, &literal_value(hi)) else {
+            let Some(hi_order) = value_compare::compare_non_null(value, &lit(hi)) else {
                 return false;
             };
             let lo_ok = if *lo_inclusive {

@@ -3,7 +3,7 @@
 use crate::{
     BinaryOp, Literal,
     plan::{
-        BindingDef, ExecutionPlan, FilterPredicate, JoinTree, ScanAccess, ScanKind,
+        BindingDef, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess, ScanKind,
         TypedIndexBounds,
         optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
     },
@@ -173,9 +173,9 @@ fn bounds_for_property(
                 let high = compatible_literal(high, kind)?.clone();
                 return Some((
                     TypedIndexBounds::Range {
-                        lo: low,
+                        lo: IndexKey::Literal(low),
                         lo_inclusive: true,
-                        hi: high,
+                        hi: IndexKey::Literal(high),
                         hi_inclusive: true,
                     },
                     vec![index],
@@ -186,7 +186,10 @@ fn bounds_for_property(
     }
 
     if let Some(literal) = equality {
-        return Some((TypedIndexBounds::Equality(literal), consumed));
+        return Some((
+            TypedIndexBounds::Equality(IndexKey::Literal(literal)),
+            consumed,
+        ));
     }
     match (lower, upper) {
         (Some((lo, lo_inclusive)), Some((hi, hi_inclusive))) => {
@@ -198,18 +201,30 @@ fn bounds_for_property(
             }
             Some((
                 TypedIndexBounds::Range {
-                    lo,
+                    lo: IndexKey::Literal(lo),
                     lo_inclusive,
-                    hi,
+                    hi: IndexKey::Literal(hi),
                     hi_inclusive,
                 },
                 consumed,
             ))
         }
-        (Some((literal, false)), None) => Some((TypedIndexBounds::GreaterThan(literal), consumed)),
-        (Some((literal, true)), None) => Some((TypedIndexBounds::GreaterEqual(literal), consumed)),
-        (None, Some((literal, false))) => Some((TypedIndexBounds::LessThan(literal), consumed)),
-        (None, Some((literal, true))) => Some((TypedIndexBounds::LessEqual(literal), consumed)),
+        (Some((literal, false)), None) => Some((
+            TypedIndexBounds::GreaterThan(IndexKey::Literal(literal)),
+            consumed,
+        )),
+        (Some((literal, true)), None) => Some((
+            TypedIndexBounds::GreaterEqual(IndexKey::Literal(literal)),
+            consumed,
+        )),
+        (None, Some((literal, false))) => Some((
+            TypedIndexBounds::LessThan(IndexKey::Literal(literal)),
+            consumed,
+        )),
+        (None, Some((literal, true))) => Some((
+            TypedIndexBounds::LessEqual(IndexKey::Literal(literal)),
+            consumed,
+        )),
         (None, None) => None,
     }
 }
