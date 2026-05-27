@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, PropertyDiff, PropertyMap, Value, intern};
+use selene_core::{
+    CoreError, GraphId, IStr, LabelSet, PropertyDiff, PropertyMap, Value, intern, lookup,
+};
 
 use super::*;
 use crate::graph::PropertyIndexEntry;
-use crate::typed_index::TypedIndexKind;
+use crate::typed_index::{TypedIndexKind, TypedIndexValueError};
 
 fn property_map(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
     PropertyMap::from_pairs(pairs).unwrap()
@@ -250,6 +252,156 @@ fn build_property_index_is_strict_for_existing_data() {
             expected_kind: TypedIndexKind::I64,
             observed: "String",
         } if err_label == label && err_property == age
+    ));
+}
+
+#[test]
+fn apply_node_create_admits_external_string_into_string_index() {
+    // BRIEF-153 bar 1: `Value::ExternalString` reaches the property-index
+    // commit and produces an entry equivalent to one produced by
+    // `Value::String` with the same content.
+    let label = intern("pi.external.create.label").unwrap();
+    let name = intern("pi.external.create.name").unwrap();
+    let probe = "pi.external.create.unique-1";
+    assert!(lookup(probe).is_none());
+    let props = property_map([(name, Value::ExternalString(Arc::<str>::from(probe)))]);
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert((label, name), entry(TypedIndexKind::String));
+
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 5).unwrap();
+
+    // The admitted IStr is now in the pool and the index entry is keyed
+    // on it; probing with either variant locates row 5.
+    let admitted = lookup(probe).expect("commit admitted the IStr");
+    assert!(rows(&indexes, label, name, &Value::String(admitted)).contains(5));
+    assert!(
+        rows(
+            &indexes,
+            label,
+            name,
+            &Value::ExternalString(Arc::<str>::from(probe)),
+        )
+        .contains(5)
+    );
+}
+
+#[test]
+fn apply_node_update_admits_external_string_replacement() {
+    // SET against an INDEXED column moves the row from the previous
+    // String-bound key to the newly admitted ExternalString-bound key.
+    let label = intern("pi.external.update.label").unwrap();
+    let name = intern("pi.external.update.name").unwrap();
+    let old = intern("pi.external.update.old").unwrap();
+    let new_probe = "pi.external.update.new-unique";
+    assert!(lookup(new_probe).is_none());
+    let old_props = property_map([(name, Value::String(old))]);
+    let new_props = property_map([(name, Value::ExternalString(Arc::<str>::from(new_probe)))]);
+    let mut indexes = PropertyIndexMap::default();
+    indexes.insert((label, name), entry(TypedIndexKind::String));
+    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 9).unwrap();
+
+    apply_node_update(
+        &mut indexes,
+        &LabelSet::single(label),
+        &old_props,
+        &LabelSet::single(label),
+        &new_props,
+        9,
+    )
+    .unwrap();
+
+    assert!(rows(&indexes, label, name, &Value::String(old)).is_empty());
+    let admitted = lookup(new_probe).expect("commit admitted the IStr");
+    assert!(rows(&indexes, label, name, &Value::String(admitted)).contains(9));
+}
+
+#[test]
+fn build_property_index_admits_existing_external_string_rows() {
+    // BRIEF-153 bar 9: pre-fix HEAD rejected ExternalString rows during
+    // registration; post-fix the strict-build admits them (DDL = consent).
+    let label = intern("pi.build.external.label").unwrap();
+    let name = intern("pi.build.external.name").unwrap();
+    let mut graph = crate::SeleneGraph::new(GraphId::new(11));
+    let unique = (0..3)
+        .map(|i| format!("pi.build.external.foo_{i}"))
+        .collect::<Vec<_>>();
+    for (row, content) in unique.iter().enumerate() {
+        assert!(lookup(content).is_none());
+        graph.node_store.labels.push(LabelSet::single(label));
+        graph.node_store.properties.push(property_map([(
+            name,
+            Value::ExternalString(Arc::<str>::from(content.as_str())),
+        )]));
+        graph.node_store.alive.insert(row as u32);
+    }
+
+    let index = build_property_index(&graph, label, name, TypedIndexKind::String).expect("admits");
+
+    assert_eq!(index.cardinality(), 3);
+    for content in &unique {
+        assert!(
+            lookup(content).is_some(),
+            "strict build admits each ExternalString row's content"
+        );
+    }
+}
+
+#[test]
+fn index_rejection_promotes_admission_failed_to_index_admission_exhausted() {
+    // BRIEF-153 bar 3 (synthetic injection per Q7/F10): the mutator
+    // commit-path helper promotes the synthetic AdmissionFailed inner
+    // error to `GraphError::IndexAdmissionExhausted` carrying the
+    // CoreError source intact, with GQLSTATUS 5GQL1.
+    let label = intern("pi.admit-fail.label").unwrap();
+    let name = intern("pi.admit-fail.name").unwrap();
+    let synthetic = TypedIndexValueError::AdmissionFailed {
+        expected_kind: TypedIndexKind::String,
+        reason: CoreError::IStrCapExceeded {
+            count: 1_000_000,
+            max: 1_000_000,
+        },
+    };
+
+    let promoted = index_rejection(label, name, synthetic);
+
+    let GraphError::IndexAdmissionExhausted {
+        label: err_label,
+        property: err_property,
+        source,
+    } = &promoted
+    else {
+        panic!("expected IndexAdmissionExhausted, got {promoted:?}");
+    };
+    assert_eq!(*err_label, label);
+    assert_eq!(*err_property, name);
+    assert!(matches!(
+        source,
+        CoreError::IStrCapExceeded {
+            count: 1_000_000,
+            max: 1_000_000,
+        }
+    ));
+    assert_eq!(promoted.gqlstatus(), "5GQL1");
+}
+
+#[test]
+fn index_rejection_keeps_kind_mismatch_path_unchanged() {
+    let label = intern("pi.kind-mismatch.label").unwrap();
+    let name = intern("pi.kind-mismatch.name").unwrap();
+    let synthetic = TypedIndexValueError::KindMismatch {
+        expected_kind: TypedIndexKind::I64,
+        observed: "String",
+    };
+
+    let promoted = index_rejection(label, name, synthetic);
+
+    assert!(matches!(
+        promoted,
+        GraphError::IndexValueRejected {
+            expected_kind: TypedIndexKind::I64,
+            observed: "String",
+            ..
+        }
     ));
 }
 

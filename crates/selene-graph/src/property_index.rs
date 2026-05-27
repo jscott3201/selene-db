@@ -179,9 +179,13 @@ fn build_property_index_inner(
         }
         match index.insert(value, row) {
             Ok(()) => {}
-            Err(err) => match policy {
-                BuildPolicy::Strict => return Err(index_rejection(label, property, err)),
-                BuildPolicy::Lenient => warn_rejected("rebuild", label, property, row, &err),
+            Err(err) => match (&err, policy) {
+                (TypedIndexValueError::AdmissionFailed { .. }, _) | (_, BuildPolicy::Strict) => {
+                    return Err(index_rejection(label, property, err));
+                }
+                (_, BuildPolicy::Lenient) => {
+                    warn_rejected("rebuild", label, property, row, &err);
+                }
             },
         }
     }
@@ -246,7 +250,7 @@ fn insert_commit(
     if let Some(index) = indexes.get_mut(&(label, property))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
     {
-        warn_rejected("insert", label, property, row, &err);
+        return demote_or_promote(label, property, row, "insert", err);
     }
     Ok(())
 }
@@ -261,17 +265,51 @@ fn remove_commit(
     if let Some(index) = indexes.get_mut(&(label, property))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
     {
-        warn_rejected("remove", label, property, row, &err);
+        return demote_or_promote(label, property, row, "remove", err);
     }
     Ok(())
 }
 
+/// Commit-path branching for [`TypedIndexValueError`]: `AdmissionFailed`
+/// surfaces as a hard [`GraphError::IndexAdmissionExhausted`] (BRIEF-153 —
+/// DDL `INDEXED` is the user's consent for STRING admission, cap exhaustion
+/// at that boundary cannot be silently dropped). Other variants
+/// (`KindMismatch`, `NaN`) keep the legacy `warn_rejected` lenient skip
+/// because open-graph kind drift remains recoverable per the module
+/// rustdoc.
+fn demote_or_promote(
+    label: IStr,
+    property: IStr,
+    row: u32,
+    op: &'static str,
+    err: TypedIndexValueError,
+) -> GraphResult<()> {
+    match err {
+        TypedIndexValueError::AdmissionFailed { .. } => Err(index_rejection(label, property, err)),
+        TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
+            warn_rejected(op, label, property, row, &err);
+            Ok(())
+        }
+    }
+}
+
 fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> GraphError {
-    GraphError::IndexValueRejected {
-        label,
-        property,
-        expected_kind: err.expected_kind(),
-        observed: err.observed(),
+    match err {
+        TypedIndexValueError::AdmissionFailed { reason, .. } => {
+            GraphError::IndexAdmissionExhausted {
+                label,
+                property,
+                source: reason,
+            }
+        }
+        TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
+            GraphError::IndexValueRejected {
+                label,
+                property,
+                expected_kind: err.expected_kind(),
+                observed: err.observed(),
+            }
+        }
     }
 }
 

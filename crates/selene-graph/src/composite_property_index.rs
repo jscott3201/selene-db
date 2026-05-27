@@ -159,9 +159,14 @@ fn build_composite_property_index_inner(
         };
         match index.insert(&values, row) {
             Ok(()) => {}
-            Err(err) => match policy {
-                BuildPolicy::Strict => return Err(index_rejection(label, &properties, err)),
-                BuildPolicy::Lenient => warn_rejected("rebuild", label, &properties, row, &err),
+            Err(err) => match (&err, policy) {
+                (CompositeIndexValueError::ComponentAdmissionFailed { .. }, _)
+                | (_, BuildPolicy::Strict) => {
+                    return Err(index_rejection(label, &properties, err));
+                }
+                (_, BuildPolicy::Lenient) => {
+                    warn_rejected("rebuild", label, &properties, row, &err);
+                }
             },
         }
     }
@@ -208,7 +213,7 @@ fn insert_commit(
     row: u32,
 ) -> GraphResult<()> {
     if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).insert(values, row) {
-        warn_rejected("insert", label, &entry.declared_properties, row, &err);
+        return demote_or_promote(label, &entry.declared_properties, row, "insert", err);
     }
     Ok(())
 }
@@ -220,9 +225,33 @@ fn remove_commit(
     row: u32,
 ) -> GraphResult<()> {
     if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).remove(values, row) {
-        warn_rejected("remove", label, &entry.declared_properties, row, &err);
+        return demote_or_promote(label, &entry.declared_properties, row, "remove", err);
     }
     Ok(())
+}
+
+/// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
+/// single-key helper in [`crate::property_index`]. `ComponentAdmissionFailed`
+/// surfaces as [`GraphError::IndexAdmissionExhausted`]; `Component` (kind
+/// mismatch) and `ArityMismatch` keep their existing lenient / inconsistent
+/// shapes.
+fn demote_or_promote(
+    label: IStr,
+    properties: &[IStr],
+    row: u32,
+    op: &'static str,
+    err: CompositeIndexValueError,
+) -> GraphResult<()> {
+    match err {
+        CompositeIndexValueError::ComponentAdmissionFailed { .. }
+        | CompositeIndexValueError::ArityMismatch { .. } => {
+            Err(index_rejection(label, properties, err))
+        }
+        CompositeIndexValueError::Component { .. } => {
+            warn_rejected(op, label, properties, row, &err);
+            Ok(())
+        }
+    }
 }
 
 fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueError) -> GraphError {
@@ -247,24 +276,21 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             expected_kind,
             observed,
         },
-        // Commit 1 (BRIEF-153) preserves the existing silent-skip lenient
-        // behavior; Commit 2 routes this through a dedicated
-        // `GraphError::IndexAdmissionExhausted` so cap-exhaustion details
-        // surface intact. Carrying the IStr-pool source string in the
-        // observed slot until the variant lands keeps the lenient path
-        // diagnostic-equivalent for the moment.
+        // BRIEF-153: IStr-pool admission failure surfaces as the dedicated
+        // hard-error variant so the underlying CoreError chain (count, max)
+        // reaches the caller — `IndexValueRejected.observed` has no slot
+        // for it.
         CompositeIndexValueError::ComponentAdmissionFailed {
             index,
-            expected_kind,
-            reason: _,
-        } => GraphError::IndexValueRejected {
+            expected_kind: _,
+            reason,
+        } => GraphError::IndexAdmissionExhausted {
             label,
             property: properties
                 .get(index)
                 .copied()
                 .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
-            expected_kind,
-            observed: "ExternalString",
+            source: reason,
         },
     }
 }
