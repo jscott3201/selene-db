@@ -195,13 +195,46 @@ fn typed_key_admit_external_string_returns_string_key() {
     assert!(lookup(probe.as_ref()).is_none());
     let value = Value::ExternalString(Arc::clone(&probe));
 
-    let key = typed_key_admit(&value).expect("admission succeeds under the pool cap");
+    let key = typed_key_admit(&value, TypedIndexKind::String)
+        .expect("admission succeeds under the pool cap");
 
     let TypedKey::String(istr) = key else {
         panic!("expected TypedKey::String, got {key:?}");
     };
     assert_eq!(istr.as_str(), probe.as_ref());
     assert!(lookup(probe.as_ref()).is_some());
+}
+
+#[test]
+fn typed_key_admit_non_string_kind_with_external_string_does_not_admit() {
+    // BRIEF-153 fix-cycle C3: probing a non-STRING-kind admit path with a
+    // `Value::ExternalString` must fail KindMismatch BEFORE admitting the
+    // content to the global IStr pool — otherwise probing an I64 index with
+    // arbitrary ExternalString content amplifies into pool growth.
+    let probe = "typed_key_admit.kind_mismatch.unique-never-pooled";
+    assert!(lookup(probe).is_none());
+    let value = Value::ExternalString(Arc::<str>::from(probe));
+
+    for kind in [
+        TypedIndexKind::I64,
+        TypedIndexKind::F64,
+        TypedIndexKind::Date,
+        TypedIndexKind::LocalDateTime,
+        TypedIndexKind::Uuid,
+    ] {
+        let err = typed_key_admit(&value, kind).expect_err("non-STRING kind rejects");
+        assert!(matches!(
+            err,
+            TypedIndexValueError::KindMismatch {
+                observed: "ExternalString",
+                ..
+            }
+        ));
+    }
+    assert!(
+        lookup(probe).is_none(),
+        "no admission must have happened on any non-STRING kind probe"
+    );
 }
 
 #[test]
@@ -234,6 +267,31 @@ fn typed_key_lookup_external_string_returns_some_when_pre_admitted() {
         panic!("expected Ok(Some(String(_))), got {result:?}");
     };
     assert_eq!(istr, admitted);
+}
+
+#[test]
+fn lookup_eq_returns_none_for_kind_drift_under_open_graph() {
+    // BRIEF-153 fix-cycle C1: an open-graph index can have rows stored
+    // with values that don't match its declared kind (the commit path
+    // logs and skips kind drift). A query bound to `Value::ExternalString`
+    // against a non-STRING index must return `None` from `lookup_eq` so
+    // the caller drops to a linear scan + cross-variant `value_compare`.
+    // Returning `Some(empty)` would silently lose the drifted row.
+    let index = TypedIndex::new(TypedIndexKind::I64);
+    let probe_content = "lookup_eq.kind_drift.never_pooled";
+    assert!(lookup(probe_content).is_none());
+
+    let result = index.lookup_eq(&Value::ExternalString(Arc::<str>::from(probe_content)));
+
+    assert!(
+        result.is_none(),
+        "non-STRING-kind index with ExternalString probe must return None (scan fallback), \
+         got Some(_)"
+    );
+    assert!(
+        lookup(probe_content).is_none(),
+        "lookup_eq must not admit even on the kind-mismatch path"
+    );
 }
 
 #[test]

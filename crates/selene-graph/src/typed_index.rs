@@ -185,10 +185,7 @@ impl TypedIndex {
     /// Insert `row` into the bitmap for `value`.
     pub(crate) fn insert(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (
-            self,
-            typed_key_admit(value).map_err(|err| err.with_expected(expected_kind))?,
-        ) {
+        match (self, typed_key_admit(value, expected_kind)?) {
             (Self::I64(index), TypedKey::I64(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
@@ -226,10 +223,7 @@ impl TypedIndex {
     /// is pruned from the inner map.
     pub(crate) fn remove(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (
-            self,
-            typed_key_admit(value).map_err(|err| err.with_expected(expected_kind))?,
-        ) {
+        match (self, typed_key_admit(value, expected_kind)?) {
             (Self::I64(index), TypedKey::I64(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -264,17 +258,26 @@ impl TypedIndex {
     /// Return the rows matching `value` exactly.
     ///
     /// Returns `None` for kind-mismatched values (callers fall back to a
-    /// runtime scan). Returns `Some(empty)` when the value's kind matches
-    /// the index but its content is not in any indexed row — including the
-    /// case where `value` is a [`Value::ExternalString`] whose content has
-    /// never been admitted to the global [`IStr`] pool (the read path
-    /// MUST NOT admit; the absence of a pool entry proves the absence of an
-    /// indexed row).
+    /// runtime scan). For a [`Self::String`] index probed with a
+    /// [`Value::ExternalString`] whose content is not in the global
+    /// [`IStr`] pool, returns `Some(empty)` — kind matches, content can't
+    /// possibly be in the index, no admission. For any other kind the
+    /// `Ok(None)` case is treated as kind-mismatch (return `None`) so the
+    /// caller drops to a linear scan; under open-graph drift a row whose
+    /// stored value is `Value::String("foo")` would otherwise be lost from
+    /// an I64 index probed with `Value::ExternalString("foo")`.
     #[must_use]
     pub(crate) fn lookup_eq(&self, value: &Value) -> Option<Cow<'_, RoaringBitmap>> {
         let key = match typed_key_lookup(value) {
             Ok(Some(key)) => key,
-            Ok(None) => return Some(Cow::Owned(RoaringBitmap::new())),
+            // Only String-kind indexes treat "ExternalString content not in
+            // the pool" as a definitive empty result. Other index kinds drop
+            // to scan fallback so open-graph drift remains discoverable via
+            // cross-variant `value_compare`.
+            Ok(None) if matches!(self, Self::String(_)) => {
+                return Some(Cow::Owned(RoaringBitmap::new()));
+            }
+            Ok(None) => return None,
             Err(_) => return None,
         };
         match (self, key) {
@@ -464,20 +467,6 @@ pub(crate) enum TypedIndexValueError {
 }
 
 impl TypedIndexValueError {
-    fn with_expected(self, expected_kind: TypedIndexKind) -> Self {
-        match self {
-            Self::KindMismatch { observed, .. } => Self::KindMismatch {
-                expected_kind,
-                observed,
-            },
-            Self::NaN { .. } => Self::NaN { expected_kind },
-            Self::AdmissionFailed { reason, .. } => Self::AdmissionFailed {
-                expected_kind,
-                reason,
-            },
-        }
-    }
-
     /// Return the expected index kind.
     pub(crate) fn expected_kind(&self) -> TypedIndexKind {
         match self {
@@ -522,14 +511,36 @@ impl TypedKey {
 
 /// Write-side coercion of `value` into a [`TypedKey`].
 ///
-/// [`Value::ExternalString`] is the only variant that may admit to the
-/// global [`IStr`] pool here: when the index is `STRING`-kind and the
-/// content is not yet pooled, [`selene_core::intern`] is invoked and the
-/// returned handle becomes the index key. Cap exhaustion at the pool
-/// surfaces as [`TypedIndexValueError::AdmissionFailed`], which the
-/// mutator promotes to a hard
-/// [`crate::error::GraphError::IndexAdmissionExhausted`] (BRIEF-153).
-fn typed_key_admit(value: &Value) -> Result<TypedKey, TypedIndexValueError> {
+/// [`Value::ExternalString`] admission is **gated on `expected_kind` being
+/// [`TypedIndexKind::String`]**. Probing a non-STRING index with an
+/// `ExternalString` would otherwise grow the global [`IStr`] pool just
+/// for the outer `match (self, key)` to reject it on kind mismatch — a
+/// DoS amplifier near pool-cap exhaustion (BRIEF-153 fix-cycle C3). For
+/// any other (kind, value) pair the function routes through the
+/// non-admitting body. Cap exhaustion on the admit branch surfaces as
+/// [`TypedIndexValueError::AdmissionFailed`], which the mutator promotes
+/// to [`crate::error::GraphError::IndexAdmissionExhausted`].
+fn typed_key_admit(
+    value: &Value,
+    expected_kind: TypedIndexKind,
+) -> Result<TypedKey, TypedIndexValueError> {
+    if let Value::ExternalString(content) = value {
+        if expected_kind == TypedIndexKind::String {
+            return match selene_core::intern(content.as_ref()) {
+                Ok(interned) => Ok(TypedKey::String(interned)),
+                Err(reason) => Err(TypedIndexValueError::AdmissionFailed {
+                    expected_kind: TypedIndexKind::String,
+                    reason,
+                }),
+            };
+        }
+        // Non-STRING target — short-circuit BEFORE admitting so the global
+        // pool never grows on a kind-mismatched probe.
+        return Err(TypedIndexValueError::KindMismatch {
+            expected_kind,
+            observed: "ExternalString",
+        });
+    }
     match value {
         Value::Int(value) => Ok(TypedKey::I64(*value)),
         Value::Float(value) => NotNanF64::new(*value)
@@ -538,18 +549,11 @@ fn typed_key_admit(value: &Value) -> Result<TypedKey, TypedIndexValueError> {
                 expected_kind: TypedIndexKind::F64,
             }),
         Value::String(value) => Ok(TypedKey::String(*value)),
-        Value::ExternalString(value) => match selene_core::intern(value.as_ref()) {
-            Ok(interned) => Ok(TypedKey::String(interned)),
-            Err(reason) => Err(TypedIndexValueError::AdmissionFailed {
-                expected_kind: TypedIndexKind::String,
-                reason,
-            }),
-        },
         Value::Date(value) => Ok(TypedKey::Date(*value)),
         Value::LocalDateTime(value) => Ok(TypedKey::LocalDateTime(*value)),
         Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
         _ => Err(TypedIndexValueError::KindMismatch {
-            expected_kind: TypedIndexKind::I64,
+            expected_kind,
             observed: observed_value_kind(value),
         }),
     }
