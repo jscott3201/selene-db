@@ -1,7 +1,9 @@
 //! Shared helpers for index-aware optimizer rules.
 
+use selene_core::IStr;
+
 use crate::{
-    GqlType, LabelExpr, Literal, ValueExpr,
+    FilterPredicate, GqlType, LabelExpr, Literal, ValueExpr,
     analyze::BindingId,
     plan::{BindingDef, BindingElement, IndexKey, IndexKind, IndexTarget, optimize::binding_refs},
 };
@@ -12,6 +14,47 @@ pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::ISt
         Some(LabelExpr::Single(label)) => Some(*label),
         _ => None,
     }
+}
+
+/// Return the flat list of single labels carried by a `Disjunction` label
+/// expression, or `None` if the expression is not a flat disjunction of
+/// singles (or is anything other than `Disjunction`).
+///
+/// IMPORTANT — idempotency contract: this helper returns `None` for
+/// `LabelExpr::Single`. The `disjunctive_label_expansion` rule wraps a
+/// `Disjunction` into a `JoinTree::DisjunctiveScan`; after expansion, every
+/// branch's `label_predicate` is `Some(LabelExpr::Single(L_i))`. If this
+/// helper returned `Some(vec![L])` for `Single(L)`, the rule would
+/// re-fire on every branch in the next optimizer iteration, looping until
+/// `max_optimizer_iterations` caps with a wrong plan. Returning `None`
+/// makes the rule a no-op on already-expanded branches.
+///
+/// Returns `None` for:
+/// - `LabelExpr::Single(_)` (idempotency — see above; also the
+///   single-label-MATCH case the rule should never re-shape).
+/// - `LabelExpr::Conjunction(..)` (intersection semantics; out of scope).
+/// - `LabelExpr::Negation(..)` (complement semantics; out of scope).
+/// - `LabelExpr::Wildcard` (matches any label; expansion would be infinite).
+/// - `None` (no label predicate; nothing to expand).
+/// - `Disjunction` whose parts contain any non-`Single` inner branch
+///   (`A|B&C`, `A|!B`, etc. — F10 fold).
+///
+/// `LabelExpr::Disjunction` wraps `Vec2OrMore<LabelExpr>`
+/// (`ast/util.rs:142-201`), so a returned `Some(parts)` always has
+/// `parts.len() >= 2` — no empty/1-element edge case to handle.
+pub(super) fn flat_disjunction_singles(
+    label: &Option<LabelExpr>,
+) -> Option<Vec<selene_core::IStr>> {
+    let Some(LabelExpr::Disjunction(parts)) = label else {
+        return None;
+    };
+    parts
+        .iter()
+        .map(|part| match part {
+            LabelExpr::Single(label) => Some(*label),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Return the target kind for a binding element.
@@ -76,6 +119,77 @@ pub(super) fn compatible_value(value: &ValueExpr, kind: IndexKind) -> Option<Ind
         declared_type: param.declared_type.cloned(),
         span: param.span,
     })
+}
+
+/// One equality-shaped property predicate against a node binding.
+///
+/// Carries the candidate's `property_predicates` index, the property key, and
+/// a borrow of the equality value (literal or parameter) so the caller can
+/// downstream-validate the value against an index kind via [`compatible_value`].
+///
+/// Lifted from `composite_index_lookup.rs` so both the composite-index rule
+/// and the disjunctive-label-expansion applicability gate (BRIEF-155) can
+/// share the equality-candidate collection logic.
+#[derive(Clone)]
+pub(super) struct EqualityCandidate<'a> {
+    /// Position of the candidate within the scan's `property_predicates`.
+    pub(super) index: usize,
+    /// Property key the equality predicate references.
+    pub(super) key: IStr,
+    /// Equality value (literal or parameter slot).
+    pub(super) value: &'a ValueExpr,
+}
+
+/// Collect the equality-shaped node-binding predicates from a scan's
+/// `property_predicates`.
+///
+/// Filters down to:
+/// - bindings of [`BindingElement::Node`] (composite indexes are node-only at HEAD).
+/// - shape [`binding_refs::PropertyPredicateShape::Equality`].
+/// - value either a literal or a parameter slot.
+/// - per-key dedup — only the first predicate per property key is kept (any
+///   further equalities on the same key stay residual).
+pub(super) fn equality_candidates<'a>(
+    predicates: &'a [FilterPredicate],
+    bindings: &'a [BindingDef],
+) -> Vec<EqualityCandidate<'a>> {
+    let mut candidates: Vec<EqualityCandidate<'a>> = Vec::new();
+    for (index, pred) in predicates.iter().enumerate() {
+        let Some(matched) = binding_refs::match_property_predicate(pred, bindings) else {
+            continue;
+        };
+        let binding_id = matched.binding;
+        let Some(binding_def) = bindings
+            .iter()
+            .find(|binding| binding.binding == binding_id)
+        else {
+            continue;
+        };
+        if binding_def.element != BindingElement::Node {
+            continue;
+        }
+        if candidates
+            .iter()
+            .any(|candidate| candidate.key == matched.key)
+        {
+            continue;
+        }
+        let binding_refs::PropertyPredicateShape::Equality(value) = matched.shape else {
+            continue;
+        };
+        // Accept either a literal or a parameter slot. Per-component kind
+        // checks (literal kind, typed-parameter compatibility) happen in the
+        // caller once the per-column IndexKind is known.
+        if binding_refs::literal(value).is_none() && binding_refs::parameter(value).is_none() {
+            continue;
+        }
+        candidates.push(EqualityCandidate {
+            index,
+            key: matched.key,
+            value,
+        });
+    }
+    candidates
 }
 
 /// Return whether a typed parameter declaration is compatible with the

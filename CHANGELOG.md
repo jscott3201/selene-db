@@ -13,6 +13,33 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `selene-gql` planner: `MATCH (n:A|B|C) WHERE ...` flat-disjunctive-label
+  patterns now expand to per-label sub-plans wrapped in a new
+  `JoinTree::DisjunctiveScan` IR variant when at least one branch has an
+  applicable per-label typed/composite/in-list index. Closes the ergonomic
+  gap where downstream consumers had to manually construct UNION ALL
+  across label families to get index-accelerated lookups. EXPLAIN renders
+  the expanded plan transparently (one ScanSnapshot per branch). The
+  executor dedups branch outputs by `NodeId` at the `JoinTree::DisjunctiveScan`
+  arm, so a node carrying labels A AND B appears exactly once in the
+  unioned binding table — matching the unexpanded
+  `LabelExpr::Disjunction(any(...))` semantics and preserving the
+  catalog-present vs catalog-absent invariant across COUNT / LIMIT /
+  aggregates. Edge label disjunction stays Linear (no edge-index rules at
+  HEAD; tracked in post-1.0 backlog). The `disjunctive_label_expansion`
+  rule lands at slot 5 in `DEFAULT_RULES`. (BRIEF-155 / ariadne #2)
+- `selene-gql::plan::ir::JoinTree`: new `DisjunctiveScan { branches:
+  Vec<NodeOrEdgeScan>, scan_anchor: NodeOrEdgeScan }` variant. Internal
+  IR — only the planner constructs it. `JoinTree` is `#[non_exhaustive]`,
+  so in-crate exhaustive matches compile-break; downstream wildcards
+  should add an explicit arm (`branches.first_mut()` is a reasonable
+  default for "first scan" helpers — selene-testing's `first_scan_mut`
+  models this). (BRIEF-155)
+- `docs/gql-reference.md`: clarified `LIMIT N` in a composite query
+  (`A UNION ALL B`) attaches statically to the syntactic arm it sits
+  within — `... B LIMIT N` limits arm B only; arm A runs unlimited. Use
+  `CALL { ... } RETURN ... LIMIT N` to limit the union total.
+  (BRIEF-155 / ariadne #3)
 - `selene-gql::ScanAccess::TypedIndexRange` / `BitmapUnion` /
   `CompositeLookup` now carry `IndexKey { Literal, Parameter }` in their key
   slots (was bare `Literal`). Parameterized equality + range + InList

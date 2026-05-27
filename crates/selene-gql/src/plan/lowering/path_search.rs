@@ -46,6 +46,12 @@ fn final_binding(tree: &JoinTree, span: SourceSpan) -> Result<TailBinding, Plann
             .first()
             .and_then(|tree| final_binding(tree, span).ok()),
         JoinTree::Subplan(_) => None,
+        JoinTree::DisjunctiveScan { .. } => {
+            // DisjunctiveScan is emitted by the disjunctive_label_expansion
+            // optimizer rule (post-lowering); path-search lowering runs
+            // during MATCH-clause lowering, before any optimizer rule fires.
+            unreachable!("DisjunctiveScan is rule-emitted post-lowering")
+        }
     }
     .ok_or(PlannerError::NotImplemented {
         feature: "path selector without source/final node binding",
@@ -112,6 +118,12 @@ fn collect_hop_contributors(
                 feature: "path selector over non-path subquery; ISO path selectors apply to path patterns",
                 span,
             });
+        }
+        JoinTree::DisjunctiveScan { .. } => {
+            // DisjunctiveScan is emitted by the disjunctive_label_expansion
+            // optimizer rule (post-lowering); hop-contributor collection runs
+            // during MATCH-clause lowering, before any optimizer rule fires.
+            unreachable!("DisjunctiveScan is rule-emitted post-lowering")
         }
     }
     Ok(())

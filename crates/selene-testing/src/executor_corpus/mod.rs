@@ -409,13 +409,33 @@ fn planned(source: &str, registry: &dyn selene_gql::ProcedureRegistry) -> Execut
 }
 
 fn first_scan_mut(tree: &mut JoinTree) -> Option<&mut selene_gql::NodeOrEdgeScan> {
+    // Enumerate every variant of `JoinTree` explicitly. `JoinTree` is
+    // `#[non_exhaustive]` upstream, so a wildcard arm is still mandatory
+    // here — but listing every variant by name first means any new variant
+    // will cause an `unreachable_patterns` warning if we forget to fold its
+    // semantics in (the wildcard would silently subsume it). Catches one
+    // class of drift per `[[feedback_signature_change_helper_audit]]`.
     match tree {
         JoinTree::Scan(scan) => Some(scan),
         JoinTree::Expand { child, .. } => first_scan_mut(child),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             first_scan_mut(left).or_else(|| first_scan_mut(right))
         }
-        JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => None,
+        // For a disjunctive-label expansion, the natural "first scan" for
+        // test-fixture label mutation is the first branch (also a
+        // `NodeOrEdgeScan`). Branches share the same binding ID, so mutating
+        // the first branch's label semantically matches mutating the
+        // pre-expansion scan's label_predicate.
+        JoinTree::DisjunctiveScan { branches, .. } => branches.first_mut(),
+        JoinTree::Questioned { .. }
+        | JoinTree::Repeat { .. }
+        | JoinTree::PathSearch { .. }
+        | JoinTree::PathModeFilter { .. }
+        | JoinTree::WorstCaseOptimal { .. }
+        | JoinTree::Subplan(_) => None,
+        // Required for `#[non_exhaustive]` cross-crate; semantics for any
+        // future variant default to "no first scan" until the corresponding
+        // arm above is added consciously.
         _ => None,
     }
 }

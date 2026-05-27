@@ -80,6 +80,12 @@ fn collect_path_contributors(
                 span,
             });
         }
+        JoinTree::DisjunctiveScan { .. } => {
+            // DisjunctiveScan is emitted by the disjunctive_label_expansion
+            // optimizer rule (post-lowering); path-mode lowering runs during
+            // MATCH-clause lowering, before any optimizer rule fires.
+            unreachable!("DisjunctiveScan is rule-emitted post-lowering")
+        }
     }
     Ok(())
 }

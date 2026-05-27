@@ -68,6 +68,15 @@ fn reorder_tree(tree: &mut JoinTree, bindings: &[BindingDef], ctx: &OptimizeCont
         JoinTree::PathSearch { .. } | JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => {
             false
         }
+        // Reorder each branch's residual predicates independently. After
+        // index-rule rewrites, each branch's `property_predicates` carries
+        // only the residual (non-consumed) filters; selectivity ordering
+        // applies per branch.
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            branches.iter_mut().fold(false, |changed, branch| {
+                reorder_bucket(&mut branch.property_predicates, ctx, &scan_ctx) | changed
+            })
+        }
     }
 }
 

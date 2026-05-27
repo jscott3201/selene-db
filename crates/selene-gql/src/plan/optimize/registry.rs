@@ -3,9 +3,9 @@
 use crate::plan::optimize::{
     Rule,
     rules::{
-        AndSplitting, CompositeIndexLookup, ConstantFolding, ExpandFilterPushdown, FilterPushdown,
-        InListOptimization, IndexOrder, NodeFilterExtraction, PredicateReorder, RangeIndexScan,
-        SymmetryBreaking, TopK, WcoJoin,
+        AndSplitting, CompositeIndexLookup, ConstantFolding, DisjunctiveLabelExpansion,
+        ExpandFilterPushdown, FilterPushdown, InListOptimization, IndexOrder, NodeFilterExtraction,
+        PredicateReorder, RangeIndexScan, SymmetryBreaking, TopK, WcoJoin,
     },
 };
 
@@ -16,6 +16,7 @@ pub static DEFAULT_RULES: &[&'static dyn Rule] = &[
     &FilterPushdown,
     &NodeFilterExtraction,
     &ExpandFilterPushdown,
+    &DisjunctiveLabelExpansion,
     &CompositeIndexLookup,
     &InListOptimization,
     &RangeIndexScan,
@@ -33,6 +34,7 @@ pub static RULE_NAMES: &[&str] = &[
     "filter_pushdown",
     "node_filter_extraction",
     "expand_filter_pushdown",
+    "disjunctive_label_expansion",
     "composite_index_lookup",
     "in_list_optimization",
     "range_index_scan",

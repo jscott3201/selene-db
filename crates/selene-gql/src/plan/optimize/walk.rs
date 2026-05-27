@@ -181,6 +181,8 @@ pub(crate) fn walk_expand_nodes(
             walk_expand_nodes(left, visit) | walk_expand_nodes(right, visit)
         }
         JoinTree::Outer { left, .. } => walk_expand_nodes(left, visit),
+        // DisjunctiveScan branches are leaf scans; no Expand under them.
+        JoinTree::DisjunctiveScan { .. } => false,
     }
 }
 
@@ -199,6 +201,8 @@ fn recurse_join_tree_subplans(
             recurse_join_tree_subplans(left, visit) | recurse_join_tree_subplans(right, visit)
         }
         JoinTree::Subplan(plan) => recurse_plan_box(plan, visit),
+        // DisjunctiveScan branches are leaf scans; no nested ExecutionPlan.
+        JoinTree::DisjunctiveScan { .. } => false,
     }
 }
 
@@ -272,6 +276,13 @@ fn walk_join_tree_exprs(
                 | walk_predicates(right_filters, bindings, visit)
         }
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        // Walk each branch's property predicates. Per-branch scans are leaves
+        // with no edge or nested tree to recurse through.
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            branches.iter_mut().fold(false, |changed, branch| {
+                walk_predicates(&mut branch.property_predicates, bindings, visit) | changed
+            })
+        }
     }
 }
 

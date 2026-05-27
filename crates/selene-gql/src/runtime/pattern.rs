@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use selene_core::{IStr, Value};
+use rustc_hash::FxHashSet;
+use selene_core::{IStr, NodeId, Value};
 
 use crate::{
     AnalyzedType, BindingElement, BindingId, BindingTableColumn, BindingTableSchema,
@@ -135,6 +136,75 @@ pub(crate) fn walk_join_tree(
         } => outer::execute(left, right, key, right_filters, env),
         JoinTree::WorstCaseOptimal { intersection, .. } => wco::execute_phase_a(intersection, env),
         JoinTree::Subplan(plan) => subplan::execute(plan, env.schema, env.seed, env.ctx),
+        // Iterate each per-label branch and dedup the resulting `Binding`
+        // rows by the scan anchor's `NodeId`. A node carrying labels A AND B
+        // would otherwise appear in both branch-A and branch-B candidate
+        // rows (a per-branch `UNION ALL` shape), which would change query
+        // semantics observably (COUNT, LIMIT, aggregates) based on whether
+        // the disjunctive-label-expansion rule fired vs the unexpanded
+        // `LabelExpr::Disjunction(any(...))` filter that visits each node
+        // once. The dedup at JoinTree-level restores the
+        // catalog-present-vs-catalog-absent invariant: same query + same
+        // data => same rows out, regardless of which optimizer rule slot
+        // fired (BRIEF-155 PR #177 Codex C1).
+        //
+        // Dedup happens here, before downstream pipeline ops (LIMIT, ORDER
+        // BY, GROUP BY, Distinct), so the union-then-dedup'd binding table
+        // is what those ops see — preserving the option-b architecture
+        // advantage (single union point, no per-branch pipeline fan-out).
+        //
+        // `scan_anchor` carries the original disjunctive `label_predicate`
+        // for EXPLAIN diagnostics and IR round-trips; at execute time we
+        // also use its binding / hidden-binding IDs to locate the column
+        // that holds the per-row `Value::NodeRef(NodeId)` for dedup. All
+        // branches inherit those IDs from `scan_anchor` (constructed by
+        // `plan/optimize/rules/disjunctive_label_expansion.rs`), so all
+        // branches write into the same column.
+        //
+        // The rule is gated to `ScanKind::Node` (see
+        // `disjunctive_label_expansion::maybe_expand_scan`), so the anchor
+        // column always carries `Value::NodeRef` (per
+        // `runtime/scan::entity_value`). The non-`NodeRef` arm is
+        // defensive and currently unreachable.
+        JoinTree::DisjunctiveScan {
+            branches,
+            scan_anchor,
+        } => {
+            let anchor_index = scan_anchor
+                .binding
+                .and_then(|binding_id| binding_index(env.pattern, env.schema, binding_id))
+                .or_else(|| {
+                    scan_anchor
+                        .hidden_binding
+                        .and_then(|hidden_id| hidden_index(env.schema, hidden_id))
+                })
+                .ok_or(ExecutorError::ImplementationDefined {
+                    detail: "DisjunctiveScan anchor binding missing from pattern schema",
+                })?;
+            let mut seen: FxHashSet<NodeId> = FxHashSet::default();
+            let mut rows = Vec::new();
+            for branch in branches {
+                for binding in
+                    scan::scan_pattern(branch, env.pattern, env.schema, env.seed, env.ctx)?
+                {
+                    match binding.get(anchor_index) {
+                        Some(Value::NodeRef(id)) => {
+                            if seen.insert(*id) {
+                                rows.push(binding);
+                            }
+                        }
+                        _ => {
+                            // Defensive: rule is gated to ScanKind::Node, so
+                            // this arm is unreachable. Preserve the row
+                            // rather than silently drop it on the impossible
+                            // variant.
+                            rows.push(binding);
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        }
     }
 }
 
@@ -204,6 +274,11 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             }
         }
         JoinTree::Subplan(_) => {}
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            for branch in branches {
+                insert_hidden(slots, branch.hidden_binding, branch.kind);
+            }
+        }
     }
 }
 

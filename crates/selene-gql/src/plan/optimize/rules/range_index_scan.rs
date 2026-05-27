@@ -57,6 +57,14 @@ fn rewrite_tree(
             rewrite_tree(child, bindings, catalog)
         }
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
+        // Walk each per-label branch; the disjunctive_label_expansion rule
+        // runs at slot 5 (before this rule), so DisjunctiveScan only carries
+        // single-label branches by the time we get here.
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            branches.iter_mut().fold(false, |changed, branch| {
+                rewrite_scan(branch, bindings, catalog) | changed
+            })
+        }
     }
 }
 

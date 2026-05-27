@@ -75,6 +75,9 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
         | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => false,
+        // DisjunctiveScan is a scan-shape leaf; not a cyclic expand chain
+        // and not a recursive container WCO can rewrite into.
+        JoinTree::DisjunctiveScan { .. } => false,
     }
 }
 
@@ -132,6 +135,10 @@ fn detect_cycle(
         | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
+        // DisjunctiveScan can't appear inside a cyclic expand chain — it
+        // replaces a JoinTree::Scan leaf, and Expand requires its child be
+        // either Scan or Expand (see line 109 above).
+        JoinTree::DisjunctiveScan { .. } => None,
     }
 }
 
@@ -172,5 +179,8 @@ fn collect_cycle_nodes(
         | JoinTree::PathModeFilter { .. }
         | JoinTree::WorstCaseOptimal { .. }
         | JoinTree::Subplan(_) => None,
+        // DisjunctiveScan can't appear inside the cycle the collector walks
+        // (the chain is anchored on a Scan + Expand sequence per `detect_cycle`).
+        JoinTree::DisjunctiveScan { .. } => None,
     }
 }

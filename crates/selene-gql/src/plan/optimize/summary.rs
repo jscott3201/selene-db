@@ -506,6 +506,14 @@ fn collect_scans(
                 collect_scans(&pattern.join_tree, &binding_map(&pattern.bindings), scans);
             }
         }
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            // Render one ScanSnapshot per branch so EXPLAIN exposes each
+            // branch's independently-selected ScanAccess (acceptance bar
+            // #1; Q5 transparent rendering).
+            for branch in branches {
+                scans.push(scan_snapshot(branch, bindings));
+            }
+        }
     }
 }
 
@@ -604,6 +612,9 @@ fn join_tree_shape(tree: &JoinTree, bindings: &BTreeMap<BindingId, String>) -> S
                 "Subplan({})",
                 PlanSnapshot::from_plan(plan, Vec::new()).compact()
             )
+        }
+        JoinTree::DisjunctiveScan { branches, .. } => {
+            format!("Disjunctive({} branches)", branches.len())
         }
     }
 }

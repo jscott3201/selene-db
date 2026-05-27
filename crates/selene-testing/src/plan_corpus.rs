@@ -82,6 +82,12 @@ impl PlanCorpus {
             .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
             .with_node_typed_index(istr("Person"), istr("email"), IndexKind::String)
             .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
+            // BRIEF-155 disjunctive-label-expansion corpus entry uses
+            // `(n:Person|Account|Robot)` with a per-label `email` index,
+            // so the rule's index-applicability gate finds a matching
+            // typed index on every branch.
+            .with_node_typed_index(istr("Account"), istr("email"), IndexKind::String)
+            .with_node_typed_index(istr("Robot"), istr("email"), IndexKind::String)
             .with_node_composite_index(
                 istr("Purchase"),
                 vec![
@@ -252,6 +258,19 @@ const ENTRIES: &[PlanCorpusEntry] = &[
             "filter_pushdown",
             "node_filter_extraction",
             "in_list_optimization",
+        ],
+        uses_index_catalog: true,
+        registry: PlanCorpusRegistry::Empty,
+    },
+    PlanCorpusEntry {
+        slug: "disjunctive_label_expansion_email",
+        description: "Flat-disjunctive label predicate with a per-label email index expands to a JoinTree::DisjunctiveScan whose branches each pick TypedIndexRange.",
+        source: "MATCH (n:Person|Account|Robot) WHERE n.email = 'foo@example.com' RETURN n",
+        category: PlanCorpusCategory::Read,
+        expected_rules: &[
+            "node_filter_extraction",
+            "disjunctive_label_expansion",
+            "range_index_scan",
         ],
         uses_index_catalog: true,
         registry: PlanCorpusRegistry::Empty,

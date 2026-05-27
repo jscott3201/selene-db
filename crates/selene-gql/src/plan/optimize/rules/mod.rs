@@ -3,6 +3,7 @@
 mod and_splitting;
 mod composite_index_lookup;
 mod constant_folding;
+mod disjunctive_label_expansion;
 mod expand_filter_pushdown;
 mod filter_pushdown;
 mod in_list_optimization;
@@ -18,6 +19,7 @@ mod wco_join;
 pub use and_splitting::AndSplitting;
 pub use composite_index_lookup::CompositeIndexLookup;
 pub use constant_folding::ConstantFolding;
+pub use disjunctive_label_expansion::DisjunctiveLabelExpansion;
 pub use expand_filter_pushdown::ExpandFilterPushdown;
 pub use filter_pushdown::FilterPushdown;
 pub use in_list_optimization::InListOptimization;

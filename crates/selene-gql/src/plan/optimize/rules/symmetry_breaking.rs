@@ -75,5 +75,7 @@ fn rewrite_tree(tree: &mut JoinTree, cap: u32) -> bool {
             rewrite_tree(left, cap) | rewrite_tree(right, cap)
         }
         JoinTree::Scan(_) | JoinTree::PathSearch { .. } | JoinTree::Subplan(_) => false,
+        // DisjunctiveScan branches are scan-shape leaves; no WCO under them.
+        JoinTree::DisjunctiveScan { .. } => false,
     }
 }

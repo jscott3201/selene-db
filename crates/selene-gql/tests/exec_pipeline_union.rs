@@ -103,6 +103,26 @@ fn union_of_empty_and_populated_returns_populated() {
 }
 
 #[test]
+fn three_arm_union_with_middle_limit_is_per_arm_static_attachment() {
+    // BRIEF-155 ride-along (#3): `A UNION ALL B LIMIT N UNION ALL C` —
+    // grammar.pest binds the LIMIT to arm B's pipeline_statement+ only.
+    // Arms A and C run unlimited; arm B is capped at LIMIT N. Result is
+    // A_rows ++ first-N-of-B ++ C_rows.
+    let table = execute_read(
+        "RETURN 1 AS n \
+         UNION ALL \
+         RETURN 2 AS n LIMIT 0 \
+         UNION ALL \
+         RETURN 3 AS n",
+    );
+    assert_eq!(
+        column_values(&table, "n"),
+        vec![Value::Int(1), Value::Int(3)],
+        "arm B (LIMIT 0) yields nothing; arms A and C are unaffected"
+    );
+}
+
+#[test]
 fn union_uses_lhs_schema_when_arms_have_different_column_names() {
     let table = execute_read("RETURN 1 AS lhs_name UNION ALL RETURN 2 AS rhs_name");
 

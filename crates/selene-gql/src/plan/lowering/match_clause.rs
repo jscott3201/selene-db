@@ -675,5 +675,11 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             intersection.first().and_then(chain_tail_binding)
         }
         JoinTree::Subplan(_) => None,
+        JoinTree::DisjunctiveScan { .. } => {
+            // DisjunctiveScan is emitted by the disjunctive_label_expansion
+            // optimizer rule (post-lowering); chain_tail_binding only runs
+            // during MATCH-clause lowering, before any optimizer rule fires.
+            unreachable!("DisjunctiveScan is rule-emitted post-lowering")
+        }
     }
 }
