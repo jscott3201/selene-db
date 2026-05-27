@@ -199,7 +199,11 @@ fn disjunctive_scan_executor_dedups_multi_label_node() {
             );
         }
     }
-    assert_eq!(seen.len(), 3, "exactly 3 distinct NodeIds in the deduped row set");
+    assert_eq!(
+        seen.len(),
+        3,
+        "exactly 3 distinct NodeIds in the deduped row set"
+    );
 
     // Sanity: the Gamma label does NOT appear; this only matters if the rule
     // accidentally added a third branch. `count_rows == 3` already pins this,
