@@ -1,0 +1,18 @@
+---
+source: crates/selene-gql/tests/plan_snapshot_corpus.rs
+assertion_line: 29
+expression: snapshot.to_string()
+---
+fired_rules: node_filter_extraction, disjunctive_label_expansion, range_index_scan
+output: [n]
+pattern:
+  bindings: 1 [n]
+  join_tree: Disjunctive(3 branches)
+  pattern_filters: 0
+  scans:
+    - n (Node): TypedIndexRange [bounds=Equality(STRING 'foo@example.com')] residual=0 consumed=0
+    - n (Node): TypedIndexRange [bounds=Equality(STRING 'foo@example.com')] residual=0 consumed=0
+    - n (Node): TypedIndexRange [bounds=Equality(STRING 'foo@example.com')] residual=0 consumed=0
+  order_access: []
+pipeline:
+  - Project(columns=[n])
