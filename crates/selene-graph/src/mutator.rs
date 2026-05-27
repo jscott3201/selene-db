@@ -67,13 +67,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &labels,
                 &props,
                 row as u32,
-            );
+            )?;
             crate::composite_property_index::apply_node_create(
                 &mut graph.composite_property_index,
                 &labels,
                 &props,
                 row as u32,
-            );
+            )?;
         }
         self.txn.changes.push(Change::NodeCreated {
             id,
@@ -208,7 +208,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_labels,
                 &new_props,
                 row as u32,
-            );
+            )?;
             crate::composite_property_index::apply_node_update(
                 &mut graph.composite_property_index,
                 &old_labels,
@@ -216,7 +216,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_labels,
                 &new_props,
                 row as u32,
-            );
+            )?;
         }
 
         self.txn.changes.push(Change::NodeUpdated {
@@ -282,13 +282,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &labels,
                 &props,
                 row as u32,
-            );
+            )?;
             crate::composite_property_index::apply_node_delete(
                 &mut graph.composite_property_index,
                 &labels,
                 &props,
                 row as u32,
-            );
+            )?;
             graph.node_store.alive.remove(row as u32);
         }
         self.txn.changes.push(Change::NodeDeleted { id });

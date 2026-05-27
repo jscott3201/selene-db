@@ -39,7 +39,7 @@ fn rows(
         return RoaringBitmap::new();
     };
     let refs = values.iter().collect::<Vec<_>>();
-    let key = entry.index.key_from_values(&refs).unwrap();
+    let key = entry.index.key_from_values_admit(&refs).unwrap();
     entry.index.lookup_key(&key).cloned().unwrap_or_default()
 }
 
@@ -65,7 +65,7 @@ fn apply_create_update_delete_moves_composite_rows() {
         (location, Value::String(intern("north").unwrap())),
     ]);
 
-    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 3);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 3).unwrap();
     assert!(
         rows(
             &indexes,
@@ -83,7 +83,8 @@ fn apply_create_update_delete_moves_composite_rows() {
         &LabelSet::single(label),
         &new_props,
         3,
-    );
+    )
+    .unwrap();
     assert!(
         rows(
             &indexes,
@@ -103,7 +104,7 @@ fn apply_create_update_delete_moves_composite_rows() {
         .contains(3)
     );
 
-    apply_node_delete(&mut indexes, &LabelSet::single(label), &new_props, 3);
+    apply_node_delete(&mut indexes, &LabelSet::single(label), &new_props, 3).unwrap();
     assert!(
         rows(
             &indexes,
@@ -129,7 +130,7 @@ fn apply_create_skips_partial_composite_values() {
     );
     let props = property_map([(ts, Value::Int(1))]);
 
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0).unwrap();
 
     let entry = indexes
         .values()
@@ -155,7 +156,7 @@ fn apply_update_label_remove_deletes_composite_row() {
         (ts, Value::Int(1)),
         (location, Value::String(intern("north").unwrap())),
     ]);
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 8);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 8).unwrap();
 
     apply_node_update(
         &mut indexes,
@@ -164,7 +165,8 @@ fn apply_update_label_remove_deletes_composite_row() {
         &LabelSet::new(),
         &props,
         8,
-    );
+    )
+    .unwrap();
 
     assert!(
         rows(

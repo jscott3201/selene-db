@@ -21,15 +21,16 @@ pub(crate) fn apply_node_create(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for label in labels.iter().copied() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            insert_commit(indexes, label, *property, value, row);
+            insert_commit(indexes, label, *property, value, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_delete(
@@ -37,15 +38,16 @@ pub(crate) fn apply_node_delete(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for label in labels.iter().copied() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            remove_commit(indexes, label, *property, value, row);
+            remove_commit(indexes, label, *property, value, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_update(
@@ -55,7 +57,7 @@ pub(crate) fn apply_node_update(
     new_labels: &LabelSet,
     new_props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     // Iterate only registered indexes whose `(label, property)` is reachable
     // from this update — i.e., the label appears on either side and the
     // property exists on either side. Index-count grows independently of
@@ -69,12 +71,13 @@ pub(crate) fn apply_node_update(
             continue;
         }
         if let Some(value) = old_value {
-            remove_commit(indexes, label, property, value, row);
+            remove_commit(indexes, label, property, value, row)?;
         }
         if let Some(value) = new_value {
-            insert_commit(indexes, label, property, value, row);
+            insert_commit(indexes, label, property, value, row)?;
         }
     }
+    Ok(())
 }
 
 /// Return the set of registered `(label, property)` keys that this update
@@ -178,7 +181,7 @@ fn build_property_index_inner(
             Ok(()) => {}
             Err(err) => match policy {
                 BuildPolicy::Strict => return Err(index_rejection(label, property, err)),
-                BuildPolicy::Lenient => warn_rejected("rebuild", label, property, row, err),
+                BuildPolicy::Lenient => warn_rejected("rebuild", label, property, row, &err),
             },
         }
     }
@@ -239,12 +242,13 @@ fn insert_commit(
     property: IStr,
     value: &Value,
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Some(index) = indexes.get_mut(&(label, property))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
     {
-        warn_rejected("insert", label, property, row, err);
+        warn_rejected("insert", label, property, row, &err);
     }
+    Ok(())
 }
 
 fn remove_commit(
@@ -253,12 +257,13 @@ fn remove_commit(
     property: IStr,
     value: &Value,
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Some(index) = indexes.get_mut(&(label, property))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
     {
-        warn_rejected("remove", label, property, row, err);
+        warn_rejected("remove", label, property, row, &err);
     }
+    Ok(())
 }
 
 fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> GraphError {
@@ -275,7 +280,7 @@ fn warn_rejected(
     label: IStr,
     property: IStr,
     row: u32,
-    err: TypedIndexValueError,
+    err: &TypedIndexValueError,
 ) {
     tracing::warn!(
         op,

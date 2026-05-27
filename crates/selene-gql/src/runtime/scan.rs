@@ -249,11 +249,18 @@ fn composite_lookup_rows(
         .composite_property_index_for(&label, properties)
     {
         let refs = values.iter().collect::<Vec<_>>();
-        if let Ok(key) = index.key_from_values(&refs) {
-            return index
-                .lookup_key(&key)
-                .map(|bitmap| bitmap.iter().collect())
-                .unwrap_or_default();
+        // Read-path MUST NOT admit new strings into the IStr pool (BRIEF-153);
+        // an unpoolable `Value::ExternalString` component proves no indexed
+        // row could match, so render as empty without admission.
+        match index.key_from_values_lookup(&refs) {
+            Ok(Some(key)) => {
+                return index
+                    .lookup_key(&key)
+                    .map(|bitmap| bitmap.iter().collect())
+                    .unwrap_or_default();
+            }
+            Ok(None) => return Vec::new(),
+            Err(_) => {}
         }
     }
     linear_rows_filtered_by_composite(scan, keys, ctx)

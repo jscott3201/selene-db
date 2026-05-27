@@ -1,9 +1,10 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
 use jiff::civil::{date, datetime};
 use roaring::RoaringBitmap;
-use selene_core::{Value, intern};
+use selene_core::{Value, intern, lookup};
 
 use super::*;
 
@@ -183,6 +184,135 @@ fn prefix_scan_matches_string_keys_only() {
         TypedIndex::new(TypedIndexKind::I64)
             .lookup_prefix("typed")
             .is_none()
+    );
+}
+
+#[test]
+fn typed_key_admit_external_string_returns_string_key() {
+    // ExternalString admits into the global IStr pool on the write path so
+    // a STRING-kind index can key on it (BRIEF-153 carve-out).
+    let probe = Arc::<str>::from("typed_key_admit.external.unique-1");
+    assert!(lookup(probe.as_ref()).is_none());
+    let value = Value::ExternalString(Arc::clone(&probe));
+
+    let key = typed_key_admit(&value).expect("admission succeeds under the pool cap");
+
+    let TypedKey::String(istr) = key else {
+        panic!("expected TypedKey::String, got {key:?}");
+    };
+    assert_eq!(istr.as_str(), probe.as_ref());
+    assert!(lookup(probe.as_ref()).is_some());
+}
+
+#[test]
+fn typed_key_lookup_external_string_returns_none_when_not_in_pool() {
+    // Lookup MUST NOT admit (read-path no-admit; BRIEF-153 bar 2).
+    let probe = Arc::<str>::from("typed_key_lookup.external.unique-not-admitted");
+    assert!(lookup(probe.as_ref()).is_none());
+    let value = Value::ExternalString(Arc::clone(&probe));
+
+    let result = typed_key_lookup(&value).expect("kind matches");
+
+    assert!(result.is_none(), "probe content was not in the pool");
+    assert!(
+        lookup(probe.as_ref()).is_none(),
+        "lookup must not admit a new IStr"
+    );
+}
+
+#[test]
+fn typed_key_lookup_external_string_returns_some_when_pre_admitted() {
+    // After admitting the content separately, lookup resolves to the pool
+    // handle without re-admitting.
+    let content = "typed_key_lookup.external.unique-pre-admitted";
+    let admitted = intern(content).unwrap();
+    let value = Value::ExternalString(Arc::<str>::from(content));
+
+    let result = typed_key_lookup(&value).expect("kind matches");
+
+    let Some(TypedKey::String(istr)) = result else {
+        panic!("expected Ok(Some(String(_))), got {result:?}");
+    };
+    assert_eq!(istr, admitted);
+}
+
+#[test]
+fn lookup_eq_with_external_string_does_not_admit_unknown_content() {
+    // Read-path symmetry test (BRIEF-153 bar 2): populate via Value::String,
+    // probe via a fresh Value::ExternalString whose content was never
+    // admitted; assert empty result AND the probe content is still absent
+    // from the global pool afterward.
+    let mut index = TypedIndex::new(TypedIndexKind::String);
+    let admitted = intern("lookup_eq.external.admitted").unwrap();
+    index.insert(&Value::String(admitted), 7).unwrap();
+
+    let probe_content = "lookup_eq.external.unique-not-admitted";
+    assert!(lookup(probe_content).is_none());
+    let probe = Value::ExternalString(Arc::<str>::from(probe_content));
+
+    let result = index.lookup_eq(&probe).expect("kind matches");
+
+    assert!(
+        result.is_empty(),
+        "no row could be keyed on unadmitted content"
+    );
+    assert!(
+        lookup(probe_content).is_none(),
+        "lookup_eq must not admit the probe content"
+    );
+}
+
+#[test]
+fn lookup_eq_external_string_finds_admitted_row_via_pool_handle() {
+    // Variant-cross test: a row inserted as Value::String can still be
+    // located by a probe bound as Value::ExternalString with matching
+    // content, because typed_key_lookup resolves the content through the
+    // existing IStr pool.
+    let mut index = TypedIndex::new(TypedIndexKind::String);
+    let content = "lookup_eq.external.cross-variant";
+    let istr = intern(content).unwrap();
+    index.insert(&Value::String(istr), 3).unwrap();
+
+    let probe = Value::ExternalString(Arc::<str>::from(content));
+    let result = index.lookup_eq(&probe).expect("kind matches");
+
+    assert!(result.contains(3));
+}
+
+#[test]
+fn values_share_key_falls_through_for_unpoolable_external_string() {
+    // Diff path MUST NOT admit (BRIEF-153 §B.1). Two distinct fresh
+    // ExternalString contents — neither in the pool — must NOT share a
+    // key, so the update fires a write that admits through the write path.
+    let index = TypedIndex::new(TypedIndexKind::String);
+    let lhs_content = "values_share_key.external.lhs-unique";
+    let rhs_content = "values_share_key.external.rhs-unique";
+    assert!(lookup(lhs_content).is_none());
+    assert!(lookup(rhs_content).is_none());
+    let lhs = Value::ExternalString(Arc::<str>::from(lhs_content));
+    let rhs = Value::ExternalString(Arc::<str>::from(rhs_content));
+
+    assert!(!index.values_share_key(&lhs, &rhs));
+    assert!(
+        lookup(lhs_content).is_none() && lookup(rhs_content).is_none(),
+        "values_share_key must not admit either operand"
+    );
+}
+
+#[test]
+fn values_share_key_returns_true_for_same_external_string_content() {
+    // Identical raw content from two ExternalString Arcs — neither in the
+    // pool — falls through to the raw-value comparison and matches.
+    let index = TypedIndex::new(TypedIndexKind::String);
+    let content = "values_share_key.external.same-content-unique";
+    assert!(lookup(content).is_none());
+    let lhs = Value::ExternalString(Arc::<str>::from(content));
+    let rhs = Value::ExternalString(Arc::<str>::from(content));
+
+    assert!(index.values_share_key(&lhs, &rhs));
+    assert!(
+        lookup(content).is_none(),
+        "values_share_key must not admit even on equality match"
     );
 }
 

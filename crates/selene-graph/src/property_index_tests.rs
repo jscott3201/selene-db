@@ -49,7 +49,7 @@ fn apply_node_create_populates_matching_indexes() {
         (name, Value::String(intern("pi.create.ada").unwrap())),
     ]);
 
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0).unwrap();
 
     assert!(rows(&indexes, label, age, &Value::Int(30)).contains(0));
     assert!(
@@ -70,9 +70,9 @@ fn apply_node_delete_removes_matching_entries() {
     let props = property_map([(age, Value::Int(30))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 4);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 4).unwrap();
 
-    apply_node_delete(&mut indexes, &LabelSet::single(label), &props, 4);
+    apply_node_delete(&mut indexes, &LabelSet::single(label), &props, 4).unwrap();
 
     assert!(rows(&indexes, label, age, &Value::Int(30)).is_empty());
 }
@@ -92,7 +92,8 @@ fn apply_node_update_with_label_add_inserts_relevant_property() {
         &LabelSet::single(label),
         &props,
         8,
-    );
+    )
+    .unwrap();
 
     assert!(rows(&indexes, label, age, &Value::Int(41)).contains(8));
 }
@@ -104,7 +105,7 @@ fn apply_node_update_with_label_remove_deletes_relevant_property() {
     let props = property_map([(age, Value::Int(41))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 8);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 8).unwrap();
 
     apply_node_update(
         &mut indexes,
@@ -113,7 +114,8 @@ fn apply_node_update_with_label_remove_deletes_relevant_property() {
         &LabelSet::new(),
         &props,
         8,
-    );
+    )
+    .unwrap();
 
     assert!(rows(&indexes, label, age, &Value::Int(41)).is_empty());
 }
@@ -126,7 +128,7 @@ fn apply_node_update_with_property_set_moves_rows_between_keys() {
     let new_props = property_map([(age, Value::Int(42))]);
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
-    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 8);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 8).unwrap();
 
     apply_node_update(
         &mut indexes,
@@ -135,7 +137,8 @@ fn apply_node_update_with_property_set_moves_rows_between_keys() {
         &LabelSet::single(label),
         &new_props,
         8,
-    );
+    )
+    .unwrap();
 
     assert!(rows(&indexes, label, age, &Value::Int(41)).is_empty());
     assert!(rows(&indexes, label, age, &Value::Int(42)).contains(8));
@@ -149,7 +152,7 @@ fn apply_node_update_with_property_remove_drops_row() {
     let new_props = PropertyMap::new();
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
-    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 8);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 8).unwrap();
 
     apply_node_update(
         &mut indexes,
@@ -158,7 +161,8 @@ fn apply_node_update_with_property_remove_drops_row() {
         &LabelSet::single(label),
         &new_props,
         8,
-    );
+    )
+    .unwrap();
 
     assert!(rows(&indexes, label, age, &Value::Int(41)).is_empty());
 }
@@ -171,7 +175,7 @@ fn kind_mismatch_skips_commit_update() {
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
 
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0).unwrap();
 
     assert_eq!(indexes.get(&(label, age)).unwrap().index.cardinality(), 0);
 }
@@ -184,7 +188,7 @@ fn null_values_are_skipped() {
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
 
-    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &props, 0).unwrap();
 
     assert_eq!(indexes.get(&(label, age)).unwrap().index.cardinality(), 0);
 }
@@ -205,7 +209,7 @@ fn untouched_indexes_keep_their_arc() {
     let mut indexes = PropertyIndexMap::default();
     indexes.insert((label, age), entry(TypedIndexKind::I64));
     indexes.insert((label, name), entry(TypedIndexKind::String));
-    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 0);
+    apply_node_create(&mut indexes, &LabelSet::single(label), &old_props, 0).unwrap();
     let name_index = Arc::clone(&indexes.get(&(label, name)).unwrap().index);
 
     apply_node_update(
@@ -215,7 +219,8 @@ fn untouched_indexes_keep_their_arc() {
         &LabelSet::single(label),
         &new_props,
         0,
-    );
+    )
+    .unwrap();
 
     assert!(Arc::ptr_eq(
         &name_index,
@@ -343,7 +348,7 @@ fn apply_node_update_only_touches_affected_indexes() {
     let labels = LabelSet::single(label);
     let old_props = property_map([(age, Value::Int(30))]);
     let new_props = property_map([(age, Value::Int(31))]);
-    apply_node_update(&mut indexes, &labels, &old_props, &labels, &new_props, 0);
+    apply_node_update(&mut indexes, &labels, &old_props, &labels, &new_props, 0).unwrap();
 
     // Unrelated indexes' Arcs are not cloned — strong_count stays at the
     // pre-update value (this clone + the registry's clone = 2).

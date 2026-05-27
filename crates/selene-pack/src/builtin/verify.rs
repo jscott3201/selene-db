@@ -223,8 +223,13 @@ fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResult {
             else {
                 continue;
             };
-            let Ok(key) = entry.index.key_from_values(&values) else {
-                continue;
+            // Read-path MUST NOT admit (BRIEF-153 Q11(a)) — when a stored
+            // `Value::ExternalString` component isn't yet in the global IStr
+            // pool, the row cannot be in the index and verify reports it as
+            // unverifiable rather than admitting just to probe.
+            let key = match entry.index.key_from_values_lookup(&values) {
+                Ok(Some(key)) => key,
+                Ok(None) | Err(_) => continue,
             };
             expected_rows += 1;
             if !entry

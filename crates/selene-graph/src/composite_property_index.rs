@@ -16,12 +16,13 @@ pub(crate) fn apply_node_create(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for (label, entry) in indexes_for_labels(indexes, labels) {
         if let Some(values) = indexable_values(props, &entry.declared_properties) {
-            insert_commit(label, entry, &values, row);
+            insert_commit(label, entry, &values, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_delete(
@@ -29,12 +30,13 @@ pub(crate) fn apply_node_delete(
     labels: &LabelSet,
     props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for (label, entry) in indexes_for_labels(indexes, labels) {
         if let Some(values) = indexable_values(props, &entry.declared_properties) {
-            remove_commit(label, entry, &values, row);
+            remove_commit(label, entry, &values, row)?;
         }
     }
+    Ok(())
 }
 
 pub(crate) fn apply_node_update(
@@ -44,7 +46,7 @@ pub(crate) fn apply_node_update(
     new_labels: &LabelSet,
     new_props: &PropertyMap,
     row: u32,
-) {
+) -> GraphResult<()> {
     for ((label, _), entry) in indexes.iter_mut() {
         if !old_labels.contains(label) && !new_labels.contains(label) {
             continue;
@@ -61,12 +63,13 @@ pub(crate) fn apply_node_update(
             continue;
         }
         if let Some(values) = old_values {
-            remove_commit(*label, entry, &values, row);
+            remove_commit(*label, entry, &values, row)?;
         }
         if let Some(values) = new_values {
-            insert_commit(*label, entry, &values, row);
+            insert_commit(*label, entry, &values, row)?;
         }
     }
+    Ok(())
 }
 
 /// Build a composite property index strictly.
@@ -158,7 +161,7 @@ fn build_composite_property_index_inner(
             Ok(()) => {}
             Err(err) => match policy {
                 BuildPolicy::Strict => return Err(index_rejection(label, &properties, err)),
-                BuildPolicy::Lenient => warn_rejected("rebuild", label, &properties, row, err),
+                BuildPolicy::Lenient => warn_rejected("rebuild", label, &properties, row, &err),
             },
         }
     }
@@ -203,10 +206,11 @@ fn insert_commit(
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).insert(values, row) {
-        warn_rejected("insert", label, &entry.declared_properties, row, err);
+        warn_rejected("insert", label, &entry.declared_properties, row, &err);
     }
+    Ok(())
 }
 
 fn remove_commit(
@@ -214,10 +218,11 @@ fn remove_commit(
     entry: &mut CompositePropertyIndexEntry,
     values: &[&Value],
     row: u32,
-) {
+) -> GraphResult<()> {
     if let Err(err) = std::sync::Arc::make_mut(&mut entry.index).remove(values, row) {
-        warn_rejected("remove", label, &entry.declared_properties, row, err);
+        warn_rejected("remove", label, &entry.declared_properties, row, &err);
     }
+    Ok(())
 }
 
 fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueError) -> GraphError {
@@ -242,6 +247,25 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             expected_kind,
             observed,
         },
+        // Commit 1 (BRIEF-153) preserves the existing silent-skip lenient
+        // behavior; Commit 2 routes this through a dedicated
+        // `GraphError::IndexAdmissionExhausted` so cap-exhaustion details
+        // surface intact. Carrying the IStr-pool source string in the
+        // observed slot until the variant lands keeps the lenient path
+        // diagnostic-equivalent for the moment.
+        CompositeIndexValueError::ComponentAdmissionFailed {
+            index,
+            expected_kind,
+            reason: _,
+        } => GraphError::IndexValueRejected {
+            label,
+            property: properties
+                .get(index)
+                .copied()
+                .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
+            expected_kind,
+            observed: "ExternalString",
+        },
     }
 }
 
@@ -250,7 +274,7 @@ fn warn_rejected(
     label: IStr,
     properties: &[IStr],
     row: u32,
-    err: CompositeIndexValueError,
+    err: &CompositeIndexValueError,
 ) {
     tracing::warn!(
         op,
