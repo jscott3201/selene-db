@@ -112,7 +112,18 @@ pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind)
                 | GqlType::SmallInt
                 | GqlType::BigInt
         ),
-        IndexKind::Float => matches!(ty, GqlType::Float | GqlType::Float64),
+        // BRIEF-154 PR #175 F2 (Codex P2): admit only `FLOAT64` for
+        // `IndexKind::Float`. `GqlType::Float` is width-generic per
+        // `parameter_type::validate_declared_type`, which accepts both
+        // `Value::Float` and `Value::Float32`; but the runtime index
+        // probe rejects `Value::Float32` via `check_value_index_kind`.
+        // Admitting `GqlType::Float` here would let a `$p :: FLOAT`
+        // parameter optimize through the indexed path and then error
+        // `InvalidParameterType` when bound to a `Value::Float32`,
+        // while the non-indexed equivalent query would compare normally
+        // via `value_compare`. Reject `FLOAT` so it falls back to
+        // Linear at plan time and the two paths agree.
+        IndexKind::Float => matches!(ty, GqlType::Float64),
         IndexKind::String => matches!(ty, GqlType::String),
         IndexKind::Date => matches!(ty, GqlType::Date),
         IndexKind::LocalDateTime => matches!(ty, GqlType::LocalDateTime),

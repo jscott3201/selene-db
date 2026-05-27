@@ -268,6 +268,59 @@ fn typed_parameter_with_incompatible_declaration_falls_back_to_linear() {
 }
 
 #[test]
+fn float_width_generic_typed_param_against_float_index_falls_back_to_linear() {
+    // BRIEF-154 PR #175 F2 (Codex P2): a `$p :: FLOAT` declaration would
+    // accept both `Value::Float` (f64) and `Value::Float32` per
+    // `parameter_type::validate_declared_type`, but `check_value_index_kind`
+    // only admits `Value::Float` for `IndexKind::Float`. Admitting
+    // `GqlType::Float` for `IndexKind::Float` at plan time would let the
+    // indexed path optimize through, then error `InvalidParameterType`
+    // when the caller binds a `Value::Float32` — while the non-indexed
+    // equivalent would compare normally. We avoid that semantic divergence
+    // by treating `GqlType::Float` as typed-incompatible with
+    // `IndexKind::Float` at plan time, falling back to Linear.
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        istr("Person"),
+        istr("score"),
+        IndexKind::Float,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.score = $score :: FLOAT RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(
+        matches!(scan.access, ScanAccess::Linear),
+        "expected Linear fallback for `$p :: FLOAT` against IndexKind::Float, got {:?}",
+        scan.access
+    );
+    assert_eq!(scan.property_predicates.len(), 1);
+}
+
+#[test]
+fn float64_typed_param_against_float_index_fires() {
+    // Companion to the FLOAT fallback: the strict-width `FLOAT64`
+    // declaration is unambiguous (only `Value::Float` matches in
+    // `parameter_type::validate_declared_type`), so it admits at plan
+    // time and the indexed path fires.
+    let catalog = MockIndexCatalog::new().with_node_typed_index(
+        istr("Person"),
+        istr("score"),
+        IndexKind::Float,
+    );
+    let plan = optimized_one(
+        "MATCH (n:Person) WHERE n.score = $score :: FLOAT64 RETURN n",
+        &catalog,
+    );
+    let scan = first_scan(&plan.pattern_plan.as_ref().unwrap().join_tree).unwrap();
+    assert!(
+        matches!(scan.access, ScanAccess::TypedIndexRange { .. }),
+        "expected TypedIndexRange for `$p :: FLOAT64`, got {:?}",
+        scan.access
+    );
+}
+
+#[test]
 fn typed_parameter_with_compatible_declaration_fires() {
     // BRIEF-154 §B.5 happy path: a STRING-typed parameter against a STRING
     // index admits at plan time.
