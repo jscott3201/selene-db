@@ -150,7 +150,17 @@ fn bounds_for_property(
             binding_refs::PropertyPredicateShape::Equality(value) => {
                 let key = compatible_value(value, kind)?;
                 equality = Some(key);
-                consumed.push(index);
+                // Equality is the tighter probe — promote it to the index
+                // bound, but leave any previously-accumulated range bounds
+                // (`> 10` etc.) as residual predicates the executor still
+                // enforces. Pre-PR-#175 this `consumed` carried the prior
+                // range-bound indices alongside the equality, silently
+                // dropping the range filter when the equality fired second
+                // (Codex PR #175 F3). The bug pre-existed for literal
+                // equality too; parameter equality made it observable.
+                consumed = vec![index];
+                lower = None;
+                upper = None;
                 break;
             }
             binding_refs::PropertyPredicateShape::Comparison { op, value } => {

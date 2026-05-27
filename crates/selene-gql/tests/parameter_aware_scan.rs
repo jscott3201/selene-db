@@ -346,6 +346,84 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
 }
 
 #[test]
+fn equality_after_range_keeps_range_as_residual_filter() {
+    // BRIEF-154 PR #175 F3 (Codex P1): pre-fix, `WHERE n.age > 10 AND n.age = $p`
+    // had both predicates removed from `property_predicates`, so the executor
+    // would probe `age = $p` and silently drop the `age > 10` filter. With
+    // `$p = 5`, age=5 rows leaked through despite failing the `>10` check.
+    // Fix: the equality arm of `bounds_for_property` now resets `consumed`
+    // to just `[index]`, leaving any earlier range bounds as residual
+    // predicates the executor still enforces post-probe.
+    let (graph, _catalog) = person_graph_with_name_index();
+    let label = istr("Person");
+    let age_key = istr("age");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for age in [5_i64, 15, 25] {
+            mutator
+                .create_node(
+                    LabelSet::single(label),
+                    props([(istr("id"), Value::Int(age)), (age_key, Value::Int(age))]),
+                )
+                .expect("age node inserts");
+        }
+        txn.commit().expect("seed commits");
+    }
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_property_index(label, age_key, TypedIndexKind::I64)
+            .expect("age index registers");
+        txn.commit().expect("index commit");
+    }
+    let catalog = MockIndexCatalog::new()
+        .with_node_typed_index(label, istr("name"), IndexKind::String)
+        .with_node_typed_index(label, age_key, IndexKind::Integer);
+
+    // Parameter equality after range: `$p = 5` AND `age > 10` should be empty
+    // (no age=5 row survives the >10 filter).
+    let plan = Arc::new(optimized_plan(
+        "MATCH (n:Person) WHERE n.age > 10 AND n.age = $p RETURN n.id AS id",
+        &catalog,
+    ));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("p"), Value::Int(5));
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("equality-after-range executes"),
+    );
+    assert!(
+        table.rows().is_empty(),
+        "expected empty result (no rows have age=5 AND age>10), got {:?}",
+        collect_id_column(&table)
+    );
+
+    // Sanity: `$p = 25` AND `age > 10` should find the age=25 row.
+    session.bind_parameter(istr("p"), Value::Int(25));
+    let table = rows(
+        execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+            .expect("equality-after-range matches row above range"),
+    );
+    assert_eq!(collect_id_column(&table), vec![25]);
+
+    // Literal-variant regression: the same bug existed pre-PR-#175 for
+    // literal equality. Confirm the fix closes it there too.
+    let literal_plan = Arc::new(optimized_plan(
+        "MATCH (n:Person) WHERE n.age > 10 AND n.age = 5 RETURN n.id AS id",
+        &catalog,
+    ));
+    let table = rows(
+        execute_statement(&literal_plan, &mut session, &EmptyProcedureRegistry)
+            .expect("literal equality-after-range executes"),
+    );
+    assert!(
+        table.rows().is_empty(),
+        "literal variant must also drop residual range filter onto post-probe path"
+    );
+}
+
+#[test]
 fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
     // BRIEF-154 PR #175 F1 (Codex P1): with parameter-bearing range bounds
     // the plan-time `range_satisfiable` guard is skipped (it gates on
