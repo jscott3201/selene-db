@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: GQ20
--- expects: parse-ok
+// corpus: positive
+// feature: GQ20
+// expects: parse-ok
 RETURN 1 AS n NEXT RETURN 2 AS n

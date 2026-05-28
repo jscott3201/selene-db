@@ -1,7 +1,7 @@
 //! Predicate expression evaluation.
 //!
 //! Implements residual predicate forms that are not lowered into scan access:
-//! `LIKE`, `BETWEEN`, `IS` sub-kinds, graph predicate functions, and
+//! `IS` sub-kinds, graph predicate functions, `ALL_DIFFERENT`, `SAME`, and
 //! `PROPERTY_EXISTS`. Predicate negation preserves `NULL` as unknown.
 
 use selene_core::{IStr, Value};
@@ -12,54 +12,10 @@ use crate::{
 };
 
 use super::{
-    binary_ops::{data_exception, eval_equality, eval_ordering, string_slice},
+    binary_ops::{data_exception, eval_equality, string_slice},
     evaluate, property_access, string_fns,
 };
 use crate::runtime::scan;
-
-pub(super) fn eval_like(
-    operand: &ValueExpr,
-    pattern: &ValueExpr,
-    negated: bool,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    let operand = evaluate(operand, binding, schema, ctx)?;
-    let pattern = evaluate(pattern, binding, schema, ctx)?;
-    if matches!(operand, Value::Null) || matches!(pattern, Value::Null) {
-        return Ok(Value::Null);
-    }
-    let (Some(operand), Some(pattern)) = (string_slice(&operand), string_slice(&pattern)) else {
-        return data_exception("LIKE operands are not both strings", span);
-    };
-    Ok(nullable_bool(like_matches(operand, pattern), negated))
-}
-
-pub(super) fn eval_between(
-    operand: &ValueExpr,
-    bounds: (&ValueExpr, &ValueExpr),
-    negated: bool,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    let operand = evaluate(operand, binding, schema, ctx)?;
-    let low = evaluate(bounds.0, binding, schema, ctx)?;
-    let high = evaluate(bounds.1, binding, schema, ctx)?;
-    if matches!(operand, Value::Null) || matches!(low, Value::Null) || matches!(high, Value::Null) {
-        return Ok(Value::Null);
-    }
-
-    let lower_ok = eval_ordering(BinaryOp::Le, low, operand.clone(), span)?;
-    let upper_ok = eval_ordering(BinaryOp::Le, operand, high, span)?;
-    match (bool_or_null(lower_ok, span)?, bool_or_null(upper_ok, span)?) {
-        (Some(lower_ok), Some(upper_ok)) => Ok(nullable_bool(lower_ok && upper_ok, negated)),
-        _ => Ok(Value::Null),
-    }
-}
 
 pub(super) fn eval_is_check(
     operand: &ValueExpr,
@@ -328,18 +284,6 @@ fn value_matches_type(value: &Value, ty: &GqlType) -> bool {
     }
 }
 
-fn bool_or_null(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> {
-    match value {
-        Value::Bool(value) => Ok(Some(value)),
-        Value::Null => Ok(None),
-        _ => data_exception("predicate comparison did not produce boolean", span),
-    }
-}
-
-fn nullable_bool(value: bool, negated: bool) -> Value {
-    Value::Bool(if negated { !value } else { value })
-}
-
 fn negate_predicate(value: Value, negated: bool) -> Result<Value, ExecutorError> {
     if !negated {
         return Ok(value);
@@ -349,67 +293,4 @@ fn negate_predicate(value: Value, negated: bool) -> Result<Value, ExecutorError>
         Value::Null => Value::Null,
         other => other,
     })
-}
-
-#[derive(Clone, Copy)]
-enum LikeToken {
-    Literal(char),
-    AnyOne,
-    AnySequence,
-}
-
-fn like_matches(value: &str, pattern: &str) -> bool {
-    let value: Vec<char> = value.chars().collect();
-    let pattern = like_tokens(pattern);
-    let mut memo = vec![vec![None; pattern.len() + 1]; value.len() + 1];
-    like_matches_at(&value, &pattern, 0, 0, &mut memo)
-}
-
-fn like_matches_at(
-    value: &[char],
-    pattern: &[LikeToken],
-    value_index: usize,
-    pattern_index: usize,
-    memo: &mut [Vec<Option<bool>>],
-) -> bool {
-    if let Some(result) = memo[value_index][pattern_index] {
-        return result;
-    }
-    let result = match pattern.get(pattern_index).copied() {
-        None => value_index == value.len(),
-        Some(LikeToken::Literal(expected)) => {
-            value
-                .get(value_index)
-                .is_some_and(|actual| *actual == expected)
-                && like_matches_at(value, pattern, value_index + 1, pattern_index + 1, memo)
-        }
-        Some(LikeToken::AnyOne) => {
-            value_index < value.len()
-                && like_matches_at(value, pattern, value_index + 1, pattern_index + 1, memo)
-        }
-        Some(LikeToken::AnySequence) => {
-            like_matches_at(value, pattern, value_index, pattern_index + 1, memo)
-                || (value_index < value.len()
-                    && like_matches_at(value, pattern, value_index + 1, pattern_index, memo))
-        }
-    };
-    memo[value_index][pattern_index] = Some(result);
-    result
-}
-
-fn like_tokens(pattern: &str) -> Vec<LikeToken> {
-    let mut tokens = Vec::new();
-    let mut chars = pattern.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '%' => tokens.push(LikeToken::AnySequence),
-            '_' => tokens.push(LikeToken::AnyOne),
-            '\\' => {
-                let literal = chars.next().unwrap_or('\\');
-                tokens.push(LikeToken::Literal(literal));
-            }
-            literal => tokens.push(LikeToken::Literal(literal)),
-        }
-    }
-    tokens
 }

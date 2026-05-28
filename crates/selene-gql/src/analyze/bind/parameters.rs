@@ -341,19 +341,6 @@ fn collect_value_parameter_declarations(
                 stack.extend(list.iter());
                 stack.push(operand);
             }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push(pattern);
-                stack.push(operand);
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push(high);
-                stack.push(low);
-                stack.push(operand);
-            }
             ValueExpr::Case {
                 branches,
                 else_branch,

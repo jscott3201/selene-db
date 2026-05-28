@@ -29,9 +29,7 @@ use self::{
     binary_ops::{eval_binary, eval_in_list, eval_unary},
     case::eval_case,
     collections::{eval_list_access, eval_record_literal},
-    predicates::{
-        eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
-    },
+    predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
     subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
 };
@@ -129,19 +127,6 @@ pub fn evaluate(
         ValueExpr::ValueSubquery { span, .. } => {
             eval_value_subquery(expr, *span, binding, schema, ctx)
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            negated,
-            span,
-        } => eval_like(operand, pattern, *negated, *span, binding, schema, ctx),
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated,
-            span,
-        } => eval_between(operand, (low, high), *negated, *span, binding, schema, ctx),
         ValueExpr::AllDifferent { items, span } => {
             eval_all_different(items, *span, binding, schema, ctx)
         }

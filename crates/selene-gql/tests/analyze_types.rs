@@ -324,15 +324,6 @@ fn string_predicate_rejects_static_non_string_operand() {
 }
 
 #[test]
-fn like_uses_dedicated_mismatch_context() {
-    let (context, _) = type_mismatch("RETURN 1 LIKE 'a' AS x");
-    assert!(matches!(
-        context,
-        TypeMismatchContext::LikePredicate { side: Side::Lhs }
-    ));
-}
-
-#[test]
 fn is_normalized_uses_dedicated_mismatch_context() {
     let (context, _) = type_mismatch("RETURN 1 IS NORMALIZED AS x");
     assert!(matches!(context, TypeMismatchContext::IsNormalized));
@@ -348,15 +339,6 @@ fn unary_negate_rejects_static_non_numeric_operand() {
 fn in_list_updates_unified_type_across_resolved_items() {
     let (context, _) = type_mismatch("RETURN 'a' IN [NULL, 'b', 1] AS x");
     assert!(matches!(context, TypeMismatchContext::InListUnification));
-}
-
-#[test]
-fn between_rejects_static_bound_family_mismatch() {
-    let (context, _) = type_mismatch("RETURN 1 BETWEEN 'a' AND 2 AS x");
-    assert!(matches!(
-        context,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs }
-    ));
 }
 
 #[test]

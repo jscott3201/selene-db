@@ -384,28 +384,6 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
                 rebase_value(item, offset);
             }
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-            rebase_value(pattern, offset);
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-            rebase_value(low, offset);
-            rebase_value(high, offset);
-        }
         ValueExpr::AllDifferent { items, span } | ValueExpr::Same { items, span } => {
             rebase_span(span, offset);
             for item in items {

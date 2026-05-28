@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: GQ08
--- expects: parse-ok
+// corpus: positive
+// feature: GQ08
+// expects: parse-ok
 MATCH (n) FILTER true RETURN n

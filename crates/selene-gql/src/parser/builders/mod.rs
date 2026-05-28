@@ -167,10 +167,6 @@ fn build_pipeline_statement(
         Rule::return_stmt => build_return_clause(pair, budget).map(PipelineStatement::Return),
         Rule::with_stmt => build_with_clause(pair, budget).map(PipelineStatement::With),
         Rule::for_stmt => Err(not_implemented(&pair, "FOR is not yet supported in v1.0")),
-        Rule::match_view_stmt => Err(not_implemented(
-            &pair,
-            "MATCH VIEW is not yet supported in v1.0",
-        )),
         Rule::call_stmt => call::build_pipeline_call(pair, budget),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }

@@ -1,5 +1,5 @@
--- corpus: positive
--- feature: IM_TYPED_PARAMS
--- also-covers: GE04
--- expects: parse-ok
+// corpus: positive
+// feature: IM_TYPED_PARAMS
+// also-covers: GE04
+// expects: parse-ok
 RETURN $id :: INT AS value

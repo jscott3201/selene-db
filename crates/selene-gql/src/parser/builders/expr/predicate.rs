@@ -51,49 +51,6 @@ fn dispatch_is_suffix(
         });
     }
 
-    if children
-        .iter()
-        .any(|child| child.as_rule() == Rule::like_kw)
-    {
-        let pattern_pair = find_child(
-            children,
-            Rule::addition,
-            "LIKE predicate is missing pattern",
-        )?;
-        return Ok(ValueExpr::Like {
-            operand: Box::new(operand),
-            pattern: Box::new(build_value_expr(pattern_pair, budget)?),
-            negated,
-            span: source_span,
-        });
-    }
-
-    if children
-        .iter()
-        .any(|child| child.as_rule() == Rule::between_kw)
-    {
-        let bounds = children
-            .iter()
-            .filter(|child| child.as_rule() == Rule::addition)
-            .cloned()
-            .map(|child| build_value_expr(child, budget))
-            .collect::<Result<Vec<_>, _>>()?;
-        if bounds.len() != 2 {
-            return Err(ParserError::syntax(
-                "BETWEEN predicate requires two bounds",
-                source_span,
-                None,
-            ));
-        }
-        return Ok(ValueExpr::Between {
-            operand: Box::new(operand),
-            low: Box::new(bounds[0].clone()),
-            high: Box::new(bounds[1].clone()),
-            negated,
-            span: source_span,
-        });
-    }
-
     Ok(ValueExpr::IsCheck {
         operand: Box::new(operand),
         kind: build_is_kind(children, source_span, budget)?,

@@ -41,34 +41,42 @@ const AGGREGATE_OPS: &[&str] = &[
 /// Codex P2 on PR #24 caught the previous, much shorter list (24 entries):
 /// identifiers like `DISTINCT`, `WITH`, `ASC` could be emitted bare and
 /// then re-parse as keywords, breaking the §D3 round-trip property.
+// NOTE (2026-05-28 grammar purge): the 16 keywords whose grammar rules were
+// removed for ISO faithfulness (LIKE, BETWEEN, GRANT, REVOKE, ROLE, USER,
+// PASSWORD, PROCEDURE, TRIGGER, TRIGGERS, MATERIALIZED, VIEW, VIEWS, AT, AFTER,
+// EXECUTE) were dropped from this set so it again mirrors grammar.pest.
+// Known pre-existing under-list gap (NOT introduced by the purge): a few
+// CONTEXTUAL keywords added by later briefs — EXPLAIN, INDEXES, PROCEDURES,
+// TRANSACTIONS, VALUE, NORMALIZE, PERCENTILE_CONT/DISC — are grammar tokens not
+// listed here. They are contextual (e.g. `VALUE {`, `NORMALIZE(`), so a bare
+// identifier of the same spelling still parses; adding them needs per-token
+// aggregate-vs-call analysis (cf. AGGREGATE_OPS) and is tracked separately.
 #[rustfmt::skip]
 const KEYWORDS: &[&str] = &[
-    "ACYCLIC", "AFTER", "ALL", "ALL_DIFFERENT", "AND", "ANY", "ARRAY", "AS",
-    "ASC", "AT", "AVERAGE", "AVG", "BETWEEN", "BIGINT", "BINDING", "BINDINGS",
-    "BOOL", "BOOLEAN", "BOTH", "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST",
-    "COLLECT", "COLLECT_LIST", "COMMIT", "CONNECTING", "CONTAINS", "COUNT",
-    "CREATE", "DATE", "DATETIME", "DAY", "DEC", "DECIMAL", "DEFAULT", "DELETE",
-    "DESC", "DESTINATION", "DETACH", "DICTIONARY", "DIFFERENT", "DIRECTED",
-    "DISTINCT", "DOUBLE", "DROP", "DURATION", "EDGE", "EDGES", "ELEMENTS",
-    "ELSE", "ENCODING", "END", "ENDS", "EXCEPT", "EXECUTE", "EXISTS", "EXTENDS",
-    "FALSE", "FILL", "FILTER", "FINISH", "FIRST", "FLOAT", "FOR", "FROM",
-    "GRANT", "GRAPH", "GROUP", "HAVING", "HOUR", "IF", "IMMUTABLE", "IN",
-    "INDEX", "INDEXED", "INSERT", "INT", "INTEGER", "INTERSECT", "INTERVAL",
-    "IS", "KEEP", "LABELED", "LABELS", "LAST", "LEADING", "LET", "LIKE",
-    "LIMIT", "LIST", "LOCAL", "MATCH", "MATERIALIZED", "MAX", "MERGE", "MIN",
+    "ACYCLIC", "ALL", "ALL_DIFFERENT", "AND", "ANY", "ARRAY", "AS", "ASC",
+    "AVERAGE", "AVG", "BIGINT", "BINDING", "BINDINGS", "BOOL", "BOOLEAN", "BOTH",
+    "BY", "BYTEA", "BYTES", "CALL", "CASE", "CAST", "COLLECT", "COLLECT_LIST",
+    "COMMIT", "CONNECTING", "CONTAINS", "COUNT", "CREATE", "DATE", "DATETIME",
+    "DAY", "DEC", "DECIMAL", "DEFAULT", "DELETE", "DESC", "DESTINATION",
+    "DETACH", "DICTIONARY", "DIFFERENT", "DIRECTED", "DISTINCT", "DOUBLE",
+    "DROP", "DURATION", "EDGE", "EDGES", "ELEMENTS", "ELSE", "ENCODING", "END",
+    "ENDS", "EXCEPT", "EXISTS", "EXTENDS", "FALSE", "FILL", "FILTER", "FINISH",
+    "FIRST", "FLOAT", "FOR", "FROM", "GRAPH", "GROUP", "HAVING", "HOUR", "IF",
+    "IMMUTABLE", "IN", "INDEX", "INDEXED", "INSERT", "INT", "INTEGER",
+    "INTERSECT", "INTERVAL", "IS", "KEEP", "LABELED", "LABELS", "LAST",
+    "LEADING", "LET", "LIMIT", "LIST", "LOCAL", "MATCH", "MAX", "MERGE", "MIN",
     "MINUTE", "MONTH", "NEXT", "NFC", "NFD", "NFKC", "NFKD", "NO", "NODE",
     "NODETACH", "NONE", "NORMALIZED", "NOT", "NOTHING", "NULL", "NULLS", "OF",
-    "OFFSET", "ON", "ONLY", "OPTIONAL", "OR", "ORDER", "OTHERWISE", "PASSWORD",
-    "PATH", "PRECISION", "PROCEDURE", "PROPERTY_EXISTS", "REAL", "RECORD",
-    "REDUCE", "REMOVE", "REPEATABLE", "REPLACE", "RETURN", "REVOKE", "ROLE",
-    "ROLLBACK", "SAME", "SEARCHABLE", "SECOND", "SELECT", "SET", "SHORTEST",
-    "SHOW", "SIGNED", "SIMPLE", "SINGLE", "SKIP", "SMALLINT", "SOURCE",
-    "START", "STARTS", "STDDEV_POP", "STDDEV_SAMP", "STRICT", "STRING", "SUM",
-    "THEN", "TIME", "TIMESTAMP", "TO", "TRAIL", "TRAILING", "TRANSACTION",
-    "TRIGGER", "TRIGGERS", "TRIM", "TRUE", "TYPE", "TYPED", "TYPES", "UINT",
-    "UNION", "UNIQUE", "UNKNOWN", "UNWIND", "USER", "UUID", "VARCHAR",
-    "VECTOR", "VIEW", "VIEWS", "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR",
-    "YEAR", "YIELD", "ZONED",
+    "OFFSET", "ON", "ONLY", "OPTIONAL", "OR", "ORDER", "OTHERWISE", "PATH",
+    "PRECISION", "PROPERTY_EXISTS", "REAL", "RECORD", "REDUCE", "REMOVE",
+    "REPEATABLE", "REPLACE", "RETURN", "ROLLBACK", "SAME", "SEARCHABLE",
+    "SECOND", "SELECT", "SET", "SHORTEST", "SHOW", "SIGNED", "SIMPLE", "SINGLE",
+    "SKIP", "SMALLINT", "SOURCE", "START", "STARTS", "STDDEV_POP",
+    "STDDEV_SAMP", "STRICT", "STRING", "SUM", "THEN", "TIME", "TIMESTAMP", "TO",
+    "TRAIL", "TRAILING", "TRANSACTION", "TRIM", "TRUE", "TYPE", "TYPED",
+    "TYPES", "UINT", "UNION", "UNIQUE", "UNKNOWN", "UNWIND", "UUID", "VARCHAR",
+    "VECTOR", "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR", "YEAR", "YIELD",
+    "ZONED",
 ];
 
 /// Format an identifier slot (binding name, alias name, property key).

@@ -1,6 +1,6 @@
--- corpus: positive
--- feature: GF01
--- expects: parse-ok
+// corpus: positive
+// feature: GF01
+// expects: parse-ok
 RETURN abs(-3) AS absolute_value,
        mod(7, 4) AS remainder,
        floor(1.8) AS floored,

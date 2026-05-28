@@ -301,19 +301,6 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
                 stack.extend(list.iter_mut());
                 stack.push(operand.as_mut());
             }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push(pattern.as_mut());
-                stack.push(operand.as_mut());
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push(high.as_mut());
-                stack.push(low.as_mut());
-                stack.push(operand.as_mut());
-            }
             ValueExpr::Case {
                 branches,
                 else_branch,

@@ -207,7 +207,6 @@ fn build_add_op(pair: &Pair<'_, Rule>) -> BinaryOp {
 fn build_mul_op(pair: &Pair<'_, Rule>) -> BinaryOp {
     match pair.as_str() {
         "/" => BinaryOp::Div,
-        "%" => BinaryOp::Mod,
         _ => BinaryOp::Mul,
     }
 }
@@ -335,12 +334,6 @@ fn build_postfix(
                     index: Box::new(build_value_expr(index_pair, budget)?),
                     span: SourceSpan::merge(previous_span, op_span),
                 };
-            }
-            Rule::temporal_prop_access => {
-                return Err(not_implemented(
-                    &op_child,
-                    "temporal property access is not yet supported in v1.0",
-                ));
             }
             _ => return Err(unexpected_pair(op_child, "expected postfix operator")),
         }

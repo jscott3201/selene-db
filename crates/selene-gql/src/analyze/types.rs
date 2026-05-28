@@ -282,32 +282,6 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             negated.hash(state);
             span.hash(state);
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            negated,
-            span,
-        } => {
-            12u8.hash(state);
-            hash_value_expr(operand, state);
-            hash_value_expr(pattern, state);
-            negated.hash(state);
-            span.hash(state);
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated,
-            span,
-        } => {
-            13u8.hash(state);
-            hash_value_expr(operand, state);
-            hash_value_expr(low, state);
-            hash_value_expr(high, state);
-            negated.hash(state);
-            span.hash(state);
-        }
         ValueExpr::AllDifferent { items, span } => {
             14u8.hash(state);
             hash_exprs(items, state);

@@ -1,4 +1,4 @@
--- corpus: negative
--- feature: GV46
--- expects: parse-rejected(syntax)
+// corpus: negative
+// feature: GV46
+// expects: parse-rejected(syntax)
 RETURN n IS TYPED RECORD{name :: STRING}

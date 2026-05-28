@@ -40,13 +40,6 @@ pub(crate) enum PropertyPredicateShape<'a> {
         /// Literal-side expression.
         value: &'a ValueExpr,
     },
-    /// `binding.key BETWEEN low AND high`.
-    Between {
-        /// Lower bound expression.
-        low: &'a ValueExpr,
-        /// Upper bound expression.
-        high: &'a ValueExpr,
-    },
     /// `binding.key IN [items]`.
     InList(Vec<&'a ValueExpr>),
 }
@@ -183,20 +176,6 @@ fn match_property_expr<'a>(
         {
             match_binary_property(*op, lhs, rhs, bindings)
         }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated: false,
-            ..
-        } => {
-            let (binding, key) = match_property_access(operand, bindings)?;
-            Some(MatchedPropertyPredicate {
-                binding,
-                key,
-                shape: PropertyPredicateShape::Between { low, high },
-            })
-        }
         ValueExpr::InList {
             operand,
             list,
@@ -305,19 +284,6 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
             for item in list {
                 walk_expr(item, visit);
             }
-        }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            walk_expr(operand, visit);
-            walk_expr(pattern, visit);
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            walk_expr(operand, visit);
-            walk_expr(low, visit);
-            walk_expr(high, visit);
         }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             for item in items {

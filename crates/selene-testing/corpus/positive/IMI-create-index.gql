@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: IM_INDEX_DDL
--- expects: parse-ok
+// corpus: positive
+// feature: IM_INDEX_DDL
+// expects: parse-ok
 CREATE INDEX sensor_ts_idx ON :Sensor(ts)

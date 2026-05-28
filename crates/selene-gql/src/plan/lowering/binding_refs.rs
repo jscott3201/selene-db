@@ -91,19 +91,6 @@ fn collect_binding_refs_in_expr(
                 collect_binding_refs_in_expr(item, analyzed, refs)?;
             }
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            collect_binding_refs_in_expr(operand, analyzed, refs)?;
-            collect_binding_refs_in_expr(pattern, analyzed, refs)?;
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            collect_binding_refs_in_expr(operand, analyzed, refs)?;
-            collect_binding_refs_in_expr(low, analyzed, refs)?;
-            collect_binding_refs_in_expr(high, analyzed, refs)?;
-        }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             for item in items {
                 collect_binding_refs_in_expr(item, analyzed, refs)?;

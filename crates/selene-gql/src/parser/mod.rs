@@ -441,10 +441,6 @@ mod tests {
             ValueExpr::IsCheck { negated: true, .. }
         ));
         assert!(matches!(
-            only_item("RETURN n.age BETWEEN 1 AND 3").expr,
-            ValueExpr::Between { negated: false, .. }
-        ));
-        assert!(matches!(
             only_item("RETURN n.name STARTS WITH 'A'").expr,
             ValueExpr::BinaryOp {
                 op: BinaryOp::StartsWith,
@@ -455,6 +451,44 @@ mod tests {
             only_item("RETURN PROPERTY_EXISTS(n, 'name')").expr,
             ValueExpr::PropertyExists { .. }
         ));
+    }
+
+    #[test]
+    fn non_iso_sql_drift_predicates_are_syntax_errors() {
+        // `LIKE` and `BETWEEN` are SQL drift with native ISO replacements
+        // (STARTS WITH / ENDS WITH / CONTAINS and `x >= lo AND x <= hi`); the
+        // grammar must reject them outright rather than accept-then-flag.
+        for source in [
+            "RETURN n.name LIKE 'a%'",
+            "RETURN n.name NOT LIKE 'a%'",
+            "RETURN n.age BETWEEN 1 AND 3",
+            "RETURN n.age NOT BETWEEN 1 AND 3",
+        ] {
+            let err = parse(source).expect_err(source);
+            assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+        }
+    }
+
+    #[test]
+    fn non_iso_modulo_and_temporal_and_sql_comment_are_syntax_errors() {
+        // `%` infix modulo (use ISO `MOD(x, y)`), `.prop AT TIME ...` temporal
+        // access, and the SQL `--` line comment are all non-ISO and removed.
+        for source in [
+            "RETURN 5 % 2",
+            "RETURN n.created AT TIME 'UTC'",
+            "RETURN 1 -- trailing comment",
+        ] {
+            let err = parse(source).expect_err(source);
+            assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+        }
+
+        // The ISO replacements and remaining comment forms still parse.
+        assert!(matches!(
+            only_item("RETURN MOD(5, 2) AS m").expr,
+            ValueExpr::FunctionCall { .. }
+        ));
+        parse("RETURN 1 // trailing comment").expect("// line comment still parses");
+        parse("RETURN 1 /* block comment */ AS x").expect("/* */ block comment still parses");
     }
 
     #[test]

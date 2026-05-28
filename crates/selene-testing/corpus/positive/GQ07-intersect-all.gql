@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: GQ07
--- expects: parse-ok
+// corpus: positive
+// feature: GQ07
+// expects: parse-ok
 RETURN 1 AS n INTERSECT ALL RETURN 2 AS n

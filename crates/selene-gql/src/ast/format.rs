@@ -528,11 +528,28 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             out.push('}');
         }
         ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
-            out.push('(');
-            fmt_expr(out, lhs)?;
-            write!(out, " {} ", fmt_binary(*op))?;
-            fmt_expr(out, rhs)?;
-            out.push(')');
+            // `MOD` and `POWER` are runtime-only operators with no infix
+            // spelling in ISO GQL; round-trip them through their scalar
+            // function form so the formatter output re-parses (the grammar
+            // emits neither `%` nor `^`).
+            if let Some(func) = match op {
+                crate::ast::BinaryOp::Mod => Some("MOD"),
+                crate::ast::BinaryOp::Power => Some("POWER"),
+                _ => None,
+            } {
+                out.push_str(func);
+                out.push('(');
+                fmt_expr(out, lhs)?;
+                out.push_str(", ");
+                fmt_expr(out, rhs)?;
+                out.push(')');
+            } else {
+                out.push('(');
+                fmt_expr(out, lhs)?;
+                write!(out, " {} ", fmt_binary(*op))?;
+                fmt_expr(out, rhs)?;
+                out.push(')');
+            }
         }
         ValueExpr::UnaryOp { op, operand, .. } => {
             out.push('(');
@@ -612,35 +629,6 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             }
             out.push(']');
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            negated,
-            ..
-        } => {
-            fmt_expr(out, operand)?;
-            if *negated {
-                out.push_str(" NOT");
-            }
-            out.push_str(" LIKE ");
-            fmt_expr(out, pattern)?;
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated,
-            ..
-        } => {
-            fmt_expr(out, operand)?;
-            if *negated {
-                out.push_str(" NOT");
-            }
-            out.push_str(" BETWEEN ");
-            fmt_expr(out, low)?;
-            out.push_str(" AND ");
-            fmt_expr(out, high)?;
-        }
         ValueExpr::AllDifferent { items, .. } => fmt_variadic(out, "ALL_DIFFERENT", items)?,
         ValueExpr::Same { items, .. } => fmt_variadic(out, "SAME", items)?,
         ValueExpr::PropertyExists { target, key, .. } => {
@@ -712,4 +700,37 @@ fn fmt_variadic(out: &mut String, name: &str, items: &[ValueExpr]) -> fmt::Resul
     }
     out.push(')');
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fmt_expr;
+    use crate::ast::ValueExpr;
+    use crate::ast::expr::{BinaryOp, Literal};
+    use crate::ast::span::SourceSpan;
+
+    fn int_lit(value: i64) -> ValueExpr {
+        ValueExpr::Literal(Literal::Integer(value, SourceSpan::default()))
+    }
+
+    fn render(op: BinaryOp) -> String {
+        let expr = ValueExpr::BinaryOp {
+            op,
+            lhs: Box::new(int_lit(2)),
+            rhs: Box::new(int_lit(3)),
+            span: SourceSpan::default(),
+        };
+        let mut out = String::new();
+        fmt_expr(&mut out, &expr).expect("formats");
+        out
+    }
+
+    #[test]
+    fn power_and_mod_render_as_iso_function_form() {
+        // `Power` and `Mod` are runtime-only operators backing ISO
+        // `POWER(x, y)` / `MOD(x, y)`; the formatter must emit the function
+        // form (never the non-ISO `^` / `%` infix) so output re-parses.
+        assert_eq!(render(BinaryOp::Power), "POWER(2, 3)");
+        assert_eq!(render(BinaryOp::Mod), "MOD(2, 3)");
+    }
 }
