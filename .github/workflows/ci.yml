@@ -1,36 +1,26 @@
-# Baseline CI for selene-db (PR + on-demand).
+# Fast iteration CI for selene-db — runs on PRs into `development`.
 #
-# Implements the gates from CLAUDE.md hard rules:
+# Workflow model (2026-05-28): Brief → PR → `development`; releases merge
+# `development` → `main`, where the full suite runs (see release.yml).
+# This gate is deliberately CHEAP — no Rust compilation — so Brief PRs iterate
+# fast and stay cost-light. The heavy gates moved to:
+#   - local hooks (`.githooks/pre-push`: clippy + nextest) — run `scripts/install-hooks.sh`
+#   - release.yml (PR → main): the comprehensive pre-release gate (clippy + tests
+#     + doctests + fuzz + macOS + cargo-audit)
+#   - nightly.yml (schedule + push:main): advisory-drift + fuzz soak
+#
+# Kept here (all near-instant — no toolchain build except a fast rustfmt pass):
 #   - cargo fmt --all --check
-#   - cargo clippy --all-targets -- -D warnings (pedantic + nursery via
-#     workspace [lints] section, NOT command line)
-#   - cargo nextest run --workspace + cargo test --doc (doctest coverage)
-#   - cargo deny check bans licenses sources                (deps-changed only)
-#   - cargo audit                                           (deps-changed only)
-#   - file-size cap (700 LOC) via check-file-size.sh
-#   - basic no-secret scan via check-no-secrets.sh
-#   - THIRDPARTY.md current via check-thirdparty-current.sh (deps-changed only)
+#   - file-size cap (700 LOC), no-secret scan, bench-invocation lint
+#   - cargo-deny + THIRDPARTY.md currency  (deps-changed only)
 #
-# Per CI spend triage 2026-05-24 the following live on `nightly.yml`
-# (cron + push-to-main + workflow_dispatch):
-#   - macOS clippy + test  (macos-latest is a 10x billing multiplier on private
-#     repos; dev-host validation happens via local `cargo` pre-PR)
-#   - parse-fuzz           (60s/PR floor → 1h nightly soak — better coverage,
-#     no critical-path cost on PR)
-#   - cargo-audit          (catches advisory-db drift on unchanged deps —
-#     PR-side audit is dep-change-gated, so unchanged vulnerable pins would
-#     otherwise sit unflagged. Nightly closes that gap.)
-#
-# Security notes:
-#   - No `${{ github.event.* }}` interpolations appear in any `run:` command;
-#     all such expansions are confined to `if:` conditions, `concurrency:`
-#     keys, and `with:` action inputs. No shell-injection surface.
+# Security: no `${{ github.event.* }}` in any `run:` (confined to if:/concurrency:/with:).
 
 name: ci
 
 on:
   pull_request:
-    branches: [main]
+    branches: [development]
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -49,9 +39,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  # Detect which file groups changed. Dep-validation jobs (cargo-deny,
-  # cargo-audit, third-party attribution) gate on `outputs.deps` so they
-  # only run when dependency manifests changed — the uncommon case.
+  # Dep-validation jobs (cargo-deny, third-party attribution) gate on
+  # `outputs.deps` so they only run when dependency manifests changed.
   changes:
     name: detect changes
     if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
@@ -82,124 +71,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: cargo fmt or tracked-source rustfmt
-        run: |
-          if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
-            rustfmt --check $(git ls-files '*.rs')
-          else
-            cargo fmt --all --check
-          fi
-
-  clippy:
-    name: clippy (ubuntu-latest)
-    # Linux-only on PR. macOS clippy runs on `nightly.yml` (scheduled +
-    # push-to-main + workflow_dispatch) since macos-latest is a 10x billing
-    # multiplier on private repos and dev-host validation happens via local
-    # `cargo clippy` pre-PR. Per CI spend triage 2026-05-24.
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: cargo clippy
-        run: |
-          if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
-            echo "No workspace packages yet; clippy starts once crate manifests land."
-          else
-            cargo clippy --workspace --all-targets --locked -- -D warnings
-          fi
-
-  test:
-    name: test (ubuntu-latest)
-    # Linux-only on PR per CI spend triage 2026-05-24 (see clippy job comment).
-    # Uses cargo-nextest for unit/integration tests (faster parallel scheduler)
-    # and a separate `cargo test --doc` pass for the two crates that ship
-    # doctests (selene-vector, selene-pack) — nextest does not run doctests.
-    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    env:
-      # Drop debuginfo from the `cargo test` build graph. The whole graph
-      # (workspace + deps) builds under the `test` profile, so this strips
-      # the DWARF bulk from every rlib/test binary, keeping the linker's
-      # disk/mmap footprint under the runner cap (ubuntu `ld` SIGBUS).
-      CARGO_PROFILE_TEST_DEBUG: 0
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-      - name: cargo nextest + doctests
-        run: |
-          if cargo metadata --format-version=1 --no-deps | grep -q '"packages":\[\]'; then
-            echo "No workspace packages yet; tests start once crate manifests land."
-          else
-            cargo nextest run --workspace --locked --all-features --profile ci
-            cargo test --workspace --locked --all-features --doc
-          fi
-
-  deny:
-    name: cargo-deny
-    needs: changes
-    # Skip when no dependency manifests changed (the common case for source-only PRs).
-    if: |
-      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.deps == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - id: cargo-lock
-        run: |
-          if [ -f Cargo.lock ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.cargo-lock.outputs.exists == 'false'
-        run: echo "No Cargo.lock yet; cargo-deny starts once dependencies land."
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        if: steps.cargo-lock.outputs.exists == 'true'
-        with:
-          command: check bans licenses sources
-
-  audit:
-    name: cargo-audit
-    needs: changes
-    # Skip when no dependency manifests changed (the common case for source-only PRs).
-    # Note: advisory-db drift is caught by the nightly workflow since advisories
-    # can land for unchanged deps; this PR-side check is a "don't introduce a new
-    # vulnerable dep" gate.
-    if: |
-      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
-      && needs.changes.outputs.deps == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - id: cargo-lock
-        run: |
-          if [ -f Cargo.lock ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.cargo-lock.outputs.exists == 'false'
-        run: echo "No Cargo.lock yet; cargo-audit starts once dependencies land."
-      - uses: taiki-e/install-action@v2
-        if: steps.cargo-lock.outputs.exists == 'true'
-        with:
-          tool: cargo-audit
-      - uses: actions/cache@v4
-        if: steps.cargo-lock.outputs.exists == 'true'
-        with:
-          path: ~/.cargo/advisory-db
-          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: advisory-db-${{ runner.os }}-
-      - if: steps.cargo-lock.outputs.exists == 'true'
-        run: cargo audit --color always
+      - run: cargo fmt --all --check
 
   file-size-cap:
     name: file-size cap (700 LOC)
@@ -229,33 +101,33 @@ jobs:
       - run: bash .github/scripts/check-mimalloc-dev-dep.test.sh
       - run: bash scripts/run-benches.test.sh
 
-  thirdparty-current:
-    name: third-party attribution current
+  deny:
+    name: cargo-deny
     needs: changes
-    # Skip when no dependency manifests changed; THIRDPARTY.md only drifts
-    # when Cargo.lock changes (cargo-about is deterministic given the lockfile).
+    # Skip when no dependency manifests changed (the common case for source-only PRs).
     if: |
       (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
       && needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - id: cargo-lock
-        run: |
-          if [ -f Cargo.lock ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.cargo-lock.outputs.exists == 'false'
-        run: echo "No Cargo.lock yet; third-party attribution check starts once dependencies land."
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources
+
+  thirdparty-current:
+    name: third-party attribution current
+    needs: changes
+    # THIRDPARTY.md only drifts when Cargo.lock changes (cargo-about is deterministic).
+    if: |
+      (github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch')
+      && needs.changes.outputs.deps == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        if: steps.cargo-lock.outputs.exists == 'true'
       - uses: Swatinem/rust-cache@v2
-        if: steps.cargo-lock.outputs.exists == 'true'
       - uses: taiki-e/install-action@v2
-        if: steps.cargo-lock.outputs.exists == 'true'
         with:
           tool: cargo-about
-      - if: steps.cargo-lock.outputs.exists == 'true'
-        run: bash .github/scripts/check-thirdparty-current.sh
+      - run: bash .github/scripts/check-thirdparty-current.sh
