@@ -1,0 +1,179 @@
+# Release gate for selene-db — runs on PRs into `main` (i.e. `development` → `main`).
+#
+# Workflow model (2026-05-28): everyday Brief work merges into `development`
+# behind the cheap `ci.yml` gate + local hooks. A release batches `development`
+# into a single PR against `main`; THIS workflow is the comprehensive pre-merge
+# gate that runs everything the fast gate skipped — full build, lint, tests,
+# doctests, macOS validation, dependency audit, and a parser fuzz pass.
+#
+# Releases are infrequent, so the macOS 10x billing multiplier and the fuzz
+# minutes are paid here, off the per-Brief critical path.
+#
+# Security: no `${{ github.event.* }}` in any `run:` (confined to if:/concurrency:/with:).
+
+name: release
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  fmt:
+    name: fmt
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (${{ matrix.os }})
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      # Strip DWARF from the test build graph to keep ubuntu `ld` under the
+      # runner mmap cap (SIGBUS otherwise). See ci-spend-triage / BRIEF-131c.
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: cargo nextest + doctests
+        run: |
+          cargo nextest run --workspace --locked --all-features --profile ci
+          cargo test --workspace --locked --all-features --doc
+
+  deny:
+    name: cargo-deny
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check bans licenses sources
+
+  audit:
+    name: cargo-audit
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cargo/advisory-db
+          key: advisory-db-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: advisory-db-${{ runner.os }}-
+      - run: cargo audit --color always
+
+  thirdparty-current:
+    name: third-party attribution current
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about
+      - run: bash .github/scripts/check-thirdparty-current.sh
+
+  file-size-cap:
+    name: file-size cap (700 LOC)
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-file-size.sh
+
+  no-secret-scan:
+    name: no-secret scan
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-no-secrets.sh
+
+  bench-invocation-lint:
+    name: bench invocation lint
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/scripts/check-bench-invocation.sh .
+      - run: bash .github/scripts/check-bench-invocation.test.sh
+      - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
+      - run: bash .github/scripts/check-mimalloc-dev-dep.test.sh
+      - run: bash scripts/run-benches.test.sh
+
+  parse-fuzz:
+    name: parse-fuzz (5m release pass)
+    # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
+    # 5-minute pre-release pass; the 1h deep soak stays on nightly.yml.
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: actions/cache@v4
+        with:
+          path: crates/selene-gql/fuzz/corpus
+          key: gql-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-testing/corpus/positive/**/*.gql') }}
+          restore-keys: gql-fuzz-corpus-${{ runner.os }}-
+      - name: seed parse corpus
+        run: |
+          mkdir -p crates/selene-gql/fuzz/corpus/parse_gql
+          find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
+      - name: fuzz parser (5m)
+        working-directory: crates/selene-gql/fuzz
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=300

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# selene-db pre-push gate — the clippy + tests that moved OFF the per-PR
+# CI (see .github/workflows/ci.yml). Running them here keeps `development`
+# green without paying per-Brief CI build minutes. The dev->main release
+# gate (release.yml) re-verifies everything before main.
+# Skip once:    git push --no-verify
+# Skip session: export SELENE_SKIP_HOOKS=1
+set -euo pipefail
+[ -n "${SELENE_SKIP_HOOKS:-}" ] && { echo "[pre-push] skipped (SELENE_SKIP_HOOKS)"; exit 0; }
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] cargo clippy --workspace --all-targets -- -D warnings"
+cargo clippy --workspace --all-targets --locked -- -D warnings
+
+if command -v cargo-nextest >/dev/null 2>&1; then
+  echo "[pre-push] cargo nextest run --workspace --all-features"
+  cargo nextest run --workspace --locked --all-features
+else
+  echo "[pre-push] cargo-nextest not found; falling back to cargo test (install: cargo install cargo-nextest)"
+  cargo test --workspace --locked --all-features
+fi
+
+echo "[pre-push] cargo test --doc"
+cargo test --workspace --locked --all-features --doc
+
+echo "[pre-push] ok"

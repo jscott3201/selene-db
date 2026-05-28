@@ -181,10 +181,21 @@ scripts/run-benches.sh --profile quick --layer iai
 # cargo bench --workspace
 ```
 
+### CI topology & local hooks (2026-05-28)
+
+Three workflows + local git hooks split the gates by cost so Brief PRs iterate cheaply:
+
+- **`.github/workflows/ci.yml`** — fast gate on **PR → `development`**. *No Rust build*: `fmt`, file-size cap, no-secret scan, bench-invocation lint, and (deps-changed only) `cargo-deny` + THIRDPARTY currency.
+- **`.github/workflows/release.yml`** — full gate on **PR → `main`** (the `development` → `main` release PR): clippy + tests on ubuntu **and** macOS + doctests + `cargo-audit` + a 5-min parser fuzz, on top of the fast checks.
+- **`.github/workflows/nightly.yml`** — schedule + push-to-`main`: advisory-DB drift + 1h fuzz soak.
+- **Local hooks** (`scripts/install-hooks.sh` sets `core.hooksPath=.githooks`): `pre-commit` = fmt + file-size + secrets; `pre-push` = `clippy -D warnings` + nextest + doctests — the build/lint/test gate intentionally kept off per-Brief CI. Skip with `--no-verify` or `SELENE_SKIP_HOOKS=1`; run `install-hooks.sh` once per clone. rust-analyzer (LSP) is editor-side — enable clippy-on-save.
+
+The `cargo …` block above is the full local set; the pre-push hook runs the clippy/test subset automatically so `development` stays green without per-PR CI build minutes.
+
 ## Conventions
 
 - **Commits:** conventional commits (`feat(scope):`, `fix(scope):`, `refactor(scope):`, `chore(scope):`); scope = crate or component.
-- **Branches:** trunk + `feature/*` / `feat/*` / `chore/*` PRs against `main`.
+- **Branches:** `development` is the integration trunk. Brief work — `feature/*` / `feat/*` / `chore/*` → PR → **`development`** (fast checks-only gate). Releases batch `development` → PR → **`main`**, where the full suite runs; release tags cut from `main`. Don't PR Brief work straight to `main`.
 - **Tests with code:** every PR ships extensive tests — units, edge cases, error paths, concurrency for shared state, property tests for invariants. Bar is "would this catch the IStr admission race."
 - **Decisions over guesses:** when blocked, surface the question with discrete options and a recommendation. Don't pre-commit.
 
