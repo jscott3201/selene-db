@@ -188,9 +188,9 @@ Three workflows + local git hooks split the gates by cost so Brief PRs iterate c
 - **`.github/workflows/ci.yml`** — fast gate on **PR → `development`**. *No Rust build*: `fmt`, file-size cap, no-secret scan, bench-invocation lint, and (deps-changed only) `cargo-deny` + THIRDPARTY currency.
 - **`.github/workflows/release.yml`** — full gate on **PR → `main`** (the `development` → `main` release PR): clippy + tests on ubuntu **and** macOS + doctests + `cargo-audit` + a 5-min parser fuzz, on top of the fast checks.
 - **`.github/workflows/nightly.yml`** — schedule + push-to-`main`: advisory-DB drift + 1h fuzz soak.
-- **Local hooks** (`scripts/install-hooks.sh` sets `core.hooksPath=.githooks`): `pre-commit` = fmt + file-size + secrets; `pre-push` = `clippy -D warnings` + nextest + doctests — the build/lint/test gate intentionally kept off per-Brief CI. Skip with `--no-verify` or `SELENE_SKIP_HOOKS=1`; run `install-hooks.sh` once per clone. rust-analyzer (LSP) is editor-side — enable clippy-on-save.
+- **Local hooks** (`scripts/install-hooks.sh` sets `core.hooksPath=.githooks`): `pre-commit` = fmt + file-size + secrets; `pre-push` = fast `clippy -D warnings` (lib/bin only). The full `nextest` + doctest suite intentionally does **not** run on every push — it runs inside agent workflows and at the `development` → `main` release gate (`release.yml`). Skip with `--no-verify` or `SELENE_SKIP_HOOKS=1`; run `install-hooks.sh` once per clone. rust-analyzer (LSP) is editor-side — enable clippy-on-save.
 
-The `cargo …` block above is the full local set; the pre-push hook runs the clippy/test subset automatically so `development` stays green without per-PR CI build minutes.
+The `cargo …` block above is the full local set; the pre-push hook runs a fast clippy lint so `development` stays compiling without per-PR CI build minutes, while the full nextest/doctest suite runs at the `development` → `main` release gate (and inside agent workflows before they push).
 
 ## Conventions
 
