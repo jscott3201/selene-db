@@ -200,6 +200,17 @@ impl<'g> WriteTxn<'g> {
             self.schema_version.fetch_add(1, Ordering::AcqRel);
         }
 
+        // Debug-only structural net: re-derive every index from the published
+        // snapshot's authoritative columns and panic on the first drift. Runs
+        // on the exact snapshot just stored, while the write lock is still
+        // held (a pure read of the immutable snapshot — never re-enters
+        // begin_write). Compiled out entirely in release builds so committed
+        // perf baselines are byte-identical.
+        #[cfg(debug_assertions)]
+        if let Err(reason) = self.snapshot.load().assert_indexes_consistent() {
+            panic!("selene-graph: post-commit index consistency violation: {reason}");
+        }
+
         let changes = std::mem::take(&mut self.changes);
         let warnings = std::mem::take(&mut self.warnings);
 

@@ -111,6 +111,27 @@ impl CompositeTypedIndex {
         self.entries.iter()
     }
 
+    /// Return true when this index holds exactly the same `(key -> rows)`
+    /// buckets as `reference`.
+    ///
+    /// Used by the debug-only structural consistency net
+    /// ([`crate::SeleneGraph::assert_indexes_consistent`]). Component kinds
+    /// and every composite-key bucket's row bitmap must match.
+    #[must_use]
+    pub(crate) fn buckets_eq(&self, reference: &Self) -> bool {
+        self.kinds == reference.kinds && self.entries == reference.entries
+    }
+
+    /// Return true when any composite key maps to an empty row bitmap.
+    ///
+    /// Maintenance prunes a bucket when its bitmap empties (see
+    /// [`Self::remove`]); a present-but-empty bucket is a leak the
+    /// debug-only consistency net flags.
+    #[must_use]
+    pub(crate) fn has_empty_bucket(&self) -> bool {
+        self.entries.values().any(RoaringBitmap::is_empty)
+    }
+
     /// Insert `row` under the composite key formed from `values`.
     ///
     /// `STRING`-component values that arrive as [`Value::ExternalString`]

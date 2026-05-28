@@ -45,6 +45,12 @@ pub struct Session<'g> {
     pub(crate) row_cap: Option<usize>,
     pub(crate) istr_admission_policy: IStrAdmissionPolicy,
     pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
+    /// When set, `execute_source` runs the optimizer with a snapshot-pinned
+    /// [`LiveIndexCatalog`] so label / typed / composite index access paths are
+    /// selected. Default `true` (greenfield default-on). Toggle off via
+    /// [`Session::without_index_selection`] to lower the byte-identical Linear
+    /// plan (perf-baseline pinning / debugging).
+    pub(crate) index_selection: bool,
 }
 
 pub(crate) fn materialize_parameter_values<'a>(
@@ -133,6 +139,7 @@ impl<'g> Session<'g> {
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
+            index_selection: true,
         }
     }
 
@@ -155,6 +162,7 @@ impl<'g> Session<'g> {
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
+            index_selection: true,
         }
     }
 
@@ -293,6 +301,32 @@ impl<'g> Session<'g> {
         registry: &BindingTableRegistry,
     ) -> Cow<'a, BTreeMap<IStr, Value>> {
         materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
+    }
+
+    /// Disable optimizer index selection; all scans fall back to
+    /// [`ScanAccess::Linear`](crate::ScanAccess::Linear).
+    ///
+    /// With index selection off, `execute_source` skips the optimizer entirely
+    /// and lowers the byte-identical Linear plan (and EXPLAIN output) of
+    /// pre-optimizer-wiring HEAD. This is the escape hatch for committed
+    /// perf-baseline reproduction and access-path debugging.
+    #[must_use]
+    pub const fn without_index_selection(mut self) -> Self {
+        self.index_selection = false;
+        self
+    }
+
+    /// (Re-)enable optimizer index selection (the default).
+    ///
+    /// When enabled, `execute_source` builds a snapshot-pinned
+    /// [`LiveIndexCatalog`](crate::LiveIndexCatalog) per cache-miss statement
+    /// and runs the optimizer so label / typed / composite index access paths
+    /// are selected. Linear remains the always-correct fallback inside every
+    /// rule, so results are byte-identical to the disabled path.
+    #[must_use]
+    pub const fn with_index_selection(mut self) -> Self {
+        self.index_selection = true;
+        self
     }
 
     /// Enable this session's source-string plan cache with the given capacity.

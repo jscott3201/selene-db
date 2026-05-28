@@ -185,6 +185,19 @@ impl SharedGraph {
         let node_floor = (graph.node_store.labels.len() as u64).saturating_add(1);
         let edge_floor = (graph.edge_store.label.len() as u64).saturating_add(1);
         let allocator = IdAllocator::from_meta_with_floors(&graph.meta, node_floor, edge_floor);
+
+        // Debug-only structural net on the snapshot-load / recovery path: the
+        // rebuild_* helpers above re-derive all indexes from columns, so a
+        // rebuild bug would otherwise surface only as silent query
+        // corruption. Highest-value placement — verify the rebuilt snapshot
+        // before it is ever published. Compiled out in release builds.
+        #[cfg(debug_assertions)]
+        if let Err(reason) = graph.assert_indexes_consistent() {
+            return Err(GraphError::Inconsistent {
+                reason: format!("rebuilt snapshot failed index consistency check: {reason}"),
+            });
+        }
+
         let graph = Arc::new(graph);
         snapshot.store(Arc::clone(&graph));
         Ok(Self {

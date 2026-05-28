@@ -1,0 +1,311 @@
+//! OPT-1/OPT-2/OPT-3 end-to-end execution tests through `Session::execute_source`.
+//!
+//! These prove the optimizer is wired into the production path with a
+//! snapshot-pinned `LiveIndexCatalog` (default-on), that index acceleration is
+//! semantically transparent (byte-identical rows vs the `without_index_selection`
+//! Linear path), and that EXPLAIN renders the optimized access path. This is the
+//! "would it catch the IStr admission race" bar: a divergence between the Linear
+//! and indexed paths is the failure mode under test.
+
+use std::sync::Arc;
+
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+use selene_gql::{BindingTable, EmptyProcedureRegistry, Session, StatementOutput};
+use selene_graph::{SharedGraph, TypedIndexKind};
+
+fn istr(value: &str) -> IStr {
+    intern(value).expect("test string interns")
+}
+
+fn props<const N: usize>(pairs: [(IStr, Value); N]) -> PropertyMap {
+    PropertyMap::from_pairs(pairs).expect("test properties fit caps")
+}
+
+fn rows(output: StatementOutput) -> BindingTable {
+    match output {
+        StatementOutput::Rows(table) => table,
+        StatementOutput::Written(outcome) => outcome.rows.expect("write returned rows"),
+        other => panic!("expected rows, got {other:?}"),
+    }
+}
+
+fn node_ids(table: &BindingTable) -> Vec<u64> {
+    table
+        .rows()
+        .iter()
+        .filter_map(|row| match row.values().first() {
+            Some(Value::NodeRef(id)) => Some(id.get()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn explain_dump(session: &mut Session<'_>, source: &str) -> String {
+    let table = rows(
+        session
+            .execute_source(&format!("EXPLAIN {source}"), &EmptyProcedureRegistry)
+            .expect("EXPLAIN executes"),
+    );
+    match table.rows().first().and_then(|r| r.values().first()) {
+        Some(Value::ExternalString(dump)) => dump.as_ref().to_owned(),
+        Some(Value::String(dump)) => dump.as_str().to_owned(),
+        other => panic!("expected EXPLAIN dump string, got {other:?}"),
+    }
+}
+
+/// Build a graph with mixed labels: 3 `Person` (one also `Employee`), 2
+/// `Robot`, indexed `Person.age` (I64). Returns the graph and the alive
+/// Person NodeIds.
+fn build_graph() -> (SharedGraph, Vec<NodeId>) {
+    let graph = SharedGraph::new(GraphId::new(901));
+    let person = istr("Person");
+    let employee = istr("Employee");
+    let robot = istr("Robot");
+    let age = istr("age");
+    let mut persons = Vec::new();
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut m = txn.mutator();
+            persons.push(
+                m.create_node(LabelSet::single(person), props([(age, Value::Int(30))]))
+                    .unwrap(),
+            );
+            // A Person that also carries Employee — proves the post-filter +
+            // bitmap agree for multi-label nodes.
+            let mut both = LabelSet::single(person);
+            both.insert(employee);
+            persons.push(m.create_node(both, props([(age, Value::Int(40))])).unwrap());
+            persons.push(
+                m.create_node(LabelSet::single(person), props([(age, Value::Int(50))]))
+                    .unwrap(),
+            );
+            m.create_node(LabelSet::single(robot), PropertyMap::new())
+                .unwrap();
+            m.create_node(LabelSet::single(robot), PropertyMap::new())
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    graph
+        .create_property_index(person, age, TypedIndexKind::I64)
+        .unwrap();
+    (graph, persons)
+}
+
+#[test]
+fn label_scan_returns_same_rows_as_linear() {
+    let (graph, _persons) = build_graph();
+    let source = "MATCH (n:Person) RETURN n";
+
+    let mut indexed = Session::new(&graph);
+    let indexed_rows = node_ids(&rows(
+        indexed
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    let mut linear = Session::new(&graph).without_index_selection();
+    let linear_rows = node_ids(&rows(
+        linear
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    assert_eq!(
+        indexed_rows, linear_rows,
+        "indexed vs linear row sets diverge"
+    );
+    assert_eq!(indexed_rows.len(), 3, "exactly the 3 Person nodes");
+}
+
+#[test]
+fn typed_index_returns_same_rows_as_linear() {
+    let (graph, _persons) = build_graph();
+    let source = "MATCH (n:Person) WHERE n.age = 40 RETURN n";
+
+    let mut indexed = Session::new(&graph);
+    let indexed_rows = node_ids(&rows(
+        indexed
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    let mut linear = Session::new(&graph).without_index_selection();
+    let linear_rows = node_ids(&rows(
+        linear
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    ));
+
+    assert_eq!(indexed_rows, linear_rows);
+    assert_eq!(indexed_rows.len(), 1, "one Person with age=40");
+}
+
+#[test]
+fn explain_renders_label_index_by_default_and_linear_when_disabled() {
+    let (graph, _persons) = build_graph();
+    let source = "MATCH (n:Person) RETURN n";
+
+    let mut indexed = Session::new(&graph);
+    let indexed_dump = explain_dump(&mut indexed, source);
+    assert!(
+        indexed_dump.contains("LabelIndex"),
+        "default-on EXPLAIN should render LabelIndex; got:\n{indexed_dump}"
+    );
+
+    let mut linear = Session::new(&graph).without_index_selection();
+    let linear_dump = explain_dump(&mut linear, source);
+    assert!(
+        linear_dump.contains("Linear"),
+        "without_index_selection EXPLAIN should render Linear; got:\n{linear_dump}"
+    );
+    assert!(
+        !linear_dump.contains("LabelIndex"),
+        "without_index_selection EXPLAIN must not pick LabelIndex; got:\n{linear_dump}"
+    );
+}
+
+#[test]
+fn explain_renders_typed_index_for_indexed_equality() {
+    let (graph, _persons) = build_graph();
+    let mut session = Session::new(&graph);
+    let dump = explain_dump(&mut session, "MATCH (n:Person) WHERE n.age = 30 RETURN n");
+    assert!(
+        dump.contains("TypedIndexRange"),
+        "indexed equality should render TypedIndexRange; got:\n{dump}"
+    );
+}
+
+#[test]
+fn empty_label_returns_no_rows() {
+    let (graph, _persons) = build_graph();
+    let mut session = Session::new(&graph);
+    let table = rows(
+        session
+            .execute_source("MATCH (n:Ghost) RETURN n", &EmptyProcedureRegistry)
+            .unwrap(),
+    );
+    assert!(table.rows().is_empty(), "absent label yields zero rows");
+}
+
+#[test]
+fn correctness_corpus_indexed_matches_linear() {
+    // A corpus of read shapes; every one must produce identical rows on the
+    // default (indexed) and without_index_selection (Linear) paths.
+    let (graph, _persons) = build_graph();
+    let corpus = [
+        "MATCH (n:Person) RETURN n",
+        "MATCH (n:Person) WHERE n.age = 30 RETURN n",
+        "MATCH (n:Person) WHERE n.age > 30 RETURN n",
+        "MATCH (n:Person) WHERE n.age >= 30 AND n.age < 50 RETURN n",
+        "MATCH (n:Person) WHERE n.age IN [30, 50] RETURN n",
+        "MATCH (n:Person) WHERE n.age = 30 OR n.age = 50 RETURN n",
+        "MATCH (n:Robot) RETURN n",
+        "MATCH (n) RETURN n",
+        "MATCH (n:Person) RETURN n ORDER BY n.age DESC LIMIT 2",
+    ];
+    for source in corpus {
+        let mut indexed = Session::new(&graph);
+        let mut linear = Session::new(&graph).without_index_selection();
+        let indexed_rows = node_ids(&rows(
+            indexed
+                .execute_source(source, &EmptyProcedureRegistry)
+                .unwrap(),
+        ));
+        let linear_rows = node_ids(&rows(
+            linear
+                .execute_source(source, &EmptyProcedureRegistry)
+                .unwrap(),
+        ));
+        assert_eq!(indexed_rows, linear_rows, "row divergence for `{source}`");
+    }
+}
+
+#[test]
+fn create_index_invalidates_cached_plan_and_re_optimizes() {
+    use std::num::NonZeroUsize;
+    let graph = SharedGraph::new(GraphId::new(902));
+    let person = istr("Person");
+    let age = istr("age");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(person), props([(age, Value::Int(7))]))
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
+    let source = "MATCH (n:Person) WHERE n.age = 7 RETURN n";
+
+    // Before the typed index, equality is served via LabelIndex (label index is
+    // intrinsic) with a residual predicate — not a typed index.
+    let before = explain_dump(&mut session, source);
+    assert!(
+        !before.contains("TypedIndexRange"),
+        "no typed index yet; got:\n{before}"
+    );
+
+    // CREATE INDEX bumps schema_version, invalidating the cached plan.
+    graph
+        .create_property_index(person, age, TypedIndexKind::I64)
+        .unwrap();
+
+    let after = explain_dump(&mut session, source);
+    assert!(
+        after.contains("TypedIndexRange"),
+        "post-CREATE-INDEX plan must use the typed index; got:\n{after}"
+    );
+
+    // The result is still correct.
+    let table = rows(
+        session
+            .execute_source(source, &EmptyProcedureRegistry)
+            .unwrap(),
+    );
+    assert_eq!(node_ids(&table).len(), 1);
+}
+
+#[test]
+fn concurrent_create_index_mid_statement_has_no_optimize_execute_skew() {
+    // Pinned-snapshot guardrail: a plan optimized against a pinned snapshot
+    // executes correctly against that same snapshot even if another thread
+    // commits a CREATE INDEX in between, and a subsequent statement re-pins and
+    // sees the new index via the bumped epoch. No panic, correct rows.
+    let (graph, _persons) = build_graph();
+    let graph = Arc::new(graph);
+    let source = "MATCH (n:Person) WHERE n.age = 30 RETURN n";
+
+    // Statement 1: optimize + execute against the current snapshot.
+    {
+        let mut session = Session::new(&graph);
+        let table = rows(
+            session
+                .execute_source(source, &EmptyProcedureRegistry)
+                .unwrap(),
+        );
+        assert_eq!(node_ids(&table).len(), 1);
+    }
+
+    // Concurrent index DDL on another thread.
+    let writer = {
+        let graph = Arc::clone(&graph);
+        std::thread::spawn(move || {
+            graph
+                .create_property_index(istr("Person"), istr("name"), TypedIndexKind::String)
+                .unwrap();
+        })
+    };
+    writer.join().unwrap();
+
+    // Statement 2: re-pins, sees the bumped epoch, still correct.
+    {
+        let mut session = Session::new(&graph);
+        let table = rows(
+            session
+                .execute_source(source, &EmptyProcedureRegistry)
+                .unwrap(),
+        );
+        assert_eq!(node_ids(&table).len(), 1);
+    }
+}

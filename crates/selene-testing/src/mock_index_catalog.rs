@@ -37,6 +37,13 @@ impl MockIndexCatalog {
         self
     }
 
+    /// Register an edge label index.
+    #[must_use]
+    pub fn with_edge_label_index(mut self, label: IStr) -> Self {
+        self.insert_label_index(IndexTarget::Edge, label);
+        self
+    }
+
     /// Register a node composite-property index.
     ///
     /// Each `(property, kind)` pair pins the typed-index kind reported through
