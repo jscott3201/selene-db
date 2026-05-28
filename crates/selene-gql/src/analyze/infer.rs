@@ -172,65 +172,6 @@ pub(crate) fn in_list(
     Ok(AnalyzedType::Resolved(GqlType::Boolean))
 }
 
-/// Infer a `LIKE` predicate type.
-pub(crate) fn like(
-    operand: &AnalyzedType,
-    operand_span: SourceSpan,
-    pattern: &AnalyzedType,
-    pattern_span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    expect_string(
-        operand,
-        operand_span,
-        TypeMismatchContext::LikePredicate { side: Side::Lhs },
-    )?;
-    expect_string(
-        pattern,
-        pattern_span,
-        TypeMismatchContext::LikePredicate { side: Side::Rhs },
-    )?;
-    Ok(AnalyzedType::Resolved(GqlType::Boolean))
-}
-
-/// Infer a `BETWEEN` predicate type.
-pub(crate) fn between(
-    operand: &AnalyzedType,
-    operand_span: SourceSpan,
-    low: &AnalyzedType,
-    low_span: SourceSpan,
-    high: &AnalyzedType,
-    high_span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    expect_comparable(
-        operand,
-        operand_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Lhs },
-    )?;
-    expect_comparable(
-        low,
-        low_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    expect_comparable(
-        high,
-        high_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    ensure_same_comparable_family(
-        operand,
-        low,
-        low_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    ensure_same_comparable_family(
-        operand,
-        high,
-        high_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    Ok(AnalyzedType::Resolved(GqlType::Boolean))
-}
-
 /// Infer a list literal type.
 pub(crate) fn list_literal(
     items: &[(AnalyzedType, SourceSpan)],

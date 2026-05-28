@@ -11,7 +11,7 @@ use crate::{
     parser::budget::InternerBudget,
 };
 
-use super::{Rule, expr, first_child, intern_pair, not_implemented, span, unexpected_pair};
+use super::{Rule, expr, first_child, intern_pair, span, unexpected_pair};
 
 pub(super) fn build_ddl_statement(
     pair: Pair<'_, Rule>,
@@ -30,28 +30,8 @@ pub(super) fn build_ddl_statement(
         Rule::show_edge_types => Ok(DdlStatement::ShowEdgeTypes(span(&inner))),
         Rule::show_indexes => Ok(DdlStatement::ShowIndexes(span(&inner))),
         Rule::show_procedures => Ok(DdlStatement::ShowProcedures(span(&inner))),
-        Rule::create_trigger | Rule::drop_trigger | Rule::show_triggers => Err(not_implemented(
-            &inner,
-            "triggers are out of v1.0 scope per spec 03 §7",
-        )),
-        Rule::create_materialized_view
-        | Rule::drop_materialized_view
-        | Rule::show_materialized_views => Err(not_implemented(
-            &inner,
-            "materialized views are not in the v1.0 claim list",
-        )),
-        Rule::create_procedure | Rule::drop_procedure => Err(not_implemented(
-            &inner,
-            "procedures are registered through selene-pack, not via DDL",
-        )),
         Rule::create_index => build_create_index(inner, budget),
         Rule::drop_index => build_drop_index(inner, budget),
-        Rule::create_user
-        | Rule::drop_user
-        | Rule::create_role
-        | Rule::drop_role
-        | Rule::grant_role
-        | Rule::revoke_role => Err(not_implemented(&inner, "auth is an embedder concern (D1)")),
         _ => Err(unexpected_pair(inner, "expected DDL statement")),
     }
 }

@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: GD01
--- expects: parse-ok
+// corpus: positive
+// feature: GD01
+// expects: parse-ok
 MATCH (n:Person) SET n.active = true RETURN n

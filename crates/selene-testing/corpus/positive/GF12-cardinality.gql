@@ -1,6 +1,6 @@
--- corpus: positive
--- feature: GF12
--- expects: parse-ok
+// corpus: positive
+// feature: GF12
+// expects: parse-ok
 MATCH p = (a)-[]->(b)
 RETURN cardinality([1, 2, 3]) AS list_size,
        cardinality(p) AS path_size,

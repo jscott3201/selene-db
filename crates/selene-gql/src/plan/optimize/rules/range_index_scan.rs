@@ -201,19 +201,6 @@ fn bounds_for_property(
                     TightenOutcome::Reject => return None,
                 }
             }
-            binding_refs::PropertyPredicateShape::Between { low, high } => {
-                let low = compatible_value(low, kind)?;
-                let high = compatible_value(high, kind)?;
-                return Some((
-                    TypedIndexBounds::Range {
-                        lo: low,
-                        lo_inclusive: true,
-                        hi: high,
-                        hi_inclusive: true,
-                    },
-                    vec![index],
-                ));
-            }
             binding_refs::PropertyPredicateShape::InList(_) => {}
         }
     }

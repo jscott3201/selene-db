@@ -187,19 +187,6 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             validate_expr(operand)?;
             validate_exprs(list)
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            validate_expr(operand)?;
-            validate_expr(pattern)
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            validate_expr(operand)?;
-            validate_expr(low)?;
-            validate_expr(high)
-        }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             validate_exprs(items)
         }

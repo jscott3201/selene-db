@@ -1,6 +1,6 @@
--- corpus: positive
--- feature: GF02
--- expects: parse-ok
+// corpus: positive
+// feature: GF02
+// expects: parse-ok
 RETURN sin(0) AS sine,
        cos(0) AS cosine,
        tan(0) AS tangent,

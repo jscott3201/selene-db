@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: G112
--- expects: parse-ok
+// corpus: positive
+// feature: G112
+// expects: parse-ok
 MATCH (n)-[e]->() RETURN n IS SOURCE OF e AS source

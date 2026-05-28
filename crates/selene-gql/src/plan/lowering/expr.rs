@@ -420,19 +420,6 @@ fn collect_subqueries_in_expr(
                 collect_subqueries_in_expr(item, analyzed, registry, entries)?;
             }
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(pattern, analyzed, registry, entries)?;
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(low, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(high, analyzed, registry, entries)?;
-        }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             for item in items {
                 collect_subqueries_in_expr(item, analyzed, registry, entries)?;

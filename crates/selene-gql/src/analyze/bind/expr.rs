@@ -113,33 +113,6 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let items = bind_many_with_spans(ctx, list)?;
                 infer::in_list(ctx.expr_type(operand_id), operand.span(), &items)?
             }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                let operand_id = bind_value_expr(ctx, operand)?;
-                let pattern_id = bind_value_expr(ctx, pattern)?;
-                infer::like(
-                    ctx.expr_type(operand_id),
-                    operand.span(),
-                    ctx.expr_type(pattern_id),
-                    pattern.span(),
-                )?
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                let operand_id = bind_value_expr(ctx, operand)?;
-                let low_id = bind_value_expr(ctx, low)?;
-                let high_id = bind_value_expr(ctx, high)?;
-                infer::between(
-                    ctx.expr_type(operand_id),
-                    operand.span(),
-                    ctx.expr_type(low_id),
-                    low.span(),
-                    ctx.expr_type(high_id),
-                    high.span(),
-                )?
-            }
             ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
                 bind_many(ctx, items)?;
                 AnalyzedType::Resolved(crate::GqlType::Boolean)
@@ -262,19 +235,6 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter().rev().map(|item| (item, next)));
-                stack.push((operand, next));
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push((pattern, next));
-                stack.push((operand, next));
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push((high, next));
-                stack.push((low, next));
                 stack.push((operand, next));
             }
             ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
@@ -466,19 +426,6 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
                     | IsCheckKind::Typed(_)
                     | IsCheckKind::Normalized(_) => {}
                 }
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push((pattern, depth));
-                stack.push((operand, depth));
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push((high, depth));
-                stack.push((low, depth));
-                stack.push((operand, depth));
             }
             ValueExpr::Case {
                 branches,

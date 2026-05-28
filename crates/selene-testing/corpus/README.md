@@ -11,12 +11,15 @@ Layout:
 File names start with the relevant ISO feature ID, for example
 `GP04-named-procedure-call.gql` or `GT03-multi-graph-tx-rejected.gql`.
 
-Each `.gql` file declares its expected outcome in header comments:
+Each `.gql` file declares its expected outcome in header comments. Headers use
+the ISO GQL line-comment prefix `//` so the whole file is valid GQL source (the
+SQL `--` comment is not part of ISO/IEC 39075:2024 and is rejected by the
+parser):
 
-```sql
--- corpus: positive
--- feature: GP04
--- expects: parse-ok
+```gql
+// corpus: positive
+// feature: GP04
+// expects: parse-ok
 
 CALL selene.count_nodes() YIELD count AS v
 RETURN v

@@ -122,36 +122,6 @@ pub enum ValueExpr {
         /// Source span of the full predicate.
         span: SourceSpan,
     },
-    /// `[NOT] LIKE` predicate.
-    ///
-    /// selene-db extension: not in ISO/IEC 39075:2024 section 19; modeled
-    /// after SQL `LIKE`.
-    Like {
-        /// Checked operand.
-        operand: Box<ValueExpr>,
-        /// Pattern expression.
-        pattern: Box<ValueExpr>,
-        /// Whether the predicate was negated.
-        negated: bool,
-        /// Source span of the full predicate.
-        span: SourceSpan,
-    },
-    /// `[NOT] BETWEEN` predicate.
-    ///
-    /// selene-db extension: not in ISO/IEC 39075:2024 section 19; modeled
-    /// after SQL `BETWEEN`.
-    Between {
-        /// Checked operand.
-        operand: Box<ValueExpr>,
-        /// Lower bound.
-        low: Box<ValueExpr>,
-        /// Upper bound.
-        high: Box<ValueExpr>,
-        /// Whether the predicate was negated.
-        negated: bool,
-        /// Source span of the full predicate.
-        span: SourceSpan,
-    },
     /// `ALL_DIFFERENT(...)` predicate.
     ///
     /// selene-db extension: ISO/IEC 39075:2024 section 19.11 takes element
@@ -269,8 +239,6 @@ impl ValueExpr {
             | Self::FunctionCall { span, .. }
             | Self::IsCheck { span, .. }
             | Self::InList { span, .. }
-            | Self::Like { span, .. }
-            | Self::Between { span, .. }
             | Self::AllDifferent { span, .. }
             | Self::Same { span, .. }
             | Self::PropertyExists { span, .. }

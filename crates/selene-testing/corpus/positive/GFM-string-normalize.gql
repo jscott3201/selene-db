@@ -1,6 +1,6 @@
--- corpus: positive
--- feature: none
--- expects: parse-ok
+// corpus: positive
+// feature: none
+// expects: parse-ok
 RETURN NORMALIZE('é') AS nfc_value,
        NORMALIZE('é', NFD) AS nfd_value,
        'é' IS NORMALIZED AS normalized

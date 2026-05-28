@@ -485,12 +485,6 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
                     .iter_mut()
                     .fold(false, |changed, item| walk_expr(item, visit) | changed)
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => walk_expr(operand, visit) | walk_expr(pattern, visit),
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => walk_expr(operand, visit) | walk_expr(low, visit) | walk_expr(high, visit),
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => items
             .iter_mut()
             .fold(false, |changed, item| walk_expr(item, visit) | changed),

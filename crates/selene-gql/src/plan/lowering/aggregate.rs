@@ -177,19 +177,6 @@ fn collect_aggregates(
                 collect_aggregates(item, analyzed, rewrite)?;
             }
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            collect_aggregates(operand, analyzed, rewrite)?;
-            collect_aggregates(pattern, analyzed, rewrite)?;
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            collect_aggregates(operand, analyzed, rewrite)?;
-            collect_aggregates(low, analyzed, rewrite)?;
-            collect_aggregates(high, analyzed, rewrite)?;
-        }
         ValueExpr::Case {
             branches,
             else_branch,
@@ -364,30 +351,6 @@ fn rewrite_aggregate_refs(
         } => ValueExpr::InList {
             operand: Box::new(rewrite_aggregate_refs(operand, aggregate_names, analyzed)),
             list: rewrite_exprs(list, aggregate_names, analyzed),
-            negated: *negated,
-            span: *span,
-        },
-        ValueExpr::Like {
-            operand,
-            pattern,
-            negated,
-            span,
-        } => ValueExpr::Like {
-            operand: Box::new(rewrite_aggregate_refs(operand, aggregate_names, analyzed)),
-            pattern: Box::new(rewrite_aggregate_refs(pattern, aggregate_names, analyzed)),
-            negated: *negated,
-            span: *span,
-        },
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated,
-            span,
-        } => ValueExpr::Between {
-            operand: Box::new(rewrite_aggregate_refs(operand, aggregate_names, analyzed)),
-            low: Box::new(rewrite_aggregate_refs(low, aggregate_names, analyzed)),
-            high: Box::new(rewrite_aggregate_refs(high, aggregate_names, analyzed)),
             negated: *negated,
             span: *span,
         },

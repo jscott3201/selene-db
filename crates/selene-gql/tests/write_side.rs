@@ -297,22 +297,39 @@ fn parse_transaction_control() {
 
 #[test]
 fn deferred_surfaces_return_not_implemented() {
-    for source in [
-        "MERGE (n:Person {name: 'X'})",
-        "CREATE TRIGGER trig AFTER INSERT ON :Person EXECUTE SET n.x = 1",
-        "CREATE MATERIALIZED VIEW v AS MATCH (n) RETURN n",
-        "CREATE PROCEDURE pkg.fn() { RETURN 1 }",
-        "CREATE USER alice SET PASSWORD 'pw'",
-        "CREATE ROLE admin",
-        "GRANT ROLE admin TO alice",
-        "FOR x IN [1,2,3] RETURN x",
-    ] {
+    // These remain ISO-legal but are deferred in v1.0, so they parse and the
+    // builder rejects them with FEATURE_NOT_SUPPORTED (42N01).
+    for source in ["MERGE (n:Person {name: 'X'})", "FOR x IN [1,2,3] RETURN x"] {
         let error = parse(source).expect_err(source);
         assert_eq!(
             error.gqlstatus(),
             GqlStatus::FEATURE_NOT_SUPPORTED,
             "{source}"
         );
+    }
+}
+
+#[test]
+fn removed_non_iso_grammar_is_syntax_error() {
+    // Triggers, materialized views, procedure DDL, and auth (users/roles/grants)
+    // are out of spec entirely (auth = embedder concern D1; procedures live in
+    // selene-pack; triggers/views are not in the v1.0 claim list). They have no
+    // ISO equivalent and were removed from the grammar, so they now fail to
+    // parse with SYNTAX_ERROR (42601) rather than FEATURE_NOT_SUPPORTED.
+    for source in [
+        "CREATE TRIGGER trig AFTER INSERT ON :Person EXECUTE SET n.x = 1",
+        "CREATE MATERIALIZED VIEW v AS MATCH (n) RETURN n",
+        "CREATE PROCEDURE pkg.fn() { RETURN 1 }",
+        "CREATE USER alice SET PASSWORD 'pw'",
+        "CREATE ROLE admin",
+        "GRANT ROLE admin TO alice",
+        "REVOKE ROLE admin FROM alice",
+        "DROP TRIGGER trig",
+        "SHOW TRIGGERS",
+        "MATCH VIEW v YIELD x",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
     }
 }
 

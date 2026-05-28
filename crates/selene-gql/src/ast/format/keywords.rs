@@ -20,8 +20,11 @@ pub(super) fn fmt_binary(op: BinaryOp) -> &'static str {
         BinaryOp::Sub => "-",
         BinaryOp::Mul => "*",
         BinaryOp::Div => "/",
-        BinaryOp::Mod => "%",
-        BinaryOp::Power => "^",
+        // `Mod` and `Power` are runtime-only operators that back the ISO
+        // `MOD(x, y)` and `POWER(x, y)` scalar functions; the grammar never
+        // emits them as infix AST nodes, so they are rendered in function
+        // form by the `format.rs` `BinaryOp` arm and never reach this helper.
+        BinaryOp::Mod | BinaryOp::Power => "",
         BinaryOp::Eq => "=",
         BinaryOp::Ne => "<>",
         BinaryOp::Lt => "<",

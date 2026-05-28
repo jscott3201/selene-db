@@ -253,28 +253,6 @@ fn scrub_value(value: &mut ValueExpr) {
                 scrub_value(item);
             }
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-            scrub_value(pattern);
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-            scrub_value(low);
-            scrub_value(high);
-        }
         ValueExpr::AllDifferent { items, span } | ValueExpr::Same { items, span } => {
             *span = SourceSpan::default();
             for item in items {

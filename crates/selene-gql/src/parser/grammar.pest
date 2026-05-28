@@ -25,33 +25,10 @@ explainable_statement = { ddl_statement | call_stmt | select_stmt | mutation_pip
 
 // -- DDL statements -----------------------------------------------
 
-ddl_statement = { create_trigger | drop_trigger | show_triggers
-              | create_materialized_view | drop_materialized_view | show_materialized_views
-              | create_node_type | drop_node_type | show_node_types
+ddl_statement = { create_node_type | drop_node_type | show_node_types
               | create_edge_type | drop_edge_type | show_edge_types
               | show_indexes | show_procedures
-              | create_graph | drop_graph | create_procedure | drop_procedure | create_index | drop_index | create_user | drop_user | create_role | drop_role | grant_role | revoke_role }
-
-create_procedure = { ^"CREATE" ~ or_replace? ~ ^"PROCEDURE" ~ if_not_exists? ~ qualified_name ~ "(" ~ param_list? ~ ")" ~ "{" ~ query_pipeline ~ "}" }
-drop_procedure   = { ^"DROP" ~ ^"PROCEDURE" ~ if_exists? ~ qualified_name }
-param_list       = { param_decl ~ ("," ~ param_decl)* }
-param_decl       = { ident ~ type_name }
-
-create_trigger = { ^"CREATE" ~ ^"TRIGGER" ~ ident ~ ^"AFTER" ~ trigger_event ~ ^"ON" ~ ":" ~ ident ~ (^"WHEN" ~ expr)? ~ ^"EXECUTE" ~ mutation_op+ }
-trigger_event  = { ^"INSERT" | ^"SET" | ^"REMOVE" | ^"DELETE" }
-drop_trigger   = { ^"DROP" ~ ^"TRIGGER" ~ ident }
-show_triggers  = { ^"SHOW" ~ ^"TRIGGERS" }
-
-create_materialized_view = {
-    ^"CREATE" ~ or_replace? ~ ^"MATERIALIZED" ~ ^"VIEW" ~ if_not_exists? ~
-    ident ~ ^"AS" ~ match_stmt ~ return_stmt
-}
-
-drop_materialized_view = {
-    ^"DROP" ~ ^"MATERIALIZED" ~ ^"VIEW" ~ if_exists? ~ ident
-}
-
-show_materialized_views = { ^"SHOW" ~ ^"MATERIALIZED" ~ ^"VIEWS" }
+              | create_graph | drop_graph | create_index | drop_index }
 
 create_node_type = {
     ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
@@ -84,12 +61,6 @@ create_graph = { ^"CREATE" ~ or_replace? ~ ^"GRAPH" ~ if_not_exists? ~ ident }
 drop_graph   = { ^"DROP" ~ ^"GRAPH" ~ if_exists? ~ ident }
 create_index = { ^"CREATE" ~ ^"INDEX" ~ if_not_exists? ~ ident ~ ^"ON" ~ ":" ~ ident ~ "(" ~ ident ~ ("," ~ ident)* ~ ")" }
 drop_index   = { ^"DROP" ~ ^"INDEX" ~ if_exists? ~ ident }
-create_user  = { ^"CREATE" ~ ^"USER" ~ if_not_exists? ~ ident ~ ^"SET" ~ ^"PASSWORD" ~ string_lit ~ (^"ROLE" ~ ident)? }
-drop_user    = { ^"DROP" ~ ^"USER" ~ if_exists? ~ ident }
-create_role  = { ^"CREATE" ~ ^"ROLE" ~ if_not_exists? ~ ident }
-drop_role    = { ^"DROP" ~ ^"ROLE" ~ if_exists? ~ ident }
-grant_role   = { ^"GRANT" ~ ^"ROLE" ~ ident ~ ^"TO" ~ ident }
-revoke_role  = { ^"REVOKE" ~ ^"ROLE" ~ ident ~ ^"FROM" ~ ident }
 
 if_not_exists = { ^"IF" ~ ^"NOT" ~ ^"EXISTS" }
 if_exists     = { ^"IF" ~ ^"EXISTS" }
@@ -123,9 +94,7 @@ select_from = { ^"FROM" ~ (match_stmt | ident) }
 // -- Query pipeline -------------------------------------------------
 
 query_pipeline     = { pipeline_statement+ }
-pipeline_statement = { match_view_stmt | match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
-
-match_view_stmt = { ^"MATCH" ~ ^"VIEW" ~ ident ~ yield_clause }
+pipeline_statement = { match_stmt | let_stmt | for_stmt | unwind_stmt | with_stmt | filter_stmt | sorting_stmt | offset_stmt | limit_stmt | return_stmt | call_stmt }
 
 for_stmt    = { ^"FOR" ~ ident ~ ^"IN" ~ expr }
 unwind_stmt = { ^"UNWIND" ~ expr ~ ^"AS" ~ ident }
@@ -305,7 +274,7 @@ nodetach_kw = { ^"NODETACH" }
 //
 // Precedence (low to high):
 //   OR -> XOR -> AND -> NOT -> IS NULL / IN / string match -> comparison ->
-//   concat (||) -> addition (+,-) -> multiplication (*,/,%) ->
+//   concat (||) -> addition (+,-) -> multiplication (*,/) ->
 //   unary (+,-) -> postfix (.prop, [idx]) -> primary
 
 expr = { or_expr }
@@ -325,8 +294,6 @@ not_kw  = @{ ^"NOT"  ~ !(LETTER | NUMBER | "_") }
 is_kw   = @{ ^"IS"   ~ !(LETTER | NUMBER | "_") }
 in_kw   = @{ ^"IN"   ~ !(LETTER | NUMBER | "_") }
 null_kw    = @{ ^"NULL"    ~ !(LETTER | NUMBER | "_") }
-like_kw    = @{ ^"LIKE"    ~ !(LETTER | NUMBER | "_") }
-between_kw = @{ ^"BETWEEN" ~ !(LETTER | NUMBER | "_") }
 
 // IS NULL, IS TRUE/FALSE/UNKNOWN, IN list, string matching - same precedence, after NOT
 //
@@ -346,8 +313,6 @@ is_suffix = {
   | is_kw ~ not_kw? ~ normal_form? ~ normalized_kw
   | is_kw ~ not_kw? ~ truth_value
   | is_kw ~ not_kw? ~ typed_kw ~ type_name
-  | not_kw? ~ like_kw ~ addition
-  | not_kw? ~ between_kw ~ addition ~ and_kw ~ addition
   | not_kw? ~ in_kw ~ list_lit
   | string_match_op ~ comparison
 }
@@ -370,15 +335,14 @@ concat = { addition ~ ("||" ~ addition)* }
 addition       = { multiplication ~ (add_op ~ multiplication)* }
 add_op         = { "+" | "-" }
 multiplication = { unary ~ (mul_op ~ unary)* }
-mul_op         = { "*" | "/" | "%" }
+mul_op         = { "*" | "/" }
 
 // Unary: both + (identity) and - (negation)
 unary    = { sign_op ~ unary | postfix }
 sign_op  = { "+" | "-" }
 
 postfix = { primary ~ postfix_op* }
-postfix_op = { temporal_prop_access | prop_access | list_access_op }
-temporal_prop_access = { "." ~ prop_ident ~ ^"AT" ~ ^"TIME" ~ string_lit }
+postfix_op = { prop_access | list_access_op }
 prop_access    = { "." ~ prop_ident }
 list_access_op = { "[" ~ expr ~ "]" }
 
@@ -623,13 +587,12 @@ keyword = @{
     | ^"STDDEV_SAMP" | ^"STDDEV_POP"
     | ^"COLLECT_LIST" | ^"COLLECT"
     | ^"WITH" | ^"HAVING" | ^"UNWIND" | ^"NULLS"
-    | ^"CREATE" | ^"DROP" | ^"GRANT" | ^"REVOKE"
+    | ^"CREATE" | ^"DROP"
     | ^"SELECT" | ^"FROM"
     | ^"DIRECTED" | ^"LABELED" | ^"RECORD" | ^"NORMALIZED"
     | ^"DAY" | ^"HOUR" | ^"MINUTE" | ^"SECOND" | ^"MONTH" | ^"YEAR"
-    | ^"BETWEEN" | ^"LIKE" | ^"ARRAY"
+    | ^"ARRAY"
     | ^"BINDING" | ^"CONNECTING" | ^"DIFFERENT" | ^"KEEP" | ^"ONLY"
-    | ^"MATERIALIZED" | ^"VIEW" | ^"VIEWS"
     | ^"STRICT" | ^"WARN"
     ) ~ !(LETTER | NUMBER | "_")
 }
@@ -642,5 +605,5 @@ uint = @{ ASCII_DIGIT+ }
 
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ line_comment | block_comment }
-line_comment  = _{ ("//" | "--") ~ (!"\n" ~ ANY)* }
+line_comment  = _{ "//" ~ (!"\n" ~ ANY)* }
 block_comment = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }

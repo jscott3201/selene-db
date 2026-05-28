@@ -415,11 +415,6 @@ pub enum TypeMismatchContext {
         /// Offending operand side.
         side: Side,
     },
-    /// LIKE predicate.
-    LikePredicate {
-        /// Offending operand side.
-        side: Side,
-    },
     /// Unary numeric negation.
     UnaryNegate,
     /// Unary boolean negation.
@@ -438,11 +433,6 @@ pub enum TypeMismatchContext {
     ListLiteralUnification,
     /// IN-list value unification failed.
     InListUnification,
-    /// BETWEEN operand or bound check failed.
-    BetweenBounds {
-        /// Offending operand side.
-        side: Side,
-    },
     /// Boolean condition clause check failed.
     Condition {
         /// Condition clause kind.
@@ -477,7 +467,6 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::BinaryStringPredicate { op, side } => {
                 write!(f, "{side} operand of string predicate {op:?}")
             }
-            Self::LikePredicate { side } => write!(f, "{side} operand of LIKE predicate"),
             Self::UnaryNegate => f.write_str("operand of unary negate"),
             Self::UnaryNot => f.write_str("operand of unary NOT"),
             Self::IsTypedTarget => f.write_str("IS TYPED target"),
@@ -487,7 +476,6 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),
-            Self::BetweenBounds { side } => write!(f, "{side} operand of BETWEEN"),
             Self::Condition { clause } => write!(f, "{clause} condition"),
             Self::ProcedureArgument {
                 procedure,

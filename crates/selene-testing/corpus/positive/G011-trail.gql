@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: G011
--- expects: parse-ok
+// corpus: positive
+// feature: G011
+// expects: parse-ok
 MATCH TRAIL (a:Person)-[:KNOWS*1..2]->(b:Person) RETURN b

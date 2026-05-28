@@ -1,4 +1,4 @@
--- corpus: negative
--- feature: GP07
--- expects: parse-rejected(syntax)
+// corpus: negative
+// feature: GP07
+// expects: parse-rejected(syntax)
 CREATE PROCEDURE pkg.fn() { LET x = COUNT { MATCH (n) } RETURN x }

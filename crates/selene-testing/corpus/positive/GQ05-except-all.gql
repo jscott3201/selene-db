@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: GQ05
--- expects: parse-ok
+// corpus: positive
+// feature: GQ05
+// expects: parse-ok
 RETURN 1 AS n EXCEPT ALL RETURN 2 AS n

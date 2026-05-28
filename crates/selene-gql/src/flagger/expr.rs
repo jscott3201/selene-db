@@ -97,19 +97,6 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             self::value(operand, uses);
             values(list, uses);
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            self::value(operand, uses);
-            self::value(pattern, uses);
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            self::value(operand, uses);
-            self::value(low, uses);
-            self::value(high, uses);
-        }
         ValueExpr::AllDifferent { items, span } => {
             record_feature(uses, FeatureId::G113, *span);
             values(items, uses);

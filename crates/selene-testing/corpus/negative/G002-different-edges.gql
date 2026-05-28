@@ -1,4 +1,4 @@
--- corpus: negative
--- feature: G002
--- expects: parse-rejected(G002)
+// corpus: negative
+// feature: G002
+// expects: parse-rejected(G002)
 MATCH DIFFERENT EDGES (n) RETURN n
