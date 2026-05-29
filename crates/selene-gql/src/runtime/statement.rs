@@ -77,6 +77,20 @@ pub fn execute_statement(
     session: &mut Session<'_>,
     registry: &dyn ProcedureRegistry,
 ) -> Result<StatementOutput, ExecutorError> {
+    // ISO/IEC 39075:2024 section 7.3: once `SESSION CLOSE` sets the termination
+    // flag, every subsequent GQL-request is rejected regardless of category.
+    // `execute_source` guards the source-string entry; this guard covers the
+    // sibling public path where an embedder caches an `ExecutionPlan` and
+    // re-executes it directly (the pipeline documented in the embedding guide),
+    // so the termination flag is enforced at the single statement funnel
+    // (hard rule 11) rather than only one layer up. The flag is set *during*
+    // execution of `SESSION CLOSE` itself, so this check never blocks the
+    // closing statement — only the requests that follow it.
+    if session.is_closed() {
+        return Err(ExecutorError::SessionClosed {
+            span: SourceSpan::default(),
+        });
+    }
     if session.aborted && plan.category != StatementCategory::TransactionControl {
         return Err(ExecutorError::InFailedTransaction {
             span: SourceSpan::default(),
@@ -91,6 +105,7 @@ pub fn execute_statement(
             execute_write(plan, session, registry)
         }
         StatementCategory::TransactionControl => execute_transaction_control(plan, session),
+        StatementCategory::SessionControl => execute_session_control(plan, session, registry),
     };
     if counts_toward_tx {
         if result.is_ok() {
@@ -120,6 +135,15 @@ impl Session<'_> {
         source: &str,
         registry: &dyn ProcedureRegistry,
     ) -> Result<StatementOutput, ExecutorError> {
+        // ISO/IEC 39075:2024 section 6 GR3 + section 7.3: once a session is
+        // closed by `SESSION CLOSE`, every subsequent GQL-request is rejected.
+        // This is the spec request boundary; embedders that drop the `Session`
+        // struct still work, but the termination flag is the conformant model.
+        if self.is_closed() {
+            return Err(ExecutorError::SessionClosed {
+                span: SourceSpan::default(),
+            });
+        }
         let schema_version = self.graph().schema_version();
         let registry_version = registry.registry_version();
         let active_txn_has_schema_changes = self
@@ -272,6 +296,7 @@ fn execute_read_only(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
+    let session_tz = session.effective_time_zone();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -292,7 +317,8 @@ fn execute_read_only(
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
         .with_istr_admission_policy(session.istr_admission_policy)
-        .with_warning_sink(warning_sink);
+        .with_warning_sink(warning_sink)
+        .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
         note_output_rows(plan, &ctx, table.row_count())?;
@@ -308,7 +334,8 @@ fn execute_read_only(
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
         .with_istr_admission_policy(session.istr_admission_policy)
-        .with_warning_sink(warning_sink);
+        .with_warning_sink(warning_sink)
+        .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
         let table = execute_plan(plan, &mut ctx)?;
         note_output_rows(plan, &ctx, table.row_count())?;
@@ -335,6 +362,7 @@ fn execute_inside_explicit_tx(
 ) -> Result<StatementOutput, ExecutorError> {
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
+    let session_tz = session.effective_time_zone();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -360,7 +388,8 @@ fn execute_inside_explicit_tx(
     )
     .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
     .with_istr_admission_policy(session.istr_admission_policy)
-    .with_warning_sink(warning_sink);
+    .with_warning_sink(warning_sink)
+    .with_session_time_zone(session_tz);
     let result = ctx
         .check_cancellation()
         .and_then(|()| execute_plan(plan, &mut ctx))
@@ -382,6 +411,7 @@ fn execute_auto_commit(
     let providers = session.graph().index_providers();
     let snapshot = session.graph().read();
     let principal = session.principal();
+    let session_tz = session.effective_time_zone();
     let binding_tables = Rc::new(BindingTableRegistry::new());
     let parameters = materialize_parameter_values(
         &session.parameters,
@@ -403,7 +433,8 @@ fn execute_auto_commit(
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
         .with_istr_admission_policy(session.istr_admission_policy)
-        .with_warning_sink(warning_sink);
+        .with_warning_sink(warning_sink)
+        .with_session_time_zone(session_tz);
         ctx.check_cancellation()
             .and_then(|()| execute_plan(plan, &mut ctx))
             .and_then(|table| {
@@ -479,6 +510,19 @@ fn execute_transaction_control(
     pipeline::tx::execute(op, session)
 }
 
+fn execute_session_control(
+    plan: &ExecutionPlan,
+    session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
+) -> Result<StatementOutput, ExecutorError> {
+    let [crate::PipelineOp::Session(op)] = plan.pipeline.as_slice() else {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "session-control plan must contain exactly one session op",
+        });
+    };
+    pipeline::session::execute(op, session, registry)
+}
+
 fn output_from_table(plan: &ExecutionPlan, table: BindingTable) -> StatementOutput {
     if plan.output_schema.columns.is_empty() {
         StatementOutput::Empty
@@ -519,6 +563,7 @@ fn statement_kind(plan: &ExecutionPlan) -> &'static str {
         StatementCategory::DataModifying => "mutation",
         StatementCategory::CatalogModifying => "catalog",
         StatementCategory::TransactionControl => "transaction",
+        StatementCategory::SessionControl => "session",
     }
 }
 

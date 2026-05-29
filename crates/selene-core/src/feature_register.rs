@@ -124,6 +124,21 @@ feature_ids! {
     GQ15 = "GQ15" => "GROUP BY clause";
     GQ18 = "GQ18" => "Scalar value query expression";
     GQ20 = "GQ20" => "Linear query composition";
+    GS01 = "GS01" => "SESSION SET command: session-local graph parameters";
+    GS02 = "GS02" => "SESSION SET command: session-local binding table parameters";
+    GS03 = "GS03" => "SESSION SET command: session-local value parameters";
+    GS04 = "GS04" => "SESSION RESET command: reset all characteristics";
+    GS05 = "GS05" => "SESSION RESET command: reset session schema";
+    GS06 = "GS06" => "SESSION RESET command: reset session graph";
+    GS07 = "GS07" => "SESSION RESET command: reset time zone displacement";
+    GS08 = "GS08" => "SESSION RESET command: reset all session parameters";
+    GS10 = "GS10" => "Session-local binding table parameters based on subqueries";
+    GS11 = "GS11" => "Session-local value parameters based on subqueries";
+    GS12 = "GS12" => "Session-local graph parameters based on simple graph expressions or references";
+    GS13 = "GS13" => "Session-local binding table parameters based on simple expressions or references";
+    GS14 = "GS14" => "Session-local value parameters based on simple expressions";
+    GS15 = "GS15" => "SESSION SET command: set time zone displacement";
+    GS16 = "GS16" => "SESSION RESET command: reset individual session parameters";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
     GV01 = "GV01" => "8 bit unsigned integer numbers";
@@ -232,6 +247,12 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ15,
     FeatureId::GQ18,
     FeatureId::GQ20,
+    FeatureId::GS03,
+    FeatureId::GS04,
+    FeatureId::GS07,
+    FeatureId::GS08,
+    FeatureId::GS15,
+    FeatureId::GS16,
     FeatureId::GT01,
     FeatureId::GV01,
     FeatureId::GV02,
@@ -343,6 +364,42 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         "graph management IF [NOT] EXISTS modifiers remain outside the v1.0 catalog claim",
     ),
     (
+        FeatureId::GS01,
+        "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no <graph expression>/CURRENT_GRAPH (GV60) or catalog to bind",
+    ),
+    (
+        FeatureId::GS02,
+        "SESSION SET <name> BINDING TABLE binds a typed binding-table reference value (GV61); the reference-type surface is deferred, so D1 has no spelling to bind",
+    ),
+    (
+        FeatureId::GS05,
+        "SESSION RESET SCHEMA resets the session schema; D1 single-graph embeddable has no schema layer (section 4.2.5.1) to reset",
+    ),
+    (
+        FeatureId::GS06,
+        "SESSION RESET GRAPH resets the session graph; D1 single-graph embeddable has exactly one graph and no working-graph switch to reset",
+    ),
+    (
+        FeatureId::GS10,
+        "session-local binding table parameters from subqueries depend on GS02 (binding-table parameters) and a procedure body; both deferred under D1",
+    ),
+    (
+        FeatureId::GS11,
+        "session-local value parameters from subqueries depend on procedure-body support; SESSION SET VALUE restricts the RHS to a value expression with no row context",
+    ),
+    (
+        FeatureId::GS12,
+        "session-local graph parameters from simple graph expressions/references depend on GS01 (graph parameters); D1-blocked",
+    ),
+    (
+        FeatureId::GS13,
+        "session-local binding table parameters from simple expressions/references depend on GS02 (binding-table parameters); deferred",
+    ),
+    (
+        FeatureId::GS14,
+        "selene-db evaluates SESSION SET VALUE against an empty binding so the RHS is restricted to a <value specification> (literal/parameter); the full <value expression> form (GS14) is not claimed",
+    ),
+    (
         FeatureId::GT03,
         "multi-graph transactions are out of v1.0 scope",
     ),
@@ -398,254 +455,9 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
 ];
 
-/// ISO Annex B implementation-defined identifier.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[repr(transparent)]
-pub struct AnnexBId(&'static str);
+mod annex_b;
 
-impl AnnexBId {
-    /// Return the ISO Annex B ID string, such as `IL001`.
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
-
-/// Chosen value for an implementation-defined element.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ImplDefinedChoice {
-    /// Human-readable summary of selene-db's choice.
-    pub choice: &'static str,
-    /// Spec section that owns the detailed behavior.
-    pub settled_in: &'static str,
-}
-
-/// Canonical Annex B register entries settled by the current specs.
-pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
-    (
-        AnnexBId("IA001"),
-        ImplDefinedChoice {
-            choice: "f64 default; Float32 distinct; NaN total_cmp",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IA025"),
-        ImplDefinedChoice {
-            choice: "numeric ordering follows total_cmp for f32/f64",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID001"),
-        ImplDefinedChoice {
-            choice: "caller-supplied principal bytes; opaque to selene-db",
-            settled_in: "spec 04 section 3.2",
-        },
-    ),
-    (
-        AnnexBId("ID016"),
-        ImplDefinedChoice {
-            choice: "en-US diagnostic text by default",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("ID017"),
-        ImplDefinedChoice {
-            choice: "structured diagnostic map may carry selene provider fields",
-            settled_in: "spec 06 section 3.3",
-        },
-    ),
-    (
-        AnnexBId("ID028"),
-        ImplDefinedChoice {
-            choice: "i64 default; i128 if context demands",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID034"),
-        ImplDefinedChoice {
-            choice: "28 significant digits via rust_decimal",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID037"),
-        ImplDefinedChoice {
-            choice: "binary64 default; binary32 if context demands",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID090"),
-        ImplDefinedChoice {
-            choice: "node terminology",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID091"),
-        ImplDefinedChoice {
-            choice: "edge terminology",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IE001"),
-        ImplDefinedChoice {
-            choice: "auto-commit per statement; explicit START TRANSACTION for multi-statement",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE002"),
-        ImplDefinedChoice {
-            choice: "serializable only in v1.0",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE004"),
-        ImplDefinedChoice {
-            choice: "no relaxation from serializable in v1.0",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE006"),
-        ImplDefinedChoice {
-            choice: "catalog statements inside data transactions are rejected",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE007"),
-        ImplDefinedChoice {
-            choice: "data mutations inside catalog transactions are rejected",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IL001"),
-        ImplDefinedChoice {
-            choice: "node labels min 0; edge labels exactly 1",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IL013"),
-        ImplDefinedChoice {
-            choice: "2^32 - 1 bytes per inline string",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IL015"),
-        ImplDefinedChoice {
-            choice: "2^32 - 1 constructed-value elements",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IL018"),
-        ImplDefinedChoice {
-            choice: "path quantifier upper bound 100",
-            settled_in: "spec 08 section 9",
-        },
-    ),
-    (
-        AnnexBId("IL020"),
-        ImplDefinedChoice {
-            choice: "flat catalog, nesting depth 0",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("IL024"),
-        ImplDefinedChoice {
-            choice: "nanosecond temporal precision",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IS001"),
-        ImplDefinedChoice {
-            choice: "caller-bounded session scope",
-            settled_in: "spec 08 section 9",
-        },
-    ),
-    (
-        AnnexBId("IV001-IV016"),
-        ImplDefinedChoice {
-            choice: "Value enum closed substitution union",
-            settled_in: "spec 02 section 3",
-        },
-    ),
-    (
-        AnnexBId("IV011"),
-        ImplDefinedChoice {
-            choice: "Value minus RecordTyped; registered Extended values allowed",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IW001"),
-        ImplDefinedChoice {
-            choice: "caller responsibility per D1",
-            settled_in: "spec 01 section 4",
-        },
-    ),
-    (
-        AnnexBId("IW002"),
-        ImplDefinedChoice {
-            choice: "caller responsibility per D1",
-            settled_in: "spec 01 section 4",
-        },
-    ),
-    (
-        AnnexBId("IW007"),
-        ImplDefinedChoice {
-            choice: "raw code plus structured fields; miette for terminals",
-            settled_in: "spec 09 section 6",
-        },
-    ),
-    (
-        AnnexBId("IW010"),
-        ImplDefinedChoice {
-            choice: "procedure-pack model",
-            settled_in: "spec 05",
-        },
-    ),
-    (
-        AnnexBId("IW014"),
-        ImplDefinedChoice {
-            choice: "byte-exact comparison only",
-            settled_in: "spec 08 section 9",
-        },
-    ),
-    (
-        AnnexBId("IW015"),
-        ImplDefinedChoice {
-            choice: "no automatic directory/schema creation",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("IW016"),
-        ImplDefinedChoice {
-            choice: "no automatic directory/schema creation",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("IW025"),
-        ImplDefinedChoice {
-            choice: "catalog-modifying procedures are transactional via Mutator::commit",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-];
+pub use annex_b::{ANNEX_B_REGISTER, AnnexBId, ImplDefinedChoice};
 
 /// True when `id` is in the v1.0 supported feature set.
 pub fn is_supported(id: FeatureId) -> bool {

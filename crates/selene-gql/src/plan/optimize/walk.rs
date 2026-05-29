@@ -132,7 +132,8 @@ pub(crate) fn recurse_subplans(
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
-            | PipelineOp::Tx(_) => {}
+            | PipelineOp::Tx(_)
+            | PipelineOp::Session(_) => {}
         }
     }
     Transformed { plan, changed }
@@ -332,7 +333,10 @@ fn walk_pipeline_op_exprs(
         | PipelineOp::Chain(_)
         | PipelineOp::CallSubquery(_)
         | PipelineOp::ExplainPlan { .. }
-        | PipelineOp::Tx(_) => false,
+        | PipelineOp::Tx(_)
+        // SESSION SET VALUE's RHS is a value specification evaluated against an
+        // empty binding, so it carries no binding references for the optimizer.
+        | PipelineOp::Session(_) => false,
     }
 }
 

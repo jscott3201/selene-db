@@ -77,6 +77,14 @@ pub fn format_read_statement(stmt: &Statement) -> Result<String, FormatError> {
                 variant: "TransactionControl",
             });
         }
+        Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => {
+            return Err(FormatError::Unsupported {
+                variant: "SessionControl",
+            });
+        }
     }
     Ok(out)
 }

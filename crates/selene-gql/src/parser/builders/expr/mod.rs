@@ -125,6 +125,11 @@ pub(super) fn intern_string_literal(
     literal::parse_string_pair(pair, budget)
 }
 
+/// Decode a `string_lit` pair into raw text (unquoted, escapes resolved).
+pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
+    literal::decode_string_text(pair)
+}
+
 fn build_left_assoc(
     pair: Pair<'_, Rule>,
     op_rule: Rule,

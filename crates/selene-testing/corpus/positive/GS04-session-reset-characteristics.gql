@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GS04
+// expects: parse-ok
+SESSION RESET ALL CHARACTERISTICS

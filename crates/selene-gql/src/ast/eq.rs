@@ -45,6 +45,13 @@ fn scrub_statement(statement: &mut Statement) {
         Statement::StartTransaction { span }
         | Statement::Commit { span }
         | Statement::Rollback { span } => *span = SourceSpan::default(),
+        Statement::SessionSetValue { value, span, .. } => {
+            *span = SourceSpan::default();
+            scrub_value(value);
+        }
+        Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionReset { span, .. }
+        | Statement::SessionClose { span } => *span = SourceSpan::default(),
     }
 }
 

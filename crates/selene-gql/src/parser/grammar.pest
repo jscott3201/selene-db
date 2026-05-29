@@ -18,7 +18,7 @@
 
 // -- Top-level ------------------------------------------------------
 
-gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
+gql_program = { SOI ~ (explain_stmt | ddl_statement | transaction_control | session_command | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline) ~ EOI }
 
 explain_stmt = { ^"EXPLAIN" ~ explainable_statement }
 explainable_statement = { ddl_statement | call_stmt | select_stmt | mutation_pipeline | composite_query | chained_query | query_pipeline }
@@ -80,6 +80,42 @@ transaction_control = { start_transaction | commit | rollback }
 start_transaction   = { ^"START" ~ ^"TRANSACTION" }
 commit              = { ^"COMMIT" }
 rollback            = { ^"ROLLBACK" }
+
+// -- Session control ------------------------------------------------
+//
+// ISO/IEC 39075:2024 section 7 session management. The implemented subset is
+// the D1-meaningful surface: SET VALUE (GS03), SET TIME ZONE (GS15), RESET
+// targets (GS04/GS07/GS08/GS16), and CLOSE (section 7.3, no feature code).
+// The D1-blocked forms (SET GRAPH/SCHEMA/BINDING TABLE = GS01/GS02, RESET
+// SCHEMA/GRAPH = GS05/GS06) are intentionally omitted; they parse-fail
+// cleanly and carry NOT_SUPPORTED_RATIONALE entries.
+
+session_command = { session_set | session_reset | session_close }
+
+// section 7.3 <session close command>
+session_close = { ^"SESSION" ~ ^"CLOSE" }
+
+// section 7.1 <session set command> implemented branches.
+session_set            = { ^"SESSION" ~ ^"SET" ~ (session_set_time_zone | session_set_value) }
+session_set_time_zone  = { ^"TIME" ~ ^"ZONE" ~ string_lit }
+// <session set value parameter clause> ::= VALUE [ IF NOT EXISTS ]
+//   <general parameter reference> <opt typed value initializer>.
+// <session parameter specification> ::= <general parameter reference> = param_ref.
+//
+// The RHS is restricted to a <value specification> (literal or general value
+// parameter reference) per ISO section 7.1 Conformance Rule: without Feature
+// GS14, the initializer shall conform to <value specification>. selene-db does
+// NOT claim GS14, so simple-expression / subquery RHS forms are rejected.
+session_set_value      = { ^"VALUE" ~ if_not_exists? ~ param_ref ~ "=" ~ session_value_spec }
+session_value_spec     = { literal | typed_param_ref }
+
+// section 7.2 <session reset command>. Bare SESSION RESET = ALL CHARACTERISTICS
+// (Syntax Rule 2b); bare {PARAMETERS|CHARACTERISTICS} = ALL form (Rule 2a-i).
+session_reset             = { ^"SESSION" ~ ^"RESET" ~ session_reset_args? }
+session_reset_args        = { session_reset_time_zone | session_reset_all | session_reset_parameter }
+session_reset_time_zone   = { ^"TIME" ~ ^"ZONE" }
+session_reset_all         = { ^"ALL"? ~ (^"PARAMETERS" | ^"CHARACTERISTICS") }
+session_reset_parameter   = { ^"PARAMETER"? ~ param_ref }
 
 // -- SELECT (desugars to MATCH + RETURN at AST level) ------------
 

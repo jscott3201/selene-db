@@ -19,7 +19,7 @@ use crate::{
     plan::{
         BindingElement, BindingTableColumn, BindingTableSchema, ExecutionPlan, ImplDefinedCaps,
         LimitAmount, PipelineOp, PlannedTableSubquery, PlannedTableSubqueryYield, PlannerError,
-        ProjectExpr, TxOp,
+        ProjectExpr, SessionOp, TxOp,
     },
 };
 
@@ -78,6 +78,42 @@ fn lower_statement_kind(
         AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
         AnalyzedStatementKind::Rollback(span) => Ok(tx_plan(TxOp::Rollback { span: *span })),
+        AnalyzedStatementKind::SessionSetValue {
+            param,
+            value,
+            if_not_exists,
+            span,
+        } => Ok(session_plan(SessionOp::SetValue {
+            param: *param,
+            value: value.clone(),
+            if_not_exists: *if_not_exists,
+            span: *span,
+        })),
+        AnalyzedStatementKind::SessionSetTimeZone { zone, span } => {
+            Ok(session_plan(SessionOp::SetTimeZone {
+                zone: zone.clone(),
+                span: *span,
+            }))
+        }
+        AnalyzedStatementKind::SessionReset { target, span } => {
+            Ok(session_plan(session_reset_op(target, *span)))
+        }
+        AnalyzedStatementKind::SessionClose(span) => {
+            Ok(session_plan(SessionOp::Close { span: *span }))
+        }
+    }
+}
+
+fn session_reset_op(target: &crate::SessionResetTarget, span: SourceSpan) -> SessionOp {
+    use crate::SessionResetTarget;
+    match target {
+        SessionResetTarget::AllCharacteristics => SessionOp::ResetAllCharacteristics { span },
+        SessionResetTarget::Parameters => SessionOp::ResetParameters { span },
+        SessionResetTarget::TimeZone => SessionOp::ResetTimeZone { span },
+        SessionResetTarget::Parameter(param) => SessionOp::ResetParameter {
+            param: *param,
+            span,
+        },
     }
 }
 
@@ -529,6 +565,22 @@ fn tx_plan(op: TxOp) -> ExecutionPlan {
         category: StatementCategory::TransactionControl,
         pattern_plan: None,
         pipeline: vec![PipelineOp::Tx(op)],
+        output_schema: BindingTableSchema {
+            columns: Vec::new(),
+        },
+        impl_defined_caps: ImplDefinedCaps::default(),
+        expr_ids: Default::default(),
+        subqueries: Default::default(),
+        next_expr_id: ExprId::new(0),
+        next_pipeline_op_id: crate::PipelineOpId::new(1),
+    }
+}
+
+fn session_plan(op: SessionOp) -> ExecutionPlan {
+    ExecutionPlan {
+        category: StatementCategory::SessionControl,
+        pattern_plan: None,
+        pipeline: vec![PipelineOp::Session(op)],
         output_schema: BindingTableSchema {
             columns: Vec::new(),
         },

@@ -1,0 +1,151 @@
+//! Session-control builders (ISO/IEC 39075:2024 section 7).
+
+use pest::iterators::Pair;
+
+use crate::{
+    ast::{SessionResetTarget, Statement},
+    error::ParserError,
+    parser::budget::InternerBudget,
+};
+
+use super::{Rule, expr, first_child, intern_param, span, unexpected_pair};
+
+/// Build a `session_command` parse tree into a session-control [`Statement`].
+pub(super) fn build_session_command(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
+    debug_assert_eq!(pair.as_rule(), Rule::session_command);
+    let inner = first_child(pair)?;
+    match inner.as_rule() {
+        Rule::session_set => build_session_set(inner, budget),
+        Rule::session_reset => build_session_reset(inner, budget),
+        Rule::session_close => Ok(Statement::SessionClose { span: span(&inner) }),
+        _ => Err(unexpected_pair(inner, "expected session-control statement")),
+    }
+}
+
+fn build_session_set(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
+    let inner = first_child(pair)?;
+    match inner.as_rule() {
+        Rule::session_set_time_zone => build_session_set_time_zone(inner),
+        Rule::session_set_value => build_session_set_value(inner, budget),
+        _ => Err(unexpected_pair(inner, "expected SESSION SET target")),
+    }
+}
+
+fn build_session_set_time_zone(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
+    let source_span = span(&pair);
+    let string_pair = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::string_lit)
+        .ok_or_else(|| {
+            ParserError::syntax(
+                "SESSION SET TIME ZONE is missing a string",
+                source_span,
+                None,
+            )
+        })?;
+    let zone = expr::decode_string_text(&string_pair)?;
+    Ok(Statement::SessionSetTimeZone {
+        zone,
+        span: source_span,
+    })
+}
+
+fn build_session_set_value(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
+    let source_span = span(&pair);
+    let mut if_not_exists = false;
+    let mut param = None;
+    let mut value = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::if_not_exists => if_not_exists = true,
+            Rule::param_ref => param = Some(intern_param(child, budget)?),
+            // <value specification>: a single literal or parameter reference.
+            Rule::session_value_spec => {
+                value = Some(expr::build_value_expr(first_child(child)?, budget)?);
+            }
+            _ => return Err(unexpected_pair(child, "unexpected SESSION SET VALUE child")),
+        }
+    }
+    let param = param.ok_or_else(|| {
+        ParserError::syntax(
+            "SESSION SET VALUE is missing a parameter name",
+            source_span,
+            None,
+        )
+    })?;
+    let value = value.ok_or_else(|| {
+        ParserError::syntax(
+            "SESSION SET VALUE is missing a value expression",
+            source_span,
+            None,
+        )
+    })?;
+    Ok(Statement::SessionSetValue {
+        param,
+        value: Box::new(value),
+        if_not_exists,
+        span: source_span,
+    })
+}
+
+fn build_session_reset(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<Statement, ParserError> {
+    let source_span = span(&pair);
+    // Bare `SESSION RESET` (no arguments) = reset all characteristics
+    // (ISO section 7.2 Syntax Rule 2b).
+    let Some(args) = pair
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::session_reset_args)
+    else {
+        return Ok(Statement::SessionReset {
+            target: SessionResetTarget::AllCharacteristics,
+            span: source_span,
+        });
+    };
+    let inner = first_child(args)?;
+    let target = match inner.as_rule() {
+        Rule::session_reset_time_zone => SessionResetTarget::TimeZone,
+        Rule::session_reset_all => reset_all_target(&inner),
+        Rule::session_reset_parameter => {
+            let param_pair = inner
+                .into_inner()
+                .find(|child| child.as_rule() == Rule::param_ref)
+                .ok_or_else(|| {
+                    ParserError::syntax(
+                        "SESSION RESET PARAMETER is missing a parameter name",
+                        source_span,
+                        None,
+                    )
+                })?;
+            SessionResetTarget::Parameter(intern_param(param_pair, budget)?)
+        }
+        _ => return Err(unexpected_pair(inner, "unexpected SESSION RESET argument")),
+    };
+    Ok(Statement::SessionReset {
+        target,
+        span: source_span,
+    })
+}
+
+/// Distinguish `[ALL] PARAMETERS` from `[ALL] CHARACTERISTICS`.
+///
+/// Bare `PARAMETERS`/`CHARACTERISTICS` imply `ALL` (ISO section 7.2 Syntax
+/// Rule 2a-i), so only the noun matters for target selection.
+fn reset_all_target(pair: &Pair<'_, Rule>) -> SessionResetTarget {
+    if pair.as_str().to_ascii_uppercase().contains("PARAMETERS") {
+        SessionResetTarget::Parameters
+    } else {
+        SessionResetTarget::AllCharacteristics
+    }
+}

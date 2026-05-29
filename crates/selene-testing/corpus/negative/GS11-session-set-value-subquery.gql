@@ -1,0 +1,4 @@
+// corpus: negative
+// feature: GS11
+// expects: parse-rejected(syntax)
+SESSION SET VALUE $p = VALUE { MATCH (n) RETURN count(n) }

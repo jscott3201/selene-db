@@ -65,7 +65,11 @@ fn collect_statement_parameter_declarations(
         }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
-        | Statement::Rollback { .. } => Ok(()),
+        | Statement::Rollback { .. }
+        | Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => Ok(()),
     }
 }
 

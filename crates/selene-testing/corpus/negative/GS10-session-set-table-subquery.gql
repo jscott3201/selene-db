@@ -1,0 +1,4 @@
+// corpus: negative
+// feature: GS10
+// expects: parse-rejected(syntax)
+SESSION SET $t BINDING TABLE VALUE { MATCH (n) RETURN n }

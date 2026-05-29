@@ -2232,6 +2232,7 @@ dependencies = [
  "criterion",
  "iai-callgrind",
  "insta",
+ "jiff",
  "lru",
  "metrics",
  "miette",

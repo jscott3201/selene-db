@@ -63,7 +63,8 @@ fn rewrite_pipeline_op(
         | PipelineOp::Mutation(_)
         | PipelineOp::Catalog(_)
         | PipelineOp::ExplainPlan { .. }
-        | PipelineOp::Tx(_) => false,
+        | PipelineOp::Tx(_)
+        | PipelineOp::Session(_) => false,
     }
 }
 
