@@ -185,6 +185,31 @@ impl CoreProvider {
             CoreInner::Recovery { state } => state.apply_change(change),
         }
     }
+
+    /// Shared per-WAL-entry truncate-expansion buffer for recovery fan-out.
+    ///
+    /// Recovery subscriber wrappers clone this handle so they can read the
+    /// per-row `NodeDeleted`/`EdgeDeleted` tombstones CORE stages while
+    /// re-deriving truncated rows from the recovered store (BRIEF-150 / audit
+    /// Item 11). Returns `None` for a live-mode provider, which never truncates
+    /// through recovery.
+    #[must_use]
+    pub(crate) fn truncate_expansion_handle(&self) -> Option<Arc<Mutex<Vec<Change>>>> {
+        let inner = self.inner.lock();
+        match &*inner {
+            CoreInner::Live { .. } => None,
+            CoreInner::Recovery { state } => Some(state.truncate_expansion_handle()),
+        }
+    }
+
+    /// Clear the per-entry truncate-expansion buffer before applying a WAL
+    /// entry's changes, so staged tombstones reflect only that entry.
+    fn reset_truncate_expansion(&self) {
+        let inner = self.inner.lock();
+        if let CoreInner::Recovery { state } = &*inner {
+            state.reset_truncate_expansion();
+        }
+    }
 }
 
 impl IndexProvider for CoreProvider {
@@ -290,6 +315,19 @@ impl RecoveryProvider for CoreProvider {
 
     fn on_change(&self, change: &Change) -> RecoveryResult<()> {
         self.on_change_inner(change).map_err(box_provider_error)
+    }
+
+    fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
+        // Reset the truncate-expansion buffer once per WAL entry so the
+        // per-row tombstones the VECT/IVFP wrappers read reflect only this
+        // entry's truncations (BRIEF-150 / audit Item 11). CORE runs first in
+        // the tag-sorted registry, so this clear happens before any wrapper
+        // reads the buffer.
+        self.reset_truncate_expansion();
+        for change in changes {
+            self.on_change_inner(change).map_err(box_provider_error)?;
+        }
+        Ok(())
     }
 }
 

@@ -262,6 +262,24 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Delete an alive node and cascade delete incident edges.
     pub fn delete_node(&mut self, id: NodeId) -> GraphResult<()> {
         let row = self.require_live_node(id)?;
+        let incident = self.remove_node_row(id, row)?;
+        self.txn.changes.push(Change::NodeDeleted { id });
+        for edge_id in incident {
+            self.delete_edge_inner(edge_id, true)?;
+        }
+        Ok(())
+    }
+
+    /// Remove one node row from every in-memory structure (label index,
+    /// property/composite indexes, liveness) and return its incident edges.
+    ///
+    /// This is the change-free removal core shared by [`Self::delete_node`] and
+    /// [`Self::truncate_node_type`]; callers own the changeset accounting (one
+    /// `NodeDeleted` for DETACH DELETE, one declarative truncate change plus
+    /// staged per-row tombstones for TRUNCATE). The returned incident set spans
+    /// edges of **every** edge type touching the node (derived from both
+    /// adjacency directions) so no dangling edge can survive.
+    fn remove_node_row(&mut self, id: NodeId, row: usize) -> GraphResult<BTreeSet<EdgeId>> {
         let graph = self.txn.read();
         let labels = graph
             .node_store
@@ -299,16 +317,111 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             )?;
             graph.node_store.alive.remove(row as u32);
         }
-        self.txn.changes.push(Change::NodeDeleted { id });
-        for edge_id in incident {
-            self.delete_edge_inner(edge_id, true)?;
-        }
-        Ok(())
+        Ok(incident)
     }
 
     /// Delete an alive edge.
     pub fn delete_edge(&mut self, id: EdgeId) -> GraphResult<()> {
         self.delete_edge_inner(id, true)
+    }
+
+    /// Remove every node carrying `label` and all of their incident edges in one
+    /// declarative truncate.
+    ///
+    /// Observationally identical to `MATCH (n:L) DETACH DELETE n`: every matched
+    /// node and every incident edge (of **any** edge type, derived from both
+    /// adjacency directions) is removed via the same change-free in-memory path
+    /// `delete_node`/`delete_edge_inner` use, so the resulting graph state is
+    /// byte-identical. The difference is the changeset: exactly **one**
+    /// declarative [`Change::NodesOfTypeTruncated`] is recorded regardless of the
+    /// number of rows removed (O(1) WAL write, deletion-reclamation audit
+    /// Item 11), while the per-row `NodeDeleted`/`EdgeDeleted` tombstones are
+    /// staged for provider/subscriber fan-out so derived state (e.g. vectors) is
+    /// reclaimed without leaks. An absent label is a clean no-op (no change is
+    /// recorded), matching DETACH DELETE of zero matches; a second truncate of
+    /// the same label is therefore idempotent.
+    ///
+    /// All logic lives in the mutator (the single write funnel, hard rule 11) so
+    /// future `DROP NODE TYPE CASCADE` and `DROP GRAPH` factory-reset paths can
+    /// reuse it without an N+1 change storm.
+    pub fn truncate_node_type(&mut self, label: IStr) -> GraphResult<()> {
+        // Snapshot the matched node rows and derive every incident edge BEFORE
+        // any removal, exactly as delete_node does — removal mutates the
+        // adjacency/label structures we are iterating.
+        let matched_rows: Vec<u32> = match self.txn.read().nodes_with_label(&label) {
+            Some(bitmap) => bitmap.iter().collect(),
+            None => return Ok(()),
+        };
+        if matched_rows.is_empty() {
+            return Ok(());
+        }
+        let mut node_tombstones = Vec::with_capacity(matched_rows.len());
+        let mut incident_edges = BTreeSet::new();
+        for row in matched_rows {
+            let id = NodeId::new(u64::from(row) + 1);
+            // Skip rows that are not alive (defensive: idx_label is kept in
+            // lockstep with liveness, but a dead row must never be re-removed).
+            if !self.txn.read().node_store.is_alive(row) {
+                continue;
+            }
+            incident_edges.append(&mut self.remove_node_row(id, row as usize)?);
+            node_tombstones.push(Change::NodeDeleted { id });
+        }
+        if node_tombstones.is_empty() {
+            return Ok(());
+        }
+        let mut expansion = node_tombstones;
+        for edge_id in incident_edges {
+            let row = edge_row_index(edge_id).ok_or(GraphError::EdgeNotFound { id: edge_id })?;
+            // An incident edge may already be gone if two truncated endpoints
+            // shared it; remove_edge_row is only called for still-alive rows.
+            if self.txn.read().edge_store.is_alive(row) {
+                self.remove_edge_row(edge_id, row as usize)?;
+                expansion.push(Change::EdgeDeleted { id: edge_id });
+            }
+        }
+        let index = self.txn.changes.len();
+        self.txn
+            .changes
+            .push(Change::NodesOfTypeTruncated { label });
+        self.txn.truncate_expansions.push((index, expansion));
+        Ok(())
+    }
+
+    /// Remove every edge carrying `label` in one declarative truncate.
+    ///
+    /// Observationally identical to `MATCH ()-[e:L]->() DELETE e`: each matched
+    /// edge is removed via the same change-free path `delete_edge` uses, leaving
+    /// the graph dangling-free. Records exactly **one** declarative
+    /// [`Change::EdgesOfTypeTruncated`] (O(1) WAL) and stages per-row
+    /// `EdgeDeleted` tombstones for fan-out. Absent label is a clean idempotent
+    /// no-op.
+    pub fn truncate_edge_type(&mut self, label: IStr) -> GraphResult<()> {
+        let matched_rows: Vec<u32> = match self.txn.read().edges_with_label(&label) {
+            Some(bitmap) => bitmap.iter().collect(),
+            None => return Ok(()),
+        };
+        if matched_rows.is_empty() {
+            return Ok(());
+        }
+        let mut expansion = Vec::with_capacity(matched_rows.len());
+        for row in matched_rows {
+            if !self.txn.read().edge_store.is_alive(row) {
+                continue;
+            }
+            let id = EdgeId::new(u64::from(row) + 1);
+            self.remove_edge_row(id, row as usize)?;
+            expansion.push(Change::EdgeDeleted { id });
+        }
+        if expansion.is_empty() {
+            return Ok(());
+        }
+        let index = self.txn.changes.len();
+        self.txn
+            .changes
+            .push(Change::EdgesOfTypeTruncated { label });
+        self.txn.truncate_expansions.push((index, expansion));
+        Ok(())
     }
 
     /// Append a schema-change WAL payload.
@@ -348,6 +461,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     fn delete_edge_inner(&mut self, id: EdgeId, record_change: bool) -> GraphResult<()> {
         let row = self.require_live_edge(id)?;
+        self.remove_edge_row(id, row)?;
+        if record_change {
+            self.txn.changes.push(Change::EdgeDeleted { id });
+        }
+        Ok(())
+    }
+
+    /// Remove one edge row from every in-memory structure (liveness, edge-label
+    /// index, both adjacency directions) without recording any change.
+    ///
+    /// Shared change-free core for [`Self::delete_edge_inner`] and the truncate
+    /// paths; callers own changeset accounting.
+    fn remove_edge_row(&mut self, id: EdgeId, row: usize) -> GraphResult<()> {
         let graph = self.txn.read();
         let label = *graph
             .edge_store
@@ -364,21 +490,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .target
             .get(row)
             .ok_or(GraphError::EdgeNotFound { id })?;
-        {
-            let graph = self.txn.guard_mut();
-            graph.edge_store.alive.remove(row as u32);
-            remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
-            if let Some(mut entry) = graph.adjacency_out.get(&source).cloned() {
-                entry.remove(id);
-                update_or_remove_entry(&mut graph.adjacency_out, source, entry);
-            }
-            if let Some(mut entry) = graph.adjacency_in.get(&target).cloned() {
-                entry.remove(id);
-                update_or_remove_entry(&mut graph.adjacency_in, target, entry);
-            }
+        let graph = self.txn.guard_mut();
+        graph.edge_store.alive.remove(row as u32);
+        remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
+        if let Some(mut entry) = graph.adjacency_out.get(&source).cloned() {
+            entry.remove(id);
+            update_or_remove_entry(&mut graph.adjacency_out, source, entry);
         }
-        if record_change {
-            self.txn.changes.push(Change::EdgeDeleted { id });
+        if let Some(mut entry) = graph.adjacency_in.get(&target).cloned() {
+            entry.remove(id);
+            update_or_remove_entry(&mut graph.adjacency_in, target, entry);
         }
         Ok(())
     }
@@ -645,3 +766,6 @@ fn update_or_remove_entry(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod truncate_tests;

@@ -111,6 +111,8 @@ mod tests {
                 id: EdgeId::new(id),
                 property: prop,
             }),
+            Just(Change::NodesOfTypeTruncated { label: node_label }),
+            Just(Change::EdgesOfTypeTruncated { label: edge_label }),
             proptest::collection::vec(any::<u8>(), 0..512).prop_map(change),
         ]
     }

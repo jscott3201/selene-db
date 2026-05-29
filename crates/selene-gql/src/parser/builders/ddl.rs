@@ -26,6 +26,8 @@ pub(super) fn build_ddl_statement(
         Rule::create_edge_type => build_create_edge_type(inner, budget),
         Rule::drop_node_type => build_drop_node_type(inner, budget),
         Rule::drop_edge_type => build_drop_edge_type(inner, budget),
+        Rule::truncate_node_type => build_truncate_node_type(inner, budget),
+        Rule::truncate_edge_type => build_truncate_edge_type(inner, budget),
         Rule::show_node_types => Ok(DdlStatement::ShowNodeTypes(span(&inner))),
         Rule::show_edge_types => Ok(DdlStatement::ShowEdgeTypes(span(&inner))),
         Rule::show_indexes => Ok(DdlStatement::ShowIndexes(span(&inner))),
@@ -255,6 +257,46 @@ fn build_drop_edge_type(
         if_exists,
         span: source_span,
     })
+}
+
+fn build_truncate_node_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let label = build_truncate_label(pair, "TRUNCATE NODE TYPE is missing label", budget)?;
+    Ok(DdlStatement::TruncateNodeType {
+        label,
+        span: source_span,
+    })
+}
+
+fn build_truncate_edge_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let label = build_truncate_label(pair, "TRUNCATE EDGE TYPE is missing label", budget)?;
+    Ok(DdlStatement::TruncateEdgeType {
+        label,
+        span: source_span,
+    })
+}
+
+fn build_truncate_label(
+    pair: Pair<'_, Rule>,
+    missing: &'static str,
+    budget: &mut InternerBudget,
+) -> Result<selene_core::IStr, ParserError> {
+    let source_span = span(&pair);
+    let mut label = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::ident => label = Some(intern_pair(child, budget)?),
+            _ => return Err(unexpected_pair(child, "unexpected TRUNCATE TYPE child")),
+        }
+    }
+    label.ok_or_else(|| ParserError::syntax(missing, source_span, None))
 }
 
 fn build_drop_type_parts(

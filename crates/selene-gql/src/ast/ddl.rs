@@ -86,6 +86,28 @@ pub enum DdlStatement {
         /// Source span.
         span: SourceSpan,
     },
+    /// `TRUNCATE NODE TYPE` (selene-db `IM_TRUNCATE` vendor extension).
+    ///
+    /// Bulk-removes every node carrying `label` and all incident edges,
+    /// observationally identical to `MATCH (n:label) DETACH DELETE n` but with an
+    /// O(1) WAL write (deletion-reclamation audit Item 11). An absent label is a
+    /// clean no-op; no `IF EXISTS` is needed.
+    TruncateNodeType {
+        /// Node label whose instances are removed.
+        label: IStr,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `TRUNCATE EDGE TYPE` (selene-db `IM_TRUNCATE` vendor extension).
+    ///
+    /// Bulk-removes every edge carrying `label` with an O(1) WAL write. Absent
+    /// label is a clean no-op.
+    TruncateEdgeType {
+        /// Edge label whose instances are removed.
+        label: IStr,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// `CREATE INDEX`.
     CreateIndex {
         /// Catalog index name.
@@ -132,6 +154,8 @@ impl DdlStatement {
             | Self::CreateEdgeType { span, .. }
             | Self::DropNodeType { span, .. }
             | Self::DropEdgeType { span, .. }
+            | Self::TruncateNodeType { span, .. }
+            | Self::TruncateEdgeType { span, .. }
             | Self::CreateIndex { span, .. }
             | Self::DropIndex { span, .. }
             | Self::ShowNodeTypes(span)

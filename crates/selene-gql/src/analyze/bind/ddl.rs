@@ -24,6 +24,8 @@ pub(crate) fn bind_ddl_statement(
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
+        | DdlStatement::TruncateNodeType { .. }
+        | DdlStatement::TruncateEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. }
         | DdlStatement::ShowNodeTypes(_)

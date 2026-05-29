@@ -25,8 +25,8 @@ explainable_statement = { ddl_statement | call_stmt | select_stmt | mutation_pip
 
 // -- DDL statements -----------------------------------------------
 
-ddl_statement = { create_node_type | drop_node_type | show_node_types
-              | create_edge_type | drop_edge_type | show_edge_types
+ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_node_types
+              | create_edge_type | drop_edge_type | truncate_edge_type | show_edge_types
               | show_indexes | show_procedures
               | create_graph | drop_graph | create_index | drop_index }
 
@@ -46,6 +46,8 @@ validation_mode_clause = { ^"STRICT" | ^"WARN" }
 or_replace = { ^"OR" ~ ^"REPLACE" }
 drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
 drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
+truncate_node_type = { ^"TRUNCATE" ~ ^"NODE" ~ ^"TYPE" ~ ":" ~ ident }
+truncate_edge_type = { ^"TRUNCATE" ~ ^"EDGE" ~ ^"TYPE" ~ ":" ~ ident }
 show_node_types  = { ^"SHOW" ~ ^"NODE" ~ ^"TYPES" }
 show_edge_types  = { ^"SHOW" ~ ^"EDGE" ~ ^"TYPES" }
 show_indexes     = { ^"SHOW" ~ ^"INDEXES" }

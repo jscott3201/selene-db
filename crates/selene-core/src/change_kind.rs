@@ -28,6 +28,10 @@ pub enum ChangeKind {
     EdgePropertyRemoved = 9,
     /// [`Change::NodeLabelRemoved`].
     NodeLabelRemoved = 10,
+    /// [`Change::NodesOfTypeTruncated`].
+    NodesOfTypeTruncated = 11,
+    /// [`Change::EdgesOfTypeTruncated`].
+    EdgesOfTypeTruncated = 12,
 }
 
 /// Bit-set over [`ChangeKind`] discriminants.
@@ -39,7 +43,7 @@ impl ChangeKindSet {
     pub const EMPTY: Self = Self(0);
 
     /// Filter set containing every currently defined [`ChangeKind`].
-    pub const ALL: Self = Self(0b0000_0111_1111_1111);
+    pub const ALL: Self = Self(0b0001_1111_1111_1111);
 
     /// Return true when `kind` is present in this set.
     #[must_use]
@@ -76,6 +80,8 @@ impl Change {
             Self::NodePropertyRemoved { .. } => ChangeKind::NodePropertyRemoved,
             Self::EdgePropertyRemoved { .. } => ChangeKind::EdgePropertyRemoved,
             Self::NodeLabelRemoved { .. } => ChangeKind::NodeLabelRemoved,
+            Self::NodesOfTypeTruncated { .. } => ChangeKind::NodesOfTypeTruncated,
+            Self::EdgesOfTypeTruncated { .. } => ChangeKind::EdgesOfTypeTruncated,
         }
     }
 }
@@ -107,6 +113,8 @@ mod tests {
             ChangeKind::NodePropertyRemoved,
             ChangeKind::EdgePropertyRemoved,
             ChangeKind::NodeLabelRemoved,
+            ChangeKind::NodesOfTypeTruncated,
+            ChangeKind::EdgesOfTypeTruncated,
         ];
         assert_eq!(Change::VARIANT_COUNT, expected.len());
 
@@ -135,7 +143,9 @@ mod tests {
         assert!(ChangeKindSet::ALL.contains(ChangeKind::NodePropertyRemoved));
         assert!(ChangeKindSet::ALL.contains(ChangeKind::EdgePropertyRemoved));
         assert!(ChangeKindSet::ALL.contains(ChangeKind::NodeLabelRemoved));
-        assert_eq!(ChangeKindSet::ALL.0, 0b0000_0111_1111_1111);
+        assert!(ChangeKindSet::ALL.contains(ChangeKind::NodesOfTypeTruncated));
+        assert!(ChangeKindSet::ALL.contains(ChangeKind::EdgesOfTypeTruncated));
+        assert_eq!(ChangeKindSet::ALL.0, 0b0001_1111_1111_1111);
     }
 
     #[test]

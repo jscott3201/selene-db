@@ -237,8 +237,14 @@ pub fn validate_change(
             warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
             Ok(warnings)
         }
+        // Truncation removes INSTANCES and keeps the bound type intact (the
+        // node/edge type still exists), and node-truncate cascades incident
+        // edges so the graph stays dangling-free — it can never violate GG02,
+        // exactly like NodeDeleted/EdgeDeleted. BRIEF-150 / audit Item 11.
         Change::NodeDeleted { .. }
         | Change::EdgeDeleted { .. }
+        | Change::NodesOfTypeTruncated { .. }
+        | Change::EdgesOfTypeTruncated { .. }
         | Change::SchemaChanged { .. }
         | Change::IndexExtensionEvent { .. } => Ok(Vec::new()),
     }

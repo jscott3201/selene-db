@@ -159,11 +159,16 @@ impl ChangeSubscriber for IvfProvider {
     fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
         match change {
             Change::NodeDeleted { id } => self.delete_node(*id).map_err(delete_err),
+            // BRIEF-150: truncate variants never reach subscribers (the producer
+            // expands them to per-row NodeDeleted); no-op keeps the match
+            // exhaustive without leaking truncated vectors.
             Change::EdgeDeleted { .. }
             | Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
             | Change::NodePropertyRemoved { .. }
             | Change::NodeLabelRemoved { .. }
+            | Change::NodesOfTypeTruncated { .. }
+            | Change::EdgesOfTypeTruncated { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }
@@ -226,6 +231,8 @@ impl IndexProvider for IvfProvider {
             | Change::NodePropertyRemoved { .. }
             | Change::NodeDeleted { .. }
             | Change::NodeLabelRemoved { .. }
+            | Change::NodesOfTypeTruncated { .. }
+            | Change::EdgesOfTypeTruncated { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }

@@ -92,6 +92,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `IM_TRUNCATE` vendor extension: `TRUNCATE NODE TYPE :L` and
+  `TRUNCATE EDGE TYPE :L` declarative bulk delete (BRIEF-150, deletion+
+  reclamation audit Item 11). A truncate is observationally identical to
+  `MATCH (n:L) DETACH DELETE n` — same final graph state, incident edges of
+  every type cascaded, no dangling edges, and the same per-row D25
+  `ChangeSubscriber` tombstone fan-out so derived state (e.g. vector indexes)
+  is reclaimed without leaks. The crucial difference is the WAL: exactly ONE
+  declarative `Change::NodesOfTypeTruncated { label }` /
+  `Change::EdgesOfTypeTruncated { label }` is written regardless of the number
+  of instances removed (O(1) WAL). Recovery re-derives the affected rows by
+  walking the recovered store and expands them to the same per-row tombstones,
+  so subscriber tombstoning is byte-identical on the runtime and recovery
+  paths. New `Mutator::truncate_node_type` / `truncate_edge_type` route through
+  the single write funnel (reusable by future `DROP NODE TYPE CASCADE` /
+  `DROP GRAPH`). Two new `ChangeKind` discriminants (`NodesOfTypeTruncated`=11,
+  `EdgesOfTypeTruncated`=12); `ChangeKindSet::ALL` widens to 13 bits. The GQL
+  Flagger stamps `FeatureId::IM_TRUNCATE` on every truncate statement
+  (clause 24.6); `IM_TRUNCATE` is registered in `SUPPORTED_FEATURES`. TRUNCATE
+  is valid on both open (GG01) and closed (GG02) graphs — it removes instances
+  and keeps the bound type. An absent label is a clean no-op; double-truncate
+  is idempotent. (Pre-v1.x postcard tag append — audit line 329 sanctions the
+  format break; no snapshot archive bump.)
 - `selene-persist` MANIFEST epoch descriptor + crash-safe multi-phase rotate +
   three-step recovery (BRIEF-148, deletion+reclamation audit Item 2 / Seam F).
   A small fixed-layout `MANIFEST` file (`SLMF` magic, format_version 1, LE

@@ -26,6 +26,12 @@ pub(super) fn catalog_summary(catalog: &CatalogOp) -> String {
         CatalogOp::DropEdgeType { label, .. } => {
             format!("op=DropEdgeType(label={})", label.as_str())
         }
+        CatalogOp::TruncateNodeType { label, .. } => {
+            format!("op=TruncateNodeType(label={})", label.as_str())
+        }
+        CatalogOp::TruncateEdgeType { label, .. } => {
+            format!("op=TruncateEdgeType(label={})", label.as_str())
+        }
         CatalogOp::CreateIndex {
             name,
             label,

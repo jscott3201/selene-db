@@ -110,6 +110,33 @@ pub enum Change {
         /// Removed label.
         label: IStr,
     },
+    /// Bulk removal of every node carrying `label` plus all incident edges.
+    ///
+    /// This is the O(1)-WAL declarative truncate change (BRIEF-150, deletion-
+    /// reclamation audit Item 11). It carries **only** the label — never the
+    /// affected node/edge ids — so a `TRUNCATE NODE TYPE :L` of N nodes still
+    /// writes exactly one WAL change. Recovery re-derives the affected rows by
+    /// walking the recovered store ("replay walks store"), marking dead every
+    /// alive node with `label` and every alive edge incident to such a node, so
+    /// the recovered state is byte-identical to `MATCH (n:L) DETACH DELETE n`.
+    /// Change subscribers (e.g. vector providers) never receive this variant;
+    /// the producing side expands it into per-row `NodeDeleted`/`EdgeDeleted`
+    /// tombstones on both the runtime and recovery paths so derived state is
+    /// reclaimed without leaks.
+    NodesOfTypeTruncated {
+        /// Node label whose instances (and incident edges) were removed.
+        label: IStr,
+    },
+    /// Bulk removal of every edge carrying `label`.
+    ///
+    /// The edge-type counterpart to [`Change::NodesOfTypeTruncated`]
+    /// (`TRUNCATE EDGE TYPE :L`). Carries only the label (O(1) WAL); recovery
+    /// re-derives the affected edges from the recovered store. Subscribers
+    /// receive per-row `EdgeDeleted` tombstones, never this declarative variant.
+    EdgesOfTypeTruncated {
+        /// Edge label whose instances were removed.
+        label: IStr,
+    },
 }
 
 /// Label set difference.
@@ -632,7 +659,7 @@ mod tests {
 
     #[test]
     fn change_all_covers_every_variant() {
-        assert_eq!(Change::VARIANT_COUNT, 11);
+        assert_eq!(Change::VARIANT_COUNT, 13);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Change::ALL {

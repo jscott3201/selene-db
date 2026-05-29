@@ -56,6 +56,18 @@ pub struct WriteTxn<'g> {
     pub(crate) subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
     pub(crate) changes: Vec<Change>,
+    /// Per-truncate per-row tombstone expansions, keyed by the index of the
+    /// declarative truncate change in [`Self::changes`] that produced them.
+    ///
+    /// BRIEF-150 / deletion-reclamation audit Item 11. The WAL/changeset carries
+    /// only the O(1) declarative `NodesOfTypeTruncated`/`EdgesOfTypeTruncated`
+    /// change, but provider/subscriber fan-out must observe the same per-row
+    /// `NodeDeleted`/`EdgeDeleted` multiset a `MATCH (n:L) DETACH DELETE n` would
+    /// emit (so derived vector state is reclaimed without leaks). The mutator
+    /// snapshots the matched ids while it still holds the store and stages their
+    /// tombstones here; commit substitutes each truncate change with its staged
+    /// expansion before fan-out.
+    pub(crate) truncate_expansions: Vec<(usize, Vec<Change>)>,
     pub(crate) warnings: Vec<CommitWarning>,
 }
 
@@ -80,6 +92,7 @@ impl<'g> WriteTxn<'g> {
             subscribers,
             durable_providers,
             changes: Vec::new(),
+            truncate_expansions: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -212,7 +225,18 @@ impl<'g> WriteTxn<'g> {
         }
 
         let changes = std::mem::take(&mut self.changes);
+        let truncate_expansions = std::mem::take(&mut self.truncate_expansions);
         let warnings = std::mem::take(&mut self.warnings);
+
+        // BRIEF-150 / audit Item 11: the persisted `changes` carry O(1)
+        // declarative truncate variants, but providers and subscribers must see
+        // the same per-row `NodeDeleted`/`EdgeDeleted` multiset that
+        // `MATCH (n:L) DETACH DELETE n` produces. Build a fan-out-only view that
+        // substitutes each truncate change with the staged per-row expansion
+        // the mutator captured. Non-truncate commits skip this entirely (no
+        // allocation), preserving the hot-path shape.
+        let fanout_view = expand_truncates_for_fanout(&changes, &truncate_expansions);
+        let fanout_changes: &[Change] = fanout_view.as_deref().unwrap_or(&changes);
 
         // Hold guard + allocator across fanout. The thread-local fanout
         // guard increments a counter that `SharedGraph::begin_write` checks
@@ -222,9 +246,9 @@ impl<'g> WriteTxn<'g> {
         // writers from other threads queue normally on the write lock.
         {
             let _fanout_guard = crate::reentry::FanoutGuard::enter();
-            notify_providers(&self.providers, &changes);
+            notify_providers(&self.providers, fanout_changes);
             if !self.subscribers.is_empty() {
-                notify_subscribers(&self.subscribers, &changes);
+                notify_subscribers(&self.subscribers, fanout_changes);
             }
         }
 
@@ -406,6 +430,39 @@ fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Chan
             }
         }
     }
+}
+
+/// Build a fan-out-only change list that substitutes each declarative truncate
+/// change with the per-row tombstones the mutator staged for it.
+///
+/// Returns `None` when no truncate expansions are staged, so the common
+/// (non-truncate) commit path fans out the persisted `changes` slice directly
+/// with zero allocation. When expansions are present, every truncate change at
+/// a staged index is replaced by its expansion (in order), and a truncate
+/// change with no staged expansion (an empty-label no-op) is simply dropped
+/// from fan-out — subscribers see no tombstones because no rows were removed.
+fn expand_truncates_for_fanout(
+    changes: &[Change],
+    expansions: &[(usize, Vec<Change>)],
+) -> Option<Vec<Change>> {
+    if expansions.is_empty() {
+        return None;
+    }
+    let mut view = Vec::with_capacity(changes.len());
+    for (index, change) in changes.iter().enumerate() {
+        match change {
+            Change::NodesOfTypeTruncated { .. } | Change::EdgesOfTypeTruncated { .. } => {
+                if let Some((_, expansion)) = expansions.iter().find(|(staged, _)| *staged == index)
+                {
+                    view.extend(expansion.iter().cloned());
+                }
+                // A truncate change with no staged expansion removed zero rows
+                // (empty/absent label); it contributes nothing to fan-out.
+            }
+            other => view.push(other.clone()),
+        }
+    }
+    Some(view)
 }
 
 /// Sentinel value emitted on the `provider_tag` field when the provider's
