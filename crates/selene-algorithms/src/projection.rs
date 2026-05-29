@@ -384,6 +384,16 @@ mod tests {
         let cached = proj.row_index();
         assert_eq!(cached.len(), survivors.len());
 
+        // iter_nodes() must yield NodeIds in ASC order (spec 16 §E03), pinned
+        // independent of the id↔row mapping so a 4b ordering regression is caught.
+        let ids: Vec<NodeId> = proj.iter_nodes().collect();
+        for w in ids.windows(2) {
+            assert!(
+                w[0].get() < w[1].get(),
+                "iter_nodes must yield NodeIds ascending per spec 16 §E03"
+            );
+        }
+
         for &nid in &survivors {
             let dense = cached
                 .dense_of_node(nid)

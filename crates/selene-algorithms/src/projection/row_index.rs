@@ -45,31 +45,38 @@ pub(crate) struct RowIndex {
 
 impl RowIndex {
     /// Build the dense remap from a row-indexed node bitmap, capturing each
-    /// row's external [`NodeId`] from `snapshot`'s `row_to_id` column.
+    /// row's external [`NodeId`] from `snapshot`'s `row_to_id` column and
+    /// assigning dense indices in **ASC-by-NodeId** order per spec 16 §E03.
     ///
     /// Used by [`GraphProjection::build`](super::GraphProjection::build) after
-    /// the node set is finalized. `RoaringBitmap::iter` yields rows ASC; the
-    /// captured `node_ids` are therefore in dense order, and (under the
-    /// BRIEF-Item-4a identity mapping) ASC by NodeId per spec 16 §E03.
+    /// the node set is finalized. `RoaringBitmap::iter` yields rows ASC; under
+    /// the BRIEF-Item-4a identity mapping that equals NodeId ASC, so the explicit
+    /// sort here is a no-op today. It is deliberate hardening: once 4b makes
+    /// `id != row + 1` the dense order — and therefore [`iter_node_ids`] and the
+    /// two visitation-order-sensitive community heuristics (louvain,
+    /// label_propagation) — must stay ASC-by-NodeId so algorithm goldens remain
+    /// stable across the identity → non-identity transition.
     pub(crate) fn from_bitmap(nodes: &RoaringBitmap, snapshot: &SeleneGraph) -> Self {
-        let rows: Vec<u32> = nodes.iter().collect();
-        let node_ids: Vec<NodeId> = rows
+        let mut pairs: Vec<(NodeId, u32)> = nodes
             .iter()
-            .map(|&row| {
-                snapshot
+            .map(|row| {
+                let id = snapshot
                     .node_id_for_row(GraphRowIndex::new(row))
-                    .expect("projection row is alive and has a mapped external id")
+                    .expect("projection row is alive and has a mapped external id");
+                (id, row)
             })
             .collect();
-        let dense: HashMap<u32, u32> = rows
+        pairs.sort_unstable_by_key(|(id, _)| *id);
+        let node_ids: Vec<NodeId> = pairs.iter().map(|(id, _)| *id).collect();
+        let dense: HashMap<u32, u32> = pairs
             .iter()
             .enumerate()
-            .map(|(i, &r)| (r, i as u32))
+            .map(|(dense_idx, (_, row))| (*row, dense_idx as u32))
             .collect();
-        let node_to_dense: HashMap<NodeId, u32> = node_ids
+        let node_to_dense: HashMap<NodeId, u32> = pairs
             .iter()
             .enumerate()
-            .map(|(i, &id)| (id, i as u32))
+            .map(|(dense_idx, (id, _))| (*id, dense_idx as u32))
             .collect();
         Self {
             dense,
@@ -112,7 +119,13 @@ impl RowIndex {
         self.node_ids[dense_idx as usize]
     }
 
-    /// Iterate the projection's external `NodeId`s in dense (ASC-by-row) order.
+    /// Iterate the projection's external `NodeId`s in **ascending NodeId order**
+    /// per spec 16 §E03 (the dense order assigned by [`Self::from_bitmap`]).
+    ///
+    /// This ASC-by-NodeId guarantee is the deterministic tie-break contract that
+    /// `iter_nodes()` consumers depend on (apsp source order, WCC/SCC component
+    /// canonicalization, the louvain / label_propagation visitation order), and
+    /// holds regardless of the id↔row mapping.
     #[inline]
     pub(crate) fn iter_node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.node_ids.iter().copied()
