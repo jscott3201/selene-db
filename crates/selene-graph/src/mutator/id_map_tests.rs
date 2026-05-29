@@ -4,10 +4,10 @@
 //! Increment 2 lands the population divergence guard; Increment 6 adds the
 //! non-identity proof test (a manually constructed map where `id != row + 1`).
 
-use selene_core::{GraphId, LabelSet, NodeId, PropertyMap};
+use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap};
 
-use crate::SharedGraph;
 use crate::store::{RowIndex, edge_row_index_arith, node_row_index_arith};
+use crate::{SeleneGraph, SharedGraph};
 
 #[test]
 fn id_row_maps_agree_with_arithmetic_for_all_alive() {
@@ -120,4 +120,91 @@ fn id_row_maps_agree_with_arithmetic_for_all_alive() {
     // The row_to_id columns track the row columns exactly (length-locked).
     assert_eq!(g.node_store.row_to_id.len(), g.node_store.len());
     assert_eq!(g.edge_store.row_to_id.len(), g.edge_store.len());
+}
+
+#[test]
+fn non_identity_map_read_paths_resolve_by_map() {
+    // BRIEF-Item-4a Increment 6 — THE proof. Hand-build a graph whose external
+    // ids are deliberately NOT `row + 1` (NodeId 5 @ row 0, NodeId 8 @ row 1,
+    // EdgeId 3 @ row 0) and feed it through SharedGraph::from_graph, whose
+    // rebuild_id_maps seeds the maps from the row_to_id column — so the whole
+    // read stack runs against a genuine non-identity mapping (a preview of what
+    // 4b compaction will produce). Every read path must resolve by the map, not
+    // by arithmetic; the arithmetic answers are asserted to be WRONG. This is the
+    // assertion that would catch any read site Increment 3 failed to migrate.
+    let label = selene_core::intern("ni.node").unwrap();
+    let elabel = selene_core::intern("ni.edge").unwrap();
+
+    let mut built = SeleneGraph::new(GraphId::new(1));
+    // Row 0 -> NodeId(5); Row 1 -> NodeId(8).
+    built.node_store.labels.push(LabelSet::single(label));
+    built.node_store.properties.push(PropertyMap::new());
+    built.node_store.row_to_id.push(NodeId::new(5));
+    built.node_store.labels.push(LabelSet::single(label));
+    built.node_store.properties.push(PropertyMap::new());
+    built.node_store.row_to_id.push(NodeId::new(8));
+    built.node_store.alive.insert(0);
+    built.node_store.alive.insert(1);
+    // Row 0 -> EdgeId(3): NodeId(5) -> NodeId(8).
+    built.edge_store.label.push(elabel);
+    built.edge_store.source.push(NodeId::new(5));
+    built.edge_store.target.push(NodeId::new(8));
+    built.edge_store.properties.push(PropertyMap::new());
+    built.edge_store.row_to_id.push(EdgeId::new(3));
+    built.edge_store.alive.insert(0);
+    built.meta.next_node_id = 9;
+    built.meta.next_edge_id = 4;
+
+    let shared = SharedGraph::from_graph(built);
+    let g = shared.read();
+
+    // Accessors round-trip the NON-identity mapping (seeded from row_to_id).
+    assert_eq!(g.row_for_node_id(NodeId::new(5)), Some(RowIndex::new(0)));
+    assert_eq!(g.row_for_node_id(NodeId::new(8)), Some(RowIndex::new(1)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(0)), Some(NodeId::new(5)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(1)), Some(NodeId::new(8)));
+    // The arithmetic answer (NodeId 5 -> row 4) is WRONG; the map says row 0.
+    assert_ne!(g.row_for_node_id(NodeId::new(5)), Some(RowIndex::new(4)));
+
+    // Liveness + labels resolve by the map. NodeId(1) was never committed: under
+    // the old `id - 1` arithmetic it would map to row 0 and return row 0's label;
+    // the map returns None. THIS is the decoupling proof.
+    assert!(g.is_node_alive(NodeId::new(5)));
+    assert!(g.is_node_alive(NodeId::new(8)));
+    assert!(!g.is_node_alive(NodeId::new(1)));
+    assert!(g.node_labels(NodeId::new(1)).is_none());
+    assert_eq!(
+        g.node_labels(NodeId::new(5))
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![label]
+    );
+    // The label index is row-keyed: rows 0 and 1 carry the label.
+    let labelled = g.nodes_with_label(&label).unwrap();
+    assert!(labelled.contains(0) && labelled.contains(1));
+
+    // Edge read paths + adjacency (rebuilt reading edge_id from row_to_id).
+    assert_eq!(g.row_for_edge_id(EdgeId::new(3)), Some(RowIndex::new(0)));
+    assert_eq!(g.edge_id_for_row(RowIndex::new(0)), Some(EdgeId::new(3)));
+    assert!(g.is_edge_alive(EdgeId::new(3)));
+    assert!(!g.is_edge_alive(EdgeId::new(1)));
+    assert_eq!(
+        g.edge_endpoints(EdgeId::new(3)),
+        Some((NodeId::new(5), NodeId::new(8)))
+    );
+    assert_eq!(*g.edge_label(EdgeId::new(3)).unwrap(), elabel);
+    assert!(
+        g.outgoing_edges(NodeId::new(5))
+            .unwrap()
+            .iter()
+            .any(|e| e.neighbor == NodeId::new(8) && e.edge_id == EdgeId::new(3))
+    );
+    assert!(
+        g.incoming_edges(NodeId::new(8))
+            .unwrap()
+            .iter()
+            .any(|e| e.neighbor == NodeId::new(5) && e.edge_id == EdgeId::new(3))
+    );
 }

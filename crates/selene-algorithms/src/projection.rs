@@ -499,4 +499,56 @@ mod tests {
         // The dropped node (row 500 → NodeId 501) is not in the projection.
         assert_eq!(proj.row_index().dense_of(500), None);
     }
+
+    /// BRIEF-Item-4a Increment 6 — non-identity proof for the algorithms layer.
+    /// A graph whose external ids are NOT `row + 1` (NodeId 5 @ row 0, NodeId 8 @
+    /// row 1, EdgeId 3 @ row 0) must project + traverse by external id. The
+    /// RowIndex capture and dense remap are exercised against a genuine
+    /// non-identity mapping (the 4b shape), proving algorithms emit correct
+    /// external NodeIds rather than row-derived ones.
+    #[test]
+    fn projection_over_non_identity_graph_emits_external_node_ids() {
+        use selene_core::EdgeId;
+        let label = istr("T");
+        let link = istr("link");
+        let mut built = SeleneGraph::new(GraphId::new(7_702));
+        built.node_store.labels.push(LabelSet::single(label));
+        built.node_store.properties.push(PropertyMap::new());
+        built.node_store.row_to_id.push(NodeId::new(5));
+        built.node_store.labels.push(LabelSet::single(label));
+        built.node_store.properties.push(PropertyMap::new());
+        built.node_store.row_to_id.push(NodeId::new(8));
+        built.node_store.alive.insert(0);
+        built.node_store.alive.insert(1);
+        built.edge_store.label.push(link);
+        built.edge_store.source.push(NodeId::new(5));
+        built.edge_store.target.push(NodeId::new(8));
+        built.edge_store.properties.push(PropertyMap::new());
+        built.edge_store.row_to_id.push(EdgeId::new(3));
+        built.edge_store.alive.insert(0);
+        built.meta.next_node_id = 9;
+        built.meta.next_edge_id = 4;
+        let shared = SharedGraph::from_graph(built);
+        let snapshot = shared.read();
+        let proj = GraphProjection::build(&snapshot, &config(), None).unwrap();
+
+        // iter_nodes yields external ids (ASC), never row-derived ids.
+        assert_eq!(
+            proj.iter_nodes().collect::<Vec<_>>(),
+            vec![NodeId::new(5), NodeId::new(8)]
+        );
+        assert!(proj.contains(NodeId::new(5)));
+        // Row 0 carries external id 5, NOT 1 — the row+1 answer is wrong.
+        assert!(!proj.contains(NodeId::new(1)));
+        // Adjacency + degree resolve by external id.
+        let outs: Vec<NodeId> = proj
+            .out_neighbors(NodeId::new(5))
+            .iter()
+            .map(|n| n.node_id)
+            .collect();
+        assert_eq!(outs, vec![NodeId::new(8)]);
+        assert_eq!(proj.out_degree(NodeId::new(5)), 1);
+        assert_eq!(proj.in_degree(NodeId::new(8)), 1);
+        assert_eq!(proj.out_degree(NodeId::new(8)), 0);
+    }
 }
