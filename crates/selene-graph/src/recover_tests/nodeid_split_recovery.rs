@@ -398,3 +398,33 @@ fn post_compaction_wal_edge_create_recovers_dense_without_rebloat() {
     assert_eq!(g.meta.next_edge_id, 3);
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn post_compaction_wal_delete_of_survivor_replays_against_compacted_snapshot() {
+    // BRIEF-Item-4e (delete arm): the only cross-compaction-epoch WAL replay is of
+    // POST-snapshot entries — pre-compaction entries are truncated by the rotate
+    // and fenced below the WAL floor, so they never reach a compacted snapshot. A
+    // post-snapshot `NodeDeleted` of a SURVIVING node finds it in the compacted
+    // snapshot (require_live_node succeeds) and applies; no hard-error, no
+    // re-bloat. This is the delete counterpart of the create re-bloat test above.
+    let dir = temp_dir("compacted-snapshot-wal-delete");
+    let shared = compacted_sample(); // nodes 1 and 4 survive; floor 3
+    write_snapshot(&dir, &shared, 3);
+    append_wal(&dir, 3, &[Change::NodeDeleted { id: NodeId::new(1) }]); // seq 4 — post-snapshot
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    let g = recovered.read();
+
+    assert!(
+        !g.is_node_alive(NodeId::new(1)),
+        "the post-compaction delete of a survivor applied"
+    );
+    assert!(
+        g.is_node_alive(NodeId::new(4)),
+        "the other survivor is untouched"
+    );
+    // The reclaimed pre-compaction ids stay NotFound throughout.
+    assert!(g.row_for_node_id(NodeId::new(2)).is_none());
+    assert!(g.row_for_node_id(NodeId::new(5)).is_none());
+    let _ = std::fs::remove_dir_all(dir);
+}
