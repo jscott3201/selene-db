@@ -21,7 +21,7 @@ use crate::core_provider::{
 };
 use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
-use crate::store::{edge_row_index, node_row_index};
+use crate::store::{RowIndex, edge_row_index_arith, node_row_index_arith};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 
 mod schema_replay;
@@ -719,7 +719,7 @@ fn apply_property_diff(
 }
 
 fn insert_node_row(graph: &mut SeleneGraph, id: NodeId, row: NodeRow) -> crate::GraphResult<()> {
-    let row_index = node_row_index(id).ok_or_else(|| {
+    let row_index = node_row_index_arith(id).ok_or_else(|| {
         crate::GraphError::Provider(invalid_payload(format!(
             "CORE/NODE payload used invalid node id {id}"
         )))
@@ -741,12 +741,21 @@ fn insert_node_row(graph: &mut SeleneGraph, id: NodeId, row: NodeRow) -> crate::
         graph.node_store.properties.set(row_index, row.properties);
         graph.node_store.row_to_id.set(row_index, id);
     }
+    // BRIEF-Item-4a: bind id -> row in the map for every materialized row (alive
+    // AND dead — a deleted recovered id stays mapped -> NotAlive, Option B). The
+    // recovery-internal closed-graph validation reads labels through this map, so
+    // it must be populated here, before that check (and before shared.rs's
+    // rebuild_id_maps re-seeds it). Holes carry the tombstone and never reach
+    // this real-row branch.
+    graph
+        .node_id_to_row
+        .insert(id, RowIndex::new(row_index as u32));
     set_alive(&mut graph.node_store.alive, row_index, row.alive);
     Ok(())
 }
 
 fn insert_edge_row(graph: &mut SeleneGraph, id: EdgeId, row: EdgeRow) -> crate::GraphResult<()> {
-    let row_index = edge_row_index(id).ok_or_else(|| {
+    let row_index = edge_row_index_arith(id).ok_or_else(|| {
         crate::GraphError::Provider(invalid_payload(format!(
             "CORE/EDGE payload used invalid edge id {id}"
         )))
@@ -772,6 +781,11 @@ fn insert_edge_row(graph: &mut SeleneGraph, id: EdgeId, row: EdgeRow) -> crate::
         graph.edge_store.properties.set(row_index, row.properties);
         graph.edge_store.row_to_id.set(row_index, id);
     }
+    // BRIEF-Item-4a: bind id -> row in the map for every materialized row (see
+    // insert_node_row).
+    graph
+        .edge_id_to_row
+        .insert(id, RowIndex::new(row_index as u32));
     set_alive(&mut graph.edge_store.alive, row_index, row.alive);
     Ok(())
 }

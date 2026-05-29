@@ -661,6 +661,16 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             continue;
         }
         let (label, source, target) = edge_row_parts(&graph.edge_store, row_index)?;
+        // rebuild_id_maps ran first, so the edge id is read from the row_to_id
+        // column (the persistence-stable id), never synthesized as row + 1.
+        let edge_id =
+            graph
+                .edge_id_for_row(RowIndex::new(row))
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "alive edge row {row} has no mapped external id during rebuild"
+                    ),
+                })?;
         graph
             .adjacency_out
             .entry(source)
@@ -668,7 +678,7 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             .add(AdjacencyEdge {
                 label,
                 neighbor: target,
-                edge_id: selene_core::EdgeId::new(row as u64 + 1),
+                edge_id,
             });
         graph
             .adjacency_in
@@ -677,7 +687,7 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             .add(AdjacencyEdge {
                 label,
                 neighbor: source,
-                edge_id: selene_core::EdgeId::new(row as u64 + 1),
+                edge_id,
             });
     }
     Ok(())

@@ -18,7 +18,7 @@ mod row_index;
 
 use roaring::RoaringBitmap;
 use selene_core::{IStr, NodeId};
-use selene_graph::{SeleneGraph, store::node_row_index};
+use selene_graph::SeleneGraph;
 
 pub use csr::ProjNeighbor;
 use csr::{ProjCsr, build_csr_in, build_csr_out};
@@ -109,7 +109,7 @@ impl GraphProjection {
 
         // Step 1.5: build the dense remap once over the finalized node set. The
         // CSR builder consumes it so offsets are sized by live-node count.
-        let row_index = RowIndex::from_bitmap(&nodes);
+        let row_index = RowIndex::from_bitmap(&nodes, snapshot);
 
         // Step 2: build CSR adjacency for each direction.
         let out_csr = build_csr_out(
@@ -201,10 +201,7 @@ impl GraphProjection {
     /// Returns true when `node` is part of this projection.
     #[must_use]
     pub fn contains(&self, node: NodeId) -> bool {
-        match node_row_index(node) {
-            Some(row) => self.nodes.contains(row),
-            None => false,
-        }
+        self.row_index.dense_of_node(node).is_some()
     }
 
     /// Out-neighbors of `node`, sorted ASC by `node_id` per spec 16 §E03.
@@ -213,10 +210,7 @@ impl GraphProjection {
     /// qualifying outgoing edges.
     #[must_use]
     pub fn out_neighbors(&self, node: NodeId) -> &[ProjNeighbor] {
-        let Some(row) = node_row_index(node) else {
-            return &[];
-        };
-        let Some(dense) = self.row_index.dense_of(row) else {
+        let Some(dense) = self.row_index.dense_of_node(node) else {
             return &[];
         };
         self.out_csr.neighbors_of_dense(dense)
@@ -228,10 +222,7 @@ impl GraphProjection {
     /// qualifying incoming edges.
     #[must_use]
     pub fn in_neighbors(&self, node: NodeId) -> &[ProjNeighbor] {
-        let Some(row) = node_row_index(node) else {
-            return &[];
-        };
-        let Some(dense) = self.row_index.dense_of(row) else {
+        let Some(dense) = self.row_index.dense_of_node(node) else {
             return &[];
         };
         self.in_csr.neighbors_of_dense(dense)
@@ -256,7 +247,7 @@ impl GraphProjection {
     /// correctness on ties (BFS visit order, SCC enumeration order, Louvain
     /// community-id assignment on equal modularity) depends on this stability.
     pub fn iter_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.nodes.iter().map(|row| NodeId::new(u64::from(row) + 1))
+        self.row_index.iter_node_ids()
     }
 
     /// Returns true when this projection carries weighted edges.
@@ -282,10 +273,10 @@ fn assert_csr_transpose(
 ) {
     let mut out_edges = Vec::with_capacity(out_csr.total_neighbors());
     for row in nodes.iter() {
-        let source = NodeId::new(u64::from(row) + 1);
         let dense = row_index
             .dense_of(row)
             .expect("projection row has a dense index");
+        let source = row_index.node_id_of(dense);
         for neighbor in out_csr.neighbors_of_dense(dense) {
             out_edges.push((neighbor.edge_id, source, neighbor.node_id));
         }
@@ -293,10 +284,10 @@ fn assert_csr_transpose(
 
     let mut in_edges = Vec::with_capacity(in_csr.total_neighbors());
     for row in nodes.iter() {
-        let target = NodeId::new(u64::from(row) + 1);
         let dense = row_index
             .dense_of(row)
             .expect("projection row has a dense index");
+        let target = row_index.node_id_of(dense);
         for neighbor in in_csr.neighbors_of_dense(dense) {
             in_edges.push((neighbor.edge_id, neighbor.node_id, target));
         }
@@ -342,11 +333,9 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        // Map keep_rows (sparse) to NodeIds (row + 1).
-        let survivors: Vec<NodeId> = keep_rows
-            .iter()
-            .map(|&r| NodeId::new(u64::from(r) + 1))
-            .collect();
+        // Map keep_rows (sparse) to NodeIds via the fixture's own creation order
+        // (all[r] is the id created for row r) — no row+1 assumption.
+        let survivors: Vec<NodeId> = keep_rows.iter().map(|&r| all[r as usize]).collect();
 
         // Delete every node NOT in survivors, creating sparse holes.
         {
@@ -381,37 +370,36 @@ mod tests {
         }
     }
 
-    /// OPT-8 transparency: the cached `row_index()` is byte-identical to a
-    /// freshly built `RowIndex::new(proj)` (same `len`, same `dense_of`, same
-    /// `node_id_of` for every node) — proving the cache equals the per-call map.
+    /// The cached `row_index()` round-trips every live node through the captured
+    /// external-id mapping: `dense_of_node` and `node_id_of` invert, and
+    /// `dense_of(row)` (row read from the graph, not synthesized as `id - 1`)
+    /// agrees with `dense_of_node`.
     #[test]
-    fn cached_row_index_equals_per_call() {
+    fn cached_row_index_round_trips() {
         // Sparse: keep rows 10, 500, 999 out of 1000.
         let (shared, survivors) = sparse_ring(1000, &[10, 500, 999]);
         let snapshot = shared.read();
         let proj = GraphProjection::build(&snapshot, &config(), None).unwrap();
 
         let cached = proj.row_index();
-        let fresh = RowIndex::new(&proj);
-
-        assert_eq!(cached.len(), fresh.len());
         assert_eq!(cached.len(), survivors.len());
 
-        // dense_of and node_id_of agree for every live node, and round-trip.
         for &nid in &survivors {
-            let row = (nid.get() - 1) as u32;
-            let cd = cached.dense_of(row);
-            assert_eq!(cd, fresh.dense_of(row));
-            let d = cd.expect("survivor has a dense index");
-            assert_eq!(cached.node_id_of(d), fresh.node_id_of(d));
-            assert_eq!(cached.node_id_of(d), nid);
-            // dense_of_node convenience matches the raw dense_of.
-            assert_eq!(cached.dense_of_node(nid), cd);
+            let dense = cached
+                .dense_of_node(nid)
+                .expect("survivor has a dense index");
+            assert_eq!(cached.node_id_of(dense), nid);
+            // The row read from the graph maps to the same dense index — no
+            // row+1 assumption baked into the oracle.
+            let row = snapshot
+                .row_for_node_id(nid)
+                .expect("survivor is mapped")
+                .get();
+            assert_eq!(cached.dense_of(row), Some(dense));
         }
 
-        // A deleted (hole) row maps to None in both.
+        // Row 0 (the deleted node 1) is outside the projection.
         assert_eq!(cached.dense_of(0), None);
-        assert_eq!(fresh.dense_of(0), None);
     }
 
     /// OPT-9: CSR offsets are sized by live-node count, NOT node_store.len().

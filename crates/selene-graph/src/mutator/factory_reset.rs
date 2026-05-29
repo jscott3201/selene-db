@@ -6,11 +6,11 @@
 //! resulting in-memory state is byte-identical to `MATCH (n) DETACH DELETE n`
 //! plus a full schema drop.
 
-use selene_core::{Change, EdgeId, NodeId};
+use selene_core::Change;
 
 use crate::Mutator;
 use crate::error::GraphResult;
-use crate::store::edge_row_index;
+use crate::store::RowIndex;
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
     /// Factory-reset the entire graph: wipe every node and edge and reset the
@@ -60,7 +60,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
         let mut expansion = Vec::with_capacity(node_rows.len() + edge_rows.len());
         for row in node_rows {
-            let id = NodeId::new(u64::from(row) + 1);
+            // Every row came from the alive bitmap, so its external id is mapped
+            // (an unmapped row would be a never-committed hole, never alive).
+            let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
+                continue;
+            };
             // remove_node_row scrubs idx_label, property/composite indexes,
             // adjacency, and node liveness. Its returned incident-edge set is
             // discarded here because the alive-edge bitmap below is the
@@ -79,9 +83,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             if !self.txn.read().edge_store.is_alive(row) {
                 continue;
             }
-            let id = EdgeId::new(u64::from(row) + 1);
+            let Some(id) = self.txn.read().edge_id_for_row(RowIndex::new(row)) else {
+                continue;
+            };
             debug_assert!(
-                edge_row_index(id) == Some(row),
+                self.txn.read().row_for_edge_id(id) == Some(RowIndex::new(row)),
                 "edge row/id round-trip must hold"
             );
             self.remove_edge_row(id, row as usize)?;

@@ -7,7 +7,7 @@ use selene_core::{
 use super::*;
 use crate::SharedGraph;
 use crate::graph_types::{NodeTypeDef, ValidationMode};
-use crate::store::node_row_index;
+use crate::store::node_row_index_arith;
 
 fn empty_node(mutator: &mut Mutator<'_, '_>) -> NodeId {
     mutator
@@ -275,7 +275,7 @@ fn read_within_tx_sees_label_index_updates() {
     let id = mutator
         .create_node(LabelSet::single(label), PropertyMap::new())
         .expect("create_node ok");
-    let row = node_row_index(id).unwrap();
+    let row = node_row_index_arith(id).unwrap();
     assert!(
         mutator
             .read()
@@ -634,7 +634,7 @@ proptest! {
             let mut expected: std::collections::BTreeMap<IStr, RoaringBitmap> =
                 std::collections::BTreeMap::new();
             for (id, node_labels) in &alive {
-                let row = node_row_index(*id).unwrap();
+                let row = node_row_index_arith(*id).unwrap();
                 for label in node_labels {
                     expected.entry(*label).or_default().insert(row);
                 }

@@ -19,7 +19,7 @@ use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
 use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::index_provider::{IndexProvider, ProviderTag};
-use crate::store::{RowIndex, edge_row_index, node_row_index};
+use crate::store::{RowIndex, edge_row_index_arith, node_row_index_arith};
 use crate::type_validator::{EntityId, TypeViolation};
 use crate::write_txn::WriteTxn;
 
@@ -46,7 +46,9 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
         fill_node_defaults(self.txn.read(), &labels, &mut props)?;
         let id = self.txn.allocator.allocate_node();
-        let row = node_row_index(id).ok_or_else(|| GraphError::IdOverflow {
+        // Binding authority: a freshly allocated id defines its row here, before
+        // the id->row map contains it (the insert below adds it).
+        let row = node_row_index_arith(id).ok_or_else(|| GraphError::IdOverflow {
             kind: "node",
             raw: id.get(),
             max: u32::MAX as u64 + 1,
@@ -109,7 +111,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.require_live_node(target)?;
         fill_edge_defaults(self.txn.read(), label, source, target, &mut props)?;
         let id = self.txn.allocator.allocate_edge();
-        let row = edge_row_index(id).ok_or_else(|| GraphError::IdOverflow {
+        // Binding authority (see create_node).
+        let row = edge_row_index_arith(id).ok_or_else(|| GraphError::IdOverflow {
             kind: "edge",
             raw: id.get(),
             max: u32::MAX as u64 + 1,
@@ -377,12 +380,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         let mut node_tombstones = Vec::with_capacity(matched_rows.len());
         let mut incident_edges = BTreeSet::new();
         for row in matched_rows {
-            let id = NodeId::new(u64::from(row) + 1);
             // Skip rows that are not alive (defensive: idx_label is kept in
             // lockstep with liveness, but a dead row must never be re-removed).
             if !self.txn.read().node_store.is_alive(row) {
                 continue;
             }
+            let Some(id) = self.txn.read().node_id_for_row(RowIndex::new(row)) else {
+                continue;
+            };
             incident_edges.append(&mut self.remove_node_row(id, row as usize)?);
             node_tombstones.push(Change::NodeDeleted { id });
         }
@@ -391,7 +396,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         let mut expansion = node_tombstones;
         for edge_id in incident_edges {
-            let row = edge_row_index(edge_id).ok_or(GraphError::EdgeNotFound { id: edge_id })?;
+            let row = self
+                .txn
+                .read()
+                .row_for_edge_id(edge_id)
+                .ok_or(GraphError::EdgeNotFound { id: edge_id })?
+                .get();
             // An incident edge may already be gone if two truncated endpoints
             // shared it; remove_edge_row is only called for still-alive rows.
             if self.txn.read().edge_store.is_alive(row) {
@@ -428,7 +438,9 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             if !self.txn.read().edge_store.is_alive(row) {
                 continue;
             }
-            let id = EdgeId::new(u64::from(row) + 1);
+            let Some(id) = self.txn.read().edge_id_for_row(RowIndex::new(row)) else {
+                continue;
+            };
             self.remove_edge_row(id, row as usize)?;
             expansion.push(Change::EdgeDeleted { id });
         }
@@ -526,8 +538,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 
     fn require_live_node(&self, id: NodeId) -> GraphResult<usize> {
-        let row = node_row_index(id).ok_or(GraphError::NodeNotFound { id })?;
         let graph = self.txn.read();
+        // Map-backed: a never-committed (aborted-tx hole) id is absent from the
+        // map -> NotFound. A deleted id stays mapped to its dead row -> NotAlive.
+        let row = graph
+            .row_for_node_id(id)
+            .ok_or(GraphError::NodeNotFound { id })?
+            .get();
         if row as usize >= graph.node_store.len() {
             return Err(GraphError::NodeNotFound { id });
         }
@@ -538,8 +555,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     }
 
     fn require_live_edge(&self, id: EdgeId) -> GraphResult<usize> {
-        let row = edge_row_index(id).ok_or(GraphError::EdgeNotFound { id })?;
         let graph = self.txn.read();
+        let row = graph
+            .row_for_edge_id(id)
+            .ok_or(GraphError::EdgeNotFound { id })?
+            .get();
         if row as usize >= graph.edge_store.len() {
             return Err(GraphError::EdgeNotFound { id });
         }

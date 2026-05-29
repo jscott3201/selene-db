@@ -152,17 +152,27 @@ impl Default for EdgeStore {
     }
 }
 
-/// Convert a node ID to its store row index.
+/// Convert a node id to its store row via the identity `id - 1` arithmetic.
+///
+/// **Binding-authority only.** Used where a freshly allocated id (create_node)
+/// or a recovered id (recovery `insert_node_row`) DEFINES its row before the
+/// `node_id_to_row` map contains it. Every read path uses the map-backed
+/// [`SeleneGraph::row_for_node_id`](crate::SeleneGraph::row_for_node_id) instead,
+/// so the external id can stay stable while compaction renumbers the row.
+/// Allowlisted in the BRIEF-Item-4a STEP-8 grep-gate; BRIEF-Item-4b replaces the
+/// binding with a persisted-id read.
 #[must_use]
-pub fn node_row_index(id: NodeId) -> Option<u32> {
+pub(crate) fn node_row_index_arith(id: NodeId) -> Option<u32> {
     id.get()
         .checked_sub(1)
         .and_then(|raw| u32::try_from(raw).ok())
 }
 
-/// Convert an edge ID to its store row index.
+/// Convert an edge id to its store row via the identity `id - 1` arithmetic.
+///
+/// Binding-authority only; see [`node_row_index_arith`].
 #[must_use]
-pub fn edge_row_index(id: EdgeId) -> Option<u32> {
+pub(crate) fn edge_row_index_arith(id: EdgeId) -> Option<u32> {
     id.get()
         .checked_sub(1)
         .and_then(|raw| u32::try_from(raw).ok())
@@ -200,10 +210,10 @@ mod tests {
     }
 
     #[test]
-    fn row_index_maps_id_minus_one() {
-        assert_eq!(node_row_index(NodeId::new(1)), Some(0));
-        assert_eq!(node_row_index(NodeId::new(42)), Some(41));
-        assert_eq!(node_row_index(NodeId::TOMBSTONE), None);
-        assert_eq!(edge_row_index(EdgeId::new(1)), Some(0));
+    fn row_index_arith_maps_id_minus_one() {
+        assert_eq!(node_row_index_arith(NodeId::new(1)), Some(0));
+        assert_eq!(node_row_index_arith(NodeId::new(42)), Some(41));
+        assert_eq!(node_row_index_arith(NodeId::TOMBSTONE), None);
+        assert_eq!(edge_row_index_arith(EdgeId::new(1)), Some(0));
     }
 }

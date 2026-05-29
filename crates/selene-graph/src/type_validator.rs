@@ -285,10 +285,16 @@ pub fn validate_entity_state(
 ) -> Result<Vec<TypeWarning>, TypeViolation> {
     let mut warnings = Vec::new();
     for row in graph.node_store.alive.iter() {
-        warnings.extend(validate_node_state(NodeId::new(row as u64 + 1), graph, type_def)?.1);
+        let id = graph
+            .node_id_for_row(crate::store::RowIndex::new(row))
+            .expect("alive node row has a mapped external id (BRIEF-Item-4a)");
+        warnings.extend(validate_node_state(id, graph, type_def)?.1);
     }
     for row in graph.edge_store.alive.iter() {
-        warnings.extend(validate_edge_state(EdgeId::new(row as u64 + 1), graph, type_def)?.1);
+        let id = graph
+            .edge_id_for_row(crate::store::RowIndex::new(row))
+            .expect("alive edge row has a mapped external id (BRIEF-Item-4a)");
+        warnings.extend(validate_edge_state(id, graph, type_def)?.1);
     }
     Ok(warnings)
 }

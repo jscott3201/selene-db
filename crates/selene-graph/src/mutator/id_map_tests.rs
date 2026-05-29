@@ -7,7 +7,7 @@
 use selene_core::{GraphId, LabelSet, NodeId, PropertyMap};
 
 use crate::SharedGraph;
-use crate::store::{RowIndex, edge_row_index, node_row_index};
+use crate::store::{RowIndex, edge_row_index_arith, node_row_index_arith};
 
 #[test]
 fn id_row_maps_agree_with_arithmetic_for_all_alive() {
@@ -56,7 +56,7 @@ fn id_row_maps_agree_with_arithmetic_for_all_alive() {
             "alive node row {row} has tombstone id"
         );
         assert_eq!(
-            node_row_index(id),
+            node_row_index_arith(id),
             Some(row),
             "arith disagrees for alive {id}"
         );
@@ -91,7 +91,7 @@ fn id_row_maps_agree_with_arithmetic_for_all_alive() {
             "alive edge row {row} has tombstone id"
         );
         assert_eq!(
-            edge_row_index(id),
+            edge_row_index_arith(id),
             Some(row),
             "arith disagrees for alive {id}"
         );
