@@ -28,7 +28,6 @@ use selene_core::{CancellationChecker, NodeId};
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
-use crate::structural::RowIndex;
 
 /// Compute community assignments via single-pass Louvain modularity.
 ///
@@ -52,7 +51,7 @@ pub fn louvain_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, u64, u32)>, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
@@ -68,7 +67,7 @@ pub fn louvain_with_checker(
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
+            if idx.dense_of_node(nb.node_id).is_some() {
                 total_weight += nb.weight;
             }
         }
@@ -96,12 +95,12 @@ pub fn louvain_with_checker(
         let node = idx.node_id_of(d);
         let mut deg = 0.0;
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
+            if idx.dense_of_node(nb.node_id).is_some() {
                 deg += nb.weight;
             }
         }
         for nb in proj.in_neighbors(node) {
-            if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
+            if idx.dense_of_node(nb.node_id).is_some() {
                 deg += nb.weight;
             }
         }
@@ -140,13 +139,13 @@ pub fn louvain_with_checker(
 
             comm_weights.clear();
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(nd) = idx.dense_of_node(nb.node_id) {
                     let nb_comm = community[nd as usize];
                     *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
                 }
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(nd) = idx.dense_of_node(nb.node_id) {
                     let nb_comm = community[nd as usize];
                     *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
                 }
@@ -210,11 +209,6 @@ pub fn louvain_with_checker(
         .collect();
     result.sort_by_key(|&(nid, _, _)| nid.get());
     Ok(result)
-}
-
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }
 
 /// Compute the scalar Louvain gain term for moving a node into one community.

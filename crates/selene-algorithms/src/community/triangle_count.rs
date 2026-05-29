@@ -157,12 +157,12 @@ fn triangle_count_parallel_checked(
     Ok(sort_triangle_count_results(result))
 }
 
-struct DenseAdjacency {
-    idx: RowIndex,
+struct DenseAdjacency<'a> {
+    idx: &'a RowIndex,
     adj: Vec<Vec<u32>>,
 }
 
-impl DenseAdjacency {
+impl DenseAdjacency<'_> {
     fn is_empty(&self) -> bool {
         self.idx.is_empty()
     }
@@ -180,8 +180,8 @@ impl DenseAdjacency {
     }
 }
 
-fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency {
-    let idx = RowIndex::new(proj);
+fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency<'_> {
+    let idx = proj.row_index();
     let n = idx.len();
 
     // Build sorted+deduped undirected adjacency per dense index. Self-loops
@@ -191,14 +191,14 @@ fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency {
         let node = idx.node_id_of(d);
         let neighbors = &mut adj[d as usize];
         for nb in proj.out_neighbors(node) {
-            if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id))
+            if let Some(nd) = idx.dense_of_node(nb.node_id)
                 && nd != d
             {
                 neighbors.push(nd);
             }
         }
         for nb in proj.in_neighbors(node) {
-            if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id))
+            if let Some(nd) = idx.dense_of_node(nb.node_id)
                 && nd != d
             {
                 neighbors.push(nd);
@@ -210,12 +210,12 @@ fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency {
     DenseAdjacency { idx, adj }
 }
 
-fn build_dense_adjacency_checked(
-    proj: &GraphProjection,
+fn build_dense_adjacency_checked<'a>(
+    proj: &'a GraphProjection,
     checker: CancellationChecker<'_>,
-) -> Result<DenseAdjacency, AlgorithmAborted> {
+) -> Result<DenseAdjacency<'a>, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     let n = idx.len();
 
     // Build sorted+deduped undirected adjacency per dense index. Self-loops
@@ -227,14 +227,14 @@ fn build_dense_adjacency_checked(
         let node = idx.node_id_of(d);
         let neighbors = &mut adj[d as usize];
         for nb in proj.out_neighbors(node) {
-            if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id))
+            if let Some(nd) = idx.dense_of_node(nb.node_id)
                 && nd != d
             {
                 neighbors.push(nd);
             }
         }
         for nb in proj.in_neighbors(node) {
-            if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id))
+            if let Some(nd) = idx.dense_of_node(nb.node_id)
                 && nd != d
             {
                 neighbors.push(nd);
@@ -269,9 +269,4 @@ fn sort_triangle_count_results(mut result: Vec<(NodeId, usize)>) -> Vec<(NodeId,
     // `feedback_dijkstra_tie_break_needs_both_rules`.
     result.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     result
-}
-
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }

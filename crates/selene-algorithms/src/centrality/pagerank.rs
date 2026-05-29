@@ -14,7 +14,6 @@ use selene_core::{CancellationChecker, NodeId};
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::parallel::{ParallelRunner, Parallelism};
 use crate::projection::GraphProjection;
-use crate::structural::RowIndex;
 
 /// Caller-supplied PageRank configuration (spec 16 §E22 — no in-crate
 /// defaults).
@@ -75,7 +74,7 @@ fn pagerank_sequential(
         config.damping
     );
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
@@ -97,7 +96,7 @@ fn pagerank_sequential(
         let neighbors: Vec<u32> = proj
             .out_neighbors(node)
             .iter()
-            .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+            .filter_map(|nb| idx.dense_of_node(nb.node_id))
             .collect();
         out_neighbors_dense.push(neighbors);
     }
@@ -175,7 +174,7 @@ fn pagerank_parallel(
         config.damping
     );
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
@@ -198,7 +197,7 @@ fn pagerank_parallel(
         let out_degree = proj
             .out_neighbors(node)
             .iter()
-            .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+            .filter_map(|nb| idx.dense_of_node(nb.node_id))
             .count();
         out_degree_dense[d as usize] = out_degree;
         if out_degree == 0 {
@@ -208,7 +207,7 @@ fn pagerank_parallel(
         let in_neighbors: Vec<u32> = proj
             .in_neighbors(node)
             .iter()
-            .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+            .filter_map(|nb| idx.dense_of_node(nb.node_id))
             .collect();
         in_neighbors_dense.push(in_neighbors);
     }
@@ -257,11 +256,4 @@ fn pagerank_parallel(
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     Ok(result)
-}
-
-/// Map a `NodeId` (1-based per selene-graph) to its sparse row index
-/// (0-based).
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }

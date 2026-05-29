@@ -13,7 +13,6 @@ use selene_core::{CancellationChecker, NodeId};
 use crate::error::{check_algorithm, check_algorithm_stride};
 use crate::pathfinding::error::PathfindingError;
 use crate::projection::GraphProjection;
-use crate::structural::RowIndex;
 
 /// Internal heap entry. Same shape as `dijkstra::DijkstraEntry` but kept
 /// separate to avoid cross-module visibility leaks (sssp::SsspEntry is
@@ -69,13 +68,11 @@ pub fn sssp_with_checker(
         return Ok(Vec::new());
     }
 
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
-    let source_dense = idx
-        .dense_of(node_sparse_row(source))
-        .expect("source is in projection");
+    let source_dense = idx.dense_of_node(source).expect("source is in projection");
 
     let n = idx.len();
     let mut dist: Vec<f64> = vec![f64::INFINITY; n];
@@ -96,7 +93,7 @@ pub fn sssp_with_checker(
 
         let source_node = idx.node_id_of(dense);
         for nb in proj.out_neighbors(source_node) {
-            let Some(next_dense) = idx.dense_of(node_sparse_row(nb.node_id)) else {
+            let Some(next_dense) = idx.dense_of_node(nb.node_id) else {
                 continue;
             };
             if nb.weight.is_nan() {
@@ -134,10 +131,4 @@ pub fn sssp_with_checker(
         }
     }
     Ok(result)
-}
-
-/// Map a `NodeId` (1-based per selene-graph) to its sparse row index (0-based).
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }

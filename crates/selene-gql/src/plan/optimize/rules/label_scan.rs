@@ -9,7 +9,7 @@ use crate::{
     IndexTarget,
     plan::{
         ExecutionPlan, JoinTree, ScanAccess, ScanKind,
-        optimize::{OptimizeContext, Rule, Transformed, walk},
+        optimize::{OptimizeContext, Rule, Transformed, cost, walk},
     },
 };
 
@@ -110,6 +110,21 @@ fn rewrite_scan(scan: &mut crate::NodeOrEdgeScan, catalog: &dyn crate::IndexCata
     let Some(handle) = catalog.label_index(target, label) else {
         return false;
     };
+    // OPT-5 cost gate: promote to LabelIndex only when the label bitmap is
+    // strictly smaller than the full-scan baseline (`total_rows`). The Linear
+    // alternative here is a *full* scan, so the baseline is the total row count,
+    // not the label-scoped residual baseline. When stats are absent (either
+    // estimator returns None) keep the structural decision (promote) so the plan
+    // is byte-identical to pre-OPT-5 HEAD. Because the label predicate stays in
+    // place as a residual post-filter, the row multiset is identical whether we
+    // promote or stay Linear.
+    if let (Some(index_cost), Some(baseline)) = (
+        cost::label_scan_cost(catalog, target, label),
+        catalog.total_rows(target),
+    ) && cost::should_decline_index(index_cost, baseline)
+    {
+        return false;
+    }
     scan.access = ScanAccess::LabelIndex { handle };
     true
 }

@@ -36,7 +36,7 @@ use crate::{
     plan::{
         BindingDef, ExecutionPlan, FilterPredicate, IndexCatalog, IndexTarget, JoinTree,
         NodeOrEdgeScan, ScanAccess, ScanKind,
-        optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
+        optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
     },
 };
 
@@ -123,6 +123,19 @@ fn maybe_expand_scan(
         return false;
     };
     if !any_branch_has_applicable_index(&labels, &scan.property_predicates, bindings, catalog) {
+        return false;
+    }
+    // OPT-5 cost gate: expand only when the summed per-label cardinality across
+    // branches is strictly cheaper than a single full Linear scan (`total_rows`).
+    // When stats are absent the gate is a no-op (keeps the structural decision),
+    // so the plan matches pre-OPT-5 HEAD. Expansion never changes the row
+    // multiset (each branch keeps its single-label predicate + residual
+    // filters), so this only chooses between row-equivalent paths.
+    if let (Some(expand_cost), Some(baseline)) = (
+        cost::disjunctive_cost(catalog, IndexTarget::Node, &labels),
+        catalog.total_rows(IndexTarget::Node),
+    ) && cost::should_decline_index(expand_cost, baseline)
+    {
         return false;
     }
     // Eligibility confirmed — promote to mutable to clone-and-replace.

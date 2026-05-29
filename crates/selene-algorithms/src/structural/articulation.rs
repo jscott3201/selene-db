@@ -87,7 +87,7 @@ fn lowlink_pass_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<LowlinkOutput, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -97,7 +97,7 @@ fn lowlink_pass_with_checker(
     for d in 0..idx.len() as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
         if state.disc[d as usize] == SENTINEL {
-            biconn_dfs(&mut state, d, proj, &idx, checker)?;
+            biconn_dfs(&mut state, d, proj, idx, checker)?;
         }
     }
 
@@ -178,12 +178,12 @@ fn biconn_dfs(
             let nid = idx.node_id_of(u);
             let mut v: Vec<u32> = Vec::new();
             for nb in proj.out_neighbors(nid) {
-                if let Some(d) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(d) = idx.dense_of_node(nb.node_id) {
                     v.push(d);
                 }
             }
             for nb in proj.in_neighbors(nid) {
-                if let Some(d) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(d) = idx.dense_of_node(nb.node_id) {
                     v.push(d);
                 }
             }
@@ -249,12 +249,4 @@ fn biconn_dfs(
         }
     }
     Ok(())
-}
-
-/// Map a `NodeId` (1-based per selene-graph) to its sparse row index
-/// (0-based). Used at the projection boundary to look up neighbor rows
-/// before converting to dense indices via [`RowIndex`].
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }
