@@ -130,6 +130,43 @@ fn audit_log_survives_restart_and_recovery_reattaches() {
 }
 
 #[test]
+fn recovery_truncates_torn_audit_tail_and_keeps_appending() {
+    let dir = temp_dir("torn-recover");
+    let graph_id = GraphId::new(205);
+
+    // Commit one lifecycle event, then drop (clean release).
+    {
+        let shared = build_with_audit(&dir, graph_id);
+        commit_lifecycle(&shared, graph_id, sample_event());
+    }
+    // Simulate a crash mid-append: garbage shorter than a record header on the
+    // end of audit.log.
+    {
+        use std::io::Write;
+        let mut f = fs::OpenOptions::new()
+            .append(true)
+            .open(audit_path(&dir))
+            .unwrap();
+        f.write_all(&[0x00, 0xFF, 0x42]).unwrap();
+    }
+
+    // Recovery opens the audit log, which truncates the torn tail; the good
+    // event survives and post-recovery commits append cleanly after it.
+    let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    assert_eq!(
+        AuditLog::read_all(&audit_path(&dir)).unwrap().len(),
+        1,
+        "torn tail truncated, the durable event survives"
+    );
+    commit_lifecycle(&recovered, graph_id, sample_event());
+    drop(recovered);
+    let records = AuditLog::read_all(&audit_path(&dir)).unwrap();
+    assert_eq!(records.len(), 2, "post-recovery append is contiguous");
+    assert!(records.iter().all(|r| r.kind == AUDIT_KIND_PACK_LIFECYCLE));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn audit_log_without_wal_is_rejected() {
     let dir = temp_dir("no-wal");
     let result = SharedGraph::builder(GraphId::new(203))

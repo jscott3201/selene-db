@@ -153,7 +153,11 @@ impl AuditLog {
             verify_file_header(&mut file)?;
             let durable_end = scan_durable_end(&mut file, file_len)?;
             if durable_end < file_len {
+                // Truncating the torn tail is idempotent (a re-open re-scans and
+                // re-truncates), but fsync it so the reclaimed length is durable
+                // immediately rather than relying on the next append's flush.
                 file.set_len(durable_end)?;
+                file.sync_all()?;
             }
         }
         file.seek(SeekFrom::End(0))?;
