@@ -102,6 +102,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Snapshot + WAL-archive retention** via a typed `RetentionPolicy` and a
+  MANIFEST-atomic `prune` (BRIEF-Item-5, deletion+reclamation audit Item 5 /
+  D26). `selene_persist::prune(dir, &policy)` (and the `WalWriter::prune`
+  wrapper) reclaim superseded `snapshot.{seq}.snap` + `wal.{seq}.archive` files
+  that a v1.0 directory accumulated without bound. `RetentionPolicy { keep_n_snapshots,
+  keep_n_wal_archives, max_total_size_bytes: Option<u64>, time_based: Option<Duration> }`
+  is **embedder configuration** (deliberately *not* persisted in the MANIFEST —
+  a stored policy would be a divergent second source of truth); the four
+  constraints are conjunctive; defaults keep 2 snapshots / 4 archives with no
+  size or time cap. The load-bearing safety floor: the live snapshot
+  (`live_snapshot_seq`) and the active WAL are **never** deletable regardless of
+  policy — even `keep_n_snapshots = 0` retains the live snapshot. Prune is
+  crash-safe by the MANIFEST commit-point invariant — it rewrites the MANIFEST
+  (shrinking `archived_wal_seqs`, the linearization point) *before* deleting any
+  file, so a crash mid-prune leaves orphans that recovery already ignores and
+  the next prune reclaims; the committed MANIFEST is never observed referencing
+  a deleted archive. Archive selection is MANIFEST-authoritative (the rewritten
+  list only ever shrinks, never adopting a crash-orphan), while superseded
+  orphan archives (`seq < live`) and orphan snapshots (`seq > live`) are
+  reclaimed. New public API: `RetentionPolicy`, `PruneOutcome`, `prune`,
+  `WalWriter::prune`, `parse_wal_archive_filename`, `WAL_ARCHIVE_PREFIX` /
+  `WAL_ARCHIVE_SUFFIX`, `DEFAULT_KEEP_SNAPSHOTS` / `DEFAULT_KEEP_WAL_ARCHIVES`.
+  No format change (the MANIFEST `retention_present` byte stays reserved).
 - `DROP GRAPH` is now executable as a **factory-reset** of the single (D1)
   session graph, replacing the v1.0 `ImplementationDefined` stub (BRIEF-152,
   deletion+reclamation audit Item 10). It wipes **every** node and edge —
