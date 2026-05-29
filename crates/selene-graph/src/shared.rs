@@ -508,7 +508,7 @@ const fn schema_kind_from(kind: TypedIndexKind) -> SchemaPropertyIndexKind {
     }
 }
 
-fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
+pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
     graph.idx_label.clear();
     graph.idx_edge_label.clear();
     graph.adjacency_out.clear();

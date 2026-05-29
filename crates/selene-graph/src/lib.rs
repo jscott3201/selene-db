@@ -14,6 +14,7 @@
 pub mod adjacency;
 pub mod change_subscriber;
 pub mod chunked_vec;
+pub mod compaction;
 pub(crate) mod composite_property_index;
 pub mod composite_typed_index;
 mod consistency;
@@ -30,6 +31,7 @@ pub(crate) mod property_index;
 mod recover;
 pub(crate) mod reentry;
 pub mod shared;
+pub mod storage_compactor;
 pub mod store;
 pub mod type_validator;
 pub mod typed_index;
@@ -38,6 +40,7 @@ pub mod write_txn;
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
 pub use change_subscriber::ChangeSubscriber;
 pub use chunked_vec::ChunkedVec;
+pub use compaction::{CompactedCore, compact_core, live_id_set};
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,
 };
@@ -57,6 +60,7 @@ pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 pub use mutator::Mutator;
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 pub use shared::{SharedGraph, SharedGraphBuilder};
+pub use storage_compactor::{CompactionReport, LiveIdSet, StorageCompactor};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
