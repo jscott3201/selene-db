@@ -102,6 +102,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Dedicated `audit.log` for engine-owned events**, with retention independent
+  of the WAL + snapshot lineage (BRIEF-Item-7, deletion+reclamation audit Item 7
+  / Seam D, D24). Fixes the bug where pack-lifecycle audit events — written to
+  the WAL as `SchemaChange::ProcedurePackLifecycle` — were moved into
+  `wal.{N}.archive` by rotation and then silently lost when an embedder pruned
+  archives ([D26](#)). Lifecycle events are now **also** mirrored to an
+  append-only `audit.log` (`SLAU`) that retention prunes separately, so pack
+  history survives. New selene-persist API: `AuditLog` (`open` / `append` /
+  `read_all` / `prune`, with a torn-tail-truncating scan-on-open mirroring the
+  WAL's crash recovery), `AuditRecord`, `AuditRetentionPolicy { keep_n_events,
+  max_age }` (conjunctive; default unbounded — lifecycle events are sparse;
+  prune is an atomic read-filter-rewrite), and `AUDIT_KIND_PACK_LIFECYCLE`.
+  Records are generic `kind`-tagged opaque payloads with a caller-supplied
+  wall-clock stamp, so `selene-persist` stays below lifecycle semantics and the
+  system clock. Wire it up via `SharedGraphBuilder::with_audit_log` (requires
+  `with_wal`); pack-lifecycle commits are mirrored **WAL-first, audit-after**
+  (the WAL append gates the commit; the audit write is best-effort and the event
+  also stays in the WAL, so a failed mirror degrades to WAL-only rather than
+  losing data — "audit lag is recoverable, fiction is not"). Recovery reattaches
+  the audit log when the file is present, so post-recovery commits keep
+  mirroring. **Scoped surgically:** the D12 per-commit principal stays in the WAL
+  entry header (no WAL-format break, no hot-path write-amplification); only
+  engine-owned events move to `audit.log`. `selene_persist::prune` (D26) never
+  touches `audit.log`.
 - **Snapshot + WAL-archive retention** via a typed `RetentionPolicy` and a
   MANIFEST-atomic `prune` (BRIEF-Item-5, deletion+reclamation audit Item 5 /
   D26). `selene_persist::prune(dir, &policy)` (and the `WalWriter::prune`
