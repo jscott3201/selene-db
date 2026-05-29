@@ -16,19 +16,25 @@
 //! columns, the alive bitmaps, the row-indexed label/property indexes, and the
 //! id↔row maps move, and all of those are rebuilt from the compacted columns.
 //!
-//! **4e constraint (load-bearing — do not lose this thread).** Compaction drops
-//! dead rows, so a *deleted* external id that gets compacted away resolves
-//! `NotFound` afterwards (was `NotAlive` under 4a's Option B). That flip makes
-//! the naive WAL-replay path FAIL, not no-op: recovery
-//! ([`crate::core_provider`] `recovery_state`) routes `Change::NodeDeleted` /
-//! `EdgeDeleted` (and any post-delete update) through `require_live_*`, which
-//! *hard-errors* when the id is absent from the decoded snapshot. A WAL entry
-//! written *before* a compaction that touches a since-reclaimed id, replayed
-//! *after* loading the compacted snapshot, would abort recovery. BRIEF-Item-4e
-//! MUST resolve this — preferably by recording a compaction WAL floor in the
-//! MANIFEST (D15) so pre-compaction WAL entries are never replayed against a
-//! compacted snapshot; alternatively by making `require_live_*` treat a
-//! delete/update of a reclaimed id as a no-op on the post-compaction path.
+//! **Cross-epoch WAL replay (BRIEF-Item-4e — RESOLVED, no new mechanism).**
+//! Compaction drops dead rows, so a *deleted* external id that gets compacted
+//! away resolves `NotFound` afterwards (was `NotAlive` under 4a's Option B). The
+//! concern was that a `Change::NodeDeleted` / `EdgeDeleted` written *before* a
+//! compaction, replayed *after* loading the compacted snapshot, would route
+//! through `require_live_*` (`recovery_state`) and hard-error on the reclaimed
+//! id. This cannot happen in the normal flow: a snapshot is published via
+//! `WalWriter::rotate_with_manifest`, which both advances the MANIFEST
+//! `live_snapshot_seq` WAL floor AND physically truncates the WAL (`set_len(0)`
+//! then a fresh header). Pre-compaction entries are therefore *gone* AND below
+//! the recovery floor (`recovery.rs` replays only `header.sequence > floor`) —
+//! they can never be replayed against a compacted snapshot. The only cross-epoch
+//! replay is of *post*-snapshot entries, which resolve against the dense rows:
+//! a post-compaction `NodeCreated` appends (BRIEF-Item-4c), and a post-compaction
+//! `NodeDeleted` of a survivor finds it in the compacted snapshot (proven by
+//! `recover_tests::nodeid_split_recovery`). The `require_live_*` hard-error is
+//! deliberately *retained* as genuine-corruption detection — a "no-op the
+//! reclaimed-id delete" alternative was rejected because it would mask a truly
+//! inconsistent WAL. The MANIFEST `compaction_epoch` field stays reserved (`0`).
 
 use std::collections::HashSet;
 
