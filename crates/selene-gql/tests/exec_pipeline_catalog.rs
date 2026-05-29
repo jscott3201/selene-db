@@ -2,7 +2,7 @@
 
 mod exec_common;
 
-use selene_core::{Change, GraphId, LabelSet, PropertyMap, SchemaChange, Value};
+use selene_core::{Change, GraphId, LabelSet, SchemaChange, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, CatalogOp, EmptyProcedureRegistry, ExecutionPlan,
     ExecutorError, GqlStatus, GqlType, PipelineOp, PlannedTypePropertyConstraint,
@@ -627,25 +627,6 @@ fn create_edge_type_multi_label_endpoint_resolves_exact_label_set() {
     let edge_type = &graph_type.edge_types[0];
     assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
     assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
-}
-
-#[test]
-fn drop_node_type_with_existing_nodes_errors_at_commit() {
-    let graph = person_graph(3711);
-    {
-        let mut txn = graph.begin_write();
-        txn.mutator()
-            .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
-            .unwrap();
-        txn.commit().unwrap();
-    }
-    let plan = planned("DROP NODE TYPE :Person");
-
-    let (_, outcome) = run_write(&graph, &plan).expect("drop op itself executes");
-    assert!(matches!(
-        outcome.expect_err("commit rejects invalid post-schema state"),
-        GraphError::TypeViolation(_)
-    ));
 }
 
 #[test]

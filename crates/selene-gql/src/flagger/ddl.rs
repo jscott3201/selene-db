@@ -4,7 +4,7 @@ use selene_core::feature_register::FeatureId;
 
 use crate::{
     DdlStatement,
-    ast::ddl::{TypePropertyConstraint, TypePropertyDef},
+    ast::ddl::{DropBehavior, TypePropertyConstraint, TypePropertyDef},
 };
 
 use super::{FeatureUse, expr, record_feature};
@@ -69,14 +69,26 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             property_defs(properties, uses);
         }
         DdlStatement::DropNodeType {
-            if_exists, span, ..
+            if_exists,
+            behavior,
+            span,
+            ..
         }
         | DdlStatement::DropEdgeType {
-            if_exists, span, ..
+            if_exists,
+            behavior,
+            span,
+            ..
         } => {
             type_ddl(*span, uses);
             if *if_exists {
                 record_feature(uses, FeatureId::GC03, *span);
+            }
+            // GQL Flagger (clause 24.6): CASCADE is a selene-db impl-defined
+            // addition, not ISO GQL, so it must flag on every use. RESTRICT and
+            // the default carry only the existing type-DDL flags.
+            if matches!(behavior, DropBehavior::Cascade) {
+                record_feature(uses, FeatureId::IM_DROP_CASCADE, *span);
             }
         }
         DdlStatement::CreateIndex { span, .. } | DdlStatement::DropIndex { span, .. } => {

@@ -257,6 +257,47 @@ fn closed_type_ddl_features_are_supported() {
 }
 
 #[test]
+fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
+    // CASCADE is the IM_DROP_CASCADE vendor extension — it must flag on every
+    // use. RESTRICT and the default carry only the existing type-DDL flags.
+    let cascade_node = parse("DROP NODE TYPE :Sensor CASCADE").expect("CASCADE node parses");
+    let cascade_edge = parse("DROP EDGE TYPE :KNOWS CASCADE").expect("CASCADE edge parses");
+    let restrict = parse("DROP NODE TYPE :Sensor RESTRICT").expect("RESTRICT parses");
+    let default = parse("DROP NODE TYPE :Sensor").expect("default parses");
+
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        ids(&cascade_node).contains(&FeatureId::IM_DROP_CASCADE),
+        "CASCADE node drop must flag IM_DROP_CASCADE"
+    );
+    assert!(
+        ids(&cascade_edge).contains(&FeatureId::IM_DROP_CASCADE),
+        "CASCADE edge drop must flag IM_DROP_CASCADE"
+    );
+    assert!(
+        !ids(&restrict).contains(&FeatureId::IM_DROP_CASCADE),
+        "explicit RESTRICT must NOT flag IM_DROP_CASCADE"
+    );
+    assert!(
+        !ids(&default).contains(&FeatureId::IM_DROP_CASCADE),
+        "default drop must NOT flag IM_DROP_CASCADE"
+    );
+    // The existing type-DDL flags are unchanged on every path.
+    for statement in [&cascade_node, &restrict, &default] {
+        let observed = ids(statement);
+        assert!(observed.contains(&FeatureId::GG02));
+        assert!(observed.contains(&FeatureId::GG20));
+        assert!(observed.contains(&FeatureId::GG21));
+    }
+}
+
+#[test]
 fn named_procedure_call_feature_is_supported() {
     parse("CALL pkg.fn(1)").expect("GP04 named CALL is claimed");
     parse("MATCH (n) CALL pkg.fn(n) RETURN n").expect("in-pipeline GP04 CALL is claimed");

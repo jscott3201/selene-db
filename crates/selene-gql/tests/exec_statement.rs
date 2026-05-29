@@ -526,7 +526,11 @@ fn session_with_principal_commits_successfully() {
 }
 
 #[test]
-fn catalog_modifying_auto_rolls_back_on_validation_error() {
+fn catalog_modifying_rejects_drop_with_surviving_instances_no_partial_state() {
+    // Seam-B fix (audit Item 3): under RESTRICT (the default) the rejection is
+    // now early and class GraphTypeViolation (G2000), not the old late
+    // commit-time GraphMutation. The "no partial state" invariant is preserved:
+    // the type survives AND the instances survive.
     let graph = closed_person_graph(3823);
     {
         let mut txn = graph.begin_write();
@@ -537,9 +541,9 @@ fn catalog_modifying_auto_rolls_back_on_validation_error() {
     }
     let mut session = Session::new(&graph);
 
-    let err = execute("DROP NODE TYPE :Person", &mut session).expect_err("commit rejects drop");
+    let err = execute("DROP NODE TYPE :Person", &mut session).expect_err("RESTRICT rejects drop");
 
-    assert!(matches!(err, ExecutorError::GraphMutation { .. }));
+    assert!(matches!(err, ExecutorError::GraphTypeViolation { .. }));
     assert_eq!(graph.graph_type().unwrap().node_types.len(), 1);
     assert_eq!(graph.read().node_count(), 1);
 }

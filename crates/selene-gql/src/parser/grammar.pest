@@ -44,8 +44,9 @@ create_edge_type = {
 }
 validation_mode_clause = { ^"STRICT" | ^"WARN" }
 or_replace = { ^"OR" ~ ^"REPLACE" }
-drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
-drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident }
+drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
+drop_edge_type   = { ^"DROP" ~ ^"EDGE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
+drop_behavior    = { ^"RESTRICT" | ^"CASCADE" }
 truncate_node_type = { ^"TRUNCATE" ~ ^"NODE" ~ ^"TYPE" ~ ":" ~ ident }
 truncate_edge_type = { ^"TRUNCATE" ~ ^"EDGE" ~ ^"TYPE" ~ ":" ~ ident }
 show_node_types  = { ^"SHOW" ~ ^"NODE" ~ ^"TYPES" }

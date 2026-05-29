@@ -92,6 +92,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `DROP NODE TYPE` / `DROP EDGE TYPE` now take an optional `RESTRICT | CASCADE`
+  behavior tail (BRIEF-151, deletion+reclamation audit Item 3, Seam B).
+  `RESTRICT` is the default when no keyword is written and is the Seam-B fix:
+  dropping a type whose instances still exist (or, for a node type, whose
+  instances are still referenced by an edge type's endpoint) is now rejected
+  EARLY at the drop op with `G2000` `GRAPH_TYPE_VIOLATION` and drops NOTHING —
+  no orphan instances, no dangling edges, the bound graph type left fully
+  intact. Previously the drop emitted `SchemaChange::NodeTypeDropped` without
+  scanning instances and only failed late at commit with a mislabelled
+  `UnknownNodeLabel`. `CASCADE` is the `IM_DROP_CASCADE` vendor extension: it
+  truncates the type's instances first (reusing the BRIEF-150
+  `Mutator::truncate_node_type` / `truncate_edge_type` funnel, so incident edges
+  are removed and there is one O(1) declarative truncate `Change`), then drops
+  the type — both the truncate `Change` and the `SchemaChange` land in the same
+  committed transaction, so commit and WAL replay are atomic (a failure rolls
+  back both). Node-CASCADE of a type still index-referenced by a surviving edge
+  type is rejected (recursive type cascade is out of scope). `CASCADE` flags
+  `IM_DROP_CASCADE` at parse time (GQL Flagger clause 24.6); `RESTRICT` and the
+  default carry only the existing `GG02`/`GG20`/`GG21` type-DDL flags.
+  `selene-graph::DropBehavior` parameterizes the single write funnel so no I/O
+  surface can bypass the policy; `selene-gql::DropBehavior` is its AST mirror.
+  No new `Change` variants — `selene-vector` needs no edits.
 - `IM_TRUNCATE` vendor extension: `TRUNCATE NODE TYPE :L` and
   `TRUNCATE EDGE TYPE :L` declarative bulk delete (BRIEF-150, deletion+
   reclamation audit Item 11). A truncate is observationally identical to

@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: IM_DROP_CASCADE
+// expects: parse-ok
+DROP NODE TYPE :Sensor CASCADE
