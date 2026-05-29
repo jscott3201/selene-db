@@ -68,6 +68,21 @@ fn unknown_top_level_field_is_schema_violation() {
 }
 
 #[test]
+fn pack_manifest_rejects_owned_data_declaration() {
+    // Packs are procedure-only (deletion+reclamation audit Item 8): a manifest
+    // cannot declare ownership of graph data. An `owned_label_prefix`-style
+    // field is an unknown field and must be a schema violation, so pack
+    // disable/uninstall never has user data to cascade-delete. This pins the
+    // procedure-only contract explicitly, beyond the generic unknown-field test.
+    let mut value = valid_manifest();
+    value["owned_label_prefix"] = json!("pack_owned_");
+
+    let err = parse_value(value).expect_err("owned-data declaration fails schema");
+
+    assert!(matches!(err, ManifestError::SchemaViolation { .. }));
+}
+
+#[test]
 fn missing_required_field_is_schema_violation() {
     let mut value = valid_manifest();
     value.as_object_mut().unwrap().remove("pack_name");

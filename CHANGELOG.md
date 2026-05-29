@@ -8,6 +8,16 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Chore
 
+- Codified the **procedure-pack "procedure-only" contract** (BRIEF-149,
+  deletion+reclamation audit Item 8): a manifest may declare only `procedures`
+  and cannot declare ownership of graph data. Already enforced structurally by
+  `#[serde(deny_unknown_fields)]` (JSON Schema `additionalProperties: false`);
+  this makes it an explicit, regression-pinned contract via expanded
+  `ProcedurePackManifest` rustdoc and a `pack_manifest_rejects_owned_data_declaration`
+  test (an `owned_label_prefix`-style field is a schema violation). Consequence:
+  disabling/uninstalling a pack never needs to cascade-delete user data —
+  packs own only engine-internal state on their own lifecycle. No behavior or
+  API change.
 - Local test invocation aligned with CI (nextest + line-tables-only debug +
   `.config/nextest.toml`). See CLAUDE.md Build & test.
 
