@@ -348,8 +348,10 @@ pub(super) fn encode_nodes(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             properties: properties.clone(),
             alive: graph.node_store.is_alive(row),
         };
+        // STEP 9 (Increment 5) will write the explicit id from the row_to_id
+        // column instead of synthesizing it here.
         rows.push((
-            NodeId::new(row as u64 + 1),
+            NodeId::new(row as u64 + 1), // rowid-arith-ok: encode synthesis until STEP 9
             NodeArchiveRow::from_runtime(runtime, "CORE/NODE")?,
         ));
     }
@@ -395,7 +397,7 @@ pub(super) fn encode_edges(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             alive: graph.edge_store.is_alive(row),
         };
         rows.push((
-            EdgeId::new(row as u64 + 1),
+            EdgeId::new(row as u64 + 1), // rowid-arith-ok: encode synthesis until STEP 9
             EdgeArchiveRow::from_runtime(runtime, "CORE/EDGE")?,
         ));
     }

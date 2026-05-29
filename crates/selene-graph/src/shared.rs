@@ -607,7 +607,7 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             if !graph.node_store.is_alive(raw) {
                 continue;
             }
-            id = selene_core::NodeId::new(u64::from(raw) + 1);
+            id = selene_core::NodeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.node_store.row_to_id.set(row, id);
         }
         graph.node_id_to_row.insert(id, RowIndex::new(raw));
@@ -624,7 +624,7 @@ fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
             if !graph.edge_store.is_alive(raw) {
                 continue;
             }
-            id = selene_core::EdgeId::new(u64::from(raw) + 1);
+            id = selene_core::EdgeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
             graph.edge_store.row_to_id.set(row, id);
         }
         graph.edge_id_to_row.insert(id, RowIndex::new(raw));
