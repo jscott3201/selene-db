@@ -6,9 +6,10 @@ use std::time::Instant;
 
 use selene_core::{NodeId, Origin, metrics};
 
+use crate::manifest::Manifest;
 use crate::{
     DEFAULT_WAL_FILE_NAME, PersistError, PersistResult, ProviderRegistry, SectionEntry,
-    SnapshotReader, WalReader, find_latest_snapshot,
+    SnapshotReader, WalReader, find_latest_snapshot, snapshot_path,
 };
 
 /// Summary of a completed recovery pass.
@@ -26,10 +27,13 @@ pub struct RecoveryOutcome {
     /// Number of replicated `Change` values skipped by `(source, sequence)`
     /// dedupe.
     pub replicated_changes_deduplicated: u64,
+    /// Whether a committed `MANIFEST` drove this recovery (the authoritative
+    /// three-step path) rather than the legacy `find_latest_snapshot` fallback.
+    pub manifest_present: bool,
 }
 
 impl RecoveryOutcome {
-    /// Outcome for a directory with no snapshot and no WAL.
+    /// Outcome for a directory with no snapshot, no WAL, and no MANIFEST.
     #[must_use]
     pub const fn empty() -> Self {
         Self {
@@ -38,11 +42,28 @@ impl RecoveryOutcome {
             providers_invoked: Vec::new(),
             wal_changes_applied: 0,
             replicated_changes_deduplicated: 0,
+            manifest_present: false,
         }
     }
 }
 
-/// Run snapshot apply plus WAL replay against `dir`.
+/// Run the three-step recovery against `dir`: MANIFEST read, snapshot apply,
+/// WAL replay (D15 amendment).
+///
+/// **Step 0 — MANIFEST read (authoritative).** When a committed `MANIFEST`
+/// exists, `live_snapshot_seq` is the source of truth: the snapshot it names is
+/// applied directly (not the highest on-disk snapshot), so an orphan
+/// `snapshot.{>live}.snap` left by a crashed rotation is ignored by
+/// construction. The legacy WAL/snapshot epoch cross-check is *not* performed —
+/// the WAL header may legitimately lag the live snapshot by one epoch after a
+/// Phase-3-before-Phase-4 rotation crash. See
+/// [`crate::manifest`] for the commit-point invariant.
+///
+/// **Step 0 fallback — MANIFEST absent.** A fresh or pre-MANIFEST directory
+/// recovers via the legacy `find_latest_snapshot` path with the original
+/// epoch cross-check intact, so existing on-disk directories recover
+/// identically. The next rotation writes a MANIFEST, migrating the directory
+/// forward.
 ///
 /// Snapshot sections are routed by provider tag to [`ProviderRegistry`]. WAL
 /// entries after the applied snapshot sequence are decoded and fanned out to
@@ -50,18 +71,36 @@ impl RecoveryOutcome {
 ///
 /// # Errors
 ///
-/// Returns persistence format errors, provider errors, or a
-/// [`PersistError::WalSnapshotMismatch`] when the WAL does not extend the
-/// applied snapshot epoch.
+/// Returns persistence format errors, provider errors, or — on the legacy
+/// MANIFEST-absent path only — a [`PersistError::WalSnapshotMismatch`] when the
+/// WAL does not extend the applied snapshot epoch.
 #[tracing::instrument(name = "selene.persist.recover", skip(registry), fields(dir = %dir.display()))]
 pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<RecoveryOutcome> {
     let started = Instant::now();
     let mut outcome = RecoveryOutcome::empty();
     let mut providers_invoked = BTreeSet::new();
 
-    outcome.applied_snapshot_seq = apply_snapshot(dir, registry, &mut providers_invoked)?;
+    // Step 0: the MANIFEST, if present, is authoritative.
+    let manifest = Manifest::read(dir)?;
+    outcome.manifest_present = manifest.is_some();
+
+    // Step 1: snapshot apply.
+    outcome.applied_snapshot_seq = match &manifest {
+        Some(manifest) => apply_manifest_snapshot(dir, manifest, registry, &mut providers_invoked)?,
+        None => apply_snapshot(dir, registry, &mut providers_invoked)?,
+    };
     outcome.last_wal_seq = outcome.applied_snapshot_seq;
-    replay_wal(dir, registry, &mut outcome, &mut providers_invoked)?;
+
+    // Step 2: WAL replay. The cross-check is only honoured on the legacy path —
+    // with a MANIFEST the live_snapshot_seq is the source of truth.
+    let cross_check = manifest.is_none();
+    replay_wal(
+        dir,
+        registry,
+        cross_check,
+        &mut outcome,
+        &mut providers_invoked,
+    )?;
     outcome.providers_invoked = providers_invoked.into_iter().collect();
     metrics::counter_inc(metrics::RECOVERIES_TOTAL);
     metrics::histogram_record(
@@ -71,15 +110,35 @@ pub fn recover(dir: &Path, registry: &ProviderRegistry) -> PersistResult<Recover
     Ok(outcome)
 }
 
-fn apply_snapshot(
+/// Apply the snapshot named by a committed MANIFEST.
+///
+/// Opens `snapshot.{live_snapshot_seq}.snap` directly rather than scanning for
+/// the highest on-disk snapshot, so an orphan snapshot (seq > live) produced by
+/// a crash between Phase 1 and Phase 3 is ignored by construction. A
+/// `live_snapshot_seq` of `0` means "no snapshot for this epoch" — nothing is
+/// applied and WAL replay starts from the beginning.
+fn apply_manifest_snapshot(
     dir: &Path,
+    manifest: &Manifest,
     registry: &ProviderRegistry,
     providers_invoked: &mut BTreeSet<[u8; 4]>,
 ) -> PersistResult<u64> {
-    let Some((snapshot_seq, path)) = find_latest_snapshot(dir)? else {
+    if manifest.live_snapshot_seq == 0 {
         return Ok(0);
-    };
-    let mut reader = SnapshotReader::open(&path)?;
+    }
+    let path = snapshot_path(dir, manifest.live_snapshot_seq);
+    route_snapshot_sections(&path, registry, providers_invoked)?;
+    Ok(manifest.live_snapshot_seq)
+}
+
+/// Open a snapshot, verify its body hash, and route every section to its
+/// provider. Shared by the legacy and MANIFEST snapshot-apply paths.
+fn route_snapshot_sections(
+    path: &Path,
+    registry: &ProviderRegistry,
+    providers_invoked: &mut BTreeSet<[u8; 4]>,
+) -> PersistResult<()> {
+    let mut reader = SnapshotReader::open(path)?;
     reader.verify_body_hash()?;
     let sections: Vec<SectionEntry> = reader.sections().to_vec();
     for (index, entry) in sections.iter().copied().enumerate() {
@@ -99,12 +158,25 @@ fn apply_snapshot(
         })?;
         providers_invoked.insert(entry.provider);
     }
+    Ok(())
+}
+
+fn apply_snapshot(
+    dir: &Path,
+    registry: &ProviderRegistry,
+    providers_invoked: &mut BTreeSet<[u8; 4]>,
+) -> PersistResult<u64> {
+    let Some((snapshot_seq, path)) = find_latest_snapshot(dir)? else {
+        return Ok(0);
+    };
+    route_snapshot_sections(&path, registry, providers_invoked)?;
     Ok(snapshot_seq)
 }
 
 fn replay_wal(
     dir: &Path,
     registry: &ProviderRegistry,
+    cross_check: bool,
     outcome: &mut RecoveryOutcome,
     providers_invoked: &mut BTreeSet<[u8; 4]>,
 ) -> PersistResult<()> {
@@ -114,7 +186,14 @@ fn replay_wal(
     }
 
     let reader = WalReader::open(&wal_path)?;
-    if reader.snapshot_seq() != outcome.applied_snapshot_seq {
+    // Why: the WAL/snapshot epoch cross-check is the Seam-F hard-fail. It is
+    // honoured only on the legacy (MANIFEST-absent) path, where no authoritative
+    // epoch exists and a WAL extending a different snapshot is genuinely
+    // ambiguous. With a MANIFEST, the commit-point invariant (audit Item 2 /
+    // Seam F) makes the epoch atomic and lets the WAL header lag the live
+    // snapshot by one epoch after a Phase-3-before-Phase-4 crash, so the
+    // cross-check is suppressed and the live_snapshot_seq replay floor governs.
+    if cross_check && reader.snapshot_seq() != outcome.applied_snapshot_seq {
         return Err(PersistError::WalSnapshotMismatch {
             wal_snapshot_seq: reader.snapshot_seq(),
             snapshot_seq: outcome.applied_snapshot_seq,
