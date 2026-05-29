@@ -230,7 +230,9 @@ impl IndexAndChangeRecoveryProvider {
         if !changes.iter().any(|change| {
             matches!(
                 change,
-                Change::NodesOfTypeTruncated { .. } | Change::EdgesOfTypeTruncated { .. }
+                Change::NodesOfTypeTruncated { .. }
+                    | Change::EdgesOfTypeTruncated { .. }
+                    | Change::GraphReset { .. }
             )
         }) {
             return None;
@@ -246,7 +248,9 @@ impl IndexAndChangeRecoveryProvider {
         let mut staged_emitted = false;
         for change in changes {
             match change {
-                Change::NodesOfTypeTruncated { .. } | Change::EdgesOfTypeTruncated { .. } => {
+                Change::NodesOfTypeTruncated { .. }
+                | Change::EdgesOfTypeTruncated { .. }
+                | Change::GraphReset { .. } => {
                     if !staged_emitted {
                         view.extend(staged.iter().cloned());
                         staged_emitted = true;

@@ -65,6 +65,7 @@ impl Change {
         || Self::EdgesOfTypeTruncated {
             label: changeset_variant_istr("change.all.edges_of_type_truncated"),
         },
+        || Self::GraphReset {},
     ];
 
     /// Number of known [`Change`] variants in this build.
@@ -87,6 +88,7 @@ impl Change {
             Self::NodeLabelRemoved { .. } => "NodeLabelRemoved",
             Self::NodesOfTypeTruncated { .. } => "NodesOfTypeTruncated",
             Self::EdgesOfTypeTruncated { .. } => "EdgesOfTypeTruncated",
+            Self::GraphReset {} => "GraphReset",
         }
     }
 }

@@ -113,6 +113,7 @@ mod tests {
             }),
             Just(Change::NodesOfTypeTruncated { label: node_label }),
             Just(Change::EdgesOfTypeTruncated { label: edge_label }),
+            Just(Change::GraphReset {}),
             proptest::collection::vec(any::<u8>(), 0..512).prop_map(change),
         ]
     }

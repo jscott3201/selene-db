@@ -211,6 +211,7 @@ fn provider_label(change: &Change) -> &'static str {
         | Change::NodeLabelRemoved { .. }
         | Change::NodesOfTypeTruncated { .. }
         | Change::EdgesOfTypeTruncated { .. }
+        | Change::GraphReset { .. }
         | Change::SchemaChanged { .. } => "provider:other",
     }
 }

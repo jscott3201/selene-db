@@ -93,6 +93,7 @@ feature_ids! {
     IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
     IM_TRUNCATE = "IM_TRUNCATE" => "selene-db bulk truncate extension";
     IM_DROP_CASCADE = "IM_DROP_CASCADE" => "selene-db cascading DROP TYPE extension";
+    IM_DROP_GRAPH = "IM_DROP_GRAPH" => "selene-db DROP GRAPH factory-reset extension";
     GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
@@ -231,6 +232,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::IM_TYPED_PARAMS,
     FeatureId::IM_TRUNCATE,
     FeatureId::IM_DROP_CASCADE,
+    FeatureId::IM_DROP_GRAPH,
     FeatureId::GH02,
     FeatureId::GG01,
     FeatureId::GG02,
@@ -361,11 +363,11 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GC04,
-        "CREATE/DROP GRAPH parses but graph management DDL remains outside the v1.0 catalog claim",
+        "CREATE GRAPH stays outside the v1.0 catalog claim (D1 single-graph embeddable cannot create a second graph); DROP GRAPH is the IM_DROP_GRAPH factory-reset extension, not GC04",
     ),
     (
         FeatureId::GC05,
-        "graph management IF [NOT] EXISTS modifiers remain outside the v1.0 catalog claim",
+        "CREATE GRAPH IF NOT EXISTS modifier remains outside the v1.0 catalog claim",
     ),
     (
         FeatureId::GS01,

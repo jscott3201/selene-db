@@ -186,6 +186,21 @@ impl SeleneGraph {
         self.edge_store.alive.len() as usize
     }
 
+    /// Bitmap of alive edge *row indices*.
+    ///
+    /// The edge-side sibling of [`Self::live_nodes`]. The returned bitmap is
+    /// row-indexed (matching `edges_with_label`), not `EdgeId`-indexed;
+    /// consumers convert a row to an `EdgeId` via
+    /// `selene_core::EdgeId::new(row as u64 + 1)` (the inverse of
+    /// `selene_graph::store::edge_row_index`). Covers every alive edge
+    /// regardless of label — used by the `DROP GRAPH` factory-reset (BRIEF-152)
+    /// to enumerate every live edge, including untyped/arbitrary-label ones that
+    /// a per-type truncate would miss.
+    #[must_use]
+    pub fn live_edges(&self) -> &RoaringBitmap {
+        &self.edge_store.alive
+    }
+
     /// Return true when `id` names an alive node.
     #[must_use]
     pub fn is_node_alive(&self, id: NodeId) -> bool {

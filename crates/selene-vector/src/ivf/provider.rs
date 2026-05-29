@@ -169,6 +169,7 @@ impl ChangeSubscriber for IvfProvider {
             | Change::NodeLabelRemoved { .. }
             | Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }
@@ -233,6 +234,7 @@ impl IndexProvider for IvfProvider {
             | Change::NodeLabelRemoved { .. }
             | Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }

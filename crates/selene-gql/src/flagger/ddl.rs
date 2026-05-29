@@ -27,10 +27,14 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
         DdlStatement::DropGraph {
             if_exists, span, ..
         } => {
-            record_feature(uses, FeatureId::GC04, *span);
-            if *if_exists {
-                record_feature(uses, FeatureId::GC05, *span);
-            }
+            // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
+            // factory-reset extension (a supported selene-db vendor flag), NOT
+            // GC04. CREATE GRAPH stays on GC04 (unsupported) so it remains
+            // parse-rejected under D1 single-graph. IF EXISTS is informational
+            // under D1 (the session graph always exists), so it carries no extra
+            // flag — both DROP GRAPH and DROP GRAPH IF EXISTS flag IM_DROP_GRAPH.
+            let _ = if_exists;
+            record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
         }
         DdlStatement::CreateNodeType {
             extends,

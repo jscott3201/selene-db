@@ -241,10 +241,15 @@ pub fn validate_change(
         // node/edge type still exists), and node-truncate cascades incident
         // edges so the graph stays dangling-free — it can never violate GG02,
         // exactly like NodeDeleted/EdgeDeleted. BRIEF-150 / audit Item 11.
+        // GraphReset sets bound_type = None in the same txn, so validate_change
+        // is never even invoked for it (the commit-time loop is gated on a Some
+        // bound_type). The arm is kept for exhaustiveness and is a no-op:
+        // wiping the whole graph + dropping the type can never violate GG02.
         Change::NodeDeleted { .. }
         | Change::EdgeDeleted { .. }
         | Change::NodesOfTypeTruncated { .. }
         | Change::EdgesOfTypeTruncated { .. }
+        | Change::GraphReset { .. }
         | Change::SchemaChanged { .. }
         | Change::IndexExtensionEvent { .. } => Ok(Vec::new()),
     }
