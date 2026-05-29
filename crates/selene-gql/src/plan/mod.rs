@@ -29,6 +29,6 @@ pub use ir::{
 pub use lowering::plan;
 pub use optimize::{
     CompositeIndexHandle, EdgeStatistics, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind,
-    IndexTarget, OptimizeContext, PropertyHistogram, Rule, Transformed, TypedIndexLookup,
-    WanderJoinSampler, optimize,
+    IndexTarget, LiveIndexCatalog, OptimizeContext, PropertyHistogram, Rule, Transformed,
+    TypedIndexLookup, WanderJoinSampler, optimize,
 };

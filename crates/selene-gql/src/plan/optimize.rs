@@ -6,6 +6,7 @@
 mod binding_refs;
 mod context;
 mod index_catalog;
+mod live_index_catalog;
 mod registry;
 mod rule;
 pub mod rules;
@@ -19,6 +20,7 @@ pub use index_catalog::{
     CompositeIndexHandle, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind, IndexTarget,
     TypedIndexLookup,
 };
+pub use live_index_catalog::LiveIndexCatalog;
 pub use registry::{DEFAULT_RULES, RULE_NAMES};
 pub use rule::{Rule, Transformed};
 #[cfg(any(test, feature = "test-harness"))]

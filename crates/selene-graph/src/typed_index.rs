@@ -182,6 +182,46 @@ impl TypedIndex {
         }
     }
 
+    /// Return true when this index holds exactly the same `(key -> rows)`
+    /// buckets as `reference`.
+    ///
+    /// Used by the debug-only structural consistency net
+    /// ([`crate::SeleneGraph::assert_indexes_consistent`]) to compare the
+    /// commit-path-maintained index against a freshly re-derived reference
+    /// built with the same lenient admission policy. Two indexes are equal
+    /// only when their kinds match and every bucket maps to an identical
+    /// row bitmap; a missing key, an extra key, or a differing bitmap all
+    /// fail the comparison.
+    #[must_use]
+    pub(crate) fn buckets_eq(&self, reference: &Self) -> bool {
+        match (self, reference) {
+            (Self::I64(lhs), Self::I64(rhs)) => lhs == rhs,
+            (Self::F64(lhs), Self::F64(rhs)) => lhs == rhs,
+            (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
+            (Self::Date(lhs), Self::Date(rhs)) => lhs == rhs,
+            (Self::LocalDateTime(lhs), Self::LocalDateTime(rhs)) => lhs == rhs,
+            (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
+            _ => false,
+        }
+    }
+
+    /// Return true when any indexed key maps to an empty row bitmap.
+    ///
+    /// Commit-path maintenance prunes a bucket when its bitmap empties
+    /// (see `remove_row`), so a present-but-empty bucket is a maintenance
+    /// leak the debug-only consistency net flags.
+    #[must_use]
+    pub(crate) fn has_empty_bucket(&self) -> bool {
+        match self {
+            Self::I64(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::F64(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::String(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Date(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::LocalDateTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Uuid(index) => index.values().any(RoaringBitmap::is_empty),
+        }
+    }
+
     /// Insert `row` into the bitmap for `value`.
     pub(crate) fn insert(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();

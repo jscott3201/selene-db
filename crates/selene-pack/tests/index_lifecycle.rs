@@ -4,12 +4,11 @@ use std::collections::HashMap;
 
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
 use selene_gql::{
-    CompositeIndexHandle, EmptyProcedureRegistry, ExecutionPlan, GqlType, IndexCatalog,
-    IndexHandle, IndexKind, IndexTarget, JoinTree, NodeOrEdgeScan, OptimizeContext,
-    ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
-    ProcedureOutputSchema, ProcedureParameter, ProcedureRegistry, ProcedureResult,
-    ProcedureSignature, ProcedureTier, ScanAccess, StatementOutput, TypedIndexLookup, analyze,
-    execute_statement, optimize, parse, plan,
+    EmptyProcedureRegistry, ExecutionPlan, GqlType, IndexKind, JoinTree, LiveIndexCatalog,
+    NodeOrEdgeScan, OptimizeContext, ProcedureContext, ProcedureError, ProcedureHandle,
+    ProcedureMetadata, ProcedureMutability, ProcedureOutputSchema, ProcedureParameter,
+    ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier, ScanAccess,
+    StatementOutput, analyze, execute_statement, optimize, parse, plan,
 };
 use selene_graph::{SharedGraph, TypedIndexKind};
 use selene_pack::ProcedurePackRegistry;
@@ -243,7 +242,7 @@ fn created_index_with_i64_kind_is_picked_by_optimizer_on_next_plan() {
     let statement = parse("MATCH (n:Person) WHERE n.age = 42 RETURN n").unwrap();
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).unwrap();
     let plan = plan(&analyzed, &EmptyProcedureRegistry).unwrap();
-    let catalog = LiveIndexCatalog { graph: &graph };
+    let catalog = LiveIndexCatalog::new(graph.read());
     let ctx = OptimizeContext::default().with_index_catalog(&catalog);
     let optimized = optimize(plan, &ctx);
     let scan = first_scan(&optimized.pattern_plan.as_ref().unwrap().join_tree).unwrap();
@@ -282,7 +281,7 @@ fn created_composite_index_is_picked_by_optimizer_in_declaration_order() {
         parse("MATCH (n:Person) WHERE n.kind = 'person' AND n.tenant = 't1' RETURN n").unwrap();
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).unwrap();
     let plan = plan(&analyzed, &EmptyProcedureRegistry).unwrap();
-    let catalog = LiveIndexCatalog { graph: &graph };
+    let catalog = LiveIndexCatalog::new(graph.read());
     let ctx = OptimizeContext::default().with_index_catalog(&catalog);
     let optimized = optimize(plan, &ctx);
     let scan = first_scan(&optimized.pattern_plan.as_ref().unwrap().join_tree).unwrap();
@@ -567,73 +566,6 @@ fn first_scan(tree: &JoinTree) -> Option<&NodeOrEdgeScan> {
         }
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => None,
         _ => None,
-    }
-}
-
-struct LiveIndexCatalog<'a> {
-    graph: &'a SharedGraph,
-}
-
-impl IndexCatalog for LiveIndexCatalog<'_> {
-    fn typed_index(
-        &self,
-        target: IndexTarget,
-        label: IStr,
-        property: IStr,
-    ) -> Option<TypedIndexLookup> {
-        if target != IndexTarget::Node {
-            return None;
-        }
-        let kind = self
-            .graph
-            .read()
-            .property_index_for(&label, &property)?
-            .kind();
-        Some(TypedIndexLookup::new(
-            IndexHandle::new(1),
-            index_kind_from(kind),
-        ))
-    }
-
-    fn label_index(&self, _target: IndexTarget, _label: IStr) -> Option<IndexHandle> {
-        None
-    }
-
-    fn composite_index(
-        &self,
-        target: IndexTarget,
-        label: IStr,
-        properties: &[IStr],
-    ) -> Option<CompositeIndexHandle> {
-        if target != IndexTarget::Node {
-            return None;
-        }
-        let mut canonical = properties.to_vec();
-        canonical.sort_unstable();
-        let graph = self.graph.read();
-        let entry = graph.composite_property_index_entry_for(&label, &canonical)?;
-        let kinds = entry.kinds();
-        // BRIEF-154 §B.2 (F7/F17): per-component IndexKind enables parameter-aware
-        // composite probes. Map storage-level TypedIndexKind to the optimizer's
-        // IndexKind for each declared property, in declaration order.
-        let properties: Vec<(IStr, IndexKind)> = entry
-            .declared_properties
-            .iter()
-            .zip(kinds.iter())
-            .map(|(property, kind)| (*property, index_kind_from(*kind)))
-            .collect();
-        Some(CompositeIndexHandle::new(IndexHandle::new(2), properties))
-    }
-}
-
-fn index_kind_from(kind: TypedIndexKind) -> IndexKind {
-    match kind {
-        TypedIndexKind::I64 => IndexKind::Integer,
-        TypedIndexKind::F64 => IndexKind::Float,
-        TypedIndexKind::String => IndexKind::String,
-        TypedIndexKind::Date => IndexKind::Date,
-        TypedIndexKind::LocalDateTime => IndexKind::LocalDateTime,
-        TypedIndexKind::Uuid => IndexKind::Uuid,
     }
 }
 

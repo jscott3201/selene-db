@@ -79,6 +79,10 @@ impl PlanCorpus {
     #[must_use]
     pub fn standard_mock_catalog() -> MockIndexCatalog {
         MockIndexCatalog::new()
+            // Label index drives the bare single-label `label_scan` corpus
+            // entry; the intrinsic RoaringBitmap label index is always present
+            // in the live engine, so this mirrors `LiveIndexCatalog`.
+            .with_node_label_index(istr("Person"))
             .with_node_typed_index(istr("Person"), istr("age"), IndexKind::Integer)
             .with_node_typed_index(istr("Person"), istr("email"), IndexKind::String)
             .with_node_typed_index(istr("Person"), istr("name"), IndexKind::String)
@@ -272,6 +276,15 @@ const ENTRIES: &[PlanCorpusEntry] = &[
             "disjunctive_label_expansion",
             "range_index_scan",
         ],
+        uses_index_catalog: true,
+        registry: PlanCorpusRegistry::Empty,
+    },
+    PlanCorpusEntry {
+        slug: "label_scan_single_label",
+        description: "Bare single-label scan with no indexable property predicate picks label-index access via the label_scan rule.",
+        source: "MATCH (n:Person) RETURN n",
+        category: PlanCorpusCategory::Read,
+        expected_rules: &["label_scan"],
         uses_index_catalog: true,
         registry: PlanCorpusRegistry::Empty,
     },

@@ -7,9 +7,11 @@ use selene_graph::CommitOutcome;
 
 use super::session::materialize_parameter_values;
 use crate::{
-    ExecutionPlan, GqlStatus, PipelineOp, ProcedureRegistry, SourceSpan, StatementCategory, TxOp,
+    ExecutionPlan, GqlStatus, LiveIndexCatalog, OptimizeContext, PipelineOp, ProcedureRegistry,
+    SourceSpan, StatementCategory, TxOp,
     analyze::analyze,
     ast::Statement,
+    optimize,
     parser::parse,
     plan::plan as build_plan,
     runtime::{
@@ -192,12 +194,17 @@ impl Session<'_> {
             }
             ExecutorError::Analysis { source }
         })?;
-        let plan = Arc::new(build_plan(&analyzed, registry).map_err(|source| {
+        let lowered = build_plan(&analyzed, registry).map_err(|source| {
             if self.active_txn.is_some() {
                 self.aborted = true;
             }
             ExecutorError::Plan { source }
-        })?);
+        })?;
+        // Optimize on the cache-MISS path only: cached plans are already
+        // optimized, so the two cache-hit early-returns above serve optimized
+        // plans at hit-cost. EXPLAIN renders the optimized inner plan for free
+        // because the optimizer recurses into PipelineOp::ExplainPlan { inner }.
+        let plan = Arc::new(self.optimize_plan(lowered));
         if !active_txn_has_schema_changes && let Some(cache) = self.plan_cache.as_mut() {
             cache.insert(Arc::from(source), Arc::clone(&plan), schema_version);
         }
@@ -205,6 +212,38 @@ impl Session<'_> {
             cache.insert_with_source(key, Arc::from(source), Arc::clone(&plan));
         }
         execute_statement(&plan, self, registry)
+    }
+
+    /// Run the default optimizer over a freshly-lowered plan.
+    ///
+    /// When [`index_selection`](Session::without_index_selection) is enabled
+    /// (the default), the optimizer probes a snapshot-pinned
+    /// [`LiveIndexCatalog`] so label / typed / composite index access paths are
+    /// selected; Linear remains the always-correct fallback inside every rule.
+    /// When disabled, the lowered (Linear) plan is returned unchanged — the
+    /// optimizer fixed-point is skipped entirely, giving byte-identical Linear
+    /// lowering and EXPLAIN to pre-optimizer-wiring HEAD.
+    ///
+    /// The catalog is built from a single pinned `Arc<SeleneGraph>` snapshot —
+    /// the active transaction's working snapshot when inside an explicit
+    /// transaction (so txn-local index DDL is visible), else the published
+    /// snapshot. The plan-cache key is the `schema_version` epoch, which bumps
+    /// only on schema-changing commits and is published after the new snapshot
+    /// (see `selene_graph::WriteTxn::commit`); index *selection* depends only
+    /// on which indexes exist, so a structural access path stays correct for
+    /// any data mutation within an epoch.
+    fn optimize_plan(&self, lowered: ExecutionPlan) -> ExecutionPlan {
+        if !self.index_selection {
+            return lowered;
+        }
+        let snapshot = match self.active_txn.as_ref() {
+            Some(txn) => Arc::new(txn.read().clone()),
+            None => self.graph().read(),
+        };
+        let catalog = LiveIndexCatalog::new(snapshot);
+        let caps = lowered.impl_defined_caps;
+        let ctx = OptimizeContext::new(&caps).with_index_catalog(&catalog);
+        optimize(lowered, &ctx)
     }
 }
 
