@@ -104,7 +104,7 @@ All v1.0 architecture is settled. D1–D19 are foundational; D20–D21 and D25 r
 | D12 | Audit: opaque caller-supplied principal byte-slot in WAL header | `_spec/04` §3 |
 | D13 | Snapshot section tag: 8-byte composite (provider + sub-tag); 24-byte row | `_spec/04` §4 |
 | D14 | Snapshot serialization: `rkyv` archive over sorted-vec intermediates | `_spec/04` §4 |
-| D15 | Recovery: two-step (snapshot apply → WAL replay); `RecoveryProvider` lives in `selene-persist`, `IndexProvider` lives in `selene-graph`; both use `&self` receivers | `_spec/06` §3, §12 |
+| D15 | Recovery: three-step (**MANIFEST read** → snapshot apply → WAL replay) — the `SLMF` epoch descriptor is authoritative (names the live snapshot + WAL floor); pre-MANIFEST directories fall back to the legacy two-step path. `RecoveryProvider` lives in `selene-persist`, `IndexProvider` lives in `selene-graph`; both use `&self` receivers | `_spec/06` §3, §12; BRIEF-148 |
 | D16 | `ProcedureRegistry` trait owned by `selene-gql`; `lookup` takes `&[IStr]`; embedder injects `&dyn ProcedureRegistry` | `_spec/08` §7 |
 | D17 | Procedure tiers: per-tier concrete `Context` structs + per-tier dyn-compatible `Procedure` traits | `_spec/05` §3 |
 | D18 | Pack lifecycle audit: WAL-only via the same mutation funnel; no parallel ledger | `_spec/05` §5 |
@@ -123,7 +123,7 @@ Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclama
 |---|---|---|
 | **D11** (no ID reuse) | Relaxed: *external* `NodeId` (UUID-shaped, user-stable) remains permanent; *internal* row index `u32` becomes remappable across compaction epochs. | BRIEF-Item-4a |
 | **D14** (rkyv snapshot archive) | Archive format grows internal-id remap headers + dual decoder for pre-compaction snapshots. | BRIEF-Item-4a + 4c |
-| **D15** (two-step recovery) | Becomes three-step: **MANIFEST read** → snapshot apply → WAL replay. Per-step crash safety in MANIFEST. | BRIEF-Item-2 |
+| ~~**D15** (two-step recovery)~~ | ✅ **Shipped (BRIEF-148):** three-step **MANIFEST read** → snapshot apply → WAL replay; the MANIFEST commit-point makes multi-phase rotate crash-safe + adds parent-dir fsync. Decision-log D15 row updated above. | BRIEF-Item-2 / BRIEF-148 |
 | **D18** (pack lifecycle WAL-only) | Revised: lifecycle events written to a dedicated `audit.log` with independent retention; D12 principal slot also relocates from WAL header to audit-log event. WAL stays change-only. | BRIEF-Item-7 |
 
 **New D-records planned** (do not add rows until shipped):

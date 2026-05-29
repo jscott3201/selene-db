@@ -11,9 +11,12 @@ use crate::entry_header::{
     encode_entry_header, ensure_payload_len, read_entry_header, validate_principal,
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
+use crate::manifest::Manifest;
 use crate::payload::{encode_changes, verify_checksum};
+use crate::snapshot_writer::SnapshotBuilder;
 use crate::writer_rotation::{
-    WalRotationOutcome, archive_current_wal, reset_active_wal_file, wal_archive_path,
+    RotationInputs, WalRotationOutcome, archive_current_wal, reset_active_wal_file,
+    rotate_with_manifest, wal_archive_path,
 };
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
@@ -339,6 +342,74 @@ impl WalWriter {
             new_path: self.path.clone(),
             archived_last_sequence,
         })
+    }
+
+    /// Crash-safe rotate: finalize `builder`, commit a MANIFEST, then reset.
+    ///
+    /// This is the v1.x replacement for the embedder's two-call
+    /// finalize-then-[`Self::rotate`] sequence. It runs the 4-phase rotation
+    /// whose MANIFEST write is the single linearization / commit point, so a
+    /// crash at any point either leaves the previous epoch fully recoverable or
+    /// the new epoch fully committed — never the [`PersistError::WalSnapshotMismatch`]
+    /// (Seam F) hard-fail the split calls could produce.
+    ///
+    /// `builder` must target the same sequence as this writer's current
+    /// high-water mark (`builder.sequence() == self.last_sequence()`); the
+    /// builder is finalized as Phase 1, so the caller adds every section before
+    /// calling. The MANIFEST's `archived_wal_seqs` extends the set already named
+    /// by any live MANIFEST in this writer's directory, so retention (Item-5)
+    /// has the full archive history.
+    ///
+    /// A second mutable borrow cannot overlap the rotation:
+    ///
+    /// ```compile_fail
+    /// # use selene_persist::{SnapshotBuilder, SnapshotConfig, WalWriter};
+    /// fn cannot_overlap(writer: &mut WalWriter, builder: SnapshotBuilder) {
+    ///     let active = writer;
+    ///     let _ = writer.rotate_with_manifest(builder);
+    ///     let _ = active.last_sequence();
+    /// }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PersistError::WalRotationSequenceMismatch`] when the builder
+    /// sequence does not match the writer high-water mark, I/O / format errors
+    /// from snapshot finalize, archive, MANIFEST commit, or WAL reset, or
+    /// [`PersistError::WalRotationIncomplete`] if the MANIFEST committed but the
+    /// active WAL could not be reset (recovery still converges on the new
+    /// epoch). On error before the MANIFEST commit the previous epoch is intact.
+    pub fn rotate_with_manifest(
+        &mut self,
+        builder: SnapshotBuilder,
+    ) -> PersistResult<WalRotationOutcome> {
+        if builder.sequence() != self.last_sequence {
+            return Err(PersistError::WalRotationSequenceMismatch {
+                snapshot_seq: builder.sequence(),
+                last_sequence: self.last_sequence,
+            });
+        }
+        self.flush()?;
+        let dir = self
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let prior_archived_seqs = Manifest::read(&dir)?
+            .map(|manifest| manifest.archived_wal_seqs)
+            .unwrap_or_default();
+        let inputs = RotationInputs {
+            file: &mut self.file,
+            wal_path: &self.path,
+            committed_offset: self.committed_offset,
+            last_sequence: self.last_sequence,
+            prior_archived_seqs,
+        };
+        let (outcome, state) = rotate_with_manifest(inputs, builder, &dir)?;
+        self.last_sequence = state.last_sequence;
+        self.snapshot_seq = state.snapshot_seq;
+        self.committed_offset = state.committed_offset;
+        self.entries_since_fsync = 0;
+        Ok(outcome)
     }
 
     /// Best-effort rollback to the last committed offset on append failure.

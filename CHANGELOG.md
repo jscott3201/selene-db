@@ -92,6 +92,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `selene-persist` MANIFEST epoch descriptor + crash-safe multi-phase rotate +
+  three-step recovery (BRIEF-148, deletion+reclamation audit Item 2 / Seam F).
+  A small fixed-layout `MANIFEST` file (`SLMF` magic, format_version 1, LE
+  fields, trailing blake3-low-128 body hash; `Manifest::{encode,decode,
+  write_atomic,read}` + `sync_dir`) names the single live persistence epoch and
+  is rewritten atomically each rotation. `WalWriter::rotate_with_manifest`
+  replaces the embedder's two-call snapshot-finalize-then-`rotate` sequence with
+  a four-phase rotation whose MANIFEST rename is the single linearization /
+  commit point: Phase 1 publishes the snapshot, Phase 2 archives the WAL (both
+  non-destructive, with parent-directory fsync after each publish), Phase 3
+  commits the MANIFEST, and Phase 4 resets the active WAL — strictly after the
+  commit, so a crash never produces the "MANIFEST names N-1 but wal.log already
+  reset to N" data-loss state. `recover()` now reads the MANIFEST first
+  (`RecoveryOutcome::manifest_present`): when present it is authoritative
+  (snapshot opened by `live_snapshot_seq` directly, orphan snapshots ignored,
+  the Seam-F `WalSnapshotMismatch` cross-check relaxed), and when absent it
+  falls back to the legacy `find_latest_snapshot` path with the cross-check
+  intact so pre-MANIFEST directories recover identically and migrate forward on
+  the next rotate. The exact crash-race that previously hard-failed
+  (`WalSnapshotMismatch`) now auto-reconciles. Parent-directory fsync (D6
+  durability ordering, previously deferred) is folded in across all three
+  publish points. D15 (two-step recovery) becomes three-step.
 - ISO/IEC 39075:2024 §7 session management (the D1-meaningful subset) in
   `selene-gql`: `SESSION SET VALUE [IF NOT EXISTS] $p = <value-spec>` (GS03),
   `SESSION SET TIME ZONE '<zone>'` (GS15), `SESSION RESET [ALL]

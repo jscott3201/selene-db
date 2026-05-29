@@ -14,6 +14,7 @@ mod compression;
 pub mod entry_header;
 pub mod error;
 pub mod file_header;
+pub mod manifest;
 mod payload;
 pub mod provider;
 mod reader;
@@ -33,6 +34,10 @@ pub use crate::entry_header::{
 pub use crate::error::{PersistError, PersistResult};
 pub use crate::file_header::{
     WAL_FILE_HEADER_LEN, WAL_MAGIC, WAL_VERSION_MAJOR, WAL_VERSION_MINOR, WalFileHeader,
+};
+pub use crate::manifest::{
+    MANIFEST_FILE_NAME, MANIFEST_FORMAT_VERSION, MANIFEST_MAGIC, MANIFEST_TMP_FILE_NAME, Manifest,
+    sync_dir,
 };
 pub use crate::provider::{ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult};
 pub use crate::reader::{WalEntry, WalEntryStream, WalEntryView, WalReader};

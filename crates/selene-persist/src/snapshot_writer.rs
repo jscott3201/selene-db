@@ -109,6 +109,12 @@ impl SnapshotBuilder {
         }
     }
 
+    /// Return the snapshot sequence this builder will finalize.
+    #[must_use]
+    pub const fn sequence(&self) -> u64 {
+        self.config.sequence
+    }
+
     /// Add one opaque section payload.
     ///
     /// # Errors
