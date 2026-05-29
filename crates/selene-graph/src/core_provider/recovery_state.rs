@@ -19,7 +19,6 @@ use crate::core_provider::{
 };
 use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
-use crate::store::{edge_row_index_arith, node_row_index_arith};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 
 mod materialize;
@@ -523,13 +522,27 @@ impl RecoveryState {
         let mut next_node_id = graph.meta.next_node_id.max(1);
         for (id, row) in self.nodes {
             next_node_id = next_node_id.max(id.get().saturating_add(1));
+            // BRIEF-Item-4c: WAL-created ids (absent from the snapshot) APPEND at
+            // the dense end, not `id - 1`. After a compacted snapshot loads (dense
+            // rows, sparse high-water ids) a post-compaction `NodeCreated` would
+            // otherwise re-pad the reclaimed holes on reload. WAL-created ids are
+            // monotonic and greater than every snapshot id, and iteration is
+            // id-ascending, so by the time one is reached every snapshot row is
+            // placed and `len()` is the next dense slot — matching the live
+            // append create path.
             let row_index = match self.node_snapshot_rows.get(&id) {
                 Some(&position) => position as usize,
-                None => node_row_index_arith(id).ok_or_else(|| {
-                    crate::GraphError::Provider(invalid_payload(format!(
-                        "WAL-created node id {id} exceeds the u32 row space"
-                    )))
-                })? as usize,
+                None => {
+                    let len = graph.node_store.len();
+                    // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real
+                    // row is u32::MAX - 1, so a live row never aliases the sentinel.
+                    if !u32::try_from(len).is_ok_and(|row| row != u32::MAX) {
+                        return Err(crate::GraphError::Provider(invalid_payload(format!(
+                            "WAL-created node id {id} exceeds the u32 row space"
+                        ))));
+                    }
+                    len
+                }
             };
             insert_node_row(&mut graph, id, row, row_index)?;
         }
@@ -538,13 +551,20 @@ impl RecoveryState {
         let mut next_edge_id = graph.meta.next_edge_id.max(1);
         for (id, row) in self.edges {
             next_edge_id = next_edge_id.max(id.get().saturating_add(1));
+            // BRIEF-Item-4c: WAL-created edge ids APPEND at the dense end (see the
+            // node arm above).
             let row_index = match self.edge_snapshot_rows.get(&id) {
                 Some(&position) => position as usize,
-                None => edge_row_index_arith(id).ok_or_else(|| {
-                    crate::GraphError::Provider(invalid_payload(format!(
-                        "WAL-created edge id {id} exceeds the u32 row space"
-                    )))
-                })? as usize,
+                None => {
+                    let len = graph.edge_store.len();
+                    // u32::MAX is reserved as RowIndex::TOMBSTONE (see the node arm).
+                    if !u32::try_from(len).is_ok_and(|row| row != u32::MAX) {
+                        return Err(crate::GraphError::Provider(invalid_payload(format!(
+                            "WAL-created edge id {id} exceeds the u32 row space"
+                        ))));
+                    }
+                    len
+                }
             };
             insert_edge_row(&mut graph, id, row, row_index)?;
         }

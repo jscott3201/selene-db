@@ -19,7 +19,7 @@ use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
 use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::index_provider::{IndexProvider, ProviderTag};
-use crate::store::{RowIndex, edge_row_index_arith, node_row_index_arith};
+use crate::store::RowIndex;
 use crate::type_validator::{EntityId, TypeViolation};
 use crate::write_txn::WriteTxn;
 
@@ -46,16 +46,24 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
         fill_node_defaults(self.txn.read(), &labels, &mut props)?;
         let id = self.txn.allocator.allocate_node();
-        // Binding authority: a freshly allocated id defines its row here, before
-        // the id->row map contains it (the insert below adds it).
-        let row = node_row_index_arith(id).ok_or_else(|| GraphError::IdOverflow {
-            kind: "node",
-            raw: id.get(),
-            max: u32::MAX as u64 + 1,
-        })? as usize;
         {
             let graph = self.txn.guard_mut();
-            ensure_node_rows(graph, row);
+            // BRIEF-Item-4c: append at the dense end (row = current row count)
+            // instead of `id - 1` arithmetic. After 4b compaction the monotonic
+            // high-water id far exceeds the dense row count, so an arith row would
+            // re-pad exactly the holes compaction reclaimed; append keeps the store
+            // dense and never resurrects a reclaimed slot. The u32 row-space cap
+            // therefore moves from the id value to the row count.
+            let row = u32::try_from(graph.node_store.len())
+                .ok()
+                // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real row
+                // is u32::MAX - 1, so a live row never aliases the sentinel.
+                .filter(|&row| row != u32::MAX)
+                .ok_or(GraphError::IdOverflow {
+                    kind: "node",
+                    raw: id.get(),
+                    max: u32::MAX as u64,
+                })?;
             // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
             // mutating row state so a cap-exhaustion error rolls back
             // cleanly with no half-written row. Index updates only touch
@@ -66,30 +74,24 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &mut graph.property_index,
                 &labels,
                 &props,
-                row as u32,
+                row,
             )?;
             crate::composite_property_index::apply_node_create(
                 &mut graph.composite_property_index,
                 &labels,
                 &props,
-                row as u32,
+                row,
             )?;
-            if row == graph.node_store.len() {
-                graph.node_store.labels.push(labels.clone());
-                graph.node_store.properties.push(props.clone());
-                graph.node_store.row_to_id.push(id);
-            } else {
-                graph.node_store.labels.set(row, labels.clone());
-                graph.node_store.properties.set(row, props.clone());
-                graph.node_store.row_to_id.set(row, id);
-            }
-            graph.node_store.alive.insert(row as u32);
+            graph.node_store.labels.push(labels.clone());
+            graph.node_store.properties.push(props.clone());
+            graph.node_store.row_to_id.push(id);
+            graph.node_store.alive.insert(row);
             // BRIEF-Item-4a: bind the external id to its row in both directions.
             // The live commit path never re-runs `rebuild_id_maps`, so the
-            // `id -> row` map must be populated here. Identity in 4a; the row is
-            // remappable once 4b compaction renumbers rows under stable ids.
-            graph.node_id_to_row.insert(id, RowIndex::new(row as u32));
-            insert_node_labels(&mut graph.idx_label, row as u32, &labels);
+            // `id -> row` map must be populated here. The row is remappable once
+            // 4b compaction renumbers rows under stable ids.
+            graph.node_id_to_row.insert(id, RowIndex::new(row));
+            insert_node_labels(&mut graph.idx_label, row, &labels);
         }
         self.txn.changes.push(Change::NodeCreated {
             id,
@@ -111,32 +113,26 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.require_live_node(target)?;
         fill_edge_defaults(self.txn.read(), label, source, target, &mut props)?;
         let id = self.txn.allocator.allocate_edge();
-        // Binding authority (see create_node).
-        let row = edge_row_index_arith(id).ok_or_else(|| GraphError::IdOverflow {
-            kind: "edge",
-            raw: id.get(),
-            max: u32::MAX as u64 + 1,
-        })? as usize;
         {
             let graph = self.txn.guard_mut();
-            ensure_edge_rows(graph, row)?;
-            if row == graph.edge_store.len() {
-                graph.edge_store.label.push(label);
-                graph.edge_store.source.push(source);
-                graph.edge_store.target.push(target);
-                graph.edge_store.properties.push(props.clone());
-                graph.edge_store.row_to_id.push(id);
-            } else {
-                graph.edge_store.label.set(row, label);
-                graph.edge_store.source.set(row, source);
-                graph.edge_store.target.set(row, target);
-                graph.edge_store.properties.set(row, props.clone());
-                graph.edge_store.row_to_id.set(row, id);
-            }
-            graph.edge_store.alive.insert(row as u32);
+            // BRIEF-Item-4c: append at the dense end (see create_node).
+            let row = u32::try_from(graph.edge_store.len())
+                .ok()
+                .filter(|&row| row != u32::MAX) // u32::MAX is RowIndex::TOMBSTONE
+                .ok_or(GraphError::IdOverflow {
+                    kind: "edge",
+                    raw: id.get(),
+                    max: u32::MAX as u64,
+                })?;
+            graph.edge_store.label.push(label);
+            graph.edge_store.source.push(source);
+            graph.edge_store.target.push(target);
+            graph.edge_store.properties.push(props.clone());
+            graph.edge_store.row_to_id.push(id);
+            graph.edge_store.alive.insert(row);
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
-            graph.edge_id_to_row.insert(id, RowIndex::new(row as u32));
-            insert_index_row(&mut graph.idx_edge_label, label, row as u32);
+            graph.edge_id_to_row.insert(id, RowIndex::new(row));
+            insert_index_row(&mut graph.idx_edge_label, label, row);
 
             graph
                 .adjacency_out
@@ -568,48 +564,6 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         Ok(row as usize)
     }
-}
-
-fn ensure_node_rows(graph: &mut crate::SeleneGraph, target_row: usize) {
-    while graph.node_store.len() < target_row {
-        graph.node_store.labels.push(LabelSet::new());
-        graph.node_store.properties.push(PropertyMap::new());
-        // BRIEF-Item-4a: keep row_to_id length-locked with the row columns;
-        // aborted-tx hole rows carry the tombstone id (never in the id->row map).
-        graph.node_store.row_to_id.push(NodeId::TOMBSTONE);
-    }
-}
-
-fn ensure_edge_rows(graph: &mut crate::SeleneGraph, target_row: usize) -> GraphResult<()> {
-    if graph.edge_store.len() >= target_row {
-        return Ok(());
-    }
-    let hole_label = edge_hole_label()?;
-    while graph.edge_store.len() < target_row {
-        graph.edge_store.label.push(hole_label);
-        graph.edge_store.source.push(NodeId::TOMBSTONE);
-        graph.edge_store.target.push(NodeId::TOMBSTONE);
-        graph.edge_store.properties.push(PropertyMap::new());
-        // BRIEF-Item-4a: keep row_to_id length-locked with the row columns.
-        graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE);
-    }
-    Ok(())
-}
-
-/// Cache the sentinel label used to pad over aborted-tx EdgeId holes.
-///
-/// First call interns `"__selene_hole"`; subsequent calls return the cached
-/// `IStr` so transaction-time hole materialization never re-hits the interner.
-/// If interner capacity is exhausted on the first call, the error propagates
-/// to the caller as a typed `CoreError::IStrCapExceeded`.
-fn edge_hole_label() -> selene_core::CoreResult<IStr> {
-    static CELL: std::sync::OnceLock<IStr> = std::sync::OnceLock::new();
-    if let Some(value) = CELL.get() {
-        return Ok(*value);
-    }
-    let value = selene_core::intern("__selene_hole")?;
-    let _ = CELL.set(value);
-    Ok(value)
 }
 
 fn insert_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {

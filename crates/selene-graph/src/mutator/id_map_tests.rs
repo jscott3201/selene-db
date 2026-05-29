@@ -4,21 +4,22 @@
 //! Increment 2 lands the population divergence guard; Increment 6 adds the
 //! non-identity proof test (a manually constructed map where `id != row + 1`).
 
-use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap};
+use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
 
-use crate::store::{RowIndex, edge_row_index_arith, node_row_index_arith};
+use crate::store::RowIndex;
 use crate::{SeleneGraph, SharedGraph};
 
 #[test]
-fn id_row_maps_agree_with_arithmetic_for_all_alive() {
-    // BRIEF-Item-4a Increment 2 divergence guard. The populated id<->row maps
-    // and per-store `row_to_id` columns must agree with the legacy
-    // `id == row + 1` arithmetic for every ALIVE node and edge, and a deleted id
-    // must stay mapped (so a later map-backed read yields NotAlive, not
-    // NotFound). Reads are still arithmetic in Increment 2, so any divergence
-    // here is a population bug surfacing before Increment 3 flips reads onto the
-    // maps. Bar: "would this catch the IStr admission race" — it walks every
-    // alive row through both directions plus the delete-tombstone path.
+fn id_row_maps_round_trip_for_all_alive() {
+    // The populated id<->row maps and per-store `row_to_id` columns must
+    // round-trip for every ALIVE node and edge, and a deleted id must stay mapped
+    // (so a later map-backed read yields NotAlive, not NotFound). BRIEF-Item-4c
+    // made creation APPEND-based, so `row == id - 1` is no longer an invariant the
+    // engine maintains — the durable contract is purely that the bidirectional
+    // map agrees with the `row_to_id` column. (For this sequential-create graph
+    // the rows happen to still be 0,1,2, but the test asserts the map, not the
+    // arithmetic.) Bar: "would this catch the IStr admission race" — it walks
+    // every alive row through both directions plus the delete-tombstone path.
     let shared = SharedGraph::new(GraphId::new(1));
     let a = selene_core::intern("inc2.a").unwrap();
     let b = selene_core::intern("inc2.b").unwrap();
@@ -43,7 +44,7 @@ fn id_row_maps_agree_with_arithmetic_for_all_alive() {
     txn.commit().unwrap();
     let g = shared.read();
 
-    // Every alive node row round-trips and equals the arithmetic mapping.
+    // Every alive node row round-trips through the bidirectional map.
     for row in g.node_store.alive.iter() {
         let id = *g
             .node_store
@@ -56,11 +57,10 @@ fn id_row_maps_agree_with_arithmetic_for_all_alive() {
             "alive node row {row} has tombstone id"
         );
         assert_eq!(
-            node_row_index_arith(id),
-            Some(row),
-            "arith disagrees for alive {id}"
+            g.node_id_to_row.get(&id).copied(),
+            Some(RowIndex::new(row)),
+            "id->row map disagrees with row_to_id for alive {id}"
         );
-        assert_eq!(g.node_id_to_row.get(&id).copied(), Some(RowIndex::new(row)));
     }
     // n1 == row 1 == NodeId(2): deleted, but its id stays mapped to the dead row
     // AND its row_to_id slot keeps the real id (Option B) so the snapshot/STEP-9
@@ -91,11 +91,10 @@ fn id_row_maps_agree_with_arithmetic_for_all_alive() {
             "alive edge row {row} has tombstone id"
         );
         assert_eq!(
-            edge_row_index_arith(id),
-            Some(row),
-            "arith disagrees for alive {id}"
+            g.edge_id_to_row.get(&id).copied(),
+            Some(RowIndex::new(row)),
+            "id->row map disagrees with row_to_id for alive {id}"
         );
-        assert_eq!(g.edge_id_to_row.get(&id).copied(), Some(RowIndex::new(row)));
     }
     assert!(g.edge_store.alive.contains(2));
     // Cascade-deleted edge ids stay mapped to their dead rows, and their
@@ -207,4 +206,64 @@ fn non_identity_map_read_paths_resolve_by_map() {
             .iter()
             .any(|e| e.neighbor == NodeId::new(5) && e.edge_id == EdgeId::new(3))
     );
+}
+
+#[test]
+fn create_node_past_u32_id_space_succeeds_with_append_rows() {
+    // BRIEF-Item-4c decoupled id-space (u64) from row-space (u32). A graph whose
+    // monotonic high-water id is already past u32::MAX (e.g. after heavy churn +
+    // compaction) can still create nodes: the new row is APPENDED at the dense
+    // end, not derived from the huge id. (Pre-4c this returned IdOverflow because
+    // row = id - 1; the row cap now only triggers at 2^32 live rows.)
+    let mut graph = SeleneGraph::new(GraphId::new(1));
+    graph.meta.next_node_id = u32::MAX as u64 + 2;
+    let shared = SharedGraph::from_graph(graph);
+    let id = {
+        let mut txn = shared.begin_write();
+        let id = txn
+            .mutator()
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .expect("create past u32 id-space succeeds with append rows");
+        txn.commit().unwrap();
+        id
+    };
+    assert_eq!(id.get(), u32::MAX as u64 + 2);
+    let g = shared.read();
+    // Row appended at the dense end (0), NOT the huge arith row.
+    assert_eq!(g.row_for_node_id(id).map(|r| r.get()), Some(0));
+    assert!(g.is_node_alive(id));
+}
+
+#[test]
+fn create_edge_past_u32_id_space_succeeds_with_append_rows() {
+    // Edge counterpart of the node test above (id-space u64 vs row-space u32).
+    let mut graph = SeleneGraph::new(GraphId::new(1));
+    graph.meta.next_edge_id = u32::MAX as u64 + 2;
+    let shared = SharedGraph::from_graph(graph);
+    let edge_id = {
+        let mut txn = shared.begin_write();
+        let id = {
+            let mut mutator = txn.mutator();
+            let source = mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok");
+            let target = mutator
+                .create_node(LabelSet::new(), PropertyMap::new())
+                .expect("create_node ok");
+            mutator
+                .create_edge(
+                    intern("edge.overflow").unwrap(),
+                    source,
+                    target,
+                    PropertyMap::new(),
+                )
+                .expect("create edge past u32 id-space succeeds with append rows")
+        };
+        txn.commit().unwrap();
+        id
+    };
+    assert_eq!(edge_id.get(), u32::MAX as u64 + 2);
+    let g = shared.read();
+    assert_eq!(g.row_for_edge_id(edge_id).map(|r| r.get()), Some(0));
+    assert!(g.is_edge_alive(edge_id));
 }
