@@ -210,6 +210,8 @@ fn change_postcard_round_trip() {
             provider: istr("serde.provider"),
             payload: Arc::from([1_u8, 2, 3]),
         },
+        Change::NodesOfTypeTruncated { label },
+        Change::EdgesOfTypeTruncated { label },
     ];
     for change in changes {
         rt(&change);

@@ -500,6 +500,8 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
         | DdlStatement::DropGraph { span, .. }
         | DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
+        | DdlStatement::TruncateNodeType { span, .. }
+        | DdlStatement::TruncateEdgeType { span, .. }
         | DdlStatement::CreateIndex { span, .. }
         | DdlStatement::DropIndex { span, .. } => rebase_span(span, offset),
         DdlStatement::CreateNodeType {

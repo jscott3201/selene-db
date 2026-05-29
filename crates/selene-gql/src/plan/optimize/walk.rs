@@ -396,6 +396,8 @@ fn walk_catalog_exprs(
         | CatalogOp::DropGraph { .. }
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
+        | CatalogOp::TruncateNodeType { .. }
+        | CatalogOp::TruncateEdgeType { .. }
         | CatalogOp::CreateIndex { .. }
         | CatalogOp::DropIndex { .. }
         | CatalogOp::ShowNodeTypes(_)

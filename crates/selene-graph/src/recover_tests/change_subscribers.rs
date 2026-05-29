@@ -209,6 +209,8 @@ fn provider_label(change: &Change) -> &'static str {
         | Change::EdgePropertyRemoved { .. }
         | Change::EdgeDeleted { .. }
         | Change::NodeLabelRemoved { .. }
+        | Change::NodesOfTypeTruncated { .. }
+        | Change::EdgesOfTypeTruncated { .. }
         | Change::SchemaChanged { .. } => "provider:other",
     }
 }

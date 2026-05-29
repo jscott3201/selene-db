@@ -57,6 +57,13 @@ const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. } => StatementCategory::CatalogModifying,
+        // TRUNCATE removes data instances while keeping the catalog type intact,
+        // so it is DataModifying (BRIEF-150). Both categories route through the
+        // same write-transaction execution arm, so this only sharpens the
+        // semantic label.
+        DdlStatement::TruncateNodeType { .. } | DdlStatement::TruncateEdgeType { .. } => {
+            StatementCategory::DataModifying
+        }
     }
 }
 

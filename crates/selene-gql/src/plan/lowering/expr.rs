@@ -346,6 +346,8 @@ fn collect_subqueries_in_catalog(
         | CatalogOp::DropGraph { .. }
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
+        | CatalogOp::TruncateNodeType { .. }
+        | CatalogOp::TruncateEdgeType { .. }
         | CatalogOp::CreateIndex { .. }
         | CatalogOp::DropIndex { .. }
         | CatalogOp::ShowNodeTypes(_)

@@ -82,6 +82,12 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
         DdlStatement::CreateIndex { span, .. } | DdlStatement::DropIndex { span, .. } => {
             record_feature(uses, FeatureId::IM_INDEX_DDL, *span);
         }
+        // GQL Flagger (clause 24.6): TRUNCATE is a selene-db impl-defined
+        // addition, not ISO GQL, so it must flag on every use.
+        DdlStatement::TruncateNodeType { span, .. }
+        | DdlStatement::TruncateEdgeType { span, .. } => {
+            record_feature(uses, FeatureId::IM_TRUNCATE, *span);
+        }
         DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
             type_ddl(*span, uses);
         }

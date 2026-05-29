@@ -156,6 +156,8 @@ fn inherit_ddl_parameter_declarations(statement: &mut DdlStatement, declarations
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
+        | DdlStatement::TruncateNodeType { .. }
+        | DdlStatement::TruncateEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. }
         | DdlStatement::ShowNodeTypes(_)

@@ -184,6 +184,8 @@ fn collect_ddl_parameter_declarations(
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
+        | DdlStatement::TruncateNodeType { .. }
+        | DdlStatement::TruncateEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. }
         | DdlStatement::ShowNodeTypes(_)

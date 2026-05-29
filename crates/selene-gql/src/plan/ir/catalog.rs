@@ -83,6 +83,20 @@ pub enum CatalogOp {
         /// Source span.
         span: SourceSpan,
     },
+    /// Truncate (bulk-delete instances of) a node type (`IM_TRUNCATE`).
+    TruncateNodeType {
+        /// Node label whose instances are removed.
+        label: IStr,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// Truncate (bulk-delete instances of) an edge type (`IM_TRUNCATE`).
+    TruncateEdgeType {
+        /// Edge label whose instances are removed.
+        label: IStr,
+        /// Source span.
+        span: SourceSpan,
+    },
     /// Create a named property index.
     CreateIndex {
         /// Catalog index name.

@@ -3,6 +3,8 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
+use parking_lot::Mutex;
+
 use selene_core::{
     Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
 };
@@ -37,6 +39,18 @@ pub(crate) struct RecoveryState {
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     sequence: u64,
+    /// Per-WAL-entry staging of the per-row tombstones a declarative truncate
+    /// expands to, for recovery subscriber fan-out.
+    ///
+    /// BRIEF-150 / audit Item 11. CORE replays first (tag-sorted), re-deriving
+    /// truncated rows from the recovered store it is building, and stages the
+    /// resulting `NodeDeleted`/`EdgeDeleted` tombstones here. The VECT/IVFP
+    /// recovery wrappers (which run after CORE for the same entry, hold no
+    /// store, and could not expand a label) read this buffer to drive subscriber
+    /// fan-out, so recovery tombstoning is byte-identical to the runtime path.
+    /// Cleared at the start of every WAL entry so the membership reflects the
+    /// pre-truncate store, not a post-truncate re-query.
+    truncate_expansion: Arc<Mutex<Vec<Change>>>,
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
@@ -74,6 +88,23 @@ impl RecoveryState {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
+    }
+
+    /// Shared handle to the per-entry truncate-expansion buffer.
+    ///
+    /// The recovery subscriber wrappers hold a clone so they can read the
+    /// per-row tombstones CORE staged for the current WAL entry.
+    #[must_use]
+    pub(crate) fn truncate_expansion_handle(&self) -> Arc<Mutex<Vec<Change>>> {
+        Arc::clone(&self.truncate_expansion)
+    }
+
+    /// Reset the per-entry truncate-expansion buffer.
+    ///
+    /// Called by CORE at the start of each WAL entry batch so the staged
+    /// tombstones reflect only that entry's truncations.
+    pub(crate) fn reset_truncate_expansion(&self) {
+        self.truncate_expansion.lock().clear();
     }
 
     pub(crate) fn read_section(
@@ -210,6 +241,42 @@ impl RecoveryState {
             Change::NodeLabelRemoved { id, label } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
                 row.labels.remove(label);
+            }
+            Change::NodesOfTypeTruncated { label } => {
+                // Re-derive the truncated rows from the recovered store: every
+                // alive node carrying the label, plus every alive edge incident
+                // to such a node (any edge type). This reconstructs the exact
+                // post-`delete_node`-cascade state without persisting any ids,
+                // and stages the per-row tombstones for subscriber fan-out.
+                let mut truncated_nodes = std::collections::BTreeSet::new();
+                let mut tombstones = Vec::new();
+                for (id, row) in self.nodes.iter_mut() {
+                    if row.alive && row.labels.contains(label) {
+                        row.alive = false;
+                        truncated_nodes.insert(*id);
+                        tombstones.push(Change::NodeDeleted { id: *id });
+                    }
+                }
+                for (id, row) in self.edges.iter_mut() {
+                    if row.alive
+                        && (truncated_nodes.contains(&row.source)
+                            || truncated_nodes.contains(&row.target))
+                    {
+                        row.alive = false;
+                        tombstones.push(Change::EdgeDeleted { id: *id });
+                    }
+                }
+                self.truncate_expansion.lock().extend(tombstones);
+            }
+            Change::EdgesOfTypeTruncated { label } => {
+                let mut tombstones = Vec::new();
+                for (id, row) in self.edges.iter_mut() {
+                    if row.alive && row.label == *label {
+                        row.alive = false;
+                        tombstones.push(Change::EdgeDeleted { id: *id });
+                    }
+                }
+                self.truncate_expansion.lock().extend(tombstones);
             }
             Change::SchemaChanged { change, .. } => {
                 match change {

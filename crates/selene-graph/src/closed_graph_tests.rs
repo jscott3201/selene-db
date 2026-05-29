@@ -23,6 +23,9 @@ mod immutable;
 #[path = "closed_graph_tests/one_of.rs"]
 mod one_of;
 
+#[path = "closed_graph_tests/truncate.rs"]
+mod truncate;
+
 fn istr(name: &str) -> selene_core::IStr {
     intern(name).unwrap()
 }

@@ -59,6 +59,12 @@ impl Change {
             id: NodeId::new(1),
             label: changeset_variant_istr("change.all.node_label_removed"),
         },
+        || Self::NodesOfTypeTruncated {
+            label: changeset_variant_istr("change.all.nodes_of_type_truncated"),
+        },
+        || Self::EdgesOfTypeTruncated {
+            label: changeset_variant_istr("change.all.edges_of_type_truncated"),
+        },
     ];
 
     /// Number of known [`Change`] variants in this build.
@@ -79,6 +85,8 @@ impl Change {
             Self::NodePropertyRemoved { .. } => "NodePropertyRemoved",
             Self::EdgePropertyRemoved { .. } => "EdgePropertyRemoved",
             Self::NodeLabelRemoved { .. } => "NodeLabelRemoved",
+            Self::NodesOfTypeTruncated { .. } => "NodesOfTypeTruncated",
+            Self::EdgesOfTypeTruncated { .. } => "EdgesOfTypeTruncated",
         }
     }
 }

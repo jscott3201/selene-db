@@ -174,6 +174,24 @@ pub(super) fn execute(
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
+        CatalogOp::TruncateNodeType { label, span } => {
+            // TRUNCATE removes instances by label (IM_TRUNCATE, audit Item 11).
+            // It is valid on both open (GG01) and closed (GG02) graphs — unlike
+            // DROP NODE TYPE it never touches the catalog, so no closed-graph
+            // gate. An absent label is a clean no-op inside the mutator.
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                .truncate_node_type(*label)
+                .map_err(|source| catalog_graph_error(source, *span))?;
+            Ok(table)
+        }
+        CatalogOp::TruncateEdgeType { label, span } => {
+            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
+            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
+                .truncate_edge_type(*label)
+                .map_err(|source| catalog_graph_error(source, *span))?;
+            Ok(table)
+        }
         CatalogOp::CreateIndex {
             name,
             label,

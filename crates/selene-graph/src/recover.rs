@@ -132,9 +132,17 @@ impl SharedGraph {
         validate_recovery_provider_tags(&core, &providers)?;
         validate_unique_subscriber_tags(&subscribers)?;
         let mut registry = ProviderRegistry::new();
+        let truncate_expansion = core
+            .truncate_expansion_handle()
+            .expect("recovery-mode CoreProvider exposes a truncate-expansion handle");
         let provider: Arc<dyn RecoveryProvider> = core.clone();
         registry.register(provider)?;
-        register_combined_recovery_providers(&mut registry, &providers, &subscribers)?;
+        register_combined_recovery_providers(
+            &mut registry,
+            &providers,
+            &subscribers,
+            &truncate_expansion,
+        )?;
         let outcome = selene_persist::recover(dir, &registry)?;
         let mut graph = core.finish_recovery(graph_id, expected_bound_type)?;
         // The committed graph generation must reflect every change that was
@@ -162,6 +170,13 @@ impl SharedGraph {
 struct IndexAndChangeRecoveryProvider {
     provider: Arc<dyn IndexProvider>,
     subscribers: Vec<Arc<dyn ChangeSubscriber>>,
+    /// Shared handle to CORE's per-WAL-entry truncate-expansion buffer.
+    ///
+    /// BRIEF-150 / audit Item 11. CORE replays first (tag-sorted) and stages the
+    /// per-row tombstones a declarative truncate expands to; this wrapper reads
+    /// them so subscribers receive the same `NodeDeleted`/`EdgeDeleted` multiset
+    /// the runtime path produces, never the declarative truncate variant.
+    truncate_expansion: Arc<parking_lot::Mutex<Vec<Change>>>,
 }
 
 impl RecoveryProvider for IndexAndChangeRecoveryProvider {
@@ -183,15 +198,64 @@ impl RecoveryProvider for IndexAndChangeRecoveryProvider {
         for change in changes {
             self.provider.on_change(change).map_err(recovery_error)?;
         }
+        if self.subscribers.is_empty() {
+            return Ok(());
+        }
+        // Substitute each declarative truncate change with the per-row
+        // tombstones CORE staged for this entry (CORE ran first), so subscribers
+        // observe the identical effect of the runtime path and never see the
+        // declarative variant they could not expand. Non-truncate commits use
+        // the raw changes with zero extra allocation.
+        let fanout = self.expanded_fanout(changes);
+        let fanout_changes: &[Change] = fanout.as_deref().unwrap_or(changes);
         for subscriber in &self.subscribers {
             let (tag, kinds) = recovery_subscriber_filter(subscriber)?;
-            for change in changes {
+            for change in fanout_changes {
                 if kinds.contains(change.kind()) {
                     recovery_subscriber_on_change(subscriber, tag, change)?;
                 }
             }
         }
         Ok(())
+    }
+}
+
+impl IndexAndChangeRecoveryProvider {
+    /// Build a subscriber fan-out view that replaces declarative truncate
+    /// changes with CORE's staged per-row tombstones.
+    ///
+    /// Returns `None` when no truncate change is present (the common path), so
+    /// callers fan out the raw entry changes directly.
+    fn expanded_fanout(&self, changes: &[Change]) -> Option<Vec<Change>> {
+        if !changes.iter().any(|change| {
+            matches!(
+                change,
+                Change::NodesOfTypeTruncated { .. } | Change::EdgesOfTypeTruncated { .. }
+            )
+        }) {
+            return None;
+        }
+        // CORE re-derives one combined tombstone list for every truncate in the
+        // entry. Emit the non-truncate changes positionally and append the
+        // staged tombstones in place of the truncate changes. Because truncate
+        // tombstones are pure NodeDeleted/EdgeDeleted (order-independent for the
+        // vector delete_node/delete_edge subscribers), splicing the whole staged
+        // list once preserves the per-row coverage invariant.
+        let staged = self.truncate_expansion.lock().clone();
+        let mut view = Vec::with_capacity(changes.len() + staged.len());
+        let mut staged_emitted = false;
+        for change in changes {
+            match change {
+                Change::NodesOfTypeTruncated { .. } | Change::EdgesOfTypeTruncated { .. } => {
+                    if !staged_emitted {
+                        view.extend(staged.iter().cloned());
+                        staged_emitted = true;
+                    }
+                }
+                other => view.push(other.clone()),
+            }
+        }
+        Some(view)
     }
 }
 
@@ -210,6 +274,7 @@ fn register_combined_recovery_providers(
     registry: &mut ProviderRegistry,
     providers: &[Arc<dyn IndexProvider>],
     subscribers: &[Arc<dyn ChangeSubscriber>],
+    truncate_expansion: &Arc<parking_lot::Mutex<Vec<Change>>>,
 ) -> GraphResult<()> {
     let mut subscribers_by_tag = BTreeMap::<ProviderTag, Vec<Arc<dyn ChangeSubscriber>>>::new();
     for subscriber in subscribers {
@@ -228,6 +293,7 @@ fn register_combined_recovery_providers(
             Arc::new(IndexAndChangeRecoveryProvider {
                 provider: Arc::clone(provider),
                 subscribers,
+                truncate_expansion: Arc::clone(truncate_expansion),
             });
         registry.register(recovery_provider)?;
     }

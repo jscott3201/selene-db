@@ -29,11 +29,19 @@ impl ChangeSubscriber for HnswIndexRegistry {
                 }
                 Ok(())
             }
+            // BRIEF-150: declarative truncate variants are NEVER fanned out to
+            // subscribers — the producing side (runtime mutator / recovery CORE)
+            // expands them into the per-row NodeDeleted/EdgeDeleted above. These
+            // arms only keep the match exhaustive and must stay no-ops, so a
+            // subscriber that lacks store access can never silently leak a
+            // truncated set's derived vectors.
             Change::EdgeDeleted { .. }
             | Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
             | Change::NodePropertyRemoved { .. }
             | Change::NodeLabelRemoved { .. }
+            | Change::NodesOfTypeTruncated { .. }
+            | Change::EdgesOfTypeTruncated { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }
@@ -62,11 +70,19 @@ impl ChangeSubscriber for IvfIndexRegistry {
                 }
                 Ok(())
             }
+            // BRIEF-150: declarative truncate variants are NEVER fanned out to
+            // subscribers — the producing side (runtime mutator / recovery CORE)
+            // expands them into the per-row NodeDeleted/EdgeDeleted above. These
+            // arms only keep the match exhaustive and must stay no-ops, so a
+            // subscriber that lacks store access can never silently leak a
+            // truncated set's derived vectors.
             Change::EdgeDeleted { .. }
             | Change::NodeCreated { .. }
             | Change::NodeUpdated { .. }
             | Change::NodePropertyRemoved { .. }
             | Change::NodeLabelRemoved { .. }
+            | Change::NodesOfTypeTruncated { .. }
+            | Change::EdgesOfTypeTruncated { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }

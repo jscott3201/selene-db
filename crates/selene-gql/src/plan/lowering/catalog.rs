@@ -93,6 +93,14 @@ pub(crate) fn lower_ddl(
             if_exists: *if_exists,
             span: *span,
         },
+        DdlStatement::TruncateNodeType { label, span } => CatalogOp::TruncateNodeType {
+            label: *label,
+            span: *span,
+        },
+        DdlStatement::TruncateEdgeType { label, span } => CatalogOp::TruncateEdgeType {
+            label: *label,
+            span: *span,
+        },
         DdlStatement::CreateIndex {
             name,
             label,
