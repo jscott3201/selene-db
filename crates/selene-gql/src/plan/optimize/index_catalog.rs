@@ -1,6 +1,8 @@
 //! Query-time index discovery surface.
 
-use selene_core::IStr;
+use std::ops::RangeBounds;
+
+use selene_core::{IStr, Value};
 
 /// Graph element kind targeted by an index lookup.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -36,7 +38,114 @@ pub trait IndexCatalog: Send + Sync {
         label: IStr,
         properties: &[IStr],
     ) -> Option<CompositeIndexHandle>;
+
+    // ---------------------------------------------------------------------
+    // Cost statistics (OPT-5)
+    //
+    // These methods expose live row-count statistics read from the *same*
+    // pinned snapshot the optimizer plans against (pinned-snapshot invariant).
+    // They return *estimated output row counts* so the cost model can gate
+    // index-vs-Linear and rank competing index candidates. The default `None`
+    // bodies preserve the pre-OPT-5 structural behavior: when no statistic is
+    // available (e.g. [`EmptyIndexCatalog`], or a catalog with no stats backing)
+    // every estimator declines and the rules keep their exact structural
+    // decision + verbatim heuristic fallback. Because every index access path is
+    // row-equivalent to a Linear scan (the runtime always re-applies the residual
+    // label / property filters), cost can only flip *which correct path runs* —
+    // never which rows are produced.
+    // ---------------------------------------------------------------------
+
+    /// Total live row count for `target` — the Linear-scan baseline.
+    ///
+    /// Defaults to `None` (no statistics).
+    fn total_rows(&self, target: IndexTarget) -> Option<u64> {
+        let _ = target;
+        None
+    }
+
+    /// Exact number of rows carrying `label` for `target` (RoaringBitmap
+    /// popcount). Defaults to `None`.
+    fn label_cardinality(&self, target: IndexTarget, label: IStr) -> Option<u64> {
+        let _ = (target, label);
+        None
+    }
+
+    /// Exact number of rows matching `value` under the `(target, label,
+    /// property)` typed index (literal equality). Defaults to `None`.
+    fn equality_cardinality(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        property: IStr,
+        value: &Value,
+    ) -> Option<u64> {
+        let _ = (target, label, property, value);
+        None
+    }
+
+    /// Exact number of rows matching `range` under the `(target, label,
+    /// property)` typed index (literal bounds). Defaults to `None`.
+    fn range_cardinality(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        property: IStr,
+        range: (std::ops::Bound<Value>, std::ops::Bound<Value>),
+    ) -> Option<u64> {
+        let _ = (target, label, property, range);
+        None
+    }
+
+    /// Expected rows per distinct key for the `(target, label, property)` typed
+    /// index = `cardinality / distinct_keys`. Used for parameter equality where
+    /// the value is unknown at plan time. Defaults to `None`.
+    fn typed_avg_bucket(&self, target: IndexTarget, label: IStr, property: IStr) -> Option<u64> {
+        let _ = (target, label, property);
+        None
+    }
+
+    /// Exact number of rows matching the literal composite `keys` (in declared
+    /// order) under the `(target, label, properties)` composite index. Defaults
+    /// to `None`. A `None` element in `keys` marks a parameter slot that makes
+    /// the literal probe impossible; the caller then falls back to
+    /// [`IndexCatalog::composite_avg_bucket`].
+    fn composite_cardinality(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        properties: &[IStr],
+        keys: &[Value],
+    ) -> Option<u64> {
+        let _ = (target, label, properties, keys);
+        None
+    }
+
+    /// Expected rows per distinct composite key = `cardinality / distinct_keys`
+    /// for the `(target, label, properties)` composite index. Used for
+    /// parameter-keyed composite probes. Defaults to `None`.
+    fn composite_avg_bucket(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        properties: &[IStr],
+    ) -> Option<u64> {
+        let _ = (target, label, properties);
+        None
+    }
 }
+
+/// A half-open or closed `Value` range built from optimizer-side bounds.
+///
+/// `(Bound<Value>, Bound<Value>)` already implements [`RangeBounds<Value>`], so
+/// this type alias documents intent without a newtype wrapper.
+pub(crate) type ValueRange = (std::ops::Bound<Value>, std::ops::Bound<Value>);
+
+/// Assert at compile time that the range tuple satisfies `RangeBounds<Value>`
+/// (the shape `SeleneGraph::nodes_with_property_range` consumes).
+const _: fn() = || {
+    fn _assert<R: RangeBounds<Value>>() {}
+    _assert::<ValueRange>();
+};
 
 /// Opaque index handle.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

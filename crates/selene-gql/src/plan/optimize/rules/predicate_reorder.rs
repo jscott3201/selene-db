@@ -24,7 +24,7 @@ impl Rule for PredicateReorder {
         if let Some(pattern) = &mut plan.pattern_plan {
             let scan_ctx = selectivity::ScanContext {
                 bindings: &pattern.bindings,
-                statistics: ctx.statistics,
+                catalog: ctx.index_catalog,
             };
             changed |= reorder_bucket(&mut pattern.filters, ctx, &scan_ctx);
             changed |= reorder_tree(&mut pattern.join_tree, &pattern.bindings, ctx);
@@ -41,7 +41,7 @@ impl Rule for PredicateReorder {
 fn reorder_tree(tree: &mut JoinTree, bindings: &[BindingDef], ctx: &OptimizeContext<'_>) -> bool {
     let scan_ctx = selectivity::ScanContext {
         bindings,
-        statistics: ctx.statistics,
+        catalog: ctx.index_catalog,
     };
     match tree {
         JoinTree::Scan(scan) => reorder_bucket(&mut scan.property_predicates, ctx, &scan_ctx),
@@ -131,7 +131,7 @@ mod tests {
         let ctx = OptimizeContext::default();
         let scan_ctx = selectivity::ScanContext {
             bindings: &[],
-            statistics: None,
+            catalog: None,
         };
 
         let changed = reorder_bucket(&mut predicates, &ctx, &scan_ctx);

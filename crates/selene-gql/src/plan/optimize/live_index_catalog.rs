@@ -29,10 +29,22 @@
 //! access path. The runtime arm (`runtime::scan::label_index_rows`) falls back
 //! to a linear scan when the requested label's bitmap is absent (zero matching
 //! rows), so reporting `Some` here is always safe.
+//!
+//! # Cost statistics (OPT-5)
+//!
+//! The catalog also serves the optimizer's cost model: `total_rows`,
+//! `label_cardinality`, `equality_cardinality`, `range_cardinality`,
+//! `typed_avg_bucket`, `composite_cardinality`, and `composite_avg_bucket` all
+//! read live row counts from the *same* pinned snapshot. They return estimated
+//! output row counts (lower = cheaper) so the index rules can gate
+//! index-vs-Linear and rank competing index candidates without re-reading the
+//! `ArcSwap` or taking a write lock. Because every index access path is
+//! row-equivalent to a Linear scan (the runtime always re-applies the residual
+//! filters), these statistics can only change *which correct path runs*.
 
 use std::sync::Arc;
 
-use selene_core::IStr;
+use selene_core::{IStr, Value};
 use selene_graph::{SeleneGraph, TypedIndexKind};
 
 use crate::plan::optimize::{
@@ -118,6 +130,139 @@ impl IndexCatalog for LiveIndexCatalog {
             component_kinds,
         ))
     }
+
+    // ---- Cost statistics (OPT-5) ----
+    //
+    // All counts are read from `self.snapshot` (the pinned snapshot), never a
+    // re-loaded `ArcSwap` — preserving D10 and the pinned-snapshot invariant.
+    // Each probe is O(1)/O(log n): RoaringBitmap::len is a popcount, the typed/
+    // composite cardinality + distinct_keys are pre-summed/length reads, and the
+    // equality/range probes borrow (not materialize) the index bitmap.
+
+    fn total_rows(&self, target: IndexTarget) -> Option<u64> {
+        Some(match target {
+            IndexTarget::Node => self.snapshot.node_count() as u64,
+            IndexTarget::Edge => self.snapshot.edge_count() as u64,
+        })
+    }
+
+    fn label_cardinality(&self, target: IndexTarget, label: IStr) -> Option<u64> {
+        match target {
+            // Absent bitmap = zero rows carry the label; report 0 (an exact,
+            // maximally-selective count) rather than None so the cost gate can
+            // still prefer the index.
+            IndexTarget::Node => Some(
+                self.snapshot
+                    .nodes_with_label(&label)
+                    .map_or(0, |bm| bm.len()),
+            ),
+            // Edge label cardinality is not exposed at HEAD; decline so the
+            // edge label-scan rule keeps its structural behavior.
+            IndexTarget::Edge => None,
+        }
+    }
+
+    fn equality_cardinality(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        property: IStr,
+        value: &Value,
+    ) -> Option<u64> {
+        if target != IndexTarget::Node {
+            return None;
+        }
+        // `Some(cow)` = exact match count (possibly 0); `None` = no index or the
+        // value cannot be used with this index kind → decline so the caller
+        // keeps its structural decision.
+        self.snapshot
+            .nodes_with_property_eq(&label, &property, value)
+            .map(|cow| cow.len())
+    }
+
+    fn range_cardinality(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        property: IStr,
+        range: (std::ops::Bound<Value>, std::ops::Bound<Value>),
+    ) -> Option<u64> {
+        if target != IndexTarget::Node {
+            return None;
+        }
+        self.snapshot
+            .nodes_with_property_range(&label, &property, range)
+            .map(|bm| bm.len())
+    }
+
+    fn typed_avg_bucket(&self, target: IndexTarget, label: IStr, property: IStr) -> Option<u64> {
+        if target != IndexTarget::Node {
+            return None;
+        }
+        let index = self.snapshot.property_index_for(&label, &property)?;
+        Some(avg_bucket(index.cardinality(), index.distinct_keys()))
+    }
+
+    fn composite_cardinality(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        properties: &[IStr],
+        keys: &[Value],
+    ) -> Option<u64> {
+        if target != IndexTarget::Node {
+            return None;
+        }
+        let mut canonical = properties.to_vec();
+        canonical.sort_unstable();
+        let index = self
+            .snapshot
+            .composite_property_index_for(&label, &canonical)?;
+        // The runtime composite index orders components by canonical (sorted)
+        // property order; reorder `keys` (given in `properties` order) to match.
+        let mut order: Vec<usize> = (0..properties.len()).collect();
+        order.sort_by_key(|&i| properties[i]);
+        if keys.len() != properties.len() {
+            return None;
+        }
+        let ordered: Vec<&Value> = order.iter().map(|&i| &keys[i]).collect();
+        // Read-path key build (no IStr admission). `Ok(None)` = an unpoolable
+        // ExternalString component → no row can be keyed → exact count 0.
+        match index.key_from_values_lookup(&ordered) {
+            Ok(Some(key)) => Some(index.lookup_key(&key).map_or(0, |bm| bm.len())),
+            Ok(None) => Some(0),
+            // Arity / kind mismatch — decline so the caller keeps the structural
+            // decision.
+            Err(_) => None,
+        }
+    }
+
+    fn composite_avg_bucket(
+        &self,
+        target: IndexTarget,
+        label: IStr,
+        properties: &[IStr],
+    ) -> Option<u64> {
+        if target != IndexTarget::Node {
+            return None;
+        }
+        let mut canonical = properties.to_vec();
+        canonical.sort_unstable();
+        let index = self
+            .snapshot
+            .composite_property_index_for(&label, &canonical)?;
+        Some(avg_bucket(index.cardinality(), index.distinct_keys()))
+    }
+}
+
+/// Expected rows per distinct key = `ceil(cardinality / distinct_keys)`, used
+/// as the parameter-equality cost (the value is unknown at plan time). Rounds
+/// up so a near-unique index never estimates 0 rows. Empty index → 0.
+fn avg_bucket(cardinality: u64, distinct_keys: u64) -> u64 {
+    if distinct_keys == 0 {
+        return 0;
+    }
+    cardinality.div_ceil(distinct_keys)
 }
 
 /// Map a storage-level [`TypedIndexKind`] to the optimizer's [`IndexKind`].

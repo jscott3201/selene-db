@@ -50,6 +50,10 @@ tempfile.workspace = true
 tracing-subscriber.workspace = true
 
 [[test]]
+name = "cost_estimators"
+required-features = ["test-harness"]
+
+[[test]]
 name = "plan_snapshot_corpus"
 required-features = ["test-harness"]
 

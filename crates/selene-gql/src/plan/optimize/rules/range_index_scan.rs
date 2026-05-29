@@ -1,11 +1,11 @@
 //! Typed range/equality index scan rule.
 
 use crate::{
-    BinaryOp, Literal,
+    BinaryOp, IndexTarget, Literal,
     plan::{
         BindingDef, ExecutionPlan, FilterPredicate, IndexKey, JoinTree, ScanAccess, ScanKind,
         TypedIndexBounds,
-        optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
+        optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
     },
 };
 
@@ -83,6 +83,26 @@ fn rewrite_scan(
     else {
         return false;
     };
+    // OPT-5 cost gate: take the typed-index probe only when its estimated output
+    // is strictly cheaper than the residual baseline (label-scoped row count,
+    // else total rows). When stats are absent the gate is a no-op (keeps the
+    // structural decision), so the plan matches pre-OPT-5 HEAD. The probe's rows
+    // are a subset of the residual evaluation — the executor still applies the
+    // label predicate + any residual filters — so results are identical either
+    // way.
+    if let (Some(index_cost), Some(baseline)) = (
+        cost::typed_index_cost(
+            catalog,
+            IndexTarget::Node,
+            label,
+            candidate.property,
+            &candidate.bounds,
+        ),
+        cost::linear_baseline(catalog, IndexTarget::Node, label),
+    ) && cost::should_decline_index(index_cost, baseline)
+    {
+        return false;
+    }
     remove_indices(&mut scan.property_predicates, &candidate.consumed_indices);
     scan.access = ScanAccess::TypedIndexRange {
         handle: candidate.handle,

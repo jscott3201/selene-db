@@ -229,10 +229,22 @@ fn create_index_invalidates_cached_plan_and_re_optimizes() {
     let person = istr("Person");
     let age = istr("age");
     {
+        // Several distinct-age Person rows so the `age = 7` equality is
+        // genuinely selective (1 of N): the OPT-5 cost gate then prefers the
+        // typed index over the label-scoped residual baseline. A degenerate
+        // single-row population would tie (equality cardinality == label
+        // cardinality), and the cost model would correctly decline the index —
+        // exactly the `equality_near_constant_declines_typed_index` case — so
+        // this test pins the *selective* re-optimization the CREATE INDEX
+        // enables, not the degenerate one.
         let mut txn = graph.begin_write();
-        txn.mutator()
-            .create_node(LabelSet::single(person), props([(age, Value::Int(7))]))
-            .unwrap();
+        {
+            let mut m = txn.mutator();
+            for value in [7, 11, 13, 17, 19] {
+                m.create_node(LabelSet::single(person), props([(age, Value::Int(value))]))
+                    .unwrap();
+            }
+        }
         txn.commit().unwrap();
     }
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());

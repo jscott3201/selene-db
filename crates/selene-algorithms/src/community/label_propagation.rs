@@ -17,7 +17,6 @@ use selene_core::{CancellationChecker, NodeId};
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
-use crate::structural::RowIndex;
 
 /// Compute community assignments via asynchronous-deterministic label
 /// propagation.
@@ -42,7 +41,7 @@ pub fn label_propagation_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, u64)>, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
@@ -71,12 +70,12 @@ pub fn label_propagation_with_checker(
             // Multiplicity-faithful: count each directed half-edge separately
             // per §E25. Parallel edges therefore contribute multiple times.
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(nd) = idx.dense_of_node(nb.node_id) {
                     *label_counts.entry(labels[nd as usize]).or_insert(0) += 1;
                 }
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(nd) = idx.dense_of_node(nb.node_id) {
                     *label_counts.entry(labels[nd as usize]).or_insert(0) += 1;
                 }
             }
@@ -112,12 +111,4 @@ pub fn label_propagation_with_checker(
         .collect();
     result.sort_by_key(|&(nid, _)| nid.get());
     Ok(result)
-}
-
-/// `NodeId` (1-based) → sparse row index (0-based) at the projection boundary.
-/// Mirrors the helper in `structural::components`; centralizing it later is a
-/// v1.x refactor (small enough function that local copies are cheap).
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }

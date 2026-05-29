@@ -156,6 +156,58 @@ fn cardinality_sums_across_keys_and_prunes_empty_keys() {
 }
 
 #[test]
+fn distinct_keys_counts_buckets_not_rows() {
+    let mut index = TypedIndex::new(TypedIndexKind::I64);
+    assert_eq!(
+        index.distinct_keys(),
+        0,
+        "empty index has zero distinct keys"
+    );
+    // Two rows on key 1, one row on key 2: 3 total rows, 2 distinct keys.
+    index.insert(&Value::Int(1), 0).unwrap();
+    index.insert(&Value::Int(1), 1).unwrap();
+    index.insert(&Value::Int(2), 2).unwrap();
+    assert_eq!(index.cardinality(), 3, "total rows = 3");
+    assert_eq!(
+        index.distinct_keys(),
+        2,
+        "distinct keys = 2 (dup value bucket)"
+    );
+    // Removing one of the two rows on key 1 keeps the bucket alive.
+    index.remove(&Value::Int(1), 0).unwrap();
+    assert_eq!(index.cardinality(), 2);
+    assert_eq!(
+        index.distinct_keys(),
+        2,
+        "bucket still present after partial remove"
+    );
+    // Removing the last row on key 1 prunes the bucket → distinct drops.
+    index.remove(&Value::Int(1), 1).unwrap();
+    assert_eq!(index.cardinality(), 1);
+    assert_eq!(
+        index.distinct_keys(),
+        1,
+        "empty bucket pruned → distinct = 1"
+    );
+}
+
+#[test]
+fn distinct_keys_each_kind() {
+    // String, Date, Uuid kinds: distinct_keys == number of distinct inserts.
+    let mut s = TypedIndex::new(TypedIndexKind::String);
+    s.insert(&Value::String(intern("a").unwrap()), 0).unwrap();
+    s.insert(&Value::String(intern("b").unwrap()), 1).unwrap();
+    s.insert(&Value::String(intern("a").unwrap()), 2).unwrap();
+    assert_eq!(s.distinct_keys(), 2);
+    assert_eq!(s.cardinality(), 3);
+
+    let mut d = TypedIndex::new(TypedIndexKind::Date);
+    d.insert(&Value::Date(date(2020, 1, 1)), 0).unwrap();
+    d.insert(&Value::Date(date(2020, 1, 2)), 1).unwrap();
+    assert_eq!(d.distinct_keys(), 2);
+}
+
+#[test]
 fn range_scan_honors_included_and_excluded_bounds() {
     let mut index = TypedIndex::new(TypedIndexKind::I64);
     for (row, value) in [(0, 1), (1, 2), (2, 3), (3, 4)] {

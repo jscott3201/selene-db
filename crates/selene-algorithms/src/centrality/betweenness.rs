@@ -138,14 +138,14 @@ fn betweenness_parallel(
     ))
 }
 
-struct DenseAdjacency {
-    idx: RowIndex,
+struct DenseAdjacency<'a> {
+    idx: &'a RowIndex,
     out_neighbors_dense: Vec<Vec<u32>>,
 }
 
-impl DenseAdjacency {
-    fn new(proj: &GraphProjection) -> Self {
-        let idx = RowIndex::new(proj);
+impl<'a> DenseAdjacency<'a> {
+    fn new(proj: &'a GraphProjection) -> Self {
+        let idx = proj.row_index();
         let n = idx.len();
         let mut out_neighbors_dense: Vec<Vec<u32>> = Vec::with_capacity(n);
         for d in 0..n as u32 {
@@ -153,7 +153,7 @@ impl DenseAdjacency {
             let neighbors: Vec<u32> = proj
                 .out_neighbors(node)
                 .iter()
-                .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+                .filter_map(|nb| idx.dense_of_node(nb.node_id))
                 .collect();
             out_neighbors_dense.push(neighbors);
         }
@@ -312,11 +312,4 @@ fn project_and_sort_centrality_pairs(
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     result
-}
-
-/// Map a `NodeId` (1-based per selene-graph) to its sparse row index
-/// (0-based).
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }

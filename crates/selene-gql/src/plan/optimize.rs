@@ -5,6 +5,7 @@
 
 mod binding_refs;
 mod context;
+mod cost;
 mod index_catalog;
 mod live_index_catalog;
 mod registry;
@@ -15,7 +16,7 @@ mod selectivity;
 mod summary;
 mod walk;
 
-pub use context::{EdgeStatistics, OptimizeContext, PropertyHistogram, WanderJoinSampler};
+pub use context::OptimizeContext;
 pub use index_catalog::{
     CompositeIndexHandle, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind, IndexTarget,
     TypedIndexLookup,
@@ -26,6 +27,17 @@ pub use rule::{Rule, Transformed};
 #[cfg(any(test, feature = "test-harness"))]
 pub use summary::{
     PatternSnapshot, PipelineOpSummary, PlanSnapshot, ScanSnapshot, optimize_summary,
+};
+// Test-harness-gated re-export of the cost estimators so integration tests can
+// exercise them in isolation against a synthetic catalog. Production code
+// reaches these via the `cost` module path; this is not a stable public API
+// (gated exactly like `summary`). Kept out of `src/` test modules because the
+// `dos_guard` interner-budget scan rejects any direct interner-call substring
+// under `src/`.
+#[cfg(any(test, feature = "test-harness"))]
+pub use cost::{
+    composite_cost, disjunctive_cost, in_list_cost, linear_baseline, should_decline_index,
+    typed_index_cost,
 };
 
 use crate::plan::ExecutionPlan;

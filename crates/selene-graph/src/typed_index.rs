@@ -170,6 +170,11 @@ impl TypedIndex {
     }
 
     /// Return total row cardinality across all indexed keys.
+    ///
+    /// This is the sum of every bucket's row count, NOT the number of distinct
+    /// keys. For the distinct-key count (e.g. to estimate an average bucket size
+    /// `cardinality / distinct_keys` for parameter-equality cost estimation) use
+    /// [`TypedIndex::distinct_keys`].
     #[must_use]
     pub fn cardinality(&self) -> u64 {
         match self {
@@ -179,6 +184,25 @@ impl TypedIndex {
             Self::Date(index) => cardinality(index),
             Self::LocalDateTime(index) => cardinality(index),
             Self::Uuid(index) => cardinality(index),
+        }
+    }
+
+    /// Return the number of distinct indexed keys (BTreeMap entry count).
+    ///
+    /// Unlike [`TypedIndex::cardinality`] (total rows), this is the number of
+    /// distinct values present in the index. The optimizer cost model divides
+    /// `cardinality / distinct_keys` to estimate the expected rows returned by a
+    /// parameter-equality probe whose value is unknown at plan time. Returns `0`
+    /// for an empty index.
+    #[must_use]
+    pub fn distinct_keys(&self) -> u64 {
+        match self {
+            Self::I64(index) => index.len() as u64,
+            Self::F64(index) => index.len() as u64,
+            Self::String(index) => index.len() as u64,
+            Self::Date(index) => index.len() as u64,
+            Self::LocalDateTime(index) => index.len() as u64,
+            Self::Uuid(index) => index.len() as u64,
         }
     }
 

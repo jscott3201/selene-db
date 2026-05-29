@@ -1,8 +1,8 @@
 //! Small `IN` list typed-index optimization.
 
 use crate::plan::{
-    BindingDef, ExecutionPlan, IndexKey, JoinTree, ScanAccess, ScanKind,
-    optimize::{OptimizeContext, Rule, Transformed, binding_refs, walk},
+    BindingDef, ExecutionPlan, IndexKey, IndexTarget, JoinTree, ScanAccess, ScanKind,
+    optimize::{OptimizeContext, Rule, Transformed, binding_refs, cost, walk},
 };
 
 use super::index_helpers::{compatible_value, single_label};
@@ -115,6 +115,18 @@ fn rewrite_scan(
         // Linear (the runtime would otherwise need per-key dispatch and the
         // brief defers that to a future revisit).
         if !all_match || (has_literal && has_parameter) {
+            continue;
+        }
+        // OPT-5 cost gate: take the bitmap-union only when the summed per-key
+        // cardinality is strictly cheaper than the residual baseline. Absent
+        // stats → no-op (keeps the structural decision). The union returns the
+        // same rows the residual `IN`-list filter would, so results are
+        // identical regardless of path.
+        if let (Some(index_cost), Some(baseline)) = (
+            cost::in_list_cost(catalog, IndexTarget::Node, label, property, &keys),
+            cost::linear_baseline(catalog, IndexTarget::Node, label),
+        ) && cost::should_decline_index(index_cost, baseline)
+        {
             continue;
         }
         scan.property_predicates.remove(index);

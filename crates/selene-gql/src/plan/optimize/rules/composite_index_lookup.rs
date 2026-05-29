@@ -3,8 +3,8 @@
 use selene_core::IStr;
 
 use crate::plan::{
-    BindingDef, ExecutionPlan, JoinTree, ScanAccess, ScanKind,
-    optimize::{OptimizeContext, Rule, Transformed, walk},
+    BindingDef, ExecutionPlan, IndexKey, IndexTarget, JoinTree, ScanAccess, ScanKind,
+    optimize::{OptimizeContext, Rule, Transformed, cost, walk},
 };
 
 use super::index_helpers::{
@@ -94,56 +94,129 @@ fn rewrite_scan(
     if candidates.len() < 2 {
         return false;
     }
-    // Try the full equality candidate set first, then progressively smaller
-    // subsets, so a query with predicates `(tenant, kind, status)` still uses
-    // a `(tenant, kind)` composite index — `status` stays in
-    // `property_predicates` as a residual filter.
-    let Some((composite, consumed_indices)) = find_composite_match(&candidates, label, catalog)
-    else {
+    // Collect every matching composite index in the deterministic
+    // largest-subset / ascending-mask order, then (OPT-5) cost-rank them by
+    // estimated composite cardinality, cheapest first. The deterministic
+    // collection order is the tie-break for equal-cost matches, so plans stay
+    // stable. Without stats, the first match in collection order wins —
+    // byte-identical to the pre-OPT-5 largest-subset-first heuristic.
+    let matches = find_composite_matches(&candidates, label, catalog);
+    let mut best: Option<SelectedComposite> = None;
+    for (composite, consumed_indices) in matches {
+        // BRIEF-154 §B.2 F7: resolve each component value against its per-column
+        // IndexKind. Literals get plan-time kind-checked via `compatible_value`'s
+        // literal branch; typed-declared parameters get gated by
+        // `gql_type_compatible_with_index_kind`. Any per-component failure
+        // (mismatched literal kind, typed-incompatible parameter) skips this
+        // candidate (it cannot be probed) and tries the next.
+        let mut keys = Vec::with_capacity(composite.properties.len());
+        let mut admissible = true;
+        for (property, kind) in &composite.properties {
+            let candidate = candidates
+                .iter()
+                .find(|candidate| candidate.key == *property)
+                .expect("matched property is present in candidate set");
+            let Some(index_key) = compatible_value(candidate.value, *kind) else {
+                admissible = false;
+                break;
+            };
+            keys.push((*property, index_key));
+        }
+        if !admissible {
+            continue;
+        }
+        // OPT-5 cost estimate (None when stats absent → ranks last so the
+        // deterministic collection order is preserved).
+        let probe_keys: Vec<IndexKey> = keys.iter().map(|(_, k)| k.clone()).collect();
+        let property_keys: Vec<IStr> = composite.properties.iter().map(|(p, _)| *p).collect();
+        let estimated = cost::composite_cost(
+            catalog,
+            IndexTarget::Node,
+            label,
+            &property_keys,
+            &probe_keys,
+        );
+        let selected = SelectedComposite {
+            handle: composite.handle,
+            properties: composite.properties,
+            keys,
+            consumed_indices,
+            cost: estimated,
+        };
+        best = Some(match best {
+            Some(current) if !is_cheaper(&selected, &current) => current,
+            _ => selected,
+        });
+    }
+    let Some(selected) = best else {
         return false;
     };
-    // BRIEF-154 §B.2 F7: resolve each component value against its per-column
-    // IndexKind. Literals get plan-time kind-checked via `compatible_value`'s
-    // literal branch; typed-declared parameters get gated by
-    // `gql_type_compatible_with_index_kind`. Any per-component failure
-    // (mismatched literal kind, typed-incompatible parameter) aborts the
-    // rewrite so the executor falls back to Linear evaluation.
-    let mut keys = Vec::with_capacity(composite.properties.len());
-    for (property, kind) in &composite.properties {
-        let candidate = candidates
-            .iter()
-            .find(|candidate| candidate.key == *property)
-            .expect("matched property is present in candidate set");
-        let Some(index_key) = compatible_value(candidate.value, *kind) else {
-            return false;
-        };
-        keys.push((*property, index_key));
+    // OPT-5 index-vs-baseline gate: take the composite lookup only when it is
+    // strictly cheaper than the residual baseline. Absent stats → no-op.
+    if let (Some(index_cost), Some(baseline)) = (
+        selected.cost,
+        cost::linear_baseline(catalog, IndexTarget::Node, label),
+    ) && cost::should_decline_index(index_cost, baseline)
+    {
+        return false;
     }
-    let mut consumed_indices = consumed_indices;
+    let mut consumed_indices = selected.consumed_indices;
     consumed_indices.sort_unstable();
     consumed_indices.dedup();
     remove_indices(&mut scan.property_predicates, &consumed_indices);
     scan.access = ScanAccess::CompositeLookup {
-        handle: composite.handle,
-        properties: composite.properties,
-        keys,
+        handle: selected.handle,
+        properties: selected.properties,
+        keys: selected.keys,
     };
     true
 }
 
-/// Try the full equality candidate set first, then every smaller subset
-/// (down to size 2), preferring larger subsets. Returns the first matching
-/// composite index along with the candidate-`property_predicates` indices it
-/// consumed.
-fn find_composite_match(
+/// A composite-index candidate with its resolved probe keys and estimated cost.
+struct SelectedComposite {
+    handle: crate::IndexHandle,
+    properties: Vec<(IStr, crate::IndexKind)>,
+    keys: Vec<(IStr, IndexKey)>,
+    consumed_indices: Vec<usize>,
+    /// Estimated output rows; `None` when no statistic is available.
+    cost: Option<u64>,
+}
+
+/// Whether `candidate` should replace `current` as the best composite match.
+///
+/// A candidate with a known cost beats one with a lower cost; a candidate
+/// without a cost never displaces an existing pick (so the deterministic
+/// collection order — the first match — wins when stats are absent or equal).
+fn is_cheaper(candidate: &SelectedComposite, current: &SelectedComposite) -> bool {
+    match (candidate.cost, current.cost) {
+        (Some(c), Some(cur)) => c < cur,
+        // Candidate has no stat: never displaces (keep collection-order winner).
+        (None, _) => false,
+        // Current has no stat but candidate does: only meaningful when the
+        // collection order put the no-stat one first; keep it (deterministic).
+        (Some(_), None) => false,
+    }
+}
+
+/// Enumerate every matching composite index in deterministic order: largest
+/// subset first, and within each size masks in ascending order. Each entry
+/// pairs the matched composite handle/metadata with the
+/// candidate-`property_predicates` indices it consumes.
+///
+/// Pre-OPT-5 the rule took the *first* entry (pure largest-subset-first
+/// heuristic). OPT-5 now cost-ranks all entries and uses this collection order
+/// only as the tie-break, so equal-cardinality matches (and the no-stats case)
+/// remain byte-identical to the old behavior.
+fn find_composite_matches(
     candidates: &[EqualityCandidate],
     label: IStr,
     catalog: &dyn crate::IndexCatalog,
-) -> Option<(crate::CompositeIndexHandle, Vec<usize>)> {
+) -> Vec<(crate::CompositeIndexHandle, Vec<usize>)> {
     let n = candidates.len();
     if n > MAX_COMPOSITE_CANDIDATES {
-        return None;
+        return Vec::new();
     }
+    let mut matches = Vec::new();
     // From largest subset down to size 2; within each size, iterate masks in
     // ascending order for deterministic plans when multiple indexes match.
     for size in (2..=n).rev() {
@@ -167,7 +240,7 @@ fn find_composite_match(
                             .expect("matched property in candidate set")
                     })
                     .collect();
-                return Some((composite, consumed));
+                matches.push((composite, consumed));
             }
             // Gosper's hack: next mask with the same popcount, lexicographically.
             let c = mask & mask.wrapping_neg();
@@ -175,7 +248,7 @@ fn find_composite_match(
             mask = (((r ^ mask) >> 2) / c) | r;
         }
     }
-    None
+    matches
 }
 
 fn remove_indices(predicates: &mut Vec<crate::FilterPredicate>, indices: &[usize]) {

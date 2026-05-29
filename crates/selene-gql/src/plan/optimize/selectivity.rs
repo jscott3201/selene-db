@@ -1,15 +1,25 @@
 //! Predicate selectivity heuristics.
+//!
+//! `estimate` returns a selectivity *fraction* in `[0, 1]` (lower = more
+//! selective); `predicate_reorder` sorts residual filters ascending by it so the
+//! cheapest predicate runs first. When the optimizer is given a live
+//! [`IndexCatalog`] (OPT-5), property-equality predicates against a single-label
+//! binding are estimated from live statistics (`equality_cardinality /
+//! label_cardinality`); every other shape, and the no-catalog case, falls back
+//! to the verbatim `HEURISTIC_*` constants + `expr_id` tie-break so plans are
+//! byte-identical to pre-OPT-5 HEAD when stats are absent.
 
-use selene_core::IStr;
+use selene_core::{IStr, Value};
 
 use crate::{
-    BinaryOp, LabelExpr, ValueExpr,
+    BinaryOp, LabelExpr, Literal, ValueExpr,
     plan::{
-        BindingDef, EdgeStatistics, FilterPredicate, FilterPredicateKind, optimize::OptimizeContext,
+        BindingDef, FilterPredicate, FilterPredicateKind, IndexTarget, optimize::IndexCatalog,
+        optimize::OptimizeContext,
     },
 };
 
-use super::binding_refs::match_property_predicate;
+use super::binding_refs::{self, match_property_predicate};
 
 const HEURISTIC_EQUALS: f64 = 0.05;
 const HEURISTIC_NEQ: f64 = 0.95;
@@ -22,8 +32,8 @@ const HEURISTIC_DEFAULT: f64 = 0.5;
 pub(crate) struct ScanContext<'a> {
     /// Pattern binding definitions.
     pub bindings: &'a [BindingDef],
-    /// Optional graph statistics.
-    pub statistics: Option<&'a EdgeStatistics>,
+    /// Optional live index catalog supplying cost statistics (OPT-5).
+    pub catalog: Option<&'a dyn IndexCatalog>,
 }
 
 /// Estimate predicate selectivity. Lower values are more selective.
@@ -32,17 +42,51 @@ pub(crate) fn estimate(
     _ctx: &OptimizeContext<'_>,
     scan_ctx: &ScanContext<'_>,
 ) -> f64 {
-    if let Some(stats) = scan_ctx.statistics
-        && let Some(matched) = match_property_predicate(pred, scan_ctx.bindings)
-        && let Some(label) = label_for_binding(scan_ctx.bindings, matched.binding)
-        && let Some(histogram) = stats.property_histograms.get(&(label, matched.key))
-    {
-        return histogram.estimate_for(&pred.expr);
+    if let Some(selectivity) = stats_selectivity(pred, scan_ctx) {
+        return selectivity;
     }
 
     match pred.kind {
         FilterPredicateKind::PropertyEquals { .. } => HEURISTIC_EQUALS,
         FilterPredicateKind::Expression => estimate_expr(&pred.expr),
+    }
+}
+
+/// Live-statistics selectivity for a property-equality predicate against a
+/// single-label node binding: `equality_cardinality / label_cardinality`.
+///
+/// Returns `None` (caller falls back to the heuristic) whenever any piece is
+/// unavailable: no catalog, non-equality shape, parameter value (unknown at plan
+/// time), missing label, or an absent/empty label population.
+fn stats_selectivity(pred: &FilterPredicate, scan_ctx: &ScanContext<'_>) -> Option<f64> {
+    let catalog = scan_ctx.catalog?;
+    let matched = match_property_predicate(pred, scan_ctx.bindings)?;
+    let label = label_for_binding(scan_ctx.bindings, matched.binding)?;
+    let binding_refs::PropertyPredicateShape::Equality(value_expr) = matched.shape else {
+        return None;
+    };
+    // Only literal equality has an exact count at plan time; parameters defer
+    // to the heuristic so the no-value case stays unchanged.
+    let value = equality_literal_value(value_expr)?;
+    let matches = catalog.equality_cardinality(IndexTarget::Node, label, matched.key, &value)?;
+    let population = catalog.label_cardinality(IndexTarget::Node, label)?;
+    if population == 0 {
+        return None;
+    }
+    Some((matches as f64 / population as f64).clamp(0.0, 1.0))
+}
+
+/// Lower a literal-equality value expression to a concrete [`Value`], or `None`
+/// for parameters / nulls.
+fn equality_literal_value(expr: &ValueExpr) -> Option<Value> {
+    let literal = binding_refs::literal(expr)?;
+    match literal {
+        Literal::Bool(value, _) => Some(Value::Bool(*value)),
+        Literal::Integer(value, _) => Some(Value::Int(*value)),
+        Literal::Float(value, _) => Some(Value::Float(*value)),
+        Literal::String(value, _) => Some(Value::String(*value)),
+        Literal::Uuid(value, _) => Some(Value::Uuid(*value)),
+        Literal::Null(_) => None,
     }
 }
 
@@ -119,7 +163,7 @@ mod tests {
         let ctx = OptimizeContext::default();
         let scan_ctx = ScanContext {
             bindings: &[],
-            statistics: None,
+            catalog: None,
         };
 
         let estimate = estimate(&in_list_predicate(100), &ctx, &scan_ctx);
@@ -132,7 +176,7 @@ mod tests {
         let ctx = OptimizeContext::default();
         let scan_ctx = ScanContext {
             bindings: &[],
-            statistics: None,
+            catalog: None,
         };
 
         let estimate = estimate(&in_list_predicate(10), &ctx, &scan_ctx);
