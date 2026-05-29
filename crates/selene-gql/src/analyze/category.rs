@@ -14,6 +14,8 @@ pub enum StatementCategory {
     CatalogModifying,
     /// Transaction-control statement.
     TransactionControl,
+    /// Session-control statement (ISO/IEC 39075:2024 section 7).
+    SessionControl,
 }
 
 pub(crate) fn classify(
@@ -34,6 +36,10 @@ pub(crate) fn classify(
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => StatementCategory::TransactionControl,
+        Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => StatementCategory::SessionControl,
     }
 }
 

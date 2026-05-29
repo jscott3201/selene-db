@@ -5,6 +5,7 @@ mod call;
 mod catalog;
 mod filter;
 mod mutation;
+mod session;
 mod subquery;
 mod tx;
 
@@ -23,6 +24,7 @@ pub use filter::{
     ProjectExpr,
 };
 pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
+pub use session::SessionOp;
 pub use subquery::{
     OuterBindingRef, PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
     SubqueryBody, SubqueryKind, SubqueryRegistry,
@@ -608,6 +610,8 @@ pub enum PipelineOp {
     },
     /// Transaction-control operation.
     Tx(TxOp),
+    /// Session-control operation (ISO/IEC 39075:2024 section 7).
+    Session(SessionOp),
 }
 
 /// Planner implementation-defined limits.

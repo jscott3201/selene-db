@@ -3,7 +3,8 @@
 use selene_core::feature_register::FeatureId;
 
 use crate::{
-    LimitValue, PipelineStatement, QueryPipeline, ReturnClause, SetOp, Statement, WithClause,
+    LimitValue, PipelineStatement, QueryPipeline, ReturnClause, SessionResetTarget, SetOp,
+    Statement, WithClause,
     ast::{
         pattern::{
             EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode,
@@ -47,6 +48,30 @@ pub(crate) fn statement(statement: &Statement, uses: &mut Vec<FeatureUse>) {
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => record_feature(uses, FeatureId::GT01, statement.span()),
+        Statement::SessionSetValue { span, .. } => {
+            record_feature(uses, FeatureId::GS03, *span);
+        }
+        Statement::SessionSetTimeZone { span, .. } => {
+            record_feature(uses, FeatureId::GS15, *span);
+        }
+        Statement::SessionReset { target, span } => match target {
+            SessionResetTarget::AllCharacteristics => {
+                record_feature(uses, FeatureId::GS04, *span);
+            }
+            SessionResetTarget::Parameters => record_feature(uses, FeatureId::GS08, *span),
+            SessionResetTarget::TimeZone => record_feature(uses, FeatureId::GS07, *span),
+            SessionResetTarget::Parameter(_) => {
+                // ISO/IEC 39075:2024 section 7.2: `SESSION RESET PARAMETER <name>`
+                // exercises both the RESET-PARAMETER surface (CR6 → GS08, shared
+                // with `RESET ALL PARAMETERS`) and the parameter-name argument
+                // (CR7 → GS16). A faithful Flagger (clause 24.6) stamps both.
+                record_feature(uses, FeatureId::GS08, *span);
+                record_feature(uses, FeatureId::GS16, *span);
+            }
+        },
+        // SESSION CLOSE (ISO section 7.3) has no feature code (Conformance
+        // Rules: None); it is unconditionally accepted.
+        Statement::SessionClose { .. } => {}
     }
 }
 

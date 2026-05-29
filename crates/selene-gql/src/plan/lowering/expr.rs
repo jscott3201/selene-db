@@ -202,7 +202,10 @@ fn collect_subqueries_in_pipeline_op(
             collect_subqueries_in_mutation(op, analyzed, registry, entries)?
         }
         PipelineOp::Catalog(op) => collect_subqueries_in_catalog(op, analyzed, registry, entries)?,
-        PipelineOp::Limit { .. } | PipelineOp::Distinct | PipelineOp::Tx(_) => {}
+        PipelineOp::Limit { .. }
+        | PipelineOp::Distinct
+        | PipelineOp::Tx(_)
+        | PipelineOp::Session(_) => {}
     }
     Ok(())
 }

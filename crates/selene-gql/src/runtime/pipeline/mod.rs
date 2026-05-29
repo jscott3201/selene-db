@@ -16,6 +16,7 @@ mod match_op;
 mod mutation;
 mod order_by;
 mod project;
+pub(crate) mod session;
 mod top_k;
 pub(crate) mod tx;
 mod union;
@@ -141,6 +142,11 @@ pub(crate) fn execute_pipeline_with_plan(
                     detail: "TX op surfaced inside execute_pipeline; should be dispatched at statement level",
                 });
             }
+            PipelineOp::Session(_) => {
+                return Err(ExecutorError::ImplementationDefined {
+                    detail: "session op surfaced inside execute_pipeline; should be dispatched at statement level",
+                });
+            }
         };
         ctx.check_cancellation()?;
     }
@@ -235,7 +241,10 @@ pub(crate) fn execute_pipeline_read_only_with_plan(
                 call::execute_read_only(call, table, ctx, expr_ids, subqueries)?
             }
             PipelineOp::CallSubquery(call) => call_subquery::execute_read_only(call, table, ctx)?,
-            PipelineOp::Mutation(_) | PipelineOp::Catalog(_) | PipelineOp::Tx(_) => {
+            PipelineOp::Mutation(_)
+            | PipelineOp::Catalog(_)
+            | PipelineOp::Tx(_)
+            | PipelineOp::Session(_) => {
                 return Err(ExecutorError::InvalidTransactionState {
                     detail: "write pipeline op invoked from read-only subquery",
                     span: crate::SourceSpan::default(),

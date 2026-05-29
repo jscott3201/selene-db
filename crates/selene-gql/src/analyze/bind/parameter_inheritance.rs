@@ -42,7 +42,11 @@ pub(super) fn inherit_statement_parameter_declarations(
         }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
-        | Statement::Rollback { .. } => {}
+        | Statement::Rollback { .. }
+        | Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => {}
     }
 }
 

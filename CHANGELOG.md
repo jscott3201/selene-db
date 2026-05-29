@@ -92,6 +92,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- ISO/IEC 39075:2024 §7 session management (the D1-meaningful subset) in
+  `selene-gql`: `SESSION SET VALUE [IF NOT EXISTS] $p = <value-spec>` (GS03),
+  `SESSION SET TIME ZONE '<zone>'` (GS15), `SESSION RESET [ALL]
+  [CHARACTERISTICS|PARAMETERS]` / `RESET PARAMETER $p` / `RESET TIME ZONE`
+  (GS04/GS07/GS08/GS16), and `SESSION CLOSE` (§7.3). `SET TIME ZONE` threads
+  the zone into a new §20.27 current-datetime family
+  (`current_timestamp`/`now`/`localtimestamp`/`current_date`/`current_time`/
+  `localtime`); the default is UTC (ID048) and `RESET` restores it. `SESSION
+  CLOSE` sets a termination flag (rolling back any active transaction) that is
+  enforced at the single statement funnel — both `Session::execute_source`
+  and the cached-plan `execute_statement` entry reject post-close requests
+  with GQLSTATUS `2DN01`. Invalid time zones raise `22009`. Default session
+  parameters are the empty set (ID049). Catalog-dependent forms (SET
+  GRAPH/SCHEMA/BINDING TABLE — GS01/GS02 — and GS10–GS14) are deferred under
+  D1 (single-graph embeddable): they are absent from `SUPPORTED_FEATURES`,
+  parse-fail cleanly, and each carries a `NOT_SUPPORTED_RATIONALE` entry. The
+  Flagger stamps the GS feature family, co-stamping GS08+GS16 for `RESET
+  PARAMETER <name>` per §7.2 CR6/CR7. (BRIEF-136)
 - Dedicated `Change::NodePropertyRemoved`, `Change::EdgePropertyRemoved`, and
   `Change::NodeLabelRemoved` variants. GQL `REMOVE` now emits these variants
   instead of drop-only `NodeUpdated`/`EdgeUpdated` diffs, while direct mutator

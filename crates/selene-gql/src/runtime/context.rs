@@ -61,6 +61,7 @@ pub struct TxContext<'a, 'g> {
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
+    session_time_zone: jiff::tz::TimeZone,
 }
 
 /// Expression-evaluation context for one planned execution point.
@@ -143,6 +144,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -191,6 +193,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -239,6 +242,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -268,6 +272,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -298,6 +303,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -330,6 +336,25 @@ impl<'a, 'g> TxContext<'a, 'g> {
     ) -> Self {
         self.warning_sink = warning_sink;
         self
+    }
+
+    /// Attach the session time-zone displacement visible to temporal functions.
+    ///
+    /// The section 20.27 current-datetime functions read this through
+    /// [`Self::session_time_zone`]. Defaults to UTC (ID048) when not set.
+    #[must_use]
+    pub fn with_session_time_zone(mut self, zone: jiff::tz::TimeZone) -> Self {
+        self.session_time_zone = zone;
+        self
+    }
+
+    /// Borrow the session time-zone displacement for temporal evaluation.
+    ///
+    /// Per ISO/IEC 39075:2024 section 4.5.2.1 the current-datetime functions
+    /// evaluate against the session time zone; the default is UTC (ID048).
+    #[must_use]
+    pub fn session_time_zone(&self) -> &jiff::tz::TimeZone {
+        &self.session_time_zone
     }
 
     /// Emit one runtime warning if the session opted into warning collection.

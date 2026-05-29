@@ -55,6 +55,15 @@ pub(super) fn parse_string_pair(
     Ok(value)
 }
 
+/// Decode a `string_lit` pair into its raw (unquoted, unescaped) text.
+///
+/// Used by surfaces that need the decoded string value rather than an interned
+/// literal — for example the `SESSION SET TIME ZONE '<region>'` time-zone
+/// string (ISO/IEC 39075:2024 section 7.1).
+pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
+    parse_string_text(pair.as_str(), span(pair))
+}
+
 pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> ValueExpr {
     match value {
         ValueExpr::Literal(Literal::Integer(value, _)) => {

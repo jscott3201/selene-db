@@ -35,7 +35,11 @@ pub fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
         | Statement::Explain { .. }
         | Statement::StartTransaction { .. }
         | Statement::Commit { .. }
-        | Statement::Rollback { .. } => Ok(()),
+        | Statement::Rollback { .. }
+        | Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => Ok(()),
     }
 }
 

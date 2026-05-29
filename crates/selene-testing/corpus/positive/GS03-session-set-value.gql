@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GS03
+// expects: parse-ok
+SESSION SET VALUE $p = 1

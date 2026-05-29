@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GS07
+// expects: parse-ok
+SESSION RESET TIME ZONE

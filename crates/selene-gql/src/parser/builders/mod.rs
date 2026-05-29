@@ -6,6 +6,7 @@ pub(super) mod explain;
 pub(super) mod expr;
 pub(super) mod mutation;
 pub(super) mod pattern;
+pub(super) mod session;
 pub(super) mod transaction;
 
 use pest::iterators::Pair;
@@ -50,6 +51,7 @@ pub(crate) fn build_statement(
         Rule::call_stmt => call::build_top_level_call(program_pair, budget),
         Rule::explain_stmt => explain::build_explain_statement(program_pair, budget),
         Rule::transaction_control => transaction::build_transaction_control(program_pair),
+        Rule::session_command => session::build_session_command(program_pair, budget),
         _ => Err(unexpected_pair(program_pair, "expected a GQL program")),
     }
 }

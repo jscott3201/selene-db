@@ -45,6 +45,9 @@ impl GqlStatus {
     pub const DIVISION_BY_ZERO: Self = Self(*b"22012");
     /// Maps to GQLSTATUS 22018 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_CHARACTER_VALUE_FOR_CAST: Self = Self(*b"22018");
+    /// Maps to GQLSTATUS 22009 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// (data exception — invalid time zone displacement value).
+    pub const INVALID_TIME_ZONE: Self = Self(*b"22009");
     /// Maps to GQLSTATUS 2201E per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM: Self = Self(*b"2201E");
     /// Maps to GQLSTATUS 2201F per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -76,6 +79,11 @@ impl GqlStatus {
     pub const IN_FAILED_TRANSACTION: Self = Self(*b"25N02");
     /// Maps to GQLSTATUS 2D000 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const INVALID_TRANSACTION_TERMINATION: Self = Self(*b"2D000");
+    /// Maps to GQLSTATUS 2DN01, a selene-db implementation-defined subclass
+    /// under standard class 2D (invalid transaction/session termination) per
+    /// ISO/IEC 39075:2024 section 23.1. Raised when a GQL-request is issued
+    /// against a session already closed by `SESSION CLOSE` (section 7.3).
+    pub const SESSION_CLOSED: Self = Self(*b"2DN01");
     /// Maps to GQLSTATUS 01G11 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const NULL_VALUE_ELIMINATED_IN_SET_FUNCTION: Self = Self(*b"01G11");
     /// Maps to GQLSTATUS 01N01, a selene-db implementation-defined subclass
@@ -278,6 +286,7 @@ mod tests {
             (GqlStatus::SUBSTRING_ERROR, "22011", *b"22"),
             (GqlStatus::DIVISION_BY_ZERO, "22012", *b"22"),
             (GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST, "22018", *b"22"),
+            (GqlStatus::INVALID_TIME_ZONE, "22009", *b"22"),
             (
                 GqlStatus::INVALID_ARGUMENT_FOR_NATURAL_LOGARITHM,
                 "2201E",
@@ -313,6 +322,7 @@ mod tests {
             (GqlStatus::READ_ONLY_TRANSACTION_VIOLATION, "25G03", *b"25"),
             (GqlStatus::IN_FAILED_TRANSACTION, "25N02", *b"25"),
             (GqlStatus::INVALID_TRANSACTION_TERMINATION, "2D000", *b"2D"),
+            (GqlStatus::SESSION_CLOSED, "2DN01", *b"2D"),
             (
                 GqlStatus::NULL_VALUE_ELIMINATED_IN_SET_FUNCTION,
                 "01G11",

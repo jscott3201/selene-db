@@ -15,6 +15,7 @@ mod predicates;
 mod scalar_fns;
 mod string_fns;
 mod subquery;
+mod temporal_fns;
 mod uuid_fns;
 
 use selene_core::{EdgeId, NodeId, Value};

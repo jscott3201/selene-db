@@ -1,8 +1,10 @@
 //! Analyzer output AST wrapper.
 
+use selene_core::IStr;
+
 use crate::{
-    DdlStatement, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline, SetOp, SourceSpan,
-    Statement,
+    DdlStatement, MutationPipeline, NonEmpty, ProcedureCall, QueryPipeline, SessionResetTarget,
+    SetOp, SourceSpan, Statement, ValueExpr,
     analyze::{
         binding::BindingUse,
         category::StatementCategory,
@@ -104,6 +106,33 @@ pub enum AnalyzedStatementKind {
     Commit(SourceSpan),
     /// `ROLLBACK`.
     Rollback(SourceSpan),
+    /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
+    SessionSetValue {
+        /// Interned parameter name without the leading `$`.
+        param: IStr,
+        /// Value expression bound to the parameter.
+        value: Box<ValueExpr>,
+        /// `IF NOT EXISTS` was present on the parameter specification.
+        if_not_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION SET TIME ZONE <time zone string>` (ISO feature GS15).
+    SessionSetTimeZone {
+        /// Decoded IANA region name or fixed-offset string.
+        zone: String,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION RESET [ <session reset arguments> ]` (ISO features GS04/GS07/GS08/GS16).
+    SessionReset {
+        /// Reset target selected by the arguments.
+        target: SessionResetTarget,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION CLOSE` (ISO/IEC 39075:2024 section 7.3).
+    SessionClose(SourceSpan),
 }
 
 impl AnalyzedStatementKind {
@@ -122,6 +151,20 @@ impl AnalyzedStatementKind {
             Statement::StartTransaction { span } => Self::StartTransaction(span),
             Statement::Commit { span } => Self::Commit(span),
             Statement::Rollback { span } => Self::Rollback(span),
+            Statement::SessionSetValue {
+                param,
+                value,
+                if_not_exists,
+                span,
+            } => Self::SessionSetValue {
+                param,
+                value,
+                if_not_exists,
+                span,
+            },
+            Statement::SessionSetTimeZone { zone, span } => Self::SessionSetTimeZone { zone, span },
+            Statement::SessionReset { target, span } => Self::SessionReset { target, span },
+            Statement::SessionClose { span } => Self::SessionClose(span),
         }
     }
 }

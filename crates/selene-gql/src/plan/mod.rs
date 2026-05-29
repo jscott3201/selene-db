@@ -23,7 +23,7 @@ pub use ir::{
     OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
     PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryBody, SubqueryKind,
+    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SessionOp, SubqueryBody, SubqueryKind,
     SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;

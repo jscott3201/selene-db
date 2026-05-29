@@ -8,6 +8,7 @@ pub(crate) mod parameter_inheritance;
 pub(crate) mod parameters;
 pub(crate) mod pattern;
 pub(crate) mod query;
+pub(crate) mod session;
 pub(crate) mod transaction;
 
 use selene_core::IStr;
@@ -76,6 +77,10 @@ pub(crate) fn bind_statement(
             | Statement::Rollback { span } => {
                 transaction::bind_transaction_control(&mut ctx, *span)
             }
+            Statement::SessionSetValue { span, .. }
+            | Statement::SessionSetTimeZone { span, .. }
+            | Statement::SessionReset { span, .. }
+            | Statement::SessionClose { span } => session::bind_session_command(&mut ctx, *span),
         }
         Ok(())
     })();
@@ -130,6 +135,17 @@ fn bind_explain_inner(
             transaction::bind_transaction_control(ctx, *span);
             Ok(())
         }
+        // The grammar's `explainable_statement` rule excludes session commands,
+        // so EXPLAIN never wraps one; reject defensively rather than silently
+        // binding a non-explainable statement.
+        Statement::SessionSetValue { span, .. }
+        | Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionReset { span, .. }
+        | Statement::SessionClose { span } => Err(AnalysisError::NotImplemented {
+            message: "EXPLAIN of a SESSION command is not supported".into(),
+            span: *span,
+            hint: None,
+        }),
     }
 }
 

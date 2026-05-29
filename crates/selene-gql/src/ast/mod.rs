@@ -36,8 +36,8 @@ pub use pattern::{
 pub use span::SourceSpan;
 pub use statement::{
     LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-    QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, TypedBinding, UnwindStatement,
-    WithClause,
+    QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement, TypedBinding,
+    UnwindStatement, WithClause,
 };
 pub use types::{GqlType, RecordType};
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};

@@ -40,7 +40,8 @@ pub use crate::ast::{
     span::SourceSpan,
     statement::{
         LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, UnwindStatement, WithClause,
+        QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement,
+        UnwindStatement, WithClause,
     },
     types::{GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},
@@ -59,8 +60,8 @@ pub use crate::plan::{
     PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery, PlannedTableSubquery,
     PlannedTableSubqueryYield, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
     PlannedYieldItem, PlannerError, ProjectExpr, PropertyInit, RepeatEdgeMatch, Rule, ScanAccess,
-    ScanKind, SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, Transformed, TxOp,
-    TypedIndexBounds, TypedIndexLookup, YieldKind, optimize, plan,
+    ScanKind, SessionOp, SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, Transformed,
+    TxOp, TypedIndexBounds, TypedIndexLookup, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureArity, ProcedureDefaultValue, ProcedureError, ProcedureHandle,

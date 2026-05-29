@@ -171,6 +171,13 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
         Statement::StartTransaction { span }
         | Statement::Commit { span }
         | Statement::Rollback { span } => rebase_span(span, offset),
+        Statement::SessionSetValue { value, span, .. } => {
+            rebase_span(span, offset);
+            rebase_value(value, offset);
+        }
+        Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionReset { span, .. }
+        | Statement::SessionClose { span } => rebase_span(span, offset),
     }
 }
 
