@@ -51,6 +51,16 @@ pub(crate) struct RecoveryState {
     /// Cleared at the start of every WAL entry so the membership reflects the
     /// pre-truncate store, not a post-truncate re-query.
     truncate_expansion: Arc<Mutex<Vec<Change>>>,
+    /// Set once a [`Change::GraphReset`] (BRIEF-152, audit Item 10) is replayed.
+    ///
+    /// A factory-reset moots all schema/index intents seen so far in the WAL, so
+    /// the reset arm clears the pending lists and sets this flag. `into_graph`
+    /// then short-circuits the snapshot/caller bound-type reconciliation and
+    /// forces `bound_type = None` (open), matching the runtime reset. Without
+    /// this, a `recover_closed(bound_type)` after a reset would reject (snapshot
+    /// declares no binding, caller asserts one) or silently restore the
+    /// pre-reset type from the snapshot.
+    schema_reset_to_open: bool,
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
@@ -278,6 +288,33 @@ impl RecoveryState {
                 }
                 self.truncate_expansion.lock().extend(tombstones);
             }
+            Change::GraphReset {} => {
+                // Re-derive every live row from the recovered store at this WAL
+                // position and mark it dead, staging per-row tombstones for
+                // subscriber fan-out — identical to the runtime mutator, which
+                // carries no ids in the declarative change ("replay walks the
+                // store"). Wipes ALL nodes/edges incl untyped ones.
+                let mut tombstones = Vec::new();
+                for (id, row) in self.nodes.iter_mut() {
+                    if row.alive {
+                        row.alive = false;
+                        tombstones.push(Change::NodeDeleted { id: *id });
+                    }
+                }
+                for (id, row) in self.edges.iter_mut() {
+                    if row.alive {
+                        row.alive = false;
+                        tombstones.push(Change::EdgeDeleted { id: *id });
+                    }
+                }
+                self.truncate_expansion.lock().extend(tombstones);
+                // A reset moots every prior schema/index intent in the WAL up to
+                // this point, and forces the recovered graph open.
+                self.schema_reset_to_open = true;
+                self.pending_schema_changes.clear();
+                self.pending_property_index_changes.clear();
+                self.pending_composite_property_index_changes.clear();
+            }
             Change::SchemaChanged { change, .. } => {
                 match change {
                     SchemaChange::NodeTypeAdded { .. }
@@ -341,7 +378,37 @@ impl RecoveryState {
                  structurally inconsistent",
             )));
         }
+        // BRIEF-152: a replayed GraphReset forces the recovered graph open and
+        // moots every prior schema intent. Short-circuit the snapshot/caller
+        // bound-type reconciliation entirely — bind to None regardless of what
+        // the snapshot or caller asserted — so a `recover_closed(bound_type)`
+        // after a reset reconstructs the identical empty+open post-state the
+        // runtime produced instead of rejecting on the reconciliation conflict.
+        let schema_reset_to_open = self.schema_reset_to_open;
         let meta = match self.meta {
+            Some(meta) if schema_reset_to_open => {
+                if meta.graph_id != expected_graph_id {
+                    return Err(crate::GraphError::Provider(inconsistent(format!(
+                        "CORE/META declares {} but caller asserted {} during recovery; \
+                         refusing to silently reconstruct under the wrong identity",
+                        meta.graph_id, expected_graph_id,
+                    ))));
+                }
+                GraphMeta {
+                    graph_id: meta.graph_id,
+                    generation: meta.generation,
+                    next_node_id: meta.next_node_id,
+                    next_edge_id: meta.next_edge_id,
+                    bound_type: None,
+                }
+            }
+            None if schema_reset_to_open => GraphMeta {
+                graph_id: expected_graph_id,
+                generation: 0,
+                next_node_id: 1,
+                next_edge_id: 1,
+                bound_type: None,
+            },
             Some(meta) => {
                 if meta.graph_id != expected_graph_id {
                     return Err(crate::GraphError::Provider(inconsistent(format!(

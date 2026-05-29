@@ -2,6 +2,7 @@
 
 mod catalog;
 mod composite_property_index;
+mod factory_reset;
 mod property_index;
 mod remove;
 
@@ -769,3 +770,6 @@ mod tests;
 
 #[cfg(test)]
 mod truncate_tests;
+
+#[cfg(test)]
+mod factory_reset_tests;

@@ -451,13 +451,20 @@ fn expand_truncates_for_fanout(
     let mut view = Vec::with_capacity(changes.len());
     for (index, change) in changes.iter().enumerate() {
         match change {
-            Change::NodesOfTypeTruncated { .. } | Change::EdgesOfTypeTruncated { .. } => {
+            // BRIEF-152: GraphReset is fanned out as its staged per-row
+            // tombstones too, alongside the BRIEF-150 truncate variants, so
+            // subscribers reclaim derived state for every wiped node/edge and
+            // never see the bare declarative reset they could not expand.
+            Change::NodesOfTypeTruncated { .. }
+            | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. } => {
                 if let Some((_, expansion)) = expansions.iter().find(|(staged, _)| *staged == index)
                 {
                     view.extend(expansion.iter().cloned());
                 }
-                // A truncate change with no staged expansion removed zero rows
-                // (empty/absent label); it contributes nothing to fan-out.
+                // A truncate/reset change with no staged expansion removed zero
+                // rows (empty/absent label, or a reset of an empty graph); it
+                // contributes nothing to fan-out.
             }
             other => view.push(other.clone()),
         }

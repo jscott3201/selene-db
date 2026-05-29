@@ -42,6 +42,7 @@ impl ChangeSubscriber for HnswIndexRegistry {
             | Change::NodeLabelRemoved { .. }
             | Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }
@@ -83,6 +84,7 @@ impl ChangeSubscriber for IvfIndexRegistry {
             | Change::NodeLabelRemoved { .. }
             | Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }

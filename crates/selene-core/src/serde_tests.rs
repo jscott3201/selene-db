@@ -212,10 +212,29 @@ fn change_postcard_round_trip() {
         },
         Change::NodesOfTypeTruncated { label },
         Change::EdgesOfTypeTruncated { label },
+        Change::GraphReset {},
     ];
     for change in changes {
         rt(&change);
     }
+}
+
+#[test]
+fn graph_reset_postcard_round_trip() {
+    // BRIEF-152: GraphReset is the empty (carries-nothing) factory-reset change.
+    // It is appended after EdgesOfTypeTruncated, so its postcard tag is 13 and
+    // no earlier variant's tag shifts (see pre_147_node_updated_wire_blob_still_
+    // decodes). A unit-style variant encodes to its single tag byte with no
+    // payload.
+    let change = Change::GraphReset {};
+    let bytes = postcard::to_allocvec(&change).unwrap();
+    assert_eq!(
+        bytes,
+        [13_u8],
+        "GraphReset encodes to its bare tag byte (13)"
+    );
+    let decoded: Change = postcard::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded, Change::GraphReset {});
 }
 
 #[test]

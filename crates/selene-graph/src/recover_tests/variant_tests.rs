@@ -491,6 +491,70 @@ fn recover_from_wal_only_replays_cascade_truncate_then_node_type_dropped() {
 }
 
 #[test]
+fn recover_from_wal_only_replays_graph_reset_to_empty_and_open() {
+    // BRIEF-152: DROP GRAPH emits one declarative Change::GraphReset. Recovery
+    // must replay it by re-deriving every live row from the recovered store and
+    // marking it dead (no ids persisted), and must reset the schema to open —
+    // even when recover_closed is handed a bound type, the replayed reset wins,
+    // reconstructing the identical empty+open post-state the runtime produced.
+    let dir = temp_dir("graph-reset-replay");
+    let graph_id = GraphId::new(710);
+    let base = person_closed_graph_type();
+    let person = base.node_types[0].name;
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let create_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    assert_eq!(shared.read().node_count(), 2);
+
+    let reset_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator().factory_reset().unwrap();
+        txn.commit().unwrap()
+    };
+    // O(1): the persisted changeset is exactly one declarative GraphReset.
+    assert!(matches!(
+        reset_outcome.changes.as_slice(),
+        [Change::GraphReset {}]
+    ));
+
+    // Replay create...+GraphReset in WAL order. recover_closed is GIVEN the
+    // closed `base`, but the replayed reset forces the recovered graph open.
+    let mut all_changes = create_outcome.changes.clone();
+    all_changes.extend(reset_outcome.changes.iter().cloned());
+    append_wal(&dir, 0, &all_changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    assert!(
+        recovered.graph_type().is_none(),
+        "GraphReset replay resets the schema to open, overriding the recover_closed base"
+    );
+    assert!(!recovered.is_closed());
+    assert_eq!(
+        recovered.read().node_count(),
+        0,
+        "all nodes wiped on replay"
+    );
+    assert_eq!(
+        recovered.read().edge_count(),
+        0,
+        "all edges wiped on replay"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_from_wal_only_replays_property_index_created() {
     let dir = temp_dir("property-index-created");
     let graph_id = GraphId::new(706);

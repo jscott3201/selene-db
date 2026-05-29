@@ -209,16 +209,38 @@ fn mutation_feature_is_supported() {
 }
 
 #[test]
-fn graph_management_features_are_rejected_before_planning() {
-    for source in [
-        "CREATE GRAPH demo",
-        "CREATE GRAPH IF NOT EXISTS demo",
-        "DROP GRAPH demo",
-        "DROP GRAPH IF EXISTS demo",
-    ] {
+fn create_graph_is_rejected_before_planning() {
+    // CREATE GRAPH stays GC04-rejected under D1 single-graph: the engine cannot
+    // create a second graph. DROP GRAPH is split out (now IM_DROP_GRAPH).
+    for source in ["CREATE GRAPH demo", "CREATE GRAPH IF NOT EXISTS demo"] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
         assert_feature(error, FeatureId::GC04);
+    }
+}
+
+#[test]
+fn drop_graph_stamps_im_drop_graph_and_parses() {
+    // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
+    // factory-reset extension (a supported vendor flag), so it parses through to
+    // the executor instead of dying in the flagger like CREATE GRAPH. IF EXISTS
+    // is informational under D1 and adds no extra flag.
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+    for source in ["DROP GRAPH demo", "DROP GRAPH IF EXISTS demo"] {
+        let observed = ids(source);
+        assert!(
+            observed.contains(&FeatureId::IM_DROP_GRAPH),
+            "{source} must flag IM_DROP_GRAPH"
+        );
+        assert!(
+            !observed.contains(&FeatureId::GC04),
+            "{source} must NOT flag GC04 (that stays CREATE GRAPH only)"
+        );
     }
 }
 

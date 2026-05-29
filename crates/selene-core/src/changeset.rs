@@ -137,6 +137,25 @@ pub enum Change {
         /// Edge label whose instances were removed.
         label: IStr,
     },
+    /// Factory-reset of the entire graph: wipe **all** nodes and edges (every
+    /// label, including untyped/arbitrary-label rows) **and** reset the schema
+    /// to open (`bound_type` -> `None`), in one declarative O(1)-WAL change.
+    ///
+    /// This is the `DROP GRAPH` factory-reset change (BRIEF-152, deletion-
+    /// reclamation audit Item 10). Under D1 single-graph it targets the one
+    /// bound graph. It carries **nothing** — never the affected node/edge ids
+    /// nor any schema payload — so a reset of a graph with N rows still writes
+    /// exactly one WAL change. Recovery re-derives every affected row by walking
+    /// the recovered store ("replay walks store"), marking dead every alive node
+    /// and edge, and forces the recovered `bound_type` to `None`, so the
+    /// recovered state is byte-identical to `MATCH (n) DETACH DELETE n` followed
+    /// by a full schema drop. Change subscribers (e.g. vector providers) never
+    /// receive this variant; the producing side expands it into per-row
+    /// `NodeDeleted`/`EdgeDeleted` tombstones on both the runtime and recovery
+    /// paths so derived state is reclaimed without leaks. The MANIFEST epoch and
+    /// WAL archive lineage are untouched: a factory-reset is one committed WAL
+    /// entry on top of the existing snapshot, not a file-level wipe.
+    GraphReset {},
 }
 
 /// Label set difference.
@@ -659,7 +678,7 @@ mod tests {
 
     #[test]
     fn change_all_covers_every_variant() {
-        assert_eq!(Change::VARIANT_COUNT, 13);
+        assert_eq!(Change::VARIANT_COUNT, 14);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Change::ALL {

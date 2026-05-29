@@ -92,6 +92,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `DROP GRAPH` is now executable as a **factory-reset** of the single (D1)
+  session graph, replacing the v1.0 `ImplementationDefined` stub (BRIEF-152,
+  deletion+reclamation audit Item 10). It wipes **every** node and edge —
+  including untyped / arbitrary-label rows (enumerated from the live-row
+  bitmaps via `SeleneGraph::live_nodes`/`live_edges`, so a per-type truncate
+  cannot miss them) — and resets the schema to open (`bound_type → None`),
+  turning a previously closed (GG02) graph back into an open (GG01) one.
+  Recorded as exactly **one** declarative `Change::GraphReset` regardless of
+  instance count (O(1) WAL), while per-row `NodeDeleted`/`EdgeDeleted`
+  tombstones are fanned out to `ChangeSubscriber`s (so derived state such as
+  vector indexes is reclaimed without leaks) on both the runtime and the
+  recovery-replay paths. Recovery re-derives the wiped rows from the recovered
+  store and forces the graph open — a `recover_closed(bound_type)` after a
+  reset reconstructs the identical empty+open state. The MANIFEST epoch and WAL
+  archive lineage are untouched (this is one committed WAL entry, not a
+  file-level wipe); `DROP GRAPH` is idempotent. Flagged as the `IM_DROP_GRAPH`
+  vendor extension; the parsed graph name is informational under D1 and
+  `IF EXISTS` is trivially satisfied. `CREATE GRAPH` remains rejected (D1
+  cannot create a second graph). New `Change::GraphReset` variant +
+  `ChangeKind` discriminant (postcard tags appended; pre-existing tags stable).
 - `DROP NODE TYPE` / `DROP EDGE TYPE` now take an optional `RESTRICT | CASCADE`
   behavior tail (BRIEF-151, deletion+reclamation audit Item 3, Seam B).
   `RESTRICT` is the default when no keyword is written and is the Seam-B fix:

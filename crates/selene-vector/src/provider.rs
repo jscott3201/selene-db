@@ -181,6 +181,7 @@ impl ChangeSubscriber for HnswProvider {
             | Change::NodeLabelRemoved { .. }
             | Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }
@@ -301,6 +302,7 @@ impl IndexProvider for HnswProvider {
             | Change::NodeLabelRemoved { .. }
             | Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }
+            | Change::GraphReset { .. }
             | Change::EdgeCreated { .. }
             | Change::EdgeUpdated { .. }
             | Change::EdgePropertyRemoved { .. }

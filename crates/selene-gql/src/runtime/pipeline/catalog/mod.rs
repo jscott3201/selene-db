@@ -2,6 +2,7 @@
 
 mod compose;
 mod drop_cascade;
+mod drop_graph;
 mod endpoints;
 mod index_ddl;
 mod property;
@@ -40,11 +41,17 @@ pub(super) fn execute(
     ctx: &mut TxContext<'_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
     match op {
-        CatalogOp::CreateGraph { .. } | CatalogOp::DropGraph { .. } => {
-            Err(ExecutorError::ImplementationDefined {
-                detail: GRAPH_LEVEL_CATALOG_DETAIL,
-            })
-        }
+        // CREATE GRAPH stays rejected under D1 single-graph (cannot create a
+        // second graph). DROP GRAPH is the IM_DROP_GRAPH factory-reset
+        // (BRIEF-152, audit Item 10), handled by the drop_graph submodule.
+        CatalogOp::CreateGraph { .. } => Err(ExecutorError::ImplementationDefined {
+            detail: GRAPH_LEVEL_CATALOG_DETAIL,
+        }),
+        CatalogOp::DropGraph {
+            name,
+            if_exists,
+            span,
+        } => drop_graph::execute_drop_graph(*name, *if_exists, *span, table, ctx),
         CatalogOp::CreateNodeType {
             label,
             or_replace,
