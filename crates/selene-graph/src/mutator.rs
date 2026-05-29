@@ -19,7 +19,7 @@ use crate::adjacency::{AdjacencyEdge, AdjacencyEntry};
 use crate::error::{GraphError, GraphResult};
 use crate::graph_types::{GraphTypeDef, PropertyTypeDef};
 use crate::index_provider::{IndexProvider, ProviderTag};
-use crate::store::{edge_row_index, node_row_index};
+use crate::store::{RowIndex, edge_row_index, node_row_index};
 use crate::type_validator::{EntityId, TypeViolation};
 use crate::write_txn::WriteTxn;
 
@@ -75,11 +75,18 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             if row == graph.node_store.len() {
                 graph.node_store.labels.push(labels.clone());
                 graph.node_store.properties.push(props.clone());
+                graph.node_store.row_to_id.push(id);
             } else {
                 graph.node_store.labels.set(row, labels.clone());
                 graph.node_store.properties.set(row, props.clone());
+                graph.node_store.row_to_id.set(row, id);
             }
             graph.node_store.alive.insert(row as u32);
+            // BRIEF-Item-4a: bind the external id to its row in both directions.
+            // The live commit path never re-runs `rebuild_id_maps`, so the
+            // `id -> row` map must be populated here. Identity in 4a; the row is
+            // remappable once 4b compaction renumbers rows under stable ids.
+            graph.node_id_to_row.insert(id, RowIndex::new(row as u32));
             insert_node_labels(&mut graph.idx_label, row as u32, &labels);
         }
         self.txn.changes.push(Change::NodeCreated {
@@ -115,13 +122,17 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 graph.edge_store.source.push(source);
                 graph.edge_store.target.push(target);
                 graph.edge_store.properties.push(props.clone());
+                graph.edge_store.row_to_id.push(id);
             } else {
                 graph.edge_store.label.set(row, label);
                 graph.edge_store.source.set(row, source);
                 graph.edge_store.target.set(row, target);
                 graph.edge_store.properties.set(row, props.clone());
+                graph.edge_store.row_to_id.set(row, id);
             }
             graph.edge_store.alive.insert(row as u32);
+            // BRIEF-Item-4a: bind the external edge id to its row (live path).
+            graph.edge_id_to_row.insert(id, RowIndex::new(row as u32));
             insert_index_row(&mut graph.idx_edge_label, label, row as u32);
 
             graph
@@ -317,6 +328,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 row as u32,
             )?;
             graph.node_store.alive.remove(row as u32);
+            // BRIEF-Item-4a: KEEP the real external id in row_to_id for the now
+            // dead row (and keep the id -> row map entry). A deleted id stays
+            // resolvable -> its dead row -> NodeNotAlive, identically across the
+            // live and recovery paths: the snapshot persists dead rows with their
+            // id (sections.rs) and STEP 9 encodes that id from this column. Only
+            // never-committed aborted-tx hole rows carry NodeId::TOMBSTONE
+            // (-> None -> NotFound, the accepted refinement).
         }
         Ok(incident)
     }
@@ -493,6 +511,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .ok_or(GraphError::EdgeNotFound { id })?;
         let graph = self.txn.guard_mut();
         graph.edge_store.alive.remove(row as u32);
+        // BRIEF-Item-4a: keep the real id in row_to_id for the dead row (see
+        // remove_node_row); only never-committed holes carry EdgeId::TOMBSTONE.
         remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
         if let Some(mut entry) = graph.adjacency_out.get(&source).cloned() {
             entry.remove(id);
@@ -534,6 +554,9 @@ fn ensure_node_rows(graph: &mut crate::SeleneGraph, target_row: usize) {
     while graph.node_store.len() < target_row {
         graph.node_store.labels.push(LabelSet::new());
         graph.node_store.properties.push(PropertyMap::new());
+        // BRIEF-Item-4a: keep row_to_id length-locked with the row columns;
+        // aborted-tx hole rows carry the tombstone id (never in the id->row map).
+        graph.node_store.row_to_id.push(NodeId::TOMBSTONE);
     }
 }
 
@@ -547,6 +570,8 @@ fn ensure_edge_rows(graph: &mut crate::SeleneGraph, target_row: usize) -> GraphR
         graph.edge_store.source.push(NodeId::TOMBSTONE);
         graph.edge_store.target.push(NodeId::TOMBSTONE);
         graph.edge_store.properties.push(PropertyMap::new());
+        // BRIEF-Item-4a: keep row_to_id length-locked with the row columns.
+        graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE);
     }
     Ok(())
 }
@@ -767,6 +792,9 @@ fn update_or_remove_entry(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod id_map_tests;
 
 #[cfg(test)]
 mod truncate_tests;
