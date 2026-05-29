@@ -112,6 +112,7 @@ All v1.0 architecture is settled. D1–D19 are foundational; D20–D21 and D25 r
 | D20 | `Value::ExternalString(Arc<str>)` is the canonical surface for engine-produced strings that must NOT enter the global `IStr` pool. `PartialEq` is variant-strict; cross-variant string equality lives at the executor layer (`selene-gql::runtime::value_compare`). | `_spec/15` E74 |
 | D21 | Snapshot harness pattern: pure-mirror DSL in `selene-testing` (zero production-crate imports), renderer + integration test + golden `.snap` files in the target crate, `test-harness` feature + `[[test]] required-features` gate, drift-detection tests deriving coverage from observed execution. Dep direction is `target -> selene-testing` as dev-dep. | `_spec/13`, `_spec/14`, `_spec/15` E81–E84 |
 | D25 | `ChangeSubscriber` trait: runtime and recovery fan-out of `Change` events to extension providers via per-provider `ChangeKindSet` filter. Vector providers use it to tombstone derived vector state when graph nodes are deleted. Forward-compatible with all extension providers. | `_design/deletion-reclamation-audit.md` Item 1 |
+| D26 | Snapshot + WAL-archive retention: typed `RetentionPolicy { keep_n_snapshots, keep_n_wal_archives, max_total_size_bytes: Option<u64>, time_based: Option<Duration> }` (embedder **config**, deliberately *not* persisted in the MANIFEST — avoids a divergent second source of truth) + `selene_persist::prune(dir, policy)` / `WalWriter::prune`. Prune is MANIFEST-atomic (rewrite-then-delete; the live snapshot + active WAL are never deletable regardless of policy) and reclaims superseded crash-orphans. The four constraints are conjunctive. Defaults: keep 2 snapshots / 4 archives, no size/time cap. | `_design/deletion-reclamation-audit.md` Item 5 |
 
 ## Forward decisions — v1.x reclamation cycle (planned, not yet shipped)
 
@@ -121,7 +122,7 @@ Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclama
 
 | Existing D | Amendment | Lands in |
 |---|---|---|
-| **D11** (no ID reuse) | Relaxed: *external* `NodeId` (UUID-shaped, user-stable) remains permanent; *internal* row index `u32` becomes remappable across compaction epochs. | BRIEF-Item-4a |
+| **D11** (no ID reuse) | Relaxed: *external* `NodeId` (monotonic `u64`, stable & never-reused — representation locked 2026-05-29) remains permanent; *internal* row index `u32` becomes remappable across compaction epochs. | BRIEF-Item-4a |
 | **D14** (rkyv snapshot archive) | Archive format grows internal-id remap headers + dual decoder for pre-compaction snapshots. | BRIEF-Item-4a + 4c |
 | ~~**D15** (two-step recovery)~~ | ✅ **Shipped (BRIEF-148):** three-step **MANIFEST read** → snapshot apply → WAL replay; the MANIFEST commit-point makes multi-phase rotate crash-safe + adds parent-dir fsync. Decision-log D15 row updated above. | BRIEF-Item-2 / BRIEF-148 |
 | **D18** (pack lifecycle WAL-only) | Revised: lifecycle events written to a dedicated `audit.log` with independent retention; D12 principal slot also relocates from WAL header to audit-log event. WAL stays change-only. | BRIEF-Item-7 |
@@ -130,10 +131,10 @@ Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclama
 
 | Planned ID | Decision | Lands in |
 |---|---|---|
-| **D22** | `NodeId` (and `EdgeId`) split into external stable `NodeId(Uuid)` + internal `RowIndex(u32)`; PropertyMap/LabelSet keyed by `RowIndex`; external `NodeId` is the persistence-stable surface. | BRIEF-Item-4a |
+| **D22** | `NodeId` (and `EdgeId`) split into external stable **monotonic `NodeId(u64)`** (never-reused counter allocated under the D10 write lock — representation locked 2026-05-29, *supersedes the earlier "UUID-shaped" wording*; keeps 8-byte id width + id ordering, no coordination needed under single-writer) + internal `RowIndex(u32)`; PropertyMap/LabelSet keyed by `RowIndex`; external `NodeId` is the persistence-stable surface. | BRIEF-Item-4a |
 | **D23** | `StorageCompactor` trait: every storage provider (selene-graph, selene-vector, future selene-timeseries / selene-rdf) implements `compact_for_snapshot(live_ids) -> CompactionResult`. Snapshot publication runs all compactors atomically under the MANIFEST epoch. Cross-storage, forward-compatible with all extensions. | BRIEF-Item-4b + 4d |
 | **D24** | Separate `audit.log` file for D12 principal + D18 lifecycle + future user-action audit. Same mutation funnel writes both WAL + audit log atomically; independent `RetentionPolicy`. | BRIEF-Item-7 |
-| **D26** | Snapshot+WAL+audit retention policy: typed `RetentionPolicy { keep_n_snapshots, keep_n_wal_archives, max_total_size_bytes, time_based }` with MANIFEST-atomic prune. Defaults: `keep_n_snapshots=2`, `keep_n_wal_archives=4`, no size/time limit. | BRIEF-Item-5 |
+| ~~**D26**~~ | ✅ **Shipped (BRIEF-Item-5):** typed `RetentionPolicy` (config, not persisted) + MANIFEST-atomic `prune`; live snapshot + active WAL never deletable; conjunctive count/size/time constraints; reclaims crash-orphans. Decision-log D26 row added above. | BRIEF-Item-5 |
 
 Brief sequence (14 work items, 4 tiers) lives in `_design/deletion-reclamation-audit.md`. Release allocation is per `project_deletion_reclamation_cycle` memory.
 

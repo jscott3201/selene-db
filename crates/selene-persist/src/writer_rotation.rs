@@ -22,12 +22,37 @@ pub struct WalRotationOutcome {
     pub archived_last_sequence: u64,
 }
 
+/// Filename prefix shared by every archived WAL segment (`wal.{seq}.archive`).
+pub const WAL_ARCHIVE_PREFIX: &str = "wal.";
+/// Filename suffix shared by every archived WAL segment (`wal.{seq}.archive`).
+pub const WAL_ARCHIVE_SUFFIX: &str = ".archive";
+
 pub(crate) fn wal_archive_path(path: &Path, last_sequence: u64) -> PathBuf {
-    let archive_name = format!("wal.{last_sequence}.archive");
+    let archive_name = format!("{WAL_ARCHIVE_PREFIX}{last_sequence}{WAL_ARCHIVE_SUFFIX}");
     path.parent().map_or_else(
         || PathBuf::from(&archive_name),
         |parent| parent.join(&archive_name),
     )
+}
+
+/// Parse `wal.{seq}.archive` into its sequence number.
+///
+/// Returns `None` for any name that does not match the durable-archive pattern,
+/// including the in-flight `wal.{seq}.archive.tmp.{pid}.{n}` temporaries a
+/// crashed rotation may leave behind (their trailing component is the attempt
+/// counter, not `.archive`). Retention's directory scan relies on this so it
+/// never mistakes a partial archive for a prunable durable one — the mirror of
+/// [`crate::snapshot_path::parse_snapshot_filename`] for the WAL archive family.
+#[must_use]
+pub fn parse_wal_archive_filename(name: &std::ffi::OsStr) -> Option<u64> {
+    let name = name.to_str()?;
+    let seq = name
+        .strip_prefix(WAL_ARCHIVE_PREFIX)?
+        .strip_suffix(WAL_ARCHIVE_SUFFIX)?;
+    if seq.is_empty() {
+        return None;
+    }
+    seq.parse::<u64>().ok()
 }
 
 pub(crate) fn archive_current_wal(

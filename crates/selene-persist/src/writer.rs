@@ -13,6 +13,7 @@ use crate::entry_header::{
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
 use crate::manifest::Manifest;
 use crate::payload::{encode_changes, verify_checksum};
+use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
 use crate::writer_rotation::{
     RotationInputs, WalRotationOutcome, archive_current_wal, reset_active_wal_file,
@@ -410,6 +411,31 @@ impl WalWriter {
         self.committed_offset = state.committed_offset;
         self.entries_since_fsync = 0;
         Ok(outcome)
+    }
+
+    /// Prune superseded snapshots + WAL archives in this writer's directory per
+    /// `policy`, committing through the MANIFEST.
+    ///
+    /// Thin ergonomic wrapper over [`crate::retention::prune`] bound to this
+    /// writer's directory. Pending appends are flushed first so the on-disk
+    /// state the prune reasons about is current, and the `&mut self` receiver
+    /// serializes the prune against [`Self::rotate_with_manifest`] — the two
+    /// must never interleave their MANIFEST rewrites. The prune never touches
+    /// the active WAL this writer owns; it only reclaims snapshot/archive files
+    /// the live epoch no longer needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns flush errors, or any error from [`crate::retention::prune`]
+    /// (directory scan, MANIFEST decode/commit). Post-commit file deletion is
+    /// best-effort and never fails the prune.
+    pub fn prune(&mut self, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
+        self.flush()?;
+        let dir = self
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        crate::retention::prune(&dir, policy)
     }
 
     /// Best-effort rollback to the last committed offset on append failure.

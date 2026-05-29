@@ -41,8 +41,13 @@
 //!   body_hash: [u8; 16]  = blake3-low-128 over the BODY region only
 //! ```
 //!
-//! Format breaks are free pre-v1.x (audit note); Items 4c/5/7 grow the reserved
-//! `compaction_epoch` / `retention` fields under a bumped `format_version`.
+//! Format breaks are free pre-v1.x (audit note); Item 4c grows the reserved
+//! `compaction_epoch` field under a bumped `format_version`. Item 5 (D26)
+//! retention deliberately leaves `retention_present` reserved: the
+//! [`RetentionPolicy`](crate::RetentionPolicy) is embedder configuration, not
+//! persisted state, so prune only shrinks `archived_wal_seqs` (it never records
+//! a policy here). Keeping a second copy of the policy in the MANIFEST would be
+//! the dual-source divergence the "single writer per concern" lesson rules out.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -115,7 +120,7 @@ impl Manifest {
         body.extend_from_slice(&self.live_snapshot_seq.to_le_bytes());
         body.extend_from_slice(&self.active_wal_header_seq.to_le_bytes());
         body.extend_from_slice(&self.compaction_epoch.to_le_bytes());
-        body.push(0_u8); // retention_present placeholder (Item-5)
+        body.push(0_u8); // retention_present: reserved (Item-5 keeps policy in embedder config)
         let name_len = u16::try_from(active_wal_bytes.len()).map_err(|_| {
             PersistError::PayloadCodec("active_wal name exceeds u16 length".to_owned())
         })?;

@@ -19,6 +19,7 @@ mod payload;
 pub mod provider;
 mod reader;
 pub mod recovery;
+pub mod retention;
 pub mod section;
 pub mod snapshot_file_header;
 pub mod snapshot_path;
@@ -42,6 +43,9 @@ pub use crate::manifest::{
 pub use crate::provider::{ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult};
 pub use crate::reader::{WalEntry, WalEntryStream, WalEntryView, WalReader};
 pub use crate::recovery::{RecoveryOutcome, recover};
+pub use crate::retention::{
+    DEFAULT_KEEP_SNAPSHOTS, DEFAULT_KEEP_WAL_ARCHIVES, PruneOutcome, RetentionPolicy, prune,
+};
 pub use crate::section::{
     MAX_SECTION_COUNT, MAX_SECTION_PAYLOAD_BYTES, SECTION_TABLE_ROW_LEN, SectionEntry,
 };
@@ -58,4 +62,6 @@ pub use crate::snapshot_writer::{
     SectionCompression, SnapshotBuilder, SnapshotConfig, SnapshotFinalizeOutcome,
 };
 pub use crate::writer::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
-pub use crate::writer_rotation::WalRotationOutcome;
+pub use crate::writer_rotation::{
+    WAL_ARCHIVE_PREFIX, WAL_ARCHIVE_SUFFIX, WalRotationOutcome, parse_wal_archive_filename,
+};
