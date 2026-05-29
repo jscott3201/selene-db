@@ -15,7 +15,7 @@ use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
-use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
+use crate::store::{EdgeStore, NodeStore, RowIndex, edge_row_index, node_row_index};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 
 /// Registered built-in property-index metadata.
@@ -131,6 +131,13 @@ pub struct SeleneGraph {
     /// Per-`(label, properties...)` node composite value indexes.
     pub composite_property_index:
         FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>,
+    /// External `NodeId -> RowIndex` lookup (the inverse of
+    /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
+    /// external id can stay stable while the row is remapped by compaction
+    /// (D22 / BRIEF-Item-4a). `imbl` for cheap copy-on-write snapshot clones.
+    pub node_id_to_row: HashMap<NodeId, RowIndex>,
+    /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
+    pub edge_id_to_row: HashMap<EdgeId, RowIndex>,
 }
 
 impl SeleneGraph {
@@ -153,6 +160,8 @@ impl SeleneGraph {
             idx_edge_label: HashMap::new(),
             property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
+            node_id_to_row: HashMap::new(),
+            edge_id_to_row: HashMap::new(),
         }
     }
 
