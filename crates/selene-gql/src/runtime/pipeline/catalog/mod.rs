@@ -1,6 +1,7 @@
 //! Catalog DDL pipeline operator.
 
 mod compose;
+mod drop_cascade;
 mod endpoints;
 mod index_ddl;
 mod property;
@@ -147,33 +148,15 @@ pub(super) fn execute(
         CatalogOp::DropNodeType {
             label,
             if_exists,
+            behavior,
             span,
-        } => {
-            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
-            if !node_type_exists(Some(&graph_type), *label) && *if_exists {
-                return Ok(table);
-            }
-            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .drop_node_type(*label)
-                .map_err(|source| catalog_graph_error(source, *span))?;
-            Ok(table)
-        }
+        } => drop_cascade::execute_drop_node_type(*label, *if_exists, *behavior, *span, table, ctx),
         CatalogOp::DropEdgeType {
             label,
             if_exists,
+            behavior,
             span,
-        } => {
-            ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let graph_type = closed_graph_type(ctx.snapshot(), *span)?;
-            if !edge_type_exists(Some(&graph_type), *label) && *if_exists {
-                return Ok(table);
-            }
-            ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .drop_edge_type(*label)
-                .map_err(|source| catalog_graph_error(source, *span))?;
-            Ok(table)
-        }
+        } => drop_cascade::execute_drop_edge_type(*label, *if_exists, *behavior, *span, table, ctx),
         CatalogOp::TruncateNodeType { label, span } => {
             // TRUNCATE removes instances by label (IM_TRUNCATE, audit Item 11).
             // It is valid on both open (GG01) and closed (GG02) graphs — unlike

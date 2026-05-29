@@ -74,6 +74,8 @@ pub enum DdlStatement {
         label: IStr,
         /// `IF EXISTS`.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
         /// Source span.
         span: SourceSpan,
     },
@@ -83,6 +85,8 @@ pub enum DdlStatement {
         label: IStr,
         /// `IF EXISTS`.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
         /// Source span.
         span: SourceSpan,
     },
@@ -164,6 +168,22 @@ impl DdlStatement {
             | Self::ShowProcedures(span) => *span,
         }
     }
+}
+
+/// `DROP NODE TYPE` / `DROP EDGE TYPE` drop behavior.
+///
+/// `Restrict` is the default when no behavior keyword is written. It is the
+/// Seam-B fix from the deletion-reclamation audit (Item 3): dropping a type
+/// whose instances still exist is rejected with `G2000` rather than silently
+/// orphaning instances on a closed (GG02) graph. `Cascade` is the selene-db
+/// `IM_DROP_CASCADE` vendor extension: it truncates the type's instances first,
+/// then drops the type, atomically in one transaction.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum DropBehavior {
+    /// Reject the drop when instances or inbound type dependencies remain.
+    Restrict,
+    /// Truncate the type's instances, then drop the type (`IM_DROP_CASCADE`).
+    Cascade,
 }
 
 /// Type-validation mode.

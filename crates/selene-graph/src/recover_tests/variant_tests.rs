@@ -7,7 +7,8 @@ use selene_core::{
 use smallvec::smallvec;
 
 use crate::{
-    EdgeEndpointDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode,
+    DropBehavior, EdgeEndpointDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind,
+    ValidationMode,
 };
 
 use super::{append_wal, expect_prop, prop, temp_dir};
@@ -327,7 +328,7 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
                 ValidationMode::Strict,
             )
             .unwrap();
-        mutator.drop_edge_type(rel).unwrap();
+        mutator.drop_edge_type(rel, DropBehavior::Restrict).unwrap();
         txn.commit().unwrap()
     };
     append_wal(&dir, 0, &outcome.changes);
@@ -408,7 +409,9 @@ fn recover_from_wal_only_replays_node_type_dropped() {
         .unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
-        txn.mutator().drop_node_type(person).unwrap();
+        txn.mutator()
+            .drop_node_type(person, DropBehavior::Restrict)
+            .unwrap();
         txn.commit().unwrap()
     };
     append_wal(&dir, 0, &outcome.changes);
@@ -424,6 +427,66 @@ fn recover_from_wal_only_replays_node_type_dropped() {
             ..
         }]
     ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_from_wal_only_replays_cascade_truncate_then_node_type_dropped() {
+    // CASCADE drop emits [NodesOfTypeTruncated, NodeTypeDropped] in one txn;
+    // recovery must replay both in WAL order to the identical post-state:
+    // instances gone (re-derived from recovered store state) AND type dropped.
+    let dir = temp_dir("cascade-node-drop-replay");
+    let graph_id = GraphId::new(709);
+    let base = person_closed_graph_type();
+    let person = base.node_types[0].name;
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let create_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    assert_eq!(shared.read().node_count(), 2);
+
+    let cascade_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .drop_node_type(person, DropBehavior::Cascade)
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    // The CASCADE changeset is exactly truncate-then-drop, in order.
+    assert!(matches!(
+        cascade_outcome.changes.as_slice(),
+        [
+            Change::NodesOfTypeTruncated { .. },
+            Change::SchemaChanged {
+                change: selene_core::SchemaChange::NodeTypeDropped { .. },
+                ..
+            }
+        ]
+    ));
+    // Replay all changes in WAL order: the two node creations, then the
+    // CASCADE truncate-then-drop. The truncate re-derives the live rows it
+    // removes from the recovered store state (no ids persisted).
+    let mut all_changes = create_outcome.changes.clone();
+    all_changes.extend(cascade_outcome.changes.iter().cloned());
+    append_wal(&dir, 0, &all_changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    assert!(graph_type.node_types.is_empty());
+    assert!(graph_type.edge_types.is_empty());
+    assert_eq!(recovered.read().node_count(), 0);
+    assert_eq!(recovered.read().edge_count(), 0);
     let _ = fs::remove_dir_all(dir);
 }
 

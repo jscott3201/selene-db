@@ -78,19 +78,23 @@ pub(crate) fn lower_ddl(
         DdlStatement::DropNodeType {
             label,
             if_exists,
+            behavior,
             span,
         } => CatalogOp::DropNodeType {
             label: *label,
             if_exists: *if_exists,
+            behavior: *behavior,
             span: *span,
         },
         DdlStatement::DropEdgeType {
             label,
             if_exists,
+            behavior,
             span,
         } => CatalogOp::DropEdgeType {
             label: *label,
             if_exists: *if_exists,
+            behavior: *behavior,
             span: *span,
         },
         DdlStatement::TruncateNodeType { label, span } => CatalogOp::TruncateNodeType {

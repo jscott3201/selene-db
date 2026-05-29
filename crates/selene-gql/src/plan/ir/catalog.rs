@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::{EdgeEndpointSpec, GqlType, SourceSpan, ValidationMode};
+use crate::{DropBehavior, EdgeEndpointSpec, GqlType, SourceSpan, ValidationMode};
 
 use super::ProjectExpr;
 
@@ -71,6 +71,8 @@ pub enum CatalogOp {
         label: IStr,
         /// Whether `IF EXISTS` was requested.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
         /// Source span.
         span: SourceSpan,
     },
@@ -80,6 +82,8 @@ pub enum CatalogOp {
         label: IStr,
         /// Whether `IF EXISTS` was requested.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
         /// Source span.
         span: SourceSpan,
     },

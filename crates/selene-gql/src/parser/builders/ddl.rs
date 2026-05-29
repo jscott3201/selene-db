@@ -4,8 +4,8 @@ use pest::iterators::Pair;
 
 use crate::{
     ast::{
-        DdlStatement, EdgeEndpointSpec, SourceSpan, TypePropertyConstraint, TypePropertyDef,
-        ValidationMode,
+        DdlStatement, DropBehavior, EdgeEndpointSpec, SourceSpan, TypePropertyConstraint,
+        TypePropertyDef, ValidationMode,
     },
     error::ParserError,
     parser::budget::InternerBudget,
@@ -236,11 +236,12 @@ fn build_drop_node_type(
     budget: &mut InternerBudget,
 ) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let (label, if_exists) =
+    let (label, if_exists, behavior) =
         build_drop_type_parts(pair, "DROP NODE TYPE is missing label", budget)?;
     Ok(DdlStatement::DropNodeType {
         label,
         if_exists,
+        behavior,
         span: source_span,
     })
 }
@@ -250,11 +251,12 @@ fn build_drop_edge_type(
     budget: &mut InternerBudget,
 ) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let (label, if_exists) =
+    let (label, if_exists, behavior) =
         build_drop_type_parts(pair, "DROP EDGE TYPE is missing label", budget)?;
     Ok(DdlStatement::DropEdgeType {
         label,
         if_exists,
+        behavior,
         span: source_span,
     })
 }
@@ -303,21 +305,37 @@ fn build_drop_type_parts(
     pair: Pair<'_, Rule>,
     missing: &'static str,
     budget: &mut InternerBudget,
-) -> Result<(selene_core::IStr, bool), ParserError> {
+) -> Result<(selene_core::IStr, bool, DropBehavior), ParserError> {
     let source_span = span(&pair);
     let mut label = None;
     let mut if_exists = false;
+    // Default behavior when the optional `RESTRICT | CASCADE` tail is absent.
+    let mut behavior = DropBehavior::Restrict;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
             Rule::ident => label = Some(intern_pair(child, budget)?),
+            Rule::drop_behavior => behavior = build_drop_behavior(&child)?,
             _ => return Err(unexpected_pair(child, "unexpected DROP TYPE child")),
         }
     }
     Ok((
         label.ok_or_else(|| ParserError::syntax(missing, source_span, None))?,
         if_exists,
+        behavior,
     ))
+}
+
+fn build_drop_behavior(pair: &Pair<'_, Rule>) -> Result<DropBehavior, ParserError> {
+    match pair.as_str().to_ascii_uppercase().as_str() {
+        "RESTRICT" => Ok(DropBehavior::Restrict),
+        "CASCADE" => Ok(DropBehavior::Cascade),
+        _ => Err(ParserError::syntax(
+            "unknown drop behavior",
+            span(pair),
+            None,
+        )),
+    }
 }
 
 fn build_type_prop_def_list(

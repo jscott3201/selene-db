@@ -15,7 +15,8 @@ pub mod util;
 
 pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{
-    DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
+    DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
+    ValidationMode,
 };
 pub use eq::structurally_eq;
 pub use expr::{

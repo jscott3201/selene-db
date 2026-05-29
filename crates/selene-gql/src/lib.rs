@@ -25,7 +25,8 @@ pub use crate::analyze::{
 pub use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem},
     ddl::{
-        DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
+        DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
+        ValidationMode,
     },
     expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr},
     format::format_procedure_call,

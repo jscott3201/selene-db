@@ -597,6 +597,28 @@ pub enum ValidationMode {
     Warn,
 }
 
+/// Behavior of a `DROP NODE TYPE` / `DROP EDGE TYPE` statement when the type
+/// still has surviving instances or inbound type dependencies.
+///
+/// `Restrict` (the default when no behavior keyword is written) is the
+/// Seam-B fix from the deletion-reclamation audit (Item 3): dropping a type
+/// whose instances still exist would otherwise leave orphan instances whose
+/// declared type no longer exists (a silent graph-type-consistency violation
+/// on a closed GG02 graph). `Restrict` makes that rejection explicit and early.
+/// `Cascade` (selene-db `IM_DROP_CASCADE` vendor extension) truncates the
+/// instances first, then drops the type, atomically in one transaction.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum DropBehavior {
+    /// Reject the drop when instances or inbound type dependencies remain; the
+    /// type is not dropped and no `Change` is recorded (no partial state).
+    #[default]
+    Restrict,
+    /// Truncate every instance of the type first (reusing the
+    /// `Mutator::truncate_*` funnel), then drop the type — both in one
+    /// transaction.
+    Cascade,
+}
+
 fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {
     let mut seen = BTreeSet::new();
     for name in names {

@@ -1,8 +1,9 @@
 //! Write-side parser coverage for BRIEF-18.
 
 use selene_gql::{
-    DdlStatement, DeleteMode, GqlStatus, GqlType, MutationStatement, MutationTerminator,
-    PipelineStatement, Statement, TypePropertyConstraint, ValidationMode, YieldColumn, parse,
+    DdlStatement, DeleteMode, DropBehavior, GqlStatus, GqlType, MutationStatement,
+    MutationTerminator, PipelineStatement, Statement, TypePropertyConstraint, ValidationMode,
+    YieldColumn, parse,
 };
 
 fn parse_mutation(source: &str) -> selene_gql::MutationPipeline {
@@ -154,16 +155,36 @@ fn parse_edge_type_and_show_ddl() {
     assert_eq!(endpoints.from_labels[0].as_str(), "Person");
     assert_eq!(properties[0].gql_type, GqlType::Date);
 
+    // Default (no behavior keyword) lowers to RESTRICT.
     assert!(matches!(
         parse_ddl("DROP NODE TYPE IF EXISTS :Person"),
         DdlStatement::DropNodeType {
             if_exists: true,
+            behavior: DropBehavior::Restrict,
             ..
         }
     ));
     assert!(matches!(
         parse_ddl("DROP EDGE TYPE :KNOWS"),
-        DdlStatement::DropEdgeType { .. }
+        DdlStatement::DropEdgeType {
+            behavior: DropBehavior::Restrict,
+            ..
+        }
+    ));
+    // Explicit CASCADE / RESTRICT keywords are carried on the AST.
+    assert!(matches!(
+        parse_ddl("DROP NODE TYPE :Person CASCADE"),
+        DdlStatement::DropNodeType {
+            behavior: DropBehavior::Cascade,
+            ..
+        }
+    ));
+    assert!(matches!(
+        parse_ddl("DROP EDGE TYPE :KNOWS RESTRICT"),
+        DdlStatement::DropEdgeType {
+            behavior: DropBehavior::Restrict,
+            ..
+        }
     ));
     assert!(matches!(
         parse_ddl("SHOW NODE TYPES"),

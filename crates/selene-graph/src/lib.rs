@@ -49,7 +49,7 @@ pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph};
 pub use graph_types::{
-    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
+    DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
     PropertyElementType, PropertyTypeDef, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
