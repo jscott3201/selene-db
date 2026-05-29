@@ -402,3 +402,88 @@ fn prune_drops_manifest_seq_whose_file_vanished() {
     assert_eq!(outcome.retained_wal_archives, vec![9]);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn prune_size_constraint_evicts_into_predecessor_snapshots_but_keeps_live() {
+    let dir = temp_dir("size-into-snaps");
+    // Three snapshots, no archives; count keeps all three (live + 2 predecessors).
+    snap(&dir, 8, &[0_u8; 100]);
+    snap(&dir, 9, &[0_u8; 100]);
+    snap(&dir, 10, &[0_u8; 100]); // live
+    write_manifest(&dir, 10, vec![]);
+
+    let policy = RetentionPolicy {
+        keep_n_snapshots: 3, // count alone would retain 8, 9, 10
+        keep_n_wal_archives: 0,
+        max_total_size_bytes: Some(150),
+        time_based: None,
+    };
+    let outcome = prune(&dir, &policy).unwrap();
+
+    // Size budget 150 forces eviction *past* archives into predecessor snapshots
+    // (evict 8 → 200, evict 9 → 100 ≤ 150), but the live snapshot 10 is exempt.
+    assert!(snap_exists(&dir, 10));
+    assert!(!snap_exists(&dir, 9));
+    assert!(!snap_exists(&dir, 8));
+    assert_eq!(outcome.retained_snapshots, vec![10]);
+    assert_eq!(outcome.deleted_snapshots, vec![8, 9]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn prune_wal_only_epoch_live_zero_keeps_newest_snapshots() {
+    let dir = temp_dir("live-zero");
+    // live_snapshot_seq = 0 → no snapshot is authoritative (WAL-only epoch).
+    // None of the on-disk snapshots is the live one, so there is no floor to
+    // force-retain; count selection keeps the newest keep_n.
+    for seq in [3, 4, 5] {
+        snap(&dir, seq, b"x");
+    }
+    write_manifest(&dir, 0, vec![]);
+
+    let policy = RetentionPolicy {
+        keep_n_snapshots: 2,
+        ..RetentionPolicy::default()
+    };
+    let outcome = prune(&dir, &policy).unwrap();
+
+    // Newest two retained; oldest reclaimed. No live exemption applies at live=0.
+    assert_eq!(outcome.retained_snapshots, vec![4, 5]);
+    assert_eq!(outcome.deleted_snapshots, vec![3]);
+    assert!(snap_exists(&dir, 5) && snap_exists(&dir, 4) && !snap_exists(&dir, 3));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn prune_conjunctive_count_time_and_size_compose() {
+    let dir = temp_dir("conjunctive");
+    // Snapshots 9 (pred) + 10 (live), 50 bytes each; archives 5,6,7,8, 100 each.
+    snap(&dir, 9, &[0_u8; 50]);
+    snap(&dir, 10, &[0_u8; 50]);
+    for seq in [5, 6, 7, 8] {
+        arch(&dir, seq, &[0_u8; 100]);
+    }
+    write_manifest(&dir, 10, vec![5, 6, 7, 8]);
+
+    // Age archives 5 and 6 past the cutoff; leave 7, 8 (and both snapshots) fresh.
+    backdate(&archive_path(&dir, 5), Duration::from_secs(3600));
+    backdate(&archive_path(&dir, 6), Duration::from_secs(3600));
+
+    let policy = RetentionPolicy {
+        keep_n_snapshots: 2,                       // count → snapshots {9,10}
+        keep_n_wal_archives: 4,                    // count → archives {5,6,7,8}
+        time_based: Some(Duration::from_secs(60)), // time → drops aged {5,6}
+        max_total_size_bytes: Some(250),           // size → 100(snaps)+200(archs) > 250, drop 7
+    };
+    let outcome = prune(&dir, &policy).unwrap();
+
+    // All three constraints compose: count admitted 4 archives, time cut to {7,8},
+    // size (oldest-first, live-exempt) cut to {8}. Snapshots untouched (100 ≤ 250
+    // once archives shrink). Deleted archives = {5,6} (time) ∪ {7} (size).
+    assert_eq!(outcome.retained_snapshots, vec![9, 10]);
+    assert_eq!(outcome.retained_wal_archives, vec![8]);
+    assert_eq!(outcome.deleted_wal_archives, vec![5, 6, 7]);
+    let manifest = Manifest::read(&dir).unwrap().unwrap();
+    assert_eq!(manifest.archived_wal_seqs, vec![8]);
+    let _ = fs::remove_dir_all(dir);
+}
