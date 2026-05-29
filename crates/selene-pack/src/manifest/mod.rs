@@ -29,6 +29,19 @@ pub(crate) const BLAKE3_HASH_SENTINEL: &str =
     "blake3:0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Typed procedure-pack manifest.
+///
+/// # Packs are procedure-only (no owned graph data)
+///
+/// A pack declares [`procedures`](Self::procedures) and nothing else. It
+/// **cannot** declare ownership of graph data: there is no `owned_label_prefix`,
+/// `owned_labels`, or similar field, and `#[serde(deny_unknown_fields)]` (which
+/// makes the generated JSON Schema `additionalProperties: false`) rejects any
+/// attempt to introduce one. This is a deliberate contract — deletion +
+/// reclamation audit Item 8, mirroring the aether-db donor — not an accident of
+/// the current field list: packs own only engine-internal state managed on
+/// their own lifecycle, so disabling or uninstalling a pack never needs to
+/// cascade-delete user graph data, because a pack owns none. The
+/// `pack_manifest_rejects_owned_data_declaration` test pins this contract.
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcedurePackManifest {
