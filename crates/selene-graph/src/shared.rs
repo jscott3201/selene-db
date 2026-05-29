@@ -10,7 +10,7 @@ use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
 use selene_core::{Change, GraphId, IStr, SchemaChange, SchemaPropertyIndexKind};
-use selene_persist::{WalConfig, WalWriter};
+use selene_persist::{AuditLog, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
 use crate::change_subscriber::ChangeSubscriber;
@@ -42,6 +42,7 @@ pub struct SharedGraphBuilder {
     providers: Vec<Arc<dyn IndexProvider>>,
     subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     wal_writer: Option<WalWriter>,
+    audit_log: Option<AuditLog>,
 }
 
 impl SharedGraph {
@@ -59,6 +60,7 @@ impl SharedGraph {
             providers: Vec::new(),
             subscribers: Vec::new(),
             wal_writer: None,
+            audit_log: None,
         }
     }
 
@@ -119,6 +121,7 @@ impl SharedGraph {
             Vec::new(),
             Vec::new(),
             Some(writer),
+            None,
         )
     }
 
@@ -127,7 +130,14 @@ impl SharedGraph {
         providers: Vec<Arc<dyn IndexProvider>>,
         subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     ) -> GraphResult<Self> {
-        Self::from_graph_with_core_and_durables(graph, providers, subscribers, Vec::new(), None)
+        Self::from_graph_with_core_and_durables(
+            graph,
+            providers,
+            subscribers,
+            Vec::new(),
+            None,
+            None,
+        )
     }
 
     pub(crate) fn from_graph_with_core_and_durables(
@@ -136,12 +146,25 @@ impl SharedGraph {
         subscribers: Vec<Arc<dyn ChangeSubscriber>>,
         mut durable_providers: Vec<Arc<dyn DurableProvider>>,
         wal_writer: Option<WalWriter>,
+        audit_log: Option<AuditLog>,
     ) -> GraphResult<Self> {
         validate_unique_subscriber_tags(&subscribers)?;
         validate_subscriber_tags_match_providers(&providers, &subscribers)?;
+        if audit_log.is_some() && wal_writer.is_none() {
+            return Err(GraphError::Inconsistent {
+                reason: "audit log configured without a WAL; audit mirroring requires durable WAL \
+                         state"
+                    .to_owned(),
+            });
+        }
         let snapshot = Arc::new(ArcSwap::from_pointee(graph.clone()));
         let has_wal = wal_writer.is_some();
-        let durable = wal_writer.map(DurableState::new);
+        let durable = wal_writer
+            .map(DurableState::new)
+            .map(|durable| match audit_log {
+                Some(audit) => durable.with_audit_log(audit),
+                None => durable,
+            });
         let core = CoreProvider::new_for_live_with_wal(Arc::clone(&snapshot), durable);
         let mut all_providers = Vec::with_capacity(providers.len() + 1);
         all_providers.push(core.clone() as Arc<dyn IndexProvider>);
@@ -423,6 +446,23 @@ impl SharedGraphBuilder {
         Ok(self)
     }
 
+    /// Attach a durable audit log at `path` (conventionally
+    /// `dir.join(selene_persist::DEFAULT_AUDIT_FILE_NAME)`).
+    ///
+    /// Pack-lifecycle events committed through this graph are mirrored to the
+    /// audit log so they survive WAL-archive pruning (Item 7 / Seam D, D24).
+    /// Requires [`Self::with_wal`]: audit mirroring is part of the durable
+    /// commit path, so [`Self::build`] errors if an audit log is configured
+    /// without a WAL.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::Persist`] when the audit log cannot be opened.
+    pub fn with_audit_log(mut self, path: impl AsRef<Path>) -> GraphResult<Self> {
+        self.audit_log = Some(AuditLog::open(path.as_ref()).map_err(GraphError::Persist)?);
+        Ok(self)
+    }
+
     /// Bind this graph to `type_def` at construction time.
     ///
     /// # Errors
@@ -452,6 +492,7 @@ impl SharedGraphBuilder {
             self.subscribers,
             Vec::new(),
             self.wal_writer,
+            self.audit_log,
         )
     }
 }

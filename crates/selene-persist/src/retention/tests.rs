@@ -404,6 +404,33 @@ fn prune_drops_manifest_seq_whose_file_vanished() {
 }
 
 #[test]
+fn prune_ignores_audit_log_file() {
+    // Seam-D guarantee (Item 7): snapshot/WAL retention never touches audit.log,
+    // so pack-lifecycle audit survives WAL-archive pruning. prune scans only
+    // `snapshot.{seq}.snap` / `wal.{seq}.archive` names; `audit.log` matches
+    // neither and is left untouched even under the most aggressive policy.
+    let dir = temp_dir("ignore-audit");
+    snap(&dir, 10, b"live");
+    arch(&dir, 1, b"a");
+    arch(&dir, 2, b"a");
+    let audit = dir.join("audit.log");
+    fs::write(&audit, b"SLAU-engine-audit-events").unwrap();
+    write_manifest(&dir, 10, vec![1, 2]);
+
+    let policy = RetentionPolicy {
+        keep_n_snapshots: 0,
+        keep_n_wal_archives: 0,
+        max_total_size_bytes: Some(1),
+        time_based: Some(Duration::from_nanos(1)),
+    };
+    prune(&dir, &policy).unwrap();
+
+    assert!(audit.exists(), "audit.log must survive WAL/snapshot prune");
+    assert_eq!(fs::read(&audit).unwrap(), b"SLAU-engine-audit-events");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn prune_size_constraint_evicts_into_predecessor_snapshots_but_keeps_live() {
     let dir = temp_dir("size-into-snaps");
     // Three snapshots, no archives; count keeps all three (live + 2 predecessors).

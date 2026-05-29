@@ -10,8 +10,11 @@ use std::sync::{
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
-use selene_core::{Change, HlcTimestamp, Origin};
-use selene_persist::{RecoveryError, RecoveryProvider, RecoveryResult, WalWriter};
+use selene_core::{Change, HlcTimestamp, Origin, SchemaChange};
+use selene_persist::{
+    AUDIT_KIND_PACK_LIFECYCLE, AuditLog, AuditRecord, RecoveryError, RecoveryProvider,
+    RecoveryResult, WalWriter,
+};
 
 use crate::core_provider::recovery_state::RecoveryState;
 use crate::core_provider::sections::{
@@ -74,6 +77,7 @@ enum CoreInner {
 pub struct DurableState {
     writer: Mutex<WalWriter>,
     next_hlc: AtomicU64,
+    audit: Option<Mutex<AuditLog>>,
 }
 
 impl DurableState {
@@ -84,6 +88,66 @@ impl DurableState {
         Self {
             writer: Mutex::new(writer),
             next_hlc: AtomicU64::new(last_sequence),
+            audit: None,
+        }
+    }
+
+    /// Attach an audit log so pack-lifecycle events committed through this
+    /// provider are mirrored to it (Item 7 / Seam D, D24).
+    ///
+    /// Mirroring is **WAL-first, audit-after**: the WAL append is the source of
+    /// truth and gates the commit; the audit write runs only after it succeeds
+    /// and is best-effort (a failure is logged, never failing the commit). The
+    /// lifecycle event also remains in the WAL, so a failed mirror degrades to
+    /// the pre-Item-7 WAL-only behavior rather than losing the event. Per the
+    /// donor lesson "audit lag is recoverable, fiction is not," the audit can
+    /// only lag the WAL, never lead it.
+    #[must_use]
+    pub fn with_audit_log(mut self, audit: AuditLog) -> Self {
+        self.audit = Some(Mutex::new(audit));
+        self
+    }
+}
+
+/// Current wall-clock time as nanoseconds since the Unix epoch, saturating.
+fn unix_nanos_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
+}
+
+/// Mirror every pack-lifecycle event in `changes` to the audit log.
+///
+/// Best-effort: a serialization or append failure is logged and skipped, never
+/// propagated, because the WAL already holds the authoritative copy (see
+/// [`DurableState::with_audit_log`]). All events from one commit share a single
+/// wall-clock stamp.
+fn mirror_lifecycle_to_audit(audit: &Mutex<AuditLog>, changes: &[Change]) {
+    let recorded_at_unix_nanos = unix_nanos_now();
+    let mut log = audit.lock();
+    for change in changes {
+        let Change::SchemaChanged {
+            change: SchemaChange::ProcedurePackLifecycle { event },
+            ..
+        } = change
+        else {
+            continue;
+        };
+        match postcard::to_allocvec(event) {
+            Ok(payload) => {
+                let record = AuditRecord {
+                    recorded_at_unix_nanos,
+                    kind: AUDIT_KIND_PACK_LIFECYCLE,
+                    payload,
+                };
+                if let Err(error) = log.append(&record) {
+                    tracing::error!(%error, "audit: failed to mirror pack lifecycle event");
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, "audit: failed to encode pack lifecycle event");
+            }
         }
     }
 }
@@ -275,10 +339,19 @@ impl DurableProvider for CoreProvider {
                 ..
             } => {
                 let principal = principal.map(Arc::<[u8]>::from);
-                let mut writer = durable.writer.lock();
-                writer
-                    .append(timestamp, Origin::Local, principal, changes)
-                    .map_err(durable_error)
+                // WAL-first: the append gates the commit (its error fails it).
+                let sequence = {
+                    let mut writer = durable.writer.lock();
+                    writer
+                        .append(timestamp, Origin::Local, principal, changes)
+                        .map_err(durable_error)?
+                };
+                // Audit-after: best-effort mirror of pack-lifecycle events, only
+                // reached once the WAL append committed.
+                if let Some(audit) = &durable.audit {
+                    mirror_lifecycle_to_audit(audit, changes);
+                }
+                Ok(sequence)
             }
             CoreInner::Live { durable: None, .. } => Ok(0),
             CoreInner::Recovery { .. } => Err(inconsistent(

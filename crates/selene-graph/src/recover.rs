@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use selene_core::{Change, ChangeKindSet, GraphId};
 use selene_persist::{
-    DEFAULT_WAL_FILE_NAME, ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult,
-    WalConfig, WalWriter,
+    AuditLog, DEFAULT_AUDIT_FILE_NAME, DEFAULT_WAL_FILE_NAME, ProviderRegistry, RecoveryError,
+    RecoveryProvider, RecoveryResult, WalConfig, WalWriter,
 };
 
 use crate::change_subscriber::ChangeSubscriber;
@@ -157,12 +157,24 @@ impl SharedGraph {
         // would lose every post-recovery change even though the feature
         // advertises live WAL durability.
         let writer = WalWriter::open(&dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())?;
+        // Reattach the audit log iff one exists on disk (its `SLAU` presence
+        // means the embedder enabled audit) so post-recovery lifecycle commits
+        // keep being mirrored. The historical events already persist in the file
+        // — recovery never re-derives them, and the WAL replay above does not
+        // re-mirror (write_commit is live-only). Absent file → no audit.
+        let audit_path = dir.join(DEFAULT_AUDIT_FILE_NAME);
+        let audit_log = if audit_path.exists() {
+            Some(AuditLog::open(&audit_path)?)
+        } else {
+            None
+        };
         Self::from_graph_with_core_and_durables(
             graph,
             providers,
             subscribers,
             Vec::new(),
             Some(writer),
+            audit_log,
         )
     }
 }

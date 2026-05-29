@@ -232,6 +232,7 @@ fn failed_commit_does_not_bump_schema_version() {
         Vec::new(),
         vec![durable],
         None,
+        None,
     )
     .unwrap();
     let mut txn = shared.begin_write();
@@ -319,6 +320,7 @@ fn durable_write_failure_rolls_back_in_memory_state() {
         Vec::new(),
         Vec::new(),
         vec![durable],
+        None,
         None,
     )
     .unwrap();
