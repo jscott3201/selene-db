@@ -30,6 +30,9 @@ mod change_subscribers;
 #[path = "recover_tests/truncate_recovery.rs"]
 mod truncate_recovery;
 
+#[path = "recover_tests/nodeid_split_recovery.rs"]
+mod nodeid_split_recovery;
+
 fn temp_dir(name: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

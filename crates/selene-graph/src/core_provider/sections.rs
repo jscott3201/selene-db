@@ -5,13 +5,16 @@
 //! are postcard-encoded inside an `Arc<[u8]>` field on each archived row until
 //! every stored `Value` variant has rkyv archivability.
 //!
-//! Compatibility note: older in-tree snapshots wrote these same
-//! `CORE/META|NODE|EDGE|SCMA` sub-tags as postcard payloads. The snapshot
-//! envelope version stays `1` because selene-db has never shipped — see
-//! Spec 04 §4.6 ("never shipped") — and there are no real on-disk graph
-//! instances pre-dating this change. When v1.0 ships, any further format
-//! change to a CORE section bumps the envelope version so old snapshots fail
-//! with `PersistError::UnsupportedVersion` instead of garbled bytes.
+//! Compatibility note: per spec 04 §4.6, any format change to a CORE section
+//! bumps the snapshot envelope version so older snapshots fail with
+//! `PersistError::UnsupportedVersion` instead of being decoded as garbled
+//! bytes. BRIEF-Item-4a STEP 9 exercises this: `CORE/NODE` / `CORE/EDGE` now
+//! persist the explicit external `NodeId` / `EdgeId` per row (read from the
+//! `row_to_id` column) instead of synthesizing `row + 1`, so a future
+//! 4b-compacted snapshot whose ids != row+1 round-trips. That change bumped
+//! `SNAPSHOT_VERSION_MINOR` 0 -> 1 (selene-persist); pre-STEP-9 (minor 0)
+//! snapshots are cleanly rejected — a clean break, not a dual decoder
+//! (deferred to 4c per the D14 amendment).
 //!
 //! `CORE/SCMA` schema rows are stored in memory by [`IStr`] handle order via
 //! [`SchemaKey::Ord`]. Their wire order is canonical lexicographic order by
@@ -348,19 +351,34 @@ pub(super) fn encode_nodes(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             properties: properties.clone(),
             alive: graph.node_store.is_alive(row),
         };
-        // STEP 9 (Increment 5) will write the explicit id from the row_to_id
-        // column instead of synthesizing it here.
-        rows.push((
-            NodeId::new(row as u64 + 1), // rowid-arith-ok: encode synthesis until STEP 9
-            NodeArchiveRow::from_runtime(runtime, "CORE/NODE")?,
-        ));
+        // BRIEF-Item-4a STEP 9: persist the EXPLICIT external id from the
+        // row_to_id column rather than synthesizing `row + 1`. Committed rows
+        // (alive or deleted-but-kept under Option B) carry their real `NodeId`;
+        // never-committed aborted-tx hole rows carry `NodeId::TOMBSTONE`, which
+        // recovery skips (-> the id resolves NotFound, matching the live path).
+        // This is the format change the SLSN minor-version bump guards: a future
+        // 4b-compacted snapshot whose ids != row+1 round-trips because recovery
+        // places rows by their stored position, not by `id - 1` arithmetic.
+        let id = graph
+            .node_store
+            .row_to_id
+            .get(row_index)
+            .copied()
+            .ok_or_else(|| {
+                inconsistent(format!("node row_to_id column missing row {row_index}"))
+            })?;
+        rows.push((id, NodeArchiveRow::from_runtime(runtime, "CORE/NODE")?));
     }
     encode_rkyv(&rows, "CORE/NODE")
 }
 
 pub(super) fn decode_nodes(bytes: &[u8]) -> Result<Vec<(NodeId, NodeRow)>, crate::ProviderError> {
     let rows: Vec<(NodeId, NodeArchiveRow)> = decode_rkyv(bytes, "CORE/NODE")?;
-    validate_sorted_unique(&rows, "CORE/NODE")?;
+    // BRIEF-Item-4a STEP 9: rows are no longer guaranteed sorted-ascending by id
+    // (a 4b-compacted snapshot may store ids in any row order) and multiple
+    // aborted-tx hole rows legitimately share `NodeId::TOMBSTONE`. Validate that
+    // every *real* (non-tombstone) id is unique; row order is positional.
+    validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")?;
     rows.into_iter()
         .map(|(id, row)| row.into_runtime("CORE/NODE").map(|row| (id, row)))
         .collect()
@@ -396,17 +414,25 @@ pub(super) fn encode_edges(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             properties: properties.clone(),
             alive: graph.edge_store.is_alive(row),
         };
-        rows.push((
-            EdgeId::new(row as u64 + 1), // rowid-arith-ok: encode synthesis until STEP 9
-            EdgeArchiveRow::from_runtime(runtime, "CORE/EDGE")?,
-        ));
+        // BRIEF-Item-4a STEP 9: persist the explicit external id from the
+        // row_to_id column (real `EdgeId`, or `EdgeId::TOMBSTONE` for a
+        // never-committed hole row). See `encode_nodes` for the rationale.
+        let id = graph
+            .edge_store
+            .row_to_id
+            .get(row_index)
+            .copied()
+            .ok_or_else(|| {
+                inconsistent(format!("edge row_to_id column missing row {row_index}"))
+            })?;
+        rows.push((id, EdgeArchiveRow::from_runtime(runtime, "CORE/EDGE")?));
     }
     encode_rkyv(&rows, "CORE/EDGE")
 }
 
 pub(super) fn decode_edges(bytes: &[u8]) -> Result<Vec<(EdgeId, EdgeRow)>, crate::ProviderError> {
     let rows: Vec<(EdgeId, EdgeArchiveRow)> = decode_rkyv(bytes, "CORE/EDGE")?;
-    validate_sorted_unique(&rows, "CORE/EDGE")?;
+    validate_ids_unique(&rows, EdgeId::TOMBSTONE, "CORE/EDGE")?;
     rows.into_iter()
         .map(|(id, row)| row.into_runtime("CORE/EDGE").map(|row| (id, row)))
         .collect()
@@ -654,4 +680,73 @@ where
         }
     }
     Ok(())
+}
+
+/// Validate that every *non-tombstone* id in a positional row section is unique.
+///
+/// BRIEF-Item-4a STEP 9: the `CORE/NODE` and `CORE/EDGE` sections are positional
+/// (row order = section order) and store the explicit external id per row, so
+/// they are NOT sorted by id — a 4b-compacted snapshot may store ids in any
+/// order. Aborted-tx hole rows all carry the type's `TOMBSTONE` sentinel and are
+/// exempt from the uniqueness check (many holes share it). Every committed id
+/// must still appear at most once; a duplicate is a corrupt snapshot.
+fn validate_ids_unique<K, V>(
+    rows: &[(K, V)],
+    tombstone: K,
+    section: &'static str,
+) -> Result<(), crate::ProviderError>
+where
+    K: Copy + Eq + std::hash::Hash + std::fmt::Debug,
+{
+    let mut seen = std::collections::HashSet::with_capacity(rows.len());
+    for (id, _) in rows {
+        if *id == tombstone {
+            continue;
+        }
+        if !seen.insert(*id) {
+            return Err(invalid_payload(format!(
+                "{section} rows must have unique non-tombstone ids; observed duplicate {id:?}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod validate_ids_unique_tests {
+    use super::validate_ids_unique;
+    use selene_core::NodeId;
+
+    // BRIEF-Item-4a STEP 9: the two contract branches the positional format
+    // introduces — duplicate-real-id rejection and many-holes-exempt — under
+    // direct test (the round-trip tests only cover them incidentally).
+
+    #[test]
+    fn rejects_duplicate_non_tombstone_id() {
+        let rows = [
+            (NodeId::new(5), ()),
+            (NodeId::TOMBSTONE, ()),
+            (NodeId::new(5), ()),
+        ];
+        let err = validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")
+            .expect_err("a duplicate committed id is a corrupt snapshot");
+        assert!(
+            format!("{err}").contains("unique non-tombstone"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn allows_multiple_tombstone_hole_rows() {
+        // Aborted-tx hole rows all share the sentinel and are exempt; only the
+        // real ids between them must be unique.
+        let rows = [
+            (NodeId::new(1), ()),
+            (NodeId::TOMBSTONE, ()),
+            (NodeId::TOMBSTONE, ()),
+            (NodeId::new(2), ()),
+        ];
+        validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")
+            .expect("multiple tombstone hole rows are valid");
+    }
 }

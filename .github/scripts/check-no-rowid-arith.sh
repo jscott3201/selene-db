@@ -8,12 +8,16 @@
 # Read paths MUST convert through SeleneGraph's map-backed accessors:
 #   row_for_node_id / row_for_edge_id   (external id -> RowIndex)
 #   node_id_for_row / edge_id_for_row   (RowIndex -> external id)
-# The binding-authority helpers `node_row_index_arith` / `edge_row_index_arith`
-# (create_*/recovery insert_*_row) are the only sanctioned id->row arithmetic.
+# The binding-authority helper `node_row_index_arith` / `edge_row_index_arith`
+# (create_* and the recovery WAL-replay fallback in into_graph) is the only
+# sanctioned id->row arithmetic. The snapshot encoder no longer synthesizes ids
+# (STEP 9: it persists the explicit id from the row_to_id column), and recovery
+# places snapshot rows positionally.
 #
-# A handful of legitimate row->id sites (the recovery identity bootstrap for
-# externally-built graphs; the snapshot encoder, pending STEP 9) are annotated
-# with a trailing `// rowid-arith-ok: <reason>` and excluded here.
+# A handful of legitimate row->id sites (the recovery identity bootstrap in
+# shared.rs::rebuild_id_maps for externally-built graphs that never populated
+# row_to_id) are annotated with a trailing `// rowid-arith-ok: <reason>` and
+# excluded here.
 #
 # Scope: production source of the four split-affected crates. Test/bench fixtures
 # (which legitimately build identity-mapped data) and other crates (e.g.

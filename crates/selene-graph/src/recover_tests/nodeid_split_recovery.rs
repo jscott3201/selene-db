@@ -1,0 +1,259 @@
+//! BRIEF-Item-4a STEP 9/10 recovery proof: a snapshot whose external ids are
+//! deliberately NOT `row + 1` round-trips through encode -> recover with the
+//! rows placed **positionally** (by section position), never via `id - 1`
+//! arithmetic.
+//!
+//! This is the recovery-path counterpart to
+//! `mutator::id_map_tests::non_identity_map_read_paths_resolve_by_map` (which
+//! proves the in-memory read stack). Here the same non-identity shape is driven
+//! through the real `CORE/NODE` + `CORE/EDGE` snapshot encoder
+//! (`sections::encode_nodes`/`encode_edges`, which now persist the explicit id
+//! from the `row_to_id` column) and `SharedGraph::recover`. It is the assertion
+//! that would catch a regression to arithmetic placement once 4b compaction
+//! starts emitting genuinely non-identity snapshots.
+//!
+//! Coverage matrix (one graph):
+//! - non-identity alive rows (NodeId 5@row0, 8@row1, 20@row4) place positionally;
+//! - a committed-then-deleted row (NodeId 15@row3, Option B keeps its id) recovers
+//!   mapped-but-dead -> `is_node_alive == false` yet `row_for_node_id` resolves;
+//! - an aborted-tx hole row (TOMBSTONE@row2) is preserved positionally but stays
+//!   OUT of the id->row map -> its would-be arithmetic id resolves to `None`
+//!   (NotFound), the live-vs-recovered consistency STEP 9 fixes;
+//! - the edge store mirrors all three cases and adjacency rebuilds from the
+//!   positional external ids.
+
+use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
+
+use super::{temp_dir, write_snapshot};
+use crate::store::RowIndex;
+use crate::{SeleneGraph, SharedGraph};
+
+/// Hand-build a graph whose external ids are not `row + 1`, with an interior
+/// hole (aborted-tx) and a deleted-but-kept row in both stores.
+fn non_identity_graph() -> SeleneGraph {
+    let nlabel = intern("nidr.node").unwrap();
+    let elabel = intern("nidr.edge").unwrap();
+    let hole_elabel = intern("__selene_hole").unwrap();
+
+    let mut g = SeleneGraph::new(GraphId::new(1));
+
+    // Nodes. Rows: 0->5 (alive), 1->8 (alive), 2->TOMBSTONE hole, 3->15
+    // (deleted, id kept), 4->20 (alive).
+    let push_node = |g: &mut SeleneGraph, id: NodeId, alive: bool| {
+        let row = g.node_store.row_to_id.len() as u32;
+        g.node_store.labels.push(if id == NodeId::TOMBSTONE {
+            LabelSet::new()
+        } else {
+            LabelSet::single(nlabel)
+        });
+        g.node_store.properties.push(PropertyMap::new());
+        g.node_store.row_to_id.push(id);
+        if alive {
+            g.node_store.alive.insert(row);
+        }
+    };
+    push_node(&mut g, NodeId::new(5), true);
+    push_node(&mut g, NodeId::new(8), true);
+    push_node(&mut g, NodeId::TOMBSTONE, false); // aborted-tx hole
+    push_node(&mut g, NodeId::new(15), false); // committed-then-deleted
+    push_node(&mut g, NodeId::new(20), true);
+    g.meta.next_node_id = 21;
+
+    // Edges. Rows: 0->3 (5->8, alive), 1->TOMBSTONE hole, 2->7 (20->5, alive).
+    let push_edge =
+        |g: &mut SeleneGraph, id: EdgeId, source: NodeId, target: NodeId, alive: bool| {
+            let row = g.edge_store.row_to_id.len() as u32;
+            g.edge_store.label.push(if id == EdgeId::TOMBSTONE {
+                hole_elabel
+            } else {
+                elabel
+            });
+            g.edge_store.source.push(source);
+            g.edge_store.target.push(target);
+            g.edge_store.properties.push(PropertyMap::new());
+            g.edge_store.row_to_id.push(id);
+            if alive {
+                g.edge_store.alive.insert(row);
+            }
+        };
+    push_edge(&mut g, EdgeId::new(3), NodeId::new(5), NodeId::new(8), true);
+    push_edge(
+        &mut g,
+        EdgeId::TOMBSTONE,
+        NodeId::TOMBSTONE,
+        NodeId::TOMBSTONE,
+        false,
+    );
+    push_edge(
+        &mut g,
+        EdgeId::new(7),
+        NodeId::new(20),
+        NodeId::new(5),
+        true,
+    );
+    g.meta.next_edge_id = 8;
+
+    g
+}
+
+#[test]
+fn non_identity_snapshot_round_trips_positionally() {
+    let dir = temp_dir("nodeid-split-positional");
+    let shared = SharedGraph::from_graph(non_identity_graph());
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(1)).expect("recovery succeeds");
+    let g = recovered.read();
+
+    // --- Nodes: rows placed by stored position, NOT by `id - 1` arithmetic. ---
+    assert_eq!(g.row_for_node_id(NodeId::new(5)), Some(RowIndex::new(0)));
+    assert_eq!(g.row_for_node_id(NodeId::new(8)), Some(RowIndex::new(1)));
+    assert_eq!(g.row_for_node_id(NodeId::new(15)), Some(RowIndex::new(3)));
+    assert_eq!(g.row_for_node_id(NodeId::new(20)), Some(RowIndex::new(4)));
+    // The arithmetic answer (id 20 -> row 19) is WRONG; positional says row 4.
+    assert_ne!(g.row_for_node_id(NodeId::new(20)), Some(RowIndex::new(19)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(0)), Some(NodeId::new(5)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(4)), Some(NodeId::new(20)));
+    // Interior hole row is preserved positionally but carries no external id.
+    assert_eq!(g.node_id_for_row(RowIndex::new(2)), None);
+    assert_eq!(g.node_store.len(), 5, "the interior hole row is preserved");
+
+    // --- Liveness: deleted (mapped, dead) vs aborted hole (unmapped). ---
+    assert!(g.is_node_alive(NodeId::new(5)));
+    assert!(g.is_node_alive(NodeId::new(8)));
+    assert!(g.is_node_alive(NodeId::new(20)));
+    // Deleted node 15 stays mapped to its dead row -> NotAlive, not NotFound.
+    assert!(!g.is_node_alive(NodeId::new(15)));
+    assert_eq!(g.row_for_node_id(NodeId::new(15)), Some(RowIndex::new(3)));
+    // Aborted-tx hole: under the OLD format the row-2 hole encoded `NodeId(3)`
+    // (row+1) and recovery bound it -> NotAlive. STEP 9 encodes TOMBSTONE and
+    // skips it, so `NodeId(3)` resolves NotFound, matching the live path.
+    assert_eq!(g.row_for_node_id(NodeId::new(3)), None);
+    assert!(!g.is_node_alive(NodeId::new(3)));
+    assert_eq!(g.node_count(), 3, "only the three alive nodes are counted");
+
+    // Row data lands at the right (positional) row.
+    assert_eq!(
+        g.node_labels(NodeId::new(20))
+            .unwrap()
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![intern("nidr.node").unwrap()]
+    );
+
+    // --- Allocator floor survives so future ids never collide. ---
+    assert_eq!(g.meta.next_node_id, 21);
+    assert_eq!(g.meta.next_edge_id, 8);
+
+    // --- Edges: positional placement + adjacency rebuilt from external ids. ---
+    assert_eq!(g.row_for_edge_id(EdgeId::new(3)), Some(RowIndex::new(0)));
+    assert_eq!(g.row_for_edge_id(EdgeId::new(7)), Some(RowIndex::new(2)));
+    assert_ne!(g.row_for_edge_id(EdgeId::new(7)), Some(RowIndex::new(6)));
+    assert_eq!(g.edge_id_for_row(RowIndex::new(1)), None); // hole
+    assert_eq!(g.edge_store.len(), 3, "the interior edge hole is preserved");
+    assert!(g.is_edge_alive(EdgeId::new(3)));
+    assert!(g.is_edge_alive(EdgeId::new(7)));
+    assert_eq!(
+        g.edge_endpoints(EdgeId::new(3)),
+        Some((NodeId::new(5), NodeId::new(8)))
+    );
+    assert_eq!(
+        g.edge_endpoints(EdgeId::new(7)),
+        Some((NodeId::new(20), NodeId::new(5)))
+    );
+    assert!(
+        g.outgoing_edges(NodeId::new(20))
+            .unwrap()
+            .iter()
+            .any(|e| e.neighbor == NodeId::new(5) && e.edge_id == EdgeId::new(7))
+    );
+    assert!(
+        g.incoming_edges(NodeId::new(8))
+            .unwrap()
+            .iter()
+            .any(|e| e.neighbor == NodeId::new(5) && e.edge_id == EdgeId::new(3))
+    );
+}
+
+/// Build a snapshot whose section (row) order is NOT id-ascending: row0->id10,
+/// row1->id3, row2->id7. This is the layout a 4b compaction may emit, and it is
+/// the case that exercises `insert_node_row`'s `set`-overwrites-a-pad branch
+/// (the reason the sorted-by-id wire guarantee was dropped).
+fn descending_first_graph() -> SeleneGraph {
+    let nlabel = intern("nidr2.node").unwrap();
+    let mut g = SeleneGraph::new(GraphId::new(2));
+    for id in [10u64, 3, 7] {
+        let row = g.node_store.row_to_id.len() as u32;
+        g.node_store.labels.push(LabelSet::single(nlabel));
+        g.node_store.properties.push(PropertyMap::new());
+        g.node_store.row_to_id.push(NodeId::new(id));
+        g.node_store.alive.insert(row);
+    }
+    g.meta.next_node_id = 11;
+    g
+}
+
+#[test]
+fn out_of_order_positional_snapshot_round_trips() {
+    let dir = temp_dir("nodeid-split-out-of-order");
+    let shared = SharedGraph::from_graph(descending_first_graph());
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(2)).expect("recovery succeeds");
+    let g = recovered.read();
+
+    // into_graph visits ids ascending (3, 7, 10). id 3@pos1 and 7@pos2 push, then
+    // 10@pos0 takes the `set` branch and overwrites the row-0 tombstone pad.
+    assert_eq!(g.row_for_node_id(NodeId::new(10)), Some(RowIndex::new(0)));
+    assert_eq!(g.row_for_node_id(NodeId::new(3)), Some(RowIndex::new(1)));
+    assert_eq!(g.row_for_node_id(NodeId::new(7)), Some(RowIndex::new(2)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(0)), Some(NodeId::new(10)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(1)), Some(NodeId::new(3)));
+    assert_eq!(g.node_id_for_row(RowIndex::new(2)), Some(NodeId::new(7)));
+    // The row-0 pad must NOT leave a stale tombstone or dead row behind.
+    assert!(g.is_node_alive(NodeId::new(10)));
+    assert!(g.is_node_alive(NodeId::new(3)));
+    assert!(g.is_node_alive(NodeId::new(7)));
+    assert_eq!(g.node_count(), 3);
+    assert_eq!(g.node_store.len(), 3, "no leftover pad row");
+}
+
+#[test]
+fn recovered_store_continues_id_allocation_without_clobber() {
+    // Defensive: after recovering the (hole-bearing, len-5) non-identity graph,
+    // a fresh create_node must allocate above the persisted high-water mark and
+    // land at a new row WITHOUT clobbering any recovered row — the allocator
+    // floor (max(meta.next_node_id, store.len()+1)) tracks meta, so a dropped
+    // trailing hole could never lower it into the live range.
+    let dir = temp_dir("nodeid-split-realloc");
+    let shared = SharedGraph::from_graph(non_identity_graph());
+    write_snapshot(&dir, &shared, 1);
+    let recovered = SharedGraph::recover(&dir, GraphId::new(1)).expect("recovery succeeds");
+
+    let new_id = {
+        let mut txn = recovered.begin_write();
+        let id = {
+            let mut m = txn.mutator();
+            m.create_node(
+                LabelSet::single(intern("nidr.node").unwrap()),
+                PropertyMap::new(),
+            )
+            .unwrap()
+        };
+        txn.commit().unwrap();
+        id
+    };
+
+    let g = recovered.read();
+    assert_eq!(new_id, NodeId::new(21), "allocation resumes at the floor");
+    assert!(g.is_node_alive(NodeId::new(21)));
+    // The recovered rows are untouched: alive ids still resolve, the deleted id
+    // stays mapped-but-dead, the aborted id stays NotFound.
+    assert_eq!(g.row_for_node_id(NodeId::new(5)), Some(RowIndex::new(0)));
+    assert_eq!(g.row_for_node_id(NodeId::new(20)), Some(RowIndex::new(4)));
+    assert!(g.is_node_alive(NodeId::new(5)));
+    assert!(!g.is_node_alive(NodeId::new(15)));
+    assert!(g.row_for_node_id(NodeId::new(15)).is_some());
+    assert!(g.row_for_node_id(NodeId::new(3)).is_none());
+}

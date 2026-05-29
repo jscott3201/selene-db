@@ -1,0 +1,109 @@
+//! Row materialization for recovery: place a decoded `NodeRow`/`EdgeRow` at a
+//! caller-resolved row index, padding the `*Id::TOMBSTONE` hole slots in
+//! between.
+//!
+//! Split out of `recovery_state.rs` to keep that file under the 700-LOC cap.
+//! BRIEF-Item-4a STEP 9: the `row_index` is supplied by `into_graph` (snapshot
+//! position, or `id - 1` arithmetic for WAL-created ids) rather than derived
+//! from the id here, so non-identity snapshots round-trip.
+
+use std::sync::OnceLock;
+
+use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
+
+use crate::core_provider::sections::{EdgeRow, NodeRow};
+use crate::graph::SeleneGraph;
+use crate::store::RowIndex;
+
+pub(super) fn insert_node_row(
+    graph: &mut SeleneGraph,
+    id: NodeId,
+    row: NodeRow,
+    row_index: usize,
+) -> crate::GraphResult<()> {
+    // The pad-then-set shape materializes the `NodeId::TOMBSTONE` hole slots
+    // that sit between the real rows the snapshot recorded.
+    while graph.node_store.len() < row_index {
+        graph.node_store.labels.push(LabelSet::new());
+        graph.node_store.properties.push(PropertyMap::new());
+        // BRIEF-Item-4a: hole rows carry the tombstone id; row_to_id stays
+        // length-locked with the row columns. `rebuild_id_maps` (shared.rs)
+        // builds the id->row maps from the alive rows after recovery.
+        graph.node_store.row_to_id.push(NodeId::TOMBSTONE);
+    }
+    if graph.node_store.len() == row_index {
+        graph.node_store.labels.push(row.labels);
+        graph.node_store.properties.push(row.properties);
+        graph.node_store.row_to_id.push(id);
+    } else {
+        graph.node_store.labels.set(row_index, row.labels);
+        graph.node_store.properties.set(row_index, row.properties);
+        graph.node_store.row_to_id.set(row_index, id);
+    }
+    // BRIEF-Item-4a: bind id -> row in the map for every materialized row (alive
+    // AND dead — a deleted recovered id stays mapped -> NotAlive, Option B). The
+    // recovery-internal closed-graph validation reads labels through this map, so
+    // it must be populated here, before that check (and before shared.rs's
+    // rebuild_id_maps re-seeds it). Holes carry the tombstone and never reach
+    // this real-row branch.
+    graph
+        .node_id_to_row
+        .insert(id, RowIndex::new(row_index as u32));
+    set_alive(&mut graph.node_store.alive, row_index, row.alive);
+    Ok(())
+}
+
+pub(super) fn insert_edge_row(
+    graph: &mut SeleneGraph,
+    id: EdgeId,
+    row: EdgeRow,
+    row_index: usize,
+) -> crate::GraphResult<()> {
+    while graph.edge_store.len() < row_index {
+        graph.edge_store.label.push(edge_hole_label()?);
+        graph.edge_store.source.push(NodeId::TOMBSTONE);
+        graph.edge_store.target.push(NodeId::TOMBSTONE);
+        graph.edge_store.properties.push(PropertyMap::new());
+        // BRIEF-Item-4a: hole rows carry the tombstone id (see insert_node_row).
+        graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE);
+    }
+    if graph.edge_store.len() == row_index {
+        graph.edge_store.label.push(row.label);
+        graph.edge_store.source.push(row.source);
+        graph.edge_store.target.push(row.target);
+        graph.edge_store.properties.push(row.properties);
+        graph.edge_store.row_to_id.push(id);
+    } else {
+        graph.edge_store.label.set(row_index, row.label);
+        graph.edge_store.source.set(row_index, row.source);
+        graph.edge_store.target.set(row_index, row.target);
+        graph.edge_store.properties.set(row_index, row.properties);
+        graph.edge_store.row_to_id.set(row_index, id);
+    }
+    // BRIEF-Item-4a: bind id -> row in the map for every materialized row (see
+    // insert_node_row).
+    graph
+        .edge_id_to_row
+        .insert(id, RowIndex::new(row_index as u32));
+    set_alive(&mut graph.edge_store.alive, row_index, row.alive);
+    Ok(())
+}
+
+fn set_alive(bitmap: &mut roaring::RoaringBitmap, row_index: usize, alive: bool) {
+    let row = u32::try_from(row_index).expect("row index was validated before liveness update");
+    if alive {
+        bitmap.insert(row);
+    } else {
+        bitmap.remove(row);
+    }
+}
+
+fn edge_hole_label() -> Result<IStr, crate::GraphError> {
+    static CELL: OnceLock<IStr> = OnceLock::new();
+    if let Some(label) = CELL.get() {
+        return Ok(*label);
+    }
+    let label = selene_core::intern("__selene_hole").map_err(crate::GraphError::Core)?;
+    let _ = CELL.set(label);
+    Ok(label)
+}
