@@ -205,7 +205,9 @@ impl SeleneGraph {
         let mut out_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
         let mut in_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
         for row in self.edge_store.alive.iter() {
-            let edge_id = EdgeId::new(u64::from(row) + 1);
+            let Some(edge_id) = self.edge_id_for_row(crate::store::RowIndex::new(row)) else {
+                return Err(format!("alive edge row {row} has no mapped external id"));
+            };
             let Some(label) = self.edge_store.label.get(row as usize).copied() else {
                 return Err(format!("alive edge row {row} has no label column entry"));
             };

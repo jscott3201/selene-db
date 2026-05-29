@@ -15,7 +15,7 @@ use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
 use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
-use crate::store::{EdgeStore, NodeStore, edge_row_index, node_row_index};
+use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 
 /// Registered built-in property-index metadata.
@@ -131,6 +131,13 @@ pub struct SeleneGraph {
     /// Per-`(label, properties...)` node composite value indexes.
     pub composite_property_index:
         FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>,
+    /// External `NodeId -> RowIndex` lookup (the inverse of
+    /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
+    /// external id can stay stable while the row is remapped by compaction
+    /// (D22 / BRIEF-Item-4a). `imbl` for cheap copy-on-write snapshot clones.
+    pub node_id_to_row: HashMap<NodeId, RowIndex>,
+    /// External `EdgeId -> RowIndex` lookup (inverse of [`EdgeStore::row_to_id`]).
+    pub edge_id_to_row: HashMap<EdgeId, RowIndex>,
 }
 
 impl SeleneGraph {
@@ -153,6 +160,8 @@ impl SeleneGraph {
             idx_edge_label: HashMap::new(),
             property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
+            node_id_to_row: HashMap::new(),
+            edge_id_to_row: HashMap::new(),
         }
     }
 
@@ -171,10 +180,10 @@ impl SeleneGraph {
     /// Bitmap of alive node *row indices*.
     ///
     /// Returned bitmap is row-indexed (matching `nodes_with_label`), not
-    /// `NodeId`-indexed; consumers convert to `NodeId` via
-    /// `selene_core::NodeId::new(row as u64 + 1)` (the inverse of
-    /// `selene_graph::store::node_row_index`). Used by `selene-algorithms` to
-    /// seed the "all alive nodes" baseline of a `GraphProjection`.
+    /// `NodeId`-indexed; consumers convert a row to its external `NodeId` via
+    /// [`Self::node_id_for_row`] (never by `row + 1` arithmetic — the external id
+    /// is stable while compaction renumbers the row). Used by `selene-algorithms`
+    /// to seed the "all alive nodes" baseline of a `GraphProjection`.
     #[must_use]
     pub fn live_nodes(&self) -> &RoaringBitmap {
         &self.node_store.alive
@@ -189,32 +198,71 @@ impl SeleneGraph {
     /// Bitmap of alive edge *row indices*.
     ///
     /// The edge-side sibling of [`Self::live_nodes`]. The returned bitmap is
-    /// row-indexed (matching `edges_with_label`), not `EdgeId`-indexed;
-    /// consumers convert a row to an `EdgeId` via
-    /// `selene_core::EdgeId::new(row as u64 + 1)` (the inverse of
-    /// `selene_graph::store::edge_row_index`). Covers every alive edge
-    /// regardless of label — used by the `DROP GRAPH` factory-reset (BRIEF-152)
-    /// to enumerate every live edge, including untyped/arbitrary-label ones that
-    /// a per-type truncate would miss.
+    /// row-indexed (matching `edges_with_label`), not `EdgeId`-indexed; consumers
+    /// convert a row to its external `EdgeId` via [`Self::edge_id_for_row`] (never
+    /// by `row + 1` arithmetic). Covers every alive edge regardless of label —
+    /// used by the `DROP GRAPH` factory-reset (BRIEF-152) to enumerate every live
+    /// edge, including untyped/arbitrary-label ones that a per-type truncate would
+    /// miss.
     #[must_use]
     pub fn live_edges(&self) -> &RoaringBitmap {
         &self.edge_store.alive
     }
 
+    /// Map an external [`NodeId`] to its internal [`RowIndex`].
+    ///
+    /// Returns `None` for a never-committed (aborted-tx hole) id. A deleted id
+    /// still resolves — to its now-dead row — so liveness, not existence,
+    /// distinguishes it (the row's `alive` bit is clear). This is the map-backed
+    /// replacement for the old `id - 1` arithmetic; the external id stays stable
+    /// while BRIEF-Item-4b compaction renumbers the row.
+    #[must_use]
+    pub fn row_for_node_id(&self, id: NodeId) -> Option<RowIndex> {
+        self.node_id_to_row.get(&id).copied()
+    }
+
+    /// Map an external [`EdgeId`] to its internal [`RowIndex`]; see
+    /// [`Self::row_for_node_id`].
+    #[must_use]
+    pub fn row_for_edge_id(&self, id: EdgeId) -> Option<RowIndex> {
+        self.edge_id_to_row.get(&id).copied()
+    }
+
+    /// Recover the external [`NodeId`] bound to a materialized [`RowIndex`].
+    ///
+    /// Reads the `row_to_id` column (the persistence-stable per-row id), never
+    /// synthesizing `row + 1`. Returns `None` past the column end or for a
+    /// never-committed hole row (which holds [`NodeId::TOMBSTONE`]).
+    #[must_use]
+    pub fn node_id_for_row(&self, row: RowIndex) -> Option<NodeId> {
+        self.node_store
+            .row_to_id
+            .get(row.get() as usize)
+            .copied()
+            .filter(|id| *id != NodeId::TOMBSTONE)
+    }
+
+    /// Recover the external [`EdgeId`] bound to a materialized [`RowIndex`]; see
+    /// [`Self::node_id_for_row`].
+    #[must_use]
+    pub fn edge_id_for_row(&self, row: RowIndex) -> Option<EdgeId> {
+        self.edge_store
+            .row_to_id
+            .get(row.get() as usize)
+            .copied()
+            .filter(|id| *id != EdgeId::TOMBSTONE)
+    }
+
     /// Return true when `id` names an alive node.
     #[must_use]
     pub fn is_node_alive(&self, id: NodeId) -> bool {
-        node_row_index(id).is_some_and(|row| {
-            (row as usize) < self.node_store.len() && self.node_store.is_alive(row)
-        })
+        self.live_node_row(id).is_some()
     }
 
     /// Return true when `id` names an alive edge.
     #[must_use]
     pub fn is_edge_alive(&self, id: EdgeId) -> bool {
-        edge_row_index(id).is_some_and(|row| {
-            (row as usize) < self.edge_store.len() && self.edge_store.is_alive(row)
-        })
+        self.live_edge_row(id).is_some()
     }
 
     /// Return node labels for an alive node.
@@ -442,13 +490,13 @@ impl SeleneGraph {
     }
 
     fn live_node_row(&self, id: NodeId) -> Option<usize> {
-        let row = node_row_index(id)?;
+        let row = self.row_for_node_id(id)?.get();
         ((row as usize) < self.node_store.len() && self.node_store.is_alive(row))
             .then_some(row as usize)
     }
 
     fn live_edge_row(&self, id: EdgeId) -> Option<usize> {
-        let row = edge_row_index(id)?;
+        let row = self.row_for_edge_id(id)?.get();
         ((row as usize) < self.edge_store.len() && self.edge_store.is_alive(row))
             .then_some(row as usize)
     }
@@ -501,6 +549,12 @@ mod tests {
         let label = intern("graph.node").unwrap();
         graph.node_store.labels.push(LabelSet::single(label));
         graph.node_store.properties.push(PropertyMap::new());
+        // BRIEF-Item-4a: a manually built row must also bind id <-> row, the way
+        // create_node / rebuild_id_maps do — reads now resolve through the map.
+        graph.node_store.row_to_id.push(NodeId::new(1));
+        graph
+            .node_id_to_row
+            .insert(NodeId::new(1), RowIndex::new(0));
         graph.node_store.alive.insert(0);
         assert_eq!(
             graph

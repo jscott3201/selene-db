@@ -18,7 +18,7 @@ mod row_index;
 
 use roaring::RoaringBitmap;
 use selene_core::{IStr, NodeId};
-use selene_graph::{SeleneGraph, store::node_row_index};
+use selene_graph::SeleneGraph;
 
 pub use csr::ProjNeighbor;
 use csr::{ProjCsr, build_csr_in, build_csr_out};
@@ -109,7 +109,7 @@ impl GraphProjection {
 
         // Step 1.5: build the dense remap once over the finalized node set. The
         // CSR builder consumes it so offsets are sized by live-node count.
-        let row_index = RowIndex::from_bitmap(&nodes);
+        let row_index = RowIndex::from_bitmap(&nodes, snapshot);
 
         // Step 2: build CSR adjacency for each direction.
         let out_csr = build_csr_out(
@@ -201,10 +201,7 @@ impl GraphProjection {
     /// Returns true when `node` is part of this projection.
     #[must_use]
     pub fn contains(&self, node: NodeId) -> bool {
-        match node_row_index(node) {
-            Some(row) => self.nodes.contains(row),
-            None => false,
-        }
+        self.row_index.dense_of_node(node).is_some()
     }
 
     /// Out-neighbors of `node`, sorted ASC by `node_id` per spec 16 §E03.
@@ -213,10 +210,7 @@ impl GraphProjection {
     /// qualifying outgoing edges.
     #[must_use]
     pub fn out_neighbors(&self, node: NodeId) -> &[ProjNeighbor] {
-        let Some(row) = node_row_index(node) else {
-            return &[];
-        };
-        let Some(dense) = self.row_index.dense_of(row) else {
+        let Some(dense) = self.row_index.dense_of_node(node) else {
             return &[];
         };
         self.out_csr.neighbors_of_dense(dense)
@@ -228,10 +222,7 @@ impl GraphProjection {
     /// qualifying incoming edges.
     #[must_use]
     pub fn in_neighbors(&self, node: NodeId) -> &[ProjNeighbor] {
-        let Some(row) = node_row_index(node) else {
-            return &[];
-        };
-        let Some(dense) = self.row_index.dense_of(row) else {
+        let Some(dense) = self.row_index.dense_of_node(node) else {
             return &[];
         };
         self.in_csr.neighbors_of_dense(dense)
@@ -256,7 +247,7 @@ impl GraphProjection {
     /// correctness on ties (BFS visit order, SCC enumeration order, Louvain
     /// community-id assignment on equal modularity) depends on this stability.
     pub fn iter_nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.nodes.iter().map(|row| NodeId::new(u64::from(row) + 1))
+        self.row_index.iter_node_ids()
     }
 
     /// Returns true when this projection carries weighted edges.
@@ -282,10 +273,10 @@ fn assert_csr_transpose(
 ) {
     let mut out_edges = Vec::with_capacity(out_csr.total_neighbors());
     for row in nodes.iter() {
-        let source = NodeId::new(u64::from(row) + 1);
         let dense = row_index
             .dense_of(row)
             .expect("projection row has a dense index");
+        let source = row_index.node_id_of(dense);
         for neighbor in out_csr.neighbors_of_dense(dense) {
             out_edges.push((neighbor.edge_id, source, neighbor.node_id));
         }
@@ -293,10 +284,10 @@ fn assert_csr_transpose(
 
     let mut in_edges = Vec::with_capacity(in_csr.total_neighbors());
     for row in nodes.iter() {
-        let target = NodeId::new(u64::from(row) + 1);
         let dense = row_index
             .dense_of(row)
             .expect("projection row has a dense index");
+        let target = row_index.node_id_of(dense);
         for neighbor in in_csr.neighbors_of_dense(dense) {
             in_edges.push((neighbor.edge_id, neighbor.node_id, target));
         }
@@ -342,11 +333,9 @@ mod tests {
             txn.commit().unwrap();
         }
 
-        // Map keep_rows (sparse) to NodeIds (row + 1).
-        let survivors: Vec<NodeId> = keep_rows
-            .iter()
-            .map(|&r| NodeId::new(u64::from(r) + 1))
-            .collect();
+        // Map keep_rows (sparse) to NodeIds via the fixture's own creation order
+        // (all[r] is the id created for row r) — no row+1 assumption.
+        let survivors: Vec<NodeId> = keep_rows.iter().map(|&r| all[r as usize]).collect();
 
         // Delete every node NOT in survivors, creating sparse holes.
         {
@@ -381,37 +370,46 @@ mod tests {
         }
     }
 
-    /// OPT-8 transparency: the cached `row_index()` is byte-identical to a
-    /// freshly built `RowIndex::new(proj)` (same `len`, same `dense_of`, same
-    /// `node_id_of` for every node) — proving the cache equals the per-call map.
+    /// The cached `row_index()` round-trips every live node through the captured
+    /// external-id mapping: `dense_of_node` and `node_id_of` invert, and
+    /// `dense_of(row)` (row read from the graph, not synthesized as `id - 1`)
+    /// agrees with `dense_of_node`.
     #[test]
-    fn cached_row_index_equals_per_call() {
+    fn cached_row_index_round_trips() {
         // Sparse: keep rows 10, 500, 999 out of 1000.
         let (shared, survivors) = sparse_ring(1000, &[10, 500, 999]);
         let snapshot = shared.read();
         let proj = GraphProjection::build(&snapshot, &config(), None).unwrap();
 
         let cached = proj.row_index();
-        let fresh = RowIndex::new(&proj);
-
-        assert_eq!(cached.len(), fresh.len());
         assert_eq!(cached.len(), survivors.len());
 
-        // dense_of and node_id_of agree for every live node, and round-trip.
-        for &nid in &survivors {
-            let row = (nid.get() - 1) as u32;
-            let cd = cached.dense_of(row);
-            assert_eq!(cd, fresh.dense_of(row));
-            let d = cd.expect("survivor has a dense index");
-            assert_eq!(cached.node_id_of(d), fresh.node_id_of(d));
-            assert_eq!(cached.node_id_of(d), nid);
-            // dense_of_node convenience matches the raw dense_of.
-            assert_eq!(cached.dense_of_node(nid), cd);
+        // iter_nodes() must yield NodeIds in ASC order (spec 16 §E03), pinned
+        // independent of the id↔row mapping so a 4b ordering regression is caught.
+        let ids: Vec<NodeId> = proj.iter_nodes().collect();
+        for w in ids.windows(2) {
+            assert!(
+                w[0].get() < w[1].get(),
+                "iter_nodes must yield NodeIds ascending per spec 16 §E03"
+            );
         }
 
-        // A deleted (hole) row maps to None in both.
+        for &nid in &survivors {
+            let dense = cached
+                .dense_of_node(nid)
+                .expect("survivor has a dense index");
+            assert_eq!(cached.node_id_of(dense), nid);
+            // The row read from the graph maps to the same dense index — no
+            // row+1 assumption baked into the oracle.
+            let row = snapshot
+                .row_for_node_id(nid)
+                .expect("survivor is mapped")
+                .get();
+            assert_eq!(cached.dense_of(row), Some(dense));
+        }
+
+        // Row 0 (the deleted node 1) is outside the projection.
         assert_eq!(cached.dense_of(0), None);
-        assert_eq!(fresh.dense_of(0), None);
     }
 
     /// OPT-9: CSR offsets are sized by live-node count, NOT node_store.len().
@@ -500,5 +498,57 @@ mod tests {
         assert_eq!(proj.row_index().len(), 2);
         // The dropped node (row 500 → NodeId 501) is not in the projection.
         assert_eq!(proj.row_index().dense_of(500), None);
+    }
+
+    /// BRIEF-Item-4a Increment 6 — non-identity proof for the algorithms layer.
+    /// A graph whose external ids are NOT `row + 1` (NodeId 5 @ row 0, NodeId 8 @
+    /// row 1, EdgeId 3 @ row 0) must project + traverse by external id. The
+    /// RowIndex capture and dense remap are exercised against a genuine
+    /// non-identity mapping (the 4b shape), proving algorithms emit correct
+    /// external NodeIds rather than row-derived ones.
+    #[test]
+    fn projection_over_non_identity_graph_emits_external_node_ids() {
+        use selene_core::EdgeId;
+        let label = istr("T");
+        let link = istr("link");
+        let mut built = SeleneGraph::new(GraphId::new(7_702));
+        built.node_store.labels.push(LabelSet::single(label));
+        built.node_store.properties.push(PropertyMap::new());
+        built.node_store.row_to_id.push(NodeId::new(5));
+        built.node_store.labels.push(LabelSet::single(label));
+        built.node_store.properties.push(PropertyMap::new());
+        built.node_store.row_to_id.push(NodeId::new(8));
+        built.node_store.alive.insert(0);
+        built.node_store.alive.insert(1);
+        built.edge_store.label.push(link);
+        built.edge_store.source.push(NodeId::new(5));
+        built.edge_store.target.push(NodeId::new(8));
+        built.edge_store.properties.push(PropertyMap::new());
+        built.edge_store.row_to_id.push(EdgeId::new(3));
+        built.edge_store.alive.insert(0);
+        built.meta.next_node_id = 9;
+        built.meta.next_edge_id = 4;
+        let shared = SharedGraph::from_graph(built);
+        let snapshot = shared.read();
+        let proj = GraphProjection::build(&snapshot, &config(), None).unwrap();
+
+        // iter_nodes yields external ids (ASC), never row-derived ids.
+        assert_eq!(
+            proj.iter_nodes().collect::<Vec<_>>(),
+            vec![NodeId::new(5), NodeId::new(8)]
+        );
+        assert!(proj.contains(NodeId::new(5)));
+        // Row 0 carries external id 5, NOT 1 — the row+1 answer is wrong.
+        assert!(!proj.contains(NodeId::new(1)));
+        // Adjacency + degree resolve by external id.
+        let outs: Vec<NodeId> = proj
+            .out_neighbors(NodeId::new(5))
+            .iter()
+            .map(|n| n.node_id)
+            .collect();
+        assert_eq!(outs, vec![NodeId::new(8)]);
+        assert_eq!(proj.out_degree(NodeId::new(5)), 1);
+        assert_eq!(proj.in_degree(NodeId::new(8)), 1);
+        assert_eq!(proj.out_degree(NodeId::new(8)), 0);
     }
 }

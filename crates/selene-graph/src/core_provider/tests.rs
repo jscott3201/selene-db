@@ -454,7 +454,11 @@ fn properties_blob_round_trips_full_value_set() {
 }
 
 #[test]
-fn encoded_nodes_are_sorted_by_node_id() {
+fn encoded_nodes_carry_explicit_row_to_id() {
+    // BRIEF-Item-4a STEP 9: the CORE/NODE section persists the explicit external
+    // id from the `row_to_id` column (no longer synthesized as row+1, and no
+    // longer contractually sorted-by-id). For this identity graph the single
+    // committed node round-trips its real id at its row position.
     let graph = graph_with_node();
     let rows = decode_nodes(&encode_nodes(&graph).unwrap()).unwrap();
     let keys: Vec<_> = rows.into_iter().map(|(id, _)| id).collect();

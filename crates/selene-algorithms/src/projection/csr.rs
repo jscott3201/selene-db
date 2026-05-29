@@ -6,11 +6,10 @@
 //! cached [`RowIndex`] maps each sparse row to a dense index `0..live_count`.
 //! Offsets are therefore sized by the live-node count (not `node_store.len()`),
 //! so a 100-node projection over a 1M-row store allocates ~100 offsets, not ~1M
-//! (review-discovered memory invariant). Converting a neighbor's `NodeId` back
-//! to a sparse row (`id.get() - 1` per the `node_row_index` invariant in
-//! `selene_graph::store`) and then to its dense index is always valid for
-//! neighbors inside the projection; mismatched bitmap state surfaces as an
-//! `expect()` panic with a diagnostic message.
+//! (review-discovered memory invariant). A neighbor's membership in the
+//! projection is tested via the cached [`RowIndex::dense_of_node`] (the map-backed
+//! external-id lookup, BRIEF-Item-4a) rather than `id - 1` arithmetic; a row's
+//! own `NodeId` is recovered via [`RowIndex::node_id_of`].
 //!
 //! CSR neighbor/offset count bound: `offsets: Vec<u32>` and the per-bucket
 //! offsets are u32-indexed, so total projected neighbor count is bounded by
@@ -20,7 +19,7 @@
 
 use roaring::RoaringBitmap;
 use selene_core::{EdgeId, IStr, NodeId, Value};
-use selene_graph::{SeleneGraph, store::node_row_index};
+use selene_graph::SeleneGraph;
 
 use super::RowIndex;
 
@@ -146,10 +145,10 @@ fn build_csr(
 
     // Pass 1: count qualifying neighbors per dense index.
     for row_u32 in nodes {
-        let nid = row_to_node_id(row_u32);
         let dense = row_index
             .dense_of(row_u32)
             .expect("projection row has a dense index") as usize;
+        let nid = row_index.node_id_of(dense as u32);
         let Some(entry) = (match direction {
             Direction::Out => snapshot.outgoing_edges(nid),
             Direction::In => snapshot.incoming_edges(nid),
@@ -157,7 +156,7 @@ fn build_csr(
             continue;
         };
         for adj in entry.iter() {
-            if !contains_neighbor(nodes, adj.neighbor) {
+            if row_index.dense_of_node(adj.neighbor).is_none() {
                 continue;
             }
             if !edge_labels.is_empty() && !edge_labels.contains(&adj.label) {
@@ -189,10 +188,10 @@ fn build_csr(
     let mut cursor = offsets.clone();
 
     for row_u32 in nodes {
-        let nid = row_to_node_id(row_u32);
         let dense = row_index
             .dense_of(row_u32)
             .expect("projection row has a dense index") as usize;
+        let nid = row_index.node_id_of(dense as u32);
         let Some(entry) = (match direction {
             Direction::Out => snapshot.outgoing_edges(nid),
             Direction::In => snapshot.incoming_edges(nid),
@@ -200,7 +199,7 @@ fn build_csr(
             continue;
         };
         for adj in entry.iter() {
-            if !contains_neighbor(nodes, adj.neighbor) {
+            if row_index.dense_of_node(adj.neighbor).is_none() {
                 continue;
             }
             if !edge_labels.is_empty() && !edge_labels.contains(&adj.label) {
@@ -231,21 +230,6 @@ fn build_csr(
     }
 
     ProjCsr { offsets, neighbors }
-}
-
-/// Reconstruct a `NodeId` from a row index. selene-graph's `node_row_index`
-/// invariant is `id.get() == row + 1` for any alive node, so the inverse is
-/// straightforward.
-fn row_to_node_id(row: u32) -> NodeId {
-    NodeId::new(u64::from(row) + 1)
-}
-
-/// Membership test for a `NodeId` against a row-indexed bitmap.
-fn contains_neighbor(nodes: &RoaringBitmap, neighbor: NodeId) -> bool {
-    match node_row_index(neighbor) {
-        Some(row) => nodes.contains(row),
-        None => false,
-    }
 }
 
 /// Extract the edge weight per spec 16 §E04 (permissive: missing / non-numeric

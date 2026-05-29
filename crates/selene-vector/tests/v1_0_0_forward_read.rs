@@ -1,4 +1,14 @@
-//! Forward-read coverage for v1.0.0 vector snapshot/WAL bytes.
+//! Compatibility coverage for v1.0.0 vector snapshot/WAL bytes.
+//!
+//! BRIEF-Item-4a STEP 9 bumped the snapshot envelope minor version `0 -> 1`
+//! (the `CORE/NODE` / `CORE/EDGE` format changed), so the two persisted lineages
+//! diverge here:
+//!   - the v1.0.0 **snapshot** (minor 0) is now cleanly REJECTED with
+//!     `UnsupportedVersion` — the deliberate clean break (see
+//!     `v1_0_0_snapshot_rejected_after_step9`);
+//!   - the v1.0.0 **WAL** is unchanged by STEP 9 (the `Change` stream + WAL
+//!     header are untouched), so it still forward-reads
+//!     (`v1_0_0_wal_still_forward_reads`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -7,7 +17,8 @@ use std::sync::Arc;
 use selene_core::{Change, HlcTimestamp, NodeId, Origin, intern};
 use selene_graph::IndexProvider;
 use selene_persist::{
-    SnapshotBuilder, SnapshotConfig, SnapshotReader, SyncPolicy, WalConfig, WalReader, WalWriter,
+    PersistError, SnapshotBuilder, SnapshotConfig, SnapshotReader, SyncPolicy, WalConfig,
+    WalReader, WalWriter,
 };
 use selene_vector::{
     DistanceMetric, HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry, PqParams,
@@ -18,54 +29,36 @@ const FIXTURE_DIR: &str = "crates/selene-testing/fixtures/v1_0_0_vector";
 const SNAPSHOT_FILE: &str = "snapshot.1.snap";
 const WAL_FILE: &str = "wal.log";
 
-#[test]
-fn v1_0_0_snapshot_and_wal_forward_read_as_default() {
-    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+fn fixture_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("crate has workspace parent")
         .parent()
         .expect("workspace root")
-        .join(FIXTURE_DIR);
-    let snapshot_path = fixture_dir.join(SNAPSHOT_FILE);
-    let wal_path = fixture_dir.join(WAL_FILE);
+        .join(FIXTURE_DIR)
+}
 
-    let hnsw_from_snapshot = HnswIndexRegistry::new(hnsw_config()).expect("HNSW registry builds");
-    let ivf_from_snapshot = IvfIndexRegistry::new(ivf_config()).expect("IVF registry builds");
-    let mut reader = SnapshotReader::open(&snapshot_path).expect("v1.0.0 snapshot opens");
-    for sub_tag in [*b"GRPH", *b"VECS", *b"QUNT"] {
-        let bytes = reader
-            .read_section(*b"VECT", sub_tag)
-            .expect("legacy HNSW section reads");
-        hnsw_from_snapshot
-            .read_section(selene_graph::SubTag(sub_tag), &bytes)
-            .expect("legacy HNSW section forwards to default");
-    }
-    for sub_tag in [*b"CQNT", *b"IPQB", *b"POST"] {
-        let bytes = reader
-            .read_section(*b"IVFP", sub_tag)
-            .expect("legacy IVF section reads");
-        ivf_from_snapshot
-            .read_section(selene_graph::SubTag(sub_tag), &bytes)
-            .expect("legacy IVF section forwards to default");
-    }
-    assert_eq!(
-        hnsw_from_snapshot
-            .get("default")
-            .expect("default HNSW exists")
-            .search(&[1.0, 0.0, 0.0, 0.0], 1, None, None, None)
-            .expect("snapshot HNSW search succeeds")
-            .first()
-            .map(|(node_id, _)| *node_id),
-        Some(NodeId::new(1))
+#[test]
+fn v1_0_0_snapshot_rejected_after_step9() {
+    // BRIEF-Item-4a STEP 9 clean break: the v1.0.0 snapshot carries envelope
+    // minor version 0; opening it now fails the version gate with a clean
+    // `UnsupportedVersion` (never a garbled mis-decode of the CORE sections).
+    let snapshot_path = fixture_dir().join(SNAPSHOT_FILE);
+    assert!(
+        matches!(
+            SnapshotReader::open(&snapshot_path),
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+        ),
+        "pre-STEP-9 (minor 0) snapshot must be cleanly rejected"
     );
-    assert_eq!(
-        ivf_from_snapshot
-            .get("default")
-            .expect("default IVF exists")
-            .snapshot()
-            .len(),
-        1
-    );
+}
+
+#[test]
+fn v1_0_0_wal_still_forward_reads() {
+    // The WAL lineage is untouched by STEP 9 (the `Change` stream + WAL header
+    // are unchanged), so the v1.0.0 WAL still replays into the default vector
+    // registries exactly as before.
+    let wal_path = fixture_dir().join(WAL_FILE);
 
     let hnsw_from_wal = HnswIndexRegistry::new(hnsw_config()).expect("HNSW registry builds");
     let ivf_from_wal = IvfIndexRegistry::new(ivf_config()).expect("IVF registry builds");
@@ -110,13 +103,13 @@ fn regenerate_v1_0_0_vector_fixture() {
         .expect("crate has workspace parent")
         .parent()
         .expect("workspace root");
-    let fixture_dir = root.join(FIXTURE_DIR);
-    fs::create_dir_all(&fixture_dir).expect("fixture dir exists");
-    let _ = fs::remove_file(fixture_dir.join(SNAPSHOT_FILE));
-    let _ = fs::remove_file(fixture_dir.join(format!("{SNAPSHOT_FILE}.tmp")));
-    let _ = fs::remove_file(fixture_dir.join(WAL_FILE));
-    write_snapshot_fixture(&fixture_dir);
-    write_wal_fixture(&fixture_dir.join(WAL_FILE));
+    let dir = root.join(FIXTURE_DIR);
+    fs::create_dir_all(&dir).expect("fixture dir exists");
+    let _ = fs::remove_file(dir.join(SNAPSHOT_FILE));
+    let _ = fs::remove_file(dir.join(format!("{SNAPSHOT_FILE}.tmp")));
+    let _ = fs::remove_file(dir.join(WAL_FILE));
+    write_snapshot_fixture(&dir);
+    write_wal_fixture(&dir.join(WAL_FILE));
 }
 
 fn write_snapshot_fixture(dir: &Path) {

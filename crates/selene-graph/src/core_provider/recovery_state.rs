@@ -1,13 +1,11 @@
 //! Recovery-mode state for the core graph provider.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use selene_core::{
-    Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
-};
+use selene_core::{Change, EdgeId, GraphId, IStr, NodeId, PropertyDiff, PropertyMap, SchemaChange};
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
@@ -21,10 +19,13 @@ use crate::core_provider::{
 };
 use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
-use crate::store::{edge_row_index, node_row_index};
+use crate::store::{edge_row_index_arith, node_row_index_arith};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
 
+mod materialize;
 mod schema_replay;
+
+use materialize::{insert_edge_row, insert_node_row};
 
 /// Accumulator populated by snapshot sections and WAL replay.
 #[derive(Default)]
@@ -36,6 +37,15 @@ pub(crate) struct RecoveryState {
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
+    /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
+    /// committed id was decoded at, so `into_graph` materializes snapshot rows
+    /// **positionally** instead of by `id - 1` arithmetic. Aborted-tx hole rows
+    /// (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as the
+    /// pad slots between the real rows the column places. WAL-created ids absent
+    /// here fall back to arithmetic placement (live append; 4e revisits this for
+    /// WAL events that cross a 4b compaction epoch).
+    node_snapshot_rows: BTreeMap<NodeId, u32>,
+    edge_snapshot_rows: BTreeMap<EdgeId, u32>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     sequence: u64,
@@ -139,10 +149,33 @@ impl RecoveryState {
                 self.meta = Some(payload);
             }
             CORE_NODE_SUB => {
-                self.nodes = decode_nodes(bytes)?.into_iter().collect();
+                // BRIEF-Item-4a STEP 9: the section is positional. Record each
+                // committed id's row (= decode position) for positional
+                // materialization; skip `NodeId::TOMBSTONE` hole rows — they are
+                // re-padded between the real rows in `into_graph` and binding
+                // their (absent) id would resurrect an aborted-tx id as NotAlive.
+                for (position, (id, row)) in decode_nodes(bytes)?.into_iter().enumerate() {
+                    if id == NodeId::TOMBSTONE {
+                        continue;
+                    }
+                    let position = u32::try_from(position).map_err(|_| {
+                        invalid_payload("CORE/NODE row position exceeds u32::MAX".to_string())
+                    })?;
+                    self.node_snapshot_rows.insert(id, position);
+                    self.nodes.insert(id, row);
+                }
             }
             CORE_EDGE_SUB => {
-                self.edges = decode_edges(bytes)?.into_iter().collect();
+                for (position, (id, row)) in decode_edges(bytes)?.into_iter().enumerate() {
+                    if id == EdgeId::TOMBSTONE {
+                        continue;
+                    }
+                    let position = u32::try_from(position).map_err(|_| {
+                        invalid_payload("CORE/EDGE row position exceeds u32::MAX".to_string())
+                    })?;
+                    self.edge_snapshot_rows.insert(id, position);
+                    self.edges.insert(id, row);
+                }
             }
             CORE_SCMA_SUB => {
                 self.schemas = decode_schemas(bytes)?.into_iter().collect();
@@ -479,17 +512,41 @@ impl RecoveryState {
         let mut graph = SeleneGraph::new(meta.graph_id);
         graph.meta = meta;
 
+        // BRIEF-Item-4a STEP 9: materialize each row at its true row index.
+        // Snapshot rows use their decoded position (`node_snapshot_rows`); a
+        // WAL-created id absent from the snapshot falls back to `id - 1`
+        // arithmetic (the live append slot in the identity-era store). Iteration
+        // is id-ascending (BTreeMap), and `insert_node_row` pads-then-sets, so an
+        // out-of-order snapshot (id != row+1, a 4b preview) still lands each row
+        // at its recorded position. The hole slots between recorded positions are
+        // padded with `NodeId::TOMBSTONE` and stay out of the id->row map.
         let mut next_node_id = graph.meta.next_node_id.max(1);
         for (id, row) in self.nodes {
             next_node_id = next_node_id.max(id.get().saturating_add(1));
-            insert_node_row(&mut graph, id, row)?;
+            let row_index = match self.node_snapshot_rows.get(&id) {
+                Some(&position) => position as usize,
+                None => node_row_index_arith(id).ok_or_else(|| {
+                    crate::GraphError::Provider(invalid_payload(format!(
+                        "WAL-created node id {id} exceeds the u32 row space"
+                    )))
+                })? as usize,
+            };
+            insert_node_row(&mut graph, id, row, row_index)?;
         }
         graph.meta.next_node_id = next_node_id;
 
         let mut next_edge_id = graph.meta.next_edge_id.max(1);
         for (id, row) in self.edges {
             next_edge_id = next_edge_id.max(id.get().saturating_add(1));
-            insert_edge_row(&mut graph, id, row)?;
+            let row_index = match self.edge_snapshot_rows.get(&id) {
+                Some(&position) => position as usize,
+                None => edge_row_index_arith(id).ok_or_else(|| {
+                    crate::GraphError::Provider(invalid_payload(format!(
+                        "WAL-created edge id {id} exceeds the u32 row space"
+                    )))
+                })? as usize,
+            };
+            insert_edge_row(&mut graph, id, row, row_index)?;
         }
         graph.meta.next_edge_id = next_edge_id;
 
@@ -716,73 +773,6 @@ fn apply_property_diff(
         map.remove(key);
     }
     Ok(())
-}
-
-fn insert_node_row(graph: &mut SeleneGraph, id: NodeId, row: NodeRow) -> crate::GraphResult<()> {
-    let row_index = node_row_index(id).ok_or_else(|| {
-        crate::GraphError::Provider(invalid_payload(format!(
-            "CORE/NODE payload used invalid node id {id}"
-        )))
-    })? as usize;
-    while graph.node_store.len() < row_index {
-        graph.node_store.labels.push(LabelSet::new());
-        graph.node_store.properties.push(PropertyMap::new());
-    }
-    if graph.node_store.len() == row_index {
-        graph.node_store.labels.push(row.labels);
-        graph.node_store.properties.push(row.properties);
-    } else {
-        graph.node_store.labels.set(row_index, row.labels);
-        graph.node_store.properties.set(row_index, row.properties);
-    }
-    set_alive(&mut graph.node_store.alive, row_index, row.alive);
-    Ok(())
-}
-
-fn insert_edge_row(graph: &mut SeleneGraph, id: EdgeId, row: EdgeRow) -> crate::GraphResult<()> {
-    let row_index = edge_row_index(id).ok_or_else(|| {
-        crate::GraphError::Provider(invalid_payload(format!(
-            "CORE/EDGE payload used invalid edge id {id}"
-        )))
-    })? as usize;
-    while graph.edge_store.len() < row_index {
-        graph.edge_store.label.push(edge_hole_label()?);
-        graph.edge_store.source.push(NodeId::TOMBSTONE);
-        graph.edge_store.target.push(NodeId::TOMBSTONE);
-        graph.edge_store.properties.push(PropertyMap::new());
-    }
-    if graph.edge_store.len() == row_index {
-        graph.edge_store.label.push(row.label);
-        graph.edge_store.source.push(row.source);
-        graph.edge_store.target.push(row.target);
-        graph.edge_store.properties.push(row.properties);
-    } else {
-        graph.edge_store.label.set(row_index, row.label);
-        graph.edge_store.source.set(row_index, row.source);
-        graph.edge_store.target.set(row_index, row.target);
-        graph.edge_store.properties.set(row_index, row.properties);
-    }
-    set_alive(&mut graph.edge_store.alive, row_index, row.alive);
-    Ok(())
-}
-
-fn set_alive(bitmap: &mut roaring::RoaringBitmap, row_index: usize, alive: bool) {
-    let row = u32::try_from(row_index).expect("row index was validated before liveness update");
-    if alive {
-        bitmap.insert(row);
-    } else {
-        bitmap.remove(row);
-    }
-}
-
-fn edge_hole_label() -> Result<IStr, crate::GraphError> {
-    static CELL: OnceLock<IStr> = OnceLock::new();
-    if let Some(label) = CELL.get() {
-        return Ok(*label);
-    }
-    let label = selene_core::intern("__selene_hole").map_err(crate::GraphError::Core)?;
-    let _ = CELL.set(label);
-    Ok(label)
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use selene_gql::{
     GqlType, GraphContext, ProcedureDefaultValue, ProcedureError, ProcedureMutability,
     ProcedureResult, ProcedureTier,
 };
-use selene_graph::{AdjacencyEntry, NotNanF64, SeleneGraph, TypedIndex};
+use selene_graph::{AdjacencyEntry, NotNanF64, RowIndex, SeleneGraph, TypedIndex};
 use selene_graph::{CompositeKey, CompositeKeyComponent, CompositeTypedIndex};
 
 use crate::builtin::{BuiltInMetadata, GraphProcedureBuiltIn, StaticOutputColumn, StaticParameter};
@@ -335,7 +335,10 @@ fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
 
     for row in &snapshot.edge_store.alive {
         live_edges += 1;
-        let edge_id = EdgeId::new(u64::from(row) + 1);
+        let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
+            issues += 1;
+            continue;
+        };
         let Some((source, target, label)) = expected_edge(snapshot, edge_id) else {
             issues += 1;
             continue;
@@ -387,7 +390,10 @@ fn check_edge_endpoint_liveness(snapshot: &SeleneGraph) -> CheckResult {
 
     for row in &snapshot.edge_store.alive {
         checked += 1;
-        let edge_id = EdgeId::new(u64::from(row) + 1);
+        let Some(edge_id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
+            issues += 1;
+            continue;
+        };
         match snapshot.edge_endpoints(edge_id) {
             Some((source, target))
                 if snapshot.is_node_alive(source) && snapshot.is_node_alive(target) => {}

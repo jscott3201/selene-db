@@ -21,7 +21,7 @@ use crate::graph::{PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
 use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
-use crate::store::EdgeStore;
+use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
 use crate::write_txn::WriteTxn;
 
@@ -547,8 +547,105 @@ fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> {
             graph.idx_edge_label.entry(*label).or_default().insert(row);
         }
     }
+    // BRIEF-Item-4a: bind external ids to rows BEFORE rebuild_adjacency, which
+    // (from Increment 3) reads the edge id from the row_to_id column.
+    rebuild_id_maps(graph)?;
     rebuild_adjacency(graph)?;
     Ok(())
+}
+
+/// Rebuild the external-id <-> [`RowIndex`] maps from the per-store `row_to_id`
+/// columns, as the final id-binding step of a full rebuild (recovery /
+/// [`SharedGraph`] construction).
+///
+/// This is the id-map authority for the recovery path — the live commit path
+/// populates the maps directly in the mutator and never reaches here. The
+/// `row_to_id` column is the persisted source of truth: recovery's
+/// `insert_*_row` writes the real external id for every materialized row (alive
+/// **and** dead — the snapshot persists dead rows so a deleted id stays
+/// resolvable to its dead row -> `NotAlive`, matching the live path) and the
+/// tombstone for never-committed aborted-tx holes. Seeding the maps from the
+/// column therefore preserves the live/recovery id-map equality exactly; only
+/// holes are skipped (-> `None` -> `NotFound`, the accepted refinement).
+///
+/// For an externally-built graph that never populated `row_to_id` (e.g. a test
+/// that pushes store columns directly), an alive row whose column slot is still
+/// the tombstone falls back to the `row + 1` identity binding. That fallback is
+/// the only `row + 1` arithmetic here and is allowlisted in the BRIEF-Item-4a
+/// STEP-8 grep-gate; BRIEF-Item-4b drops it once every construction path
+/// persists ids.
+fn rebuild_id_maps(graph: &mut SeleneGraph) -> GraphResult<()> {
+    graph.node_id_to_row.clear();
+    graph.edge_id_to_row.clear();
+    // Externally-built graphs may not have populated row_to_id; pad it to the
+    // row-column length with tombstones so every materialized row is in-bounds.
+    let node_len = graph.node_store.len();
+    let edge_len = graph.edge_store.len();
+    pad_row_to_id(
+        &mut graph.node_store.row_to_id,
+        node_len,
+        selene_core::NodeId::TOMBSTONE,
+    );
+    pad_row_to_id(
+        &mut graph.edge_store.row_to_id,
+        edge_len,
+        selene_core::EdgeId::TOMBSTONE,
+    );
+
+    for row in 0..node_len {
+        let raw = row as u32;
+        let mut id = graph
+            .node_store
+            .row_to_id
+            .get(row)
+            .copied()
+            .unwrap_or(selene_core::NodeId::TOMBSTONE);
+        if id == selene_core::NodeId::TOMBSTONE {
+            // Hole (never committed) -> stays out of the map. An alive row with
+            // no persisted id is an externally-built graph; fall back to the
+            // identity binding and repair the column.
+            if !graph.node_store.is_alive(raw) {
+                continue;
+            }
+            id = selene_core::NodeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
+            graph.node_store.row_to_id.set(row, id);
+        }
+        graph.node_id_to_row.insert(id, RowIndex::new(raw));
+    }
+    for row in 0..edge_len {
+        let raw = row as u32;
+        let mut id = graph
+            .edge_store
+            .row_to_id
+            .get(row)
+            .copied()
+            .unwrap_or(selene_core::EdgeId::TOMBSTONE);
+        if id == selene_core::EdgeId::TOMBSTONE {
+            if !graph.edge_store.is_alive(raw) {
+                continue;
+            }
+            id = selene_core::EdgeId::new(u64::from(raw) + 1); // rowid-arith-ok: 4a identity bootstrap (externally-built graph); 4b reads the persisted id
+            graph.edge_store.row_to_id.set(row, id);
+        }
+        graph.edge_id_to_row.insert(id, RowIndex::new(raw));
+    }
+    Ok(())
+}
+
+/// Grow `column` with `tombstone` until it is at least `target_len` long.
+///
+/// [`crate::chunked_vec::ChunkedVec`] supports only push/set, so this pads but
+/// never shrinks. In practice the recovery insert path already keeps the column
+/// at row-column length (this is then a no-op), while an externally-built graph
+/// is padded from empty.
+fn pad_row_to_id<T: Clone>(
+    column: &mut crate::chunked_vec::ChunkedVec<T>,
+    target_len: usize,
+    tombstone: T,
+) {
+    while column.len() < target_len {
+        column.push(tombstone.clone());
+    }
 }
 
 fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
@@ -564,6 +661,16 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             continue;
         }
         let (label, source, target) = edge_row_parts(&graph.edge_store, row_index)?;
+        // rebuild_id_maps ran first, so the edge id is read from the row_to_id
+        // column (the persistence-stable id), never synthesized as row + 1.
+        let edge_id =
+            graph
+                .edge_id_for_row(RowIndex::new(row))
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "alive edge row {row} has no mapped external id during rebuild"
+                    ),
+                })?;
         graph
             .adjacency_out
             .entry(source)
@@ -571,7 +678,7 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             .add(AdjacencyEdge {
                 label,
                 neighbor: target,
-                edge_id: selene_core::EdgeId::new(row as u64 + 1),
+                edge_id,
             });
         graph
             .adjacency_in
@@ -580,7 +687,7 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             .add(AdjacencyEdge {
                 label,
                 neighbor: source,
-                edge_id: selene_core::EdgeId::new(row as u64 + 1),
+                edge_id,
             });
     }
     Ok(())

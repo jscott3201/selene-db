@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 use std::ops::Bound::{Excluded, Included, Unbounded};
 
-use selene_core::{EdgeId, IStr, LabelSet, NodeId, Value};
+use selene_core::{IStr, LabelSet, Value};
+use selene_graph::RowIndex;
 
 use crate::{
     FilterPredicate, FilterPredicateKind, IndexKey, IndexKind, LabelExpr, NodeOrEdgeScan,
@@ -43,7 +44,9 @@ pub(crate) fn scan_entities(
         if !label_matches_scan(scan, row, ctx) {
             continue;
         }
-        let entity = entity_value(scan.kind, row);
+        let Some(entity) = entity_value(scan.kind, row, ctx) else {
+            continue;
+        };
         let Some(binding) = binding_for_scan(scan, pattern, schema, seed, entity.clone())? else {
             continue;
         };
@@ -492,18 +495,21 @@ fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &EvalCtx<'_, '_, '_,
     let Some(label_expr) = &scan.label_predicate else {
         return true;
     };
+    let snapshot = ctx.tx.snapshot();
     match scan.kind {
         ScanKind::Node => {
-            let id = NodeId::new(u64::from(row) + 1);
-            ctx.tx
-                .snapshot()
+            let Some(id) = snapshot.node_id_for_row(RowIndex::new(row)) else {
+                return false;
+            };
+            snapshot
                 .node_labels(id)
                 .is_some_and(|labels| label_matches_node(label_expr, labels))
         }
         ScanKind::Edge => {
-            let id = EdgeId::new(u64::from(row) + 1);
-            ctx.tx
-                .snapshot()
+            let Some(id) = snapshot.edge_id_for_row(RowIndex::new(row)) else {
+                return false;
+            };
+            snapshot
                 .edge_label(id)
                 .is_some_and(|label| label_matches_edge(label_expr, *label))
         }
@@ -537,10 +543,15 @@ fn single_label(label: &Option<LabelExpr>) -> Option<IStr> {
     }
 }
 
-fn entity_value(kind: ScanKind, row: u32) -> Value {
+fn entity_value(kind: ScanKind, row: u32, ctx: &EvalCtx<'_, '_, '_, '_>) -> Option<Value> {
+    let snapshot = ctx.tx.snapshot();
     match kind {
-        ScanKind::Node => Value::NodeRef(NodeId::new(u64::from(row) + 1)),
-        ScanKind::Edge => Value::EdgeRef(EdgeId::new(u64::from(row) + 1)),
+        ScanKind::Node => snapshot
+            .node_id_for_row(RowIndex::new(row))
+            .map(Value::NodeRef),
+        ScanKind::Edge => snapshot
+            .edge_id_for_row(RowIndex::new(row))
+            .map(Value::EdgeRef),
     }
 }
 
@@ -564,16 +575,15 @@ fn property_value<'a>(
     property: IStr,
     ctx: &'a EvalCtx<'_, '_, '_, '_>,
 ) -> Option<&'a Value> {
+    let snapshot = ctx.tx.snapshot();
     match kind {
-        ScanKind::Node => ctx
-            .tx
-            .snapshot()
-            .node_properties(NodeId::new(u64::from(row) + 1))
+        ScanKind::Node => snapshot
+            .node_id_for_row(RowIndex::new(row))
+            .and_then(|id| snapshot.node_properties(id))
             .and_then(|properties| properties.get(&property)),
-        ScanKind::Edge => ctx
-            .tx
-            .snapshot()
-            .edge_properties(EdgeId::new(u64::from(row) + 1))
+        ScanKind::Edge => snapshot
+            .edge_id_for_row(RowIndex::new(row))
+            .and_then(|id| snapshot.edge_properties(id))
             .and_then(|properties| properties.get(&property)),
     }
 }
