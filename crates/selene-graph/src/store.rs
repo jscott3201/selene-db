@@ -152,31 +152,13 @@ impl Default for EdgeStore {
     }
 }
 
-/// Convert a node id to its store row via the identity `id - 1` arithmetic.
-///
-/// **Binding-authority only.** Used where a freshly allocated id (create_node)
-/// or a recovered id (recovery `insert_node_row`) DEFINES its row before the
-/// `node_id_to_row` map contains it. Every read path uses the map-backed
-/// [`SeleneGraph::row_for_node_id`](crate::SeleneGraph::row_for_node_id) instead,
-/// so the external id can stay stable while compaction renumbers the row.
-/// Allowlisted in the BRIEF-Item-4a STEP-8 grep-gate; BRIEF-Item-4b replaces the
-/// binding with a persisted-id read.
-#[must_use]
-pub(crate) fn node_row_index_arith(id: NodeId) -> Option<u32> {
-    id.get()
-        .checked_sub(1)
-        .and_then(|raw| u32::try_from(raw).ok())
-}
-
-/// Convert an edge id to its store row via the identity `id - 1` arithmetic.
-///
-/// Binding-authority only; see [`node_row_index_arith`].
-#[must_use]
-pub(crate) fn edge_row_index_arith(id: EdgeId) -> Option<u32> {
-    id.get()
-        .checked_sub(1)
-        .and_then(|raw| u32::try_from(raw).ok())
-}
+// BRIEF-Item-4c retired `node_row_index_arith` / `edge_row_index_arith`: both the
+// live create path (mutator) and the recovery WAL-replay path now allocate rows
+// by APPEND (`row = store.len()`) rather than `id - 1`. After 4b compaction the
+// monotonic high-water id far exceeds the dense row count, so id-arith would
+// re-pad the reclaimed holes; append keeps stores dense. No production read path
+// derives a row from an id anymore — the grep-gate (`check-no-rowid-arith.sh`)
+// needs no binding-authority allowlist.
 
 #[cfg(test)]
 mod tests {
@@ -207,13 +189,5 @@ mod tests {
         store.alive.insert(0);
         assert!(store.is_alive(0));
         assert!(!store.is_alive(1));
-    }
-
-    #[test]
-    fn row_index_arith_maps_id_minus_one() {
-        assert_eq!(node_row_index_arith(NodeId::new(1)), Some(0));
-        assert_eq!(node_row_index_arith(NodeId::new(42)), Some(41));
-        assert_eq!(node_row_index_arith(NodeId::TOMBSTONE), None);
-        assert_eq!(edge_row_index_arith(EdgeId::new(1)), Some(0));
     }
 }

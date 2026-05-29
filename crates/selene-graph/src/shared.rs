@@ -240,6 +240,45 @@ impl SharedGraph {
         self.snapshot.load_full()
     }
 
+    /// Compact the live graph in place: reclaim every dead / hole row, renumber
+    /// rows dense, and atomically republish the result so the RAM held by deleted
+    /// rows is reclaimed immediately (BRIEF-Item-4c — the live-densify half of
+    /// snapshot-time compaction).
+    ///
+    /// This is pure space reclamation: it changes only the internal row layout,
+    /// never external `NodeId`/`EdgeId`, properties, or labels, so it emits **no**
+    /// [`Change`](selene_core::Change) and writes **no** WAL entry. Durability
+    /// comes from the next snapshot, which encodes the now-dense live graph (the
+    /// CORE provider reads the same `snapshot` cell this method publishes into). A
+    /// crash before that snapshot simply reloads the pre-compaction state and
+    /// recompacts later — compaction can never lose data.
+    ///
+    /// The write lock is held for the whole operation, so it serializes with
+    /// writers exactly like a commit; lock-free readers keep observing the old
+    /// snapshot until the dense graph is published. The monotonic allocator
+    /// high-water marks are preserved (the live allocator is untouched, and
+    /// [`compact_core`](crate::compact_core) carries `GraphMeta` verbatim — and
+    /// the allocator is kept in sync with `GraphMeta` on every commit), so no
+    /// external id is ever reused after a later recovery.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError`] if the graph's id↔row mapping is corrupt or the
+    /// recompacted graph fails its consistency check (see
+    /// [`compact_core`](crate::compact_core)).
+    pub fn compact(&self) -> GraphResult<crate::CompactionReport> {
+        let mut guard = self.shared.write();
+        let compacted = crate::compaction::compact_core(&guard)?;
+        // `compacted.live` is the cross-storage LiveIdSet; downstream
+        // `StorageCompactor` fan-out lands with the first downstream compactor
+        // (BRIEF-Item-4d, deferred — vectors are out of scope this cycle). CORE-only
+        // compaction has no downstream consumer yet.
+        let dense = Arc::new(compacted.graph);
+        *guard = Arc::clone(&dense);
+        self.snapshot.store(dense);
+        Ok(compacted.report)
+    }
+
     /// Return the runtime schema-version epoch used for plan-cache invalidation.
     ///
     /// The epoch starts at zero for each [`SharedGraph`] instance and advances
@@ -783,6 +822,8 @@ pub(crate) fn subscriber_tag_checked(
     )
 }
 
+#[cfg(test)]
+mod compaction_tests;
 #[cfg(test)]
 #[path = "shared_property_tests.rs"]
 mod property_tests;

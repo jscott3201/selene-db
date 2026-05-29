@@ -325,12 +325,13 @@ fn compaction_of_an_all_deleted_graph_reclaims_everything() {
 }
 
 #[test]
-fn compaction_reclaims_an_aborted_tx_interior_hole() {
-    // Burn id 2 with an aborted txn, then materialize the hole row by creating
-    // id 3 (whose arith row lands past the gap). The canonical store now holds
-    // an interior TOMBSTONE row that was NEVER alive. Compaction must drop it,
-    // leave id 2 NotFound, and preserve next_node_id so the burned id is never
-    // reissued.
+fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
+    // BRIEF-Item-4c: with append-based creation an aborted txn burns its id but
+    // materializes NO row (the txn clone is discarded; the next committed create
+    // appends at the dense end rather than padding `id - 1`). So the canonical
+    // store never grows an interior TOMBSTONE hole for a burned id — n1 and n3
+    // land at rows 0 and 1 with NO gap. The burned id is still NotFound, the
+    // high-water is still preserved, and compaction has nothing to reclaim.
     let shared = SharedGraph::new(GraphId::new(1));
     let la = intern("cmp.hole").unwrap();
 
@@ -355,7 +356,8 @@ fn compaction_reclaims_an_aborted_tx_interior_hole() {
         // txn dropped here, uncommitted.
     }
 
-    // Materialize the interior hole: id 3's arith row (index 2) pads row 1.
+    // The next committed create appends — id 3 lands at row 1 (NOT row 2): no
+    // hole is padded for the burned id 2.
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
@@ -368,23 +370,36 @@ fn compaction_reclaims_an_aborted_tx_interior_hole() {
 
     let before = shared.read();
     assert_eq!(before.node_count(), 2, "n1 + n3 alive; id 2 burned");
+    assert_eq!(
+        before.node_store.len(),
+        2,
+        "append leaves NO interior hole row for the burned id"
+    );
+    assert_eq!(
+        before.row_for_node_id(NodeId::new(1)),
+        Some(RowIndex::new(0))
+    );
+    assert_eq!(
+        before.row_for_node_id(NodeId::new(3)),
+        Some(RowIndex::new(1)),
+        "id 3 appended at the dense end, not arith row 2"
+    );
     assert!(
         before.row_for_node_id(NodeId::new(2)).is_none(),
-        "aborted id was never committed -> NotFound even pre-compaction"
+        "aborted id was never committed -> NotFound"
     );
-    let rows_before = before.node_store.len() as u64;
-    assert!(rows_before >= 3, "an interior hole row exists to reclaim");
     let next_node_before = before.meta.next_node_id;
 
+    // The store is already dense, so compaction reclaims nothing.
     let compacted = compact_core(&before).unwrap();
     let g = &compacted.graph;
 
-    assert_eq!(g.node_store.len(), 2, "the hole row is reclaimed");
+    assert_eq!(g.node_store.len(), 2);
     assert_eq!(g.node_count(), 2);
+    assert_eq!(compacted.report.reclaimed_nodes, 0, "nothing to reclaim");
     assert_eq!(g.row_for_node_id(NodeId::new(1)), Some(RowIndex::new(0)));
     assert_eq!(g.row_for_node_id(NodeId::new(3)), Some(RowIndex::new(1)));
     assert!(g.row_for_node_id(NodeId::new(2)).is_none());
-    assert!(compacted.report.reclaimed_nodes >= 1);
     assert_eq!(
         g.meta.next_node_id, next_node_before,
         "burned id 2 must never be reissued"
@@ -396,10 +411,10 @@ fn compaction_reclaims_an_aborted_tx_interior_hole() {
 fn republished_compacted_graph_allocates_without_reuse() {
     // The 4c-critical property: after a compacted graph goes live, the very next
     // create must allocate the PRESERVED next_node_id (not reuse a reclaimed id,
-    // not alias a survivor's renumbered row). create_node still uses arith
-    // row = id - 1 (the 4c arith->append change has not landed), so this also
-    // proves the arith path stays safe on a renumbered store: it pads holes and
-    // appends past the dense survivors.
+    // not alias a survivor's renumbered row). With BRIEF-Item-4c append creation
+    // the new node lands at the dense end (row 3 here) rather than its high-water
+    // arith row, so the store does NOT re-bloat — proving append keeps a
+    // republished compacted graph dense.
     let shared = graph_with_a_deletion();
     let next_node_before = shared.read().meta.next_node_id;
 
@@ -427,6 +442,10 @@ fn republished_compacted_graph_allocates_without_reuse() {
         "the next create must take the preserved high-water mark, not a reclaimed id"
     );
     assert!(g.is_node_alive(new_id));
+    // Dense append: the new node took the next dense row (3), NOT its high-water
+    // arith row (4) — so the republished compacted store did not re-bloat.
+    assert_eq!(g.row_for_node_id(new_id), Some(RowIndex::new(3)));
+    assert_eq!(g.node_store.len(), 4, "store stays dense, no hole re-bloat");
     // Survivors untouched by the new allocation.
     assert!(g.is_node_alive(NodeId::new(1)));
     assert!(g.is_node_alive(NodeId::new(3)));

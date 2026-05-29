@@ -22,9 +22,9 @@
 //! - the edge store mirrors all three cases and adjacency rebuilds from the
 //!   positional external ids.
 
-use selene_core::{EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
+use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
 
-use super::{temp_dir, write_snapshot};
+use super::{append_wal, node_created, sample_shared_graph, temp_dir, write_snapshot};
 use crate::store::RowIndex;
 use crate::{SeleneGraph, SharedGraph};
 
@@ -256,4 +256,145 @@ fn recovered_store_continues_id_allocation_without_clobber() {
     assert!(!g.is_node_alive(NodeId::new(15)));
     assert!(g.row_for_node_id(NodeId::new(15)).is_some());
     assert!(g.row_for_node_id(NodeId::new(3)).is_none());
+}
+
+// --- BRIEF-Item-4c: compacted-snapshot recovery + post-compaction WAL append ---
+//
+// A COMPACTED snapshot (dense rows, sparse high-water ids) round-trips through
+// recovery dense, and a post-compaction WAL `NodeCreated` APPENDS at the dense
+// end on replay rather than re-padding the reclaimed holes via `id - 1` (the
+// re-bloat regression the recovery-path arith→append change closes). The
+// pre-compaction deletes that ride below the snapshot's WAL floor are never
+// replayed, so reclaimed ids stay NotFound — also exercising the floor that
+// keeps the 4e delete hazard out of the normal rotate path.
+
+/// `sample_shared_graph` builds GraphId(7) with nodes 1..=5 (node 5 deleted) and
+/// one edge 1->2. Delete nodes 2 and 3 (deleting 2 cascade-deletes the edge),
+/// leaving 1 and 4 alive, then live-densify.
+fn compacted_sample() -> SharedGraph {
+    let shared = sample_shared_graph();
+    {
+        let mut txn = shared.begin_write();
+        {
+            let mut m = txn.mutator();
+            m.delete_node(NodeId::new(2)).unwrap();
+            m.delete_node(NodeId::new(3)).unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    let report = shared.compact().unwrap();
+    assert_eq!(report.reclaimed_nodes, 3, "rows 2, 3, 5 reclaimed");
+    assert!(
+        report.reclaimed_edges >= 1,
+        "the cascade-deleted edge reclaimed"
+    );
+    {
+        let g = shared.read();
+        assert_eq!(g.node_store.len(), 2, "live store densified to 1 and 4");
+        assert_eq!(g.meta.next_node_id, 6, "high-water preserved");
+    }
+    shared
+}
+
+#[test]
+fn compacted_snapshot_recovers_dense() {
+    let dir = temp_dir("compacted-snapshot-dense");
+    let shared = compacted_sample();
+    write_snapshot(&dir, &shared, 3);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    let g = recovered.read();
+
+    assert_eq!(g.node_store.len(), 2, "recovered store is dense (no holes)");
+    assert_eq!(g.node_count(), 2);
+    assert!(g.is_node_alive(NodeId::new(1)));
+    assert!(g.is_node_alive(NodeId::new(4)));
+    // Reclaimed ids are gone from the compacted snapshot -> NotFound.
+    assert!(g.row_for_node_id(NodeId::new(2)).is_none());
+    assert!(g.row_for_node_id(NodeId::new(3)).is_none());
+    assert!(g.row_for_node_id(NodeId::new(5)).is_none());
+    // The monotonic high-water survives recovery so no id is ever reissued.
+    assert_eq!(g.meta.next_node_id, 6);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn post_compaction_wal_create_recovers_dense_without_rebloat() {
+    // THE re-bloat regression. After the compacted snapshot at seq 3, a WAL
+    // `NodeCreated { id: 6 }` (absent from the dense snapshot) must append at the
+    // dense end (row 2), NOT at arith row 5 — which would re-pad rows 2..5 and
+    // undo the compaction on every reload.
+    let dir = temp_dir("compacted-snapshot-wal-rebloat");
+    let shared = compacted_sample();
+    write_snapshot(&dir, &shared, 3);
+    append_wal(&dir, 3, &[node_created(6)]);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    let g = recovered.read();
+
+    assert!(g.is_node_alive(NodeId::new(1)));
+    assert!(g.is_node_alive(NodeId::new(4)));
+    assert!(
+        g.is_node_alive(NodeId::new(6)),
+        "the WAL-created node recovered"
+    );
+    // Pre-compaction deletes rode below the snapshot WAL floor -> never replayed.
+    assert!(g.row_for_node_id(NodeId::new(2)).is_none());
+    assert!(g.row_for_node_id(NodeId::new(3)).is_none());
+    assert!(g.row_for_node_id(NodeId::new(5)).is_none());
+    // No re-bloat: exactly 3 rows (2 dense survivors + 1 appended WAL node), and
+    // the WAL node landed at the dense end — not arith row 5.
+    assert_eq!(
+        g.node_store.len(),
+        3,
+        "no hole re-bloat from the WAL-created id"
+    );
+    assert_eq!(g.row_for_node_id(NodeId::new(6)), Some(RowIndex::new(2)));
+    // Allocation continues above the recovered high-water (id 6 + 1).
+    assert_eq!(g.meta.next_node_id, 7);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn post_compaction_wal_edge_create_recovers_dense_without_rebloat() {
+    // The EDGE arm of the re-bloat regression (symmetric to the node arm above).
+    // `compacted_sample` cascade-deleted the original edge, so the compacted
+    // snapshot has zero edge rows but next_edge_id == 2. A post-snapshot WAL
+    // `EdgeCreated { id: 2 }` between the two surviving nodes must append at edge
+    // row 0, NOT pad arith row 1.
+    let dir = temp_dir("compacted-snapshot-wal-edge");
+    let shared = compacted_sample();
+    write_snapshot(&dir, &shared, 3);
+    let edge = Change::EdgeCreated {
+        id: EdgeId::new(2),
+        label: intern("recover.wal.edge").unwrap(),
+        source: NodeId::new(1),
+        target: NodeId::new(4),
+        properties: PropertyMap::new(),
+    };
+    append_wal(&dir, 3, &[edge]);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(7)).unwrap();
+    let g = recovered.read();
+
+    assert!(g.is_edge_alive(EdgeId::new(2)));
+    assert_eq!(
+        g.edge_store.len(),
+        1,
+        "no edge re-bloat: the WAL edge appended at the dense end"
+    );
+    assert_eq!(g.row_for_edge_id(EdgeId::new(2)), Some(RowIndex::new(0)));
+    assert_eq!(
+        g.edge_endpoints(EdgeId::new(2)),
+        Some((NodeId::new(1), NodeId::new(4)))
+    );
+    // Adjacency rebuilt for the appended edge.
+    assert!(
+        g.outgoing_edges(NodeId::new(1))
+            .unwrap()
+            .iter()
+            .any(|e| e.edge_id == EdgeId::new(2) && e.neighbor == NodeId::new(4))
+    );
+    assert_eq!(g.meta.next_edge_id, 3);
+    let _ = std::fs::remove_dir_all(dir);
 }
