@@ -61,7 +61,8 @@ pub use property_value_type::PropertyValueType;
 pub use schema::{
     EdgeEndpointDef, EdgeTypeDef, EdgeTypeDefV1, GraphType, GraphTypeId, KeyLabelSetPolicy,
     NodeKey, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDef,
-    PropertyDefV1, RecordTypeDef, RecordTypeRef, ValidationMode, ValueType, ValueTypeCardinality,
+    PropertyDefV1, RecordFieldStructure, RecordFieldStructureDef, RecordFieldStructureType,
+    RecordTypeDef, RecordTypeRef, ValidationMode, ValueType, ValueTypeCardinality,
 };
 pub use value::{EdgeDirection, Path, PathSegment, Record, RecordTyped, Value};
 pub use value_adapter::{

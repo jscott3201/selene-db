@@ -4,13 +4,15 @@ use pest::iterators::Pair;
 use selene_core::feature_register::FeatureId;
 
 use crate::{
-    ast::{BinaryOp, GqlType, IsCheckKind, NormalForm, SourceSpan, TruthValue, ValueExpr},
+    ast::{
+        BinaryOp, GqlType, IsCheckKind, NormalForm, RecordType, SourceSpan, TruthValue, ValueExpr,
+    },
     error::ParserError,
     parser::{MAX_NESTING_DEPTH, budget::InternerBudget},
 };
 
 use super::{Rule, build_value_expr, literal};
-use crate::parser::builders::{not_implemented, pattern, span};
+use crate::parser::builders::{intern_pair, not_implemented, pattern, span};
 
 pub(super) fn apply_is_suffix(
     operand: ValueExpr,
@@ -175,7 +177,7 @@ fn build_is_kind(
         .any(|child| child.as_rule() == Rule::typed_kw)
     {
         let type_pair = find_child(children, Rule::type_name, "IS TYPED is missing type")?;
-        return Ok(IsCheckKind::Typed(build_type_name(type_pair)?));
+        return Ok(IsCheckKind::Typed(build_type_name(type_pair, budget)?));
     }
     Err(ParserError::syntax(
         "unsupported IS predicate",
@@ -196,11 +198,18 @@ fn find_child<'a>(
         .ok_or_else(|| ParserError::syntax(missing, SourceSpan::default(), None))
 }
 
-pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    build_type_name_with_depth(pair, 0)
+pub(super) fn build_type_name(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<GqlType, ParserError> {
+    build_type_name_with_depth(pair, 0, budget)
 }
 
-fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
+fn build_type_name_with_depth(
+    pair: Pair<'_, Rule>,
+    depth: u32,
+    budget: &mut InternerBudget,
+) -> Result<GqlType, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::type_name);
     let source_span = span(&pair);
     if depth > MAX_NESTING_DEPTH {
@@ -277,7 +286,38 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         return Ok(GqlType::List(Box::new(build_type_name_with_depth(
             inner,
             depth + 1,
+            budget,
         )?)));
+    }
+
+    if compact.starts_with("RECORD") {
+        // Per ISO 39075:2024 section18.9 <record type> / <field types specification> +
+        // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
+        // type; bare `RECORD` (no fields) is the open record type. Field names are
+        // user-controlled and charge the per-parse interner budget (DoS bound).
+        let fields = pair
+            .into_inner()
+            .filter(|child| child.as_rule() == Rule::record_field_type)
+            .map(|field| {
+                let field_span = span(&field);
+                let mut children = field.into_inner();
+                let name_pair = children.next().ok_or_else(|| {
+                    ParserError::syntax("record field type is missing name", field_span, None)
+                })?;
+                let type_pair = children.next().ok_or_else(|| {
+                    ParserError::syntax("record field type is missing type", field_span, None)
+                })?;
+                Ok((
+                    intern_pair(name_pair, budget)?,
+                    build_type_name_with_depth(type_pair, depth + 1, budget)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ParserError>>()?;
+        return Ok(if fields.is_empty() {
+            GqlType::Record(RecordType::Open)
+        } else {
+            GqlType::Record(RecordType::Closed(fields))
+        });
     }
 
     match compact.as_str() {

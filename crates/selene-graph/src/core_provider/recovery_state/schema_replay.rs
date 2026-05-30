@@ -9,8 +9,9 @@ use selene_core::{
 
 use crate::core_provider::inconsistent;
 use crate::graph_types::{
-    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_LIST_TYPE_NESTING, NodeTypeDef,
-    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_LIST_TYPE_NESTING, MAX_RECORD_TYPE_NESTING,
+    NodeTypeDef, PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
+    RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 
 pub(super) fn replay_schema_changes(
@@ -195,7 +196,31 @@ fn runtime_properties(
     properties
         .iter()
         .map(|property| {
-            let (value_type, list_element_type) = runtime_value_type(&property.value_type)?;
+            // Why: a RECORD property's structure rides `PropertyDef.record_fields`
+            // (structural-inline), NOT `ValueType.record`. `record_fields` jointly encodes
+            // three states so recovery faithfully restores the committed catalog (D11-class
+            // live-vs-recovered consistency): `None` ⇒ not a record; `Some(Open)` ⇒ an
+            // open/bare `RECORD` (RecordTyped with no field constraints — without this
+            // marker its all-`None` `ValueType` would degrade to scalar `Null` on replay);
+            // `Some(Closed)` ⇒ a closed/typed `RECORD{..}`. The coarse `RecordTyped` tag is
+            // derived here (not stored on `ValueType`) so commit-time GG02 validation treats
+            // it correctly. Per ISO 39075:2024 §18.9/§18.10 (GV46/GV47/GV48).
+            let (value_type, list_element_type, record_field_types) =
+                match property.record_fields.as_deref() {
+                    Some(selene_core::RecordFieldStructure::Open) => {
+                        (PropertyValueType::RecordTyped, None, None)
+                    }
+                    Some(selene_core::RecordFieldStructure::Closed(defs)) => (
+                        PropertyValueType::RecordTyped,
+                        None,
+                        Some(runtime_record_field_types(defs, 1)?),
+                    ),
+                    None => {
+                        let (value_type, list_element_type) =
+                            runtime_value_type(&property.value_type)?;
+                        (value_type, list_element_type, None)
+                    }
+                };
             Ok(PropertyTypeDef {
                 name: property.name,
                 value_type,
@@ -203,9 +228,57 @@ fn runtime_properties(
                 required: !property.nullable || property.value_type.not_null,
                 default: runtime_default_value(property.default.as_ref())?,
                 immutable: property.immutable,
+                record_field_types,
             })
         })
         .collect()
+}
+
+fn runtime_record_field_types(
+    defs: &[selene_core::RecordFieldStructureDef],
+    depth: u32,
+) -> Result<RecordFieldTypes, crate::ProviderError> {
+    if depth > MAX_RECORD_TYPE_NESTING {
+        return Err(inconsistent(
+            "WAL property definition exceeds RECORD nesting limit",
+        ));
+    }
+    let fields = defs
+        .iter()
+        .map(|field| {
+            Ok(RecordFieldTypeDef {
+                name: field.name,
+                field_type: runtime_record_field_type(&field.field_type, depth)?,
+                required: field.required,
+            })
+        })
+        .collect::<Result<Vec<_>, crate::ProviderError>>()?;
+    Ok(RecordFieldTypes(fields))
+}
+
+fn runtime_record_field_type(
+    field_type: &selene_core::RecordFieldStructureType,
+    depth: u32,
+) -> Result<RecordFieldType, crate::ProviderError> {
+    match field_type {
+        selene_core::RecordFieldStructureType::Scalar(value_type) => {
+            Ok(RecordFieldType::Scalar(*value_type))
+        }
+        selene_core::RecordFieldStructureType::List(inner) => Ok(RecordFieldType::List(Box::new(
+            runtime_record_field_type(inner, depth + 1)?,
+        ))),
+        // A nested RECORD field is structurally always closed: the rkyv `RecordFieldType`
+        // descriptor has no open-record field variant, and GQL lowering rejects open nested
+        // record fields, so an `Open` here means a corrupt WAL payload.
+        selene_core::RecordFieldStructureType::Record(inner) => match inner.as_ref() {
+            selene_core::RecordFieldStructure::Closed(defs) => Ok(RecordFieldType::Record(
+                Box::new(runtime_record_field_types(defs, depth + 1)?),
+            )),
+            selene_core::RecordFieldStructure::Open => Err(inconsistent(
+                "WAL record field type contains an unsupported open nested RECORD",
+            )),
+        },
+    }
 }
 
 fn runtime_default_value(

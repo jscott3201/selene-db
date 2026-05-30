@@ -37,6 +37,7 @@ mod statement;
 mod subplan;
 mod value_compare;
 mod value_key;
+mod value_type_match;
 mod visited_set;
 mod wco;
 

@@ -2,7 +2,7 @@
 //! parser, analyzer, walker, format, GQLSTATUS, feature-flag, and runtime
 //! ISO §22 dispatch matrix coverage.
 
-use selene_core::{GraphId, Value, feature_register::FeatureId};
+use selene_core::{GraphId, Record, Value, feature_register::FeatureId, intern};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
     GqlStatus, GqlType, PipelineStatement, ReturnItem, Session, Statement, StatementOutput,
@@ -572,10 +572,95 @@ fn cast_path_to_anything_returns_42n01() {
 }
 
 #[test]
-fn cast_record_to_anything_returns_42n01() {
-    // Construct a record literal and attempt to cast it.
+fn cast_record_to_scalar_returns_22g03() {
+    // A record source to a non-record (scalar) target is an invalid type combination per
+    // ISO §20.8 Table 4 (`N`) → 22G03 datatype mismatch (not a missing feature).
     let source = "RETURN CAST({a: 1, b: 2} AS STRING) AS v";
-    assert_eq!(execute_first_status(source), "42N01");
+    assert_eq!(execute_first_status(source), "22G03");
+}
+
+#[test]
+fn cast_record_to_closed_record_coerces_and_projects() {
+    // ISO §20.8 GR4(e): per-field recursive cast (string '5' -> INT 5); SR12 subset
+    // projection drops the undeclared extra source field `b`.
+    let source = "RETURN CAST({a: '5', b: 2} AS RECORD{a :: INT}) AS v";
+    let value = execute_first_value(source);
+    assert_eq!(
+        value,
+        Value::Record(Box::new(Record::Open(
+            [(intern("a").unwrap(), Value::Int(5))]
+                .into_iter()
+                .collect()
+        )))
+    );
+}
+
+#[test]
+fn cast_record_missing_target_field_returns_22g0u() {
+    // The target declares a field absent from the source → 22G0U record fields do not match.
+    let source = "RETURN CAST({a: 1} AS RECORD{a :: INT, b :: STRING}) AS v";
+    assert_eq!(execute_first_status(source), "22G0U");
+}
+
+#[test]
+fn cast_non_record_to_record_returns_22g03() {
+    let source = "RETURN CAST(5 AS RECORD{a :: INT}) AS v";
+    assert_eq!(execute_first_status(source), "22G03");
+}
+
+#[test]
+fn cast_record_to_open_record_is_identity() {
+    let source = "RETURN CAST({a: 1, b: 'x'} AS RECORD) AS v";
+    let value = execute_first_value(source);
+    assert_eq!(
+        value,
+        Value::Record(Box::new(Record::Open(
+            [
+                (intern("a").unwrap(), Value::Int(1)),
+                (intern("b").unwrap(), Value::String(intern("x").unwrap())),
+            ]
+            .into_iter()
+            .collect()
+        )))
+    );
+}
+
+#[test]
+fn cast_null_to_record_is_null() {
+    let source = "RETURN CAST(NULL AS RECORD{a :: INT}) AS v";
+    assert_eq!(execute_first_value(source), Value::Null);
+}
+
+#[test]
+fn cast_record_inner_field_cast_failure_propagates() {
+    // ISO §20.8 GR4(e)(i): each field is cast recursively, so a failing inner cast
+    // ('abc' -> INT) must surface its own status (22018 invalid character value for cast),
+    // not a swallowed or relabelled error.
+    let source = "RETURN CAST({a: 'abc'} AS RECORD{a :: INT}) AS v";
+    assert_eq!(execute_first_status(source), "22018");
+}
+
+#[test]
+fn cast_record_to_nested_record_coerces_recursively() {
+    // The recursive-descent path (cast_to_record re-enters under stacker::maybe_grow): a
+    // nested closed-record target coerces the inner field ('5' -> INT 5).
+    let source = "RETURN CAST({a: {b: '5'}} AS RECORD{a :: RECORD{b :: INT}}) AS v";
+    let value = execute_first_value(source);
+    assert_eq!(
+        value,
+        Value::Record(Box::new(Record::Open(
+            [(
+                intern("a").unwrap(),
+                Value::Record(Box::new(Record::Open(
+                    [(intern("b").unwrap(), Value::Int(5))]
+                        .into_iter()
+                        .collect()
+                )))
+            )]
+            .into_iter()
+            .collect()
+        )))
+    );
 }
 
 #[test]

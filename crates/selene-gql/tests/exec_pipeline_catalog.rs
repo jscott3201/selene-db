@@ -673,31 +673,59 @@ fn unique_property_constraint_is_deferred() {
 }
 
 #[test]
-fn record_and_nothing_property_types_are_deferred() {
+fn nothing_property_type_is_deferred() {
     let graph = empty_closed_graph(3715);
-    for gql_type in [GqlType::Record(RecordType::Open), GqlType::Nothing] {
-        let mut plan = planned("CREATE NODE TYPE :Person ()");
-        let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) =
-            &mut plan.pipeline[0]
-        else {
-            panic!("expected create node type");
-        };
-        properties.push(PlannedTypePropertyDef {
-            name: istr("payload"),
-            gql_type,
-            constraints: Vec::new(),
-            span: SourceSpan::new(0, 1),
-        });
+    let mut plan = planned("CREATE NODE TYPE :Person ()");
+    let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) = &mut plan.pipeline[0]
+    else {
+        panic!("expected create node type");
+    };
+    properties.push(PlannedTypePropertyDef {
+        name: istr("payload"),
+        gql_type: GqlType::Nothing,
+        constraints: Vec::new(),
+        span: SourceSpan::new(0, 1),
+    });
 
-        let err = run_write(&graph, &plan).expect_err("type is deferred");
+    let err = run_write(&graph, &plan).expect_err("NOTHING type is deferred");
 
-        assert!(matches!(
-            err,
-            ExecutorError::ImplementationDefined {
-                detail: "type property GQL type not supported as property value type (Phase A)",
-            }
-        ));
-    }
+    assert!(matches!(
+        err,
+        ExecutorError::ImplementationDefined {
+            detail: "type property GQL type not supported as property value type (Phase A)",
+        }
+    ));
+}
+
+#[test]
+fn open_record_property_type_is_supported() {
+    // A bare/open `RECORD` property lowers to a permissive RecordTyped declaration that
+    // accepts any record value.
+    let graph = empty_closed_graph(3716);
+    let mut plan = planned("CREATE NODE TYPE :Person ()");
+    let PipelineOp::Catalog(CatalogOp::CreateNodeType { properties, .. }) = &mut plan.pipeline[0]
+    else {
+        panic!("expected create node type");
+    };
+    properties.push(PlannedTypePropertyDef {
+        name: istr("payload"),
+        gql_type: GqlType::Record(RecordType::Open),
+        constraints: Vec::new(),
+        span: SourceSpan::new(0, 1),
+    });
+
+    let (_table, outcome) = run_write(&graph, &plan).expect("open RECORD type executes");
+    outcome.expect("open RECORD property type commits");
+}
+
+#[test]
+fn closed_record_property_type_lowers_end_to_end() {
+    // Full grammar -> builder -> analyzer -> lowering -> closed-graph commit for a typed
+    // RECORD declaration.
+    let graph = empty_closed_graph(3717);
+    let plan = planned("CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INT})");
+    let (_table, outcome) = run_write(&graph, &plan).expect("closed RECORD type executes");
+    outcome.expect("closed RECORD property type commits");
 }
 
 #[test]

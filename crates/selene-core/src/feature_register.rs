@@ -286,6 +286,9 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV40,
     FeatureId::GV41,
     FeatureId::GV45,
+    FeatureId::GV46,
+    FeatureId::GV47,
+    FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
 ];
@@ -434,18 +437,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
-    (
-        FeatureId::GV46,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
-    (
-        FeatureId::GV47,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
-    (
-        FeatureId::GV48,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
     (
         FeatureId::GV60,
         "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",

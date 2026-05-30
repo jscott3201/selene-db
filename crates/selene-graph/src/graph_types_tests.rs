@@ -14,6 +14,7 @@ fn property(name: &str) -> PropertyTypeDef {
         required: true,
         default: None,
         immutable: false,
+        record_field_types: None,
     }
 }
 

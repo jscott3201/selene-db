@@ -3,7 +3,7 @@
 mod numeric;
 
 use crate::{
-    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, UnaryOp,
+    BinaryOp, GqlType, IsCheckKind, Literal, RecordType, SourceSpan, UnaryOp,
     analyze::{
         error::{AnalysisError, ConditionClause, ExpectedType, Side, TypeMismatchContext},
         types::AnalyzedType,
@@ -597,11 +597,14 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Null
         | GqlType::Nothing => true,
         GqlType::List(inner) => is_supported_typed_target(inner),
-        GqlType::Record(_)
-        | GqlType::GraphRef
-        | GqlType::NodeRef
-        | GqlType::EdgeRef
-        | GqlType::TableRef => false,
+        // Why: per ISO 39075:2024 §18.9 <record type> + §19.6 <value type predicate>, a
+        // record type is an authorized typed-predicate target. Closed-record field types
+        // are validated recursively, mirroring the List(inner) arm above.
+        GqlType::Record(RecordType::Open) => true,
+        GqlType::Record(RecordType::Closed(fields)) => {
+            fields.iter().all(|(_, ty)| is_supported_typed_target(ty))
+        }
+        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => false,
     }
 }
 

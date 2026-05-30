@@ -189,6 +189,8 @@ fn person_only_graph_type() -> GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],

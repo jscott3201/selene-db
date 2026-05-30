@@ -14,10 +14,11 @@
 //!   explicit-cast scope (NODE / EDGE / PATH / RECORD source, or any cast
 //!   whose target is `NULL` / `NOTHING`).
 
-use selene_core::Value;
+use selene_core::{Record, Value};
+use smallvec::SmallVec;
 
 use crate::{
-    GqlType, SourceSpan,
+    GqlType, RecordType, SourceSpan,
     runtime::{DataExceptionSubclass, ExecutorError},
 };
 
@@ -58,6 +59,13 @@ pub(super) fn eval_cast(
         return Ok(Value::Null);
     }
 
+    // A RECORD target is handled before the generic source-rejection block: per ISO §20.8
+    // Table 4 the only valid source for a record target is a record (R -> R), so a record
+    // source reaching a record target must not be spuriously rejected below.
+    if let GqlType::Record(record_type) = target_type {
+        return cast_to_record(value, record_type, span);
+    }
+
     // Source-level rejections (graph-element / path / record).
     match &value {
         Value::NodeRef(_) => {
@@ -79,10 +87,14 @@ pub(super) fn eval_cast(
             });
         }
         Value::Record(_) | Value::RecordTyped(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
-                feature: "CAST from RECORD",
+            // A record source to a non-record (scalar/list) target is an invalid type
+            // combination per ISO §20.8 Table 4 (`N`), i.e. a 22G03 datatype mismatch —
+            // not a missing feature.
+            return Err(ExecutorError::data_exception(
+                DataExceptionSubclass::InvalidValueType,
+                "CAST from RECORD to a non-record type is not a valid type combination",
                 span,
-            });
+            ));
         }
         _ => {}
     }
@@ -216,6 +228,93 @@ fn cast_to_list(
         })?);
     }
     Ok(Value::List(out))
+}
+
+/// CAST a record value to a record target type per ISO/IEC 39075:2024 §20.8.
+///
+/// - An **open** record target (`RecordType::Open`) returns the source record unchanged
+///   (GR4(e)(ii) identity).
+/// - A **closed** record target re-casts each declared field. Per SR12 the target's field
+///   names must be a subset of the source's (for the named `Value::Record` form): extra
+///   source fields are projected away, and each kept field's value is recursively re-cast
+///   to the declared field type (GR4(e)(i)). A positional `Value::RecordTyped` source is
+///   re-cast by position with matching arity. A missing target field (or arity mismatch)
+///   raises `22G0U` "record fields do not match".
+///
+/// The result is emitted as the open named `Value::Record` form, matching the §20.18
+/// record-constructor output so cast results are indistinguishable from record literals
+/// downstream (and validate identically against a closed-graph RECORD property).
+fn cast_to_record(
+    value: Value,
+    target: &RecordType,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    match target {
+        RecordType::Open => match value {
+            Value::Record(_) | Value::RecordTyped(_) => Ok(value),
+            _ => Err(non_record_source_cast(span)),
+        },
+        RecordType::Closed(fields) => {
+            let mut out: SmallVec<[(selene_core::IStr, Value); 4]> =
+                SmallVec::with_capacity(fields.len());
+            match value {
+                Value::Record(record) => {
+                    let Record::Open(source_fields) = *record else {
+                        return Err(non_record_source_cast(span));
+                    };
+                    for (name, ty) in fields {
+                        let Some((_, source_value)) =
+                            source_fields.iter().find(|(field, _)| field == name)
+                        else {
+                            return Err(record_fields_do_not_match(span));
+                        };
+                        let source_value = source_value.clone();
+                        let casted = stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
+                            eval_cast(source_value, ty, span)
+                        })?;
+                        out.push((*name, casted));
+                    }
+                }
+                // Fail-closed. SR12's closed→closed projection is by field NAME, but a
+                // `Value::RecordTyped` source is catalog-bound (a `type_id` + positional
+                // slots, no inline names), so name-keyed projection needs to resolve
+                // `type_id` through the named-record-type catalog. That catalog is unbuilt
+                // (`GraphTypeDef.record_types` is never populated) and its resolution
+                // semantics are undesigned, so rather than project positionally (name-blind,
+                // plausibly wrong) we reject. Unreached today: no production read path
+                // materializes `Value::RecordTyped` (records surface as
+                // `Value::Record(Record::Open)`, handled name-keyed above). Name-keyed
+                // projection lands with the future RecordTyped read-path producer brief.
+                Value::RecordTyped(_) => {
+                    return Err(ExecutorError::FeatureNotInV1_1 {
+                        feature: "CAST of a catalog-bound RECORD (RecordTyped) source value",
+                        span,
+                    });
+                }
+                _ => return Err(non_record_source_cast(span)),
+            }
+            Ok(Value::Record(Box::new(Record::Open(out))))
+        }
+    }
+}
+
+fn non_record_source_cast(span: SourceSpan) -> ExecutorError {
+    // ISO §20.8 Table 4: a non-record source to a record target is an invalid type
+    // combination (`N`) → 22G03 datatype mismatch.
+    ExecutorError::data_exception(
+        DataExceptionSubclass::InvalidValueType,
+        "CAST to RECORD requires a record source value",
+        span,
+    )
+}
+
+fn record_fields_do_not_match(span: SourceSpan) -> ExecutorError {
+    // ISO §20.8 GR4(e): the source record fields do not match the target RECORD type.
+    ExecutorError::data_exception(
+        DataExceptionSubclass::RecordFieldsDoNotMatch,
+        "source record fields do not match the target RECORD type",
+        span,
+    )
 }
 
 fn float_to_integer(f: f64, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -382,5 +481,28 @@ mod tests {
             panic!("expected DataException, got {err:?}");
         };
         assert_eq!(subclass, DataExceptionSubclass::NumericValueOutOfRange);
+    }
+
+    #[test]
+    fn recordtyped_source_to_closed_record_is_fail_closed() {
+        // A catalog-bound `Value::RecordTyped` source carries no inline field names, and the
+        // named-record-type catalog needed to resolve them is unbuilt — so CAST rejects it
+        // (42N01 feature-not-in-v1.1) rather than projecting positionally (name-blind).
+        // RecordTyped is not grammar-reachable, hence this unit test.
+        use selene_core::{RecordTypeId, RecordTyped};
+        let value = Value::RecordTyped(Box::new(RecordTyped {
+            type_id: RecordTypeId::new(1),
+            values: [Some(Value::Int(1))].into_iter().collect(),
+        }));
+        let field = selene_core::intern_with_admission("a")
+            .expect("intern field")
+            .0;
+        let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
+        let err = eval_cast(value, &target, span()).expect_err("RecordTyped source rejected");
+        assert!(
+            matches!(err, ExecutorError::FeatureNotInV1_1 { .. }),
+            "expected FeatureNotInV1_1, got {err:?}"
+        );
+        assert_eq!(err.gqlstatus().as_str(), "42N01");
     }
 }

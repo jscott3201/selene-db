@@ -1,5 +1,4 @@
-use std::sync::Arc;
-use std::thread;
+use std::{sync::Arc, thread};
 
 use parking_lot::Mutex;
 use selene_core::{
@@ -33,6 +32,7 @@ fn person_graph_type() -> GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],

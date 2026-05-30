@@ -1,8 +1,9 @@
 use std::fs;
 
 use selene_core::{
-    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelDiff, LabelSet, NodeId, NodeTypeRef,
-    PropertyDiff, PropertyMap, SchemaChange, Value, intern,
+    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelDiff, LabelSet, NodeId,
+    NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDefV1, PropertyDiff, PropertyMap,
+    SchemaChange, Value, ValueType, ValueTypeCardinality, intern,
 };
 use smallvec::smallvec;
 
@@ -11,7 +12,7 @@ use crate::{
     ValidationMode,
 };
 
-use super::{append_wal, expect_prop, prop, temp_dir};
+use super::{append_wal, empty_closed_graph_type, expect_prop, prop, temp_dir};
 
 fn person_closed_graph_type() -> crate::GraphTypeDef {
     let person = intern("recover.closed.person").unwrap();
@@ -641,5 +642,77 @@ fn recover_from_wal_only_replays_property_index_dropped() {
             }
         ]
     ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn legacy_string_property(name: &str, required: bool) -> PropertyDefV1 {
+    PropertyDefV1 {
+        name: intern(name).unwrap(),
+        value_type: ValueType {
+            predefined: Some(PredefinedValueType::String),
+            union: None,
+            list_of: None,
+            record: None,
+            not_null: required,
+            cardinality: ValueTypeCardinality::ExactlyOne,
+        },
+        nullable: !required,
+        default: None,
+    }
+}
+
+#[test]
+fn recover_closed_wal_only_decodes_legacy_catalog_ddl_v1() {
+    let dir = temp_dir("closed-schema-legacy-wal-only");
+    let graph_id = GraphId::new(20);
+    let base = empty_closed_graph_type();
+    let graph_type = GraphTypeId::new(1).unwrap();
+    let sensor = intern("LegacySensor").unwrap();
+    let linked = intern("LEGACY_LINKED").unwrap();
+    let changes = vec![
+        Change::SchemaChanged {
+            graph: graph_id,
+            change: SchemaChange::NodeTypeAdded {
+                graph_type,
+                label: sensor,
+                def: NodeTypeDefV1 {
+                    labels: LabelSet::single(sensor),
+                    properties: smallvec![legacy_string_property("serial", true)],
+                    key: None,
+                },
+            },
+        },
+        Change::SchemaChanged {
+            graph: graph_id,
+            change: SchemaChange::EdgeTypeAdded {
+                graph_type,
+                label: linked,
+                def: EdgeTypeDefV1 {
+                    label: linked,
+                    source_node_type: NodeTypeRef(sensor),
+                    target_node_type: NodeTypeRef(sensor),
+                    properties: smallvec![legacy_string_property("since", false)],
+                },
+            },
+        },
+    ];
+    append_wal(&dir, 0, &changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    let node_type = &graph_type.node_types[0];
+    assert_eq!(node_type.name, sensor);
+    assert_eq!(node_type.validation_mode, ValidationMode::Strict);
+    assert_eq!(node_type.properties[0].name.as_str(), "serial");
+    assert!(node_type.properties[0].required);
+    assert!(!node_type.properties[0].immutable);
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(edge_type.name, linked);
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.validation_mode, ValidationMode::Strict);
+    assert_eq!(edge_type.properties[0].name.as_str(), "since");
+    assert!(!edge_type.properties[0].required);
+    assert!(!edge_type.properties[0].immutable);
     let _ = fs::remove_dir_all(dir);
 }

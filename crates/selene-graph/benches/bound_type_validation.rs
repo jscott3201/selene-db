@@ -197,6 +197,8 @@ fn property_defs(count: usize) -> Vec<PropertyTypeDef> {
             required: idx < 3,
             default: None,
             immutable: false,
+
+            record_field_types: None,
         })
         .collect()
 }

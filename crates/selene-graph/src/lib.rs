@@ -52,8 +52,9 @@ pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph};
 pub use graph_types::{
-    DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
-    PropertyElementType, PropertyTypeDef, ValidationMode,
+    DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,
+    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
+    RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
 pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};

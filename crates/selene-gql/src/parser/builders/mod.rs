@@ -612,7 +612,7 @@ pub(super) fn build_typed_param_ref(
                 param_span = Some(span(&child));
                 name = Some(intern_param(child, budget)?);
             }
-            Rule::type_name => declared_type = Some(expr::build_type_name(child)?),
+            Rule::type_name => declared_type = Some(expr::build_type_name(child, budget)?),
             _ => return Err(unexpected_pair(child, "unexpected typed parameter child")),
         }
     }

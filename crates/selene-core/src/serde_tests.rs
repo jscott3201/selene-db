@@ -33,6 +33,7 @@ fn property_def(name: &str) -> PropertyDef {
         nullable: false,
         default: None,
         immutable: false,
+        record_fields: None,
     }
 }
 

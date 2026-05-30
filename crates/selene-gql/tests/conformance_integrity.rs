@@ -38,6 +38,53 @@ fn path_mode_features_are_claimed_supported() {
 }
 
 #[test]
+fn record_type_features_are_claimed_supported() {
+    // GV45 (record types umbrella / value form) shipped earlier; GV46 (closed), GV47
+    // (open), GV48 (nested) record TYPES ship with the typed/closed RECORD grammar.
+    for feature in [
+        FeatureId::GV45,
+        FeatureId::GV46,
+        FeatureId::GV47,
+        FeatureId::GV48,
+    ] {
+        assert!(
+            SUPPORTED_FEATURES.contains(&feature),
+            "{feature} must be claimed supported"
+        );
+        assert!(
+            !NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature),
+            "{feature} must not remain in NOT_SUPPORTED_RATIONALE"
+        );
+    }
+}
+
+#[test]
+fn deferred_reference_value_type_features_remain_unsupported() {
+    // GRAPH/TABLE reference types and explicit nullability stay deferred.
+    for feature in [FeatureId::GV60, FeatureId::GV61, FeatureId::GV90] {
+        assert!(!SUPPORTED_FEATURES.contains(&feature), "{feature}");
+        assert!(
+            NOT_SUPPORTED_RATIONALE
+                .iter()
+                .any(|(unsupported, _)| *unsupported == feature),
+            "{feature}"
+        );
+    }
+}
+
+#[test]
+fn no_feature_is_both_supported_and_rationalized_unsupported() {
+    for (feature, _) in NOT_SUPPORTED_RATIONALE {
+        assert!(
+            !SUPPORTED_FEATURES.contains(feature),
+            "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
+        );
+    }
+}
+
+#[test]
 fn quantifier_features_are_claimed_supported() {
     for feature in [
         FeatureId::G036,
