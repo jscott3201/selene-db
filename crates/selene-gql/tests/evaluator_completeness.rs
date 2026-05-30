@@ -609,9 +609,27 @@ fn case_list_access_and_record_literal_evaluate() {
         ),
         Value::Int(2)
     );
+    // 1-based ordinal subscript (ISO §14.8): list[1] is the first element.
     assert_eq!(
         single_value("RETURN [10, 20, 30][1] AS value", "value"),
+        Value::Int(10)
+    );
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][2] AS value", "value"),
         Value::Int(20)
+    );
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][3] AS value", "value"),
+        Value::Int(30)
+    );
+    // Ordinal 0 and beyond-cardinality fall outside 1..=cardinality -> NULL.
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][0] AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][4] AS value", "value"),
+        Value::Null
     );
     assert_eq!(
         single_value("RETURN [10][-1] AS value", "value"),
@@ -645,7 +663,7 @@ fn case_list_access_and_record_literal_evaluate() {
             vec![index],
         )
         .unwrap(),
-        Value::Int(2)
+        Value::Int(1)
     );
     assert_eq!(
         eval_with_binding(
@@ -657,7 +675,7 @@ fn case_list_access_and_record_literal_evaluate() {
             vec![index],
         )
         .unwrap(),
-        Value::Int(1)
+        Value::Null
     );
     assert_eq!(
         eval(&list_access(

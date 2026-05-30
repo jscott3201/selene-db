@@ -279,6 +279,36 @@ fn closed_type_ddl_features_are_supported() {
 }
 
 #[test]
+fn list_subscript_stamps_im_list_subscript_but_bare_list_does_not() {
+    // `list[i]` is the selene-db vendor subscript (no ISO operator exists), so it
+    // must flag IM_LIST_SUBSCRIPT on every use; a bare list literal flags only
+    // GV50 and never the subscript.
+    let subscript = parse("RETURN [10, 20, 30][1] AS first").expect("subscript parses");
+    let bare_list = parse("RETURN [10, 20, 30] AS items").expect("bare list parses");
+
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let subscript_ids = ids(&subscript);
+    assert!(
+        subscript_ids.contains(&FeatureId::IM_LIST_SUBSCRIPT),
+        "list subscript must flag IM_LIST_SUBSCRIPT"
+    );
+    assert!(
+        subscript_ids.contains(&FeatureId::GV50),
+        "the subscripted list literal still flags GV50"
+    );
+    assert!(
+        !ids(&bare_list).contains(&FeatureId::IM_LIST_SUBSCRIPT),
+        "a bare list literal must NOT flag IM_LIST_SUBSCRIPT"
+    );
+}
+
+#[test]
 fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
     // CASCADE is the IM_DROP_CASCADE vendor extension — it must flag on every
     // use. RESTRICT and the default carry only the existing type-DDL flags.

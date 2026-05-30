@@ -59,3 +59,47 @@ fn order_by_nulls_first_under_descending() {
         vec![Value::Null, Value::Int(2), Value::Int(1)]
     );
 }
+
+#[test]
+fn order_by_list_values_sort_lexicographically() {
+    // ISO §22.14 ordering: lists order element-wise by ascending ordinal; the
+    // first differing element decides ([1,2] < [1,3] < [2,0]).
+    let table = execute_read("UNWIND [[2, 0], [1, 3], [1, 2]] AS x RETURN x ORDER BY x");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+            Value::List(vec![Value::Int(1), Value::Int(3)]),
+            Value::List(vec![Value::Int(2), Value::Int(0)]),
+        ]
+    );
+}
+
+#[test]
+fn order_by_list_values_shorter_prefix_precedes() {
+    // Cardinality tiebreak: on an equal prefix the shorter list sorts first.
+    let table = execute_read("UNWIND [[1, 2, 3], [1, 2]] AS x RETURN x ORDER BY x");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+            Value::List(vec![Value::Int(1), Value::Int(2), Value::Int(3)]),
+        ]
+    );
+}
+
+#[test]
+fn order_by_list_values_descending_reverses_lexicographic_order() {
+    let table = execute_read("UNWIND [[1, 2], [2, 0], [1, 3]] AS x RETURN x ORDER BY x DESC");
+
+    assert_eq!(
+        column_values(&table, "x"),
+        vec![
+            Value::List(vec![Value::Int(2), Value::Int(0)]),
+            Value::List(vec![Value::Int(1), Value::Int(3)]),
+            Value::List(vec![Value::Int(1), Value::Int(2)]),
+        ]
+    );
+}

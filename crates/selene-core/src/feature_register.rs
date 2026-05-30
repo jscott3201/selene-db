@@ -93,6 +93,7 @@ feature_ids! {
     IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
     IM_TRUNCATE = "IM_TRUNCATE" => "selene-db bulk truncate extension";
     IM_DROP_CASCADE = "IM_DROP_CASCADE" => "selene-db cascading DROP TYPE extension";
+    IM_LIST_SUBSCRIPT = "IM_LIST_SUBSCRIPT" => "selene-db 1-based list element subscript extension";
     IM_DROP_GRAPH = "IM_DROP_GRAPH" => "selene-db DROP GRAPH factory-reset extension";
     GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
@@ -232,6 +233,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::IM_TYPED_PARAMS,
     FeatureId::IM_TRUNCATE,
     FeatureId::IM_DROP_CASCADE,
+    FeatureId::IM_LIST_SUBSCRIPT,
     FeatureId::IM_DROP_GRAPH,
     FeatureId::GH02,
     FeatureId::GG01,
