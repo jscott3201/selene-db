@@ -64,6 +64,8 @@ impl GqlStatus {
     pub const NODE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0S");
     /// Maps to GQLSTATUS 22G0T per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const EDGE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM: Self = Self(*b"22G0T");
+    /// Maps to GQLSTATUS 22G0U per ISO/IEC 39075:2024 section 23.1 Table 8.
+    pub const RECORD_FIELDS_DO_NOT_MATCH: Self = Self(*b"22G0U");
     /// Maps to GQLSTATUS 22G0X per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const RECORD_DATA_FIELD_UNASSIGNABLE: Self = Self(*b"22G0X");
     /// Maps to GQLSTATUS 25000 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -315,6 +317,7 @@ mod tests {
                 "22G0T",
                 *b"22",
             ),
+            (GqlStatus::RECORD_FIELDS_DO_NOT_MATCH, "22G0U", *b"22"),
             (GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE, "22G0X", *b"22"),
             (GqlStatus::INVALID_TRANSACTION_STATE, "25000", *b"25"),
             (GqlStatus::ACTIVE_TRANSACTION, "25G01", *b"25"),

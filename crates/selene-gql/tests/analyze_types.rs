@@ -153,9 +153,16 @@ fn unwind_list_aliases_to_element_type() {
 }
 
 #[test]
-fn record_literal_stays_dynamic() {
+fn record_literal_resolves_to_open_record() {
+    // An open `RECORD{...}` value literal resolves to the open record type
+    // (ISO feature GV45, `<record constructor>` clause 20.18). `RecordType::Open`
+    // is a pure tag with no per-field inference; the executor builds the open
+    // record at runtime.
     let analyzed = analyze_one("RETURN {score: 1} AS r").unwrap();
-    assert_eq!(projection_type(&analyzed, "r"), AnalyzedType::Dynamic);
+    assert_eq!(
+        projection_type(&analyzed, "r"),
+        AnalyzedType::Resolved(GqlType::Record(selene_gql::RecordType::Open))
+    );
 }
 
 #[test]

@@ -279,6 +279,80 @@ fn closed_type_ddl_features_are_supported() {
 }
 
 #[test]
+fn list_subscript_stamps_im_list_subscript_but_bare_list_does_not() {
+    // `list[i]` is the selene-db vendor subscript (no ISO operator exists), so it
+    // must flag IM_LIST_SUBSCRIPT on every use; a bare list literal flags only
+    // GV50 and never the subscript.
+    let subscript = parse("RETURN [10, 20, 30][1] AS first").expect("subscript parses");
+    let bare_list = parse("RETURN [10, 20, 30] AS items").expect("bare list parses");
+
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let subscript_ids = ids(&subscript);
+    assert!(
+        subscript_ids.contains(&FeatureId::IM_LIST_SUBSCRIPT),
+        "list subscript must flag IM_LIST_SUBSCRIPT"
+    );
+    assert!(
+        subscript_ids.contains(&FeatureId::GV50),
+        "the subscripted list literal still flags GV50"
+    );
+    assert!(
+        !ids(&bare_list).contains(&FeatureId::IM_LIST_SUBSCRIPT),
+        "a bare list literal must NOT flag IM_LIST_SUBSCRIPT"
+    );
+}
+
+#[test]
+fn record_value_form_flags_gv45_while_type_spellings_flag_gv46_47_48() {
+    // The `RECORD{..}` VALUE constructor is GV45 (ISO §20.18 <record constructor>) and is
+    // distinct from the record TYPE spellings: open `RECORD` is GV47, closed `RECORD{..}`
+    // is GV46, nested is GV48. Pins that the record surface is actually flagged per clause
+    // 24.6 (not merely listed in SUPPORTED_FEATURES) and that the value form is GV45 — not
+    // GV47, which belongs to the open record *type*.
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let value = parse("RETURN RECORD {x: 1} AS r").expect("record value parses");
+    let value_ids = ids(&value);
+    assert!(
+        value_ids.contains(&FeatureId::GV45),
+        "a RECORD value constructor must flag GV45; observed {value_ids:?}"
+    );
+    assert!(
+        !value_ids.contains(&FeatureId::GV47),
+        "the value form must NOT flag GV47 (that is the open record TYPE); observed {value_ids:?}"
+    );
+
+    let open =
+        parse("RETURN RECORD {name: 'Ada'} IS TYPED RECORD AS t").expect("open record type parses");
+    let open_ids = ids(&open);
+    assert!(
+        open_ids.contains(&FeatureId::GV47),
+        "an open RECORD type must flag GV47; observed {open_ids:?}"
+    );
+
+    let nested = parse(
+        "RETURN RECORD {inner: RECORD {flag: true}} IS TYPED RECORD{inner :: RECORD{flag :: BOOL}} AS t",
+    )
+    .expect("nested closed record type parses");
+    let nested_ids = ids(&nested);
+    assert!(
+        nested_ids.contains(&FeatureId::GV46) && nested_ids.contains(&FeatureId::GV48),
+        "a nested closed RECORD type must flag GV46 + GV48; observed {nested_ids:?}"
+    );
+}
+
+#[test]
 fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
     // CASCADE is the IM_DROP_CASCADE vendor extension — it must flag on every
     // use. RESTRICT and the default carry only the existing type-DDL flags.

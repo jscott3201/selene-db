@@ -86,8 +86,11 @@ pub(super) fn build_value_expr(
     }
 }
 
-pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    predicate::build_type_name(pair)
+pub(super) fn build_type_name(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<GqlType, ParserError> {
+    predicate::build_type_name(pair, budget)
 }
 
 fn build_cast_expr(
@@ -110,7 +113,7 @@ fn build_cast_expr(
     let type_pair = type_pair
         .ok_or_else(|| ParserError::syntax("CAST is missing target type", source_span, None))?;
     let value = build_value_expr(value_pair, budget)?;
-    let target_type = build_type_name(type_pair)?;
+    let target_type = build_type_name(type_pair, budget)?;
     Ok(ValueExpr::Cast {
         value: Box::new(value),
         target_type: Box::new(target_type),

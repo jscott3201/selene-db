@@ -43,6 +43,8 @@ pub enum DataExceptionSubclass {
     NodePropertiesExceedSupportedMaximum,
     /// Number of edge properties exceeds supported maximum (`22G0T`).
     EdgePropertiesExceedSupportedMaximum,
+    /// Record fields do not match the target record type on CAST (`22G0U`).
+    RecordFieldsDoNotMatch,
     /// Record data field unassignable (`22G0X`).
     RecordDataFieldUnassignable,
 }
@@ -75,6 +77,7 @@ impl DataExceptionSubclass {
             Self::EdgePropertiesExceedSupportedMaximum => {
                 GqlStatus::EDGE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM
             }
+            Self::RecordFieldsDoNotMatch => GqlStatus::RECORD_FIELDS_DO_NOT_MATCH,
             Self::RecordDataFieldUnassignable => GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE,
         }
     }

@@ -10,8 +10,9 @@ use smallvec::SmallVec;
 
 use crate::{
     DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator,
-    NodeTypeDef, PropertyElementType, PropertyTypeDef, ValidationMode,
-    graph_types::MAX_LIST_TYPE_NESTING,
+    NodeTypeDef, PropertyElementType, PropertyTypeDef, RecordFieldType, RecordFieldTypes,
+    ValidationMode,
+    graph_types::{MAX_LIST_TYPE_NESTING, MAX_RECORD_TYPE_NESTING},
 };
 
 const OPEN_GRAPH_CATALOG_DDL: &str =
@@ -396,6 +397,10 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
             nullable: !property.required,
             default: property.default.as_ref().map(|default| default.to_value()),
             immutable: property.immutable,
+            record_fields: core_record_fields(
+                property.value_type,
+                property.record_field_types.as_ref(),
+            )?,
         });
     }
     Ok(out)
@@ -414,6 +419,10 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
             nullable: !property.required,
             default: property.default.as_ref().map(|default| default.to_value()),
             immutable: property.immutable,
+            record_fields: core_record_fields(
+                property.value_type,
+                property.record_field_types.as_ref(),
+            )?,
         });
     }
     Ok(out)
@@ -498,6 +507,69 @@ fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
         not_null: false,
         cardinality: selene_core::ValueTypeCardinality::ExactlyOne,
     }
+}
+
+/// Convert the rkyv-side typed-`RECORD` descriptor into the serde/WAL counterpart carried
+/// on [`PropertyDef::record_fields`]. Returns `None` for every non-record property,
+/// `Some(Open)` for an open/bare `RECORD` (no declared fields), and `Some(Closed(..))`
+/// for a closed/typed `RECORD{..}`.
+// Why: a RECORD property's record-ness must survive WAL replay; it rides
+// `PropertyDef.record_fields` (structural-inline), not `ValueType.record`. The open/bare
+// form carries no field list, so it persists as `Some(Open)` — without that marker WAL
+// recovery cannot tell an open record from a scalar `Null` and degrades it to `Null`.
+fn core_record_fields(
+    value_type: PropertyValueType,
+    fields: Option<&RecordFieldTypes>,
+) -> GraphResult<Option<Box<selene_core::RecordFieldStructure>>> {
+    match (value_type, fields) {
+        (PropertyValueType::RecordTyped, Some(fields)) => {
+            Ok(Some(Box::new(core_record_field_structure(fields, 1)?)))
+        }
+        (PropertyValueType::RecordTyped, None) => {
+            Ok(Some(Box::new(selene_core::RecordFieldStructure::Open)))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn core_record_field_structure(
+    fields: &RecordFieldTypes,
+    depth: u32,
+) -> GraphResult<selene_core::RecordFieldStructure> {
+    if depth > MAX_RECORD_TYPE_NESTING {
+        return Err(GraphError::Inconsistent {
+            reason: "RECORD property definition exceeds nesting limit".to_owned(),
+        });
+    }
+    let defs = fields
+        .0
+        .iter()
+        .map(|field| {
+            Ok(selene_core::RecordFieldStructureDef {
+                name: field.name,
+                field_type: core_record_field_structure_type(&field.field_type, depth)?,
+                required: field.required,
+            })
+        })
+        .collect::<GraphResult<Vec<_>>>()?;
+    Ok(selene_core::RecordFieldStructure::Closed(defs))
+}
+
+fn core_record_field_structure_type(
+    field_type: &RecordFieldType,
+    depth: u32,
+) -> GraphResult<selene_core::RecordFieldStructureType> {
+    Ok(match field_type {
+        RecordFieldType::Scalar(value_type) => {
+            selene_core::RecordFieldStructureType::Scalar(*value_type)
+        }
+        RecordFieldType::List(inner) => selene_core::RecordFieldStructureType::List(Box::new(
+            core_record_field_structure_type(inner, depth + 1)?,
+        )),
+        RecordFieldType::Record(inner) => selene_core::RecordFieldStructureType::Record(Box::new(
+            core_record_field_structure(inner, depth + 1)?,
+        )),
+    })
 }
 
 #[cfg(test)]

@@ -360,7 +360,7 @@ fn build_type_prop_def(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::ident => name = Some(intern_pair(child, budget)?),
-            Rule::type_name => gql_type = Some(expr::build_type_name(child)?),
+            Rule::type_name => gql_type = Some(expr::build_type_name(child, budget)?),
             Rule::type_prop_constraint => {
                 constraints.push(build_type_prop_constraint(child, budget)?);
             }

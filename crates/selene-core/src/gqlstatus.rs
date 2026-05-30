@@ -37,6 +37,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
         "22G0T",
         "number-of-edge-properties-exceeds-supported-maximum",
     ),
+    ("22G0U", "record-fields-do-not-match"),
     ("22G0X", "record-data-field-unassignable"),
     ("25G01", "active-gql-transaction"),
     ("25G02", "invalid-transaction-state-mixing"),

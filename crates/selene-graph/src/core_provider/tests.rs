@@ -19,6 +19,8 @@ use crate::graph::PropertyIndexEntry;
 use crate::typed_index::TypedIndex;
 use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
+#[path = "tests/composites.rs"]
+mod composites;
 #[path = "tests/cpix.rs"]
 mod cpix;
 #[path = "tests/gtyp.rs"]
@@ -166,6 +168,8 @@ fn graph_type() -> crate::GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,
         }],

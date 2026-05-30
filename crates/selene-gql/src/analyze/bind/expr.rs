@@ -59,12 +59,16 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 for (_, value) in fields {
                     bind_value_expr(ctx, value)?;
                 }
-                // Why: GV45-GV48 (RECORD types) are demoted to
-                // NOT_SUPPORTED_RATIONALE per CLAUDE.md D2 amendment
-                // (2026-05-08). The parser is the gate for whether a
-                // RecordLiteral reaches the analyzer; leave the type cell Dynamic
-                // rather than implying claimed-feature support.
-                AnalyzedType::Dynamic
+                // An open `RECORD{...}` value literal resolves to the open
+                // record type. `RecordType::Open` carries no per-field types, so
+                // this is a pure tag (no field inference). Resolving it (vs
+                // `Dynamic`) routes closed-graph (GG02) RECORD property writes
+                // through the declared property-type compatibility check instead
+                // of bypassing it via the `Dynamic` fast-path. The value form is
+                // ISO feature GV45 (`<record constructor>`, clause 20.18);
+                // typed/closed RECORD *type* expressions (GV46-GV48) stay
+                // deferred to the typed-RECORD brief.
+                AnalyzedType::Resolved(crate::GqlType::Record(crate::RecordType::Open))
             }
             ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
                 let lhs_id = bind_value_expr(ctx, lhs)?;

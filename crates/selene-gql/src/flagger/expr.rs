@@ -28,7 +28,12 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             }
         }
         ValueExpr::PropertyAccess { target, .. } => self::value(target, uses),
-        ValueExpr::ListAccess { target, index, .. } => {
+        ValueExpr::ListAccess {
+            target,
+            index,
+            span,
+        } => {
+            record_feature(uses, FeatureId::IM_LIST_SUBSCRIPT, *span);
             self::value(target, uses);
             self::value(index, uses);
         }
@@ -36,7 +41,8 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GV50, *span);
             values(items, uses);
         }
-        ValueExpr::RecordLiteral { fields, .. } => {
+        ValueExpr::RecordLiteral { fields, span } => {
+            record_feature(uses, FeatureId::GV45, *span);
             for (_, value) in fields {
                 self::value(value, uses);
             }

@@ -263,8 +263,16 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Uuid, G::Uuid)
             | (P::Bytes, G::Bytes | G::Binary | G::VarBinary)
             | (P::List, G::List(_))
+            // Every record property declaration — open `RECORD` and closed `RECORD{..}`
+            // alike — lowers to `P::RecordTyped` (catalog/property.rs), while a `RECORD{..}`
+            // constructor always analyzes to the OPEN record type (bind/expr.rs). Accept the
+            // open literal at this coarse type-compat gate; closed-record field-name-set +
+            // per-field conformance is enforced at commit time by `RecordFieldTypes::matches`
+            // → G2000 (ISO 39075:2024 §4.15.4). Without the open arm, a record write into any
+            // RECORD-typed property in a GG02 graph is rejected at analysis even though the
+            // runtime accepts and structurally validates it.
             | (P::Record, G::Record(RecordType::Open))
-            | (P::RecordTyped, G::Record(RecordType::Closed(_)))
+            | (P::RecordTyped, G::Record(_))
             | (P::ZonedDateTime, G::ZonedDateTime)
             | (P::LocalDateTime, G::LocalDateTime)
             | (P::Date, G::Date)
@@ -365,6 +373,21 @@ mod tests {
         assert!(property_type_compatible(
             PropertyValueType::RecordTyped,
             &GqlType::Record(RecordType::Closed(Vec::new()))
+        ));
+        // A `RECORD{..}` constructor always analyzes to the OPEN record type, so a
+        // `RecordTyped`-declared property (the tag every record declaration lowers to)
+        // must accept the open literal at this coarse gate; closed-field conformance is
+        // deferred to the runtime (`RecordFieldTypes::matches` → G2000). Regression pin
+        // for the analyzer/runtime divergence that made typed-RECORD writes unexecutable.
+        assert!(property_type_compatible(
+            PropertyValueType::RecordTyped,
+            &GqlType::Record(RecordType::Open)
+        ));
+        // The gate stays closed for a genuine mismatch: a record literal does not satisfy
+        // a scalar declaration.
+        assert!(!property_type_compatible(
+            PropertyValueType::Int,
+            &GqlType::Record(RecordType::Open)
         ));
         assert!(property_type_compatible(
             PropertyValueType::Null,

@@ -8,7 +8,8 @@ use exec_common::empty_graph_context;
 use selene_core::{Value, intern};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
-    ImplDefinedCaps, Literal, NonEmpty, SourceSpan, UnaryOp, ValueExpr,
+    GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType, SourceSpan, UnaryOp,
+    ValueExpr,
 };
 
 fn span() -> SourceSpan {
@@ -302,4 +303,207 @@ fn unknown_scalar_function_returns_22g03() {
 
     assert!(matches!(err, ExecutorError::UnknownFunction { .. }));
     assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn record_field_access_reads_named_field() {
+    // C1: property access on an open `RECORD{...}` value reads the named field
+    // (ISO/IEC 39075:2024 clause 20.11 `<property reference>`).
+    let score = intern("score").unwrap();
+    let rank = intern("rank").unwrap();
+    let record = ValueExpr::RecordLiteral {
+        fields: vec![(score, int_lit(7)), (rank, int_lit(2))],
+        span: span(),
+    };
+    let access = ValueExpr::PropertyAccess {
+        target: Box::new(record),
+        key: score,
+        span: span(),
+    };
+
+    assert_eq!(eval(&access), Value::Int(7));
+}
+
+#[test]
+fn record_field_access_absent_field_is_null() {
+    // An open record yields NULL for a field it does not carry (open-record
+    // property-reference declared type is the nullable open dynamic union type).
+    let score = intern("score").unwrap();
+    let missing = intern("missing").unwrap();
+    let record = ValueExpr::RecordLiteral {
+        fields: vec![(score, int_lit(7))],
+        span: span(),
+    };
+    let access = ValueExpr::PropertyAccess {
+        target: Box::new(record),
+        key: missing,
+        span: span(),
+    };
+
+    assert_eq!(eval(&access), Value::Null);
+}
+
+#[test]
+fn nested_record_field_access_reads_inner_field() {
+    // Field access composes: the outer field resolves to a record value, and a
+    // second property access reads a field from that inner record.
+    let inner_key = intern("inner").unwrap();
+    let leaf = intern("leaf").unwrap();
+    let inner = ValueExpr::RecordLiteral {
+        fields: vec![(leaf, int_lit(42))],
+        span: span(),
+    };
+    let outer = ValueExpr::RecordLiteral {
+        fields: vec![(inner_key, inner)],
+        span: span(),
+    };
+    let access = ValueExpr::PropertyAccess {
+        target: Box::new(ValueExpr::PropertyAccess {
+            target: Box::new(outer),
+            key: inner_key,
+            span: span(),
+        }),
+        key: leaf,
+        span: span(),
+    };
+
+    assert_eq!(eval(&access), Value::Int(42));
+}
+
+// --- IS [NOT] TYPED RECORD / LIST structural runtime (Group J) ---
+
+fn string_lit(value: &str) -> ValueExpr {
+    lit(Literal::String(intern(value).unwrap(), span()))
+}
+
+fn record_lit(fields: Vec<(&str, ValueExpr)>) -> ValueExpr {
+    ValueExpr::RecordLiteral {
+        fields: fields
+            .into_iter()
+            .map(|(name, expr)| (intern(name).unwrap(), expr))
+            .collect(),
+        span: span(),
+    }
+}
+
+fn is_typed(operand: ValueExpr, ty: GqlType, negated: bool) -> ValueExpr {
+    ValueExpr::IsCheck {
+        operand: Box::new(operand),
+        kind: IsCheckKind::Typed(ty),
+        negated,
+        span: span(),
+    }
+}
+
+fn closed_ab() -> GqlType {
+    GqlType::Record(RecordType::Closed(vec![
+        (intern("a").unwrap(), GqlType::Integer),
+        (intern("b").unwrap(), GqlType::String),
+    ]))
+}
+
+#[test]
+fn is_typed_closed_record_is_structural() {
+    let conforming = || record_lit(vec![("a", int_lit(1)), ("b", string_lit("x"))]);
+    // Conforming closed record → true; IS NOT TYPED negates to false.
+    assert_eq!(
+        eval(&is_typed(conforming(), closed_ab(), false)),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval(&is_typed(conforming(), closed_ab(), true)),
+        Value::Bool(false)
+    );
+    // Extra undeclared field → false (ISO §4.15.4 field-name-set equality).
+    assert_eq!(
+        eval(&is_typed(
+            record_lit(vec![
+                ("a", int_lit(1)),
+                ("b", string_lit("x")),
+                ("c", int_lit(2))
+            ]),
+            closed_ab(),
+            false,
+        )),
+        Value::Bool(false)
+    );
+    // Missing declared field → false.
+    assert_eq!(
+        eval(&is_typed(
+            record_lit(vec![("a", int_lit(1))]),
+            closed_ab(),
+            false
+        )),
+        Value::Bool(false)
+    );
+    // Wrong field type → false.
+    assert_eq!(
+        eval(&is_typed(
+            record_lit(vec![("a", string_lit("x")), ("b", string_lit("y"))]),
+            closed_ab(),
+            false,
+        )),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn is_typed_nested_and_open_record() {
+    // Nested closed record (GV48): RECORD{ inner :: RECORD{ flag :: BOOL } }.
+    let ty = GqlType::Record(RecordType::Closed(vec![(
+        intern("inner").unwrap(),
+        GqlType::Record(RecordType::Closed(vec![(
+            intern("flag").unwrap(),
+            GqlType::Boolean,
+        )])),
+    )]));
+    let conforming = record_lit(vec![("inner", record_lit(vec![("flag", bool_lit(true))]))]);
+    assert_eq!(
+        eval(&is_typed(conforming, ty.clone(), false)),
+        Value::Bool(true)
+    );
+    let bad = record_lit(vec![("inner", record_lit(vec![("flag", int_lit(0))]))]);
+    assert_eq!(eval(&is_typed(bad, ty, false)), Value::Bool(false));
+
+    // Open record type accepts any record; rejects a non-record.
+    let open = || GqlType::Record(RecordType::Open);
+    assert_eq!(
+        eval(&is_typed(
+            record_lit(vec![("x", int_lit(1))]),
+            open(),
+            false
+        )),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval(&is_typed(int_lit(5), open(), false)),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn is_typed_list_enforces_element_type() {
+    // Regression: the prior runtime ignored the LIST element type, so a list of ints
+    // wrongly satisfied LIST<STRING>. It must now be false.
+    let list = ValueExpr::ListLiteral {
+        items: vec![int_lit(1), int_lit(2)],
+        span: span(),
+    };
+    assert_eq!(
+        eval(&is_typed(
+            list.clone(),
+            GqlType::List(Box::new(GqlType::String)),
+            false
+        )),
+        Value::Bool(false)
+    );
+    // A list of ints does satisfy LIST<INTEGER>.
+    assert_eq!(
+        eval(&is_typed(
+            list,
+            GqlType::List(Box::new(GqlType::Integer)),
+            false
+        )),
+        Value::Bool(true)
+    );
 }

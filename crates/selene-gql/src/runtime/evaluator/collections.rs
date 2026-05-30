@@ -1,8 +1,11 @@
 //! Collection and record expression evaluation.
 //!
-//! List access is 0-indexed and returns `NULL` for negative or out-of-bounds
-//! integer indexes. Record literals build open records and reject duplicate
-//! field keys with a data exception.
+//! List access uses 1-based ordinals per ISO/IEC 39075:2024 §20.16 (`list[1]`
+//! is the first element); ordinals outside `1..=cardinality` — including `0` and
+//! negatives — return `NULL`. ISO defines no list-subscript operator, so this is
+//! a selene-db vendor construct flagged as `IM_LIST_SUBSCRIPT` (clause 24.6).
+//! Record literals build open records and reject duplicate field keys with a
+//! data exception.
 
 use std::collections::BTreeSet;
 
@@ -15,7 +18,7 @@ use crate::{
 };
 
 use super::{
-    binary_ops::{data_exception, data_exception_value_with, data_exception_with},
+    binary_ops::{data_exception, data_exception_with},
     evaluate,
 };
 
@@ -35,25 +38,22 @@ pub(super) fn eval_list_access(
     let Value::List(values) = target else {
         return data_exception("list access target is not a list", span);
     };
-    let index = match index {
-        Value::Int(index) => {
-            let Ok(index) = usize::try_from(index) else {
-                return Ok(Value::Null);
-            };
-            index
-        }
-        Value::Uint(index) => usize::try_from(index).map_err(|_| {
-            data_exception_value_with(
-                DataExceptionSubclass::ListElementError,
-                "list access index is out of range",
-                span,
-            )
-        })?,
+    // ISO §20.16 fixes list ordinals as 1-based (`list[1]` is the first
+    // element). ISO has no subscript operator, so this is the selene-db vendor
+    // `IM_LIST_SUBSCRIPT` construct (clause 24.6); any ordinal outside
+    // `1..=cardinality` — 0, negative, beyond the end, or out of `usize` range —
+    // yields NULL rather than the §20.16 list-element error (22G0C).
+    let zero_based = match index {
+        Value::Int(index) if index >= 1 => usize::try_from(index - 1).ok(),
+        Value::Uint(index) if index != 0 => usize::try_from(index - 1).ok(),
+        Value::Int(_) | Value::Uint(_) => None,
         _ => {
             return data_exception("list access index is not an integer", span);
         }
     };
-    Ok(values.get(index).cloned().unwrap_or(Value::Null))
+    Ok(zero_based
+        .and_then(|index| values.get(index).cloned())
+        .unwrap_or(Value::Null))
 }
 
 pub(super) fn eval_record_literal(
@@ -76,4 +76,24 @@ pub(super) fn eval_record_literal(
         values.push((*key, evaluate(expr, binding, schema, ctx)?));
     }
     Ok(Value::Record(Box::new(Record::Open(values))))
+}
+
+/// Reads a field from an open record value by name.
+///
+/// Per ISO/IEC 39075:2024 clause 20.11 `<property reference>` GR3(b)/(d)(i): a
+/// named field yields its value; a field absent from an open record yields
+/// `NULL` (the open-record property-reference declared type is the nullable
+/// open dynamic union type, SR2(b)).
+pub(super) fn record_field(record: &Record, key: IStr) -> Value {
+    match record {
+        Record::Open(fields) => fields
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value.clone())
+            .unwrap_or(Value::Null),
+        // `Record` is `#[non_exhaustive]`; closed/typed records resolve fields
+        // positionally via the graph-type catalog (deferred to the typed-RECORD
+        // brief), so they are not field-addressable through this open-record path.
+        _ => Value::Null,
+    }
 }

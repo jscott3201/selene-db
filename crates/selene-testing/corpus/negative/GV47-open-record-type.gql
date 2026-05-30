@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GV47
-// expects: parse-rejected(syntax)
-RETURN n IS TYPED RECORD{*}

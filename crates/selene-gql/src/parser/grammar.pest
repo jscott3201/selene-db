@@ -466,6 +466,10 @@ trim_char = { expr }
 record_constructor = { ^"RECORD"? ~ "{" ~ record_field ~ ("," ~ record_field)* ~ "}" }
 record_field = { prop_ident ~ ":" ~ expr }
 
+// Record TYPE field (spec section18.10 <field type>): `name :: <value type>`.
+// Distinct from `record_field` above (the value form, which binds with a single `:`).
+record_field_type = { prop_ident ~ "::" ~ type_name }
+
 // Aggregates with optional DISTINCT (spec section20.9)
 aggregate_expr         = { binary_aggregate_expr | general_aggregate_expr }
 general_aggregate_expr = { aggregate_op ~ "(" ~ distinct_kw? ~ (star | expr)? ~ ")" }
@@ -503,6 +507,10 @@ type_name = {
   | ^"PATH"
   | ^"VECTOR"
   | ^"LIST" ~ "<" ~ type_name ~ ">"
+  // Record types (spec section18.9 <record type>): closed `RECORD { a :: INT }` longest
+  // first, then the open/bare `RECORD`. Field syntax uses `::` (record_field_type).
+  | ^"RECORD" ~ "{" ~ record_field_type ~ ("," ~ record_field_type)* ~ "}"
+  | ^"RECORD"
   | ^"NOTHING" | ^"NULL"
 }
 
