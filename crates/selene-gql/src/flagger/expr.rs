@@ -36,7 +36,8 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GV50, *span);
             values(items, uses);
         }
-        ValueExpr::RecordLiteral { fields, .. } => {
+        ValueExpr::RecordLiteral { fields, span } => {
+            record_feature(uses, FeatureId::GV45, *span);
             for (_, value) in fields {
                 self::value(value, uses);
             }

@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV45
+// also-covers: GV50
+// expects: parse-ok
+RETURN RECORD {id: 1, name: 'Ada', tags: ['a', 'b']} AS r

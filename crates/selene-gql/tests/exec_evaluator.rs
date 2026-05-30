@@ -303,3 +303,68 @@ fn unknown_scalar_function_returns_22g03() {
     assert!(matches!(err, ExecutorError::UnknownFunction { .. }));
     assert_eq!(err.gqlstatus().as_str(), "22G03");
 }
+
+#[test]
+fn record_field_access_reads_named_field() {
+    // C1: property access on an open `RECORD{...}` value reads the named field
+    // (ISO/IEC 39075:2024 clause 20.11 `<property reference>`).
+    let score = intern("score").unwrap();
+    let rank = intern("rank").unwrap();
+    let record = ValueExpr::RecordLiteral {
+        fields: vec![(score, int_lit(7)), (rank, int_lit(2))],
+        span: span(),
+    };
+    let access = ValueExpr::PropertyAccess {
+        target: Box::new(record),
+        key: score,
+        span: span(),
+    };
+
+    assert_eq!(eval(&access), Value::Int(7));
+}
+
+#[test]
+fn record_field_access_absent_field_is_null() {
+    // An open record yields NULL for a field it does not carry (open-record
+    // property-reference declared type is the nullable open dynamic union type).
+    let score = intern("score").unwrap();
+    let missing = intern("missing").unwrap();
+    let record = ValueExpr::RecordLiteral {
+        fields: vec![(score, int_lit(7))],
+        span: span(),
+    };
+    let access = ValueExpr::PropertyAccess {
+        target: Box::new(record),
+        key: missing,
+        span: span(),
+    };
+
+    assert_eq!(eval(&access), Value::Null);
+}
+
+#[test]
+fn nested_record_field_access_reads_inner_field() {
+    // Field access composes: the outer field resolves to a record value, and a
+    // second property access reads a field from that inner record.
+    let inner_key = intern("inner").unwrap();
+    let leaf = intern("leaf").unwrap();
+    let inner = ValueExpr::RecordLiteral {
+        fields: vec![(leaf, int_lit(42))],
+        span: span(),
+    };
+    let outer = ValueExpr::RecordLiteral {
+        fields: vec![(inner_key, inner)],
+        span: span(),
+    };
+    let access = ValueExpr::PropertyAccess {
+        target: Box::new(ValueExpr::PropertyAccess {
+            target: Box::new(outer),
+            key: inner_key,
+            span: span(),
+        }),
+        key: leaf,
+        span: span(),
+    };
+
+    assert_eq!(eval(&access), Value::Int(42));
+}

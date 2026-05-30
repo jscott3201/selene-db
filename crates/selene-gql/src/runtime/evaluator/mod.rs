@@ -29,7 +29,7 @@ use crate::{
 use self::{
     binary_ops::{eval_binary, eval_in_list, eval_unary},
     case::eval_case,
-    collections::{eval_list_access, eval_record_literal},
+    collections::{eval_list_access, eval_record_literal, record_field},
     predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
     subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
@@ -230,6 +230,7 @@ pub(super) fn property_access(
         Value::Null => Ok(Value::Null),
         Value::NodeRef(id) => Ok(property_from_node(*id, key, ctx)),
         Value::EdgeRef(id) => Ok(property_from_edge(*id, key, ctx)),
+        Value::Record(record) => Ok(record_field(record, key)),
         _ => Err(ExecutorError::ImplementationDefined {
             detail: "property access target is not graph element",
         }),

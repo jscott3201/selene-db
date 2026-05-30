@@ -77,3 +77,23 @@ pub(super) fn eval_record_literal(
     }
     Ok(Value::Record(Box::new(Record::Open(values))))
 }
+
+/// Reads a field from an open record value by name.
+///
+/// Per ISO/IEC 39075:2024 clause 20.11 `<property reference>` GR3(b)/(d)(i): a
+/// named field yields its value; a field absent from an open record yields
+/// `NULL` (the open-record property-reference declared type is the nullable
+/// open dynamic union type, SR2(b)).
+pub(super) fn record_field(record: &Record, key: IStr) -> Value {
+    match record {
+        Record::Open(fields) => fields
+            .iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value.clone())
+            .unwrap_or(Value::Null),
+        // `Record` is `#[non_exhaustive]`; closed/typed records resolve fields
+        // positionally via the graph-type catalog (deferred to the typed-RECORD
+        // brief), so they are not field-addressable through this open-record path.
+        _ => Value::Null,
+    }
+}
