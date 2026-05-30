@@ -2249,8 +2249,6 @@ dependencies = [
  "selene-pack",
  "selene-persist",
  "selene-testing",
- "selene-vector",
- "selene-vector-pack",
  "serde",
  "serde_json",
  "smallvec",
@@ -2346,52 +2344,6 @@ dependencies = [
  "selene-gql",
  "selene-graph",
  "thiserror",
-]
-
-[[package]]
-name = "selene-vector"
-version = "1.0.0"
-dependencies = [
- "arc-swap",
- "blake3",
- "criterion",
- "fastrand",
- "insta",
- "miette",
- "parking_lot",
- "postcard",
- "proptest",
- "rkyv 0.8.16",
- "roaring",
- "rustc-hash",
- "selene-core",
- "selene-graph",
- "selene-pack",
- "selene-persist",
- "selene-testing",
- "serde",
- "serde_json",
- "simsimd",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
-name = "selene-vector-pack"
-version = "1.0.0"
-dependencies = [
- "criterion",
- "fastrand",
- "insta",
- "mimalloc",
- "roaring",
- "selene-core",
- "selene-gql",
- "selene-graph",
- "selene-pack",
- "selene-testing",
- "selene-vector",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -2491,15 +2443,6 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
-
-[[package]]
-name = "simsimd"
-version = "5.9.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9638f2829f4887c62a01958903b58fa1b740a64d5dc2bbc4a75a33827ee1bd53"
-dependencies = [
- "cc",
-]
 
 [[package]]
 name = "slab"

@@ -43,7 +43,6 @@ The crate set is layered so transitive footprint stays small:
 | Core graph + persistence | Direct mutation with WAL + snapshot recovery | + `selene-persist` |
 | Procedure packs | Wire `CALL <namespace>.<procedure>` and the platform built-ins | + `selene-pack` |
 | Graph algorithms | `CALL algo.*` over projection catalogs | + `selene-algorithms`, `selene-algorithms-pack` |
-| Vector search | HNSW / IVF indexes; `CALL vector.*` | + `selene-vector`, `selene-vector-pack` |
 
 ### 2.1 Plain core graph
 
@@ -94,7 +93,7 @@ selene-pack    = { path = "path/to/selene-db/crates/selene-pack" }
 - the concrete `ProcedurePackRegistry` (implements `selene_gql::ProcedureRegistry`),
 - platform built-ins: `selene.health`, `selene.create_index`, `selene.drop_index`, and (when wired to a WAL) `selene.pack.history`,
 - the JSON Schema 2020-12 manifest validator,
-- the external procedure-pack registration surface for plugging in algorithms / vector / your own packs.
+- the external procedure-pack registration surface for plugging in algorithms / your own packs.
 
 ### 2.5 With graph algorithms
 
@@ -109,25 +108,6 @@ selene-algorithms-pack  = { path = "path/to/selene-db/crates/selene-algorithms-p
 ```
 
 `selene-algorithms-pack` exposes nineteen `algo.*` procedures (projection lifecycle, PageRank, betweenness, label propagation, Louvain, triangle count, WCC, SCC, topological sort, articulation points, bridges, Dijkstra, SSSP, APSP) by registering an `ExternalProcedurePack` with `selene-pack`.
-
-### 2.6 With vector search
-
-```toml
-[dependencies]
-selene-core         = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph        = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql          = { path = "path/to/selene-db/crates/selene-gql" }
-selene-pack         = { path = "path/to/selene-db/crates/selene-pack" }
-selene-vector       = { path = "path/to/selene-db/crates/selene-vector" }
-selene-vector-pack  = { path = "path/to/selene-db/crates/selene-vector-pack" }
-```
-
-`selene-vector` is an `IndexProvider` implementation (HNSW + IVF, optional SQ8 / PQ / OPQ quantization). `selene-vector-pack` exposes the read/mutate operations as nine `vector.*` procedures.
-
-`CALL vector.create_index(name, kind, config)` is idempotent when the existing
-index has the same kind and config. Re-running the same create call succeeds
-as a no-op. Reusing a name with a different dimension, metric, kind, or other
-config is rejected as an invalid argument (`22G03`).
 
 ## 3. Opening a graph
 
@@ -360,11 +340,11 @@ use selene_core::intern;
 
 let payload: Arc<[u8]> = my_provider_payload.into();
 let mut tx = graph.begin_write();
-tx.mutator().extension_event(intern("selene-vector")?, payload);
+tx.mutator().extension_event(intern("my-provider")?, payload);
 tx.commit()?;
 ```
 
-`extension_event` is how extension crates (e.g. `selene-vector`) inject their own change records into the WAL. Replay is owned by the registered `IndexProvider` whose `provider_tag` matches the event's logical owner. Application code rarely calls this directly — procedure packs do.
+`extension_event` is how extension crates inject their own change records into the WAL. Replay is owned by the registered `IndexProvider` whose `provider_tag` matches the event's logical owner. Application code rarely calls this directly — procedure packs do.
 
 ## 6. Running GQL
 
@@ -589,7 +569,7 @@ Now every committed change flows into the WAL atomically with the snapshot publi
 
 ### 7.3 Writing snapshots
 
-Snapshots are atomic envelopes containing zero or more **sections** keyed by `(provider, sub)` tag pair. The engine-owned graph state lives under the `CORE` provider (`META`, `NODE`, `EDGE`, `SCMA` sub-tags); extension providers (e.g. `VECT`) own their own sections.
+Snapshots are atomic envelopes containing zero or more **sections** keyed by `(provider, sub)` tag pair. The engine-owned graph state lives under the `CORE` provider (`META`, `NODE`, `EDGE`, `SCMA` sub-tags); extension providers own their own sections under their own provider tags.
 
 ```rust
 use selene_persist::{SectionCompression, SnapshotBuilder, SnapshotConfig};
@@ -621,7 +601,7 @@ use selene_persist::{ProviderRegistry, recover};
 
 let mut registry = ProviderRegistry::new();
 registry.register(Arc::clone(&core_recovery_provider))?;
-registry.register(Arc::clone(&vector_recovery_provider))?;
+registry.register(Arc::clone(&extension_recovery_provider))?;
 // ...
 
 let outcome = recover(wal_dir, &registry)?;
@@ -638,7 +618,7 @@ println!(
 1. **Snapshot apply.** Find the latest `snapshot.{seq}.snap`, verify its body hash, and call `read_section` on every section in section-table order, routed by `provider` tag.
 2. **WAL replay.** Read every WAL entry with `sequence > applied_snapshot_seq`, decode the changes, and fan out to every registered provider in deterministic tag order. The WAL must extend the snapshot epoch; mismatched chains return `PersistError::WalSnapshotMismatch`.
 
-Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered (D8). Most providers implement both traits with thin shims — see `selene-vector/src/provider.rs` for the canonical pattern.
+Both `IndexProvider` and `RecoveryProvider` exist because `selene-graph` and `selene-persist` are separately layered (D8). Most providers implement both traits with thin shims so that the same derived state is written at snapshot time and re-read at recovery time.
 
 ## 8. Principals and authorization
 
@@ -743,13 +723,12 @@ Use only when tenants are administratively trusted (e.g. departments inside one 
 
 ### 9.3 Per-tenant procedure-pack registry
 
-`ProcedurePackRegistry` is `Clone` (the storage is `Arc`-shared internally). If every tenant should see the same procedures, share one registry. If tenants need different procedure surfaces (free tier vs. paid tier, vector search disabled per plan, &c.), build per-tenant registries:
+`ProcedurePackRegistry` is `Clone` (the storage is `Arc`-shared internally). If every tenant should see the same procedures, share one registry. If tenants need different procedure surfaces (free tier vs. paid tier, graph algorithms disabled per plan, &c.), build per-tenant registries:
 
 ```rust
 let free_registry = ProcedurePackRegistry::with_builtins()?;
 let paid_registry = ProcedurePackRegistryBuilder::new()
     .with_builtins()
-    .with_external_pack(VectorPack::new().external_pack())
     .with_external_pack(AlgorithmsPack::new().external_pack())
     .build()?;
 ```

@@ -25,8 +25,6 @@ pub const RECOVERIES_TOTAL: &str = "selene.recoveries.total";
 pub const RECOVERY_DURATION_SECONDS: &str = "selene.recovery.duration_seconds";
 /// Total cooperative cancellation events.
 pub const CANCELLATIONS_TOTAL: &str = "selene.cancellations.total";
-/// Total vector search procedure calls.
-pub const VECTOR_SEARCHES_TOTAL: &str = "selene.vector.searches.total";
 /// Total algorithm procedure calls.
 pub const ALGORITHM_RUNS_TOTAL: &str = "selene.algorithm.runs.total";
 /// Total shared GQL procedure-CALL plan-cache hits.

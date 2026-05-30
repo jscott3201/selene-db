@@ -71,9 +71,9 @@ implementations. During recovery the orchestrator:
 
 This boundary is load-bearing. It means the persistence layer does not have
 to be re-released when graph types evolve. It also means that **extensions
-with persistent state** (a vector index, a custom index family, a procedure
-pack with audit storage) plug in by registering their own `RecoveryProvider`
-implementation. See [Recovery semantics for extensions](#recovery-semantics-for-extensions).
+with persistent state** (a custom index family, a procedure pack with audit
+storage) plug in by registering their own `RecoveryProvider` implementation.
+See [Recovery semantics for extensions](#recovery-semantics-for-extensions).
 
 The core graph state participates exactly the same way: `selene-graph` ships
 the `CoreProvider` (provider tag `CORE`) that reconstructs the in-memory
@@ -181,7 +181,7 @@ let mut builder = SnapshotBuilder::new(SnapshotConfig {
 });
 builder.add_section(*b"CORE", *b"META", core_meta_bytes)?;
 builder.add_section(*b"CORE", *b"NODE", core_node_bytes)?;
-builder.add_section(*b"VECT", *b"GRPH", hnsw_topology_bytes)?;
+builder.add_section(*b"CORE", *b"EDGE", core_edge_bytes)?;
 let outcome = builder.finalize()?;
 ```
 
@@ -198,13 +198,13 @@ tags shipped by the workspace:
 
 | Provider | Sub     | Producer                                  |
 | :------- | :------ | :---------------------------------------- |
-| `CORE`   | various | `selene-graph` core state (`CoreProvider`).|
-| `VECT`   | `GRPH`  | `selene-vector` HNSW topology.            |
-| `VECT`   | `VECS`  | `selene-vector` f32 vector payload.       |
-| `VECT`   | `QUNT`  | `selene-vector` quantized payload.        |
-| `IVFP`   | `CQNT`  | `selene-vector` IVF coarse quantizer.     |
-| `IVFP`   | `IPQB`  | `selene-vector` IVF residual PQ codebook. |
-| `IVFP`   | `POST`  | `selene-vector` IVF posting lists.        |
+| `CORE`   | `META`  | `selene-graph` core metadata (`CoreProvider`). |
+| `CORE`   | `NODE`  | `selene-graph` node columns.              |
+| `CORE`   | `EDGE`  | `selene-graph` edge columns.              |
+| `CORE`   | `SCMA`  | `selene-graph` schema catalog.            |
+
+Extension providers register their own provider tag and contribute their own
+sections alongside the `CORE` sections.
 
 Extension authors pick a four-byte ASCII `provider` tag and a `sub` tag per
 section family they need. Tags are advisory but must be globally unique
@@ -241,7 +241,7 @@ use selene_persist::{ProviderRegistry, recover};
 
 let mut registry = ProviderRegistry::new();
 registry.register(core_provider.clone())?;
-registry.register(vector_provider.clone())?;
+registry.register(extension_provider.clone())?;
 
 let outcome = recover(data_dir, &registry)?;
 ```
@@ -306,9 +306,8 @@ WAL entries have already been pruned.
 
 The discipline is: if your provider can be in a state that affects future
 behavior but is not derivable from post-snapshot `Change`s alone, capture
-that state in a snapshot section. This applies to IVF training centroids,
-HNSW build parameters captured at construction time, OPQ rotation matrices,
-and any other "computed once, used many times" artifact.
+that state in a snapshot section. This applies to any "computed once, used
+many times" artifact a provider builds at construction or training time.
 
 ## Snapshot versioning
 
@@ -331,9 +330,9 @@ forward-compatibility hacks visible.
 Per-section payload format is owned by each section's producer. The
 `provider`/`sub` tag pair identifies which decoder runs; the producer is
 responsible for tagging its own byte layouts with versions if it needs to
-evolve them. The vector index extension does this through subsection
-version bytes inside its rkyv-archived bodies; first-party CORE sections do
-the same.
+evolve them. Extension providers typically do this through subsection
+version bytes inside their rkyv-archived bodies; first-party CORE sections
+do the same.
 
 ## Backups
 

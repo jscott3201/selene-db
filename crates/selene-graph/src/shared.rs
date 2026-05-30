@@ -271,8 +271,8 @@ impl SharedGraph {
         let compacted = crate::compaction::compact_core(&guard)?;
         // `compacted.live` is the cross-storage LiveIdSet; downstream
         // `StorageCompactor` fan-out lands with the first downstream compactor
-        // (BRIEF-Item-4d, deferred — vectors are out of scope this cycle). CORE-only
-        // compaction has no downstream consumer yet.
+        // (downstream compactor fan-out deferred — no downstream storage
+        // providers yet). CORE-only compaction has no downstream consumer yet.
         let dense = Arc::new(compacted.graph);
         *guard = Arc::clone(&dense);
         self.snapshot.store(dense);

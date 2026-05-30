@@ -454,8 +454,8 @@ mod tests {
             (*b"CORE", *b"META", vec![1_u8; 257]),
             (*b"CORE", *b"NODE", vec![2_u8; 1_024]),
             (*b"CORE", *b"EDGE", vec![3_u8; 2_049]),
-            (*b"VECT", *b"HNSW", vec![4_u8; 4_096]),
-            (*b"IVFP", *b"LIST", vec![5_u8; 8_193]),
+            (*b"DEMO", *b"SUBT", vec![4_u8; 4_096]),
+            (*b"AUX1", *b"LIST", vec![5_u8; 8_193]),
         ];
         let mut builder = SnapshotBuilder::new(config(
             dir.clone(),

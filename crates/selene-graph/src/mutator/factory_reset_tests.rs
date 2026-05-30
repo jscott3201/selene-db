@@ -7,7 +7,7 @@
 //! - The schema resets to open (bound_type -> None): a previously closed GG02
 //!   graph becomes open and accepts a previously-invalid insert.
 //! - Exactly ONE `Change::GraphReset` is written regardless of N (O(1) WAL).
-//! - A vector-like `ChangeSubscriber` receives per-row NodeDeleted/EdgeDeleted
+//! - A derived-state `ChangeSubscriber` receives per-row NodeDeleted/EdgeDeleted
 //!   tombstones for every removed row — the anti-leak guarantee — and never the
 //!   declarative GraphReset variant.
 //! - Idempotent: a second DROP GRAPH on an empty + open graph is a clean no-op.
@@ -186,7 +186,7 @@ fn factory_reset_on_empty_open_graph_is_clean_noop() {
     txn.commit().expect("double DROP GRAPH is idempotent");
 }
 
-// --- Anti-leak: a vector-like subscriber must receive per-row tombstones ---
+// --- Anti-leak: a subscriber must receive per-row tombstones ---
 
 struct RecordingProvider;
 
@@ -292,11 +292,11 @@ fn factory_reset_fans_out_per_row_tombstones_to_subscriber() {
         .collect();
     assert_eq!(
         deleted_nodes, expected_nodes,
-        "subscriber missed a node tombstone (vector leak), incl untyped"
+        "subscriber missed a node tombstone (derived-state leak), incl untyped"
     );
     assert_eq!(
         deleted_edges, expected_edges,
-        "subscriber missed an edge tombstone (vector leak)"
+        "subscriber missed an edge tombstone (derived-state leak)"
     );
     assert!(
         !seen.iter().any(|c| matches!(c, Change::GraphReset {})),

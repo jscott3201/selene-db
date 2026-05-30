@@ -4,7 +4,7 @@
 //! - TRUNCATE NODE TYPE :L is observationally identical to
 //!   `MATCH (n:L) DETACH DELETE n` (same final graph state, no dangling edges).
 //! - Exactly ONE declarative change is written regardless of N (O(1) WAL).
-//! - A `ChangeSubscriber` (e.g. a vector provider) receives per-row tombstones
+//! - A `ChangeSubscriber` (e.g. a derived-state provider) receives per-row tombstones
 //!   for every truncated node/edge — the anti-leak guarantee.
 //! - Empty/absent label is a clean no-op; double-truncate is idempotent.
 
@@ -222,7 +222,7 @@ fn double_truncate_is_idempotent() {
     assert!(outcome.changes.is_empty(), "second truncate writes nothing");
 }
 
-// --- Anti-leak: a vector-like subscriber must receive per-row tombstones ---
+// --- Anti-leak: a subscriber must receive per-row tombstones ---
 
 struct RecordingProvider;
 
@@ -247,7 +247,7 @@ impl IndexProvider for RecordingProvider {
     }
 }
 
-/// Mirrors the vector provider contract: subscribes only to NodeDeleted/
+/// Mirrors the derived-state provider contract: subscribes only to NodeDeleted/
 /// EdgeDeleted and records every tombstone it receives.
 struct TombstoneSubscriber {
     seen: Arc<Mutex<Vec<Change>>>,
@@ -337,11 +337,11 @@ fn truncate_fans_out_per_row_tombstones_to_subscriber() {
         expected_nodes
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>(),
-        "subscriber missed a truncated node tombstone (vector leak)"
+        "subscriber missed a truncated node tombstone (derived-state leak)"
     );
     assert_eq!(
         deleted_edges, expected_edges,
-        "subscriber missed an incident-edge tombstone (vector leak)"
+        "subscriber missed an incident-edge tombstone (derived-state leak)"
     );
     assert!(
         !seen

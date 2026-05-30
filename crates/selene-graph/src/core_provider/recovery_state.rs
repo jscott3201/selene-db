@@ -53,8 +53,8 @@ pub(crate) struct RecoveryState {
     ///
     /// BRIEF-150 / audit Item 11. CORE replays first (tag-sorted), re-deriving
     /// truncated rows from the recovered store it is building, and stages the
-    /// resulting `NodeDeleted`/`EdgeDeleted` tombstones here. The VECT/IVFP
-    /// recovery wrappers (which run after CORE for the same entry, hold no
+    /// resulting `NodeDeleted`/`EdgeDeleted` tombstones here. Downstream recovery
+    /// wrappers (which run after CORE for the same entry, hold no
     /// store, and could not expand a label) read this buffer to drive subscriber
     /// fan-out, so recovery tombstoning is byte-identical to the runtime path.
     /// Cleared at the start of every WAL entry so the membership reflects the

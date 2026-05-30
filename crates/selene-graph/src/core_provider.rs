@@ -392,7 +392,7 @@ impl RecoveryProvider for CoreProvider {
 
     fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
         // Reset the truncate-expansion buffer once per WAL entry so the
-        // per-row tombstones the VECT/IVFP wrappers read reflect only this
+        // per-row tombstones downstream extension providers read reflect only this
         // entry's truncations (BRIEF-150 / audit Item 11). CORE runs first in
         // the tag-sorted registry, so this clear happens before any wrapper
         // reads the buffer.

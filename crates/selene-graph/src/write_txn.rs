@@ -63,7 +63,7 @@ pub struct WriteTxn<'g> {
     /// only the O(1) declarative `NodesOfTypeTruncated`/`EdgesOfTypeTruncated`
     /// change, but provider/subscriber fan-out must observe the same per-row
     /// `NodeDeleted`/`EdgeDeleted` multiset a `MATCH (n:L) DETACH DELETE n` would
-    /// emit (so derived vector state is reclaimed without leaks). The mutator
+    /// emit (so derived state is reclaimed without leaks). The mutator
     /// snapshots the matched ids while it still holds the store and stages their
     /// tombstones here; commit substitutes each truncate change with its staged
     /// expansion before fan-out.

@@ -13,15 +13,14 @@ in-process.
 
 For operational detail on durability and recovery see
 [`persistence-and-recovery.md`](persistence-and-recovery.md). For the GQL
-surface see [`gql-reference.md`](gql-reference.md). For algorithm and vector
-extension surfaces see [`graph-algorithms.md`](graph-algorithms.md) and
-[`vector-search.md`](vector-search.md).
+surface see [`gql-reference.md`](gql-reference.md). For graph algorithm
+surfaces see [`graph-algorithms.md`](graph-algorithms.md).
 
 ---
 
 ## 1. Crate dependency graph
 
-The workspace is a flat tree of ten crates with no umbrella facade
+The workspace is a flat tree of eight crates with no umbrella facade
 (decision D8). `selene-core` is the leaf. Every other crate transitively
 depends on it. `selene-testing` is dev-only and is consumed via
 `[dev-dependencies]`.
@@ -29,20 +28,17 @@ depends on it. `selene-testing` is dev-only and is consumed via
 ```text
                                  selene-core
                                       |
-            +-------------+-----------+-----------+----------------+
-            |             |                       |                |
-       selene-persist  selene-graph        selene-algorithms  selene-vector
-            ^             ^                       ^                ^
-            |             |                       |                |
-            +------+------+                       |                |
-                   |                              |                |
-              selene-gql                          |                |
-                   ^                              |                |
-                   |                              |                |
-              selene-pack <---- selene-algorithms-pack             |
-                   ^                                               |
-                   |                                               |
-                   +------------- selene-vector-pack --------------+
+            +-------------+-----------+-----------+
+            |             |                       |
+       selene-persist  selene-graph        selene-algorithms
+            ^             ^                       ^
+            |             |                       |
+            +------+------+                       |
+                   |                              |
+              selene-gql                          |
+                   ^                              |
+                   |                              |
+              selene-pack <---- selene-algorithms-pack
 
    (dev-only)  selene-testing  depends on selene-core, selene-gql, selene-graph
 ```
@@ -56,15 +52,12 @@ depends on it. `selene-testing` is dev-only and is consumed via
 | `selene-pack` | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate activation state machine, atomic mutation-funnel audit, blake3 content hashing, platform built-ins (`selene.health`, `selene.create_index`, `selene.drop_index`, `selene.pack.history`). Widest dep set: `selene-core` + `selene-persist` + `selene-graph` + `selene-gql`. |
 | `selene-algorithms` | `GraphProjection` + `ProjectionCatalog`, four algorithm families (structural / pathfinding / centrality / community), D21 snapshot harness. Independent of `selene-gql`. |
 | `selene-algorithms-pack` | Procedure-pack adapter that exposes `selene-algorithms` through GQL `CALL` by registering an external pack with `selene-pack`. |
-| `selene-vector` | Opt-in HNSW and IVF vector index extension with search, mutation replay, snapshots, quantization, and `IndexProvider` registration. |
-| `selene-vector-pack` | Procedure-pack adapter that exposes vector search, mutation, bulk mutation, IVF search, and IVF stats through GQL `CALL`. |
 | `selene-testing` | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / procedure-pack / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
 The dependency graph is intentionally acyclic with a single sink
 (`selene-core`) and a single broad consumer of the runtime layer
-(`selene-pack`). Pack-adapter crates (`selene-algorithms-pack`,
-`selene-vector-pack`) sit on top so that the runtime crates never grow
-non-graph capability surface.
+(`selene-pack`). The pack-adapter crate (`selene-algorithms-pack`) sits on
+top so that the runtime crates never grow non-graph capability surface.
 
 ---
 
@@ -244,9 +237,9 @@ limits before handing decoded changes back to providers.
 This separation has three consequences:
 
 1. The WAL format can evolve independently of the graph data model.
-2. Non-graph providers (vector indexes, future fulltext, future
-   timeseries) can ride the same WAL by emitting their own `Change`
-   variants without touching persistence code.
+2. Non-graph providers (future extensions such as time-series / RDF)
+   can ride the same WAL by emitting their own `Change` variants
+   without touching persistence code.
 3. Recovery is a pure data pipeline: read snapshot, then replay the
    tail of the WAL.
 
@@ -300,7 +293,7 @@ trait IndexProvider: Send + Sync + 'static {
 Provider authors:
 
 - Reserve a 4-byte uppercase ASCII `ProviderTag` (first-party allocations
-  include `VECT`, `FULL`, `TIMS`, `GRPR`).
+  include `TIMS`, `GRPR`).
 - Implement interior mutability (`parking_lot::RwLock`, `papaya::HashMap`,
   etc.); the engine stores providers as `Arc<dyn IndexProvider>` and
   guarantees serialized calls per graph.
@@ -326,16 +319,16 @@ plus `Deprecated` and `Disabled` terminals). Activation transitions and
 audit records are committed atomically with graph state through the same
 mutation funnel (D18); there is no parallel ledger.
 
-### Why algorithms and vectors live outside `selene-graph`
+### Why algorithms live outside `selene-graph`
 
 Decision D5 forbids non-graph capabilities from leaking into
 `selene-graph`. The graph crate ships pure graph storage plus the
-`IndexProvider` hook. Vector search lives in `selene-vector` and registers
-through that hook; graph algorithms live in `selene-algorithms` and operate
-over a frozen `GraphProjection`. The pack-adapter crates
-(`selene-algorithms-pack`, `selene-vector-pack`) expose those capabilities
-through GQL `CALL`. This split keeps the graph core honest: an embedder
-who wants neither extension simply does not depend on those crates.
+`IndexProvider` hook. Graph algorithms live in `selene-algorithms` and
+operate over a frozen `GraphProjection`; the pack-adapter crate
+(`selene-algorithms-pack`) exposes them through GQL `CALL`. This split
+keeps the graph core honest: an embedder who wants no extension simply
+does not depend on those crates. The same pattern applies to future
+extensions.
 
 ---
 
@@ -377,8 +370,8 @@ Writers never mutate a snapshot in place; they construct a new
 
 ### D5 — Non-graph capabilities in extension crates
 
-Vectors, fulltext, time series, RDF, and graph algorithms ship as separate
-crates outside `selene-graph`. They plug in through `IndexProvider` and the
+Time series, RDF, and graph algorithms ship as separate crates outside
+`selene-graph`. They plug in through `IndexProvider` and the
 procedure-pack registry. Refusing to widen the graph core is what keeps
 the cold dependency closure for a graph-only embedder bounded.
 
@@ -501,8 +494,8 @@ snapshot management. See section 7 for the full pattern description.
 The snapshot harness exists because selene-db has many independent
 producers of structured output that must not drift silently: planner
 rewrites, executor row materialization, procedure-pack metadata
-serialization, algorithm result shapes, vector-index section bytes,
-recovery results. A change to any of these surfaces would otherwise hide
+serialization, algorithm result shapes, recovery results. A change to
+any of these surfaces would otherwise hide
 behind passing unit tests until an embedder noticed a wire-shape
 difference.
 

@@ -5,7 +5,7 @@
 //!   reconstructs the IDENTICAL alive-node/alive-edge state as recovering a WAL
 //!   containing the equivalent N `NodeDeleted` + incident `EdgeDeleted`
 //!   ("replay walks the store").
-//! - A mock vector-like `ChangeSubscriber` receives the SAME per-row
+//! - A mock derived-state `ChangeSubscriber` receives the SAME per-row
 //!   `NodeDeleted`/`EdgeDeleted` multiset during replay of the declarative
 //!   variant as it would for the expanded form — the recovery anti-leak
 //!   guarantee. The subscriber must never see the declarative variant.
@@ -228,7 +228,7 @@ fn recovery_truncate_fans_out_per_row_tombstones_to_subscriber() {
         [NodeId::new(1), NodeId::new(2), NodeId::new(3)]
             .into_iter()
             .collect::<std::collections::BTreeSet<_>>(),
-        "recovery subscriber missed a truncated node tombstone (vector leak)"
+        "recovery subscriber missed a truncated node tombstone (derived-state leak)"
     );
     assert_eq!(
         deleted_edges,
@@ -240,7 +240,7 @@ fn recovery_truncate_fans_out_per_row_tombstones_to_subscriber() {
         ]
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>(),
-        "recovery subscriber missed an incident-edge tombstone (vector leak)"
+        "recovery subscriber missed an incident-edge tombstone (derived-state leak)"
     );
     assert!(
         !seen

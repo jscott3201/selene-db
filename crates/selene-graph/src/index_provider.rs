@@ -10,7 +10,7 @@ use selene_core::Change;
 /// - `CORE` is reserved for engine-owned snapshot sections.
 /// - `META`/`NODE`/`EDGE`/`SCMA` are reserved sub-tags under `CORE`, not
 ///   provider tags.
-/// - First-party extension allocations include `VECT`, `FULL`, `TIMS`, `GRPR`.
+/// - First-party extension allocations include `TIMS`, `GRPR`.
 /// - Other ASCII uppercase 4-byte sequences are provider-allocated.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct ProviderTag(
@@ -215,19 +215,19 @@ mod tests {
 
     #[test]
     fn provider_tag_equality_and_ordering() {
-        let vect = ProviderTag(*b"VECT");
-        let full = ProviderTag(*b"FULL");
-        assert_eq!(vect, ProviderTag(*b"VECT"));
-        assert!(full < vect);
-        assert_eq!(vect.to_string(), "VECT");
+        let demo = ProviderTag(*b"DEMO");
+        let meta = ProviderTag(*b"META");
+        assert_eq!(demo, ProviderTag(*b"DEMO"));
+        assert!(demo < meta);
+        assert_eq!(demo.to_string(), "DEMO");
     }
 
     #[test]
     fn sub_tag_equality_and_ordering() {
         let graph = SubTag(*b"GRPH");
-        let vecs = SubTag(*b"VECS");
+        let subt = SubTag(*b"SUBT");
         assert_eq!(graph, SubTag(*b"GRPH"));
-        assert!(graph < vecs);
+        assert!(graph < subt);
         assert_eq!(graph.to_string(), "GRPH");
     }
 
@@ -235,7 +235,7 @@ mod tests {
     #[case(ProviderError::InvalidPayload { reason: "bad".to_owned() })]
     #[case(ProviderError::SectionMissing { sub_tag: SubTag(*b"MISS") })]
     #[case(ProviderError::SerializationFailed { reason: "io".to_owned() })]
-    #[case(ProviderError::UnknownProvider { tag: ProviderTag(*b"VECT"), sub_tag: SubTag(*b"VECS") })]
+    #[case(ProviderError::UnknownProvider { tag: ProviderTag(*b"DEMO"), sub_tag: SubTag(*b"SUBT") })]
     #[case(ProviderError::Inconsistent { reason: "duplicate".to_owned() })]
     fn provider_error_gqlstatus_mappings(#[case] provider_error: ProviderError) {
         let graph_error = GraphError::Provider(provider_error);

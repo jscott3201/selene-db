@@ -78,11 +78,9 @@ Opt-in extension crates:
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-vector` | core, graph | HNSW vector index provider (`VECT` with sub-tags `GRPH` / `VECS` / `QUNT`), scalar distance kernels, HNSW insert + search + RoaringBitmap pre-filter, SQ8 + PQ + OPQ quantization (asymmetric ADC), IVF-PQ provider (`IVFP`). |
-| `selene-vector-pack` | core, graph, gql, pack, vector | Procedure-pack surface for HNSW (`vector.search` adapter, `vector_pack_corpus` mirror). Bridges selene-vector into GQL CALL via D17 per-tier contexts. |
 | `selene-algorithms-pack` | core, graph, gql, pack, algorithms | Procedure-pack surface for graph algorithms (`algo.projection_*`, `algo.pagerank`, `algo.wcc`, `algo.dijkstra`, `algo.louvain`, etc.). |
 
-Future opt-in extension crates: `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-text` / `selene-text-pack` (locked in for v1.2 — Tantivy-backed full-text). **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
+Future opt-in extension crates: `selene-timeseries`, `selene-rdf`, `selene-graphrag`. **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
 
 ## Decision log
 
@@ -94,7 +92,7 @@ All v1.0 architecture is settled. D1–D19 are foundational; D20–D21 and D25 r
 | D2 | Conformance: minimum + ~30–40 parser-reachable optional features | `_spec/01` §5 |
 | D3 | Schema: both GG01 (open) and GG02 (closed); per-graph choice | `_spec/02` §6 |
 | D4 | Procedure-pack extension model + feature-gated workspace modules | `_spec/05` §3, §5 |
-| D5 | Vector via `Value::Extended`; HNSW lives in `selene-vector` | `_spec/02` §3, `_spec/06` §3 |
+| D5 | Vector via `Value::Extended`; externalized to a separate dedicated project in the 2026-05-30 consolidation | `_spec/02` §3, `_spec/06` §3 |
 | D6 | WAL+snapshot from day one in `selene-persist` | `_spec/04` |
 | D7 | Concurrency: `ArcSwap` + `parking_lot::RwLock` + `imbl` CoW; `imbl` MPL-2.0 exception accepted | `_spec/03` §4 |
 | D8 | Multi-crate, no umbrella; linear dep direction | this file (Crate map), `_spec/03` §8 |
@@ -111,14 +109,14 @@ All v1.0 architecture is settled. D1–D19 are foundational; D20–D21 and D25 r
 | D19 | GG02 catalog: per-graph immutable `bound_type: Option<Arc<GraphTypeDef>>` runtime binding, persisted via `CORE/GTYP`. **Amended (JSON/L1c-d):** the catalog now persists closed/typed **and** open RECORD property types on **both** type-models — rkyv `RecordFieldTypes` in `CORE/GTYP` (authoritative) + serde `RecordFieldStructure` on the WAL `PropertyDef.record_fields`. `RecordFieldStructure` is `enum { Open, Closed(Vec<..>) }`; with the `Option` it encodes three durable states (`None` = not-record / `Some(Open)` = bare RECORD / `Some(Closed)` = typed). The open marker is **load-bearing** — without it WAL replay degrades a bare RECORD to `Null`. `ValueType.record` stays dormant (structural-inline, O4). GV46/47/48 are SUPPORTED; a closed-record `CAST` field-mismatch raises new GQLSTATUS **22G0U** (commit-time GG02 record violations use the existing G2000 class). | `_spec/02` §6, `_spec/03` §3; JSON/L1c-d |
 | D20 | `Value::ExternalString(Arc<str>)` is the canonical surface for engine-produced strings that must NOT enter the global `IStr` pool. `PartialEq` is variant-strict; cross-variant string equality lives at the executor layer (`selene-gql::runtime::value_compare`). | `_spec/15` E74 |
 | D21 | Snapshot harness pattern: pure-mirror DSL in `selene-testing` (zero production-crate imports), renderer + integration test + golden `.snap` files in the target crate, `test-harness` feature + `[[test]] required-features` gate, drift-detection tests deriving coverage from observed execution. Dep direction is `target -> selene-testing` as dev-dep. | `_spec/13`, `_spec/14`, `_spec/15` E81–E84 |
-| D25 | `ChangeSubscriber` trait: runtime and recovery fan-out of `Change` events to extension providers via per-provider `ChangeKindSet` filter. Vector providers use it to tombstone derived vector state when graph nodes are deleted. Forward-compatible with all extension providers. | `_design/deletion-reclamation-audit.md` Item 1 |
+| D25 | `ChangeSubscriber` trait: runtime and recovery fan-out of `Change` events to extension providers via per-provider `ChangeKindSet` filter. Extension providers use it to tombstone derived state when graph nodes are deleted. Forward-compatible with all extension providers. | `_design/deletion-reclamation-audit.md` Item 1 |
 | D26 | Snapshot + WAL-archive retention: typed `RetentionPolicy { keep_n_snapshots, keep_n_wal_archives, max_total_size_bytes: Option<u64>, time_based: Option<Duration> }` (embedder **config**, deliberately *not* persisted in the MANIFEST — avoids a divergent second source of truth) + `selene_persist::prune(dir, policy)` / `WalWriter::prune`. Prune is MANIFEST-atomic (rewrite-then-delete; the live snapshot + active WAL are never deletable regardless of policy) and reclaims superseded crash-orphans. The four constraints are conjunctive. Defaults: keep 2 snapshots / 4 archives, no size/time cap. | `_design/deletion-reclamation-audit.md` Item 5 |
 | D24 | Dedicated append-only `audit.log` (`SLAU`) for engine-owned events, with retention independent of the WAL/snapshot lineage. **Surgical scope (BRIEF-Item-7):** carries pack-lifecycle events (Seam D) + a forward framework for user-action audit; records are generic `kind`-tagged opaque payloads (selene-persist stays below lifecycle semantics + clock — the caller stamps `recorded_at_unix_nanos`). The D12 per-commit principal **stays in the WAL entry header** (no format break, no hot-path write-amplification) — full principal relocation was deliberately *not* taken. `AuditLog` (open/append/read_all/prune, torn-tail-truncating scan) + `AuditRetentionPolicy { keep_n_events, max_age }` (atomic read-filter-rewrite compaction; default unbounded). Mirrored through the graph funnel (`DurableState::with_audit_log`, `SharedGraphBuilder::with_audit_log`), WAL-first/audit-after; recovery reattaches by file presence. | `_design/deletion-reclamation-audit.md` Item 7 |
 | D22 | `NodeId`/`EdgeId` split into external stable **monotonic `NodeId(u64)`/`EdgeId(u64)`** (never-reused counter allocated under the D10 write lock; `*Id::TOMBSTONE == 0`, so id 0 is unallocatable and a safe hole sentinel) + internal **`RowIndex(u32)`** (dense row-column position, remappable by 4b/4c compaction). Reads resolve external↔row through `node_id_to_row`/`edge_id_to_row` maps + a `row_to_id` reverse column — never `id±1` arithmetic (enforced by `.github/scripts/check-no-rowid-arith.sh`, CI + pre-commit). PropertyMap/LabelSet columns are row-indexed. **Edges + adjacency still key endpoints by external `NodeId`** — the internal-`RowIndex` swap there is deferred to 4b. Snapshot persists explicit ids + positional recovery (see D14). | `_design/deletion-reclamation-audit.md` Item 4; BRIEF-Item-4a (PR #190) |
 
 ## Forward decisions — v1.x reclamation cycle (planned, not yet shipped)
 
-Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclamation-audit.md` — five parallel research passes across in-memory graph / WAL / snapshot/recovery / vector / GQL), the project commits to a long-term-correctness reclamation cycle. Standing top priority going forward (see memory `project_deletion_reclamation_cycle`). The audit doc is the canonical reference; Stage 0 dispatches for any of the 14 brief-shaped items below MUST cite that doc + ground against current HEAD before drafting.
+Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclamation-audit.md` — five parallel research passes across in-memory graph / WAL / snapshot/recovery / GQL), the project commits to a long-term-correctness reclamation cycle. Standing top priority going forward (see memory `project_deletion_reclamation_cycle`). The audit doc is the canonical reference; Stage 0 dispatches for any of the 14 brief-shaped items below MUST cite that doc + ground against current HEAD before drafting.
 
 **D-record amendments planned** (land in the indicated brief; do not pre-update D1–D21 rows until shipped):
 
@@ -134,11 +132,13 @@ Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclama
 | Planned ID | Decision | Lands in |
 |---|---|---|
 | ~~**D22**~~ | ✅ **Shipped (BRIEF-Item-4a, PR #190):** external monotonic `NodeId(u64)`/`EdgeId(u64)` + internal `RowIndex(u32)`, `node_id_to_row`/`edge_id_to_row` maps + `row_to_id` column, all reads decoupled from `id±1` (grep gate), explicit-id positional snapshot encode + recovery. Edge/adjacency `RowIndex` swap deferred to 4b. Decision-log D22 row added above. | BRIEF-Item-4a |
-| **D23** | `StorageCompactor` trait: every storage provider (selene-graph, selene-vector, future selene-timeseries / selene-rdf) implements `compact_for_snapshot(live_ids) -> CompactionResult`. Snapshot publication runs all compactors atomically under the MANIFEST epoch. Cross-storage, forward-compatible with all extensions. | BRIEF-Item-4b + 4d |
+| **D23** | `StorageCompactor` trait: every storage provider (selene-graph, future selene-timeseries / selene-rdf) implements `compact_for_snapshot(live_ids) -> CompactionResult`. Snapshot publication runs all compactors atomically under the MANIFEST epoch. Cross-storage, forward-compatible with all extensions. | BRIEF-Item-4b |
 | ~~**D24**~~ | ✅ **Shipped (BRIEF-Item-7):** separate append-only `audit.log` (`SLAU`) for engine-owned events (pack lifecycle now + framework for future user-action audit) with independent `AuditRetentionPolicy`; same funnel writes WAL + audit (WAL-first/audit-after). Scoped down from the original plan: the D12 principal stays in the WAL header (not relocated). Decision-log D24 row added above. | BRIEF-Item-7 |
 | ~~**D26**~~ | ✅ **Shipped (BRIEF-Item-5):** typed `RetentionPolicy` (config, not persisted) + MANIFEST-atomic `prune`; live snapshot + active WAL never deletable; conjunctive count/size/time constraints; reclaims crash-orphans. Decision-log D26 row added above. | BRIEF-Item-5 |
 
 Brief sequence (14 work items, 4 tiers) lives in `_design/deletion-reclamation-audit.md`. Release allocation is per `project_deletion_reclamation_cycle` memory.
+
+**Direction shift 2026-05-30:** selene-db is consolidating to a single native graph engine with no opt-in extensions. The vector store is externalized to a separate dedicated project and planned full-text/BM25 is dropped entirely; algorithms will be inlined natively and the extension-pack system removed in a following workflow.
 
 ## Where state lives
 

@@ -4471,8 +4471,6 @@ Used by:
 - selene-pack v1.0.0 — https://github.com/jscott3201/selene-db
 - selene-persist v1.0.0 — https://github.com/jscott3201/selene-db
 - selene-testing v1.0.0 — https://github.com/jscott3201/selene-db
-- selene-vector v1.0.0 — https://github.com/jscott3201/selene-db
-- selene-vector-pack v1.0.0 — https://github.com/jscott3201/selene-db
 - anes v0.1.6 — https://github.com/zrzka/anes-rs
 - num-cmp v0.1.0 — https://github.com/lifthrasiir/num-cmp
 - plotters-backend v0.3.7 — https://github.com/plotters-rs/plotters

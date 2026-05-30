@@ -354,8 +354,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// declarative [`Change::NodesOfTypeTruncated`] is recorded regardless of the
     /// number of rows removed (O(1) WAL write, deletion-reclamation audit
     /// Item 11), while the per-row `NodeDeleted`/`EdgeDeleted` tombstones are
-    /// staged for provider/subscriber fan-out so derived state (e.g. vectors) is
-    /// reclaimed without leaks. An absent label is a clean no-op (no change is
+    /// staged for provider/subscriber fan-out so derived state (e.g. extension
+    /// providers) is reclaimed without leaks. An absent label is a clean no-op (no change is
     /// recorded), matching DETACH DELETE of zero matches; a second truncate of
     /// the same label is therefore idempotent.
     ///

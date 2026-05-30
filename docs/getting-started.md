@@ -53,7 +53,6 @@ The persistence and pack crates are additional opt-ins:
 selene-persist          = { path = "../selene-db/crates/selene-persist" }
 selene-pack             = { path = "../selene-db/crates/selene-pack" }
 selene-algorithms-pack  = { path = "../selene-db/crates/selene-algorithms-pack" }
-selene-vector-pack      = { path = "../selene-db/crates/selene-vector-pack" }
 ```
 
 Run `cargo build` once to confirm the dependency graph resolves before moving on.
@@ -342,7 +341,7 @@ That demonstrates **read-your-writes** across transactions on a single graph han
 
 - **Write side**: every `tx.commit()` emits a `Vec<Change>`; the embedder pipes those into `selene_persist::WalWriter::open(path, WalConfig::default())` (WAL file, `SLDB` magic).
 - **Snapshot side**: periodically, the embedder dumps the current graph to a `SnapshotBuilder` (snapshot file, `SLSN` magic) and truncates the WAL.
-- **Recovery on restart**: `selene_persist::recover(dir, &registry)` reads the latest snapshot, replays the WAL tail, and routes both into the providers you register (the graph's `CoreProvider` plus any extension providers such as `selene-vector`).
+- **Recovery on restart**: `selene_persist::recover(dir, &registry)` reads the latest snapshot, replays the WAL tail, and routes both into the providers you register (the graph's `CoreProvider` plus any extension providers you register).
 
 This wiring is intentionally explicit so embedders can choose their own commit-to-disk policy (sync every commit, batch, flush on idle, etc.) and own their snapshot cadence. The full worked example, including `ProviderRegistry` setup and a process-restart test, lives in [docs/persistence-and-recovery.md](persistence-and-recovery.md).
 
@@ -364,7 +363,6 @@ This wiring is intentionally explicit so embedders can choose their own commit-t
 - [GQL reference](gql-reference.md) — the ISO GQL surface selene-db supports, including which optional features are claimed.
 - [Architecture](architecture.md) — crate boundaries, threading model, snapshot semantics.
 - [Extension guide](extension-guide.md) — writing procedure packs and `IndexProvider` implementations.
-- [Vector search](vector-search.md) — `CALL vector.*` for HNSW and IVF indexes.
 - [Graph algorithms](graph-algorithms.md) — `CALL algo.*` for PageRank, betweenness, Louvain, and the rest.
 - [Persistence and recovery](persistence-and-recovery.md) — WAL, snapshots, and the recovery flow.
 - [Performance](performance.md) — benchmarks, tuning knobs, and what numbers to expect.

@@ -43,8 +43,7 @@ pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropert
 pub use codec::{Codec, CodecError};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
-    ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_FULLTEXT, SELENE_RDF,
-    SELENE_TIMESERIES, SELENE_VECTOR,
+    ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,
 };
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;

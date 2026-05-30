@@ -140,7 +140,7 @@ The workspace uses four kinds of tests:
   round-trips, codec symmetry, and persistent-collection equivalence.
 - **Snapshot tests** via `insta` for any output that must not drift
   silently (planner, executor, procedure-pack metadata, algorithm
-  result shapes, vector-index section bytes, recovery results).
+  result shapes, recovery results).
 
 See [`architecture.md`](architecture.md#7-snapshot-harness-pattern-d21)
 for the snapshot-harness pattern (decision D21) and the pure-mirror
@@ -325,8 +325,7 @@ conflict in your PR description before reshaping the workspace.
 
 Every runtime surface that can drift silently is pinned by golden
 `.snap` files: planner output, executor output, procedure-pack
-signatures, algorithm result shapes, vector-index section bytes,
-recovery results. The pattern is:
+signatures, algorithm result shapes, recovery results. The pattern is:
 
 1. **Pure-mirror DSL** in `selene-testing` expressing the producer's
    public output shape as serializable structs. The mirror crate's
@@ -402,11 +401,9 @@ The high-level flow is:
 [`extension-guide.md`](extension-guide.md) is the full walkthrough:
 manifest format, tier choice, the worked `hello.world` example, and
 the registration patterns. Cross-reference
-[`vector-search.md`](vector-search.md) and
-[`graph-algorithms.md`](graph-algorithms.md) for two production
-worked examples of pack-adapter crates (`selene-vector-pack` and
-`selene-algorithms-pack`) that expose extension capabilities through
-GQL `CALL`.
+[`graph-algorithms.md`](graph-algorithms.md) for a production worked
+example of a pack-adapter crate (`selene-algorithms-pack`) that exposes
+extension capabilities through GQL `CALL`.
 
 ---
 
@@ -490,10 +487,10 @@ Some changes are out of scope by decision:
   crate sees `&[Change]` going in and a `RecoveryResult` coming out.
   It must never grow a dependency on `selene-graph` or `selene-core`'s
   graph-shaped types.
-- **No vector or fulltext or timeseries types in `selene-graph`** (D5).
+- **No non-graph types in `selene-graph`** (D5).
   Extension capabilities plug in through the `IndexProvider` trait and
   the procedure-pack registry. The graph crate ships pure graph
-  storage; an embedder who wants neither extension does not depend on
+  storage; an embedder who wants no extension does not depend on
   those crates.
 - **No `unsafe` Rust** anywhere in selene-db's own source (D9). The
   lint is `forbid`, not `deny`; you cannot override it locally. If a
@@ -534,6 +531,4 @@ Some changes are out of scope by decision:
   packs and `IndexProvider` implementations.
 - [`graph-algorithms.md`](graph-algorithms.md) — algorithm surface
   exposed through `algo.*` procedures.
-- [`vector-search.md`](vector-search.md) — vector index extension
-  surface exposed through `vector.*` procedures.
 - [`performance.md`](performance.md) — benchmarks and tuning knobs.

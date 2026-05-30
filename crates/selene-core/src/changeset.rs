@@ -80,9 +80,9 @@ pub enum Change {
     },
     /// Opaque event emitted by an index extension provider.
     ///
-    /// `provider` is a human-readable interned provider name (for example,
-    /// `selene-vector`). The named provider owns deserialization of `payload`
-    /// during WAL replay per D15.
+    /// `provider` is a human-readable interned provider name (for example, an
+    /// index provider owned by an extension crate). The named provider owns
+    /// deserialization of `payload` during WAL replay per D15.
     IndexExtensionEvent {
         /// Provider name.
         provider: IStr,
@@ -119,10 +119,10 @@ pub enum Change {
     /// walking the recovered store ("replay walks store"), marking dead every
     /// alive node with `label` and every alive edge incident to such a node, so
     /// the recovered state is byte-identical to `MATCH (n:L) DETACH DELETE n`.
-    /// Change subscribers (e.g. vector providers) never receive this variant;
-    /// the producing side expands it into per-row `NodeDeleted`/`EdgeDeleted`
-    /// tombstones on both the runtime and recovery paths so derived state is
-    /// reclaimed without leaks.
+    /// Change subscribers (e.g. derived-state providers) never receive this
+    /// variant; the producing side expands it into per-row `NodeDeleted`/
+    /// `EdgeDeleted` tombstones on both the runtime and recovery paths so derived
+    /// state is reclaimed without leaks.
     NodesOfTypeTruncated {
         /// Node label whose instances (and incident edges) were removed.
         label: IStr,
@@ -149,8 +149,8 @@ pub enum Change {
     /// the recovered store ("replay walks store"), marking dead every alive node
     /// and edge, and forces the recovered `bound_type` to `None`, so the
     /// recovered state is byte-identical to `MATCH (n) DETACH DELETE n` followed
-    /// by a full schema drop. Change subscribers (e.g. vector providers) never
-    /// receive this variant; the producing side expands it into per-row
+    /// by a full schema drop. Change subscribers (e.g. derived-state providers)
+    /// never receive this variant; the producing side expands it into per-row
     /// `NodeDeleted`/`EdgeDeleted` tombstones on both the runtime and recovery
     /// paths so derived state is reclaimed without leaks. The MANIFEST epoch and
     /// WAL archive lineage are untouched: a factory-reset is one committed WAL
@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn index_extension_event_payload_round_trip() {
         let change = Change::IndexExtensionEvent {
-            provider: istr("selene-vector"),
+            provider: istr("ext-provider"),
             payload: Arc::from([1_u8, 2, 3]),
         };
         assert_eq!(change.clone(), change);

@@ -12,8 +12,7 @@ register are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
 [`persistence-and-recovery.md`](persistence-and-recovery.md). For procedure
-packs see [`graph-algorithms.md`](graph-algorithms.md) and
-[`vector-search.md`](vector-search.md).
+packs see [`graph-algorithms.md`](graph-algorithms.md).
 
 The Rust API used in every example below is:
 
@@ -664,27 +663,11 @@ algo.dijkstra, algo.sssp, algo.apsp
 See [`graph-algorithms.md`](graph-algorithms.md) for argument shapes and
 result columns.
 
-### Vector pack (`vector.*`)
-
-Registered by `selene-vector-pack`. The 12 procedure names are listed in
-`VECTOR_PROCEDURE_NAMES`:
-
-```text
-vector.search, vector.upsert, vector.delete,
-vector.bulk_upsert, vector.bulk_delete,
-vector.ivf_search, vector.ivf_bulk_upsert, vector.ivf_bulk_delete,
-vector.ivf_stats,
-vector.create_index, vector.drop_index, vector.list_indexes
-```
-
-See [`vector-search.md`](vector-search.md) for argument shapes and
-result columns.
-
 ### Registry construction
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
 A real embedder builds a `selene_pack::ProcedurePackRegistry` via its
-builder, registering external packs (`AlgorithmsPack`, `VectorPack`) at
+builder, registering external packs (e.g. `AlgorithmsPack`) at
 construction time. After build, the registry is frozen (D16) and can be
 shared across threads via `Arc`.
 
@@ -803,7 +786,6 @@ explicitly absent. The canonical rationale is
 | Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
 | `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL` synonym | Not claimed. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
-| Full-text search syntax | Out of scope. Future first-party extension allocation `FULL`. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |
 | Recursive CTEs (`WITH RECURSIVE`) | Not in ISO GQL; not supported. |

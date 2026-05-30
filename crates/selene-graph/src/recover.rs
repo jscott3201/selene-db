@@ -252,8 +252,8 @@ impl IndexAndChangeRecoveryProvider {
         // CORE re-derives one combined tombstone list for every truncate in the
         // entry. Emit the non-truncate changes positionally and append the
         // staged tombstones in place of the truncate changes. Because truncate
-        // tombstones are pure NodeDeleted/EdgeDeleted (order-independent for the
-        // vector delete_node/delete_edge subscribers), splicing the whole staged
+        // tombstones are pure NodeDeleted/EdgeDeleted (order-independent for
+        // derived-state delete_node/delete_edge subscribers), splicing the whole staged
         // list once preserves the per-row coverage invariant.
         let staged = self.truncate_expansion.lock().clone();
         let mut view = Vec::with_capacity(changes.len() + staged.len());

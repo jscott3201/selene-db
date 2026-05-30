@@ -11,9 +11,9 @@
 //! *mechanism* in [`crate::compaction`]. The CORE graph does not implement this
 //! trait — it is the authority that *produces* the [`LiveIdSet`] via
 //! [`crate::compaction::compact_core`], rather than a downstream consumer of
-//! one. Downstream storage providers (e.g. `selene-vector` in BRIEF-Item-4d,
-//! future `selene-timeseries` / `selene-rdf`) implement this trait to compact
-//! their own state against the graph's live set. The snapshot publisher
+//! one. Downstream storage providers (e.g. future `selene-timeseries` /
+//! `selene-rdf`) implement this trait to compact their own state against the
+//! graph's live set. The snapshot publisher
 //! (BRIEF-Item-4c) runs all compactors atomically under the MANIFEST epoch.
 
 use std::collections::HashSet;

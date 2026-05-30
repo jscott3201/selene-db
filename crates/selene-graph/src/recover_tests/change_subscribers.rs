@@ -218,7 +218,7 @@ fn provider_label(change: &Change) -> &'static str {
 
 fn extension_event() -> Change {
     Change::IndexExtensionEvent {
-        provider: intern("selene-vector").unwrap(),
+        provider: intern("ext-provider").unwrap(),
         payload: Arc::from(vec![1_u8].into_boxed_slice()),
     }
 }

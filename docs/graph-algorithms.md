@@ -660,7 +660,6 @@ See [`docs/extension-guide.md`](extension-guide.md) for the full procedure-pack 
 - [`docs/embedding-guide.md`](embedding-guide.md) — registering `AlgorithmsPack` with a `ProcedurePackRegistry`.
 - [`docs/gql-reference.md`](gql-reference.md) §8 — `CALL ... YIELD` grammar.
 - [`docs/extension-guide.md`](extension-guide.md) — writing procedure packs and index providers.
-- [`docs/vector-search.md`](vector-search.md) — the sibling extension exposing `CALL vector.*`.
 - [`BENCHMARKS.md`](../BENCHMARKS.md) §4 and §5 — algorithm and adapter benchmarks.
 - [`crates/selene-algorithms`](../crates/selene-algorithms) — algorithm sources.
 - [`crates/selene-algorithms-pack`](../crates/selene-algorithms-pack) — procedure-pack adapters.

@@ -10,9 +10,9 @@ The guide covers:
 4. The three procedure tiers and their context structs.
 5. A full worked example: `hello.world` from trait impl through registration and tests.
 6. How procedure-pack lifecycle events flow through the mutation funnel.
-7. Reading `selene-algorithms-pack` and `selene-vector-pack` as canonical examples.
+7. Reading `selene-algorithms-pack` as the canonical example.
 8. The `IndexProvider` trait and its consistency / recovery / snapshot contract.
-9. Snapshot section encoding (`SLSN` TLV, rkyv archives), with `selene-vector` as the reference.
+9. Snapshot section encoding (`SLSN` TLV, rkyv archives).
 10. Testing your extension via the pure-mirror snapshot harness.
 11. Versioning your extension and the wire-format invariants you owe consumers.
 
@@ -24,12 +24,12 @@ selene-db has exactly two extension points. Both are stable APIs. Everything els
 
 | Extension point | What it adds | Trait / surface | Lives in |
 |:---|:---|:---|:---|
-| `IndexProvider` | Derived state attached to a `SharedGraph`: a secondary index, a vector index, a fulltext index, a time-series materialization, an external mirror. | `selene_graph::IndexProvider` (trait, `Send + Sync + 'static`). | `selene-graph` |
+| `IndexProvider` | Derived state attached to a `SharedGraph`: a secondary index, a time-series materialization, an external mirror. | `selene_graph::IndexProvider` (trait, `Send + Sync + 'static`). | `selene-graph` |
 | Procedure pack | Named procedures invokable as `CALL <pack>.<procedure>(...)` from GQL. | `selene_pack::ExternalProcedurePack` plus `ExternalGraphProcedure` / `ExternalMutationProcedure`. | `selene-pack` |
 
-This is what D5 (architecture decision 5: non-graph capabilities in extension crates) means in practice. The graph crate ships pure graph storage plus the `IndexProvider` hook. Anything else - vector search, fulltext, graph algorithms, time series, RDF - is its own crate and plugs in through one or both of these points.
+This is what D5 (architecture decision 5: non-graph capabilities in extension crates) means in practice. The graph crate ships pure graph storage plus the `IndexProvider` hook. Anything else - graph algorithms, time series, RDF - is its own crate and plugs in through one or both of these points.
 
-The two extension points are independent. A pack can be pure read-only GQL surface with no `IndexProvider`. A provider can be a silent WAL sink with no procedures. Most non-trivial extensions ship both: an `IndexProvider` that owns derived state and a procedure pack that exposes operations over it. `selene-vector` is the canonical example.
+The two extension points are independent. A pack can be pure read-only GQL surface with no `IndexProvider`. A provider can be a silent WAL sink with no procedures. Most non-trivial extensions ship a procedure pack, and a non-trivial extension that owns persistent derived state ships an `IndexProvider` alongside it; `selene-algorithms-pack` is the canonical procedure-pack example.
 
 ---
 
@@ -82,12 +82,12 @@ The manifest is a JSON document validated against the JSON Schema 2020-12 docume
 
 ### Concrete manifest
 
-The bundled `selene-vector` manifest is in `crates/selene-vector/resources/procedure-pack.json`:
+A minimal manifest with no procedures declared looks like:
 
 ```json
 {
   "schema_version": 1,
-  "pack_name": "vector",
+  "pack_name": "demo_pack",
   "pack_version": "0.1.0",
   "content_hash": "blake3:88f46c373df17f993f3d9765f6eab3ec4cfe420c6b42c9f4996dc23265e4d60b",
   "procedures": []
@@ -415,9 +415,9 @@ The sink's `record` then drives `txn.commit_with_principal(self.principal_bytes.
 
 ---
 
-## 7. Reading the worked external packs
+## 7. Reading the worked external pack
 
-Two external packs ship in-tree as reference implementations. Read them when in doubt about a pattern.
+One external pack ships in-tree as a reference implementation. Read it when in doubt about a pattern.
 
 ### `selene-algorithms-pack`
 
@@ -425,39 +425,19 @@ Path: `crates/selene-algorithms-pack/`.
 
 This pack exposes the nineteen graph algorithms in `selene-algorithms` through nineteen `algo.*` procedures. The crate is intentionally a thin adapter: `src/registry.rs` carries the `AlgorithmsPack` handle and the `external_pack()` builder; `src/<family>.rs` modules (pagerank, betweenness, community, structural, pathfinding, projection) each export a procedure constructor returning `Arc<dyn ExternalGraphProcedure>`; `src/args.rs` ships shared argument-parsing helpers (`expect_arity`, `required_string`, `nullable_f64`, ...); `src/state.rs` carries per-graph projection-catalog state shared across procedures via `Arc<AlgorithmsPackState>`. `selene-algorithms-pack` registers exclusively as read-tier; all nineteen algorithms read the published snapshot and compute over a `GraphProjection`.
 
-### `selene-vector-pack`
-
-Path: `crates/selene-vector-pack/`.
-
-This pack exposes twelve `vector.*` procedures, split across both tiers:
-
-- Read tier: `vector.search`, `vector.ivf_search`, `vector.ivf_stats`, `vector.list_indexes`.
-- Mutation tier: `vector.upsert`, `vector.delete`, `vector.bulk_upsert`, `vector.bulk_delete`, `vector.ivf_bulk_upsert`, `vector.ivf_bulk_delete`, `vector.create_index`, `vector.drop_index`.
-
-The mutation procedures emit `extension_event` records through the mutator. The HNSW and IVF registries consume those events through `on_change`, decode the payload, and apply the change to in-memory index state. The pack and the providers are wired together at `SharedGraph::builder` time:
+The pack registers against a `SharedGraph` and its built-in registry:
 
 ```rust
-use std::sync::Arc;
 use selene_core::GraphId;
 use selene_graph::SharedGraph;
-use selene_graph::IndexProvider;
-use selene_vector::{HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry};
-use selene_vector_pack::VectorPack;
+use selene_algorithms_pack::AlgorithmsPack;
 
-let hnsw: Arc<dyn IndexProvider> =
-    Arc::new(HnswIndexRegistry::new(HnswConfig::new(384)?)?);
-let ivf: Arc<dyn IndexProvider> =
-    Arc::new(IvfIndexRegistry::new(IvfConfig::new(384)?)?);
-let graph = SharedGraph::builder(GraphId::new(1))
-    .with_provider(hnsw)
-    .with_provider(ivf)
-    .build()?;
-
-let pack = VectorPack::new();
+let graph = SharedGraph::new(GraphId::new(1));
+let pack = AlgorithmsPack::new();
 let registry = pack.registry_with_builtins()?;
 ```
 
-The provider owns derived state and snapshot sections; the pack exposes operations over that state. Read both crates together to see the end-to-end pattern.
+A pack that owns persistent derived state rather than only computing over the live graph additionally ships an `IndexProvider` registered through `SharedGraph::builder(...).with_provider(...)`; the provider owns the derived state and snapshot sections while the pack exposes operations over it. See §8 and §9 for that contract.
 
 ---
 
@@ -476,9 +456,9 @@ pub trait IndexProvider: Send + Sync + 'static {
 }
 ```
 
-`ProviderTag` is a `#[derive(Copy)]` 4-byte uppercase ASCII identifier (`ProviderTag(*b"VECT")`). First-party allocations include `CORE` (engine-owned, do not collide), `VECT`, `IVFP`, `FULL`, `TIMS`, `GRPR`. Pack authors pick a new tag from the remaining ASCII uppercase space and document it in their crate.
+`ProviderTag` is a `#[derive(Copy)]` 4-byte uppercase ASCII identifier (`ProviderTag(*b"GRPR")`). First-party allocations include `CORE` (engine-owned, do not collide), `TIMS`, `GRPR`. Pack authors pick a new tag from the remaining ASCII uppercase space and document it in their crate.
 
-`SubTag` is also a 4-byte ASCII identifier, namespaced inside one provider's tag space (e.g. `selene-vector` uses `GRPH`, `VECS`, `QUNT` under `VECT`).
+`SubTag` is also a 4-byte ASCII identifier, namespaced inside one provider's tag space (e.g. a provider might declare `HEAD`, `BODY`, `META` under its own tag).
 
 ### What selene-graph promises
 
@@ -491,12 +471,12 @@ pub trait IndexProvider: Send + Sync + 'static {
 
 A correct `IndexProvider` must: (1) **use interior mutability** for owned state (`parking_lot::RwLock`/`Mutex`, `arc_swap::ArcSwap`, or a lock-free map crate); (2) **honor the re-entrancy contract** - `on_change` MUST NOT initiate `begin_write` on the same graph directly or indirectly, and cross-thread re-entry that blocks the callback on a worker calling `begin_write` is documented misuse that deadlocks the engine; (3) **be consistent across replay** - snapshot decode plus WAL replay must produce byte-equivalent derived state, so non-deterministic numerics (SIMD reduction order varying by CPU) need a pinned scalar fallback for golden tests; (4) **validate every payload** - treat extension-event bytes as untrusted, bound sizes, verify magics, check version fields, refuse malformed input with `ProviderError::InvalidPayload`; (5) **filter foreign events** - `on_change` is delivered every `Change` variant, not just the provider's own `IndexExtensionEvent`, so match the variant and ignore unrelated cases.
 
-`selene-vector::HnswProvider` is the canonical worked example. Read `crates/selene-vector/src/provider.rs` to see:
+A robust provider that owns multi-section derived state typically combines:
 
-- `ArcSwap<HnswGraph>` publishing immutable derived graph snapshots,
-- a `Mutex<SectionStaging>` typestate machine guarding the section read/write protocol (GRPH must precede VECS; QUNT validates against the committed graph; emitting a partial snapshot is refused),
-- explicit refusal to apply mutation events while a GRPH section has been staged without a matching VECS commit,
-- `Change` variant filtering: `NodeCreated`, `EdgeCreated`, etc. are noops; only `IndexExtensionEvent` whose `provider` field matches `"selene-vector"` is decoded.
+- an `ArcSwap<T>` publishing immutable derived snapshots so readers never block,
+- a `Mutex<SectionStaging>` typestate machine guarding the section read/write protocol (a header section must precede its body; later sections validate against the committed state; emitting a partial snapshot is refused),
+- explicit refusal to apply mutation events while a header section has been staged without a matching body commit,
+- `Change` variant filtering: `NodeCreated`, `EdgeCreated`, etc. are noops; only `IndexExtensionEvent` whose `provider` field matches the provider's own interned name is decoded.
 
 ### `ProviderError`
 
@@ -548,23 +528,21 @@ fn decode(bytes: &[u8]) -> Result<MyHeaderV1, ProviderError> {
 }
 ```
 
-### selene-vector's section layout (worked example)
+### A multi-section layout (illustrative example)
 
-Path: `crates/selene-vector/src/snapshot/`.
-
-The `VECT` provider declares three subsections in fixed order:
+A provider that owns several related sections declares them in a fixed
+order. As a worked shape, a provider with tag `DEMO` might declare three
+subsections:
 
 | `SubTag` | Body type | What it carries |
 |:---|:---|:---|
-| `GRPH` | `GrphBody` (header + per-node topology + optional liveness vector) | HNSW topology: entry point, max layer, neighbor lists, live-slot bitmap. Two version magics: `VGRP` (v1, all-alive) and `VGP2` (v2, with explicit `live_indices`). |
-| `VECS` | `VecsBodyV1` (header + flat `f32` components) | Raw vector payload. Cross-validated against `GRPH` for matching `dimensions` and `node_count`. |
-| `QUNT` | `QuntBody` or empty | Optional SQ8 / PQ / OPQ quantized overlay. May be empty when quantization is disabled. |
+| `HEAD` | `HeadBody` (header + per-row topology + optional liveness map) | Structural topology and a live-slot bitmap. A version magic in the header lets new layouts add a magic without breaking old decoders. |
+| `BODY` | `BodyV1` (header + flat payload) | The bulk payload. Cross-validated against `HEAD` for matching counts. |
+| `META` | `MetaBody` or empty | An optional overlay. May be empty when the feature it backs is disabled. |
 
-The write protocol is ordered: `GRPH` must be emitted before `VECS`, and `QUNT` is optional and emitted last. The provider implements a typestate machine inside its `staging: Mutex<SectionStaging>` field to enforce this. A failed encode resets staging so a subsequent retry does not pick up stale captured state.
+The write protocol is ordered: `HEAD` must be emitted before `BODY`, and `META` is optional and emitted last. The provider implements a typestate machine inside a `staging: Mutex<SectionStaging>` field to enforce this. A failed encode resets staging so a subsequent retry does not pick up stale captured state.
 
-The read protocol is the mirror: `GRPH` admits the topology, `VECS` admits the vectors and the provider then assembles the `HnswGraph`, and `QUNT` (if present and non-empty) attaches a post-commit overlay via `state.rcu(|prev| prev.clone_with_quantized(Some(store)))`.
-
-Read `crates/selene-vector/src/snapshot/mod.rs`, `grph.rs`, and `vecs.rs` for the canonical TLV-codec shape.
+The read protocol is the mirror: `HEAD` admits the topology, `BODY` admits the bulk payload and the provider then assembles its in-memory state, and `META` (if present and non-empty) attaches a post-commit overlay via an `ArcSwap` `rcu`.
 
 ### Extension events on the WAL
 
@@ -579,9 +557,9 @@ ctx.mutator()
     .extension_event(intern("my-provider")?, payload);
 ```
 
-The mutator records the event in the transaction's change list; on commit, the WAL writer frames it as a `Change::IndexExtensionEvent` and fans it out to every registered provider via `on_change`. Each provider filters by the `provider` field (a `selene_core::IStr`) and ignores events not addressed to it. selene-vector uses `"selene-vector"` as the value.
+The mutator records the event in the transaction's change list; on commit, the WAL writer frames it as a `Change::IndexExtensionEvent` and fans it out to every registered provider via `on_change`. Each provider filters by the `provider` field (a `selene_core::IStr`) and ignores events not addressed to it; the value is the provider's own interned crate name.
 
-The extension-event payload format is provider-owned. Spec 04 only specifies the framing; the bytes inside are yours. selene-vector uses a magic-prefixed postcard-serialized enum (`EventKind::Upsert | Bulk | BulkDelete | IvfBulkInsert | IvfBulkDelete`).
+The extension-event payload format is provider-owned. Spec 04 only specifies the framing; the bytes inside are yours. A common pattern is a magic-prefixed postcard-serialized enum so the decoder can dispatch by event kind and reject malformed input.
 
 ---
 
@@ -643,7 +621,7 @@ fn hello_world_golden() {
 }
 ```
 
-For an `IndexProvider`, the golden surface is typically the snapshot section bytes (encoded via the renderer into a hex-formatted dump or a structural mirror), the event-replay trace, and the recovery result. selene-vector pins all three.
+For an `IndexProvider`, the golden surface is typically the snapshot section bytes (encoded via the renderer into a hex-formatted dump or a structural mirror), the event-replay trace, and the recovery result. A robust provider pins all three.
 
 ### Recovery acceptance tests
 
@@ -675,24 +653,24 @@ The manifest's `pack_version` field is your own semver string. Bump it whenever 
 
 This is the harder invariant. Once a snapshot section with `(provider, sub_tag)` is written to disk, your provider must be able to decode that section forever, or you must ship a migration.
 
-The pattern selene-vector uses is **magic-prefixed bodies**:
+The recommended pattern is **magic-prefixed bodies**:
 
 ```rust
-pub(crate) const PAYLOAD_MAGIC_GRPH:    [u8; 4] = *b"VGRP";   // v1
-pub(crate) const PAYLOAD_MAGIC_GRPH_V2: [u8; 4] = *b"VGP2";   // v2
+pub(crate) const PAYLOAD_MAGIC_HEAD:    [u8; 4] = *b"HDR1";   // v1
+pub(crate) const PAYLOAD_MAGIC_HEAD_V2: [u8; 4] = *b"HDR2";   // v2
 ```
 
-The decoder reads the magic first, dispatches by version, and returns a unified `GrphBody`. New versions add new magic constants; old versions remain decodable. The encoder picks the lowest version that can represent the current state (e.g. v1 when every slot is alive, v2 when explicit liveness is needed).
+The decoder reads the magic first, dispatches by version, and returns a unified body type. New versions add new magic constants; old versions remain decodable. The encoder picks the lowest version that can represent the current state (e.g. v1 when no v2-only field is set, v2 when the richer layout is needed).
 
 Three rules for bumping section versions:
 
 1. **Bump the magic, not the type.** A new magic constant is much easier to reason about than a `version: u8` field inside an existing archived struct. Different magics decode through different rkyv-archived types.
-2. **Ship a decoder for every magic the provider has ever emitted.** Until you ship a one-shot migration that re-writes old snapshots, your provider's decode dispatch must understand every historical version. selene-vector decodes both `VGRP` and `VGP2` indefinitely.
+2. **Ship a decoder for every magic the provider has ever emitted.** Until you ship a one-shot migration that re-writes old snapshots, your provider's decode dispatch must understand every historical version.
 3. **Recovery tests at every version.** For each released version that may still exist on disk, a recovery acceptance test pins the byte-stable replay path.
 
 ### 11.4 Byte parity for compatibility
 
-If your provider claims byte parity across builds (so two embedders writing the same logical state produce byte-identical snapshots), the encode path must be deterministic: no `HashMap` iteration order in serialized bytes (use `BTreeMap` or sort explicitly), no non-deterministic numerics (SIMD reductions over `f32` are not order-equivalent across CPUs - pin a scalar fallback for golden tests), no clock/PID material in section payloads, no allocation-address-dependent ordering in archived nodes. selene-vector's HNSW provider does NOT claim byte parity across all builds - SIMD reduction-order drift in neighbor selection produces different neighbor lists, snapshot bytes, and digests. Where byte parity is needed, harnesses pin a scalar-only configuration. A provider that does claim byte parity must say so in its rustdoc and back the claim with a golden snapshot test in CI.
+If your provider claims byte parity across builds (so two embedders writing the same logical state produce byte-identical snapshots), the encode path must be deterministic: no `HashMap` iteration order in serialized bytes (use `BTreeMap` or sort explicitly), no non-deterministic numerics (SIMD reductions over `f32` are not order-equivalent across CPUs - pin a scalar fallback for golden tests), no clock/PID material in section payloads, no allocation-address-dependent ordering in archived nodes. A provider whose derived state depends on order-sensitive floating-point reductions may NOT be able to claim byte parity across all builds; where byte parity is needed, harnesses pin a scalar-only configuration. A provider that does claim byte parity must say so in its rustdoc and back the claim with a golden snapshot test in CI.
 
 ---
 
@@ -701,5 +679,5 @@ If your provider claims byte parity across builds (so two embedders writing the 
 - [`docs/architecture.md`](architecture.md) - D1-D21 decisions, layered model, persistence design.
 - [`docs/embedding-guide.md`](embedding-guide.md) - the embedder workflow, registering providers, wiring the WAL.
 - [`docs/persistence-and-recovery.md`](persistence-and-recovery.md) - WAL framing, snapshot envelope, two-step recovery.
-- [`docs/vector-search.md`](vector-search.md), [`docs/graph-algorithms.md`](graph-algorithms.md) - the worked external packs in user-facing form.
-- `crates/selene-pack/src/`, `crates/selene-vector/src/provider.rs`, `crates/selene-vector/src/snapshot/`, `crates/selene-algorithms-pack/`, `crates/selene-vector-pack/` - canonical source references.
+- [`docs/graph-algorithms.md`](graph-algorithms.md) - the worked external pack in user-facing form.
+- `crates/selene-pack/src/`, `crates/selene-algorithms-pack/` - canonical source references.

@@ -165,13 +165,13 @@ mod tests {
     #[test]
     fn iter_yields_in_provider_tag_order() {
         let mut registry = ProviderRegistry::new();
-        registry.register(provider(*b"VECT")).unwrap();
+        registry.register(provider(*b"DEMO")).unwrap();
         registry.register(provider(*b"CORE")).unwrap();
         registry.register(provider(*b"META")).unwrap();
         let tags: Vec<_> = registry
             .iter()
             .map(|provider| provider.provider_tag())
             .collect();
-        assert_eq!(tags, vec![*b"CORE", *b"META", *b"VECT"]);
+        assert_eq!(tags, vec![*b"CORE", *b"DEMO", *b"META"]);
     }
 }

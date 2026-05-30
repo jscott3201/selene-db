@@ -42,8 +42,6 @@ proptest.workspace = true
 rstest.workspace = true
 selene-persist = { path = "../selene-persist", version = "1.0.0" }
 selene-pack = { path = "../selene-pack", version = "1.0.0" }
-selene-vector = { path = "../selene-vector", version = "1.0.0" }
-selene-vector-pack = { path = "../selene-vector-pack", version = "1.0.0" }
 selene-algorithms-pack = { path = "../selene-algorithms-pack", version = "1.0.0" }
 selene-testing = { path = "../selene-testing", version = "1.0.0" }
 serde_json.workspace = true

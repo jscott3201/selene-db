@@ -18,10 +18,6 @@ pub mod mock_index_catalog;
 pub mod mock_procedure_registry;
 pub mod pack_corpus;
 pub mod plan_corpus;
-#[cfg(feature = "vector")]
-pub mod vector_corpus;
-#[cfg(feature = "vector")]
-pub mod vector_pack_corpus;
 
 pub use algo_corpus::{
     ALGORITHM_COVERAGE, AlgoCorpus, AlgoCorpusCategory, AlgoCorpusEntry, AlgoCorpusGraph,
@@ -48,16 +44,3 @@ pub use pack_corpus::{
     SyntheticManifestSpec, SyntheticMutability, SyntheticProcedureSpec, SyntheticTier,
 };
 pub use plan_corpus::{PlanCorpus, PlanCorpusCategory, PlanCorpusEntry, PlanCorpusRegistry};
-#[cfg(feature = "vector")]
-pub use vector_corpus::{
-    ApiInductionPayload, ERROR_KIND_COVERAGE, ErrorInductionKind, MAGIC_COVERAGE, METRIC_COVERAGE,
-    NEIGHBOR_SELECTION_COVERAGE, NeighborSelectionFlavor, OP_COVERAGE, QUANT_METHOD_COVERAGE,
-    QuantMethodMirror, SURFACE_COVERAGE, SyntheticErrorFields, VectorConfigSpec, VectorCorpus,
-    VectorCorpusCategory, VectorCorpusEntry, VectorCorpusEvent, VectorCorpusGraph,
-    VectorCorpusInvocation, VectorErrorKindMirror, VectorMagicMirror, VectorMetricMirror,
-    VectorOpMirror, VectorPqSpec, VectorQuantizationSpec, VectorSurface,
-};
-#[cfg(feature = "vector")]
-pub use vector_pack_corpus::{
-    VectorPackCorpus, VectorPackCorpusCategory, VectorPackCorpusEntry, VectorPackInvocation,
-};

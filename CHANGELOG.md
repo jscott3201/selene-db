@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+
+- **Vector index extension externalized.** The `selene-vector` and
+  `selene-vector-pack` crates — the HNSW and IVF `IndexProvider`
+  implementations (with SQ8 / PQ / OPQ quantization) and their `vector.*`
+  procedure-pack adapters — were removed from the workspace and moved to a
+  separate dedicated project. **BREAKING** change to the public crate
+  surface: embedders depending on either crate must repoint to the
+  externalized project. The core `selene-graph` query and mutation surfaces
+  are unchanged, and the generic extension boundary (`IndexProvider`,
+  procedure packs) is unaffected.
+- **Planned full-text / BM25 extension dropped.** The previously planned
+  `selene-text` / `selene-text-pack` (Tantivy-backed) full-text extension is
+  dropped entirely and is no longer a roadmap item. The reserved
+  `SELENE_FULLTEXT` extension type id is removed.
+
 ### Chore
 
 - Codified the **procedure-pack "procedure-only" contract** (BRIEF-149,
