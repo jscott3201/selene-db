@@ -12,8 +12,10 @@ autobenches = false
 [dependencies]
 selene-core = { path = "../selene-core", version = "1.0.0" }
 selene-graph = { path = "../selene-graph", version = "1.0.0" }
+selene-algorithms = { path = "../selene-algorithms", version = "1.0.0" }
 jiff.workspace = true
 miette.workspace = true
+parking_lot.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 serde.workspace = true

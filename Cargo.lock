@@ -2243,6 +2243,7 @@ dependencies = [
  "proptest",
  "rstest",
  "rustc-hash",
+ "selene-algorithms",
  "selene-algorithms-pack",
  "selene-core",
  "selene-graph",
