@@ -93,6 +93,56 @@ fn compare_record_with_null_field_returns_null() {
 }
 
 #[test]
+fn compare_list_with_null_element_returns_null() {
+    // ISO §16.7 element-wise comparison propagates 3VL: a NULL element makes the pair
+    // incomparable, so the whole list comparison is unknown (None), never a value_rank
+    // tiebreak collapsing to Equal.
+    let lhs = Value::List(vec![Value::Null]);
+    let rhs = Value::List(vec![Value::Int(1)]);
+
+    assert_eq!(compare_non_null(&lhs, &rhs), None);
+}
+
+#[test]
+fn compare_list_with_incomparable_element_returns_null() {
+    // Cross-type elements are not comparable → None (not a silent ordering).
+    let lhs = Value::List(vec![Value::String(intern_with_admission("a").unwrap().0)]);
+    let rhs = Value::List(vec![Value::Int(1)]);
+
+    assert_eq!(compare_non_null(&lhs, &rhs), None);
+}
+
+#[test]
+fn compare_nested_list_orders_by_inner_element() {
+    // Recursion through compare_values: the inner lists decide the outer ordering.
+    let lhs = Value::List(vec![Value::List(vec![Value::Int(2)])]);
+    let rhs = Value::List(vec![Value::List(vec![Value::Int(1)])]);
+
+    assert_eq!(compare_non_null(&lhs, &rhs), Some(Ordering::Greater));
+}
+
+#[test]
+fn compare_list_equal_prefix_shorter_precedes() {
+    // Equal prefix → the shorter list precedes (cardinality tiebreak); the empty list
+    // precedes any non-empty list; equal-length-equal-elements compare Equal.
+    assert_eq!(
+        compare_non_null(
+            &Value::List(vec![Value::Int(1)]),
+            &Value::List(vec![Value::Int(1), Value::Int(2)]),
+        ),
+        Some(Ordering::Less)
+    );
+    assert_eq!(
+        compare_non_null(&Value::List(Vec::new()), &Value::List(vec![Value::Int(1)])),
+        Some(Ordering::Less)
+    );
+    assert_eq!(
+        compare_non_null(&Value::List(Vec::new()), &Value::List(Vec::new())),
+        Some(Ordering::Equal)
+    );
+}
+
+#[test]
 fn compare_non_null_date_lt_date() {
     assert_eq!(
         compare_non_null(

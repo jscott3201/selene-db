@@ -2,6 +2,11 @@
 
 mod exec_common;
 
+// Closed-record catalog end-to-end tests live in a sibling file to keep this test root
+// under the 700-LOC cap; they reuse this binary's `planned`/`run_write`/`empty_closed_graph`.
+#[path = "exec_pipeline_catalog/record_catalog.rs"]
+mod record_catalog;
+
 use selene_core::{Change, GraphId, LabelSet, SchemaChange, Value};
 use selene_gql::{
     Binding, BindingTable, BindingTableSchema, CatalogOp, EmptyProcedureRegistry, ExecutionPlan,
@@ -716,16 +721,6 @@ fn open_record_property_type_is_supported() {
 
     let (_table, outcome) = run_write(&graph, &plan).expect("open RECORD type executes");
     outcome.expect("open RECORD property type commits");
-}
-
-#[test]
-fn closed_record_property_type_lowers_end_to_end() {
-    // Full grammar -> builder -> analyzer -> lowering -> closed-graph commit for a typed
-    // RECORD declaration.
-    let graph = empty_closed_graph(3717);
-    let plan = planned("CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INT})");
-    let (_table, outcome) = run_write(&graph, &plan).expect("closed RECORD type executes");
-    outcome.expect("closed RECORD property type commits");
 }
 
 #[test]
