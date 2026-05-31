@@ -44,6 +44,52 @@ fn stddev_pop_and_samp_use_welford_accumulator() {
 }
 
 #[test]
+fn stddev_is_numerically_stable_under_large_offset() {
+    // GQLRT-25: the existing stddev test uses small magnitudes [2,4,..,9], where
+    // a naive single-pass Σx² accumulator gives the right answer within
+    // tolerance. Shifting the same data by a ~1e9 offset leaves the true
+    // standard deviation unchanged (variance is translation-invariant) but makes
+    // a naive Σx² variance catastrophically cancel: each (1e9 + k)^2 loses the
+    // low-order bits, so sumsq/n - mean^2 collapses to ~0. Welford's online
+    // algorithm stays accurate. This data would FAIL (return ~0) under a
+    // naive-variance regression.
+    let offset: i64 = 1_000_000_000;
+    let values = [2i64, 4, 4, 4, 5, 5, 7, 9]
+        .iter()
+        .map(|value| (value + offset).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let table = execute_read(&format!(
+        "UNWIND [{values}] AS x RETURN stddev_pop(x) AS pop, stddev_samp(x) AS samp"
+    ));
+
+    let pop_values = column_values(&table, "pop");
+    let [Value::Float(pop)] = pop_values.as_slice() else {
+        panic!("expected pop stddev float, got {pop_values:?}");
+    };
+    // The true population stddev of the unshifted data is exactly 2.0; Welford
+    // recovers it to within f64 round-off even at the 1e9 offset. A naive Σx²
+    // accumulator returns ~0 here, which the `> 1.0` bound also excludes.
+    assert!(
+        (pop - 2.0).abs() < 1.0e-6,
+        "Welford stddev_pop must stay ~2.0 under a 1e9 offset, got {pop}"
+    );
+    assert!(
+        *pop > 1.0,
+        "a naive Σx² variance would cancel to ~0 here; {pop} proves it did not"
+    );
+
+    let samp_values = column_values(&table, "samp");
+    let [Value::Float(samp)] = samp_values.as_slice() else {
+        panic!("expected samp stddev float, got {samp_values:?}");
+    };
+    assert!(
+        (samp - 2.138_089_935_299_395).abs() < 1.0e-6,
+        "Welford stddev_samp must match the unshifted value, got {samp}"
+    );
+}
+
+#[test]
 fn stddev_skips_null_inputs_and_sample_requires_two_values() {
     let table = execute_read(
         "UNWIND [1, NULL, 3] AS x \

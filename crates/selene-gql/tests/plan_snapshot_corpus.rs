@@ -82,6 +82,43 @@ fn corpus_expected_rules_match_actual() {
 }
 
 #[test]
+fn recording_driver_matches_production_pipeline_op_high_water() {
+    // PLAN-20: the snapshot corpus drives `optimize_summary` -> `optimize_recording`,
+    // a test-only optimizer. It previously skipped the post-loop
+    // `refresh_pipeline_op_high_water()` that the production `optimize` /
+    // `optimize_with_rules` runs, so the corpus + idempotence snapshots verified
+    // the test driver, not production. Now that the recording driver mirrors the
+    // production post-loop step, pin parity: for every corpus entry the recording
+    // driver's `next_pipeline_op_id` must equal production's. A future divergence
+    // (e.g. dropping the refresh from one driver) fails here.
+    let corpus = PlanCorpus::m5c();
+    let mock_catalog = PlanCorpus::standard_mock_catalog();
+    let empty_registry = EmptyProcedureRegistry;
+    let mock_registry = PlanCorpus::standard_mock_registry();
+
+    for entry in corpus.entries() {
+        let caps = ImplDefinedCaps::default();
+
+        // Recording driver (test harness) — re-plan because optimize consumes.
+        let (_, recording_plan) = plan_entry(entry, &empty_registry, &mock_registry);
+        let recording_ctx = context_for(entry, &caps, &mock_catalog);
+        let recording = optimize_summary(recording_plan, &recording_ctx);
+
+        // Production driver.
+        let (_, production_plan) = plan_entry(entry, &empty_registry, &mock_registry);
+        let production_ctx = context_for(entry, &caps, &mock_catalog);
+        let production = optimize(production_plan, &production_ctx);
+
+        assert_eq!(
+            recording.next_pipeline_op_id,
+            production.next_pipeline_op_id.get(),
+            "{}: recording driver next_pipeline_op_id drifted from production",
+            entry.slug
+        );
+    }
+}
+
+#[test]
 fn corpus_idempotent_under_double_optimize() {
     let corpus = PlanCorpus::m5c();
     let mock_catalog = PlanCorpus::standard_mock_catalog();

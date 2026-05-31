@@ -176,8 +176,8 @@ fn raw_value_key(value: &Value) -> String {
         Value::Uint(value) => format!("uint:{value:020}"),
         Value::Int128(value) => format!("int128:{value:+040}"),
         Value::Uint128(value) => format!("uint128:{value:040}"),
-        Value::Float(value) => format!("float:{:016x}", value.to_bits()),
-        Value::Float32(value) => format!("float32:{:08x}", value.to_bits()),
+        Value::Float(value) => format!("float:{:016x}", canonical_f64_bits(*value)),
+        Value::Float32(value) => format!("float32:{:08x}", canonical_f32_bits(*value)),
         Value::Decimal(value) => format!("decimal:{value}"),
         Value::String(value) => format!("string:{}", value.as_str()),
         Value::ExternalString(value) => format!("external_string:{}", value.as_ref()),
@@ -202,6 +202,36 @@ fn raw_value_key(value: &Value) -> String {
         Value::Null => "null".to_owned(),
         Value::Uuid(value) => format!("uuid:{value}"),
         _ => "<value::unknown>".to_owned(),
+    }
+}
+
+/// Canonicalize an `f64` to the bit pattern used for the deterministic
+/// snapshot row key.
+///
+/// Why: the raw `to_bits()` value distinguishes `+0.0` (`0x0000…`) from `-0.0`
+/// (`0x8000…`) and every distinct NaN payload, which would let two snapshots
+/// that the runtime treats as equal sort into different placeholder orders —
+/// a determinism hole in the harness. This mirrors the runtime value-key
+/// canonicalization in `runtime::value_key::hash_f64_canonical`: collapse
+/// every zero to `+0.0`'s bits and every NaN to a single canonical NaN.
+fn canonical_f64_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        0.0_f64.to_bits()
+    } else if value.is_nan() {
+        f64::NAN.to_bits()
+    } else {
+        value.to_bits()
+    }
+}
+
+/// Canonicalize an `f32` snapshot key. See [`canonical_f64_bits`].
+fn canonical_f32_bits(value: f32) -> u32 {
+    if value == 0.0 {
+        0.0_f32.to_bits()
+    } else if value.is_nan() {
+        f32::NAN.to_bits()
+    } else {
+        value.to_bits()
     }
 }
 
@@ -435,6 +465,81 @@ mod tests {
         ]);
 
         assert_ne!(raw_value_key(&lhs), raw_value_key(&rhs));
+    }
+
+    #[test]
+    fn raw_float_key_canonicalizes_signed_zero_and_nan_payloads() {
+        // GQLRT-24: the raw `to_bits()` key would distinguish +0.0 from -0.0
+        // and one NaN payload from another, even though the runtime value key
+        // treats them as identical — a latent harness-determinism hole. The
+        // canonical key must collapse all zeros to one key and all NaNs to one.
+        assert_eq!(
+            raw_value_key(&Value::Float(0.0)),
+            raw_value_key(&Value::Float(-0.0)),
+            "+0.0 and -0.0 must share a snapshot key"
+        );
+        let nan_a = f64::from_bits(0x7ff8_0000_0000_0001);
+        let nan_b = f64::from_bits(0x7ff8_dead_beef_cafe);
+        assert!(nan_a.is_nan() && nan_b.is_nan(), "fixtures are NaNs");
+        assert_ne!(
+            nan_a.to_bits(),
+            nan_b.to_bits(),
+            "fixtures have distinct NaN payloads"
+        );
+        assert_eq!(
+            raw_value_key(&Value::Float(nan_a)),
+            raw_value_key(&Value::Float(nan_b)),
+            "distinct NaN payloads must share a snapshot key"
+        );
+
+        // Same for the 32-bit float key.
+        assert_eq!(
+            raw_value_key(&Value::Float32(0.0)),
+            raw_value_key(&Value::Float32(-0.0)),
+            "+0.0f32 and -0.0f32 must share a snapshot key"
+        );
+        let nan32_a = f32::from_bits(0x7fc0_0001);
+        let nan32_b = f32::from_bits(0x7fde_adbe);
+        assert!(
+            nan32_a.is_nan() && nan32_b.is_nan(),
+            "f32 fixtures are NaNs"
+        );
+        assert_ne!(nan32_a.to_bits(), nan32_b.to_bits());
+        assert_eq!(
+            raw_value_key(&Value::Float32(nan32_a)),
+            raw_value_key(&Value::Float32(nan32_b)),
+            "distinct f32 NaN payloads must share a snapshot key"
+        );
+
+        // A non-zero, non-NaN float still keys distinctly (regression guard
+        // against over-collapsing).
+        assert_ne!(
+            raw_value_key(&Value::Float(1.0)),
+            raw_value_key(&Value::Float(0.0))
+        );
+    }
+
+    #[test]
+    fn signed_zero_does_not_reorder_sort_deterministic_rows() {
+        // End-to-end determinism: the SortDeterministic policy keys rows by
+        // `raw_row_key`. A +0.0 sort key and a -0.0 sort key must compare
+        // equal, so a stable sort leaves a (+0.0-then-1.0) table and a
+        // (-0.0-then-1.0) table in the same row order — the placeholder/row
+        // sequence must match. (The rendered float text legitimately still
+        // shows the input sign; the determinism contract is on row ORDER, so
+        // this asserts the row keys, not the rendered cells.)
+        let zero_pos = Value::Float(0.0);
+        let zero_neg = Value::Float(-0.0);
+        let one = Value::Float(1.0);
+        // The sort key (not the rendered value) is what governs row order.
+        assert_eq!(
+            raw_row_key(&[zero_pos.clone(), one.clone()]),
+            raw_row_key(&[zero_neg.clone(), one.clone()]),
+            "rows differing only by signed zero must share a sort key"
+        );
+        // And +0.0 still sorts distinctly from a different finite value, so the
+        // ordering itself is preserved (not collapsed to a single bucket).
+        assert_ne!(raw_row_key(&[zero_pos]), raw_row_key(&[one]));
     }
 
     fn summary_for(table: &BindingTable) -> ExecutorSnapshot {

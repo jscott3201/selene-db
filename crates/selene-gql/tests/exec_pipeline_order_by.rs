@@ -61,6 +61,37 @@ fn order_by_nulls_first_under_descending() {
 }
 
 #[test]
+fn order_by_explicit_nulls_policy_is_direction_aware_across_all_four_combos() {
+    // GQLRT-28: only the two DEFAULT null placements (ASC->last, DESC->first)
+    // were tested. The explicit `NULLS FIRST/LAST` × `ASC/DESC` matrix exercises
+    // the direction-aware flip in `order_by::null_sort_order` (under DESC the
+    // comparator reverses, so the policy must be flipped to land NULLs where the
+    // user asked). Assert the full row order for all four combinations.
+    let source = "UNWIND [2, NULL, 1] AS x RETURN x ORDER BY x";
+
+    // ASC: data ascends 1,2; NULLS FIRST puts NULL at the head, LAST at the tail.
+    assert_eq!(
+        column_values(&execute_read(&format!("{source} ASC NULLS FIRST")), "x"),
+        vec![Value::Null, Value::Int(1), Value::Int(2)]
+    );
+    assert_eq!(
+        column_values(&execute_read(&format!("{source} ASC NULLS LAST")), "x"),
+        vec![Value::Int(1), Value::Int(2), Value::Null]
+    );
+
+    // DESC: data descends 2,1; the explicit policy still honors FIRST/LAST
+    // literally despite the reversed comparator.
+    assert_eq!(
+        column_values(&execute_read(&format!("{source} DESC NULLS FIRST")), "x"),
+        vec![Value::Null, Value::Int(2), Value::Int(1)]
+    );
+    assert_eq!(
+        column_values(&execute_read(&format!("{source} DESC NULLS LAST")), "x"),
+        vec![Value::Int(2), Value::Int(1), Value::Null]
+    );
+}
+
+#[test]
 fn order_by_list_values_sort_lexicographically() {
     // ISO §22.14 ordering: lists order element-wise by ascending ordinal; the
     // first differing element decides ([1,2] < [1,3] < [2,0]).
