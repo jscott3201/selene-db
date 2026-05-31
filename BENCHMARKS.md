@@ -174,23 +174,6 @@ Registered token: `selene-algorithms:algo_bench:criterion`. Fixture: `BenchFixtu
 
 **Notable**: pagerank/Auto is **slower** than pagerank/Sequential at every scale on this fixture. The bench graph is sparse (~3 edges/node), so per-iteration work (3·N FP multiplications + accumulator) doesn't outweigh rayon's thread-coordination cost on an M5. Auto remains the right choice on denser graphs where per-vertex work amortizes the overhead — the API exposes both modes deliberately.
 
-## §5 selene-algorithms-pack (adapter overhead)
-
-Registered token: `selene-algorithms-pack:algo_pack:criterion`. Fixtures stay crate-local to measure adapter overhead independently of algorithm scaling.
-
-| Bench | Fixture | Median | Notes |
-|---|---|---:|---|
-| `algo_pack/projection_build_default` | 1k deterministic directed graph | 235.2 µs | Includes parse + plan + execute. |
-| `algo_pack/algo_pagerank_default` | 256-node prebuilt projection | 138.1 µs | |
-| `algo_pack/algo_dijkstra_single_pair` | 256-node prebuilt projection | 38.08 µs | |
-| `algo_pack/algo_apsp_default` | 96-node prebuilt projection | 1.47 ms | Small-N APSP. |
-| `algo_pack/algo_betweenness_default` | 256-node prebuilt projection | 299.4 µs | |
-| `algo_pack/algo_louvain_default` | 256-node prebuilt projection | 129.7 µs | |
-| `algo_pack/algo_triangle_count_default` | 256-node prebuilt projection | 119.7 µs | |
-| `algo_pack/algo_label_propagation_default` | 256-node prebuilt projection | 75.78 µs | |
-
-Adapter cost is dominated by GQL `CALL` parsing + planning, not the underlying algorithm.
-
 ## §iai-callgrind (deferred; instruction-count baselines pending)
 
 Pinned for parity with `scripts/run-benches.sh` BENCHES list. Numbers are

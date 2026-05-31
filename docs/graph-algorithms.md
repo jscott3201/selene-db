@@ -612,18 +612,7 @@ Headline numbers from [BENCHMARKS.md](../BENCHMARKS.md):
 | `louvain` (sequential)     | 100k (planted communities)           | **55.43 ms**    |
 | `apsp` (Auto)              | 1k                                   | **8.46 ms**      |
 
-Adapter overhead from §5 of BENCHMARKS.md is dominated by GQL `CALL` parsing + planning, not the underlying algorithm:
-
-| Bench                                  | Fixture                       | Median   |
-| :------------------------------------- | :---------------------------- | -------: |
-| `algo_pack/projection_build_default`   | 1k directed graph             | 235.2 µs |
-| `algo_pack/algo_pagerank_default`      | 256-node prebuilt projection  | 138.1 µs |
-| `algo_pack/algo_dijkstra_single_pair`  | 256-node prebuilt projection  | 38.08 µs |
-| `algo_pack/algo_betweenness_default`   | 256-node prebuilt projection  | 299.4 µs |
-| `algo_pack/algo_louvain_default`       | 256-node prebuilt projection  | 129.7 µs |
-| `algo_pack/algo_triangle_count_default`| 256-node prebuilt projection  | 119.7 µs |
-| `algo_pack/algo_label_propagation_default` | 256-node prebuilt projection | 75.78 µs |
-| `algo_pack/algo_apsp_default`          | 96-node prebuilt projection   | 1.47 ms  |
+Invoking an algorithm through `CALL algo.*` adds GQL parse + plan + execute overhead per call, on top of the algorithm itself — that pipeline, not the underlying computation, dominates the per-call cost.
 
 If you are calling the same algorithm many times in a tight loop, prefer the Rust API over `CALL`: you save the parse + plan + execute pipeline per invocation and reuse the projection directly.
 
