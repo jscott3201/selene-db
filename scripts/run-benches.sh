@@ -103,7 +103,6 @@ selene-gql:write_e2e:criterion
 selene-gql:procedure_call_repeat:criterion
 selene-gql:iai_gates:iai
 selene-algorithms:algo_bench:criterion
-selene-algorithms-pack:algo_pack:criterion
 "
 
 echo "==> Compiling bench binaries (parallel compilation is allowed)"
