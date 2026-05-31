@@ -1,4 +1,4 @@
-//! Compact discriminants and filter sets for WAL change fan-out.
+//! Compact stable discriminants for [`Change`] variants.
 
 use crate::Change;
 
@@ -36,36 +36,6 @@ pub enum ChangeKind {
     GraphReset = 13,
 }
 
-/// Bit-set over [`ChangeKind`] discriminants.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct ChangeKindSet(u16);
-
-impl ChangeKindSet {
-    /// Empty filter set.
-    pub const EMPTY: Self = Self(0);
-
-    /// Filter set containing every currently defined [`ChangeKind`].
-    pub const ALL: Self = Self(0b0011_1111_1111_1111);
-
-    /// Return true when `kind` is present in this set.
-    #[must_use]
-    pub const fn contains(self, kind: ChangeKind) -> bool {
-        self.0 & kind_bit(kind) != 0
-    }
-
-    /// Return this set with `kind` included.
-    #[must_use]
-    pub const fn with(self, kind: ChangeKind) -> Self {
-        Self(self.0 | kind_bit(kind))
-    }
-
-    /// Return the union of this set and `other`.
-    #[must_use]
-    pub const fn union(self, other: Self) -> Self {
-        Self(self.0 | other.0)
-    }
-}
-
 impl Change {
     /// Return the compact kind discriminant for this change.
     #[must_use]
@@ -89,18 +59,10 @@ impl Change {
     }
 }
 
-const fn kind_bit(kind: ChangeKind) -> u16 {
-    1_u16 << (kind as u8)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{ChangeKind, ChangeKindSet};
+    use super::ChangeKind;
     use crate::Change;
-
-    static TOMBSTONE_KINDS: ChangeKindSet = ChangeKindSet::EMPTY
-        .with(ChangeKind::NodeDeleted)
-        .with(ChangeKind::EdgeDeleted);
 
     #[test]
     fn change_kind_maps_every_change_variant() {
@@ -128,40 +90,11 @@ mod tests {
     }
 
     #[test]
-    fn change_kind_set_filters_kinds() {
-        let node_mutations = ChangeKindSet::EMPTY
-            .with(ChangeKind::NodeCreated)
-            .with(ChangeKind::NodeUpdated);
-        let deletions = ChangeKindSet::EMPTY
-            .with(ChangeKind::NodeDeleted)
-            .with(ChangeKind::EdgeDeleted);
-        let combined = node_mutations.union(deletions);
-
-        assert!(!ChangeKindSet::EMPTY.contains(ChangeKind::NodeCreated));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::IndexExtensionEvent));
-        assert!(combined.contains(ChangeKind::NodeCreated));
-        assert!(combined.contains(ChangeKind::NodeUpdated));
-        assert!(combined.contains(ChangeKind::NodeDeleted));
-        assert!(combined.contains(ChangeKind::EdgeDeleted));
-        assert!(!combined.contains(ChangeKind::EdgeCreated));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::NodePropertyRemoved));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::EdgePropertyRemoved));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::NodeLabelRemoved));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::NodesOfTypeTruncated));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::EdgesOfTypeTruncated));
-        assert!(ChangeKindSet::ALL.contains(ChangeKind::GraphReset));
-        assert_eq!(ChangeKindSet::ALL.0, 0b0011_1111_1111_1111);
-    }
-
-    #[test]
-    fn change_kind_set_supports_const_construction() {
-        assert!(TOMBSTONE_KINDS.contains(ChangeKind::NodeDeleted));
-        assert!(TOMBSTONE_KINDS.contains(ChangeKind::EdgeDeleted));
-        assert!(!TOMBSTONE_KINDS.contains(ChangeKind::NodeUpdated));
-    }
-
-    #[test]
-    fn default_is_empty() {
-        assert_eq!(ChangeKindSet::default(), ChangeKindSet::EMPTY);
+    fn change_kind_discriminants_are_contiguous_and_stable() {
+        // The discriminant values are a stable telemetry/ABI surface; pin them
+        // so a reordering of the `ChangeKind` enum is caught at test time.
+        assert_eq!(ChangeKind::NodeCreated as u8, 0);
+        assert_eq!(ChangeKind::IndexExtensionEvent as u8, 7);
+        assert_eq!(ChangeKind::GraphReset as u8, 13);
     }
 }

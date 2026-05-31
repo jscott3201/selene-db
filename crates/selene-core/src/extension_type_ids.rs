@@ -1,35 +1,38 @@
-//! First-party extension value-type ID reservations.
+//! Value-type ID reservations for `Value::Extended` payloads.
 //!
 //! `ExtensionTypeId` is an IANA-style numeric namespace for
-//! `Value::Extended { type_id, payload }` values. The first-party range is
-//! `0x00000100..=0x0000FFFF`; third-party extensions use
-//! `0x00010000..=0xFFFFFFFE`.
+//! `Value::Extended { type_id, payload }` values. selene-db is a single native
+//! engine with no loadable extensions; the upper ID range is reserved for
+//! value types defined by externalized sister projects (time-series, RDF,
+//! vectors, GraphRAG) that carry their own opaque payloads through this engine.
+//! The first-party range is `0x00000100..=0x0000FFFF`; sister-project value
+//! types use `0x00010000..=0xFFFFFFFE`.
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-/// Numeric ID reserving an extension value type.
+/// Numeric ID reserving an [`crate::Value::Extended`] value type.
 ///
 /// Reserved ranges:
 ///
 /// * `0x00000000..=0x000000FF` - selene-core
-/// * `0x00000100..=0x0000FFFF` - first-party selene-* extensions
-/// * `0x00010000..=0xFFFFFFFE` - third-party extensions
+/// * `0x00000100..=0x0000FFFF` - first-party selene-* value types
+/// * `0x00010000..=0xFFFFFFFE` - externalized sister-project value types
 /// * `0xFFFFFFFF` - reserved sentinel
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[repr(transparent)]
 pub struct ExtensionTypeId(pub u32);
 
 impl ExtensionTypeId {
-    /// First valid first-party extension ID.
+    /// First valid first-party value-type ID.
     pub const FIRST_PARTY_MIN: Self = Self(0x00000100);
-    /// Last valid first-party extension ID.
+    /// Last valid first-party value-type ID.
     pub const FIRST_PARTY_MAX: Self = Self(0x0000FFFF);
-    /// First valid third-party extension ID.
-    pub const THIRD_PARTY_MIN: Self = Self(0x00010000);
-    /// Last valid third-party extension ID.
-    pub const THIRD_PARTY_MAX: Self = Self(0xFFFFFFFE);
+    /// First valid sister-project value-type ID.
+    pub const SISTER_PROJECT_MIN: Self = Self(0x00010000);
+    /// Last valid sister-project value-type ID.
+    pub const SISTER_PROJECT_MAX: Self = Self(0xFFFFFFFE);
     /// Reserved sentinel value.
     pub const RESERVED_SENTINEL: Self = Self(0xFFFFFFFF);
 
@@ -87,8 +90,12 @@ mod tests {
     }
 
     #[test]
-    fn display_third_party_unknown_id_uses_hex() {
+    fn display_sister_project_unknown_id_uses_hex() {
         assert_eq!(ExtensionTypeId(0x0001_FFFF).to_string(), "0x0001ffff");
+        assert_eq!(
+            ExtensionTypeId::SISTER_PROJECT_MIN.to_string(),
+            "0x00010000"
+        );
     }
 
     #[test]

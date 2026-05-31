@@ -2,8 +2,8 @@
 //!
 //! The [`Value`] variant order is canonical and append-only. Reordering,
 //! removing, or inserting variants in the middle is a major-version and
-//! durability-format change. Serialization derives are part of the same
-//! durability contract as the `Codec` trait.
+//! durability-format change. The serde/postcard and rkyv serialization
+//! derives are part of the same durability contract.
 
 use std::sync::Arc;
 
@@ -162,7 +162,7 @@ impl Value {
         || Self::LocalTime("00:00:00".parse().unwrap()),
         || Self::Duration("PT1S".parse().unwrap()),
         || Self::Extended {
-            type_id: ExtensionTypeId::THIRD_PARTY_MIN,
+            type_id: ExtensionTypeId::FIRST_PARTY_MIN,
             payload: Arc::from([0_u8]),
         },
         || Self::Null,

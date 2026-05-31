@@ -37,17 +37,6 @@ impl PropertyMap {
         Self::Standard(SmallVec::new())
     }
 
-    /// Construct an empty standard property map with capacity.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CoreError::ConstructedValueTooLarge`] if `capacity` exceeds
-    /// the implementation-defined property cardinality cap.
-    pub fn with_capacity(capacity: usize) -> CoreResult<Self> {
-        ensure_within_cap(capacity)?;
-        Ok(Self::Standard(SmallVec::with_capacity(capacity)))
-    }
-
     /// Construct a standard property map from pairs, sorting by `IStr` order.
     ///
     /// Later duplicate keys overwrite earlier keys.
@@ -178,25 +167,32 @@ impl PropertyMap {
     }
 
     /// Iterate present key/value pairs in sorted-key order.
-    pub fn iter(&self) -> Box<dyn Iterator<Item = (&IStr, &Value)> + '_> {
+    ///
+    /// Returns a concrete [`PropertyMapIter`] (not a boxed trait object): this
+    /// is exercised per-label per-node on the commit path and per-write during
+    /// validation, so the allocation a `Box<dyn Iterator>` would cost on every
+    /// call is removed here.
+    #[must_use]
+    pub fn iter(&self) -> PropertyMapIter<'_> {
         match self {
-            Self::Standard(entries) => Box::new(entries.iter().map(|(key, value)| (key, value))),
-            Self::Compact { keys, values } => Box::new(
-                keys.iter()
-                    .zip(values.iter())
-                    .filter_map(|(key, value)| value.as_ref().map(|value| (key, value))),
-            ),
+            Self::Standard(entries) => PropertyMapIter::Standard(entries.iter()),
+            Self::Compact { keys, values } => PropertyMapIter::Compact {
+                keys: keys.iter(),
+                values: values.iter(),
+            },
         }
     }
 
     /// Iterate present property keys in sorted-key order.
-    pub fn keys(&self) -> Box<dyn Iterator<Item = &IStr> + '_> {
-        Box::new(self.iter().map(|(key, _)| key))
+    #[must_use]
+    pub fn keys(&self) -> PropertyMapKeys<'_> {
+        PropertyMapKeys(self.iter())
     }
 
     /// Iterate present property values in sorted-key order.
-    pub fn values(&self) -> Box<dyn Iterator<Item = &Value> + '_> {
-        Box::new(self.iter().map(|(_, value)| value))
+    #[must_use]
+    pub fn values(&self) -> PropertyMapValues<'_> {
+        PropertyMapValues(self.iter())
     }
 
     /// Return true if `key` has a present value.
@@ -219,6 +215,66 @@ impl PropertyMap {
 impl Default for PropertyMap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Borrowing iterator over a [`PropertyMap`]'s present key/value pairs.
+///
+/// Concrete (non-boxed) so the hot commit/validate paths pay no per-call
+/// allocation. Yields pairs in sorted-key order for both representations.
+#[derive(Debug)]
+pub enum PropertyMapIter<'a> {
+    /// Iterator over a [`PropertyMap::Standard`] entry slice.
+    Standard(std::slice::Iter<'a, (IStr, Value)>),
+    /// Iterator over a [`PropertyMap::Compact`] key/value slot pair.
+    Compact {
+        /// Sorted key slots.
+        keys: std::slice::Iter<'a, IStr>,
+        /// Positional value slots aligned with `keys`; `None` means absent.
+        values: std::slice::Iter<'a, Option<Value>>,
+    },
+}
+
+impl<'a> Iterator for PropertyMapIter<'a> {
+    type Item = (&'a IStr, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Standard(entries) => entries.next().map(|(key, value)| (key, value)),
+            Self::Compact { keys, values } => loop {
+                // Compact maps store absent slots inline; skip them so the
+                // observable sequence matches Standard's "present only" contract.
+                let value = values.next()?;
+                let key = keys.next()?;
+                if let Some(value) = value.as_ref() {
+                    return Some((key, value));
+                }
+            },
+        }
+    }
+}
+
+/// Borrowing iterator over a [`PropertyMap`]'s present keys in sorted-key order.
+#[derive(Debug)]
+pub struct PropertyMapKeys<'a>(PropertyMapIter<'a>);
+
+impl<'a> Iterator for PropertyMapKeys<'a> {
+    type Item = &'a IStr;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|(key, _)| key)
+    }
+}
+
+/// Borrowing iterator over a [`PropertyMap`]'s present values in sorted-key order.
+#[derive(Debug)]
+pub struct PropertyMapValues<'a>(PropertyMapIter<'a>);
+
+impl<'a> Iterator for PropertyMapValues<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|(_, value)| value)
     }
 }
 
@@ -562,6 +618,72 @@ mod tests {
                 }
                 prop_assert!(map.sorted_invariant_holds());
                 prop_assert_eq!(map.len(), expected.len());
+            }
+        }
+
+        /// CORE-16: a Compact map seeded with a fixed key set, then driven
+        /// through sets/removes (including unknown-key widening), must stay
+        /// observationally equal to a BTreeMap oracle where `None == absent`.
+        #[test]
+        fn compact_widening_matches_reference_map(
+            // Slot presence for the four schema keys at construction.
+            seed in proptest::collection::vec(any::<bool>(), 4),
+            // (key index 0..6, present?, value) operations; keys 4 and 5 are
+            // unknown to the seed key set, so they exercise the widening path.
+            ops in proptest::collection::vec((0_usize..6, any::<bool>(), 0_u64..16), 0..64),
+        ) {
+            let pid = std::process::id();
+            let schema_keys: Vec<IStr> = (0..4)
+                .map(|i| intern(&format!("pm.core16.{pid}.k{i}")).unwrap())
+                .collect();
+            let all_keys: Vec<IStr> = (0..6)
+                .map(|i| intern(&format!("pm.core16.{pid}.k{i}")).unwrap())
+                .collect();
+
+            let mut oracle = std::collections::BTreeMap::<IStr, Value>::new();
+            let seed_values: Vec<Option<Value>> = schema_keys
+                .iter()
+                .zip(&seed)
+                .map(|(k, present)| {
+                    if *present {
+                        oracle.insert(*k, Value::Uint(0));
+                        Some(Value::Uint(0))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            let mut map = PropertyMap::compact(schema_keys.iter().copied(), seed_values).unwrap();
+            let is_compact = matches!(map, PropertyMap::Compact { .. });
+            prop_assert!(is_compact);
+
+            for (idx, present, raw) in ops {
+                let key = all_keys[idx];
+                if present {
+                    let value = Value::Uint(raw);
+                    map.set(key, value.clone()).unwrap();
+                    oracle.insert(key, value);
+                } else {
+                    let removed = map.remove(&key);
+                    let expected = oracle.remove(&key);
+                    prop_assert_eq!(removed, expected);
+                }
+
+                // Observational equality: get() agrees, including None == absent.
+                for k in &all_keys {
+                    prop_assert_eq!(map.get(k), oracle.get(k));
+                }
+                prop_assert_eq!(map.len(), oracle.len());
+                prop_assert!(map.sorted_invariant_holds());
+
+                // iter() yields exactly the oracle's present pairs in key order.
+                let observed: Vec<(IStr, Value)> =
+                    map.iter().map(|(k, v)| (*k, v.clone())).collect();
+                let expected: Vec<(IStr, Value)> =
+                    oracle.iter().map(|(k, v)| (*k, v.clone())).collect();
+                // Both are key-handle-sorted (BTreeMap by IStr Ord, map by invariant).
+                prop_assert_eq!(observed, expected);
             }
         }
     }
