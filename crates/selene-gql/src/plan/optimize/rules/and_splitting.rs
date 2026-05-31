@@ -23,11 +23,18 @@ impl Rule for AndSplitting {
         ctx: &OptimizeContext<'_>,
     ) -> Transformed<ExecutionPlan> {
         let mut changed = false;
-        let pattern_bindings = plan
-            .pattern_plan
-            .as_ref()
-            .map(|pattern| pattern.bindings.clone())
-            .unwrap_or_default();
+        // The pattern bindings are only read while splitting an actual `AND`
+        // filter (to recollect per-conjunct binding-refs). When neither the
+        // pattern filters nor the pipeline filters contain a top-level `AND`,
+        // splitting is a no-op, so skip cloning the bindings entirely.
+        let pattern_bindings = if plan_has_and_filter(&plan) {
+            plan.pattern_plan
+                .as_ref()
+                .map(|pattern| pattern.bindings.clone())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         if plan.pattern_plan.is_some() {
             let mut filters = {
                 let pattern = plan.pattern_plan.as_mut().expect("pattern checked");
@@ -47,6 +54,32 @@ impl Rule for AndSplitting {
             changed,
         }
     }
+}
+
+/// True when the plan has at least one splittable (`AND`-expression) filter,
+/// either in the leading pattern plan or in the top-level pipeline. Used to
+/// skip the pattern-binding clone when splitting would be a no-op.
+fn plan_has_and_filter(plan: &ExecutionPlan) -> bool {
+    let pattern_has = plan
+        .pattern_plan
+        .as_ref()
+        .is_some_and(|pattern| pattern.filters.iter().any(is_and_expression_filter));
+    pattern_has
+        || plan.pipeline.iter().any(|op| match op {
+            PipelineOp::Filter(pred) => is_and_expression_filter(pred),
+            _ => false,
+        })
+}
+
+fn is_and_expression_filter(pred: &FilterPredicate) -> bool {
+    pred.kind == FilterPredicateKind::Expression
+        && matches!(
+            pred.expr,
+            ValueExpr::BinaryOp {
+                op: BinaryOp::And,
+                ..
+            }
+        )
 }
 
 fn split_pipeline_filters(
@@ -92,6 +125,19 @@ fn split_predicate(
     plan: &mut ExecutionPlan,
 ) -> Vec<FilterPredicate> {
     if pred.kind != FilterPredicateKind::Expression {
+        return vec![pred];
+    }
+    // Guard before the deep clone: only a top-level `AND` flattens to >1
+    // predicate (a non-`AND` pushes exactly one, so `flatten_and` would return
+    // `len <= 1`). Checking the discriminant first avoids cloning the whole
+    // expression tree for the common single-predicate case.
+    if !matches!(
+        pred.expr,
+        ValueExpr::BinaryOp {
+            op: BinaryOp::And,
+            ..
+        }
+    ) {
         return vec![pred];
     }
     let mut exprs = Vec::new();

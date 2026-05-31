@@ -99,10 +99,7 @@ pub(crate) fn walk_join_tree(
             min,
             max,
             path_mode,
-            selector,
-        } => super::repeat::execute(
-            child, edge, *direction, *min, *max, *path_mode, *selector, env,
-        ),
+        } => super::repeat::execute(child, edge, *direction, *min, *max, *path_mode, env),
         JoinTree::PathSearch {
             selector,
             child,

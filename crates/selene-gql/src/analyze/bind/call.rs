@@ -26,13 +26,19 @@ pub(crate) fn lookup_metadata(
     ctx: &BindContext,
     call: &ProcedureCall,
 ) -> Result<ProcedureMetadata, AnalysisError> {
-    let procedure = call.name.clone().into_vec().into_boxed_slice();
     ctx.registry()
         .lookup(&call.name)
-        .ok_or(AnalysisError::UnknownProcedure {
-            name: procedure,
+        .ok_or_else(|| AnalysisError::UnknownProcedure {
+            name: procedure_name(call),
             span: call.span,
         })
+}
+
+/// Build the boxed name slice used by the error variants that name the
+/// offending procedure. Computed lazily at each error-return site so the
+/// happy path allocates nothing.
+fn procedure_name(call: &ProcedureCall) -> Box<[IStr]> {
+    call.name.clone().into_vec().into_boxed_slice()
 }
 
 pub(crate) fn bind_procedure_call_with_metadata(
@@ -40,13 +46,11 @@ pub(crate) fn bind_procedure_call_with_metadata(
     call: &mut ProcedureCall,
     metadata: ProcedureMetadata,
 ) -> Result<(), AnalysisError> {
-    let procedure = call.name.clone().into_vec().into_boxed_slice();
-
     let arity = metadata.signature.arity();
     let actual = call.args.len();
     if !arity.accepts(actual) {
         return Err(AnalysisError::WrongArgumentCount {
-            procedure,
+            procedure: procedure_name(call),
             expected: arity.maximum,
             minimum: arity.minimum,
             actual,
@@ -72,7 +76,7 @@ pub(crate) fn bind_procedure_call_with_metadata(
         {
             return Err(AnalysisError::TypeMismatch {
                 context: TypeMismatchContext::ProcedureArgument {
-                    procedure,
+                    procedure: procedure_name(call),
                     parameter: parameter.name,
                     position,
                 },
@@ -106,7 +110,7 @@ pub(crate) fn bind_procedure_call_with_metadata(
                 .find(|candidate| candidate.name == column)
             else {
                 return Err(AnalysisError::UnknownYieldColumn {
-                    procedure,
+                    procedure: procedure_name(call),
                     column,
                     span: item.span,
                 });
@@ -127,11 +131,10 @@ fn fill_missing_defaults(
     if provided == expected {
         return Ok(());
     }
-    let procedure = call.name.clone().into_vec().into_boxed_slice();
     for parameter in metadata.signature.parameters.iter().skip(provided) {
         let Some(default) = parameter.default else {
             return Err(AnalysisError::WrongArgumentCount {
-                procedure,
+                procedure: procedure_name(call),
                 expected,
                 minimum: expected,
                 actual: provided,

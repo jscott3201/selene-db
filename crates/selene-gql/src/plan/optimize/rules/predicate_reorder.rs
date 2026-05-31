@@ -85,21 +85,34 @@ fn reorder_bucket(
     ctx: &OptimizeContext<'_>,
     scan_ctx: &selectivity::ScanContext<'_>,
 ) -> bool {
-    let before = predicates
+    // Precompute each predicate's selectivity estimate exactly once, keyed by
+    // its (bucket-unique) `expr_id`. The old comparator called
+    // `selectivity::estimate` — a linear binding scan plus two catalog probes —
+    // for every comparison (O(n log n) probes); now it is O(n) probes and the
+    // comparator is an O(1) map lookup. `f64` is not `Ord`, so the comparator
+    // still uses `partial_cmp` (no `sort_by_cached_key`).
+    let estimates: std::collections::HashMap<u32, f64> = predicates
         .iter()
-        .map(|pred| pred.expr_id)
-        .collect::<Vec<_>>();
+        .map(|pred| {
+            (
+                pred.expr_id.get(),
+                selectivity::estimate(pred, ctx, scan_ctx),
+            )
+        })
+        .collect();
+    let estimate_of = |pred: &FilterPredicate| estimates[&pred.expr_id.get()];
+
+    let before: Vec<u32> = predicates.iter().map(|pred| pred.expr_id.get()).collect();
     predicates.sort_by(|left, right| {
-        selectivity::estimate(left, ctx, scan_ctx)
-            .partial_cmp(&selectivity::estimate(right, ctx, scan_ctx))
+        estimate_of(left)
+            .partial_cmp(&estimate_of(right))
             .unwrap_or(Ordering::Equal)
             .then_with(|| left.expr_id.get().cmp(&right.expr_id.get()))
     });
-    let after = predicates
+    predicates
         .iter()
-        .map(|pred| pred.expr_id)
-        .collect::<Vec<_>>();
-    after != before
+        .map(|pred| pred.expr_id.get())
+        .ne(before.iter().copied())
 }
 
 #[cfg(test)]

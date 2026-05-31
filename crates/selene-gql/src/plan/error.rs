@@ -8,8 +8,8 @@ use crate::{GqlStatus, SourceSpan, analyze::BindingId};
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum PlannerError {
-    /// The planner reached a syntactic surface not supported in v1.0.
-    #[error("planner cannot lower {feature}: not supported in v1.0")]
+    /// The planner reached a syntactic surface it does not yet lower.
+    #[error("planner cannot lower {feature}: not yet supported")]
     #[diagnostic(code(SLENE_P_010))]
     NotImplemented {
         /// Stable missing-feature tag asserted by tests.
@@ -97,7 +97,7 @@ pub enum PlannerError {
 
     /// A planner-visible implementation-defined limit would be exceeded.
     #[error("{limit_name} {actual} exceeds implementation-defined limit {limit}")]
-    #[diagnostic(code(SLENE_GQL_5GQL1))]
+    #[diagnostic(code(SLENE_P_018))]
     ProgramLimitExceeded {
         /// Stable limit name asserted by tests.
         limit_name: &'static str,

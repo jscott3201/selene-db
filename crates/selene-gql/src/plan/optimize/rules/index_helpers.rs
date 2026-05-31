@@ -62,7 +62,7 @@ pub(super) fn target_for_element(element: BindingElement) -> Option<IndexTarget>
     match element {
         BindingElement::Node => Some(IndexTarget::Node),
         BindingElement::Edge => Some(IndexTarget::Edge),
-        BindingElement::Path | BindingElement::Alias => None,
+        BindingElement::Path => None,
     }
 }
 
@@ -213,7 +213,6 @@ pub(super) fn equality_candidates<'a>(
 ///
 /// Untyped parameters (no `$id :: TYPE` declaration) bypass this check and
 /// defer to the execute-time `IndexKind` probe on the resolved Value.
-#[allow(dead_code)] // Commit 2 lights up the caller in `compatible_value`.
 pub(super) fn gql_type_compatible_with_index_kind(ty: &GqlType, kind: IndexKind) -> bool {
     match kind {
         IndexKind::Integer => matches!(
