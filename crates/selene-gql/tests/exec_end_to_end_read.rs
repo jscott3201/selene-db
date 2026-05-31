@@ -109,3 +109,32 @@ fn read_executes_projection_without_pattern() {
 
     assert_eq!(column_values(&table, "n"), vec![Value::Int(1)]);
 }
+
+// PARSE-01: `UNKNOWN` is the ISO §21.2 boolean unknown literal; it parses to
+// `Literal::Null` and executes end-to-end to `Value::Null`.
+#[test]
+fn read_executes_unknown_literal_to_null() {
+    let table = execute_read("RETURN UNKNOWN AS u");
+
+    assert_eq!(column_values(&table, "u"), vec![Value::Null]);
+}
+
+// ANALYZE-01: NULL operands in comparison / arithmetic / boolean / unary
+// operators analyze without error AND execute to NULL under three-valued logic.
+#[test]
+fn read_executes_null_operands_to_null() {
+    for source in [
+        "RETURN NULL < 5 AS r",
+        "RETURN NULL + 1 AS r",
+        "RETURN -NULL AS r",
+        "RETURN NULL AND true AS r",
+        "RETURN NOT NULL AS r",
+    ] {
+        let table = execute_read(source);
+        assert_eq!(
+            column_values(&table, "r"),
+            vec![Value::Null],
+            "{source} must execute to NULL"
+        );
+    }
+}

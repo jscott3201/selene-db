@@ -48,19 +48,44 @@ pub(super) fn eval_unary(
             Value::Null => Ok(Value::Null),
             _ => data_exception("NOT operand is not boolean", span),
         },
+        // Negate every numeric `Value` variant. The analyzer types `- $p` as
+        // Dynamic (and `- NULL` as NULL) and passes them through, so this is the
+        // sole runtime guard; an unsigned operand promotes to the signed width
+        // and reports `NumericValueOutOfRange` (22003) when it cannot fit.
         UnaryOp::Negate => match value {
-            Value::Int(value) => value.checked_neg().map(Value::Int).ok_or_else(|| {
-                data_exception_value_with(
-                    DataExceptionSubclass::NumericValueOutOfRange,
-                    "integer arithmetic overflow",
-                    span,
-                )
-            }),
+            Value::Int(value) => value
+                .checked_neg()
+                .map(Value::Int)
+                .ok_or_else(|| negate_overflow(span)),
+            Value::Int128(value) => value
+                .checked_neg()
+                .map(Value::Int128)
+                .ok_or_else(|| negate_overflow(span)),
+            Value::Uint(value) => i64::try_from(value)
+                .ok()
+                .and_then(i64::checked_neg)
+                .map(Value::Int)
+                .ok_or_else(|| negate_overflow(span)),
+            Value::Uint128(value) => i128::try_from(value)
+                .ok()
+                .and_then(i128::checked_neg)
+                .map(Value::Int128)
+                .ok_or_else(|| negate_overflow(span)),
             Value::Float(value) => Ok(Value::Float(-value)),
+            Value::Float32(value) => Ok(Value::Float32(-value)),
+            Value::Decimal(value) => Ok(Value::Decimal(-value)),
             Value::Null => Ok(Value::Null),
             _ => data_exception("unary minus operand is not numeric", span),
         },
     }
+}
+
+fn negate_overflow(span: SourceSpan) -> ExecutorError {
+    data_exception_value_with(
+        DataExceptionSubclass::NumericValueOutOfRange,
+        "negation overflow: result is out of the signed integer range",
+        span,
+    )
 }
 
 fn eval_and(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, ExecutorError> {

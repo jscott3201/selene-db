@@ -175,6 +175,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_return_unknown() {
+        // ISO/IEC 39075:2024 §21.2 <boolean literal> ::= TRUE | FALSE | UNKNOWN.
+        // UNKNOWN is the mandatory-conformance boolean unknown truth value; the
+        // runtime models it as `Value::Null` (validated 3VL), so the parser
+        // lowers the `unknown_lit` token to `Literal::Null`.
+        assert_eq!(
+            only_item("RETURN UNKNOWN").expr,
+            ValueExpr::Literal(Literal::Null(SourceSpan::new(7, 7)))
+        );
+        // Case-insensitive per the `^"UNKNOWN"` grammar rule.
+        assert_eq!(
+            only_item("RETURN unknown").expr,
+            ValueExpr::Literal(Literal::Null(SourceSpan::new(7, 7)))
+        );
+    }
+
+    #[test]
     fn parse_return_alias() {
         let item = only_item("RETURN 1 AS one");
         assert_eq!(optional_name(item.alias), Some("one"));

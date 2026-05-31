@@ -66,6 +66,9 @@ pub(crate) fn unary(
         UnaryOp::Negate => match operand {
             AnalyzedType::Dynamic => Ok(AnalyzedType::Dynamic),
             AnalyzedType::Resolved(ty) if is_numeric(ty) => Ok(operand.clone()),
+            // Per ISO/IEC 39075:2024 three-valued logic, `- NULL` yields NULL.
+            // The runtime returns `Value::Null`; the analyzer must not reject.
+            AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Null)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNegate,
                 ExpectedType::Numeric,
@@ -74,10 +77,13 @@ pub(crate) fn unary(
             )),
         },
         UnaryOp::Not => match operand {
-            AnalyzedType::Dynamic => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
-            AnalyzedType::Resolved(GqlType::Boolean) => {
+            AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => {
                 Ok(AnalyzedType::Resolved(GqlType::Boolean))
             }
+            // `NOT NULL` yields NULL (UNKNOWN) under three-valued logic; the
+            // runtime returns `Value::Null`. The static result type stays
+            // Boolean (the UNKNOWN truth value lives in the Boolean domain).
+            AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNot,
                 ExpectedType::Boolean,
@@ -428,7 +434,9 @@ fn expect_numeric(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic => Ok(()),
+        // A NULL operand is accepted: ISO three-valued logic makes the operator
+        // yield NULL rather than a type error (the runtime already does so).
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) if is_numeric(found) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
@@ -445,7 +453,11 @@ fn expect_boolean(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => Ok(()),
+        // A NULL operand is accepted: under three-valued logic a boolean
+        // operator over NULL yields NULL, not a type error (runtime parity).
+        AnalyzedType::Dynamic
+        | AnalyzedType::Resolved(GqlType::Boolean)
+        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::Boolean,
@@ -479,7 +491,9 @@ fn expect_comparable(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic => Ok(()),
+        // A NULL operand is accepted: an ordered comparison against NULL yields
+        // NULL under three-valued logic, not a type error (runtime parity).
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) if comparable_family(found).is_some() => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
@@ -515,6 +529,11 @@ fn ensure_same_comparable_family(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     if let (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) = (lhs, rhs)
+        // A NULL operand has no comparable family and never forms a mismatch:
+        // the comparison evaluates to NULL under three-valued logic regardless
+        // of the other side's family (e.g. `NULL < 5` is valid, yields NULL).
+        && !matches!(lhs_ty, GqlType::Null)
+        && !matches!(rhs_ty, GqlType::Null)
         && comparable_family(lhs_ty) != comparable_family(rhs_ty)
     {
         return Err(type_mismatch(

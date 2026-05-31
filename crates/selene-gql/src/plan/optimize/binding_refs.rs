@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 use crate::{
-    BinaryOp, GqlType, Literal, SourceSpan, ValueExpr,
+    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, ValueExpr,
     analyze::BindingId,
     plan::{BindingDef, FilterPredicate, FilterPredicateKind},
 };
@@ -278,7 +278,26 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
             }
             walk_expr(source, visit);
         }
-        ValueExpr::IsCheck { operand, .. } => walk_expr(operand, visit),
+        ValueExpr::IsCheck { operand, kind, .. } => {
+            walk_expr(operand, visit);
+            // `n IS SOURCE OF e` / `n IS DESTINATION OF e` bind the edge in
+            // `kind`; that operand must be walked so the collected binding-refs
+            // include the edge (e.g. `{n, e}`). Omitting it lets the optimizer's
+            // filter pushdown treat the predicate as single-binding and push it
+            // onto the node scan/expand before the edge is bound. Mirrors
+            // `plan::optimize::walk::walk_is_check`.
+            match kind {
+                IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
+                    walk_expr(value, visit);
+                }
+                IsCheckKind::Null
+                | IsCheckKind::Directed
+                | IsCheckKind::Labeled(_)
+                | IsCheckKind::TruthValue(_)
+                | IsCheckKind::Typed(_)
+                | IsCheckKind::Normalized(_) => {}
+            }
+        }
         ValueExpr::InList { operand, list, .. } => {
             walk_expr(operand, visit);
             for item in list {
@@ -308,5 +327,72 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
         ValueExpr::Exists { .. }
         | ValueExpr::CountSubquery { .. }
         | ValueExpr::ValueSubquery { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyze::types::AnalyzedType;
+    use crate::plan::BindingElement;
+
+    // `intern_with_admission` (not the budget-bypassing `intern`) keeps this
+    // test module clear of the `no_unbudgeted_intern_call_in_selene_gql` guard.
+    fn name_of(name: &str) -> selene_core::IStr {
+        selene_core::intern_with_admission(name).unwrap().0
+    }
+
+    fn binding_def(name: &str, raw: u32, element: BindingElement) -> BindingDef {
+        BindingDef {
+            binding: BindingId::new(raw),
+            name: name_of(name),
+            element,
+            ty: AnalyzedType::Dynamic,
+            label_predicate: None,
+            span: SourceSpan::new(0, 1),
+        }
+    }
+
+    fn var(name: &str) -> ValueExpr {
+        ValueExpr::Variable {
+            name: name_of(name),
+            span: SourceSpan::new(0, 1),
+        }
+    }
+
+    // PLAN-01: `n IS SOURCE OF e` / `n IS DESTINATION OF e` reference BOTH the
+    // node operand and the edge bound inside `kind`. The collector must yield
+    // both bindings; if it dropped the edge, `expand_filter_pushdown` would push
+    // the predicate onto `n`'s scan before `e` is bound (a plan-correctness bug).
+    #[test]
+    fn collect_binding_refs_includes_edge_in_is_source_of() {
+        let bindings = [
+            binding_def("n", 0, BindingElement::Node),
+            binding_def("e", 1, BindingElement::Edge),
+        ];
+        let expr = ValueExpr::IsCheck {
+            operand: Box::new(var("n")),
+            kind: IsCheckKind::SourceOf(Box::new(var("e"))),
+            negated: false,
+            span: SourceSpan::new(0, 1),
+        };
+        let refs = collect_binding_refs(&expr, &bindings).expect("all variables resolve");
+        assert_eq!(refs, vec![BindingId::new(0), BindingId::new(1)]);
+    }
+
+    #[test]
+    fn collect_binding_refs_includes_edge_in_is_destination_of() {
+        let bindings = [
+            binding_def("n", 0, BindingElement::Node),
+            binding_def("e", 1, BindingElement::Edge),
+        ];
+        let expr = ValueExpr::IsCheck {
+            operand: Box::new(var("n")),
+            kind: IsCheckKind::DestinationOf(Box::new(var("e"))),
+            negated: false,
+            span: SourceSpan::new(0, 1),
+        };
+        let refs = collect_binding_refs(&expr, &bindings).expect("all variables resolve");
+        assert_eq!(refs, vec![BindingId::new(0), BindingId::new(1)]);
     }
 }
