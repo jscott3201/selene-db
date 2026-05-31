@@ -25,6 +25,15 @@ use crate::typed_index::TypedIndexKind;
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
+///
+/// Since v1.2 (BRIEF 1) every snapshot publish is funneled through a single
+/// per-graph committer thread ([`crate::committer::CommitterThread`]), which is
+/// the **sole writer** of the `snapshot` [`ArcSwap`] cell. `begin_write` hands
+/// each [`WriteTxn`] a cheap submit handle; `commit`/`compact` seal-and-submit
+/// to the committer and block until it publishes. This single-committer +
+/// sole-publisher discipline is what preserves D10 strict-serializability once
+/// `seal()` drops the write lock early — it is load-bearing and NOT
+/// type-enforced (a second committer or ArcSwap writer would silently break it).
 pub struct SharedGraph {
     shared: Arc<RwLock<Arc<SeleneGraph>>>,
     snapshot: Arc<ArcSwap<SeleneGraph>>,
@@ -32,6 +41,10 @@ pub struct SharedGraph {
     allocator: Arc<Mutex<IdAllocator>>,
     providers: Vec<Arc<dyn IndexProvider>>,
     durable_providers: Vec<Arc<dyn DurableProvider>>,
+    /// The single per-graph committer thread; sole publisher of `snapshot`.
+    /// Dropped last via [`SharedGraph`]'s implicit drop order, which joins the
+    /// thread once every outstanding [`WriteTxn`] submit handle is gone.
+    committer: crate::committer::CommitterThread,
 }
 
 /// Builder for a [`SharedGraph`] and its fixed provider registry.
@@ -192,13 +205,27 @@ impl SharedGraph {
 
         let graph = Arc::new(graph);
         snapshot.store(Arc::clone(&graph));
+        let shared = Arc::new(RwLock::new(graph));
+        let schema_version = Arc::new(AtomicU64::new(0));
+        let allocator = Arc::new(Mutex::new(allocator));
+        // Spawn the single per-graph committer thread. It captures clones of
+        // every handle it needs to publish + compact; it is the sole writer of
+        // `snapshot`. All commit/compact/index-DDL publishes route through it.
+        let committer =
+            crate::committer::CommitterThread::spawn(crate::committer::CommitterHandles {
+                snapshot: Arc::clone(&snapshot),
+                schema_version: Arc::clone(&schema_version),
+                providers: providers.clone(),
+                durable_providers: durable_providers.clone(),
+            });
         Ok(Self {
-            shared: Arc::new(RwLock::new(graph)),
+            shared,
             snapshot,
-            schema_version: Arc::new(AtomicU64::new(0)),
-            allocator: Arc::new(Mutex::new(allocator)),
+            schema_version,
+            allocator,
             providers,
             durable_providers,
+            committer,
         })
     }
 
@@ -221,13 +248,18 @@ impl SharedGraph {
     /// crash before that snapshot simply reloads the pre-compaction state and
     /// recompacts later — compaction can never lose data.
     ///
-    /// The write lock is held for the whole operation, so it serializes with
-    /// writers exactly like a commit; lock-free readers keep observing the old
-    /// snapshot until the dense graph is published. The monotonic allocator
-    /// high-water marks are preserved (the live allocator is untouched, and
-    /// [`compact_core`](crate::compact_core) carries `GraphMeta` verbatim — and
-    /// the allocator is kept in sync with `GraphMeta` on every commit), so no
-    /// external id is ever reused after a later recovery.
+    /// The dense graph is built under the write lock on the calling thread
+    /// (seal-and-handover, exactly like a commit), and is allocated a publish
+    /// `seal_seq` under that same lock; the single committer then swaps it into
+    /// the published `snapshot` cell strictly in `seal_seq` order. So compaction
+    /// serializes with writers exactly like a commit and can never be reordered
+    /// ahead of an earlier-sealed commit (which would let that commit's stale,
+    /// non-dense frozen snapshot clobber the dense one). Lock-free readers keep
+    /// observing the old snapshot until the dense graph is published. The
+    /// monotonic allocator high-water marks are preserved (the live allocator is
+    /// untouched, and [`compact_core`](crate::compact_core) carries `GraphMeta`
+    /// verbatim — and the allocator is kept in sync with `GraphMeta` on every
+    /// commit), so no external id is ever reused after a later recovery.
     ///
     /// # Errors
     ///
@@ -235,14 +267,39 @@ impl SharedGraph {
     /// recompacted graph fails its consistency check (see
     /// [`compact_core`](crate::compact_core)).
     pub fn compact(&self) -> GraphResult<crate::CompactionReport> {
-        let mut guard = self.shared.write();
-        let compacted = crate::compaction::compact_core(&guard)?;
-        // `compacted.live` is the CORE liveness set, available to callers that
-        // want it; CORE-internal densify has no further consumer.
-        let dense = Arc::new(compacted.graph);
-        *guard = Arc::clone(&dense);
-        self.snapshot.store(dense);
-        Ok(compacted.report)
+        // Seal-and-handover for compaction (v1.2 BRIEF 1, P1 fix): build the
+        // dense graph HERE, on the caller thread, under the write lock — exactly
+        // like a commit seals under the lock — then hand the committer a
+        // pre-built dense snapshot to publish in seal_seq order. This keeps the
+        // committer off the write lock entirely (no deadlock surface) and, more
+        // importantly, ties compaction's publish position to a seal_seq taken
+        // under the same lock as commits, so a compact can never be reordered
+        // ahead of an earlier-sealed commit (which would otherwise let an
+        // earlier commit's stale, non-dense frozen snapshot clobber the dense
+        // one in the published cell).
+        //
+        // Ordering under the lock is load-bearing for the reorder buffer's
+        // gap-free invariant: densify FIRST (the only fallible step), and only
+        // THEN allocate the seal_seq, so a failed compaction consumes no
+        // sequence number (which would otherwise wedge the committer waiting for
+        // a seq that never arrives).
+        let committer = self.committer.handle();
+        let (seal_seq, dense, report) = {
+            let mut guard = self.shared.write();
+            let compacted = crate::compaction::compact_core(&guard)?;
+            let dense = Arc::new(compacted.graph);
+            // Allocate the publish-order key under the lock, after the fallible
+            // densify, so seal_seq order == lock-acquisition order and no seq is
+            // ever burned by a failed compaction.
+            let seal_seq = committer.next_seal_seq();
+            *guard = Arc::clone(&dense);
+            (seal_seq, dense, compacted.report)
+            // Lock released here, before the (blocking) enqueue + recv — the
+            // committer never needs the write lock, but releasing here also
+            // means a compactor never holds the lock while blocked on the
+            // committer.
+        };
+        committer.submit_compact(seal_seq, dense, report)
     }
 
     /// Return the runtime schema-version epoch used for plan-cache invalidation.
@@ -363,41 +420,45 @@ impl SharedGraph {
     /// lock; the engine does **not** panic legitimate concurrent writes
     /// during another commit's provider fanout.
     ///
+    /// Since v1.2 (BRIEF 1) the actual snapshot publish happens on the single
+    /// committer thread, not here: `WriteTxn::commit` seals under this lock,
+    /// releases it, and hands the frozen bundle to the committer. Provider
+    /// fan-out therefore now runs on the **committer thread**, so the
+    /// re-entrancy guard below protects the committer thread (sound with exactly
+    /// one committer — see `reentry.rs` and the v1.2 design §7.7).
+    ///
     /// # Panics
     ///
     /// Panics when called from inside an [`IndexProvider`] callback **on
-    /// the same thread** as the active fanout. Same-thread re-entrant
-    /// writes are unsupported in v1.0; the outer commit holds the write
-    /// lock and the fanout serializer, so a nested write would deadlock or
-    /// recurse indefinitely. The panic is caught by the outer commit's
-    /// `notify_providers` boundary; provider state may drift, but the
-    /// outer commit still completes.
+    /// the committer thread** as the active fanout. Re-entrant writes from a
+    /// provider callback are unsupported; the committer is publishing, so a
+    /// nested write would recurse indefinitely. The panic is caught by the
+    /// committer's `notify_providers` boundary; provider state may drift, but
+    /// the commit still completes.
     ///
     /// Cross-thread re-entry — a provider spawning a worker thread that
     /// calls `begin_write` and waiting for it — is **documented misuse**
     /// rather than a detectable footgun (the engine cannot trace causal
     /// thread ancestry). See the module docs in `reentry.rs` and the
-    /// `IndexProvider` rustdoc for the v1.0 contract.
+    /// `IndexProvider` rustdoc for the contract.
     #[must_use]
     #[tracing::instrument(name = "selene.graph.begin_write", skip(self))]
     pub fn begin_write(&self) -> WriteTxn<'_> {
         if crate::reentry::in_fanout() {
             panic!(
                 "selene-graph: SharedGraph::begin_write() called from within \
-                 a provider fan-out callback on the same thread; same-thread \
-                 re-entrant writes are not supported in v1.0. The outer \
-                 commit's fan-out boundary will catch this panic; \
-                 the outer commit succeeds, but the offending provider's \
+                 a provider fan-out callback on the committer thread; \
+                 re-entrant writes from a provider callback are not supported. \
+                 The committer's fan-out boundary will catch this panic; \
+                 the commit succeeds, but the offending provider's \
                  chained mutation does not."
             );
         }
         WriteTxn::new(
             self.shared.write(),
-            Arc::clone(&self.snapshot),
-            Arc::clone(&self.schema_version),
+            self.committer.handle(),
             self.allocator.lock(),
             self.providers.clone(),
-            self.durable_providers.clone(),
         )
     }
 
@@ -405,6 +466,27 @@ impl SharedGraph {
     pub(crate) fn locked_arc_ptr_for_test(&self) -> *const SeleneGraph {
         let guard = self.shared.read();
         Arc::as_ptr(&*guard)
+    }
+
+    /// Read the generation of the **live RwLock graph** (`*shared`), as opposed
+    /// to the published `ArcSwap` snapshot. Used by divergence tests to assert
+    /// the two never disagree after a failed / cancelled commit (the P0
+    /// WAL-failure + cancel rollback invariants).
+    #[cfg(test)]
+    pub(crate) fn locked_generation_for_test(&self) -> u64 {
+        self.shared.read().meta.generation
+    }
+
+    /// Submit an already-[`seal`](crate::WriteTxn::seal)ed commit straight to the
+    /// committer, blocking until it is durable + visible. Test-only seam for
+    /// exercising the BRIEF-117 cancellation cut-line (which has no production
+    /// producer yet) without re-entering `commit_with_principal`.
+    #[cfg(test)]
+    pub(crate) fn submit_sealed_for_test(
+        &self,
+        sealed: crate::write_txn::SealedCommit,
+    ) -> GraphResult<crate::CommitOutcome> {
+        self.committer.handle().submit_commit(sealed)
     }
 }
 
