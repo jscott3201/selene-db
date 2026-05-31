@@ -214,6 +214,7 @@ fn failed_commit_does_not_bump_schema_version() {
         vec![durable],
         None,
         None,
+        crate::committer_batch::CommitBatching::Off,
     )
     .unwrap();
     let mut txn = shared.begin_write();
@@ -252,6 +253,7 @@ fn durable_write_failure_rolls_back_in_memory_state() {
         vec![durable],
         None,
         None,
+        crate::committer_batch::CommitBatching::Off,
     )
     .unwrap();
     let mut txn = shared.begin_write();

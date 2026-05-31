@@ -76,16 +76,36 @@ Rows added by BRIEF-111 are compile-registered but not measured yet. They isolat
 | `bound_type_validation/bound_commit_rich` | rich type graph | TBD | Wider type graph validation delta. |
 | `bound_type_validation/bound_schema_change` | schema change | TBD | Full graph state validation path. |
 
+Thread fan-in arms sweep `[1, 2, 4, 8, 16, 32]`. Two axes:
+
+- **In-memory** (`threads{N}`, `threads{N}_with_readers8`) — no WAL; measures pure
+  single-committer queueing + lock-free reads under contention. Group commit
+  has nothing to coalesce here (no `fsync`), so it is *not* run on this axis.
+- **WAL-backed** (`wal_threads{N}_batchOFF` vs `wal_threads{N}_batchON`) — a real
+  on-disk WAL (tempdir per iteration; the committer is the sole `fsync` caller,
+  driven in `SyncPolicy::OnFlushOnly`). This is the only axis where group commit
+  can win, because the win is coalesced `fsync` syscalls. `batchOFF` =
+  `CommitBatching::Off` (one `fsync` per commit, the BRIEF-1 baseline);
+  `batchON` = `CommitBatching::DEFAULT_ON` (coalesce up to 64 commits / 8 MiB
+  into one `fsync`). At 16/32-thread fan-in `batchON` shows higher
+  `Throughput::Elements` and lower p99/p999 than `batchOFF`; at 1 thread there is
+  no contiguous run to coalesce, so `batchON ≈ batchOFF` (and the 1-thread
+  `batchOFF` median is the BRIEF-2 parity check against the pre-BRIEF-2
+  per-commit-fsync baseline).
+
+On the `full` / `stress` profiles each WAL-backed arm also emits an **untimed**
+`[concurrent_writers percentiles] wal_threads{N}_{batch}: n=… p50=…us p99=…us
+p999=…us` line to stderr — per-commit wall-clock latency collected outside the
+Criterion measured closure (so it never pollutes the throughput sample). Read
+p99/p999 for the tail-latency story Criterion's mean cannot show; the headline
+`thrpt` row is the aggregate throughput.
+
 | Bench | Threads | Median | Notes |
 |---|---:|---:|---|
-| `concurrent_writers/threads1` | 1 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads2` | 2 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads4` | 4 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads8` | 8 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads1_with_readers8` | 1 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/threads2_with_readers8` | 2 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/threads4_with_readers8` | 4 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/threads8_with_readers8` | 8 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/threads{1,2,4,8,16,32}` | 1–32 | TBD | In-memory; 1000 total commits, 10 property updates per commit. |
+| `concurrent_writers/threads{1,2,4,8,16,32}_with_readers8` | 1–32 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/wal_threads{1,2,4,8,16,32}_batchOFF` | 1–32 | TBD | Real WAL, one `fsync` per commit (BRIEF-1 baseline). |
+| `concurrent_writers/wal_threads{1,2,4,8,16,32}_batchON` | 1–32 | TBD | Real WAL, group commit (≤64 commits / 8 MiB per `fsync`); the fan-in win. |
 
 ## §2 selene-persist
 

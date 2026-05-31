@@ -1,5 +1,6 @@
 //! Write transaction RAII handle per spec 03 sections 4 and 6.
 
+use std::sync::mpsc::SyncSender;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -402,56 +403,106 @@ fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimest
         .map_or_else(HlcTimestamp::zero, |provider| provider.next_timestamp())
 }
 
-/// Run the durable + publish tail of a sealed commit on the committer thread
-/// (v1.2 multi-writer, BRIEF 1). This is the second half of what
-/// `commit_with_principal` did under the lock pre-v1.2, in the **identical**
-/// order — only the thread changed.
+/// A sealed commit whose durable bytes have been **appended** to every durable
+/// provider but **not yet fsynced or published** (v1.2 multi-writer, BRIEF 2).
 ///
-/// Ordering (verbatim from the pre-v1.2 commit body, except the debug assert
-/// moved earlier — see (1)):
-/// 1. Debug-only index-consistency assertion on the frozen `next_snapshot`
-///    **before** any durable append or publish. The snapshot is immutable from
-///    seal time, so checking it here is equally sound — and a detected
-///    violation now aborts the commit with **nothing durable and nothing
-///    visible** (it poisons via the committer's catch_unwind, but no WAL entry
-///    was written and the published cell never advanced, so a reopen is clean).
-///    Running it after the store (as pre-fix) would return `Err` for a commit
-///    that *did* persist + publish — a "returns-Err-but-actually-committed"
-///    contract inversion (P2).
-/// 2. Stamp the HLC timestamp **here**, in committer seal-sequence order, so
-///    HLC is monotonic in commit order (== publish order).
-/// 3. WAL-first: `write_commit` for each durable provider; its error aborts the
-///    commit (and BRIEF 1 keeps `EveryN(1)`, so this also fsyncs). Past this
-///    point the commit is irrevocable.
-/// 4. Publish: `snapshot.store(next_snapshot)` (the ArcSwap linearization point;
-///    the committer is its sole writer).
-/// 5. store-before-schema-bump (PR #127 P1): bump `schema_version` strictly
-///    after the store.
-/// 6. No-op provider fan-out under the [`FanoutGuard`] (now committer-thread-
-///    local — sound with one committer).
+/// This is the intermediate state between Stage 1 ([`append_sealed`]) and
+/// Stage 3 ([`publish_appended`]) of the group-commit pipeline. The committer
+/// forms a contiguous run of `AppendedCommit`s, runs ONE group flush
+/// ([`flush_durables`] — the R1 fsync-before-publish barrier) over the whole
+/// run, then publishes + acks each in `seal_seq` order. Because the flush is the
+/// single barrier for the whole batch, an appended-but-unflushed commit is
+/// **never** published or acked — it is only ever lost atomically with the rest
+/// of its run on a crash (durable-before-visible).
 ///
-/// # Failure ⇒ engine poison
+/// It owns the reply [`SyncSender`] (moved in by the committer when it pops the
+/// `Work::Commit`) so the Stage-4 ack is a single drain in `seal_seq` order with
+/// no parallel-`Vec` correlation between commits and their reply channels.
 ///
-/// Any error returned here is a **post-seal** failure: `seal()` already wove
-/// this commit's mutation into `*shared` (and a later seal may have forked off
-/// it), so the live in-memory graph cannot be surgically rolled back. The
-/// committer therefore poisons the engine on any returned `Err` (mirroring the
-/// committer-death path); the durable WAL never received the entry, so a reopen
-/// recovers a consistent state. The cancellation cut-line is *not* here — it
-/// moved into [`WriteTxn::seal`], under the lock, where `Drop`-rollback is still
-/// possible (so a cancel leaves no trace and does **not** poison).
+/// All post-append/pre-publish state carried here was frozen under the session's
+/// write lock in [`WriteTxn::seal`]; the committer never re-validates,
+/// re-allocates ids, or re-applies a change list.
+pub(crate) struct AppendedCommit {
+    /// Fully-built next snapshot, frozen under the session's write lock. The
+    /// committer stores this exact `Arc` in Stage 3 and never rebuilds it.
+    pub(crate) next_snapshot: Arc<SeleneGraph>,
+    /// Persisted change list, returned in the [`CommitOutcome`].
+    pub(crate) changes: Vec<Change>,
+    /// Truncate-expanded fan-out view, or `None` on the common (non-truncate)
+    /// path (then fan-out uses `changes` directly).
+    pub(crate) fanout_changes: Option<Vec<Change>>,
+    /// Opaque caller-supplied principal bytes (D12), returned in the outcome.
+    pub(crate) principal: Option<Arc<[u8]>>,
+    /// Whether the change list bumps the schema epoch (store-before-schema-bump).
+    pub(crate) schema_changed: bool,
+    /// Already-bumped graph generation.
+    pub(crate) generation: u64,
+    /// Next node id after this commit.
+    pub(crate) next_node_id: u64,
+    /// Next edge id after this commit.
+    pub(crate) next_edge_id: u64,
+    /// Non-fatal validation warnings.
+    pub(crate) warnings: Vec<CommitWarning>,
+    /// Highest durable sequence assigned across the durable providers during
+    /// [`append_sealed`]. Observable only after the group flush + publish.
+    pub(crate) durable_at: Option<u64>,
+    /// The reply channel for this commit's waiter, set by the committer when it
+    /// pops the `Work::Commit`. Drained (acked) in Stage 4, in `seal_seq` order.
+    pub(crate) reply: Option<SyncSender<GraphResult<CommitOutcome>>>,
+    /// `Instant` captured at append time so commit-duration metrics span the
+    /// full durable+publish tail (recorded in [`publish_appended`]).
+    pub(crate) started: Instant,
+}
+
+/// Compile-time proof that [`AppendedCommit`] is `Send + 'static`, so the
+/// committer can hold a batch of them across the group flush.
+const _: fn() = || {
+    fn assert_send_static<T: Send + 'static>() {}
+    assert_send_static::<AppendedCommit>();
+};
+
+/// Stage 1 — **append** a sealed commit's durable bytes to every durable
+/// provider, with fsync **deferred** (v1.2 multi-writer, BRIEF 2). Performs no
+/// store, no schema bump, and no fan-out: the snapshot is not yet visible.
+///
+/// This is the first third of the pre-BRIEF-2 `publish_sealed` body, split at
+/// the append/store seam so the committer can append a whole contiguous run
+/// before fsyncing it once (group commit). Ordering within Stage 1 is verbatim:
+/// 1. Debug-only index-consistency assertion on the frozen `next_snapshot`,
+///    BEFORE any durable append. A detected violation aborts with nothing
+///    durable and nothing visible (it poisons via the committer's
+///    `catch_unwind`, but no WAL entry was written and the published cell never
+///    advanced, so a reopen is clean). Asserting after the store (pre-fix) would
+///    return `Err` for a commit that *did* persist — a P2 inversion.
+/// 2. Stamp the HLC in committer seal-sequence order so HLC is monotonic in
+///    commit order (== publish order).
+/// 3. WAL-first: `write_commit` for each durable provider. Under the BRIEF-2
+///    `OnFlushOnly` policy this append does **not** fsync — the committer's
+///    later [`flush_durables`] is the single fsync for the whole run. The
+///    returned per-provider sequence is folded into `durable_at`.
+///
+/// The split makes durability **fsync-gated, not append-gated**: an appended
+/// commit is durable only after the group [`flush_durables`] returns `Ok`. The
+/// committer holds the append's bytes-but-no-fsync state in the returned
+/// [`AppendedCommit`] and publishes/acks strictly after the barrier.
+///
+/// # Failure ⇒ engine poison (handled by the committer)
+///
+/// A returned `Err` is a **post-seal** failure: `seal()` already wove this
+/// commit's mutation into `*shared` (and a later seal may have forked off it),
+/// so the live graph cannot be surgically rolled back. The committer poisons the
+/// engine, Errs this commit + every already-appended batch member (whose
+/// appended-but-unflushed bytes are correct to lose on reopen), and drains the
+/// buffer. The durable WAL never fsynced any of them, so a reopen heals.
 ///
 /// # Errors
 ///
 /// Returns [`GraphError::Durable`] if a durable provider's `write_commit`
-/// failed (which poisons the committer).
-pub(crate) fn publish_sealed(
+/// failed.
+pub(crate) fn append_sealed(
     sealed: SealedCommit,
-    snapshot: &ArcSwap<SeleneGraph>,
-    schema_version: &AtomicU64,
-    providers: &[Arc<dyn IndexProvider>],
     durable_providers: &[Arc<dyn DurableProvider>],
-) -> GraphResult<CommitOutcome> {
+) -> GraphResult<AppendedCommit> {
     let started = Instant::now();
     let SealedCommit {
         seal_seq: _,
@@ -467,11 +518,11 @@ pub(crate) fn publish_sealed(
     } = sealed;
 
     // (1) Debug-only structural net on the frozen snapshot, BEFORE any durable
-    // append or publish. The snapshot is immutable from seal time, so this is
-    // just as sound as asserting after the store — but a detected violation now
-    // aborts with nothing durable and nothing visible (no `Err`-but-committed
-    // inversion). A pure read of the immutable snapshot — never re-enters
-    // begin_write. Compiled out in release builds.
+    // append. The snapshot is immutable from seal time, so this is just as sound
+    // as asserting after the store — but a detected violation now aborts with
+    // nothing durable and nothing visible (no `Err`-but-committed inversion). A
+    // pure read of the immutable snapshot — never re-enters begin_write.
+    // Compiled out in release builds.
     #[cfg(debug_assertions)]
     if let Err(reason) = next_snapshot.assert_indexes_consistent() {
         panic!("selene-graph: pre-publish index consistency violation: {reason}");
@@ -481,9 +532,10 @@ pub(crate) fn publish_sealed(
     // order).
     let timestamp = commit_timestamp(durable_providers);
 
-    // (3) WAL-first: the append gates the commit. Irrevocable past here. A
-    // returned error poisons the committer (see the doc above) because the
-    // session-thread seal already mutated `*shared` and cannot be rolled back.
+    // (3) WAL-first append. Under OnFlushOnly (BRIEF 2) this does NOT fsync —
+    // the committer's group flush is the single barrier. A returned error
+    // poisons the committer (the session-thread seal already mutated `*shared`
+    // and cannot be rolled back).
     let mut durable_at: Option<u64> = None;
     for durable in durable_providers {
         let seq = durable
@@ -494,9 +546,98 @@ pub(crate) fn publish_sealed(
         durable_at = Some(durable_at.map_or(seq, |highest| highest.max(seq)));
     }
 
-    // (4) Publish — the sole ArcSwap writer.
+    Ok(AppendedCommit {
+        next_snapshot,
+        changes,
+        fanout_changes,
+        principal,
+        schema_changed,
+        generation,
+        next_node_id,
+        next_edge_id,
+        warnings,
+        durable_at,
+        reply: None,
+        started,
+    })
+}
+
+/// Stage 2 — **flush** every durable provider, fsyncing the whole contiguous run
+/// of appended commits in one barrier (the R1 fsync-before-publish barrier,
+/// v1.2 multi-writer, BRIEF 2).
+///
+/// Called by the committer exactly once per drained run of [`append_sealed`]s,
+/// strictly **before** any of the run's commits are published or acked. After it
+/// returns `Ok`, every byte appended in the run is durable, so publishing the
+/// snapshots (Stage 3) and delivering `durable_at` (Stage 4) cannot expose a
+/// not-yet-durable commit (durable-before-visible). When `commit_batching=Off`
+/// the run length is capped at 1, so this is exactly one fsync per commit at the
+/// same order point as `EveryN(1)`'s append-time fsync — behaviorally identical
+/// to BRIEF 1.
+///
+/// # Failure ⇒ engine poison (handled by the committer)
+///
+/// A flush error means the run's appended bytes may not be durable. The
+/// committer publishes **nothing** from the run, poisons the engine, and Errs
+/// every member — reopen lets WAL recovery decide truth, and no caller was told
+/// "durable."
+///
+/// # Errors
+///
+/// Returns [`GraphError::Durable`] if a durable provider's `flush` failed.
+pub(crate) fn flush_durables(durable_providers: &[Arc<dyn DurableProvider>]) -> GraphResult<()> {
+    for durable in durable_providers {
+        durable.flush().map_err(|error| GraphError::Durable {
+            reason: format!("{}: {error}", durable.provider_tag()),
+        })?;
+    }
+    Ok(())
+}
+
+/// Stage 3+4 — make an appended (and now group-flushed) commit **visible** and
+/// build its [`CommitOutcome`] (v1.2 multi-writer, BRIEF 2). **Infallible.**
+///
+/// Called by the committer only after [`flush_durables`] returned `Ok` for the
+/// whole run, in `seal_seq` order. Infallibility is load-bearing: by the time we
+/// store the snapshot the commit is already durable, so there is no honest way
+/// to return `Err` here — returning `Result` would reintroduce the P2
+/// "returns-Err-but-actually-published" inversion. The committer still wraps the
+/// call in `catch_unwind`, so a `store`/debug-assert PANIC still poisons.
+///
+/// Ordering (verbatim from the pre-BRIEF-2 `publish_sealed` tail):
+/// 1. Publish: `snapshot.store(next_snapshot)` (the ArcSwap linearization point;
+///    the committer is its sole writer).
+/// 2. store-before-schema-bump (PR #127 P1): bump `schema_version` strictly
+///    after the store, so a reader seeing the new epoch also sees the new
+///    snapshot.
+/// 3. No-op provider fan-out under the [`crate::reentry::FanoutGuard`] (now
+///    committer-thread-local — sound with one committer).
+/// 4. Metrics + build the [`CommitOutcome`] (carrying the `durable_at` computed
+///    in [`append_sealed`]).
+pub(crate) fn publish_appended(
+    appended: AppendedCommit,
+    snapshot: &ArcSwap<SeleneGraph>,
+    schema_version: &AtomicU64,
+    providers: &[Arc<dyn IndexProvider>],
+) -> CommitOutcome {
+    let AppendedCommit {
+        next_snapshot,
+        changes,
+        fanout_changes,
+        principal,
+        schema_changed,
+        generation,
+        next_node_id,
+        next_edge_id,
+        warnings,
+        durable_at,
+        reply: _,
+        started,
+    } = appended;
+
+    // (1) Publish — the sole ArcSwap writer.
     snapshot.store(Arc::clone(&next_snapshot));
-    // (5) Publish the schema-version bump AFTER snapshot.store so any reader
+    // (2) Publish the schema-version bump AFTER snapshot.store so any reader
     // observing the new epoch is guaranteed to also observe the new snapshot
     // (Codex PR #127 auto-review P1). Reverse ordering would let a reader read
     // `epoch=N` then load the prior snapshot, planning against stale schema.
@@ -504,7 +645,7 @@ pub(crate) fn publish_sealed(
         schema_version.fetch_add(1, Ordering::AcqRel);
     }
 
-    // (6) No-op provider fan-out. The FanoutGuard's thread-local counter now
+    // (3) No-op provider fan-out. The FanoutGuard's thread-local counter now
     // guards the COMMITTER thread: a provider that re-enters begin_write on the
     // committer thread panics before locking, and the boundary below catches
     // it. Safe with exactly one committer (v1.2 design §7.7).
@@ -514,6 +655,7 @@ pub(crate) fn publish_sealed(
         notify_providers(providers, fanout);
     }
 
+    // (4) Metrics + outcome.
     metrics::counter_inc(metrics::COMMITS_TOTAL);
     metrics::histogram_record(
         metrics::COMMIT_DURATION_SECONDS,
@@ -522,7 +664,7 @@ pub(crate) fn publish_sealed(
     metrics::gauge_set(metrics::GRAPH_NODES, next_snapshot.node_count() as f64);
     metrics::gauge_set(metrics::GRAPH_EDGES, next_snapshot.edge_count() as f64);
 
-    Ok(CommitOutcome {
+    CommitOutcome {
         generation,
         changes,
         principal,
@@ -530,7 +672,7 @@ pub(crate) fn publish_sealed(
         next_node_id,
         next_edge_id,
         warnings,
-    })
+    }
 }
 
 /// Fan out committed changes to every registered provider, swallowing

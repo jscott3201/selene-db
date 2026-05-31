@@ -10,9 +10,10 @@ use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
 use selene_core::{Change, GraphId, IStr, SchemaChange, SchemaPropertyIndexKind};
-use selene_persist::{AuditLog, WalConfig, WalWriter};
+use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
+use crate::committer_batch::CommitBatching;
 use crate::core_provider::{CoreProvider, DurableState};
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
@@ -53,6 +54,7 @@ pub struct SharedGraphBuilder {
     providers: Vec<Arc<dyn IndexProvider>>,
     wal_writer: Option<WalWriter>,
     audit_log: Option<AuditLog>,
+    commit_batching: CommitBatching,
 }
 
 impl SharedGraph {
@@ -70,6 +72,7 @@ impl SharedGraph {
             providers: Vec::new(),
             wal_writer: None,
             audit_log: None,
+            commit_batching: CommitBatching::Off,
         }
     }
 
@@ -114,6 +117,13 @@ impl SharedGraph {
 
     /// Construct shared state from a graph snapshot and commit-critical WAL file.
     ///
+    /// Since v1.2 (BRIEF 2) the committer is the sole fsync caller, so the WAL is
+    /// **always** opened in [`SyncPolicy::OnFlushOnly`] regardless of the
+    /// `config.sync_policy` passed (it is overwritten before
+    /// [`WalWriter::open`]). This non-builder constructor uses
+    /// [`CommitBatching::Off`], so the committer still fsyncs once per commit —
+    /// behaviorally identical to BRIEF 1's `EveryN(1)`.
+    ///
     /// # Errors
     ///
     /// Returns [`GraphError::Persist`] when the WAL cannot be opened, plus the
@@ -121,17 +131,35 @@ impl SharedGraph {
     pub fn from_graph_with_wal(
         graph: SeleneGraph,
         path: impl AsRef<Path>,
-        config: WalConfig,
+        mut config: WalConfig,
     ) -> GraphResult<Self> {
+        // BRIEF 2: the committer owns fsync via flush_durables(); force the
+        // committer-managed WAL into OnFlushOnly before opening it (overwriting
+        // any caller policy), keeping open-error timing unchanged.
+        config.sync_policy = SyncPolicy::OnFlushOnly;
         let writer = WalWriter::open(path.as_ref(), config)?;
-        Self::from_graph_with_core_and_durables(graph, Vec::new(), Vec::new(), Some(writer), None)
+        Self::from_graph_with_core_and_durables(
+            graph,
+            Vec::new(),
+            Vec::new(),
+            Some(writer),
+            None,
+            CommitBatching::Off,
+        )
     }
 
     fn from_graph_with_core(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
     ) -> GraphResult<Self> {
-        Self::from_graph_with_core_and_durables(graph, providers, Vec::new(), None, None)
+        Self::from_graph_with_core_and_durables(
+            graph,
+            providers,
+            Vec::new(),
+            None,
+            None,
+            CommitBatching::Off,
+        )
     }
 
     pub(crate) fn from_graph_with_core_and_durables(
@@ -140,6 +168,7 @@ impl SharedGraph {
         mut durable_providers: Vec<Arc<dyn DurableProvider>>,
         wal_writer: Option<WalWriter>,
         audit_log: Option<AuditLog>,
+        batching: CommitBatching,
     ) -> GraphResult<Self> {
         if audit_log.is_some() && wal_writer.is_none() {
             return Err(GraphError::Inconsistent {
@@ -164,7 +193,13 @@ impl SharedGraph {
             durable_providers.push(core as Arc<dyn DurableProvider>);
         }
         validate_unique_provider_tags(&all_providers)?;
-        Self::from_graph_parts_and_snapshot(graph, all_providers, durable_providers, snapshot)
+        Self::from_graph_parts_and_snapshot(
+            graph,
+            all_providers,
+            durable_providers,
+            snapshot,
+            batching,
+        )
     }
 
     pub(crate) fn from_graph_parts_and_snapshot(
@@ -172,6 +207,7 @@ impl SharedGraph {
         providers: Vec<Arc<dyn IndexProvider>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
         snapshot: Arc<ArcSwap<SeleneGraph>>,
+        batching: CommitBatching,
     ) -> GraphResult<Self> {
         validate_unique_provider_tags(&providers)?;
         let mut graph = graph;
@@ -217,6 +253,7 @@ impl SharedGraph {
                 schema_version: Arc::clone(&schema_version),
                 providers: providers.clone(),
                 durable_providers: durable_providers.clone(),
+                batching,
             });
         Ok(Self {
             shared,
@@ -506,13 +543,49 @@ impl SharedGraphBuilder {
     /// The path is the WAL file path, not a directory. Callers using the
     /// conventional layout should pass `dir.join(selene_persist::DEFAULT_WAL_FILE_NAME)`.
     ///
+    /// # SyncPolicy is OVERRIDDEN (v1.2 BRIEF 2 — read this)
+    ///
+    /// The single per-graph committer thread is the **sole fsync caller** for the
+    /// committer-managed WAL: it appends a contiguous run of commits with fsync
+    /// deferred, then issues exactly one [`WalWriter::flush`] per run (the R1
+    /// fsync-before-publish barrier). To make that the *only* fsync path, this
+    /// method **forces `config.sync_policy` to [`SyncPolicy::OnFlushOnly`]**
+    /// before opening the WAL — **whatever policy you pass is discarded.** The
+    /// fsync cadence is instead controlled by [`Self::with_commit_batching`]:
+    /// [`CommitBatching::Off`] (the default) fsyncs once per commit (behaviorally
+    /// identical to the old `EveryN(1)`), and [`CommitBatching::On`] coalesces a
+    /// contiguous run into one fsync. `config.snapshot_seq` is passed through
+    /// verbatim. Durability is unchanged: the committer always flushes before it
+    /// publishes or acks, so a commit is durable before it is ever visible.
+    ///
     /// # Errors
     ///
     /// Returns [`GraphError::Persist`] when the WAL cannot be opened, including
     /// when another writer already holds the file lock.
-    pub fn with_wal(mut self, path: impl AsRef<Path>, config: WalConfig) -> GraphResult<Self> {
+    pub fn with_wal(mut self, path: impl AsRef<Path>, mut config: WalConfig) -> GraphResult<Self> {
+        // BRIEF 2: the committer owns fsync. Force OnFlushOnly before opening so
+        // the committer's group flush is the single durability barrier. Done
+        // before WalWriter::open so open-error timing (e.g. WriterLockHeld) is
+        // unchanged for existing .unwrap() call sites.
+        config.sync_policy = SyncPolicy::OnFlushOnly;
         self.wal_writer = Some(WalWriter::open(path.as_ref(), config)?);
         Ok(self)
+    }
+
+    /// Set the group-commit batching policy for the committer-managed WAL
+    /// (v1.2 BRIEF 2). Default [`CommitBatching::Off`].
+    ///
+    /// With [`CommitBatching::Off`] the committer fsyncs once per commit
+    /// (behaviorally identical to BRIEF 1). With [`CommitBatching::On`] it
+    /// coalesces up to `max_commits` (capped by aggregate `max_bytes`) contiguous
+    /// commits into one fsync — higher throughput + lower tail latency under
+    /// fan-in, at the cost of grouping several commits behind one barrier (all
+    /// still durable before any of them is acked or published). Has no effect
+    /// without [`Self::with_wal`] (no durable provider to flush).
+    #[must_use]
+    pub fn with_commit_batching(mut self, batching: CommitBatching) -> Self {
+        self.commit_batching = batching;
+        self
     }
 
     /// Attach a durable audit log at `path` (conventionally
@@ -560,6 +633,7 @@ impl SharedGraphBuilder {
             Vec::new(),
             self.wal_writer,
             self.audit_log,
+            self.commit_batching,
         )
     }
 }
