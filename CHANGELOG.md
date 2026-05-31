@@ -54,12 +54,81 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were used only by the deleted pack crates / registry and are removed from
   `Cargo.toml`. `THIRDPARTY.md` regen is deferred to the version bump.
 
+#### Pre-1.1.0 deep-review residue teardown (greenfield; no shipped consumers)
+
+- **`selene-core`:** the dead `codec` module (`Codec` / `CodecError`, ~223 LOC),
+  the inert `value_adapter` registry and its `ExtensionTypeId{Conflict,
+  Unregistered}` errors (`Value::Extended` + `ExtensionTypeId` kept), the unused
+  `ChangeKindSet`, and the `PropertyMap::with_capacity` DoS shape are removed.
+  (CORE-02/03/04/10)
+- **`Change::IndexExtensionEvent` + `Mutator::extension_event` deleted.**
+  `ChangeKind::IndexExtensionEvent` (= 7) is removed and trailing discriminants
+  renumber (greenfield `postcard` re-tag; no production WAL/snapshot). The
+  durable first-party engine-event channel is the separate `audit.log` (D24).
+  (CORE-05/19)
+- **Dead `Origin` write-funnel plumbing removed** — the always-`Local` `origin`
+  parameter and `_origin` field drop off `Mutator`; `Origin::Replicated` is
+  retained (reworded as reserved-for-replication, no format break). (CORE-17/
+  GRAPH-27)
+- **Dead public/internal surfaces demoted or deleted** across `selene-graph`
+  (`as_any`, withdrawn-D23 `LiveIdSet` residue, unconstructed `ProviderError`
+  variants, `IdAllocator::from_meta`, `EdgeEndpointDef::node_type_indices`),
+  `selene-algorithms` (10 `*_checked` runner helpers collapsed onto
+  `*_with_checker(disabled())`), and `selene-gql` (`format_mutate_statement`
+  stub, `GqlType::Binary`/`VarBinary`, dead `label_expression` walker, and
+  several planner dead-code paths). (GRAPH-24..30, ALGO-17/18, PARSE-02/03/04,
+  PLAN-*)
+- **Crash-unsafe legacy `WalWriter::rotate` removed** (the pre-MANIFEST rotate
+  with a Seam-F crash window; zero callers). The SCMA snapshot section collapses
+  its dual V1/V2 decoder to a single hard-reject version, mirroring the GTYP
+  clean break. (PERSIST-02, GRAPH-23)
+
 ### Chore
 
 - Local test invocation aligned with CI (nextest + line-tables-only debug +
   `.config/nextest.toml`). See CLAUDE.md Build & test.
+- **Pre-1.1.0 deep-review test hardening (+~150 tests, 2503 → 2655 workspace).**
+  New coverage spans WAL/snapshot/recovery codec round-trips and crash-safety,
+  deep-graph algorithm exercises (100K-node line-graph SCC/articulation/bridges
+  in a bounded worker stack, concurrent `ensure_fresh` rebuild races),
+  mid-execution cancellation past the 1024-row stride, the conformance corpus
+  exact-feature-multiset (catching §24.6 over-stamping the `⊆` check missed),
+  write-side `FormatError` variant pinning, and per-numeric-variant negate /
+  RECORD-equality / set-op conformance. Findings cataloged in the review ledger;
+  the deferred large features and bench-gated perf are tracked as grounded
+  briefs for v1.2+.
 
 ### Changed
+
+#### Pre-1.1.0 deep-review ISO error-class + surface pass
+
+- **Set-operation arms must be column-name-equal.** `UNION` / `INTERSECT` /
+  `EXCEPT` arms with mismatched output names are now rejected at lowering with
+  `PlannerError::SetOpArmsNotCombinable` (`42001`) per ISO §14.2 SR v, instead
+  of silently relabelling to the left arm's names. Both-arms-unnamed stays
+  legal. **Behavior-breaking** for queries that previously relied on the
+  silent relabel. (GQLRT-31)
+- **Removed-construct error classes are now honest.** Dead/donor grammar that
+  is no longer offered (`CAST(x AS VECTOR)`, the full-text/time-series DDL
+  constraints, hex/octal/binary numeric literals, unsigned-integer suffixes)
+  now produces a clean `42001` syntax error rather than a silent `42N01` /
+  `5GQL0`; `vector` is again a usable bare identifier. `UNIQUE` constraints
+  surface an honest `42N01` deferral (was a silent `5GQL0`). (PARSE-05/06/07/08)
+- **`5GQL0` is now reserved for internal-invariant breaks.** ISO-legal but
+  unimplemented mutation constructs map to `42N01`; a property access on a
+  non-node/edge value maps to `22G03` (span threaded); `5 IS TRUE` (non-boolean
+  operand) maps to `22G03`. (GQLRT-13/20/21)
+- **`GraphError::IdOverflow` → `RowSpaceExhausted { rows, max_rows }`** — the
+  error now names the exhausted row space rather than blaming the id. (GRAPH-14)
+- **SHOW rendering fidelity.** Closed RECORD types now render recursively as
+  `RECORD { name :: TYPE, ... }`; `render_default_value` hard-errors on an
+  unrenderable default instead of emitting `<unsupported-default>`.
+  (GQLRT-23/17)
+- **`ProcedureRegistry` seam narrowed** to `{Graph, Mutation} × {Read,
+  SchemaWrite}` — the pack-era `Persist` / `GraphWrite` / `Admin` / `Capability`
+  tiers are deleted. The D16 `&dyn` injection seam and the frozen
+  `registry_version() == 0` are untouched. **Breaking** to the `selene-gql`
+  registry surface (greenfield; no shipped consumers). (GQLRT-32)
 
 - `selene-gql` planner: `MATCH (n:A|B|C) WHERE ...` flat-disjunctive-label
   patterns now expand to per-label sub-plans wrapped in a new
@@ -652,12 +721,86 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   aggregate expression per statement; sessions without a sink silently discard
   warnings.
 
+### Performance
+
+#### Pre-1.1.0 deep-review hot-path pass (no behavior change)
+
+- **Commit path (`selene-graph`):** label-index inserts in place
+  (`entry().or_default().insert()`, no whole-`RoaringBitmap` clone per label per
+  node); typed-index union via bulk `|= &bitmap` (no per-element `insert_all`);
+  closed-graph validation borrows `LabelSet`/`PropertyMap` (clones only on
+  error); `candidate_keys` empty-index fast path. The provider encodes its rkyv
+  section lock-free (the mutex is held only for `load_full`) and no longer
+  re-allocates the principal slice per commit. (GRAPH-01/02/03/04/07/08)
+- **Core (`selene-core`):** `PropertyMap::iter`/`keys`/`values` return concrete
+  iterators instead of a per-call `Box<dyn Iterator>` on the commit/validate hot
+  path (sorted present-only order preserved). (CORE-07)
+- **Persistence (`selene-persist`):** `decode_changes` reads from the borrow (no
+  `to_vec`); `SnapshotReader.sections` is an `Arc<[SectionEntry]>` (no double Vec
+  clone). (PERSIST-03/07)
+- **Query runtime (`selene-gql`):** GROUP BY keys into an insertion-ordered Vec
+  (O(n) vs O(n_rows × n_groups)) with a `group_by_key_cap`; UNION consumes the
+  owned right-hand side (no per-row clone); `IS NORMALIZED` is allocation-free;
+  `NULLIF` borrows for the equality test. The parser borrows bare identifiers
+  via `Cow`, builds DELETE ops single-pass, and canonicalizes keywords
+  allocation-free; the planner precomputes selectivity outside the comparator
+  and drains instead of `remove(0)`-looping. (GQLRT-02/03/04/06, PARSE-22/23/24/
+  25, PLAN-10/11/12)
+- **Algorithms (`selene-algorithms`):** release builds skip WCC's redundant
+  in-neighbor union (debug retains the transpose cross-check); `triangle_count`
+  and the API runners collapse their duplicated checked/unchecked
+  implementations onto a single checker-threaded path. (ALGO-11/17/18)
+- **Robustness:** the analyzer's `ExprId` fingerprint memo is now scoped to the
+  single `for_expr` recursive walk (where all nodes are provably live) rather
+  than persisted on the table with a subquery-boundary `clear()`, eliminating a
+  pointer-reuse → stale-fingerprint → false-dedup hazard by construction.
+  (ANALYZE-06)
+
 ### Fixed
 
 - Align `POWER` overflow GQLSTATUS handling with ISO/IEC 39075:2024 §20.22 GR11:
   overflow now maps to `22003` numeric-value-out-of-range, while `2201F`
   invalid-argument-for-power-function is reserved for the zero-base negative
   exponent and negative-base non-integral exponent cases.
+
+#### Pre-1.1.0 deep-review correctness pass
+
+- **`RETURN UNKNOWN` is now accepted.** Per ISO §21.2 `<boolean literal> ::=
+  TRUE | FALSE | UNKNOWN` and BOOLEAN is mandatory; `UNKNOWN` lowers to the Null
+  truth value (was rejected `42N01`). (PARSE-01)
+- **Three-valued-logic analyzer parity.** The analyzer no longer statically
+  rejects `NULL < 5`, `NULL + 1`, `-NULL`, `NULL AND TRUE`, or `NOT NULL` — the
+  runtime already evaluated these to NULL/UNKNOWN correctly, so the static
+  rejection was a false negative (ISO §19.3 / §20.21 / §6.4). (ANALYZE-01)
+- **Unary negate covers every numeric type.** `-x` now handles `Uint` /
+  `Int128` / `Uint128` / `Float32` / `Decimal` (was `Int`/`Float` only);
+  unsigned operands promote to the signed width and report `22003` when the
+  magnitude cannot fit. (GQLRT-01)
+- **Cross-type numeric comparison and equality are now exact and complete.**
+  `numeric_equal` / `numeric_compare` / the runtime hash key cover
+  `Int128` / `Uint128` / `Decimal` cross-type by exact representability —
+  e.g. `$i128 = 1` is now `TRUE` (previously `FALSE`, even though `<= 1 AND
+  >= 1` was `TRUE`). `SUM`/`AVG` widen `Int → Int128 → Decimal → Float`
+  (SUM past `i64` → `i128`; overflow → `22003`), and `eval_arithmetic` gains
+  the Decimal / `Uint128 + Uint128` / `Int128 ↔ Uint128` arms. The GV13/GV14/
+  GV17 128-bit/Decimal feature claims are now honest end-to-end (no flagger
+  change). The parity invariant holds throughout: equality, the hash/group
+  key, and ordering all route through one canonical form, so DISTINCT /
+  GROUP BY / set-ops agree with `=`. (GQLRT-26/27/30)
+- **RECORD equality is field-name-keyed** (ISO §4.15). `{a: 1, b: 2} =
+  {b: 2, a: 1}` is now `TRUE` (was a positional-zip `FALSE`); permuted records
+  collapse correctly under DISTINCT / GROUP BY, with NULL/NaN → Unknown 3VL
+  preserved. Only the reachable `Value::Record(Open)` path is affected; the
+  deferred `Value::RecordTyped` arms (node-791) and Rust's derived
+  `PartialEq`/`Hash` (HashMap keys / §16 identity) are untouched. (GQLRT-14)
+- **The optimizer binding-ref collector walks `IS SOURCE/DESTINATION OF`
+  operands.** `n IS SOURCE OF e` now contributes `{n, e}` (was `{n}`), so
+  `expand_filter_pushdown` no longer pushes a predicate onto `n`'s scan before
+  `e` is bound. (PLAN-01)
+- **Recovery no longer double-rebuilds and double-validates indexes.**
+  `into_graph` is registration-only; recovered closed-graph violations now
+  surface as `TypeViolation`, matching the documented `recover_closed`
+  contract. (GRAPH-06)
 
 ## [1.0.0] — 2026-05-16
 
