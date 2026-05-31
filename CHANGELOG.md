@@ -11,18 +11,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Conformance-honesty: feature-ID corrections (CONFORMANCE-00).** Three
   fixes so the advertised optional-feature set matches the ISO taxonomy and the
   implemented surface:
-  - **`GE08` reclaimed for its real ISO meaning — "Reference parameters"**
-    (ISO/IEC 39075:2024 §17.7 / Annex D Table D.1 row 77). It was mislabeled
-    "CAST operator" and stamped on every `ValueExpr::Cast`. `CAST` is
+  - **`CAST` re-stamped with its real ISO feature `GA05` "Cast specification"**,
+    and **`GE08` reclaimed for its real ISO meaning — "Reference parameters"**
+    (ISO/IEC 39075:2024 §17.7 / Annex D Table D.1 row 77). `CAST` was mislabeled
+    "CAST operator" and stamped `GE08` on every `ValueExpr::Cast`. `CAST` is
     `<cast specification>` (§20.8), whose optional feature is **`GA05` "Cast
-    specification"** (Annex D row 53), not `GE08`. `CAST` now records **no** ISO
-    optional-feature marker — it ships as baseline value-expression surface
-    gated only by its source/target *type* optional features — and `GE08` is
-    moved out of `SUPPORTED_FEATURES` (reference parameters are unimplemented;
-    it is referenced-but-not-claimed with a rationale). `GA05` is added to the
-    referenced register, reserved (not yet claimed). `CALL selene.feature_status()`
-    no longer reports `GE08` as a CAST feature. The `GE08-cast*.gql` corpus
-    files were renamed to `cast-*.gql` and re-declared `feature: none`.
+    specification"** (Annex D row 53), not `GE08`. Per ISO Annex A item 52, a
+    conforming implementation may not contain a `<cast specification>` without
+    `GA05` — `CAST` is **not** baseline — so `CAST` now records `GA05`, and
+    because selene-db implements the cast construct, **`GA05` is claimed in
+    `SUPPORTED_FEATURES`**. `GE08` is moved out of `SUPPORTED_FEATURES`
+    (reference parameters are unimplemented; it is referenced-but-not-claimed
+    without a rationale, having no parser surface). `CALL selene.feature_status()`
+    now reports `GA05` (supported), not `GE08`, for `CAST`. The `GE08-cast*.gql`
+    corpus files were renamed to `cast-*.gql` and re-declared `feature: GA05`.
   - **`GG21` "Explicit element type key label sets" de-stamped** (ISO §18.2/18.3).
     `GG21` requires a `<node/edge type key label set>` — `[ <label set phrase> ]
     <implies>` — but the type-DDL grammar has **no `<implies>` token**: `CREATE
