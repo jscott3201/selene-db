@@ -37,13 +37,21 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 
 pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let bytes = source.as_bytes();
+    // Index of the final `'` in the input. A single-quoted string treats `\'`
+    // as an escaped quote ONLY when a later `'` exists (pest `escaped_quote`);
+    // when the `'` after a `\` is the last quote, the `\` is a dangling escape
+    // and the `'` closes the string (pest `dangling_escape`). Mirroring this is
+    // load-bearing: a blanket "`\` escapes the next byte" rule lets `RETURN '\'`
+    // skip past the real closing quote to EOF, hiding a hostile `[` run that
+    // pest still closes the string before and parses — a parser-time DoS bypass.
+    let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
 
     while index < bytes.len() {
         match bytes[index] {
-            b'\'' => index = skip_single_quoted(bytes, index + 1),
+            b'\'' => index = skip_single_quoted(bytes, index + 1, last_single_quote),
             b'"' => index = skip_double_quoted(bytes, index + 1),
             b'`' => index = skip_backtick_quoted(bytes, index + 1),
             b'/' if next_is(bytes, index, b'/') => index = skip_line_comment(bytes, index + 2),
@@ -96,9 +104,18 @@ fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {
     bytes.get(index + 1).is_some_and(|value| *value == expected)
 }
 
-fn skip_single_quoted(bytes: &[u8], mut index: usize) -> usize {
+fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
     while index < bytes.len() {
         match bytes[index] {
+            // `\'` where the `'` is the final quote in the input is a *dangling*
+            // escape (pest `dangling_escape`): the `\` is literal and the `'`
+            // closes the string. Return the `'` position so the scan resumes
+            // after it and still counts any following brackets — matching pest,
+            // which closes the string here too. Any other `\X` (including a
+            // `\'` with a later quote — pest `escaped_quote`) escapes one byte.
+            b'\\' if bytes.get(index + 1) == Some(&b'\'') && Some(index + 1) == last_quote => {
+                return index + 1;
+            }
             b'\\' => index += 2,
             b'\'' if next_is(bytes, index, b'\'') => index += 2,
             b'\'' => return index,
