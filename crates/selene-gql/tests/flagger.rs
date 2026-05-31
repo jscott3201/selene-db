@@ -2,8 +2,8 @@
 
 use selene_core::{GraphId, feature_register::FeatureId};
 use selene_gql::{
-    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ParserError, TxContext,
-    analyze, execute_pattern, execute_pipeline, feature_walk, parse, plan,
+    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, GqlStatus, ParserError,
+    TxContext, analyze, execute_pattern, execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -268,6 +268,27 @@ fn or_replace_catalog_ddl_is_not_implemented() {
             matches!(error, ParserError::NotImplemented { .. }),
             "expected NotImplemented for {source:?}, got {error:?}"
         );
+    }
+}
+
+#[test]
+fn deferred_grammar_surfaces_report_not_implemented_with_42n01() {
+    // PARSE-17: `RETURN NO BINDINGS` and `SELECT FROM <graph-name>` parse at the
+    // grammar level but their builders are deferred (builders::mod.rs). Sibling
+    // deferrals (MERGE/FOR) are pinned; these two had zero coverage. Pin the
+    // exact NotImplemented variant + the 42N01 (FEATURE_NOT_SUPPORTED) status.
+    for source in ["MATCH (n) RETURN NO BINDINGS", "SELECT * FROM my_graph"] {
+        let error = parse(source).expect_err(source);
+        assert!(
+            matches!(error, ParserError::NotImplemented { .. }),
+            "expected NotImplemented for {source:?}, got {error:?}"
+        );
+        assert_eq!(
+            error.gqlstatus(),
+            GqlStatus::FEATURE_NOT_SUPPORTED,
+            "{source:?} must report 42N01"
+        );
+        assert_eq!(error.gqlstatus().as_str(), "42N01", "{source:?}");
     }
 }
 

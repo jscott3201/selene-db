@@ -216,4 +216,207 @@ mod tests {
             optimized.pipeline.len() as u32
         );
     }
+
+    // --- PLAN-18: expression-subquery body coverage ---------------------------
+    //
+    // The optimizer never recurses into `plan.subqueries`, so an indexed
+    // EXISTS/COUNT/VALUE body always runs a Linear scan even when an applicable
+    // index exists for the same label that the OUTER scan does use. The corpus
+    // invariant collectors never descended into subquery bodies, leaving this
+    // behavior unpinned. These tests descend into the subquery bodies and pin
+    // the current (Linear, unoptimized) behavior, contrasted against the
+    // optimized outer scan. Whether to optimize subquery bodies is a deferred
+    // decision; this only PINS current behavior.
+
+    use std::sync::Arc;
+
+    use selene_core::GraphId;
+    use selene_graph::SeleneGraph;
+
+    use crate::plan::{JoinTree, LiveIndexCatalog, ScanAccess, SubqueryBody, SubqueryKind};
+
+    fn leading_scan_access(tree: &JoinTree) -> Option<&ScanAccess> {
+        match tree {
+            JoinTree::Scan(scan) => Some(&scan.access),
+            JoinTree::Expand { child, .. }
+            | JoinTree::Repeat { child, .. }
+            | JoinTree::Questioned { child, .. }
+            | JoinTree::PathSearch { child, .. }
+            | JoinTree::PathModeFilter { child, .. } => leading_scan_access(child),
+            _ => None,
+        }
+    }
+
+    fn optimize_with_label_index(source: &str) -> ExecutionPlan {
+        let plan = plan_one(source);
+        // LiveIndexCatalog::label_index always returns Some for any label, so a
+        // bare `(:Person)` scan takes the intrinsic label index — the contrast
+        // baseline for the Linear subquery-body pins.
+        let catalog = LiveIndexCatalog::new(Arc::new(SeleneGraph::new(GraphId::new(9_001))));
+        let ctx = OptimizeContext::default().with_index_catalog(&catalog);
+        optimize(plan, &ctx)
+    }
+
+    #[test]
+    fn outer_scan_uses_label_index_as_a_contrast_baseline() {
+        // Confirms the index IS applicable to a `(:Person)` scan, so the Linear
+        // subquery-body pins below are meaningful (the body declines an index
+        // the outer query takes).
+        let optimized = optimize_with_label_index("MATCH (a:Person) RETURN a");
+        let access = leading_scan_access(&optimized.pattern_plan.as_ref().unwrap().join_tree)
+            .expect("leading scan");
+        assert!(
+            matches!(access, ScanAccess::LabelIndex { .. }),
+            "outer (:Person) scan should take the label index, got {access:?}"
+        );
+    }
+
+    #[test]
+    fn exists_and_count_subquery_bodies_stay_linear_unoptimized() {
+        // EXISTS and COUNT lower to a `SubqueryBody::Pattern`. The optimizer does
+        // not descend, so the body scan stays Linear even though `(:Person)`
+        // would otherwise take the label index (proven above).
+        for source in [
+            "MATCH (a:Person) WHERE EXISTS { MATCH (n:Person) WHERE n.age > 5 } RETURN a",
+            "MATCH (a:Person) RETURN COUNT { MATCH (n:Person) WHERE n.age > 5 } AS c",
+        ] {
+            let optimized = optimize_with_label_index(source);
+            let mut subqueries = 0;
+            for subquery in optimized.subqueries.iter() {
+                assert!(
+                    matches!(
+                        subquery.kind,
+                        SubqueryKind::Exists { .. } | SubqueryKind::Count
+                    ),
+                    "unexpected subquery kind {:?} for {source}",
+                    subquery.kind
+                );
+                let SubqueryBody::Pattern(pattern) = &subquery.body else {
+                    panic!("EXISTS/COUNT body must be a Pattern body");
+                };
+                let access = leading_scan_access(&pattern.join_tree).expect("body scan");
+                assert!(
+                    matches!(access, ScanAccess::Linear),
+                    "{source}: subquery body scan should stay Linear (optimizer does not \
+                     recurse into subqueries), got {access:?}"
+                );
+                subqueries += 1;
+            }
+            assert_eq!(subqueries, 1, "{source} should plan exactly one subquery");
+        }
+    }
+
+    #[test]
+    fn value_subquery_body_plan_stays_linear_unoptimized() {
+        // VALUE lowers to a full `SubqueryBody::Plan`. Its inner pattern scan is
+        // likewise left Linear.
+        let optimized = optimize_with_label_index(
+            "MATCH (a:Person) RETURN VALUE { MATCH (n:Person) WHERE n.age > 5 RETURN n.age LIMIT 1 } AS v",
+        );
+        let mut found = false;
+        for subquery in optimized.subqueries.iter() {
+            assert_eq!(subquery.kind, SubqueryKind::Value);
+            let SubqueryBody::Plan(inner) = &subquery.body else {
+                panic!("VALUE body must be a Plan body");
+            };
+            let access = leading_scan_access(&inner.pattern_plan.as_ref().unwrap().join_tree)
+                .expect("inner body scan");
+            assert!(
+                matches!(access, ScanAccess::Linear),
+                "VALUE subquery body scan should stay Linear, got {access:?}"
+            );
+            found = true;
+        }
+        assert!(found, "VALUE query should plan a subquery");
+    }
+
+    /// Walk a subquery body and record every filter-predicate `(expr_id, ty)`.
+    /// This is the descent the external `plan_snapshot_corpus` collectors cannot
+    /// perform (`SubqueryRegistry::iter` is `pub(crate)`), so the type-stability
+    /// invariant is extended into subquery bodies here, in-crate.
+    fn collect_body_predicate_types(
+        body: &SubqueryBody,
+        types: &mut std::collections::BTreeMap<crate::ExprId, crate::AnalyzedType>,
+    ) {
+        let pattern = match body {
+            SubqueryBody::Pattern(pattern) => Some(pattern.as_ref()),
+            SubqueryBody::Plan(plan) => plan.pattern_plan.as_ref(),
+        };
+        let Some(pattern) = pattern else { return };
+        let mut record = |predicate: &crate::FilterPredicate| {
+            if let Some(previous) = types.insert(predicate.expr_id, predicate.ty.clone()) {
+                assert_eq!(
+                    previous,
+                    predicate.ty,
+                    "subquery-body expr_id {} has an inconsistent ty",
+                    predicate.expr_id.get()
+                );
+            }
+        };
+        for predicate in &pattern.filters {
+            record(predicate);
+        }
+        // The body scans are Linear here, so their property predicates live on
+        // the leading scan; record those too.
+        let mut tree = &pattern.join_tree;
+        loop {
+            match tree {
+                JoinTree::Scan(scan) => {
+                    for predicate in &scan.property_predicates {
+                        record(predicate);
+                    }
+                    break;
+                }
+                JoinTree::Expand { child, .. }
+                | JoinTree::Repeat { child, .. }
+                | JoinTree::Questioned { child, .. }
+                | JoinTree::PathSearch { child, .. }
+                | JoinTree::PathModeFilter { child, .. } => tree = child,
+                _ => break,
+            }
+        }
+    }
+
+    #[test]
+    fn subquery_body_predicate_types_are_stable_across_optimize() {
+        // PLAN-18 (collector half): the external corpus invariants
+        // (`corpus_optimize_preserves_expr_types`) never descend into subquery
+        // bodies, so a rule that mutated an expr-id's analyzed type INSIDE an
+        // EXISTS/COUNT/VALUE body would go uncaught. Pin the type-stability
+        // invariant inside the body: every `(expr_id, ty)` observed before
+        // optimize must match the one observed after. (The bodies are currently
+        // left untouched, so this also documents that they are stable today.)
+        for source in [
+            "MATCH (a:Person) WHERE EXISTS { MATCH (n:Person) WHERE n.age > 5 } RETURN a",
+            "MATCH (a:Person) RETURN COUNT { MATCH (n:Person) WHERE n.age > 5 } AS c",
+            "MATCH (a:Person) RETURN VALUE { MATCH (n:Person) WHERE n.age > 5 RETURN n.age LIMIT 1 } AS v",
+        ] {
+            let before = plan_one(source);
+            let mut before_types = std::collections::BTreeMap::new();
+            for subquery in before.subqueries.iter() {
+                collect_body_predicate_types(&subquery.body, &mut before_types);
+            }
+            assert!(
+                !before_types.is_empty(),
+                "{source}: subquery body should contribute at least one typed predicate"
+            );
+
+            let optimized = optimize_with_label_index(source);
+            let mut after_types = std::collections::BTreeMap::new();
+            for subquery in optimized.subqueries.iter() {
+                collect_body_predicate_types(&subquery.body, &mut after_types);
+            }
+
+            for (expr_id, before_ty) in &before_types {
+                if let Some(after_ty) = after_types.get(expr_id) {
+                    assert_eq!(
+                        before_ty,
+                        after_ty,
+                        "{source}: subquery-body expr_id {} changed ty across optimize",
+                        expr_id.get()
+                    );
+                }
+            }
+        }
+    }
 }

@@ -119,6 +119,91 @@ fn corpus_covers_feature_register() {
     );
 }
 
+#[test]
+fn canonical_cases_observe_exactly_their_curated_feature_set() {
+    // PARSE-16: `corpus_contracts_hold` only checks declared ⊆ observed, which
+    // catches a feature the parser stops stamping but NOT over-stamping — a
+    // spurious extra feature stamp would cause a spurious UnsupportedFeature
+    // rejection (ISO §24.6). Most corpus headers intentionally declare a SUBSET
+    // of observed features (minimum-conformance + implied features stay
+    // undeclared), so a blanket observed==declared assertion is wrong. Instead,
+    // pin a curated set of canonical cases to their COMPLETE observed feature
+    // multiset. A regression that adds or drops any feature stamp on these
+    // stable shapes fails this exact-equality check.
+    //
+    // Each entry is (corpus filename, complete sorted-unique observed feature
+    // id set). Captured from `feature_walk` over the parsed source.
+    let expected: &[(&str, &[&str])] = &[
+        // Single-feature minimum-surface cases.
+        ("G010-walk-explicit.gql", &["G010"]),
+        ("G100-element-id.gql", &["G100"]),
+        ("G110-is-directed.gql", &["G110"]),
+        ("G111-is-labeled.gql", &["G111"]),
+        ("G113-all-different.gql", &["G113"]),
+        ("G114-same.gql", &["G114"]),
+        ("G115-property-exists.gql", &["G115"]),
+        ("GA01-ieee754-arithmetic.gql", &["GA01"]),
+        ("GE07-xor.gql", &["GE07"]),
+        ("GH02-undirected-edge-pattern.gql", &["GH02"]),
+        ("GQ03-union.gql", &["GQ03"]),
+        ("GQ08-filter.gql", &["GQ08"]),
+        ("GQ15-group-by.gql", &["GQ15"]),
+        ("GQ20-next.gql", &["GQ20"]),
+        // Multi-feature shapes where the COMPLETE observed set matters (these
+        // are exactly the cases an over-stamping regression would corrupt).
+        ("G011-trail.gql", &["G011", "G036", "G060"]),
+        ("G037-questioned-edge.gql", &["G036", "G037"]),
+        ("GE04-parameters.gql", &["GE04", "GE05"]),
+        ("GF01-enhanced-numeric.gql", &["GA01", "GF01"]),
+        ("GP01-inline-procedure.gql", &["GP01", "GP02"]),
+        ("GQ18-value-subquery.gql", &["GQ13", "GQ18"]),
+        ("GV45-record-literal.gql", &["GV45", "GV50"]),
+        ("GV46-closed-record-type.gql", &["GV45", "GV46"]),
+        ("GV48-nested-record-type.gql", &["GV45", "GV46", "GV48"]),
+        ("IMU-uuid-cast.gql", &["GE08", "IM_UUID"]),
+    ];
+
+    let cases = load_default_corpus().expect("corpus loads");
+    let mut matched = 0usize;
+    for (file_name, expected_features) in expected {
+        let case = cases
+            .iter()
+            .find(|case| {
+                case.path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == *file_name)
+            })
+            .unwrap_or_else(|| panic!("curated corpus case {file_name} not found"));
+        assert_eq!(
+            case.kind,
+            CorpusKind::Positive,
+            "{file_name} must be positive"
+        );
+
+        let statement = parse(&case.source)
+            .unwrap_or_else(|error| panic!("{file_name}: expected parse-ok, got {error:?}"));
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<BTreeSet<_>>();
+        let observed_names = observed
+            .iter()
+            .map(|feature| feature.as_str())
+            .collect::<Vec<_>>();
+        let expected_names = expected_features.iter().copied().collect::<BTreeSet<_>>();
+        let expected_sorted = expected_names.into_iter().collect::<Vec<_>>();
+
+        assert_eq!(
+            observed_names, expected_sorted,
+            "{file_name}: observed feature multiset drifted from the curated exact set \
+             (over- or under-stamping)"
+        );
+        matched += 1;
+    }
+    assert_eq!(matched, expected.len(), "all curated cases must be present");
+}
+
 trait ResultExt<T, E> {
     fn unwrap_err_or_else(self, f: impl FnOnce() -> E) -> E;
 }

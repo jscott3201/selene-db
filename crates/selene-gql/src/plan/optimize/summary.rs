@@ -42,6 +42,11 @@ pub struct PlanSnapshot {
     pub output_columns: Vec<String>,
     /// Optimizer rules that reported a change at least once.
     pub fired_rules: Vec<&'static str>,
+    /// Pipeline-op high-water mark after optimization. Captured so a test can
+    /// assert the recording driver agrees with the production
+    /// `optimize_with_rules` (PLAN-20). Deliberately NOT rendered by
+    /// [`fmt::Display`] so the golden `.snap` corpus is unaffected.
+    pub next_pipeline_op_id: u32,
 }
 
 /// Stable summary of one pipeline operation.
@@ -114,6 +119,7 @@ impl PlanSnapshot {
                 .map(|pattern| pattern_snapshot(pattern, &plan.pipeline)),
             output_columns: output_columns(&plan.output_schema.columns),
             fired_rules,
+            next_pipeline_op_id: plan.next_pipeline_op_id.get(),
         }
     }
 
@@ -223,6 +229,13 @@ fn optimize_recording(
             break;
         }
     }
+    // Why (PLAN-20): mirror the production `optimize_with_rules` post-loop
+    // step. Without this, the recording driver leaves `next_pipeline_op_id` at
+    // its lowering-time value while production refreshes it from the final
+    // pipeline length, so the corpus + idempotence snapshots would pin the
+    // test driver instead of the shipped optimizer. Parity is asserted in the
+    // `recording_driver_matches_production_pipeline_op_high_water` test below.
+    plan.refresh_pipeline_op_high_water();
     let mut fired_rules = fired.into_iter().collect::<Vec<_>>();
     fired_rules.sort_unstable_by_key(|name| {
         RULE_NAMES

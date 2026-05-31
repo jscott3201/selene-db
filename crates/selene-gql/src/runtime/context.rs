@@ -606,3 +606,77 @@ impl fmt::Debug for TxContext<'_, '_> {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use selene_core::GraphId;
+
+    use crate::{EmptyProcedureRegistry, ImplDefinedCaps};
+
+    use super::*;
+
+    fn read_only_ctx<'a>(
+        graph: &'a Arc<SeleneGraph>,
+        caps: &'a ImplDefinedCaps,
+        registry: &'a EmptyProcedureRegistry,
+    ) -> TxContext<'a, 'a> {
+        TxContext::read_only(graph.clone(), caps, registry, &[])
+    }
+
+    #[test]
+    fn stride_accumulates_then_resets_and_only_checks_at_boundary() {
+        // GQLRT-29: the in-loop stride accumulator must NOT call the (cancelled)
+        // token until the accumulated row count reaches CANCEL_CHECK_STRIDE. A
+        // cancelled token is attached up front, so any premature check would
+        // error immediately.
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(8_801)));
+        let caps = ImplDefinedCaps::default();
+        let registry = EmptyProcedureRegistry;
+        let token = CancellationToken::new();
+        token.cancel();
+        let ctx =
+            read_only_ctx(&graph, &caps, &registry).with_resource_limits(Some(&token), None, None);
+
+        let mut rows_since_check = 0usize;
+        // Accumulate one short of the stride: no boundary crossed, no check.
+        for _ in 0..(CANCEL_CHECK_STRIDE - 1) {
+            ctx.check_cancellation_stride(&mut rows_since_check, 1)
+                .expect("below the stride boundary the cancelled token is never consulted");
+        }
+        assert_eq!(rows_since_check, CANCEL_CHECK_STRIDE - 1);
+
+        // The row that crosses the boundary triggers the check, which observes
+        // the cancelled token and surfaces 5GQL2.
+        let err = ctx
+            .check_cancellation_stride(&mut rows_since_check, 1)
+            .expect_err("crossing the stride boundary consults the cancelled token");
+        assert!(matches!(err, ExecutorError::Cancelled { .. }));
+        assert_eq!(err.gqlstatus().as_str(), "5GQL2");
+    }
+
+    #[test]
+    fn stride_resets_counter_after_an_uncancelled_boundary_check() {
+        // With no cancellation attached, crossing the boundary still resets the
+        // accumulator to 0 so the next stride window starts fresh (the
+        // accumulate-then-reset contract).
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(8_802)));
+        let caps = ImplDefinedCaps::default();
+        let registry = EmptyProcedureRegistry;
+        let ctx = read_only_ctx(&graph, &caps, &registry);
+
+        let mut rows_since_check = 0usize;
+        // A single batch large enough to cross the boundary resets to 0.
+        ctx.check_cancellation_stride(&mut rows_since_check, CANCEL_CHECK_STRIDE + 5)
+            .expect("no cancellation token attached");
+        assert_eq!(
+            rows_since_check, 0,
+            "the accumulator must reset to 0 once a boundary check fires"
+        );
+
+        // A sub-stride batch after the reset does not trigger another check and
+        // accumulates from 0.
+        ctx.check_cancellation_stride(&mut rows_since_check, 3)
+            .expect("below boundary");
+        assert_eq!(rows_since_check, 3);
+    }
+}
