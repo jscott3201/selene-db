@@ -6,8 +6,6 @@
 //! canonical lexicographic order by [`IStr::as_str`] and re-sort into the
 //! receiver's local handle order after decode.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
@@ -16,7 +14,7 @@ use crate::{
     IStr, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyMap, RecordTypeDef, Value,
 };
 
-/// A graph, schema, or extension-provider change carried by the WAL.
+/// A graph or schema change carried by the WAL.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 // Invariant: serde+postcard tag stability - append new variants, never insert.
@@ -76,17 +74,6 @@ pub enum Change {
         graph: GraphId,
         /// Schema change payload.
         change: SchemaChange,
-    },
-    /// Opaque event emitted by an index extension provider.
-    ///
-    /// `provider` is a human-readable interned provider name (for example, an
-    /// index provider owned by an extension crate). The named provider owns
-    /// deserialization of `payload` during WAL replay per D15.
-    IndexExtensionEvent {
-        /// Provider name.
-        provider: IStr,
-        /// Provider-owned payload bytes.
-        payload: Arc<[u8]>,
     },
     /// Node property removal.
     NodePropertyRemoved {
@@ -616,17 +603,8 @@ mod tests {
     }
 
     #[test]
-    fn index_extension_event_payload_round_trip() {
-        let change = Change::IndexExtensionEvent {
-            provider: istr("ext-provider"),
-            payload: Arc::from([1_u8, 2, 3]),
-        };
-        assert_eq!(change.clone(), change);
-    }
-
-    #[test]
     fn change_all_covers_every_variant() {
-        assert_eq!(Change::VARIANT_COUNT, 14);
+        assert_eq!(Change::VARIANT_COUNT, 13);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Change::ALL {
@@ -785,14 +763,9 @@ mod tests {
     }
 
     #[test]
-    fn empty_diffs_and_empty_payload_are_valid() {
+    fn empty_diffs_are_valid() {
         assert!(LabelDiff::new([], []).unwrap().is_empty());
         assert!(PropertyDiff::new([], []).unwrap().is_empty());
-        let event = Change::IndexExtensionEvent {
-            provider: istr("empty-provider"),
-            payload: Arc::from([]),
-        };
-        assert_eq!(event.clone(), event);
     }
 
     #[test]

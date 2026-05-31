@@ -152,20 +152,6 @@ fn data_changed_commit_does_not_bump_version() {
 }
 
 #[test]
-fn index_extension_event_does_not_bump_version() {
-    let shared = SharedGraph::new(GraphId::new(104));
-    let mut txn = shared.begin_write();
-    txn.mutator().extension_event(
-        intern("schema.version.vector").unwrap(),
-        Arc::from([1_u8, 2, 3]),
-    );
-
-    txn.commit().expect("extension event commit succeeds");
-
-    assert_eq!(shared.schema_version(), 0);
-}
-
-#[test]
 fn direct_create_property_index_bumps_schema_version() {
     let shared = SharedGraph::new(GraphId::new(105));
     shared

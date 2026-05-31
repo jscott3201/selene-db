@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use roaring::RoaringBitmap;
 use selene_core::{
-    Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, Origin, PropertyDiff, PropertyMap,
+    Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
     SchemaChange,
 };
 
@@ -26,15 +26,11 @@ use crate::write_txn::WriteTxn;
 /// Borrowed mutation builder for one write transaction.
 pub struct Mutator<'tx, 'g> {
     txn: &'tx mut WriteTxn<'g>,
-    _origin: Origin,
 }
 
 impl<'tx, 'g> Mutator<'tx, 'g> {
-    pub(crate) fn new(txn: &'tx mut WriteTxn<'g>, origin: Origin) -> Self {
-        Self {
-            txn,
-            _origin: origin,
-        }
+    pub(crate) fn new(txn: &'tx mut WriteTxn<'g>) -> Self {
+        Self { txn }
     }
 
     /// Create a node, emit `Change::NodeCreated`, and return its ID.
@@ -459,15 +455,6 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn
             .changes
             .push(Change::SchemaChanged { graph, change });
-    }
-
-    /// Append an opaque extension-provider event.
-    ///
-    /// Replay is owned by registered index providers.
-    pub fn extension_event(&mut self, provider: IStr, payload: Arc<[u8]>) {
-        self.txn
-            .changes
-            .push(Change::IndexExtensionEvent { provider, payload });
     }
 
     /// Look up a registered index provider through the held write transaction.

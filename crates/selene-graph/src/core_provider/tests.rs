@@ -665,14 +665,6 @@ fn recovery_mode_on_change_applies_each_change_variant() {
     .unwrap();
     IndexProvider::on_change(
         provider.as_ref(),
-        &Change::IndexExtensionEvent {
-            provider: intern("core.extension").unwrap(),
-            payload: Arc::from([1_u8, 2]),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
         &Change::EdgeDeleted { id: EdgeId::new(1) },
     )
     .unwrap();

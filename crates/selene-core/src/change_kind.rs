@@ -20,20 +20,18 @@ pub enum ChangeKind {
     EdgeDeleted = 5,
     /// [`Change::SchemaChanged`].
     SchemaChanged = 6,
-    /// [`Change::IndexExtensionEvent`].
-    IndexExtensionEvent = 7,
     /// [`Change::NodePropertyRemoved`].
-    NodePropertyRemoved = 8,
+    NodePropertyRemoved = 7,
     /// [`Change::EdgePropertyRemoved`].
-    EdgePropertyRemoved = 9,
+    EdgePropertyRemoved = 8,
     /// [`Change::NodeLabelRemoved`].
-    NodeLabelRemoved = 10,
+    NodeLabelRemoved = 9,
     /// [`Change::NodesOfTypeTruncated`].
-    NodesOfTypeTruncated = 11,
+    NodesOfTypeTruncated = 10,
     /// [`Change::EdgesOfTypeTruncated`].
-    EdgesOfTypeTruncated = 12,
+    EdgesOfTypeTruncated = 11,
     /// [`Change::GraphReset`].
-    GraphReset = 13,
+    GraphReset = 12,
 }
 
 impl Change {
@@ -48,7 +46,6 @@ impl Change {
             Self::EdgeUpdated { .. } => ChangeKind::EdgeUpdated,
             Self::EdgeDeleted { .. } => ChangeKind::EdgeDeleted,
             Self::SchemaChanged { .. } => ChangeKind::SchemaChanged,
-            Self::IndexExtensionEvent { .. } => ChangeKind::IndexExtensionEvent,
             Self::NodePropertyRemoved { .. } => ChangeKind::NodePropertyRemoved,
             Self::EdgePropertyRemoved { .. } => ChangeKind::EdgePropertyRemoved,
             Self::NodeLabelRemoved { .. } => ChangeKind::NodeLabelRemoved,
@@ -74,7 +71,6 @@ mod tests {
             ChangeKind::EdgeUpdated,
             ChangeKind::EdgeDeleted,
             ChangeKind::SchemaChanged,
-            ChangeKind::IndexExtensionEvent,
             ChangeKind::NodePropertyRemoved,
             ChangeKind::EdgePropertyRemoved,
             ChangeKind::NodeLabelRemoved,
@@ -94,7 +90,7 @@ mod tests {
         // The discriminant values are a stable telemetry/ABI surface; pin them
         // so a reordering of the `ChangeKind` enum is caught at test time.
         assert_eq!(ChangeKind::NodeCreated as u8, 0);
-        assert_eq!(ChangeKind::IndexExtensionEvent as u8, 7);
-        assert_eq!(ChangeKind::GraphReset as u8, 13);
+        assert_eq!(ChangeKind::NodePropertyRemoved as u8, 7);
+        assert_eq!(ChangeKind::GraphReset as u8, 12);
     }
 }
