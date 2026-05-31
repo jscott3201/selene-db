@@ -30,21 +30,35 @@ impl fmt::Display for EmptyVecError {
 
 impl Error for EmptyVecError {}
 
-/// Vector wrapper that guarantees at least one element.
+/// Vector wrapper that guarantees at least `MIN` elements.
+///
+/// The cardinality floor is encoded in the `MIN` const generic, so a single
+/// implementation backs every minimum-length AST container. The constructor is
+/// the only way to build the wrapper, so the invariant `len() >= MIN` holds for
+/// the lifetime of any value (including across a serde round-trip, which routes
+/// through the same fallible constructor). See [`NonEmpty`] / [`Vec2OrMore`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct NonEmpty<T> {
+pub struct BoundedVec<T, const MIN: usize> {
     values: Vec<T>,
 }
 
-impl<T> NonEmpty<T> {
-    /// Build a non-empty vector wrapper.
+impl<T, const MIN: usize> BoundedVec<T, MIN> {
+    /// Build a wrapper enforcing the `MIN`-element floor.
     ///
     /// # Errors
     ///
-    /// Returns [`EmptyVecError`] when `values` is empty.
+    /// Returns [`EmptyVecError`] when `values` has fewer than `MIN` items.
     pub fn try_from_vec(values: Vec<T>) -> Result<Self, EmptyVecError> {
-        validate_min_len(values, 1).map(|values| Self { values })
+        let found = values.len();
+        if found < MIN {
+            Err(EmptyVecError {
+                expected_min: MIN,
+                found,
+            })
+        } else {
+            Ok(Self { values })
+        }
     }
 
     /// Return the wrapped values as a slice.
@@ -77,8 +91,8 @@ impl<T> NonEmpty<T> {
 
     /// Return true when the wrapper has no values.
     ///
-    /// This is always false for a valid wrapper and exists for slice-like
-    /// ergonomics in generic code.
+    /// This is always false for a valid wrapper (`MIN >= 1` for every alias in
+    /// use) and exists for slice-like ergonomics in generic code.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         false
@@ -91,7 +105,7 @@ impl<T> NonEmpty<T> {
     }
 }
 
-impl<'de, T> Deserialize<'de> for NonEmpty<T>
+impl<'de, T, const MIN: usize> Deserialize<'de> for BoundedVec<T, MIN>
 where
     T: Deserialize<'de>,
 {
@@ -104,7 +118,7 @@ where
     }
 }
 
-impl<T> Deref for NonEmpty<T> {
+impl<T, const MIN: usize> Deref for BoundedVec<T, MIN> {
     type Target = [T];
 
     fn deref(&self) -> &Self::Target {
@@ -112,7 +126,7 @@ impl<T> Deref for NonEmpty<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a NonEmpty<T> {
+impl<'a, T, const MIN: usize> IntoIterator for &'a BoundedVec<T, MIN> {
     type IntoIter = Iter<'a, T>;
     type Item = &'a T;
 
@@ -121,7 +135,7 @@ impl<'a, T> IntoIterator for &'a NonEmpty<T> {
     }
 }
 
-impl<'a, T> IntoIterator for &'a mut NonEmpty<T> {
+impl<'a, T, const MIN: usize> IntoIterator for &'a mut BoundedVec<T, MIN> {
     type IntoIter = IterMut<'a, T>;
     type Item = &'a mut T;
 
@@ -130,7 +144,7 @@ impl<'a, T> IntoIterator for &'a mut NonEmpty<T> {
     }
 }
 
-impl<T> IntoIterator for NonEmpty<T> {
+impl<T, const MIN: usize> IntoIterator for BoundedVec<T, MIN> {
     type IntoIter = std::vec::IntoIter<T>;
     type Item = T;
 
@@ -138,127 +152,12 @@ impl<T> IntoIterator for NonEmpty<T> {
         self.values.into_iter()
     }
 }
+
+/// Vector wrapper that guarantees at least one element.
+pub type NonEmpty<T> = BoundedVec<T, 1>;
 
 /// Vector wrapper that guarantees at least two elements.
-#[derive(Clone, Debug, Eq, Hash, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct Vec2OrMore<T> {
-    values: Vec<T>,
-}
-
-impl<T> Vec2OrMore<T> {
-    /// Build a vector wrapper with at least two values.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`EmptyVecError`] when `values` has fewer than two items.
-    pub fn try_from_vec(values: Vec<T>) -> Result<Self, EmptyVecError> {
-        validate_min_len(values, 2).map(|values| Self { values })
-    }
-
-    /// Return the wrapped values as a slice.
-    #[must_use]
-    pub fn as_slice(&self) -> &[T] {
-        &self.values
-    }
-
-    /// Iterate over the wrapped values.
-    pub fn iter(&self) -> Iter<'_, T> {
-        self.values.iter()
-    }
-
-    /// Iterate mutably over the wrapped values.
-    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        self.values.iter_mut()
-    }
-
-    /// Return the first value.
-    #[must_use]
-    pub fn first(&self) -> &T {
-        &self.values[0]
-    }
-
-    /// Return the number of wrapped values.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    /// Return true when the wrapper has no values.
-    ///
-    /// This is always false for a valid wrapper and exists for slice-like
-    /// ergonomics in generic code.
-    #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        false
-    }
-
-    /// Consume the wrapper and return the inner vector.
-    #[must_use]
-    pub fn into_vec(self) -> Vec<T> {
-        self.values
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Vec2OrMore<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let values = Vec::<T>::deserialize(deserializer)?;
-        Self::try_from_vec(values).map_err(serde::de::Error::custom)
-    }
-}
-
-impl<T> Deref for Vec2OrMore<T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        self.as_slice()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a Vec2OrMore<T> {
-    type IntoIter = Iter<'a, T>;
-    type Item = &'a T;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
-    }
-}
-
-impl<'a, T> IntoIterator for &'a mut Vec2OrMore<T> {
-    type IntoIter = IterMut<'a, T>;
-    type Item = &'a mut T;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter_mut()
-    }
-}
-
-impl<T> IntoIterator for Vec2OrMore<T> {
-    type IntoIter = std::vec::IntoIter<T>;
-    type Item = T;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.into_iter()
-    }
-}
-
-fn validate_min_len<T>(values: Vec<T>, expected_min: usize) -> Result<Vec<T>, EmptyVecError> {
-    let found = values.len();
-    if found < expected_min {
-        Err(EmptyVecError {
-            expected_min,
-            found,
-        })
-    } else {
-        Ok(values)
-    }
-}
+pub type Vec2OrMore<T> = BoundedVec<T, 2>;
 
 #[cfg(test)]
 mod tests {

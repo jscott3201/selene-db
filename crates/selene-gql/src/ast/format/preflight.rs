@@ -14,7 +14,7 @@ use super::FormatError;
 ///
 /// Returns [`FormatError::Unsupported`] when the tree contains AST-only type
 /// variants that the parser cannot read back from formatted source.
-pub fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
+pub(crate) fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
     match stmt {
         Statement::Query(pipeline) => validate_pipeline(pipeline),
         Statement::Composite { first, rest, .. } => {

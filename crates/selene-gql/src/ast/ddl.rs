@@ -140,8 +140,8 @@ pub enum DdlStatement {
     ShowEdgeTypes(SourceSpan),
     /// `SHOW INDEXES`.
     ///
-    /// Lists built-in property indexes only. Vector indexes remain exposed via
-    /// `CALL vector.list_indexes()`.
+    /// Lists registered property indexes (built-in plus those created with
+    /// `CREATE INDEX`).
     ShowIndexes(SourceSpan),
     /// `SHOW PROCEDURES`.
     ShowProcedures(SourceSpan),
@@ -247,16 +247,6 @@ pub enum TypePropertyConstraint {
         /// Source span.
         span: SourceSpan,
     },
-    /// `SEARCHABLE`.
-    Searchable(SourceSpan),
-    /// `DICTIONARY`.
-    Dictionary(SourceSpan),
-    /// `FILL name`.
-    Fill(IStr, SourceSpan),
-    /// `INTERVAL 'duration'`.
-    Interval(IStr, SourceSpan),
-    /// `ENCODING name`.
-    Encoding(IStr, SourceSpan),
 }
 
 impl TypePropertyConstraint {
@@ -267,12 +257,7 @@ impl TypePropertyConstraint {
             Self::NotNull(span)
             | Self::Default(_, span)
             | Self::Immutable(span)
-            | Self::Unique(span)
-            | Self::Searchable(span)
-            | Self::Dictionary(span)
-            | Self::Fill(_, span)
-            | Self::Interval(_, span)
-            | Self::Encoding(_, span) => *span,
+            | Self::Unique(span) => *span,
             Self::Indexed { span, .. } => *span,
         }
     }

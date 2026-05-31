@@ -9,6 +9,8 @@ pub(super) mod pattern;
 pub(super) mod session;
 pub(super) mod transaction;
 
+use std::borrow::Cow;
+
 use pest::iterators::Pair;
 use selene_core::IStr;
 
@@ -631,14 +633,55 @@ pub(super) fn build_typed_param_ref(
     Ok((name, declared_type, source_span))
 }
 
-pub(super) fn decode_ident_like(text: &str) -> String {
+/// Decode an identifier-like token into its canonical form.
+///
+/// Bare (unquoted) identifiers — the common case — are returned borrowed
+/// (`Cow::Borrowed`) with zero allocation; only delimited identifiers that
+/// must strip delimiters or unescape `""` allocate. Callers pass the result
+/// straight into the budget-routed interner, which only needs `&str`.
+pub(super) fn decode_ident_like(text: &str) -> Cow<'_, str> {
     if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
-        inner.replace("\"\"", "\"")
+        Cow::Owned(inner.replace("\"\"", "\""))
     } else if let Some(inner) = text.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
-        inner.to_owned()
+        Cow::Borrowed(inner)
     } else {
-        text.to_owned()
+        Cow::Borrowed(text)
     }
+}
+
+/// Compare a raw keyword token sequence against an expected canonical form,
+/// case- and whitespace-insensitively, without allocating.
+///
+/// `text` is the source slice (any case, arbitrary internal whitespace runs);
+/// `expected` is an already-canonical sequence of upper-case keyword tokens
+/// (e.g. `["SIGNED", "INTEGER"]` or `["NOT", "NULL"]`). The match holds iff the
+/// whitespace-split tokens of `text` equal `expected` token-for-token under
+/// ASCII-case-insensitive comparison. This preserves the multi-token /
+/// whitespace-insensitive semantics of the previous
+/// `to_ascii_uppercase().split_whitespace().collect().join(" ")` canonicalizer
+/// while avoiding the per-call `Vec<&str>` + `String` allocation.
+pub(super) fn keyword_tokens_eq(text: &str, expected: &[&str]) -> bool {
+    let mut tokens = text.split_whitespace();
+    for &want in expected {
+        match tokens.next() {
+            Some(token) if token.eq_ignore_ascii_case(want) => {}
+            _ => return false,
+        }
+    }
+    tokens.next().is_none()
+}
+
+/// Return `true` when `text`, with leading whitespace ignored, begins with
+/// `keyword` case-insensitively (allocation-free prefix dispatch).
+///
+/// This mirrors the previous `uppercase + whitespace-normalize + starts_with`
+/// behavior, where e.g. `LIST<INT8>` and `RECORD{ a :: INT }` (which carry no
+/// space after the keyword) are detected by their leading keyword. The actual
+/// element / field types are parsed separately from the pest children.
+pub(super) fn keyword_starts_with(text: &str, keyword: &str) -> bool {
+    text.trim_start()
+        .get(..keyword.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(keyword))
 }
 
 pub(super) fn unexpected_pair(pair: Pair<'_, Rule>, message: &'static str) -> ParserError {

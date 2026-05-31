@@ -534,8 +534,6 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Float32 => 17u8.hash(state),
         GqlType::Float64 => 18u8.hash(state),
         GqlType::Bytes => 19u8.hash(state),
-        GqlType::Binary => 20u8.hash(state),
-        GqlType::VarBinary => 21u8.hash(state),
         GqlType::ZonedDateTime => 22u8.hash(state),
         GqlType::LocalDateTime => 23u8.hash(state),
         GqlType::Date => 24u8.hash(state),

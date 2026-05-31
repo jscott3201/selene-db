@@ -22,10 +22,7 @@ pub use eq::structurally_eq;
 pub use expr::{
     BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr,
 };
-pub use format::{
-    FormatError, format_mutate_statement, format_procedure_call, format_read_statement,
-    validate_formattable,
-};
+pub use format::{FormatError, format_procedure_call, format_read_statement};
 pub use mutation::{
     DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
     MutationTerminator, RemoveItem, SetItem,

@@ -122,6 +122,24 @@ fn parser_rejects_cast_with_invalid_grammar() {
 }
 
 #[test]
+fn cast_to_vector_type_is_syntax_error() {
+    // `VECTOR` was removed-subsystem residue (post-#196 no-extensions pivot): it
+    // is no longer a `type_name` alternative, so `CAST(x AS VECTOR)` fails to
+    // match the grammar and reports a clean 42001 syntax error rather than a
+    // deep not-implemented rejection.
+    let err = parse("RETURN CAST(1 AS VECTOR) AS v").expect_err("CAST to VECTOR is rejected");
+    assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+}
+
+#[test]
+fn vector_is_a_usable_bare_identifier() {
+    // With the reserved `VECTOR` keyword removed, `vector` is an ordinary
+    // identifier again and binds as a variable name.
+    let statement = parse_or_panic("MATCH (vector) RETURN vector");
+    assert!(matches!(statement, Statement::Query(_)));
+}
+
+#[test]
 fn analyze_bind_cast_returns_target_type_integer() {
     let analyzed = analyze_or_panic("RETURN CAST('42' AS INTEGER) AS n");
     let ty = first_return_item_type(&analyzed);

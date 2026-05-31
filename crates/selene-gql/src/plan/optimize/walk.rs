@@ -382,12 +382,7 @@ fn walk_catalog_exprs(
                         PlannedTypePropertyConstraint::NotNull(_)
                         | PlannedTypePropertyConstraint::Immutable(_)
                         | PlannedTypePropertyConstraint::Unique(_)
-                        | PlannedTypePropertyConstraint::Indexed { .. }
-                        | PlannedTypePropertyConstraint::Searchable(_)
-                        | PlannedTypePropertyConstraint::Dictionary(_)
-                        | PlannedTypePropertyConstraint::Fill(_, _)
-                        | PlannedTypePropertyConstraint::Interval(_, _)
-                        | PlannedTypePropertyConstraint::Encoding(_, _) => constraint_changed,
+                        | PlannedTypePropertyConstraint::Indexed { .. } => constraint_changed,
                     })
                     | changed
             })

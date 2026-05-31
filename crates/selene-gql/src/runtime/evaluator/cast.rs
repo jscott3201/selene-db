@@ -394,7 +394,7 @@ fn format_float(f: f64) -> String {
 fn cast_to_type_feature(target: &GqlType) -> &'static str {
     match target {
         GqlType::Decimal => "CAST to DECIMAL",
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => "CAST to BYTES",
+        GqlType::Bytes => "CAST to BYTES",
         GqlType::ZonedDateTime => "CAST to ZONED DATETIME",
         GqlType::LocalDateTime => "CAST to LOCAL DATETIME",
         GqlType::Date => "CAST to DATE",

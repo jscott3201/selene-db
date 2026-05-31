@@ -164,14 +164,4 @@ pub enum PlannedTypePropertyConstraint {
         /// Source span.
         span: SourceSpan,
     },
-    /// `SEARCHABLE`.
-    Searchable(SourceSpan),
-    /// `DICTIONARY`.
-    Dictionary(SourceSpan),
-    /// `FILL name`.
-    Fill(IStr, SourceSpan),
-    /// `INTERVAL value`.
-    Interval(IStr, SourceSpan),
-    /// `ENCODING name`.
-    Encoding(IStr, SourceSpan),
 }

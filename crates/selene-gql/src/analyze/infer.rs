@@ -604,8 +604,6 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Float64
         | GqlType::Bytes
         | GqlType::Uuid
-        | GqlType::Binary
-        | GqlType::VarBinary
         | GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date
@@ -641,7 +639,7 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
     }
     Some(match ty {
         GqlType::String => ComparableFamily::String,
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => ComparableFamily::Bytes,
+        GqlType::Bytes => ComparableFamily::Bytes,
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date

@@ -4,14 +4,17 @@ use pest::iterators::Pair;
 
 use crate::{
     ast::{
-        DdlStatement, DropBehavior, EdgeEndpointSpec, SourceSpan, TypePropertyConstraint,
-        TypePropertyDef, ValidationMode,
+        DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
+        ValidationMode,
     },
     error::ParserError,
     parser::budget::InternerBudget,
 };
 
-use super::{Rule, expr, first_child, intern_pair, span, unexpected_pair};
+use super::{
+    Rule, expr, first_child, intern_pair, keyword_starts_with, keyword_tokens_eq, span,
+    unexpected_pair,
+};
 
 pub(super) fn build_ddl_statement(
     pair: Pair<'_, Rule>,
@@ -385,17 +388,16 @@ fn build_type_prop_constraint(
     budget: &mut InternerBudget,
 ) -> Result<TypePropertyConstraint, ParserError> {
     let source_span = span(&pair);
-    let text = pair
-        .as_str()
-        .to_ascii_uppercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Match the constraint keyword(s) token-wise (case- and whitespace-
+    // insensitive) without allocating a normalized `String`. `NOT NULL` keeps
+    // its two-token match; `DEFAULT`/`INDEXED` are leading-keyword prefixes
+    // (the literal / index name are read from the pest children).
+    let text = pair.as_str();
 
-    if text == "NOT NULL" {
+    if keyword_tokens_eq(text, &["NOT", "NULL"]) {
         return Ok(TypePropertyConstraint::NotNull(source_span));
     }
-    if text.starts_with("DEFAULT") {
+    if keyword_starts_with(text, "DEFAULT") {
         let literal = pair
             .into_inner()
             .find(|child| child.as_rule() == Rule::literal)
@@ -407,13 +409,13 @@ fn build_type_prop_constraint(
             source_span,
         ));
     }
-    if text == "IMMUTABLE" {
+    if keyword_tokens_eq(text, &["IMMUTABLE"]) {
         return Ok(TypePropertyConstraint::Immutable(source_span));
     }
-    if text == "UNIQUE" {
+    if keyword_tokens_eq(text, &["UNIQUE"]) {
         return Ok(TypePropertyConstraint::Unique(source_span));
     }
-    if text.starts_with("INDEXED") {
+    if keyword_starts_with(text, "INDEXED") {
         let name = pair
             .into_inner()
             .find(|child| child.as_rule() == Rule::ident)
@@ -424,48 +426,12 @@ fn build_type_prop_constraint(
             span: source_span,
         });
     }
-    if text == "SEARCHABLE" {
-        return Ok(TypePropertyConstraint::Searchable(source_span));
-    }
-    if text == "DICTIONARY" {
-        return Ok(TypePropertyConstraint::Dictionary(source_span));
-    }
 
-    let mut children = pair.into_inner();
-    match text.split_whitespace().next() {
-        Some("FILL") => {
-            let value = child_interned(
-                &mut children,
-                source_span,
-                "FILL is missing strategy",
-                budget,
-            )?;
-            Ok(TypePropertyConstraint::Fill(value, source_span))
-        }
-        Some("INTERVAL") => {
-            let value = children
-                .find(|child| child.as_rule() == Rule::string_lit)
-                .ok_or_else(|| {
-                    ParserError::syntax("INTERVAL is missing duration", source_span, None)
-                })
-                .and_then(|pair| expr::intern_string_literal(pair, budget))?;
-            Ok(TypePropertyConstraint::Interval(value, source_span))
-        }
-        Some("ENCODING") => {
-            let value = child_interned(
-                &mut children,
-                source_span,
-                "ENCODING is missing name",
-                budget,
-            )?;
-            Ok(TypePropertyConstraint::Encoding(value, source_span))
-        }
-        _ => Err(ParserError::syntax(
-            "unknown type property constraint",
-            source_span,
-            None,
-        )),
-    }
+    Err(ParserError::syntax(
+        "unknown type property constraint",
+        source_span,
+        None,
+    ))
 }
 
 fn build_edge_endpoint(
@@ -516,16 +482,4 @@ fn build_validation_mode(pair: &Pair<'_, Rule>) -> Result<ValidationMode, Parser
             None,
         )),
     }
-}
-
-fn child_interned(
-    children: &mut pest::iterators::Pairs<'_, Rule>,
-    source_span: SourceSpan,
-    missing: &'static str,
-    budget: &mut InternerBudget,
-) -> Result<selene_core::IStr, ParserError> {
-    children
-        .find(|child| child.as_rule() == Rule::ident)
-        .ok_or_else(|| ParserError::syntax(missing, source_span, None))
-        .and_then(|pair| intern_pair(pair, budget))
 }

@@ -668,13 +668,18 @@ fn unique_property_constraint_is_deferred() {
     let graph = empty_closed_graph(3714);
     let plan = planned("CREATE NODE TYPE :Sensor (v :: STRING UNIQUE)");
 
+    // UNIQUE is ISO-relevant but uniqueness enforcement is not yet implemented;
+    // it surfaces as an honest 42N01 capability-gap deferral (not a generic
+    // 5GQL0 internal error), mirroring the inline-INDEXED-on-edge deferral.
     let err = run_write(&graph, &plan).expect_err("UNIQUE property constraint is deferred");
     assert!(matches!(
         err,
-        ExecutorError::ImplementationDefined {
-            detail: "type property constraint not implemented",
+        ExecutorError::FeatureNotInV1_1 {
+            feature: "UNIQUE property constraint",
+            ..
         }
     ));
+    assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
 }
 
 #[test]

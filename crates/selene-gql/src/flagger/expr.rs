@@ -267,7 +267,7 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::Decimal => record_feature(uses, FeatureId::GV17, span),
         GqlType::Float32 => record_feature(uses, FeatureId::GV21, span),
         GqlType::Float64 => record_feature(uses, FeatureId::GV24, span),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => {
+        GqlType::Bytes => {
             record_feature(uses, FeatureId::GV35, span);
         }
         GqlType::Date | GqlType::LocalDateTime | GqlType::LocalTime => {
