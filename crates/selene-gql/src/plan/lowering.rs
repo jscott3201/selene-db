@@ -11,6 +11,9 @@ mod path_mode;
 mod path_search;
 mod repeat;
 mod sequential_match;
+mod set_op;
+
+use set_op::assert_arms_column_name_equal;
 
 use crate::{
     GqlType, InlineProcedureCall, LimitValue, PipelineStatement, ProcedureRegistry, QueryPipeline,
@@ -61,9 +64,19 @@ fn lower_statement_kind(
         AnalyzedStatementKind::Composite { first, rest, .. } => {
             let mut plan = lower_query_pipeline(first, registry, analyzed)?;
             for (op, rhs) in rest {
+                let rhs_plan = lower_query_pipeline(rhs, registry, analyzed)?;
+                // ISO §14.2 SR v: set-composition arms must be column
+                // name-equal. The binder binds each arm independently, so the
+                // names are first available here on the lowered output schemas.
+                assert_arms_column_name_equal(
+                    *op,
+                    &plan.output_schema,
+                    &rhs_plan.output_schema,
+                    rhs.span,
+                )?;
                 plan.pipeline.push(PipelineOp::Union {
                     op: *op,
-                    rhs: Box::new(lower_query_pipeline(rhs, registry, analyzed)?),
+                    rhs: Box::new(rhs_plan),
                 });
             }
             Ok(plan)

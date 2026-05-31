@@ -21,15 +21,64 @@ pub(crate) enum NullSortOrder {
 pub(crate) fn equal_non_null(lhs: &Value, rhs: &Value) -> bool {
     debug_assert!(!matches!(lhs, Value::Null));
     debug_assert!(!matches!(rhs, Value::Null));
-    numeric_equal(lhs, rhs)
-        .or_else(|| string_equal(lhs, rhs))
-        .unwrap_or(lhs == rhs)
+    if let Some(equal) = numeric_equal(lhs, rhs).or_else(|| string_equal(lhs, rhs)) {
+        return equal;
+    }
+    match (lhs, rhs) {
+        // Records compare under a field-name bijection (GQLRT-14), so the key
+        // regime that backs DISTINCT / GROUP BY / set-ops must NOT use the
+        // positional `Value::PartialEq`. Field values use 2VL identity here
+        // (NULL == NULL is `true` for keying); the 3VL `=` operator path lives
+        // in `gql_equal_non_null`.
+        (Value::Record(lhs), Value::Record(rhs)) => record_key_equal(lhs, rhs),
+        // Lists are positional, but a list of records must recurse through the
+        // name-keyed record equality rather than positional `PartialEq`.
+        (Value::List(lhs), Value::List(rhs)) => {
+            lhs.len() == rhs.len()
+                && lhs
+                    .iter()
+                    .zip(rhs)
+                    .all(|(lhs, rhs)| value_key_equal(lhs, rhs))
+        }
+        _ => lhs == rhs,
+    }
+}
+
+/// 2VL-identity equality used by the DISTINCT / GROUP BY / set-op key regime.
+///
+/// Unlike the 3VL `=` operator, `NULL` and `NaN` are definite, self-equal key
+/// values: the `equal_non_null` cross-type numeric/string collapse applies
+/// first, then a `Value::PartialEq` fallback restores the round-trip identity
+/// `NaN == NaN` and `-0.0 == 0.0` that the variant-strict storage relies on.
+fn value_key_equal(lhs: &Value, rhs: &Value) -> bool {
+    match (lhs, rhs) {
+        (Value::Null, Value::Null) => true,
+        (Value::Null, _) | (_, Value::Null) => false,
+        _ => equal_non_null(lhs, rhs) || lhs == rhs,
+    }
+}
+
+/// Field-name-keyed record equality for the key regime (2VL identity).
+fn record_key_equal(lhs: &Record, rhs: &Record) -> bool {
+    match (lhs, rhs) {
+        (Record::Open(lhs), Record::Open(rhs)) => {
+            lhs.len() == rhs.len()
+                && lhs.iter().all(|(lhs_key, lhs_value)| {
+                    rhs.iter()
+                        .find(|(rhs_key, _)| rhs_key == lhs_key)
+                        .is_some_and(|(_, rhs_value)| value_key_equal(lhs_value, rhs_value))
+                })
+        }
+        _ => lhs == rhs,
+    }
 }
 
 pub(crate) fn gql_equal_non_null(lhs: &Value, rhs: &Value) -> Option<bool> {
     debug_assert!(!matches!(lhs, Value::Null));
     debug_assert!(!matches!(rhs, Value::Null));
-    if (float_is_nan(lhs) || float_is_nan(rhs)) && numeric_equal(lhs, rhs).is_some() {
+    // A NaN float meeting any numeric operand (including Decimal) yields the
+    // 3VL "unknown" outcome, never a spurious false from the fall-through path.
+    if (float_is_nan(lhs) && is_numeric(rhs)) || (float_is_nan(rhs) && is_numeric(lhs)) {
         return None;
     }
     match (lhs, rhs) {
@@ -130,14 +179,21 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
 fn record_gql_equal(lhs: &Record, rhs: &Record) -> Option<bool> {
     match (lhs, rhs) {
         (Record::Open(lhs), Record::Open(rhs)) => {
+            // ISO §4.15: records are equal under a field-name bijection, not a
+            // positional zip. Differing field sets (arity or names) are a
+            // definite `false`; on matching names the field values combine
+            // under 3VL (a NULL/incomparable pair yields the unknown outcome,
+            // but only after every shared field has been checked for a definite
+            // mismatch that short-circuits to `false`).
             if lhs.len() != rhs.len() {
                 return Some(false);
             }
             let mut saw_unknown = false;
-            for ((lhs_key, lhs_value), (rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
-                if lhs_key != rhs_key {
+            for (lhs_key, lhs_value) in lhs {
+                let Some((_, rhs_value)) = rhs.iter().find(|(rhs_key, _)| rhs_key == lhs_key)
+                else {
                     return Some(false);
-                }
+                };
                 match gql_equal(lhs_value, rhs_value) {
                     Some(true) => {}
                     Some(false) => return Some(false),
@@ -178,8 +234,14 @@ fn gql_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
 fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
     match (lhs, rhs) {
         (Record::Open(lhs), Record::Open(rhs)) => {
-            for ((lhs_key, lhs_value), (rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
-                let key_ordering = lhs_key.cmp(rhs_key);
+            // Order over a field-name-sorted view so permuted-equal records
+            // compare `Equal` and the ordering agrees with name-keyed equality
+            // (GQLRT-14). Field names sort by string content (not the
+            // non-lexicographic IStr handle order) so the order is stable.
+            let lhs = sorted_record_fields(lhs);
+            let rhs = sorted_record_fields(rhs);
+            for (&(lhs_key, lhs_value), &(rhs_key, rhs_value)) in lhs.iter().zip(rhs.iter()) {
+                let key_ordering = lhs_key.as_str().cmp(rhs_key.as_str());
                 if !key_ordering.is_eq() {
                     return Some(key_ordering);
                 }
@@ -192,6 +254,16 @@ fn record_compare(lhs: &Record, rhs: &Record) -> Option<Ordering> {
         }
         _ => None,
     }
+}
+
+/// Borrow a record's fields sorted by field-name string content.
+///
+/// IStr ordering is handle order, not lexicographic, so the wire codecs and
+/// every name-keyed comparison sort by `as_str()` to stay deterministic.
+fn sorted_record_fields(fields: &[(selene_core::IStr, Value)]) -> Vec<&(selene_core::IStr, Value)> {
+    let mut sorted: Vec<&(selene_core::IStr, Value)> = fields.iter().collect();
+    sorted.sort_by(|lhs, rhs| lhs.0.as_str().cmp(rhs.0.as_str()));
+    sorted
 }
 
 /// Compare two list values lexicographically.
@@ -288,8 +360,120 @@ fn numeric_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
         (Value::Float32(lhs), Value::Uint(rhs)) => {
             u64_to_f32_exact(*rhs).is_some_and(|rhs| *lhs == rhs)
         }
+        // 128-bit integer cross-type — exact integer equality, mirroring the
+        // `compare_value_pair` ordering arms (GQLRT-26).
+        (Value::Int128(lhs), Value::Int128(rhs)) => lhs == rhs,
+        (Value::Uint128(lhs), Value::Uint128(rhs)) => lhs == rhs,
+        (Value::Int128(lhs), Value::Int(rhs)) => *lhs == i128::from(*rhs),
+        (Value::Int(lhs), Value::Int128(rhs)) => i128::from(*lhs) == *rhs,
+        (Value::Int128(lhs), Value::Uint(rhs)) => *lhs == i128::from(*rhs),
+        (Value::Uint(lhs), Value::Int128(rhs)) => i128::from(*lhs) == *rhs,
+        (Value::Uint128(lhs), Value::Uint(rhs)) => *lhs == u128::from(*rhs),
+        (Value::Uint(lhs), Value::Uint128(rhs)) => u128::from(*lhs) == *rhs,
+        (Value::Uint128(lhs), Value::Int(rhs)) => *rhs >= 0 && *lhs == u128::from(*rhs as u64),
+        (Value::Int(lhs), Value::Uint128(rhs)) => *lhs >= 0 && u128::from(*lhs as u64) == *rhs,
+        (Value::Int128(lhs), Value::Uint128(rhs)) => *lhs >= 0 && (*lhs as u128) == *rhs,
+        (Value::Uint128(lhs), Value::Int128(rhs)) => *rhs >= 0 && *lhs == (*rhs as u128),
+        // 128-bit vs binary float — exact-representability, mirroring
+        // `numeric_compare`'s `i128_to_f64_exact` / `u128_to_f64_exact` arms.
+        (Value::Int128(lhs), Value::Float(rhs)) => {
+            i128_to_f64_exact(*lhs).is_some_and(|l| l == *rhs)
+        }
+        (Value::Float(lhs), Value::Int128(rhs)) => {
+            i128_to_f64_exact(*rhs).is_some_and(|r| *lhs == r)
+        }
+        (Value::Uint128(lhs), Value::Float(rhs)) => {
+            u128_to_f64_exact(*lhs).is_some_and(|l| l == *rhs)
+        }
+        (Value::Float(lhs), Value::Uint128(rhs)) => {
+            u128_to_f64_exact(*rhs).is_some_and(|r| *lhs == r)
+        }
+        (Value::Int128(lhs), Value::Float32(rhs)) => {
+            i128_to_f32_exact(*lhs).is_some_and(|l| l == *rhs)
+        }
+        (Value::Float32(lhs), Value::Int128(rhs)) => {
+            i128_to_f32_exact(*rhs).is_some_and(|r| *lhs == r)
+        }
+        (Value::Uint128(lhs), Value::Float32(rhs)) => {
+            u128_to_f32_exact(*lhs).is_some_and(|l| l == *rhs)
+        }
+        (Value::Float32(lhs), Value::Uint128(rhs)) => {
+            u128_to_f32_exact(*rhs).is_some_and(|r| *lhs == r)
+        }
+        // Decimal cross-type — exact policy shared with `decimal_compare`.
+        (Value::Decimal(lhs), Value::Decimal(rhs)) => lhs == rhs,
+        (Value::Decimal(lhs), _) => return decimal_equal(lhs, rhs),
+        (_, Value::Decimal(rhs)) => return decimal_equal(rhs, lhs),
         _ => return None,
     })
+}
+
+/// Exact ordering of a [`rust_decimal::Decimal`] against another numeric value.
+///
+/// Decimal↔integer is lossless: an integer that fits inside `Decimal`'s range
+/// is converted exactly; one that overflows the range cannot equal any finite
+/// Decimal, so ordering falls back to a sign/magnitude comparison. Decimal↔
+/// binary-float uses the exact binary expansion of the float
+/// (`Decimal::from_f64_retain`), so `0.1_f64` (which is really
+/// `0.1000…0055`) is strictly greater than the decimal `0.1`. A non-finite
+/// float or an out-of-Decimal-range float orders by sign with `None` for NaN.
+fn decimal_compare(lhs: &rust_decimal::Decimal, rhs: &Value) -> Option<Ordering> {
+    match rhs {
+        Value::Int(rhs) => Some(lhs.cmp(&rust_decimal::Decimal::from(*rhs))),
+        Value::Uint(rhs) => Some(lhs.cmp(&rust_decimal::Decimal::from(*rhs))),
+        Value::Int128(rhs) => Some(decimal_cmp_i128(lhs, *rhs)),
+        Value::Uint128(rhs) => Some(decimal_cmp_u128(lhs, *rhs)),
+        Value::Float(rhs) => decimal_cmp_f64(lhs, *rhs),
+        Value::Float32(rhs) => decimal_cmp_f64(lhs, f64::from(*rhs)),
+        Value::Decimal(rhs) => Some(lhs.cmp(rhs)),
+        _ => None,
+    }
+}
+
+fn decimal_equal(lhs: &rust_decimal::Decimal, rhs: &Value) -> Option<bool> {
+    Some(decimal_compare(lhs, rhs)? == Ordering::Equal)
+}
+
+fn decimal_cmp_i128(lhs: &rust_decimal::Decimal, rhs: i128) -> Ordering {
+    // `try_from_i128_with_scale` is the non-panicking i128→Decimal path
+    // (the std `From<i128>`/blanket `TryFrom` impl panics on out-of-range).
+    match rust_decimal::Decimal::try_from_i128_with_scale(rhs, 0) {
+        Ok(rhs) => lhs.cmp(&rhs),
+        // `rhs` magnitude exceeds Decimal's range, so it dominates by sign.
+        Err(_) => {
+            if rhs < 0 {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            }
+        }
+    }
+}
+
+fn decimal_cmp_u128(lhs: &rust_decimal::Decimal, rhs: u128) -> Ordering {
+    // Decimal's positive range tops out below `i128::MAX`, so any `u128` above
+    // it necessarily overflows and is the larger value.
+    if rhs > i128::MAX as u128 {
+        return Ordering::Less;
+    }
+    decimal_cmp_i128(lhs, rhs as i128)
+}
+
+fn decimal_cmp_f64(lhs: &rust_decimal::Decimal, rhs: f64) -> Option<Ordering> {
+    if rhs.is_nan() {
+        return None;
+    }
+    match rust_decimal::Decimal::from_f64_retain(rhs) {
+        Some(rhs) => Some(lhs.cmp(&rhs)),
+        // `rhs` is ±∞ or overflows Decimal's range; it dominates by sign.
+        None => {
+            if rhs < 0.0 {
+                Some(Ordering::Greater)
+            } else {
+                Some(Ordering::Less)
+            }
+        }
+    }
 }
 
 fn string_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
@@ -300,6 +484,19 @@ fn string_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
         (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs == rhs,
         _ => return None,
     })
+}
+
+fn is_numeric(value: &Value) -> bool {
+    matches!(
+        value,
+        Value::Int(_)
+            | Value::Uint(_)
+            | Value::Int128(_)
+            | Value::Uint128(_)
+            | Value::Float(_)
+            | Value::Float32(_)
+            | Value::Decimal(_)
+    )
 }
 
 fn float_is_nan(value: &Value) -> bool {
@@ -348,6 +545,11 @@ fn value_rank(value: &Value) -> u8 {
 
 fn numeric_compare(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     match (lhs, rhs) {
+        // Decimal cross-type. `compare_value_pair` handles Decimal↔Decimal; the
+        // mixed arms live here so `numeric_compare` is the single source of the
+        // exact-representability policy that `numeric_equal` mirrors.
+        (Value::Decimal(lhs), _) => decimal_compare(lhs, rhs),
+        (_, Value::Decimal(rhs)) => decimal_compare(rhs, lhs).map(Ordering::reverse),
         (Value::Int(lhs), Value::Int(rhs)) => Some(lhs.cmp(rhs)),
         (Value::Uint(lhs), Value::Uint(rhs)) => Some(lhs.cmp(rhs)),
         (Value::Int(lhs), Value::Uint(rhs)) => Some(i64_cmp_u64(*lhs, *rhs)),

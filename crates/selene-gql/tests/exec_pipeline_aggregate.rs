@@ -5,7 +5,7 @@ mod exec_common;
 use selene_core::Value;
 use selene_gql::ExecutorError;
 
-use exec_common::{column_values, execute_read, execute_read_result};
+use exec_common::{column_values, execute_read};
 
 #[test]
 fn avg_empty_group_returns_null_not_division_by_zero() {
@@ -94,11 +94,16 @@ fn sum_skips_null_inputs() {
 }
 
 #[test]
-fn sum_overflow_returns_data_exception() {
-    let err = execute_read_result("UNWIND [9223372036854775807, 1] AS x RETURN sum(x) AS s")
-        .expect_err("sum overflow errors");
+fn sum_widens_past_i64_into_i128() {
+    // GQLRT-27: an i64 SUM that overflows i64 widens to i128 rather than
+    // erroring (GV13/GV14 128-bit support is honest). `i64::MAX + 1` is exactly
+    // `i128::from(i64::MAX) + 1`.
+    let table = execute_read("UNWIND [9223372036854775807, 1] AS x RETURN sum(x) AS s");
 
-    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(
+        column_values(&table, "s"),
+        vec![Value::Int128(i128::from(i64::MAX) + 1)]
+    );
 }
 
 #[test]

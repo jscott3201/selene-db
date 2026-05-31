@@ -124,11 +124,14 @@ fn otherwise_empty_lhs_evaluates_rhs() {
 }
 
 #[test]
-fn otherwise_empty_lhs_preserves_lhs_schema() {
-    let table = execute_read("RETURN 1 AS lhs LIMIT 0 OTHERWISE RETURN 2 AS rhs");
+fn otherwise_empty_lhs_yields_rhs_rows() {
+    // ISO §14.2 SR v: OTHERWISE arms must be column name-equal. With matching
+    // names, an empty LHS substitutes the RHS rows under the shared schema.
+    // (Migrated from the prior `lhs`/`rhs` mismatch that relied on the lenient
+    // LHS-relabel now rejected by `SetOpArmsNotCombinable`.)
+    let table = execute_read("RETURN 1 AS v LIMIT 0 OTHERWISE RETURN 2 AS v");
 
-    assert_eq!(column_values(&table, "lhs"), vec![Value::Int(2)]);
-    assert!(table.column_index(exec_common::istr("rhs")).is_none());
+    assert_eq!(column_values(&table, "v"), vec![Value::Int(2)]);
 }
 
 #[test]

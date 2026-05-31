@@ -1,3 +1,4 @@
+use rust_decimal::prelude::ToPrimitive;
 use rustc_hash::FxHashSet;
 use selene_core::Value;
 
@@ -268,9 +269,19 @@ impl AggregateState {
     }
 }
 
+/// Running accumulator for `SUM` / `AVG`.
+///
+/// The variants form a widening lattice that mirrors `eval_arithmetic`'s
+/// promotion order: `Int` (i64) widens to `Int128` (i128) on i64 overflow or
+/// when mixed with a 128-bit operand; `Decimal` is the exact base-10 channel
+/// for `DECIMAL` inputs (and integers mixed with them); `Float` (f64) is the
+/// lossy top reached as soon as any binary float participates. 128-bit and
+/// DECIMAL inputs keep `GV13`/`GV14`/`GV17` honest end-to-end (GQLRT-27).
 #[derive(Clone)]
 enum NumericSum {
     Int(i64),
+    Int128(i128),
+    Decimal(rust_decimal::Decimal),
     Float(f64),
 }
 
@@ -278,6 +289,8 @@ impl NumericSum {
     fn into_value(self) -> Value {
         match self {
             Self::Int(value) => Value::Int(value),
+            Self::Int128(value) => Value::Int128(value),
+            Self::Decimal(value) => Value::Decimal(value),
             Self::Float(value) => Value::Float(value),
         }
     }
@@ -386,15 +399,35 @@ fn add_numeric(
     let next = numeric_value(value, span)?;
     match (current, next) {
         (None, next) => Ok(next),
-        (Some(NumericSum::Int(lhs)), NumericSum::Int(rhs)) => {
-            lhs.checked_add(rhs).map(NumericSum::Int).ok_or_else(|| {
+        (Some(NumericSum::Int(lhs)), NumericSum::Int(rhs)) => match lhs.checked_add(rhs) {
+            Some(value) => Ok(NumericSum::Int(value)),
+            // i64 overflow widens to i128 rather than failing outright.
+            None => add_i128(i128::from(lhs), i128::from(rhs), span),
+        },
+        // Integer family (i64 + i128 in any order) accumulates in i128.
+        (Some(NumericSum::Int(lhs)), NumericSum::Int128(rhs))
+        | (Some(NumericSum::Int128(rhs)), NumericSum::Int(lhs)) => {
+            add_i128(i128::from(lhs), rhs, span)
+        }
+        (Some(NumericSum::Int128(lhs)), NumericSum::Int128(rhs)) => add_i128(lhs, rhs, span),
+        // Decimal channel: Decimal mixed with the integer family stays exact.
+        (Some(NumericSum::Decimal(lhs)), NumericSum::Decimal(rhs)) => add_decimal(lhs, rhs, span),
+        (Some(NumericSum::Decimal(lhs)), NumericSum::Int(rhs))
+        | (Some(NumericSum::Int(rhs)), NumericSum::Decimal(lhs)) => {
+            add_decimal(lhs, rust_decimal::Decimal::from(rhs), span)
+        }
+        (Some(NumericSum::Decimal(lhs)), NumericSum::Int128(rhs))
+        | (Some(NumericSum::Int128(rhs)), NumericSum::Decimal(lhs)) => {
+            let rhs = rust_decimal::Decimal::try_from_i128_with_scale(rhs, 0).map_err(|_| {
                 data_exception_value(
                     DataExceptionSubclass::NumericValueOutOfRange,
-                    "integer aggregate overflow",
+                    "128-bit aggregate value exceeds DECIMAL range",
                     span,
                 )
-            })
+            })?;
+            add_decimal(lhs, rhs, span)
         }
+        // Any float participant collapses the running sum to f64.
         (Some(lhs), rhs) => {
             let lhs = numeric_sum_to_f64(lhs, span)?;
             let rhs = numeric_sum_to_f64(rhs, span)?;
@@ -403,16 +436,46 @@ fn add_numeric(
     }
 }
 
+fn add_i128(lhs: i128, rhs: i128, span: SourceSpan) -> Result<NumericSum, ExecutorError> {
+    lhs.checked_add(rhs).map(NumericSum::Int128).ok_or_else(|| {
+        data_exception_value(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "integer aggregate overflow",
+            span,
+        )
+    })
+}
+
+fn add_decimal(
+    lhs: rust_decimal::Decimal,
+    rhs: rust_decimal::Decimal,
+    span: SourceSpan,
+) -> Result<NumericSum, ExecutorError> {
+    lhs.checked_add(rhs)
+        .map(NumericSum::Decimal)
+        .ok_or_else(|| {
+            data_exception_value(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "decimal aggregate overflow",
+                span,
+            )
+        })
+}
+
 fn numeric_value(value: Value, span: SourceSpan) -> Result<NumericSum, ExecutorError> {
     match value {
         Value::Int(value) => Ok(NumericSum::Int(value)),
-        Value::Uint(value) => i64::try_from(value).map(NumericSum::Int).map_err(|_| {
+        Value::Uint(value) => Ok(i64::try_from(value)
+            .map_or_else(|_| NumericSum::Int128(i128::from(value)), NumericSum::Int)),
+        Value::Int128(value) => Ok(NumericSum::Int128(value)),
+        Value::Uint128(value) => i128::try_from(value).map(NumericSum::Int128).map_err(|_| {
             data_exception_value(
                 DataExceptionSubclass::NumericValueOutOfRange,
-                "unsigned aggregate value is out of range",
+                "unsigned 128-bit aggregate value is out of range",
                 span,
             )
         }),
+        Value::Decimal(value) => Ok(NumericSum::Decimal(value)),
         Value::Float(value) => finite_float(value, span).map(NumericSum::Float),
         Value::Float32(value) => finite_float(f64::from(value), span).map(NumericSum::Float),
         _ => Err(data_exception_value(
@@ -448,6 +511,22 @@ fn numeric_sum_to_f64(value: NumericSum, span: SourceSpan) -> Result<f64, Execut
                 span,
             )
         }),
+        NumericSum::Int128(value) => i128_to_f64_exact(value).ok_or_else(|| {
+            data_exception_value(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "128-bit aggregate value is not exactly float-representable",
+                span,
+            )
+        }),
+        // DECIMAL → f64 is intrinsically lossy; statistics (STDDEV / percentile)
+        // and the float-collapse SUM path accept the nearest f64.
+        NumericSum::Decimal(value) => value.to_f64().ok_or_else(|| {
+            data_exception_value(
+                DataExceptionSubclass::NumericValueOutOfRange,
+                "decimal aggregate value is out of float range",
+                span,
+            )
+        }),
         NumericSum::Float(value) => Ok(value),
     }
 }
@@ -462,6 +541,13 @@ fn avg_to_value(
     };
     if count == 0 {
         return Ok(Value::Null);
+    }
+    // DECIMAL averages stay in the exact base-10 channel; every other numeric
+    // channel divides in f64 (ISO `AVG` returns an approximate numeric).
+    if let NumericSum::Decimal(sum) = sum
+        && let Some(avg) = sum.checked_div(rust_decimal::Decimal::from(count))
+    {
+        return Ok(Value::Decimal(avg));
     }
     let sum = numeric_sum_to_f64(sum, span)?;
     finite_float(sum / count as f64, span).map(Value::Float)
@@ -552,19 +638,23 @@ fn count_to_value(count: u64, span: SourceSpan) -> Result<Value, ExecutorError> 
 }
 
 fn i64_to_f64_exact(value: i64) -> Option<f64> {
-    u64_representable_by_binary_float(value.unsigned_abs(), 53).then_some(value as f64)
+    u128_representable_by_binary_float(u128::from(value.unsigned_abs()), 53).then_some(value as f64)
 }
 
-fn u64_representable_by_binary_float(value: u64, significand_bits: u32) -> bool {
+fn i128_to_f64_exact(value: i128) -> Option<f64> {
+    u128_representable_by_binary_float(value.unsigned_abs(), 53).then_some(value as f64)
+}
+
+fn u128_representable_by_binary_float(value: u128, significand_bits: u32) -> bool {
     if value == 0 {
         return true;
     }
-    let exponent = u64::BITS - 1 - value.leading_zeros();
+    let exponent = u128::BITS - 1 - value.leading_zeros();
     if exponent < significand_bits {
         return true;
     }
     let low_bits = exponent + 1 - significand_bits;
-    let mask = (1_u64 << low_bits) - 1;
+    let mask = (1_u128 << low_bits) - 1;
     value & mask == 0
 }
 
