@@ -463,6 +463,38 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RADIANS`); and GF03 logarithmic functions (`LN`, `LOG`, `LOG10`, `EXP`,
   plus `POWER` feature claiming). `LN(<=0)` now emits GQLSTATUS `2201E`
   invalid-argument-for-natural-logarithm.
+- Native ISO RECORD types end-to-end (JSON/L1c + L1c-d), per ISO/IEC
+  39075:2024 §18.9 `<record type>` / §18.10 `<field type>`. Closed/typed
+  `RECORD { a :: INT, b :: STRING }`, open/bare `RECORD` / `ANY RECORD`, and
+  nested record types parse, flag, and persist; features `GV45` (record
+  types), `GV46` (closed), `GV47` (open), and `GV48` (nested) are registered
+  supported and fire through the §24.6 Flagger on every record type position.
+  The catalog persists record field-type structure on **both** type-models
+  (D14 / D19): the rkyv `RecordFieldTypes` descriptor in `CORE/GTYP`
+  (authoritative; `CORE/GTYP` collapsed to a single `GTYP_VERSION = 1`), and
+  the serde `RecordFieldStructure` on the WAL `PropertyDef.record_fields`
+  (recovery reconstructs the closed-record catalog faithfully). Commit-time
+  closed-graph (GG02) record-property validation enforces ISO §4.15.4
+  field-name-set equality (no extra, no missing-required) and raises `G2000`
+  on violation. In expression context: `x IS TYPED RECORD{…}` performs
+  name-keyed §4.15.4 conformance (two-valued — `NULL IS TYPED <T>` is `false`,
+  not unknown), and `CAST(x AS RECORD{…})` performs per-field recursive
+  coercion with §20.8 SR12 subset projection (extra source fields dropped),
+  raising the new GQLSTATUS `22G0U` (record-fields-do-not-match) when a target
+  field is absent and `22G03` (datatype-mismatch) for a non-record source or a
+  record→scalar cast. Record field names are charged against the per-parse
+  interner budget. **Known limitation (deliberately deferred):** name-keyed
+  `IS TYPED` / `CAST` for a *catalog-bound* `Value::RecordTyped` operand is
+  fail-closed (`IS TYPED` → `false`; `CAST` → `42N01`). `RecordTyped` carries a
+  `type_id` plus positional slots with no inline field names, so ISO-mandated
+  name-keyed conformance requires resolving `type_id` through a named-record-
+  type catalog (`GraphTypeDef.record_types`) that is not yet built — and no
+  production read path materializes `Value::RecordTyped` today (records surface
+  as `Record::Open`, handled name-keyed above), so the fail-closed arms are
+  unreachable by any user query. Positional matching is intentionally **not**
+  done (it would be silent non-conformance). Name-keyed `RecordTyped` is
+  deferred to a future named-record-type catalog + `RecordTyped` read-path
+  producer brief.
 - Explicit `CAST(<expr> AS <type>)` expressions in `selene-gql` per ISO/IEC
   39075:2024 §22. New `ValueExpr::Cast { value, target_type, span }` AST
   variant; feature `GE08` (CAST operator) is registered as supported. The
@@ -473,7 +505,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (invalid-character-value-for-cast — new in the Table 8 map), `22003`
   (numeric overflow), `22000` (boolean domain), or `42N01` for
   intentionally unsupported source/target combinations (NODE / EDGE / PATH
-  / RECORD sources; `NULL` / `NOTHING` targets). The analyzer's
+  sources, and catalog-bound `RecordTyped` record sources; `NULL` /
+  `NOTHING` targets — open-record `CAST(… AS RECORD{…})` is supported, see
+  the native-record-types entry). The analyzer's
   `bind_value_expr` recursive walker now grows the stack via
   `stacker::maybe_grow(64K, 1MB)` so future `ValueExpr` variant additions
   cannot reach into the 2 MB default macOS pthread stack at the depth-256
