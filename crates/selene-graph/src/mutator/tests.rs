@@ -312,21 +312,6 @@ fn multi_step_tx_emits_changes_in_order() {
 }
 
 #[test]
-fn extension_event_emits_change_passthrough() {
-    let shared = SharedGraph::new(GraphId::new(1));
-    let mut txn = shared.begin_write();
-    {
-        let mut mutator = txn.mutator();
-        mutator.extension_event(intern("provider").unwrap(), Arc::from([1_u8, 2]));
-    }
-    let outcome = txn.commit().unwrap();
-    assert!(matches!(
-        outcome.changes[0],
-        Change::IndexExtensionEvent { .. }
-    ));
-}
-
-#[test]
 fn schema_change_emits_change_passthrough() {
     let shared = SharedGraph::new(GraphId::new(1));
     let mut txn = shared.begin_write();

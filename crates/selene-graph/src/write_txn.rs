@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
-use selene_core::{Change, HlcTimestamp, Origin, metrics};
+use selene_core::{Change, HlcTimestamp, metrics};
 
 use crate::committer::Committer;
 use crate::durable_provider::DurableProvider;
@@ -166,7 +166,7 @@ impl<'g> WriteTxn<'g> {
     /// Borrow a mutator tied to this transaction.
     #[must_use]
     pub fn mutator(&mut self) -> Mutator<'_, 'g> {
-        Mutator::new(self, Origin::Local)
+        Mutator::new(self)
     }
 
     /// Borrow the transaction-local working graph.

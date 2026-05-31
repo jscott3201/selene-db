@@ -250,8 +250,7 @@ pub fn validate_change(
         | Change::NodesOfTypeTruncated { .. }
         | Change::EdgesOfTypeTruncated { .. }
         | Change::GraphReset { .. }
-        | Change::SchemaChanged { .. }
-        | Change::IndexExtensionEvent { .. } => Ok(Vec::new()),
+        | Change::SchemaChanged { .. } => Ok(Vec::new()),
     }
 }
 

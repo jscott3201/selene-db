@@ -69,10 +69,19 @@ mod tests {
         intern(name).unwrap()
     }
 
+    // A `NodeCreated` carrying a `Value::Bytes` property is the byte-payload-
+    // bearing change used to exercise the size-sensitive codec paths
+    // (compression threshold, bounded decode). Its serialized footprint scales
+    // with the supplied byte buffer just like the former extension-event payload.
     fn change(bytes: impl Into<Vec<u8>>) -> Change {
-        Change::IndexExtensionEvent {
-            provider: provider("payload.provider"),
-            payload: Arc::from(bytes.into()),
+        Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(provider("payload.node")),
+            properties: PropertyMap::from_pairs([(
+                provider("payload.property"),
+                Value::Bytes(Arc::from(bytes.into())),
+            )])
+            .unwrap(),
         }
     }
 
@@ -198,7 +207,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn index_extension_event_payload_round_trips(payload in proptest::collection::vec(any::<u8>(), 0..4096)) {
+        fn byte_payload_change_round_trips(payload in proptest::collection::vec(any::<u8>(), 0..4096)) {
             let changes = vec![change(payload)];
             let encoded = encode_changes(&changes).unwrap();
             let decoded = decode_changes(&encoded.bytes, encoded.flags & FLAG_PAYLOAD_COMPRESSED != 0).unwrap();

@@ -207,10 +207,6 @@ fn change_postcard_round_trip() {
                 graph_type: graph_type(),
             },
         },
-        Change::IndexExtensionEvent {
-            provider: istr("serde.provider"),
-            payload: Arc::from([1_u8, 2, 3]),
-        },
         Change::NodesOfTypeTruncated { label },
         Change::EdgesOfTypeTruncated { label },
         Change::GraphReset {},
@@ -223,16 +219,16 @@ fn change_postcard_round_trip() {
 #[test]
 fn graph_reset_postcard_round_trip() {
     // BRIEF-152: GraphReset is the empty (carries-nothing) factory-reset change.
-    // It is appended after EdgesOfTypeTruncated, so its postcard tag is 13 and
-    // no earlier variant's tag shifts (see pre_147_node_updated_wire_blob_still_
-    // decodes). A unit-style variant encodes to its single tag byte with no
-    // payload.
+    // It is the last appended variant, so its postcard tag is 12 (the removal of
+    // the former IndexExtensionEvent variant at tag 7 re-tagged every later
+    // variant down by one — a greenfield postcard break with no production WAL).
+    // A unit-style variant encodes to its single tag byte with no payload.
     let change = Change::GraphReset {};
     let bytes = postcard::to_allocvec(&change).unwrap();
     assert_eq!(
         bytes,
-        [13_u8],
-        "GraphReset encodes to its bare tag byte (13)"
+        [12_u8],
+        "GraphReset encodes to its bare tag byte (12)"
     );
     let decoded: Change = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(decoded, Change::GraphReset {});

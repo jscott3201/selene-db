@@ -329,7 +329,6 @@ impl RecoveryState {
                     return Err(schema_replay::unsupported_schema_recovery(change));
                 }
             },
-            Change::IndexExtensionEvent { .. } => {}
         }
         Ok(())
     }

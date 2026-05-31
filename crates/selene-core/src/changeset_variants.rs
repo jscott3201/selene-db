@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use smallvec::SmallVec;
 
 use crate::{
@@ -43,10 +41,6 @@ impl Change {
                 id: GraphId::new(2),
             },
         },
-        || Self::IndexExtensionEvent {
-            provider: changeset_variant_istr("change.all.provider"),
-            payload: Arc::from([0_u8]),
-        },
         || Self::NodePropertyRemoved {
             id: NodeId::new(1),
             property: changeset_variant_istr("change.all.node_property_removed"),
@@ -82,7 +76,6 @@ impl Change {
             Self::EdgeUpdated { .. } => "EdgeUpdated",
             Self::EdgeDeleted { .. } => "EdgeDeleted",
             Self::SchemaChanged { .. } => "SchemaChanged",
-            Self::IndexExtensionEvent { .. } => "IndexExtensionEvent",
             Self::NodePropertyRemoved { .. } => "NodePropertyRemoved",
             Self::EdgePropertyRemoved { .. } => "EdgePropertyRemoved",
             Self::NodeLabelRemoved { .. } => "NodeLabelRemoved",

@@ -10,10 +10,14 @@ pub enum Origin {
     /// Mutation originated in this selene-db instance.
     #[default]
     Local,
-    /// Mutation was replicated from a federation peer.
+    /// Reserved for future replication (no production producer today).
     ///
-    /// `source_node_id` names a federation node, not a property-graph node.
-    /// Sequence values are caller-defined; `0` is allowed.
+    /// The WAL entry-header slot and the recovery dedup branch carry this
+    /// variant, but no engine code path emits it yet; it is retained as the
+    /// stable on-disk surface for a future replication producer.
+    ///
+    /// `source_node_id` names a replication source node, not a property-graph
+    /// node. Sequence values are caller-defined; `0` is allowed.
     Replicated {
         /// Federation source node.
         source_node_id: NodeId,

@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_core::{Change, HlcTimestamp, NodeId, Origin, intern};
+use selene_core::{Change, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, Value, intern};
 use selene_persist::{SyncPolicy, WalConfig, WalWriter};
 
 fn temp_path(name: &str) -> PathBuf {
@@ -40,9 +40,14 @@ fn origin(index: usize) -> Origin {
 }
 
 fn changes(index: usize) -> Vec<Change> {
-    vec![Change::IndexExtensionEvent {
-        provider: intern("wal.v2.roundtrip").unwrap(),
-        payload: Arc::from(format!("entry-{index}").into_bytes()),
+    vec![Change::NodeCreated {
+        id: NodeId::new(1),
+        labels: LabelSet::single(intern("wal.v2.roundtrip").unwrap()),
+        properties: PropertyMap::from_pairs([(
+            intern("wal.v2.payload").unwrap(),
+            Value::Bytes(Arc::from(format!("entry-{index}").into_bytes())),
+        )])
+        .unwrap(),
     }]
 }
 
