@@ -635,6 +635,16 @@ pub(crate) fn publish_appended(
         started,
     } = appended;
 
+    // Test-only injection seam for the Stage-3 publish-panic path (BRIEF 2 crash
+    // matrix item 6). In production this compiles to nothing. It panics BEFORE the
+    // store so the panicking member never publishes — matching the real
+    // store/debug-assert panic this branch defends against — letting a test drive
+    // the "member i of a multi-member batch panics ⇒ i acked-and-visible,
+    // panicking i+1 + remaining i+2.. Err'd, poisoned, drained" path that
+    // `notify_providers`' panic-swallowing makes otherwise unreachable.
+    #[cfg(test)]
+    publish_panic_inject::maybe_panic();
+
     // (1) Publish — the sole ArcSwap writer.
     snapshot.store(Arc::clone(&next_snapshot));
     // (2) Publish the schema-version bump AFTER snapshot.store so any reader
@@ -792,6 +802,53 @@ fn expand_truncates_for_fanout(
 /// own `provider_tag()` method panicked, so log filters keyed on the field
 /// name still match.
 const SENTINEL_PROVIDER_TAG: &str = "<unknown>";
+
+/// Test-only seam to drive a panic from inside [`publish_appended`] (Stage 3) on
+/// a chosen publish ordinal, so the committer's multi-member publish-panic
+/// poison-and-drain branch can be exercised deterministically.
+///
+/// This is the *only* way to reach that branch from a test: a misbehaving
+/// [`IndexProvider`]'s `on_change` panic is swallowed by [`notify_providers`]'
+/// per-callback `catch_unwind`, and `snapshot.store` does not panic, so without
+/// this hook the Stage-3 panic path is unreachable through the public API. The
+/// counter is keyed on the committer thread (the sole `publish_appended` caller),
+/// so "panic on the Nth publish of this run" is deterministic. Compiled only
+/// under `cfg(test)`; production builds have no injection point and no overhead.
+#[cfg(test)]
+pub(crate) mod publish_panic_inject {
+    use std::cell::Cell;
+
+    thread_local! {
+        /// `Some(remaining)` arms the injection: each [`maybe_panic`] call
+        /// decrements it, panicking when it reaches zero. `None` (the default) is
+        /// disarmed. Thread-local so only the committer thread that ran
+        /// [`arm`] is affected, and it auto-clears after firing.
+        static COUNTDOWN: Cell<Option<u32>> = const { Cell::new(None) };
+    }
+
+    /// Arm the injection so the `after`-th subsequent [`maybe_panic`] panics
+    /// (`after = 1` ⇒ the next publish panics; `after = 2` ⇒ the second). Must be
+    /// called on the committer thread (e.g. from inside a provider `on_change`
+    /// during an earlier publish in the same run).
+    pub(crate) fn arm(after: u32) {
+        COUNTDOWN.with(|cell| cell.set(Some(after)));
+    }
+
+    /// Panic if armed and the countdown has elapsed; otherwise a no-op. Clears the
+    /// arming when it fires so exactly one panic is injected per [`arm`].
+    pub(crate) fn maybe_panic() {
+        COUNTDOWN.with(|cell| {
+            if let Some(remaining) = cell.get() {
+                let next = remaining.saturating_sub(1);
+                if next == 0 {
+                    cell.set(None);
+                    panic!("selene-graph test: injected Stage-3 publish_appended panic");
+                }
+                cell.set(Some(next));
+            }
+        });
+    }
+}
 
 #[cfg(test)]
 mod tests;

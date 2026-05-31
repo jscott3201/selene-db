@@ -9,31 +9,58 @@
 // from the parent test module's scope by this glob.
 use super::*;
 // Items NOT already in the parent's scope.
-use std::sync::atomic::AtomicUsize;
+use std::collections::BTreeMap;
 
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 
 // ───────────────────────── T7 (load-bearing, F2) ─────────────────────────
 
-/// Durable that latches a per-flush watermark and records, for every
-/// `write_commit`, the flush-epoch in effect when it was appended. Combined with
-/// the GenOrderProvider's publish observation it proves the commits in a batch
-/// were FLUSHED before the dense compact stored.
+/// A monotonic per-flush watermark ("flush epoch") shared by [`FlushEpochDurable`]
+/// (the writer/fsync side) and [`FlushEpochObserver`] (the publish/fan-out side),
+/// so a test can pin the R1 barrier's interleaving: append happens at epoch E,
+/// the group flush bumps the epoch E→E+1, and publish (fan-out) is observed at
+/// the post-flush epoch. `publish_epoch > append_epoch` therefore proves the
+/// commit was FLUSHED strictly between its Stage-1 append and its Stage-3 publish
+/// — durable-before-visible — for every batched commit, and at the compact
+/// boundary in particular (A, B flushed before they publish, before the dense
+/// store).
+type FlushEpoch = Arc<AtomicU64>;
+
+/// Durable that latches a shared per-flush watermark and records, for every
+/// `write_commit`, both the assigned sequence and the flush-epoch in effect when
+/// it was appended (BEFORE its group flush). Paired with [`FlushEpochObserver`],
+/// it proves a batch's commits were FLUSHED before they were published (and, at
+/// the compact boundary, before the dense Arc stored).
 struct FlushEpochDurable {
     tag: ProviderTag,
     seq: AtomicU64,
-    flush_epoch: AtomicUsize,
-    flushes: AtomicUsize,
+    /// Shared monotonic flush watermark, bumped once per `flush`.
+    flush_epoch: FlushEpoch,
+    /// Count of `flush` calls (used by the zero-flush compact-at-head proof).
+    flushes: AtomicU64,
+    /// Per assigned sequence, the flush-epoch observed at append time.
+    append_epoch: Mutex<BTreeMap<u64, u64>>,
 }
 
 impl FlushEpochDurable {
-    fn new(tag: &[u8; 4]) -> Arc<Self> {
+    fn new(tag: &[u8; 4], flush_epoch: FlushEpoch) -> Arc<Self> {
         Arc::new(Self {
             tag: ProviderTag(*tag),
             seq: AtomicU64::new(0),
-            flush_epoch: AtomicUsize::new(0),
-            flushes: AtomicUsize::new(0),
+            flush_epoch,
+            flushes: AtomicU64::new(0),
+            append_epoch: Mutex::new(BTreeMap::new()),
         })
+    }
+
+    /// The flush-epoch in effect when the commit assigned `seq` was appended.
+    fn append_epoch_of(&self, seq: u64) -> u64 {
+        *self
+            .append_epoch
+            .lock()
+            .unwrap()
+            .get(&seq)
+            .expect("append epoch recorded for seq")
     }
 }
 
@@ -47,31 +74,105 @@ impl DurableProvider for FlushEpochDurable {
         _changes: &[Change],
         _timestamp: HlcTimestamp,
     ) -> Result<u64, ProviderError> {
-        Ok(self.seq.fetch_add(1, Ordering::SeqCst) + 1)
+        let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
+        // Record the flush-epoch in effect at append time, BEFORE any group flush
+        // for this run runs (Stage 1, fsync deferred).
+        let epoch = self.flush_epoch.load(Ordering::SeqCst);
+        self.append_epoch.lock().unwrap().insert(seq, epoch);
+        Ok(seq)
     }
     fn flush(&self) -> Result<Option<u64>, ProviderError> {
         self.flushes.fetch_add(1, Ordering::SeqCst);
+        // The R1 barrier: bump the shared watermark so any publish observed after
+        // this flush reads a strictly-greater epoch than the appends it covers.
         self.flush_epoch.fetch_add(1, Ordering::SeqCst);
         Ok(Some(self.seq.load(Ordering::SeqCst)))
     }
 }
 
+/// Fan-out provider that records, per published `NodeCreated`, the flush-epoch in
+/// effect at publish time (Stage 3). Paired with [`FlushEpochDurable`]: comparing
+/// the publish-epoch against the durable's append-epoch for the same commit
+/// proves the group flush ran strictly between append and publish.
+struct FlushEpochObserver {
+    tag: ProviderTag,
+    flush_epoch: FlushEpoch,
+    /// Node-id → flush-epoch observed when that node was published.
+    publish_epoch: Mutex<BTreeMap<u64, u64>>,
+}
+
+impl FlushEpochObserver {
+    fn new(tag: &[u8; 4], flush_epoch: FlushEpoch) -> Arc<Self> {
+        Arc::new(Self {
+            tag: ProviderTag(*tag),
+            flush_epoch,
+            publish_epoch: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    /// The flush-epoch in effect when the node with this id was published.
+    fn publish_epoch_of(&self, id: u64) -> u64 {
+        *self
+            .publish_epoch
+            .lock()
+            .unwrap()
+            .get(&id)
+            .expect("publish epoch recorded for node id")
+    }
+}
+
+impl IndexProvider for FlushEpochObserver {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn provider_tag(&self) -> ProviderTag {
+        self.tag
+    }
+    fn read_section(&self, _sub: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn write_section(&self, _sub: SubTag) -> Result<Vec<u8>, ProviderError> {
+        Ok(Vec::new())
+    }
+    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
+        if let Change::NodeCreated { id, .. } = change {
+            let epoch = self.flush_epoch.load(Ordering::SeqCst);
+            self.publish_epoch.lock().unwrap().insert(id.get(), epoch);
+        }
+        Ok(())
+    }
+    fn declared_sub_tags(&self) -> &[SubTag] {
+        &[]
+    }
+}
+
 #[test]
 fn t7_compact_boundary_durable_before_visible() {
-    // Real WAL. Seal A, B (unpublished), then compact() (seal_seq after them).
-    // Submit the compact-publish FIRST, then A, B. The committer publishes in
-    // seal_seq order: A, B flush+publish+ack BEFORE the dense compact stores
-    // (the compact is a hard flush boundary, F2). Final snapshot is dense AND
-    // contains A, B.
-    let dir = temp_dir("t7");
-    let wal = dir.join(DEFAULT_WAL_FILE_NAME);
+    // F2 ordering proof (durable-before-visible at the compact boundary), pinned
+    // by a flush-epoch watermark rather than only end-state. A synthetic
+    // FlushEpochDurable + FlushEpochObserver share a per-flush watermark; the
+    // durable records each commit's APPEND epoch (before its group flush) and the
+    // observer records each node's PUBLISH epoch (at fan-out). Because the group
+    // flush bumps the watermark between Stage-1 append and Stage-3 publish,
+    // publish_epoch(A,B) > append_epoch(A,B) proves A, B were FLUSHED before they
+    // were published. Compaction reclaims the in-memory holes (no real WAL needed
+    // — the dense layout comes from the graph, not the durable; real-WAL compact
+    // recovery is covered by T8). The compact is a hard flush boundary (F2):
+    // A, B flush+publish+ack BEFORE the dense Arc stores, and the final snapshot
+    // is dense AND contains A, B (the dense store is LAST).
+    let flush_epoch: FlushEpoch = Arc::new(AtomicU64::new(0));
+    let durable = FlushEpochDurable::new(b"FEP0", Arc::clone(&flush_epoch));
+    let observer = FlushEpochObserver::new(b"FOB0", Arc::clone(&flush_epoch));
     let shared = Arc::new(
-        SharedGraph::builder(GraphId::new(70_010))
-            .with_wal(&wal, WalConfig::default())
-            .unwrap()
-            .with_commit_batching(on(8, 8 * 1024 * 1024))
-            .build()
-            .unwrap(),
+        SharedGraph::from_graph_with_core_and_durables(
+            SeleneGraph::new(GraphId::new(70_010)),
+            vec![observer.clone() as Arc<dyn IndexProvider>],
+            vec![durable.clone()],
+            None,
+            None,
+            on(8, 8 * 1024 * 1024),
+        )
+        .unwrap(),
     );
 
     // Seed reclaimable holes so the compact actually densifies.
@@ -126,11 +227,28 @@ fn t7_compact_boundary_durable_before_visible() {
     let report = compactor.join().expect("compactor ok");
 
     // A, B durable (acked with a durable_at) and visible; report reclaimed.
-    assert!(outcome_a.durable_at.is_some());
-    assert!(outcome_b.durable_at.is_some());
+    let a_seq = outcome_a.durable_at.expect("A durable_at");
+    let b_seq = outcome_b.durable_at.expect("B durable_at");
     assert!(report.reclaimed_nodes >= 20, "report: {report:?}");
 
-    // Final snapshot is the dense compacted one AND contains A, B.
+    // ORDERING PROOF (the F2 / R1 barrier): for both A and B the group flush bumped
+    // the shared watermark strictly between their append and their publish, so
+    // each was durable BEFORE it became visible.
+    let a_pub = observer.publish_epoch_of(a.get());
+    let b_pub = observer.publish_epoch_of(b.get());
+    assert!(
+        a_pub > durable.append_epoch_of(a_seq),
+        "A published (epoch {a_pub}) only after its group flush (append epoch {})",
+        durable.append_epoch_of(a_seq),
+    );
+    assert!(
+        b_pub > durable.append_epoch_of(b_seq),
+        "B published (epoch {b_pub}) only after its group flush (append epoch {})",
+        durable.append_epoch_of(b_seq),
+    );
+
+    // Final snapshot is the dense compacted one AND contains A, B (the dense
+    // store ran LAST — after A, B flushed + published).
     let snap = shared.read();
     assert!(snap.is_node_alive(a));
     assert!(snap.is_node_alive(b));
@@ -149,7 +267,8 @@ fn t7b_compact_at_head_publishes_with_zero_flush_calls() {
     // A compact whose seal_seq is at next_publish_seq (no pending commit run)
     // publishes the dense Arc with ZERO flush calls — all lower seqs already
     // durable + visible.
-    let durable = FlushEpochDurable::new(b"FEP1");
+    let flush_epoch: FlushEpoch = Arc::new(AtomicU64::new(0));
+    let durable = FlushEpochDurable::new(b"FEP1", flush_epoch);
     let shared = SharedGraph::from_graph_with_core_and_durables(
         SeleneGraph::new(GraphId::new(70_011)),
         Vec::new(),
@@ -185,6 +304,99 @@ fn t7b_compact_at_head_publishes_with_zero_flush_calls() {
         flushes_before,
         "compact-at-head issues zero flush calls",
     );
+}
+
+// ───────────────── T2b: within-batch commit flush-order (R1 barrier) ─────────
+
+#[test]
+fn t2b_within_batch_commits_flush_before_publish() {
+    // The headline durable-before-visible guarantee for GROUPED commits (not just
+    // at the compact boundary): the single group flush precedes EVERY commit's
+    // publish in the run. Fan in a contiguous run under On; the FlushEpochDurable
+    // records each commit's append epoch, the FlushEpochObserver records each
+    // node's publish epoch, and we assert publish_epoch > append_epoch for every
+    // commit — i.e. the R1 barrier sits strictly between Stage-1 append and
+    // Stage-3 publish for grouped commits. Buffer the later seqs behind a gap and
+    // release seq 0 last so a genuine multi-member batch forms (>= 2 in one run).
+    let flush_epoch: FlushEpoch = Arc::new(AtomicU64::new(0));
+    let durable = FlushEpochDurable::new(b"FEP2", Arc::clone(&flush_epoch));
+    let observer = FlushEpochObserver::new(b"FOB2", Arc::clone(&flush_epoch));
+    let shared = Arc::new(
+        SharedGraph::from_graph_with_core_and_durables(
+            SeleneGraph::new(GraphId::new(70_012)),
+            vec![observer.clone() as Arc<dyn IndexProvider>],
+            vec![durable.clone()],
+            None,
+            None,
+            on(8, 8 * 1024 * 1024),
+        )
+        .unwrap(),
+    );
+
+    // Seal 4 commits (seal_seq 0..3) each forking the prior.
+    let mut sealeds = Vec::new();
+    let mut ids = Vec::new();
+    for label in ["p", "q", "r", "s"] {
+        let mut txn = shared.begin_write();
+        let id = txn
+            .mutator()
+            .create_node(LabelSet::single(istr(label)), PropertyMap::new())
+            .unwrap();
+        ids.push(id);
+        sealeds.push(txn.seal(None, None).expect("seals"));
+    }
+
+    // Withhold seq 0; submit seqs 3,2,1 first (buffer behind the gap), then seq 0
+    // last so the full [0,1,2,3] contiguous run drains as ONE batch with ONE flush.
+    let sealed_0 = sealeds.remove(0);
+    let mut handles = Vec::new();
+    while let Some(sealed) = sealeds.pop() {
+        let shared = Arc::clone(&shared);
+        handles.push(thread::spawn(move || {
+            shared
+                .submit_sealed_for_test(sealed)
+                .expect("buffered commit")
+        }));
+        for _ in 0..1_000 {
+            thread::yield_now();
+        }
+    }
+    let outcome_0 = shared.submit_sealed_for_test(sealed_0).expect("seq 0");
+    let mut durable_seqs = vec![outcome_0.durable_at.expect("durable_at")];
+    for handle in handles {
+        durable_seqs.push(handle.join().unwrap().durable_at.expect("durable_at"));
+    }
+
+    // The run grouped (fewer flushes than commits) — otherwise this would only be
+    // testing the degenerate cap-1 path.
+    assert!(
+        durable.flushes.load(Ordering::SeqCst) < 4,
+        "the 4 commits grouped into fewer than 4 flushes (got {})",
+        durable.flushes.load(Ordering::SeqCst),
+    );
+
+    // R1 barrier: every commit's append epoch is strictly below every commit's
+    // publish epoch — the group flush bumped the watermark strictly between
+    // Stage-1 append and Stage-3 publish for the whole run. Order-independent
+    // (max append epoch < min publish epoch) so the proof does not rely on which
+    // node id maps to which assigned seq.
+    let max_append = durable_seqs
+        .iter()
+        .map(|seq| durable.append_epoch_of(*seq))
+        .max()
+        .expect("at least one commit");
+    let min_publish = ids
+        .iter()
+        .map(|id| observer.publish_epoch_of(id.get()))
+        .min()
+        .expect("at least one node");
+    assert!(
+        min_publish > max_append,
+        "the group flush separated every append (max epoch {max_append}) from every \
+         publish (min epoch {min_publish}) — durable-before-visible for grouped commits",
+    );
+    assert_eq!(shared.read().node_count(), 4);
+    assert_eq!(shared.read().meta.generation, 4);
 }
 
 // ───────────────────────── T8 ─────────────────────────
@@ -229,11 +441,16 @@ fn t8_compact_recovery_after_crash() {
 
 #[test]
 fn t9_recovery_after_crash_batched() {
-    // On(16), real WAL; fan in 100 node-commits, get all acks, drop, reopen;
-    // assert all 100 recovered with gap-free ids.
+    // On(16), real WAL; fan in 100 node-commits from 8 threads, collect the
+    // acked NodeIds, drop, reopen; assert the recovered live id set equals
+    // EXACTLY the acked set — no holes, no extras (gap-free recovery; D11/D22:
+    // every acked external NodeId survives, and nothing un-acked leaks in). The
+    // mid-flood panic variant is covered separately (T5/T5b + committer.rs panic
+    // tests drive the poison path); here we pin acked ⇒ recovered with stable ids.
     let dir = temp_dir("t9");
     let wal = dir.join(DEFAULT_WAL_FILE_NAME);
     const TOTAL: usize = 100;
+    let acked_ids = Arc::new(Mutex::new(Vec::with_capacity(TOTAL)));
     {
         let shared = Arc::new(
             SharedGraph::builder(GraphId::new(70_030))
@@ -248,15 +465,19 @@ fn t9_recovery_after_crash_batched() {
             for t in 0..8 {
                 let shared = Arc::clone(&shared);
                 let barrier = Arc::clone(&barrier);
+                let acked_ids = Arc::clone(&acked_ids);
                 scope.spawn(move || {
                     barrier.wait();
                     let mut idx = t;
                     while idx < TOTAL {
                         let mut txn = shared.begin_write();
-                        txn.mutator()
+                        let id = txn
+                            .mutator()
                             .create_node(LabelSet::single(istr("F")), PropertyMap::new())
                             .unwrap();
                         txn.commit().expect("commit ok");
+                        // Only record AFTER the ack: this id is durable + visible.
+                        acked_ids.lock().unwrap().push(id);
                         idx += 8;
                     }
                 });
@@ -270,6 +491,24 @@ fn t9_recovery_after_crash_batched() {
         recovered.read().node_count(),
         TOTAL,
         "all acked commits recovered",
+    );
+
+    // Gap-free: the recovered live id set is EXACTLY the acked set.
+    let snap = recovered.read();
+    let mut acked: Vec<_> = acked_ids.lock().unwrap().clone();
+    acked.sort_unstable();
+    assert_eq!(acked.len(), TOTAL, "every commit's node id was recorded");
+    for id in &acked {
+        assert!(
+            snap.is_node_alive(*id),
+            "acked node {id:?} survived recovery",
+        );
+    }
+    // No extras: exactly TOTAL live nodes, all of them in the acked set.
+    assert_eq!(
+        snap.node_count(),
+        acked.len(),
+        "no un-acked id leaked into the recovered graph",
     );
 }
 
@@ -465,5 +704,78 @@ fn t13_cap_bounds_accumulation() {
         durable.write_count(),
         1 + TOTAL,
         "every commit appended once"
+    );
+    // With max_bytes=80, every >=1-change commit estimates over the byte cap and
+    // is taken ALONE (the >= 1 progress rule), so no batch ever exceeds 4 — here,
+    // it never exceeds 1. The COUNT cap is pinned directly by t13b below.
+    assert!(
+        durable.max_batch_size() <= 4,
+        "no batch exceeds the count cap of 4 (observed max {})",
+        durable.max_batch_size(),
+    );
+}
+
+#[test]
+fn t13b_count_cap_clamps_batch_size() {
+    // Directly pin the F4 COUNT cap: with max_bytes generous (so the count cap is
+    // the only binding constraint) and a fully-buffered contiguous run of 12
+    // commits, the committer must never coalesce more than max_commits=4 into one
+    // group flush. We seal 12 commits, buffer seqs 1..11 behind the seq-0 gap so
+    // they cannot drain piecemeal, then release seq 0 last — the whole [0..11] run
+    // is present in the reorder buffer when drain_contiguous_batch runs, so an
+    // uncapped committer would form one 12-member batch (max_batch_size == 12).
+    // With the cap it forms batches of 4 ⇒ max_batch_size == 4. The durable's
+    // Write/Flush event log makes batch size observable (writes between flushes).
+    const TOTAL: usize = 12;
+    const MAX_COMMITS: usize = 4;
+    let durable = CountingDurable::new(b"CN13");
+    let shared = Arc::new(graph_with_durable(
+        70_071,
+        durable.clone(),
+        on(MAX_COMMITS, 8 * 1024 * 1024),
+    ));
+
+    let mut sealeds = Vec::new();
+    for _ in 0..TOTAL {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(istr("Cap")), PropertyMap::new())
+            .unwrap();
+        sealeds.push(txn.seal(None, None).expect("seals"));
+    }
+
+    // Withhold seq 0; submit seqs 1..11 (buffer behind the gap), then seq 0 last.
+    let sealed_0 = sealeds.remove(0);
+    let mut handles = Vec::new();
+    while let Some(sealed) = sealeds.pop() {
+        let shared = Arc::clone(&shared);
+        handles.push(thread::spawn(move || {
+            shared
+                .submit_sealed_for_test(sealed)
+                .expect("buffered commit")
+        }));
+        for _ in 0..200 {
+            thread::yield_now();
+        }
+    }
+    shared.submit_sealed_for_test(sealed_0).expect("seq 0");
+    for handle in handles {
+        handle.join().expect("waiter ok");
+    }
+
+    assert_eq!(shared.read().node_count(), TOTAL, "no loss");
+    assert_eq!(durable.write_count(), TOTAL, "every commit appended once");
+    assert!(
+        durable.max_batch_size() <= MAX_COMMITS,
+        "no group-commit batch exceeds the count cap of {MAX_COMMITS} (observed max {})",
+        durable.max_batch_size(),
+    );
+    // And the cap actually engaged: with 12 fully-buffered contiguous commits a
+    // working committer coalesces into runs of MAX_COMMITS, so it must have formed
+    // at least one batch larger than 1 (otherwise the cap is untested).
+    assert!(
+        durable.max_batch_size() > 1,
+        "the buffered run coalesced into multi-member batches (observed max {})",
+        durable.max_batch_size(),
     );
 }
