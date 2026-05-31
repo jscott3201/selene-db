@@ -271,6 +271,19 @@ pub enum PersistError {
         /// Current WAL high-water mark.
         last_sequence: u64,
     },
+
+    /// A committed MANIFEST named an active WAL file other than the one this
+    /// build recovers from. The active-WAL name is a de-facto fixed contract
+    /// (always [`crate::DEFAULT_WAL_FILE_NAME`]); recovery opens that file by
+    /// name and rejects a divergent name rather than silently ignoring it.
+    #[error("manifest names unexpected active wal {observed:?}, expected {expected:?}")]
+    #[diagnostic(code(SLENE_P_032))]
+    UnexpectedActiveWal {
+        /// Active WAL name read from the committed MANIFEST.
+        observed: String,
+        /// Active WAL name this build recovers from.
+        expected: &'static str,
+    },
 }
 
 impl PersistError {
@@ -307,7 +320,8 @@ impl PersistError {
             | Self::WalSnapshotMismatch { .. }
             | Self::WalArchiveExists { .. }
             | Self::WalRotationIncomplete { .. }
-            | Self::WalRotationSequenceMismatch { .. } => "5GQL0",
+            | Self::WalRotationSequenceMismatch { .. }
+            | Self::UnexpectedActiveWal { .. } => "5GQL0",
         }
     }
 }

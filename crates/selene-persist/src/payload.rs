@@ -32,14 +32,17 @@ pub(crate) fn encode_changes(changes: &[Change]) -> PersistResult<EncodedPayload
 }
 
 pub(crate) fn decode_changes(bytes: &[u8], compressed: bool) -> PersistResult<Vec<Change>> {
-    let raw = if compressed {
-        decompress_zstd_bounded(bytes, MAX_WAL_ENTRY_BYTES, |len, max| {
+    // postcard decodes from a borrow, so the uncompressed branch hands `bytes`
+    // straight to the decoder rather than copying it into an owned buffer first.
+    // Only the compressed branch must materialize the decompressed payload.
+    if compressed {
+        let raw = decompress_zstd_bounded(bytes, MAX_WAL_ENTRY_BYTES, |len, max| {
             PersistError::PayloadTooLarge { len, max }
-        })?
+        })?;
+        postcard::from_bytes(&raw).map_err(|error| PersistError::PayloadCodec(error.to_string()))
     } else {
-        bytes.to_vec()
-    };
-    postcard::from_bytes(&raw).map_err(|error| PersistError::PayloadCodec(error.to_string()))
+        postcard::from_bytes(bytes).map_err(|error| PersistError::PayloadCodec(error.to_string()))
+    }
 }
 
 pub(crate) fn verify_checksum(header: &WalEntryHeader, bytes: &[u8]) -> PersistResult<()> {
@@ -61,7 +64,10 @@ mod tests {
     use std::sync::Arc;
 
     use proptest::prelude::*;
-    use selene_core::{Change, EdgeId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
+    use selene_core::{
+        Change, EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
+        Record, RecordTypeId, RecordTyped, SchemaChange, Value, intern,
+    };
 
     use super::*;
 
@@ -85,16 +91,117 @@ mod tests {
         }
     }
 
+    /// Full-fidelity `Value` generator covering every leaf variant the WAL frame
+    /// must round-trip inside a `PropertyMap` (the ledger's coverage-followup #1
+    /// surface): all numeric widths, `Decimal`, both string variants, `Bytes`,
+    /// temporals, `Bool`, `Null`, `Uuid`, plus the nested `List` / `Record` /
+    /// `RecordTyped` containers. `prop_recursive` bounds the nesting depth so the
+    /// generator terminates.
+    fn value_strategy() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(Value::Int),
+            any::<u64>().prop_map(Value::Uint),
+            any::<i128>().prop_map(Value::Int128),
+            any::<u128>().prop_map(Value::Uint128),
+            any::<f64>().prop_map(Value::Float),
+            any::<f32>().prop_map(Value::Float32),
+            any::<i64>().prop_map(|m| Value::Decimal(rust_decimal::Decimal::new(m, 3))),
+            "[a-z]{1,8}".prop_map(|s| Value::String(intern(&format!("payload.v.{s}")).unwrap())),
+            "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::ExternalString(Arc::from(s.as_str()))),
+            proptest::collection::vec(any::<u8>(), 0..24).prop_map(|b| Value::Bytes(Arc::from(b))),
+            Just(Value::Date("2024-06-15".parse().unwrap())),
+            Just(Value::LocalDateTime("2024-06-15T12:30:00".parse().unwrap())),
+            Just(Value::LocalTime("12:30:00".parse().unwrap())),
+            Just(Value::Duration("PT3H15M".parse().unwrap())),
+            any::<u128>().prop_map(|n| Value::Uuid(uuid::Uuid::from_u128(n))),
+            Just(Value::Null),
+        ];
+        leaf.prop_recursive(3, 16, 4, |inner| {
+            prop_oneof![
+                proptest::collection::vec(inner.clone(), 0..4).prop_map(Value::List),
+                proptest::collection::vec(("[a-z]{1,6}", inner.clone()), 0..3).prop_map(|fields| {
+                    Value::Record(Box::new(Record::Open(
+                        fields
+                            .into_iter()
+                            .map(|(k, v)| (intern(&format!("payload.f.{k}")).unwrap(), v))
+                            .collect(),
+                    )))
+                }),
+                proptest::collection::vec(proptest::option::of(inner), 0..3).prop_map(|values| {
+                    Value::RecordTyped(Box::new(RecordTyped {
+                        type_id: RecordTypeId::new(1),
+                        values: values.into_iter().collect(),
+                    }))
+                }),
+            ]
+        })
+    }
+
+    /// A `PropertyMap` carrying 0..4 distinct keys, each a full-fidelity `Value`.
+    fn property_map_strategy() -> impl Strategy<Value = PropertyMap> {
+        proptest::collection::vec(("[a-z]{1,6}", value_strategy()), 0..4).prop_map(|pairs| {
+            let pairs = pairs
+                .into_iter()
+                .map(|(k, v)| (intern(&format!("payload.k.{k}")).unwrap(), v));
+            PropertyMap::from_pairs(pairs).unwrap()
+        })
+    }
+
+    /// Reuse the core `SchemaChange::ALL` census so every schema-change variant
+    /// (including the heavy `GraphTypeCreated` / `NodeTypeAddedV2` shapes) flows
+    /// through the WAL frame, not just a hand-picked subset.
+    fn schema_change_strategy() -> impl Strategy<Value = SchemaChange> {
+        (0..SchemaChange::VARIANT_COUNT).prop_map(|idx| SchemaChange::ALL[idx]())
+    }
+
+    fn label_diff_strategy() -> impl Strategy<Value = LabelDiff> {
+        proptest::collection::vec("[a-z]{1,6}", 0..3).prop_map(|added| {
+            let added = added
+                .into_iter()
+                .map(|s| intern(&format!("payload.la.{s}")).unwrap());
+            LabelDiff::new(added, []).unwrap()
+        })
+    }
+
+    fn property_diff_strategy() -> impl Strategy<Value = PropertyDiff> {
+        (
+            proptest::collection::vec(("[a-z]{1,6}", value_strategy()), 0..3),
+            proptest::collection::vec("[a-z]{1,6}", 0..2),
+        )
+            .prop_map(|(set, removed)| {
+                let set = set
+                    .into_iter()
+                    .map(|(k, v)| (intern(&format!("payload.ds.{k}")).unwrap(), v));
+                let removed = removed
+                    .into_iter()
+                    .map(|s| intern(&format!("payload.dr.{s}")).unwrap());
+                PropertyDiff::new(set, removed).unwrap()
+            })
+    }
+
     fn change_strategy() -> impl Strategy<Value = Change> {
         let node_label = provider("payload.node");
         let edge_label = provider("payload.edge");
         let prop = provider("payload.property");
         prop_oneof![
-            (1_u64..10_000).prop_map(move |id| Change::NodeCreated {
-                id: NodeId::new(id),
-                labels: LabelSet::single(node_label),
-                properties: PropertyMap::from_pairs([(prop, Value::Int(id as i64))]).unwrap(),
+            (1_u64..10_000, property_map_strategy()).prop_map(move |(id, properties)| {
+                Change::NodeCreated {
+                    id: NodeId::new(id),
+                    labels: LabelSet::single(node_label),
+                    properties,
+                }
             }),
+            (
+                1_u64..10_000,
+                label_diff_strategy(),
+                property_diff_strategy()
+            )
+                .prop_map(|(id, labels_diff, properties_diff)| Change::NodeUpdated {
+                    id: NodeId::new(id),
+                    labels_diff,
+                    properties_diff,
+                }),
             (1_u64..10_000).prop_map(|id| Change::NodeDeleted {
                 id: NodeId::new(id),
             }),
@@ -106,12 +213,20 @@ mod tests {
                 id: NodeId::new(id),
                 label: node_label,
             }),
-            (1_u64..10_000, 1_u64..10_000).prop_map(move |(id, target)| Change::EdgeCreated {
-                id: EdgeId::new(id),
-                label: edge_label,
-                source: NodeId::new(id),
-                target: NodeId::new(target),
-                properties: PropertyMap::new(),
+            (1_u64..10_000, 1_u64..10_000, property_map_strategy()).prop_map(
+                move |(id, target, properties)| Change::EdgeCreated {
+                    id: EdgeId::new(id),
+                    label: edge_label,
+                    source: NodeId::new(id),
+                    target: NodeId::new(target),
+                    properties,
+                }
+            ),
+            (1_u64..10_000, property_diff_strategy()).prop_map(|(id, properties_diff)| {
+                Change::EdgeUpdated {
+                    id: EdgeId::new(id),
+                    properties_diff,
+                }
             }),
             (1_u64..10_000).prop_map(|id| Change::EdgeDeleted {
                 id: EdgeId::new(id),
@@ -119,6 +234,10 @@ mod tests {
             (1_u64..10_000).prop_map(move |id| Change::EdgePropertyRemoved {
                 id: EdgeId::new(id),
                 property: prop,
+            }),
+            schema_change_strategy().prop_map(|change| Change::SchemaChanged {
+                graph: GraphId::new(1),
+                change,
             }),
             Just(Change::NodesOfTypeTruncated { label: node_label }),
             Just(Change::EdgesOfTypeTruncated { label: edge_label }),
@@ -173,6 +292,51 @@ mod tests {
             verify_checksum(&header, &encoded.bytes),
             Err(PersistError::ChecksumMismatch { sequence: 7 })
         ));
+    }
+
+    #[test]
+    fn compression_threshold_boundary_is_inclusive_at_128() {
+        // The `>= COMPRESS_THRESHOLD` gate in encode_changes keys on the encoded
+        // (postcard) length, not the raw byte-buffer length. Grow the byte buffer
+        // one at a time until the encoded length crosses 127 -> 128, then assert
+        // exactly-127 stays uncompressed and exactly-128 compresses. This pins the
+        // off-by-one (`>` vs `>=`) the codec tests far from the boundary can't.
+        assert_eq!(COMPRESS_THRESHOLD, 128);
+
+        let encoded_len = |buf_len: usize| -> usize {
+            let changes = vec![change(vec![0_u8; buf_len])];
+            postcard::to_stdvec(&changes).unwrap().len()
+        };
+
+        // Find a buffer whose encoded length is exactly 127, and the +1 buffer.
+        let mut buf_at_127 = None;
+        for buf_len in 0..512 {
+            if encoded_len(buf_len) == 127 {
+                buf_at_127 = Some(buf_len);
+                break;
+            }
+        }
+        let buf_127 = buf_at_127.expect("a buffer encoding to exactly 127 bytes exists");
+        // postcard encodes Bytes length as a varint; below 128 the length byte is
+        // one byte, so +1 raw byte == +1 encoded byte at this boundary.
+        assert_eq!(encoded_len(buf_127), 127, "127-byte encoded payload");
+        assert_eq!(encoded_len(buf_127 + 1), 128, "128-byte encoded payload");
+
+        let at_127 = vec![change(vec![0_u8; buf_127])];
+        let enc_127 = encode_changes(&at_127).unwrap();
+        assert_eq!(
+            enc_127.flags, 0,
+            "127-byte encoded payload stays uncompressed"
+        );
+        assert_eq!(decode_changes(&enc_127.bytes, false).unwrap(), at_127);
+
+        let at_128 = vec![change(vec![0_u8; buf_127 + 1])];
+        let enc_128 = encode_changes(&at_128).unwrap();
+        assert_eq!(
+            enc_128.flags, FLAG_PAYLOAD_COMPRESSED,
+            "128-byte encoded payload is compressed (>= threshold)"
+        );
+        assert_eq!(decode_changes(&enc_128.bytes, true).unwrap(), at_128);
     }
 
     #[test]

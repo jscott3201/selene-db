@@ -15,10 +15,7 @@ use crate::manifest::Manifest;
 use crate::payload::{encode_changes, verify_checksum};
 use crate::retention::{PruneOutcome, RetentionPolicy};
 use crate::snapshot_writer::SnapshotBuilder;
-use crate::writer_rotation::{
-    RotationInputs, WalRotationOutcome, archive_current_wal, reset_active_wal_file,
-    rotate_with_manifest, wal_archive_path,
-};
+use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
 /// Conventional v1.0 single-file WAL name used by embedders.
@@ -302,60 +299,6 @@ impl WalWriter {
     #[must_use]
     pub const fn entries_since_fsync(&self) -> u32 {
         self.entries_since_fsync
-    }
-
-    /// Rotate this WAL after a durable snapshot has been finalized.
-    ///
-    /// The current WAL is fsynced, copied to an archive file in the same
-    /// directory as `wal.{last_sequence}.archive`, and then truncated in place
-    /// to a fresh standard WAL header seeded with `new_snapshot_seq`.
-    ///
-    /// A second mutable borrow cannot overlap the rotation:
-    ///
-    /// ```compile_fail
-    /// # use selene_persist::WalWriter;
-    /// fn cannot_overlap(writer: &mut WalWriter) {
-    ///     let active = writer;
-    ///     let _ = writer.rotate(1);
-    ///     let _ = active.last_sequence();
-    /// }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed snapshot-sequence error when the supplied snapshot does
-    /// not exactly cover the current WAL, I/O errors from fsync/archive/header
-    /// writes, a typed archive-exists error when the archive path is already
-    /// occupied, or a typed rotation-incomplete error if the archive commit
-    /// happened but the active WAL could not be rewritten.
-    pub fn rotate(&mut self, new_snapshot_seq: u64) -> PersistResult<WalRotationOutcome> {
-        if new_snapshot_seq != self.last_sequence {
-            return Err(PersistError::WalRotationSequenceMismatch {
-                snapshot_seq: new_snapshot_seq,
-                last_sequence: self.last_sequence,
-            });
-        }
-        self.flush()?;
-        let archived_last_sequence = self.last_sequence;
-        let archived_path = wal_archive_path(&self.path, archived_last_sequence);
-        archive_current_wal(&mut self.file, &archived_path, self.committed_offset)?;
-
-        if reset_active_wal_file(&mut self.file, new_snapshot_seq).is_err() {
-            return Err(PersistError::WalRotationIncomplete {
-                archived_path,
-                new_path: self.path.clone(),
-            });
-        }
-
-        self.last_sequence = new_snapshot_seq;
-        self.snapshot_seq = new_snapshot_seq;
-        self.committed_offset = WAL_FILE_HEADER_LEN as u64;
-        self.entries_since_fsync = 0;
-        Ok(WalRotationOutcome {
-            archived_path,
-            new_path: self.path.clone(),
-            archived_last_sequence,
-        })
     }
 
     /// Crash-safe rotate: finalize `builder`, commit a MANIFEST, then reset.
@@ -900,6 +843,61 @@ mod tests {
         .unwrap();
         assert_eq!(writer.last_sequence(), 101);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn concurrent_open_admits_exactly_one_writer() {
+        // The exclusive OS lock is the single-writer invariant. Race N threads to
+        // open the same WAL: exactly one must win (Ok), every other must observe
+        // WriterLockHeld — never a second writer corrupting the log. Every winning
+        // writer is parked in a shared vec and NOT dropped until all threads have
+        // finished their open attempt, so a winner's lock cannot be released and
+        // re-acquired mid-race. That makes the count deterministically exactly one.
+        use std::sync::{Arc as StdArc, Barrier, Mutex};
+
+        let path = temp_path("concurrent-lock");
+        // Ensure the file exists first so every thread races the lock, not create.
+        drop(WalWriter::open(&path, WalConfig::default()).unwrap());
+
+        const THREADS: usize = 8;
+        let start = StdArc::new(Barrier::new(THREADS));
+        // Winners deposit their live writer here; the lock stays held until the
+        // vec is dropped after every join.
+        let winners: StdArc<Mutex<Vec<WalWriter>>> = StdArc::new(Mutex::new(Vec::new()));
+        let path = StdArc::new(path);
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let start = StdArc::clone(&start);
+                let winners = StdArc::clone(&winners);
+                let path = StdArc::clone(&path);
+                std::thread::spawn(move || {
+                    start.wait();
+                    match WalWriter::open(&path, WalConfig::default()) {
+                        Ok(writer) => {
+                            winners.lock().unwrap().push(writer);
+                            true
+                        }
+                        Err(PersistError::WriterLockHeld) => false,
+                        Err(other) => panic!("unexpected open error: {other:?}"),
+                    }
+                })
+            })
+            .collect();
+
+        let mut wins = 0_usize;
+        for handle in handles {
+            if handle.join().unwrap() {
+                wins += 1;
+            }
+        }
+        assert_eq!(
+            wins, 1,
+            "exactly one concurrent writer may hold the exclusive lock"
+        );
+        assert_eq!(winners.lock().unwrap().len(), 1);
+        // Drop the single winning writer (releasing the OS lock) before cleanup.
+        winners.lock().unwrap().clear();
+        let _ = fs::remove_file(path.as_path());
     }
 
     #[test]

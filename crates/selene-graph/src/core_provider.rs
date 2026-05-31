@@ -358,10 +358,9 @@ impl RecoveryProvider for CoreProvider {
             .map_err(box_provider_error)
     }
 
-    fn on_change(&self, change: &Change) -> RecoveryResult<()> {
-        self.on_change_inner(change).map_err(box_provider_error)
-    }
-
+    // `on_changes` is the sole entry point WAL replay invokes; the per-change
+    // `RecoveryProvider::on_change` default is unused for this provider, so it is
+    // deliberately not overridden.
     fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
         for change in changes {
             self.on_change_inner(change).map_err(box_provider_error)?;

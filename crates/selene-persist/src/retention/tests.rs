@@ -406,7 +406,7 @@ fn prune_drops_manifest_seq_whose_file_vanished() {
 #[test]
 fn prune_ignores_audit_log_file() {
     // Seam-D guarantee (Item 7): snapshot/WAL retention never touches audit.log,
-    // so pack-lifecycle audit survives WAL-archive pruning. prune scans only
+    // so engine audit events survive WAL-archive pruning. prune scans only
     // `snapshot.{seq}.snap` / `wal.{seq}.archive` names; `audit.log` matches
     // neither and is left untouched even under the most aggressive policy.
     let dir = temp_dir("ignore-audit");
@@ -427,6 +427,45 @@ fn prune_ignores_audit_log_file() {
 
     assert!(audit.exists(), "audit.log must survive WAL/snapshot prune");
     assert_eq!(fs::read(&audit).unwrap(), b"SLAU-engine-audit-events");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn prune_idempotent_noop_leaves_manifest_byte_identical() {
+    // The "do not rewrite when the retained archive set is unchanged"
+    // optimization avoids a needless dir-fsync + torn-MANIFEST window. Pin it:
+    // run prune to a stable state, snapshot the committed MANIFEST bytes, run a
+    // second prune under the same policy, and assert the MANIFEST is byte-for-byte
+    // untouched (the second prune is a true no-op).
+    let dir = temp_dir("idempotent-noop");
+    snap(&dir, 10, b"live");
+    snap(&dir, 9, b"pred");
+    arch(&dir, 8, b"a8");
+    arch(&dir, 9, b"a9");
+    write_manifest(&dir, 10, vec![8, 9]);
+
+    let policy = RetentionPolicy::default();
+    // First prune reaches the stable retained set.
+    let first = prune(&dir, &policy).unwrap();
+
+    let manifest_path = dir.join(crate::MANIFEST_FILE_NAME);
+    let bytes_after_first = fs::read(&manifest_path).unwrap();
+
+    // Second prune under the same policy must change nothing.
+    let second = prune(&dir, &policy).unwrap();
+    assert!(
+        second.deleted_snapshots.is_empty() && second.deleted_wal_archives.is_empty(),
+        "second prune must reclaim nothing"
+    );
+    assert_eq!(second.bytes_reclaimed, 0);
+    assert_eq!(second.retained_snapshots, first.retained_snapshots);
+    assert_eq!(second.retained_wal_archives, first.retained_wal_archives);
+
+    let bytes_after_second = fs::read(&manifest_path).unwrap();
+    assert_eq!(
+        bytes_after_first, bytes_after_second,
+        "idempotent prune must leave the MANIFEST byte-identical"
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
