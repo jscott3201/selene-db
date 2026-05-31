@@ -37,8 +37,8 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::IdOverflow`] when the allocator advances past the
-    /// v1 row-index range (max 2^32 rows).
+    /// Returns [`GraphError::RowSpaceExhausted`] when the dense row store fills
+    /// the v1 row-index range (max 2^32 rows).
     pub fn create_node(&mut self, labels: LabelSet, mut props: PropertyMap) -> GraphResult<NodeId> {
         fill_node_defaults(self.txn.read(), &labels, &mut props)?;
         let id = self.txn.allocator.allocate_node();
@@ -55,10 +55,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real row
                 // is u32::MAX - 1, so a live row never aliases the sentinel.
                 .filter(|&row| row != u32::MAX)
-                .ok_or(GraphError::IdOverflow {
+                .ok_or(GraphError::RowSpaceExhausted {
                     kind: "node",
-                    raw: id.get(),
-                    max: u32::MAX as u64,
+                    rows: graph.node_store.len() as u64,
+                    max_rows: u32::MAX as u64,
                 })?;
             // BRIEF-153 fix-cycle C2: run property-index admission BEFORE
             // mutating row state so a cap-exhaustion error rolls back
@@ -115,10 +115,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             let row = u32::try_from(graph.edge_store.len())
                 .ok()
                 .filter(|&row| row != u32::MAX) // u32::MAX is RowIndex::TOMBSTONE
-                .ok_or(GraphError::IdOverflow {
+                .ok_or(GraphError::RowSpaceExhausted {
                     kind: "edge",
-                    raw: id.get(),
-                    max: u32::MAX as u64,
+                    rows: graph.edge_store.len() as u64,
+                    max_rows: u32::MAX as u64,
                 })?;
             graph.edge_store.label.push(label);
             graph.edge_store.source.push(source);
@@ -447,10 +447,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         Ok(())
     }
 
-    /// Append a schema-change WAL payload.
+    /// Append a raw [`SchemaChange`] WAL payload through the write funnel.
     ///
-    /// This is a pass-through accumulator. Catalog graph mutation and
-    /// closed-graph validation are handled by higher-level validation layers.
+    /// This is a pass-through accumulator: catalog graph mutation and
+    /// closed-graph validation are handled by higher-level validation layers
+    /// (the typed catalog DDL methods on this `Mutator` — e.g. `create_node_type`
+    /// — call those layers and then funnel here).
+    ///
+    /// Why: this is the single, canonical funnel entry for a `SchemaChanged`
+    /// change record (hard rule 11 — every mutation routes through the one
+    /// `Mutator`). It is intentionally retained as a `pub` funnel surface even
+    /// though no GQL caller reaches it directly today: the catalog DDL methods
+    /// are the production producers, and keeping the low-level entry public means
+    /// any future schema-event producer routes through the same funnel rather
+    /// than re-implementing the write path. Tests and benches drive it directly
+    /// to exercise the raw funnel without the DDL validation layer on top.
     pub fn schema_change(&mut self, graph: GraphId, change: SchemaChange) {
         self.txn
             .changes
@@ -566,9 +577,11 @@ fn remove_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, 
 }
 
 fn insert_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: IStr, row: u32) {
-    let mut bitmap = index.get(&label).cloned().unwrap_or_default();
-    bitmap.insert(row);
-    index.insert(label, bitmap);
+    // In-place insert via `entry().or_default()`: the rebuild path uses the same
+    // idiom (see `consistency.rs` / `typed_index.rs`). `guard_mut` already gives
+    // unique ownership of the bitmap (Arc::make_mut), so we never clone the whole
+    // RoaringBitmap per label per node — bulk-loading one label is O(N), not O(N²).
+    index.entry(label).or_default().insert(row);
 }
 
 fn remove_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: &IStr, row: u32) {

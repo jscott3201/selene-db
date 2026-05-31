@@ -1,4 +1,4 @@
-//! CORE graph compaction mechanism (D23, BRIEF-Item-4b).
+//! CORE graph compaction mechanism (BRIEF-Item-4b / 4c).
 //!
 //! [`compact_core`] is a pure transform: given a [`SeleneGraph`], it builds a
 //! fresh graph whose rows are dense (every dead / aborted-tx hole row dropped),
@@ -38,45 +38,12 @@
 
 use std::collections::HashSet;
 
-use selene_core::{EdgeId, NodeId};
+use selene_core::NodeId;
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::TypedIndex;
-
-/// The external ids that survive a compaction — the CORE liveness set.
-///
-/// Membership is by *external* id (stable across compaction, D22), never by
-/// internal `RowIndex`. [`compact_core`] produces this set; it is the single
-/// source of truth for which `NodeId`/`EdgeId` the dense graph retains.
-#[derive(Clone, Debug, Default)]
-pub struct LiveIdSet {
-    /// Surviving (alive) external node ids.
-    pub nodes: HashSet<NodeId>,
-    /// Surviving (alive) external edge ids.
-    pub edges: HashSet<EdgeId>,
-}
-
-impl LiveIdSet {
-    /// Construct an empty live set.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Whether `id` survives the compaction.
-    #[must_use]
-    pub fn contains_node(&self, id: NodeId) -> bool {
-        self.nodes.contains(&id)
-    }
-
-    /// Whether `id` survives the compaction.
-    #[must_use]
-    pub fn contains_edge(&self, id: EdgeId) -> bool {
-        self.edges.contains(&id)
-    }
-}
 
 /// What CORE reclaimed during a compaction pass.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -91,32 +58,8 @@ pub struct CompactionReport {
 pub struct CompactedCore {
     /// The dense, fully-rebuilt compacted graph (no dead/hole rows).
     pub graph: SeleneGraph,
-    /// The surviving external ids the dense graph retains.
-    pub live: LiveIdSet,
     /// What CORE reclaimed.
     pub report: CompactionReport,
-}
-
-/// Compute the live external-id set from a graph's alive rows.
-///
-/// Reads the stable id from `row_to_id` per alive row (never `row + 1`); hole
-/// rows resolve to `None` and are skipped.
-#[must_use]
-pub fn live_id_set(graph: &SeleneGraph) -> LiveIdSet {
-    let mut live = LiveIdSet::new();
-    live.nodes.reserve(graph.node_store.alive.len() as usize);
-    live.edges.reserve(graph.edge_store.alive.len() as usize);
-    for row in graph.node_store.alive.iter() {
-        if let Some(id) = graph.node_id_for_row(RowIndex::new(row)) {
-            live.nodes.insert(id);
-        }
-    }
-    for row in graph.edge_store.alive.iter() {
-        if let Some(id) = graph.edge_id_for_row(RowIndex::new(row)) {
-            live.edges.insert(id);
-        }
-    }
-    live
 }
 
 /// Compact `graph`: drop every dead / hole row, renumber rows dense (ascending
@@ -168,8 +111,6 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     }
 
     let mut edges = EdgeStore::new();
-    let mut live_edges: HashSet<EdgeId> =
-        HashSet::with_capacity(graph.edge_store.alive.len() as usize);
     for old_row in graph.edge_store.alive.iter() {
         let r = old_row as usize;
         let id = graph
@@ -222,7 +163,6 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
                 .ok_or_else(|| column_missing("properties"))?,
         );
         edges.row_to_id.push(id);
-        live_edges.insert(id);
     }
     let edge_len = edges.label.len() as u32;
     for new_row in 0..edge_len {
@@ -279,16 +219,8 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
         });
     }
 
-    // Single source of truth: the live set IS the ids the compaction kept, so
-    // the LiveIdSet 4c hands to downstream compactors cannot drift from what the
-    // dense graph holds.
-    let live = LiveIdSet {
-        nodes: live_nodes,
-        edges: live_edges,
-    };
     Ok(CompactedCore {
         graph: dense,
-        live,
         report,
     })
 }

@@ -213,8 +213,9 @@ fn create_node_past_u32_id_space_succeeds_with_append_rows() {
     // BRIEF-Item-4c decoupled id-space (u64) from row-space (u32). A graph whose
     // monotonic high-water id is already past u32::MAX (e.g. after heavy churn +
     // compaction) can still create nodes: the new row is APPENDED at the dense
-    // end, not derived from the huge id. (Pre-4c this returned IdOverflow because
-    // row = id - 1; the row cap now only triggers at 2^32 live rows.)
+    // end, not derived from the huge id. (Pre-4c this returned an id-overflow
+    // error because row = id - 1; the row cap — now RowSpaceExhausted — only
+    // triggers at 2^32 live rows.)
     let mut graph = SeleneGraph::new(GraphId::new(1));
     graph.meta.next_node_id = u32::MAX as u64 + 2;
     let shared = SharedGraph::from_graph(graph);

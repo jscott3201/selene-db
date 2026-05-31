@@ -35,8 +35,9 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// * **O(1) WAL.** Exactly one [`Change::GraphReset`] is pushed regardless of
     ///   the number of rows removed. The per-row `NodeDeleted`/`EdgeDeleted`
     ///   tombstones are staged into the fan-out buffer (`truncate_expansions`)
-    ///   only, never into the persisted changeset, so derived state (e.g.
-    ///   extension-provider indexes) is reclaimed without leaks while the WAL stays constant-size.
+    ///   only, never into the persisted changeset, so derived state (e.g. the
+    ///   label/property indexes) is reclaimed without leaks while the WAL stays
+    ///   constant-size.
     /// * **Idempotent.** On an already-empty + open graph the row enumeration is
     ///   empty and `bound_type` is already `None`; a `GraphReset` is still pushed
     ///   with an empty staged expansion (which the fan-out expander drops), so a

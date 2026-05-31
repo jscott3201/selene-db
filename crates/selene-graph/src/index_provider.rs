@@ -1,6 +1,12 @@
-//! Stateful extension-provider protocol per spec 06.
+//! Stateful provider protocol for engine-owned derived state.
+//!
+//! `IndexProvider` is the engine-internal hook through which the CORE storage
+//! provider (and the recovery-side replay providers) participate in snapshot
+//! bootstrap and per-commit mutation observation. selene-db is a single native
+//! engine with no loadable extensions: the only production implementor is
+//! [`crate::CoreProvider`].
 
-use std::{any::Any, fmt};
+use std::fmt;
 
 use selene_core::Change;
 
@@ -37,12 +43,12 @@ impl fmt::Display for SubTag {
     }
 }
 
-/// Stateful extension hook for derived state participation.
+/// Stateful hook for engine-owned derived-state participation.
 ///
-/// Spec 06 originally used `&mut self` for [`IndexProvider::read_section`] and
-/// [`IndexProvider::on_change`]. `selene-graph` stores providers as
-/// `Arc<dyn IndexProvider>`, so providers use interior mutability for owned
-/// state. The engine guarantees serialized calls per graph.
+/// [`IndexProvider::read_section`] and [`IndexProvider::on_change`] take
+/// `&self`: `selene-graph` stores providers as `Arc<dyn IndexProvider>`, so
+/// providers use interior mutability for owned state. The engine guarantees
+/// serialized calls per graph.
 ///
 /// ## Re-entrancy contract
 ///
@@ -61,9 +67,6 @@ impl fmt::Display for SubTag {
 /// Provider authors who spawn threads inside `on_change` must not block
 /// the callback on those threads' progress.
 pub trait IndexProvider: Send + Sync + 'static {
-    /// Erased self reference for downcasting by procedure-pack adapters.
-    fn as_any(&self) -> &dyn Any;
-
     /// Stable 4-byte ASCII tag uniquely identifying this provider.
     fn provider_tag(&self) -> ProviderTag;
 
@@ -111,30 +114,12 @@ pub enum ProviderError {
         reason: String,
     },
 
-    /// A required snapshot subsection was absent.
-    #[error("snapshot section missing: {sub_tag:?}")]
-    #[diagnostic(code(SLENE_G_011))]
-    SectionMissing {
-        /// Missing subsection tag.
-        sub_tag: SubTag,
-    },
-
     /// Provider state could not be serialized.
     #[error("provider serialization failed: {reason}")]
     #[diagnostic(code(SLENE_G_012))]
     SerializationFailed {
         /// Human-readable serialization failure reason.
         reason: String,
-    },
-
-    /// Snapshot recovery found a section whose provider is not registered.
-    #[error("unknown provider for tag {tag:?} sub_tag {sub_tag:?}")]
-    #[diagnostic(code(SLENE_G_013))]
-    UnknownProvider {
-        /// Unknown provider tag.
-        tag: ProviderTag,
-        /// Provider-local subsection tag.
-        sub_tag: SubTag,
     },
 
     /// Provider state or registration is inconsistent.
@@ -185,10 +170,6 @@ mod tests {
     }
 
     impl IndexProvider for RecordingProvider {
-        fn as_any(&self) -> &dyn std::any::Any {
-            self
-        }
-
         fn provider_tag(&self) -> ProviderTag {
             self.tag
         }
@@ -233,9 +214,7 @@ mod tests {
 
     #[rstest]
     #[case(ProviderError::InvalidPayload { reason: "bad".to_owned() })]
-    #[case(ProviderError::SectionMissing { sub_tag: SubTag(*b"MISS") })]
     #[case(ProviderError::SerializationFailed { reason: "io".to_owned() })]
-    #[case(ProviderError::UnknownProvider { tag: ProviderTag(*b"DEMO"), sub_tag: SubTag(*b"SUBT") })]
     #[case(ProviderError::Inconsistent { reason: "duplicate".to_owned() })]
     fn provider_error_gqlstatus_mappings(#[case] provider_error: ProviderError) {
         let graph_error = GraphError::Provider(provider_error);

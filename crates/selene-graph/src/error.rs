@@ -47,16 +47,20 @@ pub enum GraphError {
         id: EdgeId,
     },
 
-    /// Allocator advanced past the v1 row-addressable range (max 2^32 rows).
-    #[error("{kind} id {raw} exceeds the v1 row-index range (max {max})")]
+    /// The dense row store filled the v1 row-addressable range (max 2^32 rows).
+    ///
+    /// Post-4c the cap is a *row count*, not an id value: rows append at the
+    /// dense end and `u32::MAX` is reserved as `RowIndex::TOMBSTONE`, so the last
+    /// addressable row is `u32::MAX - 1`.
+    #[error("{kind} row store is full ({rows} rows; max {max_rows})")]
     #[diagnostic(code(SLENE_G_005))]
-    IdOverflow {
+    RowSpaceExhausted {
         /// `"node"` or `"edge"`.
         kind: &'static str,
-        /// The raw u64 ID that overflowed.
-        raw: u64,
-        /// The maximum addressable raw ID.
-        max: u64,
+        /// The current row count that hit the cap.
+        rows: u64,
+        /// The maximum addressable row count.
+        max_rows: u64,
     },
 
     /// The graph snapshot violates a structural invariant (e.g., row count
@@ -128,7 +132,7 @@ pub enum GraphError {
 
     /// A composite property index already exists for this `(label, properties...)`.
     #[error("composite property index already exists for ({label}, {properties:?})")]
-    #[diagnostic(code(SLENE_G_010))]
+    #[diagnostic(code(SLENE_G_020))]
     CompositePropertyIndexAlreadyExists {
         /// Indexed node label.
         label: IStr,
@@ -182,7 +186,7 @@ impl GraphError {
             | Self::EdgeNotFound { .. }
             | Self::NodeNotAlive { .. }
             | Self::EdgeNotAlive { .. } => "22G03",
-            Self::IdOverflow { .. } => "53000",
+            Self::RowSpaceExhausted { .. } => "53000",
             Self::Inconsistent { .. } => "5GQL0",
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
@@ -212,7 +216,7 @@ mod tests {
     #[case(GraphError::NodeNotAlive { id: NodeId::new(1) }, "22G03")]
     #[case(GraphError::EdgeNotAlive { id: EdgeId::new(1) }, "22G03")]
     #[case(
-        GraphError::IdOverflow { kind: "node", raw: 5_000_000_000, max: 4_294_967_296 },
+        GraphError::RowSpaceExhausted { kind: "node", rows: 4_294_967_295, max_rows: 4_294_967_295 },
         "53000"
     )]
     #[case(
@@ -286,5 +290,146 @@ mod tests {
             outer(),
             Err(GraphError::Core(CoreError::ZeroIdentifier))
         ));
+    }
+
+    /// Internal miette `SLENE_G_*` diagnostic codes must be unique across the
+    /// graph-crate diagnostic enums (`GraphError`, `TypeViolation`,
+    /// `ProviderError`). A reused code makes two semantically different errors
+    /// indistinguishable in diagnostics. (GRAPH-42 regression guard.)
+    #[test]
+    fn internal_diagnostic_codes_are_unique() {
+        use miette::Diagnostic;
+        use selene_core::{LabelSet, PropertyValueType};
+
+        use crate::graph_types::EdgeEndpointDef;
+        use crate::type_validator::EntityId;
+
+        let lbl = intern("codes.label").unwrap();
+        let prop = intern("codes.property").unwrap();
+
+        // One representative of every code-carrying GraphError variant (the
+        // transparent `TypeViolation`/`Core`/`Persist`/`Provider` wrappers carry
+        // no own code).
+        let graph_errors: Vec<GraphError> = vec![
+            GraphError::NodeNotFound { id: NodeId::new(1) },
+            GraphError::EdgeNotFound { id: EdgeId::new(1) },
+            GraphError::NodeNotAlive { id: NodeId::new(1) },
+            GraphError::EdgeNotAlive { id: EdgeId::new(1) },
+            GraphError::RowSpaceExhausted {
+                kind: "node",
+                rows: 1,
+                max_rows: 1,
+            },
+            GraphError::Inconsistent {
+                reason: "x".to_owned(),
+            },
+            GraphError::PropertyIndexAlreadyExists {
+                label: lbl,
+                property: prop,
+            },
+            GraphError::PropertyIndexNotFound {
+                label: lbl,
+                property: prop,
+            },
+            GraphError::IndexValueRejected {
+                label: lbl,
+                property: prop,
+                expected_kind: TypedIndexKind::I64,
+                observed: "String",
+            },
+            GraphError::IndexAdmissionExhausted {
+                label: lbl,
+                property: prop,
+                source: CoreError::IStrCapExceeded { count: 2, max: 1 },
+            },
+            GraphError::CompositePropertyIndexAlreadyExists {
+                label: lbl,
+                properties: Default::default(),
+            },
+            GraphError::Durable {
+                reason: "x".to_owned(),
+            },
+            GraphError::Cancelled,
+        ];
+
+        let type_violations: Vec<TypeViolation> = vec![
+            TypeViolation::UnknownNodeLabel {
+                id: NodeId::new(1),
+                labels: LabelSet::new(),
+            },
+            TypeViolation::UnknownEdgeLabel {
+                id: EdgeId::new(1),
+                label: lbl,
+            },
+            TypeViolation::EdgeEndpointTypeMismatch {
+                id: EdgeId::new(1),
+                label: lbl,
+                expected_source_type: EdgeEndpointDef::Any,
+                observed_source_type: 0,
+                expected_target_type: EdgeEndpointDef::Any,
+                observed_target_type: 0,
+            },
+            TypeViolation::MissingRequiredProperty {
+                entity_id: EntityId::Node(NodeId::new(1)),
+                property: prop,
+                declared_in: lbl,
+            },
+            TypeViolation::PropertyTypeMismatch {
+                entity_id: EntityId::Node(NodeId::new(1)),
+                property: prop,
+                expected: PropertyValueType::Int,
+                observed: "String",
+            },
+            TypeViolation::ExtensionValueRejected {
+                entity_id: EntityId::Node(NodeId::new(1)),
+                property: prop,
+            },
+            TypeViolation::UndeclaredProperty {
+                entity_id: EntityId::Node(NodeId::new(1)),
+                property: prop,
+            },
+            TypeViolation::ImmutablePropertyUpdate {
+                entity_id: EntityId::Node(NodeId::new(1)),
+                property: prop,
+                declared_in: lbl,
+            },
+        ];
+
+        let provider_errors: Vec<ProviderError> = vec![
+            ProviderError::InvalidPayload {
+                reason: "x".to_owned(),
+            },
+            ProviderError::SerializationFailed {
+                reason: "x".to_owned(),
+            },
+            ProviderError::Inconsistent {
+                reason: "x".to_owned(),
+            },
+        ];
+
+        let mut codes: Vec<String> = Vec::new();
+        codes.extend(
+            graph_errors
+                .iter()
+                .filter_map(|e| e.code().map(|c| c.to_string())),
+        );
+        codes.extend(
+            type_violations
+                .iter()
+                .filter_map(|e| e.code().map(|c| c.to_string())),
+        );
+        codes.extend(
+            provider_errors
+                .iter()
+                .filter_map(|e| e.code().map(|c| c.to_string())),
+        );
+
+        let mut seen = std::collections::HashSet::new();
+        for code in &codes {
+            assert!(
+                seen.insert(code.clone()),
+                "duplicate internal diagnostic code {code} across graph-crate error enums"
+            );
+        }
     }
 }

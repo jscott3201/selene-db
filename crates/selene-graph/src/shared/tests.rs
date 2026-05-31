@@ -23,10 +23,6 @@ impl TestProvider {
 }
 
 impl IndexProvider for TestProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -58,7 +54,7 @@ impl DurableProvider for FailingDurableProvider {
 
     fn write_commit(
         &self,
-        _principal: Option<&[u8]>,
+        _principal: Option<&Arc<[u8]>>,
         _changes: &[Change],
         _timestamp: HlcTimestamp,
     ) -> Result<u64, ProviderError> {

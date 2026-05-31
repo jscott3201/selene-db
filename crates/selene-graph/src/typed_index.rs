@@ -449,7 +449,7 @@ impl TypedIndex {
                 let mut result = RoaringBitmap::new();
                 for (key, bitmap) in index {
                     if key.as_str().starts_with(prefix) {
-                        insert_all(&mut result, bitmap);
+                        result |= bitmap;
                     }
                 }
                 Some(result)
@@ -722,15 +722,11 @@ fn range_union<K: Ord>(
     };
     let mut result = RoaringBitmap::new();
     for (_key, bitmap) in index.range::<K, _>((start_bound, end_bound)) {
-        insert_all(&mut result, bitmap);
+        // RoaringBitmap bulk OR (`BitOrAssign<&RoaringBitmap>`) is the union
+        // primitive — far cheaper than a per-element scan-and-insert.
+        result |= bitmap;
     }
     result
-}
-
-fn insert_all(target: &mut RoaringBitmap, source: &RoaringBitmap) {
-    for row in source {
-        target.insert(row);
-    }
 }
 
 #[cfg(test)]

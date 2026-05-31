@@ -539,7 +539,7 @@ pub(crate) fn append_sealed(
     let mut durable_at: Option<u64> = None;
     for durable in durable_providers {
         let seq = durable
-            .write_commit(principal.as_deref(), &changes, timestamp)
+            .write_commit(principal.as_ref(), &changes, timestamp)
             .map_err(|error| GraphError::Durable {
                 reason: format!("{}: {error}", durable.provider_tag()),
             })?;

@@ -146,7 +146,7 @@ impl DurableProvider for CountingDurable {
 
     fn write_commit(
         &self,
-        _principal: Option<&[u8]>,
+        _principal: Option<&Arc<[u8]>>,
         _changes: &[Change],
         _timestamp: HlcTimestamp,
     ) -> Result<u64, ProviderError> {
@@ -396,9 +396,6 @@ impl GenOrderProvider {
 }
 
 impl IndexProvider for GenOrderProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -665,9 +662,6 @@ impl ArmPublishPanicProvider {
 }
 
 impl IndexProvider for ArmPublishPanicProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }

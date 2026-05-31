@@ -25,15 +25,6 @@ impl IdAllocator {
         }
     }
 
-    /// Restore allocator counters from graph metadata.
-    #[must_use]
-    pub const fn from_meta(meta: &GraphMeta) -> Self {
-        Self {
-            next_node_id: meta.next_node_id,
-            next_edge_id: meta.next_edge_id,
-        }
-    }
-
     /// Restore allocator counters from graph metadata, never falling below the
     /// supplied storage floors.
     ///
@@ -55,7 +46,7 @@ impl IdAllocator {
         let id = self.next_node_id;
         // Why: 2^64 distinct allocations is unreachable in any deployment;
         // practical overflow lands at the u32 row-index boundary in mutator.rs
-        // and is surfaced as `GraphError::IdOverflow` long before this expect.
+        // and is surfaced as `GraphError::RowSpaceExhausted` long before this expect.
         self.next_node_id = self
             .next_node_id
             .checked_add(1)
@@ -114,7 +105,7 @@ mod tests {
     }
 
     #[test]
-    fn from_meta_restores_counters() {
+    fn from_meta_with_floors_restores_counters_with_zero_floors() {
         let meta = GraphMeta {
             graph_id: GraphId::new(1),
             generation: 7,
@@ -122,7 +113,7 @@ mod tests {
             next_edge_id: 99,
             bound_type: None,
         };
-        let allocator = IdAllocator::from_meta(&meta);
+        let allocator = IdAllocator::from_meta_with_floors(&meta, 0, 0);
         assert_eq!(allocator.peek_next_node(), 42);
         assert_eq!(allocator.peek_next_edge(), 99);
     }

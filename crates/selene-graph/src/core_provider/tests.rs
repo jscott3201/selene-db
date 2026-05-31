@@ -10,7 +10,7 @@ use selene_core::{
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
 use super::sections::{
-    SchemaEntry, SchemaEntryV1, SchemaKey, decode_edges, decode_graph_types, decode_meta,
+    SCMA_VERSION, SchemaEntry, SchemaKey, decode_edges, decode_graph_types, decode_meta,
     decode_nodes, decode_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
     ensure_section_within_cap,
 };
@@ -252,23 +252,30 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
         label: apple,
         property: apple_prop,
     };
+    // Out-of-handle-order rows under the current (versioned) layout. `decode_schemas`
+    // must re-sort by the (label, property) key regardless of input order.
     let rows = vec![
         (
             apple_key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::I64,
+                name: None,
             },
         ),
         (
             zebra_key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::String,
+                name: None,
             },
         ),
     ];
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
-        .unwrap()
-        .into_vec();
+    let mut bytes = vec![SCMA_VERSION];
+    bytes.extend(
+        rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+            .unwrap()
+            .into_vec(),
+    );
 
     let decoded = decode_schemas(&bytes).unwrap();
 
@@ -326,24 +333,52 @@ fn scma_decode_rejects_duplicate_keys_after_resort() {
     let rows = vec![
         (
             key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::I64,
+                name: None,
             },
         ),
         (
             key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::String,
+                name: None,
             },
         ),
     ];
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
-        .unwrap()
-        .into_vec();
+    let mut bytes = vec![SCMA_VERSION];
+    bytes.extend(
+        rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+            .unwrap()
+            .into_vec(),
+    );
 
     let result = decode_schemas(&bytes);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn scma_decode_rejects_empty_or_mismatched_version() {
+    // GRAPH-23 clean break: with the legacy v1 no-magic fallback removed,
+    // an empty section or a wrong leading version byte is a hard decode error.
+    assert!(
+        matches!(
+            decode_schemas(&[]),
+            Err(crate::ProviderError::InvalidPayload { .. })
+        ),
+        "empty CORE/SCMA must be rejected"
+    );
+    // A non-current version byte (e.g. the retired 0xA5 v2-magic value used a
+    // different layout) must hard-reject rather than silently fall back.
+    let wrong_version = SCMA_VERSION.wrapping_add(1);
+    assert!(
+        matches!(
+            decode_schemas(&[wrong_version, 0, 0, 0, 0]),
+            Err(crate::ProviderError::InvalidPayload { .. })
+        ),
+        "mismatched CORE/SCMA version must be rejected"
+    );
 }
 
 #[test]
@@ -573,7 +608,9 @@ fn core_provider_threads_principal_through_wal() {
     }];
 
     let timestamp = DurableProvider::next_timestamp(provider.as_ref());
-    DurableProvider::write_commit(provider.as_ref(), Some(b"alice"), &changes, timestamp).unwrap();
+    let principal: Arc<[u8]> = Arc::from(&b"alice"[..]);
+    DurableProvider::write_commit(provider.as_ref(), Some(&principal), &changes, timestamp)
+        .unwrap();
     DurableProvider::flush(provider.as_ref()).unwrap();
     drop(provider);
 

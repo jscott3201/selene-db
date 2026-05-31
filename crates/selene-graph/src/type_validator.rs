@@ -31,7 +31,7 @@ impl fmt::Display for EntityId {
 pub enum TypeViolation {
     /// Node labels do not match any node type.
     #[error("node {id} has labels {labels:?}, which do not match any node type")]
-    #[diagnostic(code(SLENE_G_010))]
+    #[diagnostic(code(SLENE_G_030))]
     UnknownNodeLabel {
         /// Node ID.
         id: NodeId,
@@ -41,7 +41,7 @@ pub enum TypeViolation {
 
     /// Edge label does not match any edge type.
     #[error("edge {id} has label {label}, which does not match any edge type")]
-    #[diagnostic(code(SLENE_G_011))]
+    #[diagnostic(code(SLENE_G_031))]
     UnknownEdgeLabel {
         /// Edge ID.
         id: EdgeId,
@@ -53,7 +53,7 @@ pub enum TypeViolation {
     #[error(
         "edge {id} label {label} expected endpoint types ({expected_source_type}, {expected_target_type}) but observed ({observed_source_type}, {observed_target_type})"
     )]
-    #[diagnostic(code(SLENE_G_012))]
+    #[diagnostic(code(SLENE_G_032))]
     EdgeEndpointTypeMismatch {
         /// Edge ID.
         id: EdgeId,
@@ -71,7 +71,7 @@ pub enum TypeViolation {
 
     /// Required property is absent or null.
     #[error("{entity_id} is missing required property {property} declared in {declared_in}")]
-    #[diagnostic(code(SLENE_G_013))]
+    #[diagnostic(code(SLENE_G_033))]
     MissingRequiredProperty {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -83,7 +83,7 @@ pub enum TypeViolation {
 
     /// Property value has the wrong runtime type.
     #[error("{entity_id} property {property} expected {expected} but observed {observed}")]
-    #[diagnostic(code(SLENE_G_014))]
+    #[diagnostic(code(SLENE_G_034))]
     PropertyTypeMismatch {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -95,9 +95,9 @@ pub enum TypeViolation {
         observed: &'static str,
     },
 
-    /// Extension-owned values are not declarable in v1.0 graph types.
-    #[error("{entity_id} property {property} uses an extension-owned value")]
-    #[diagnostic(code(SLENE_G_015))]
+    /// `Value::Extended` is not a declarable closed-graph type.
+    #[error("{entity_id} property {property} uses a Value::Extended payload")]
+    #[diagnostic(code(SLENE_G_035))]
     ExtensionValueRejected {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -107,7 +107,7 @@ pub enum TypeViolation {
 
     /// Property is not declared by the matched node or edge type.
     #[error("{entity_id} property {property} is not declared by the matched type")]
-    #[diagnostic(code(SLENE_G_016))]
+    #[diagnostic(code(SLENE_G_036))]
     UndeclaredProperty {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -117,7 +117,7 @@ pub enum TypeViolation {
 
     /// Immutable property was updated or removed.
     #[error("{entity_id} property {property} declared in {declared_in} is immutable")]
-    #[diagnostic(code(SLENE_G_017))]
+    #[diagnostic(code(SLENE_G_037))]
     ImmutablePropertyUpdate {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -303,25 +303,28 @@ fn validate_node_state(
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
 ) -> Result<(u32, Vec<TypeWarning>), TypeViolation> {
-    let labels = graph.node_labels(id).cloned().unwrap_or_else(LabelSet::new);
+    // Borrow the live LabelSet/PropertyMap through; only the None (missing-row)
+    // path materializes an empty default, and only the error path clones the
+    // label set. On schema-changing commits this avoids deep-cloning every alive
+    // node's LabelSet + PropertyMap solely to read them.
+    let empty_labels = LabelSet::new();
+    let labels = graph.node_labels(id).unwrap_or(&empty_labels);
     let node_type_index =
         type_def
-            .find_node_type_index(&labels)
+            .find_node_type_index(labels)
             .ok_or_else(|| TypeViolation::UnknownNodeLabel {
                 id,
                 labels: labels.clone(),
             })?;
     let node_type = &type_def.node_types[node_type_index as usize];
-    let properties = graph
-        .node_properties(id)
-        .cloned()
-        .unwrap_or_else(PropertyMap::new);
+    let empty_props = PropertyMap::new();
+    let properties = graph.node_properties(id).unwrap_or(&empty_props);
     let warnings = validate_properties(
         EntityId::Node(id),
         node_type.name,
         node_type.validation_mode,
         &node_type.properties,
-        &properties,
+        properties,
     )?;
     Ok((node_type_index, warnings))
 }
@@ -357,16 +360,14 @@ fn validate_edge_state<'a>(
             observed_target_type: target_type,
         });
     };
-    let properties = graph
-        .edge_properties(id)
-        .cloned()
-        .unwrap_or_else(PropertyMap::new);
+    let empty_props = PropertyMap::new();
+    let properties = graph.edge_properties(id).unwrap_or(&empty_props);
     warnings.extend(validate_properties(
         EntityId::Edge(id),
         edge_type.name,
         edge_type.validation_mode,
         &edge_type.properties,
-        &properties,
+        properties,
     )?);
     Ok((edge_type, warnings))
 }

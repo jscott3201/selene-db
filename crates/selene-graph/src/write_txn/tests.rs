@@ -80,10 +80,6 @@ impl PanicOnSecondChangeProvider {
 }
 
 impl IndexProvider for PanicOnSecondChangeProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -110,10 +106,6 @@ impl IndexProvider for PanicOnSecondChangeProvider {
 }
 
 impl IndexProvider for RecordingProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
