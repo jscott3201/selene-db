@@ -8,10 +8,34 @@ use crate::{SourceSpan, error::ParserError};
 /// ordinary query, list, record, and subquery nesting comfortably below the cap.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
+/// Maximum total count of grouping, list, and record openers admitted in a
+/// single statement, regardless of how deeply they nest.
+///
+/// pest is not packrat-memoized, so every failed sub-parse of an opener is
+/// recomputed. The three `[`-prefixed expression rules
+/// (`list_access_op`, `list_comprehension`, `list_lit`; see `grammar.pest`)
+/// each re-explore a run of openers, so a wide, shallow fan-out of `[` (or
+/// `(`/`{`) runs drives super-linear backtracking — seconds-to-minutes parse
+/// time for sub-kilobyte hostile inputs — even when net nesting stays well
+/// under [`MAX_NESTING_DEPTH`]. Because parsing precedes execution, an
+/// execution deadline cannot interrupt it; the only safe place to stop the
+/// blow-up is before recursive descent begins.
+///
+/// This is a conservative *complexity budget*, not an exact root-cause metric:
+/// one observed 56-opener artifact parses fast and a 57-opener one is slow, so
+/// the cap is set generously above the legitimate maximum rather than at the
+/// empirical blow-up point. The largest single-statement opener count in the
+/// positive corpus is 9 (a 9-argument trigonometric `RETURN`), and no
+/// legitimate query anywhere in the workspace exceeds 9, so a cap of 20 leaves
+/// comfortable headroom while rejecting every known hostile artifact (the
+/// smallest of which uses 56 openers).
+pub(crate) const MAX_BRACKET_OPENER_COUNT: u32 = 20;
+
 pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let bytes = source.as_bytes();
     let mut index = 0;
     let mut depth = 0_u32;
+    let mut openers = 0_u32;
 
     while index < bytes.len() {
         match bytes[index] {
@@ -22,6 +46,18 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             b'-' if next_is(bytes, index, b'-') => index = skip_line_comment(bytes, index + 2),
             b'/' if next_is(bytes, index, b'*') => index = skip_block_comment(bytes, index + 2),
             b'(' | b'[' | b'{' => {
+                // Bound total openers first: it is the tighter cap and the
+                // primary defense against the wide fan-out blow-up. A balanced
+                // input deep enough to exceed MAX_NESTING_DEPTH also exceeds
+                // this cap, so it is reported as the (tighter, more honest)
+                // complexity violation rather than a nesting violation.
+                openers += 1;
+                if openers > MAX_BRACKET_OPENER_COUNT {
+                    return Err(ParserError::ComplexityLimitExceeded {
+                        limit: MAX_BRACKET_OPENER_COUNT,
+                        span: point_span(index),
+                    });
+                }
                 depth += 1;
                 if depth > MAX_NESTING_DEPTH {
                     return Err(ParserError::NestingLimitExceeded {

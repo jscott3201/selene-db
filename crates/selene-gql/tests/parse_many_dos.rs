@@ -90,10 +90,12 @@ fn budget_consumed_by_first_segment_does_not_starve_a_later_segment() {
 }
 
 #[test]
-fn nesting_guard_fires_per_segment_with_a_rebased_span() {
-    // A valid leading statement, then a second statement whose bracket nesting
-    // exceeds the per-parse cap. The guard runs over the second segment alone
-    // and rejects with NestingLimitExceeded, span rebased past the first.
+fn complexity_guard_fires_per_segment_with_a_rebased_span() {
+    // A valid leading statement, then a second statement whose bracket-opener
+    // run exceeds the per-statement complexity cap. The byte-scan guard runs
+    // over the second segment alone and rejects with ComplexityLimitExceeded,
+    // span rebased past the first. (A balanced run long enough to exceed the
+    // 64-delimiter nesting cap exceeds the tighter complexity cap first.)
     let lead = "RETURN 1 AS ok";
     let deep = format!(
         "LET x = {}0{} RETURN x",
@@ -103,14 +105,13 @@ fn nesting_guard_fires_per_segment_with_a_rebased_span() {
     let source = format!("{lead}; {deep}");
     let deep_start = source.find("LET ").unwrap();
 
-    let error = parse_many(&source).expect_err("the second segment is over-nested");
-    let ParserError::NestingLimitExceeded { limit, span } = error else {
-        panic!("expected NestingLimitExceeded, got {error:?}");
+    let error = parse_many(&source).expect_err("the second segment is over-complex");
+    let ParserError::ComplexityLimitExceeded { span, .. } = error else {
+        panic!("expected ComplexityLimitExceeded, got {error:?}");
     };
-    assert_eq!(limit, NESTING_LIMIT as u32);
     assert!(
         span.byte_offset >= deep_start as u32,
-        "span {span:?} should be rebased into the over-nested second statement (>= {deep_start})"
+        "span {span:?} should be rebased into the over-complex second statement (>= {deep_start})"
     );
 }
 

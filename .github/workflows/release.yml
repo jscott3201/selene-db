@@ -176,4 +176,8 @@ jobs:
           find crates/selene-testing/corpus/positive -name '*.gql' -exec cp {} crates/selene-gql/fuzz/corpus/parse_gql/ \;
       - name: fuzz parser (5m)
         working-directory: crates/selene-gql/fuzz
-        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=300
+        # -timeout=20 caps per-input parse time at 20s. The default (1200s)
+        # silently tolerated the super-linear bracket-backtracking blow-up; a
+        # 20s ceiling makes any future regression fail the gate. No legitimate
+        # input parses anywhere near this long.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=300 -timeout=20

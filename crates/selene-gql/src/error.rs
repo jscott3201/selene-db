@@ -198,6 +198,32 @@ pub enum ParserError {
         span: SourceSpan,
     },
 
+    /// Query opened more bracket delimiters than the parser's complexity cap
+    /// allows, regardless of how deeply they nest.
+    ///
+    /// Distinct from [`Self::NestingLimitExceeded`], which bounds *net* nesting
+    /// depth. This variant bounds the *total* count of `(`, `[`, and `{`
+    /// openers in a single statement. A wide, shallow fan-out of openers (e.g.
+    /// many sibling `[` runs at modest depth) re-explored under several
+    /// `[`-prefixed grammar rules drives super-linear pest backtracking even
+    /// though net depth stays under the nesting cap, so the byte-scan guard
+    /// rejects it before recursive descent begins.
+    #[error("parser complexity limit exceeded ({limit} bracket openers)")]
+    #[diagnostic(
+        code(SLENE_GQL_5GQL1),
+        help(
+            "queries are bounded to a total count of grouping, list, and record openers per \
+             statement"
+        )
+    )]
+    ComplexityLimitExceeded {
+        /// Maximum admitted total bracket-opener count.
+        limit: u32,
+        /// Source span of the opener that crossed the limit.
+        #[label("exceeds parser complexity limit")]
+        span: SourceSpan,
+    },
+
     /// Source parsed at the grammar level, but no AST builder is implemented yet.
     ///
     /// Distinct from [`Self::SyntaxError`] (parse failed) and
@@ -227,9 +253,9 @@ impl ParserError {
             Self::UnsupportedFeature { .. } | Self::NotImplemented { .. } => {
                 GqlStatus::FEATURE_NOT_SUPPORTED
             }
-            Self::InternerBudgetExceeded { .. } | Self::NestingLimitExceeded { .. } => {
-                GqlStatus::PROGRAM_LIMIT_EXCEEDED
-            }
+            Self::InternerBudgetExceeded { .. }
+            | Self::NestingLimitExceeded { .. }
+            | Self::ComplexityLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
         }
     }
 
