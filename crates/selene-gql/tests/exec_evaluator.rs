@@ -8,8 +8,8 @@ use exec_common::empty_graph_context;
 use selene_core::{Value, intern};
 use selene_gql::{
     AnalyzedType, BinaryOp, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
-    GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType, SourceSpan, UnaryOp,
-    ValueExpr,
+    GqlType, ImplDefinedCaps, IsCheckKind, Literal, NonEmpty, RecordType, SourceSpan, TruthValue,
+    UnaryOp, ValueExpr,
 };
 
 fn span() -> SourceSpan {
@@ -584,4 +584,83 @@ fn negate_over_each_numeric_value_type() {
     // A non-numeric operand still errors.
     let err = negate_value(Value::Bool(true)).expect_err("boolean negate is a data exception");
     assert!(matches!(err, ExecutorError::DataException { .. }));
+}
+
+// --- GQLRT-20: property access on a non-element / non-record target ---
+
+fn property_access_expr(target: ValueExpr, key: &str) -> ValueExpr {
+    ValueExpr::PropertyAccess {
+        target: Box::new(target),
+        key: intern(key).unwrap(),
+        span: span(),
+    }
+}
+
+#[test]
+fn property_access_on_list_target_is_data_exception() {
+    // `[1,2,3].foo` types the target as Dynamic at analysis, so the type error
+    // surfaces at runtime — as 22G03 (a data exception), not 5GQL0.
+    let list = ValueExpr::ListLiteral {
+        items: vec![int_lit(1), int_lit(2), int_lit(3)],
+        span: span(),
+    };
+    let err = eval_result(&property_access_expr(list, "foo"))
+        .expect_err("property access on a list errors");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+#[test]
+fn property_access_on_integer_target_is_data_exception() {
+    // `(123).foo` — a scalar target is likewise a 22G03 runtime type error.
+    let err = eval_result(&property_access_expr(int_lit(123), "foo"))
+        .expect_err("property access on an integer errors");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+}
+
+// --- GQLRT-21: IS <truth value> on a non-boolean operand ---
+
+fn is_truth_value(operand: ValueExpr, truth_value: TruthValue) -> ValueExpr {
+    ValueExpr::IsCheck {
+        operand: Box::new(operand),
+        kind: IsCheckKind::TruthValue(truth_value),
+        negated: false,
+        span: span(),
+    }
+}
+
+#[test]
+fn is_truth_value_on_boolean_operand_evaluates() {
+    assert_eq!(
+        eval(&is_truth_value(bool_lit(true), TruthValue::True)),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval(&is_truth_value(bool_lit(true), TruthValue::False)),
+        Value::Bool(false)
+    );
+    // NULL maps to UNKNOWN per §19 three-valued logic.
+    assert_eq!(
+        eval(&is_truth_value(null_lit(), TruthValue::Unknown)),
+        Value::Bool(true)
+    );
+    assert_eq!(
+        eval(&is_truth_value(null_lit(), TruthValue::True)),
+        Value::Bool(false)
+    );
+}
+
+#[test]
+fn is_truth_value_on_non_boolean_operand_is_data_exception() {
+    // `5 IS TRUE` is a type error (22G03), not a silent FALSE (the prior dead
+    // `_ => false` arm).
+    let err = eval_result(&is_truth_value(int_lit(5), TruthValue::True))
+        .expect_err("non-boolean IS TRUE errors");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
+
+    let err = eval_result(&is_truth_value(string_lit("x"), TruthValue::False))
+        .expect_err("non-boolean IS FALSE errors");
+    assert_eq!(err.gqlstatus().as_str(), "22G03");
 }

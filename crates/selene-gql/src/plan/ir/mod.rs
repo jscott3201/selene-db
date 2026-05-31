@@ -625,11 +625,16 @@ pub struct ImplDefinedCaps {
     pub max_wco_traversal_nodes: u32,
     /// Maximum unique row keys a set operation may hold while counting rows.
     pub set_op_key_cap: NonZeroUsize,
+    /// Maximum distinct groups a `GROUP BY` may materialize.
+    pub group_by_key_cap: NonZeroUsize,
 }
 
 impl ImplDefinedCaps {
     /// Default maximum unique row keys a set operation may hold.
     pub const DEFAULT_SET_OP_KEY_CAP: usize = 1_000_000;
+
+    /// Default maximum distinct groups a `GROUP BY` may materialize.
+    pub const DEFAULT_GROUP_BY_KEY_CAP: usize = 1_000_000;
 
     /// Return the configured set-operation key cap.
     #[must_use]
@@ -643,6 +648,19 @@ impl ImplDefinedCaps {
         self.set_op_key_cap = set_op_key_cap;
         self
     }
+
+    /// Return the configured `GROUP BY` distinct-group cap.
+    #[must_use]
+    pub const fn group_by_key_cap(&self) -> usize {
+        self.group_by_key_cap.get()
+    }
+
+    /// Return a copy with a different `GROUP BY` distinct-group cap.
+    #[must_use]
+    pub const fn with_group_by_key_cap(mut self, group_by_key_cap: NonZeroUsize) -> Self {
+        self.group_by_key_cap = group_by_key_cap;
+        self
+    }
 }
 
 impl Default for ImplDefinedCaps {
@@ -654,6 +672,8 @@ impl Default for ImplDefinedCaps {
             max_wco_traversal_nodes: 64,
             set_op_key_cap: NonZeroUsize::new(Self::DEFAULT_SET_OP_KEY_CAP)
                 .expect("default set-op key cap is non-zero"),
+            group_by_key_cap: NonZeroUsize::new(Self::DEFAULT_GROUP_BY_KEY_CAP)
+                .expect("default group-by key cap is non-zero"),
         }
     }
 }

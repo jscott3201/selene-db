@@ -1,8 +1,9 @@
+use rustc_hash::FxHashMap;
 use selene_core::Value;
 
 use crate::{
-    Aggregate, BindingTableColumn, ProjectExpr,
-    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator, value_compare},
+    Aggregate, BindingTableColumn, ProjectExpr, SourceSpan,
+    runtime::{Binding, BindingTable, EvalCtx, ExecutorError, evaluator, value_key::RuntimeEqKey},
 };
 
 use super::aggregate::{self, AggregateSlot};
@@ -15,20 +16,33 @@ pub(super) fn execute(
 ) -> Result<BindingTable, ExecutorError> {
     let (input_schema, input_rows) = table.into_parts();
     let output_schema = output_schema(&input_schema, aggregates);
+    // Insertion-ordered groups (first-emission order preserved) + an
+    // `FxHashMap<RuntimeEqKey, usize>` index so locating a row's group is O(1)
+    // rather than the previous O(n_groups) linear scan per row. `RuntimeEqKey`
+    // equality matches the prior `key_values_equal` exactly (Null/Null⇒equal,
+    // Null/non-null⇒distinct, else `equal_non_null`), so grouping semantics are
+    // unchanged; DISTINCT/set-ops already use the same key.
     let mut groups = Vec::<Group>::new();
+    let mut group_index = FxHashMap::<RuntimeEqKey, usize>::default();
+    let group_cap = ctx.tx.impl_defined_caps().group_by_key_cap();
     let mut rows_since_check = 0;
 
     for row in &input_rows {
         ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         let key = evaluate_key_tuple(keys, row, &input_schema, ctx)?;
-        let index = groups
-            .iter()
-            .position(|group| key_tuples_equal(&group.key, &key))
-            .map(Ok)
-            .unwrap_or_else(|| {
-                groups.push(Group::new(key.clone(), row.clone(), aggregates)?);
-                Ok(groups.len() - 1)
-            })?;
+        let probe = RuntimeEqKey::from_row(key);
+        let index = match group_index.get(&probe) {
+            Some(index) => *index,
+            None => {
+                if groups.len() >= group_cap {
+                    return Err(group_by_key_cap_exceeded());
+                }
+                let index = groups.len();
+                groups.push(Group::new(row.clone(), aggregates)?);
+                group_index.insert(probe, index);
+                index
+            }
+        };
         groups[index].observe(row, &input_schema, ctx)?;
     }
 
@@ -40,7 +54,7 @@ pub(super) fn execute(
                 .map(|_| Value::Null)
                 .collect::<Vec<_>>(),
         );
-        groups.push(Group::new(Vec::new(), representative, aggregates)?);
+        groups.push(Group::new(representative, aggregates)?);
     }
 
     let rows = groups
@@ -53,24 +67,25 @@ pub(super) fn execute(
     Ok(BindingTable::new(output_schema, rows))
 }
 
+fn group_by_key_cap_exceeded() -> ExecutorError {
+    ExecutorError::ProgramLimitExceeded {
+        detail: "GROUP BY distinct-group cap exceeded",
+        span: SourceSpan::default(),
+    }
+}
+
 struct Group {
-    key: Vec<Value>,
     representative: Binding,
     aggregates: Vec<AggregateSlot>,
 }
 
 impl Group {
-    fn new(
-        key: Vec<Value>,
-        representative: Binding,
-        aggregates: &[Aggregate],
-    ) -> Result<Self, ExecutorError> {
+    fn new(representative: Binding, aggregates: &[Aggregate]) -> Result<Self, ExecutorError> {
         let aggregates = aggregates
             .iter()
             .map(AggregateSlot::new)
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
-            key,
             representative,
             aggregates,
         })
@@ -126,20 +141,4 @@ fn evaluate_key_tuple(
     keys.iter()
         .map(|key| evaluator::evaluate(&key.expr, row, schema, ctx))
         .collect()
-}
-
-fn key_tuples_equal(lhs: &[Value], rhs: &[Value]) -> bool {
-    lhs.len() == rhs.len()
-        && lhs
-            .iter()
-            .zip(rhs)
-            .all(|(lhs, rhs)| key_values_equal(lhs, rhs))
-}
-
-fn key_values_equal(lhs: &Value, rhs: &Value) -> bool {
-    match (lhs, rhs) {
-        (Value::Null, Value::Null) => true,
-        (Value::Null, _) | (_, Value::Null) => false,
-        _ => value_compare::equal_non_null(lhs, rhs),
-    }
 }

@@ -104,7 +104,6 @@ impl MetricsProcedureRegistry {
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
-                None,
             ),
         }
     }

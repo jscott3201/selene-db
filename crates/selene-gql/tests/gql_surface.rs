@@ -204,7 +204,6 @@ impl ProcedureRegistry for CountingRegistry {
                 ProcedureOutputSchema::default(),
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
-                None,
             )
         })
     }

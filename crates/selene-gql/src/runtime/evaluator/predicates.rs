@@ -31,7 +31,7 @@ pub(super) fn eval_is_check(
         IsCheckKind::Null => Value::Bool(matches!(operand, Value::Null)),
         IsCheckKind::Directed => eval_is_directed(operand, span, ctx)?,
         IsCheckKind::Labeled(label_expr) => eval_is_labeled(operand, label_expr, span, ctx)?,
-        IsCheckKind::TruthValue(truth_value) => eval_is_truth_value(operand, *truth_value),
+        IsCheckKind::TruthValue(truth_value) => eval_is_truth_value(operand, *truth_value, span)?,
         IsCheckKind::Typed(ty) => Value::Bool(
             crate::runtime::value_type_match::value_matches_gql_type(&operand, ty),
         ),
@@ -142,7 +142,7 @@ pub(super) fn eval_same(
 pub(super) fn eval_property_exists(
     target: &ValueExpr,
     key: IStr,
-    _span: SourceSpan,
+    span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -151,7 +151,7 @@ pub(super) fn eval_property_exists(
     if matches!(target, Value::Null) {
         return Ok(Value::Null);
     }
-    let value = property_access(&target, key, ctx)?;
+    let value = property_access(&target, key, span, ctx)?;
     Ok(Value::Bool(!matches!(value, Value::Null)))
 }
 
@@ -202,15 +202,22 @@ fn eval_is_labeled(
     }
 }
 
-fn eval_is_truth_value(value: Value, truth_value: TruthValue) -> Value {
+fn eval_is_truth_value(
+    value: Value,
+    truth_value: TruthValue,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    // Per ISO/IEC 39075:2024 §19, `<value> IS [NOT] {TRUE|FALSE|UNKNOWN}` takes a
+    // boolean-valued operand; NULL maps to UNKNOWN. A non-boolean operand
+    // (e.g. `5 IS TRUE`) is a data exception (22G03), not a silent FALSE.
     let matches_truth = match (value, truth_value) {
         (Value::Bool(true), TruthValue::True)
         | (Value::Bool(false), TruthValue::False)
         | (Value::Null, TruthValue::Unknown) => true,
         (Value::Bool(_), _) | (Value::Null, _) => false,
-        _ => false,
+        _ => return data_exception("IS <truth value> operand is not boolean", span),
     };
-    Value::Bool(matches_truth)
+    Ok(Value::Bool(matches_truth))
 }
 
 fn eval_is_endpoint(

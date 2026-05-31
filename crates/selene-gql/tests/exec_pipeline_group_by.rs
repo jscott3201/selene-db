@@ -89,8 +89,14 @@ fn group_by_handles_null_keys_as_distinct_group() {
 fn group_by_preserves_first_row_emission_order() {
     let table = execute_read("UNWIND [2, 1, 2, 3, 1] AS x RETURN x AS x, count(*) AS c GROUP BY x");
 
+    // GQLRT-02: the hash-indexed grouping keeps groups in first-emission order
+    // (2, then 1, then 3) and reports the correct per-group aggregate.
     assert_eq!(
         column_values(&table, "x"),
         vec![Value::Int(2), Value::Int(1), Value::Int(3)]
+    );
+    assert_eq!(
+        column_values(&table, "c"),
+        vec![Value::Int(2), Value::Int(2), Value::Int(1)]
     );
 }

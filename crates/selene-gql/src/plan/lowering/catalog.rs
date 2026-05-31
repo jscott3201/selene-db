@@ -233,10 +233,6 @@ where
                     "since_version",
                     "static SHOW PROCEDURES column 'since_version'",
                 ),
-                (
-                    "capability_required",
-                    "static SHOW PROCEDURES column 'capability_required'",
-                ),
             ],
             intern,
         ),

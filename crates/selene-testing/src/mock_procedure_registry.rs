@@ -124,7 +124,6 @@ impl MockProcedureRegistry {
                 },
                 tier,
                 mutability,
-                None,
             ),
         );
     }
@@ -174,9 +173,7 @@ impl ProcedureRegistry for MockProcedureRegistry {
 const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
     match mutability {
         ProcedureMutability::Read => ProcedureTier::Graph,
-        ProcedureMutability::GraphWrite
-        | ProcedureMutability::SchemaWrite
-        | ProcedureMutability::Admin => ProcedureTier::Mutation,
+        ProcedureMutability::SchemaWrite => ProcedureTier::Mutation,
     }
 }
 

@@ -58,13 +58,11 @@ pub(super) fn eval_function_call(
             span,
         ),
         "ceil" | "ceiling" => eval_unary_numeric(
-            &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::ceil,
         ),
         "floor" => eval_unary_numeric(
-            &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::floor,
@@ -154,7 +152,6 @@ pub(super) fn eval_function_call(
             span,
         ),
         "round" => eval_unary_numeric(
-            &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::round,
@@ -318,7 +315,6 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
 }
 
 fn eval_unary_numeric(
-    _name: &str,
     args: Vec<Value>,
     span: SourceSpan,
     op: fn(f64) -> f64,

@@ -311,7 +311,7 @@ fn show_node_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
                 .iter()
                 .map(|node_type| {
                     let label = render_node_label_name(&node_type.key_labels);
-                    show_row(&label, &render_node_type_def(node_type))
+                    show_row(&label, &render_node_type_def(node_type)?)
                 })
                 .collect::<Result<Vec<_>, _>>()
         })
@@ -333,7 +333,7 @@ fn show_edge_types(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
                 .map(|edge_type| {
                     show_row(
                         edge_type.label.as_str(),
-                        &render_edge_type_def(graph_type, edge_type),
+                        &render_edge_type_def(graph_type, edge_type)?,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()
@@ -391,7 +391,6 @@ fn show_procedures(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorErro
             "signature",
             "description",
             "since_version",
-            "capability_required",
         ])?,
         rows,
     ))
@@ -455,9 +454,6 @@ fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding,
         ))?),
         Value::String(intern_runtime(metadata.description)?),
         Value::String(intern_runtime(metadata.signature.since_version)?),
-        Value::String(intern_runtime(
-            metadata.capability_required.as_deref().unwrap_or(""),
-        )?),
     ]))
 }
 
@@ -472,16 +468,13 @@ fn render_tier(tier: ProcedureTier) -> &'static str {
     match tier {
         ProcedureTier::Graph => "graph",
         ProcedureTier::Mutation => "mutation",
-        ProcedureTier::Persist => "persist",
     }
 }
 
 fn render_mutability(mutability: ProcedureMutability) -> &'static str {
     match mutability {
         ProcedureMutability::Read => "read",
-        ProcedureMutability::GraphWrite => "graph_write",
         ProcedureMutability::SchemaWrite => "schema_write",
-        ProcedureMutability::Admin => "admin",
     }
 }
 
@@ -532,7 +525,17 @@ fn render_gql_type(ty: &GqlType) -> String {
         GqlType::ZonedTime => "ZONED TIME".to_owned(),
         GqlType::LocalTime => "LOCAL TIME".to_owned(),
         GqlType::Duration => "DURATION".to_owned(),
-        GqlType::Record(_) => "RECORD".to_owned(),
+        // An open/bare RECORD stays "RECORD"; a closed RECORD renders its field
+        // structure so introspection can distinguish open vs closed.
+        GqlType::Record(crate::RecordType::Open) => "RECORD".to_owned(),
+        GqlType::Record(crate::RecordType::Closed(fields)) => {
+            let rendered = fields
+                .iter()
+                .map(|(name, ty)| format!("{} :: {}", name.as_str(), render_gql_type(ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("RECORD {{ {rendered} }}")
+        }
         GqlType::List(inner) => format!("LIST<{}>", render_gql_type(inner)),
         GqlType::Path => "PATH".to_owned(),
         GqlType::GraphRef => "GRAPH".to_owned(),
@@ -544,24 +547,27 @@ fn render_gql_type(ty: &GqlType) -> String {
     }
 }
 
-fn render_node_type_def(node_type: &NodeTypeDef) -> String {
-    format!(
+fn render_node_type_def(node_type: &NodeTypeDef) -> Result<String, ExecutorError> {
+    Ok(format!(
         "CREATE NODE TYPE {} ({})",
         render_node_label_set(&node_type.key_labels),
-        render_properties(&node_type.properties)
-    )
+        render_properties(&node_type.properties)?
+    ))
 }
 
-fn render_edge_type_def(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
+fn render_edge_type_def(
+    graph_type: &GraphTypeDef,
+    edge_type: &EdgeTypeDef,
+) -> Result<String, ExecutorError> {
     let endpoint_clause = render_edge_endpoint_clause(graph_type, edge_type);
-    let properties = render_properties(&edge_type.properties);
+    let properties = render_properties(&edge_type.properties)?;
     let body = match (endpoint_clause.is_empty(), properties.is_empty()) {
         (true, true) => String::new(),
         (true, false) => properties,
         (false, true) => endpoint_clause,
         (false, false) => format!("{endpoint_clause}, {properties}"),
     };
-    format!("CREATE EDGE TYPE :{} ({body})", edge_type.label)
+    Ok(format!("CREATE EDGE TYPE :{} ({body})", edge_type.label))
 }
 
 fn render_edge_endpoint_clause(graph_type: &GraphTypeDef, edge_type: &EdgeTypeDef) -> String {
@@ -619,41 +625,48 @@ fn render_node_label_name(labels: &LabelSet) -> String {
         .join(":")
 }
 
-fn render_properties(properties: &[PropertyTypeDef]) -> String {
-    properties
+fn render_properties(properties: &[PropertyTypeDef]) -> Result<String, ExecutorError> {
+    let rendered = properties
         .iter()
         .map(|property| {
             let nullability = if property.required { " NOT NULL" } else { "" };
-            let default = property
-                .default
-                .as_ref()
-                .map(render_default_value)
-                .map(|value| format!(" DEFAULT {value}"))
-                .unwrap_or_default();
+            let default = match property.default.as_ref() {
+                Some(value) => format!(" DEFAULT {}", render_default_value(value)?),
+                None => String::new(),
+            };
             let immutable = if property.immutable { " IMMUTABLE" } else { "" };
-            format!(
+            Ok(format!(
                 "{} :: {}{}{}{}",
                 property.name,
                 render_property_value_type(
                     property.value_type,
-                    property.list_element_type.as_ref()
+                    property.list_element_type.as_ref(),
+                    property.record_field_types.as_ref()
                 ),
                 nullability,
                 default,
                 immutable
-            )
+            ))
         })
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect::<Result<Vec<_>, ExecutorError>>()?;
+    Ok(rendered.join(", "))
 }
 
-fn render_default_value(default: &selene_graph::PropertyDefaultValue) -> String {
+fn render_default_value(
+    default: &selene_graph::PropertyDefaultValue,
+) -> Result<String, ExecutorError> {
+    // `PropertyDefaultValue` is cross-crate `#[non_exhaustive]`, so the wildcard
+    // is unavoidable. Rather than emit a user-visible non-parseable placeholder
+    // into otherwise round-trip-parseable DDL, fail loudly so a future variant
+    // forces a rendering decision here.
     match default {
-        selene_graph::PropertyDefaultValue::Null => "NULL".to_owned(),
-        selene_graph::PropertyDefaultValue::Boolean(value) => value.to_string().to_uppercase(),
-        selene_graph::PropertyDefaultValue::Integer(value) => value.to_string(),
-        selene_graph::PropertyDefaultValue::String(value) => format!("'{}'", value.as_str()),
-        _ => "<unsupported-default>".to_owned(),
+        selene_graph::PropertyDefaultValue::Null => Ok("NULL".to_owned()),
+        selene_graph::PropertyDefaultValue::Boolean(value) => Ok(value.to_string().to_uppercase()),
+        selene_graph::PropertyDefaultValue::Integer(value) => Ok(value.to_string()),
+        selene_graph::PropertyDefaultValue::String(value) => Ok(format!("'{}'", value.as_str())),
+        _ => Err(ExecutorError::ImplementationDefined {
+            detail: "unsupported property default value in catalog DDL rendering",
+        }),
     }
 }
 
@@ -702,7 +715,8 @@ mod tests {
                 properties: Vec::new(),
                 validation_mode: GraphValidationMode::Strict,
             };
-            let rendered = render_edge_type_def(&graph_type, &edge_type);
+            let rendered =
+                render_edge_type_def(&graph_type, &edge_type).expect("edge type DDL renders");
             assert_eq!(rendered, "CREATE EDGE TYPE :KNOWS ()");
             crate::parse(&rendered).expect("rendered edge type DDL parses");
         }

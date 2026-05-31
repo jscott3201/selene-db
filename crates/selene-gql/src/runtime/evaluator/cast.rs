@@ -234,12 +234,12 @@ fn cast_to_list(
 ///
 /// - An **open** record target (`RecordType::Open`) returns the source record unchanged
 ///   (GR4(e)(ii) identity).
-/// - A **closed** record target re-casts each declared field. Per SR12 the target's field
-///   names must be a subset of the source's (for the named `Value::Record` form): extra
-///   source fields are projected away, and each kept field's value is recursively re-cast
-///   to the declared field type (GR4(e)(i)). A positional `Value::RecordTyped` source is
-///   re-cast by position with matching arity. A missing target field (or arity mismatch)
-///   raises `22G0U` "record fields do not match".
+/// - A **closed** record target re-casts each declared field. Per GR4(e)(i), for the named
+///   `Value::Record` form each declared target field is resolved by name in the source:
+///   a target field with no matching source field raises `22G0U` "record fields do not
+///   match", and source fields not named by the target are dropped. Each resolved field's
+///   value is recursively re-cast to the declared field type. (A `Value::RecordTyped` source
+///   is rejected — see the fail-closed note below.)
 ///
 /// The result is emitted as the open named `Value::Record` form, matching the §20.18
 /// record-constructor output so cast results are indistinguishable from record literals

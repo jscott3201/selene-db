@@ -74,7 +74,8 @@ pub(super) fn execute_with_rhs(
             assert_compatible_schemas("UNION", table.schema(), rhs_table.schema())?;
             let (schema, mut rows) = table.into_parts();
             ctx.check_cancellation()?;
-            rows.extend(rhs_table.rows().iter().cloned());
+            let (_, rhs_rows) = rhs_table.into_parts();
+            rows.extend(rhs_rows);
             let combined = BindingTable::new(schema, rows);
             if matches!(op, SetOp::Union) {
                 distinct::execute(combined, ctx)
@@ -87,15 +88,9 @@ pub(super) fn execute_with_rhs(
             execute_counted(op, table, &rhs_table, ctx)
         }
         SetOp::Otherwise => {
-            let (schema, rows) = table.into_parts();
-            assert_compatible_schemas("OTHERWISE", &schema, rhs_table.schema())?;
-            if rows.is_empty() {
-                assert_compatible_schemas("OTHERWISE", &schema, rhs_table.schema())?;
-                let (_, rhs_rows) = rhs_table.into_parts();
-                Ok(BindingTable::new(schema, rhs_rows))
-            } else {
-                Ok(BindingTable::new(schema, rows))
-            }
+            unreachable!(
+                "Otherwise prefiltered by execute/execute_read_only before execute_with_rhs"
+            )
         }
     }
 }

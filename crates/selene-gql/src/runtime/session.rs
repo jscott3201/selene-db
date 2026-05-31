@@ -184,7 +184,7 @@ impl<'g> Session<'g> {
     /// Attach a cooperative cancellation token to subsequent statements.
     ///
     /// Cancellation is cooperative: statements observe the token at executor,
-    /// procedure-pack, and algorithm checkpoints. If a statement inside an
+    /// built-in-procedure, and algorithm checkpoints. If a statement inside an
     /// explicit transaction returns `Cancelled`, the transaction enters the
     /// failed state until `ROLLBACK`.
     #[must_use]

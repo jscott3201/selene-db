@@ -70,10 +70,8 @@ pub struct ProcedureMetadata {
     pub output_schema: ProcedureOutputSchema,
     /// Tier selected by the concrete registry for execution.
     pub tier: ProcedureTier,
-    /// Side-effect class declared by the procedure manifest.
+    /// Side-effect class declared by the registered procedure.
     pub mutability: ProcedureMutability,
-    /// Caller-owned capability string, if the manifest requires one.
-    pub capability_required: Option<String>,
 }
 
 impl ProcedureMetadata {
@@ -85,7 +83,6 @@ impl ProcedureMetadata {
         output_schema: ProcedureOutputSchema,
         tier: ProcedureTier,
         mutability: ProcedureMutability,
-        capability_required: Option<String>,
     ) -> Self {
         Self {
             handle,
@@ -94,7 +91,6 @@ impl ProcedureMetadata {
             output_schema,
             tier,
             mutability,
-            capability_required,
         }
     }
 
@@ -322,21 +318,15 @@ pub enum ProcedureTier {
     Graph,
     /// Mutation-tier procedure running inside a write transaction.
     Mutation,
-    /// Persistence-aware procedure with an explicit persist handle.
-    Persist,
 }
 
-/// Procedure mutability declared by the pack manifest.
+/// Side-effect class declared by the registered procedure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcedureMutability {
     /// Procedure cannot mutate graph or catalog state.
     Read,
-    /// Procedure may mutate graph data.
-    GraphWrite,
     /// Procedure may mutate catalog/schema state.
     SchemaWrite,
-    /// Procedure performs administrative registry or operational work.
-    Admin,
 }
 
 /// Result returned by procedure execution.
@@ -361,12 +351,6 @@ pub enum ProcedureError {
     InvalidArgument {
         /// Stable diagnostic detail.
         detail: String,
-    },
-    /// The registry rejected a missing or denied capability.
-    #[error("procedure capability violation: {capability}")]
-    Capability {
-        /// Capability name required by the procedure.
-        capability: String,
     },
     /// Procedure tier metadata was internally inconsistent.
     #[error("procedure tier mismatch: expected {expected:?}, actual {actual:?}")]
@@ -400,7 +384,6 @@ impl ProcedureError {
         match self {
             Self::UnknownProcedure { .. } => GqlStatus::UNKNOWN_PROCEDURE,
             Self::InvalidArgument { .. } => GqlStatus::INVALID_PROCEDURE_ARGUMENT,
-            Self::Capability { .. } => GqlStatus::CAPABILITY_VIOLATION,
             Self::TierMismatch { .. } | Self::Internal { .. } => {
                 GqlStatus::IMPLEMENTATION_DEFINED_ERROR
             }

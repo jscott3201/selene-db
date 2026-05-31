@@ -73,7 +73,6 @@ impl TestRegistry {
                 ProcedureOutputSchema { columns: outputs },
                 tier,
                 mutability,
-                None,
             ),
         );
         self
@@ -422,7 +421,7 @@ fn read_tier_procedure_inside_write_tx_sees_pending_writes() {
 fn mutation_tier_procedure_in_auto_commit_commits_on_success() {
     let registry = registry_one(
         &["pkg", "create"],
-        ProcedureMutability::GraphWrite,
+        ProcedureMutability::SchemaWrite,
         ProcedureTier::Mutation,
         Vec::new(),
         Behavior::CreateNode(istr("FromProc")),
@@ -443,7 +442,7 @@ fn mutation_tier_procedure_in_auto_commit_commits_on_success() {
 fn mutation_tier_procedure_in_explicit_tx_sees_pending_state() {
     let registry = registry_one(
         &["pkg", "count"],
-        ProcedureMutability::GraphWrite,
+        ProcedureMutability::SchemaWrite,
         ProcedureTier::Mutation,
         vec![output("count", GqlType::Integer)],
         Behavior::CountNodes,
@@ -466,7 +465,7 @@ fn mutation_tier_procedure_in_explicit_tx_sees_pending_state() {
 fn mutation_tier_procedure_in_read_only_context_returns_invalid_transaction_state() {
     let registry = registry_one(
         &["pkg", "create"],
-        ProcedureMutability::GraphWrite,
+        ProcedureMutability::SchemaWrite,
         ProcedureTier::Mutation,
         Vec::new(),
         Behavior::CreateNode(istr("FromProc")),
@@ -486,7 +485,7 @@ fn mutation_tier_procedure_in_read_only_context_returns_invalid_transaction_stat
     assert!(matches!(
         err,
         ExecutorError::InvalidTransactionState {
-            detail: "GraphWrite procedure requires a write transaction",
+            detail: "mutation-tier procedure requires a write transaction",
             ..
         }
     ));
@@ -496,7 +495,7 @@ fn mutation_tier_procedure_in_read_only_context_returns_invalid_transaction_stat
 fn mutation_tier_procedure_failure_inside_explicit_tx_marks_session_aborted() {
     let registry = registry_one(
         &["pkg", "fail"],
-        ProcedureMutability::GraphWrite,
+        ProcedureMutability::SchemaWrite,
         ProcedureTier::Mutation,
         Vec::new(),
         Behavior::Error(ProcedureError::InvalidArgument {
@@ -616,27 +615,6 @@ fn procedure_timeout_preserves_session_deadline() {
     };
     assert_eq!(observed, deadline);
     assert_eq!(observed_elapsed, elapsed);
-}
-
-#[test]
-fn persist_tier_procedure_returns_implementation_defined() {
-    let registry = registry_one(
-        &["pkg", "persist"],
-        ProcedureMutability::Read,
-        ProcedureTier::Persist,
-        Vec::new(),
-        Behavior::Return(vec![vec![]]),
-    );
-
-    let err = execute("CALL pkg.persist()", &graph(3919), &registry)
-        .expect_err("persist tier not implemented");
-
-    assert!(matches!(
-        err,
-        ExecutorError::ImplementationDefined {
-            detail: "persist-tier procedures not implemented in v1.0"
-        }
-    ));
 }
 
 #[test]

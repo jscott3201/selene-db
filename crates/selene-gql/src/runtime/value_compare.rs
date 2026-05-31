@@ -340,7 +340,9 @@ fn value_rank(value: &Value) -> u8 {
         Value::Extended { .. } => 25,
         Value::Null => 26,
         Value::Uuid(_) => 27,
-        _ => 27,
+        // Any future `Value` variant ranks after every enumerated one so it
+        // never silently ties with `Uuid` (27) in the sort fallback.
+        _ => 28,
     }
 }
 
