@@ -800,36 +800,10 @@ mod tests {
         );
     }
 
-    // The complexity guard maps to GQLSTATUS 5GQL1 (PROGRAM_LIMIT_EXCEEDED), a
-    // selene-db implementation-defined class. Per ISO/IEC 39075:2024 §23.1,
-    // class codes whose first character is in `5`-`9` or `A`-`Z` are reserved
-    // for implementation-defined exception conditions, so a resource/complexity
-    // bound that has no standard Table 8 code lives here alongside the existing
-    // NestingLimitExceeded and InternerBudgetExceeded guards.
-    #[test]
-    fn bracket_complexity_limit_maps_to_program_limit_exceeded() {
-        let over_cap = "[".repeat((MAX_NESTING_DEPTH as usize).min(64) + 1);
-        let source = format!("RETURN {over_cap}0");
-        let error = parse(&source).expect_err("a long bracket run exceeds the complexity cap");
-        assert!(
-            matches!(error, ParserError::ComplexityLimitExceeded { .. }),
-            "expected ComplexityLimitExceeded, got {error:?}"
-        );
-        assert_eq!(error.gqlstatus(), GqlStatus::PROGRAM_LIMIT_EXCEEDED);
-    }
-
-    #[test]
-    fn bracket_complexity_allows_legitimate_boundary_queries() {
-        // The largest single-statement opener count anywhere in the workspace is
-        // 9 (a 9-argument trigonometric RETURN). Queries at and below that count
-        // must still parse cleanly under the complexity cap of 20.
-        let nine_call_return = "RETURN sin(0), cos(0), tan(0), cot(1), asin(0), \
-             acos(1), atan(0), degrees(3.0), radians(180)";
-        parse(nine_call_return).expect("a 9-opener RETURN is well under the complexity cap");
-
-        // A nested list literal three levels deep (3 openers) and a record with
-        // a nested list (3 openers) both sit far below the cap.
-        parse("RETURN [[[1]]]").expect("a depth-3 list literal parses");
-        parse("RETURN {a: [1, 2], b: [3, 4]}").expect("a record of two lists parses");
-    }
+    // PARSER-DOS complexity-guard unit tests live in the dedicated integration
+    // suite `tests/parser_dos_artifacts.rs` (the `dos` regression module),
+    // alongside the embedded fuzz artifacts, so this near-cap module file stays
+    // comfortably under the 700-LOC gate. The guard maps to GQLSTATUS 5GQL1
+    // PROGRAM_LIMIT_EXCEEDED per ISO/IEC 39075:2024 section 23.1; see
+    // `crate::error::GqlStatus::PROGRAM_LIMIT_EXCEEDED` for the Table 8 grounding.
 }

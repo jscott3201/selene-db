@@ -201,6 +201,10 @@ pub enum ParserError {
     /// Query opened more bracket delimiters than the parser's complexity cap
     /// allows, regardless of how deeply they nest.
     ///
+    /// Maps to GQLSTATUS 5GQL1 (PROGRAM_LIMIT_EXCEEDED), a selene-db
+    /// implementation-defined class per ISO/IEC 39075:2024 section 23.1 (see
+    /// [`GqlStatus::PROGRAM_LIMIT_EXCEEDED`]).
+    ///
     /// Distinct from [`Self::NestingLimitExceeded`], which bounds *net* nesting
     /// depth. This variant bounds the *total* count of `(`, `[`, and `{`
     /// openers in a single statement. A wide, shallow fan-out of openers (e.g.
