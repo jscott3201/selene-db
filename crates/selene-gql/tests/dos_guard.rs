@@ -132,11 +132,11 @@ fn over_budget_parse_does_not_pollute_global_interner() {
 
 #[test]
 fn rejects_excessive_bracket_run_before_pest_parse() {
-    // A long run of `[` openers is rejected by the pre-pest byte-scan guard.
-    // The complexity cap (total bracket-opener count) is the tighter of the two
-    // byte-scan caps and fires first: a balanced run deep enough to exceed the
-    // 64-delimiter nesting cap has already opened far more than the
-    // complexity-cap brackets, so it is reported as the (more precise)
+    // A deeply nested run of `[` openers is rejected by the pre-pest byte-scan
+    // guard. The `[`-specific complexity cap (32 nested list brackets) is the
+    // tighter of the two byte-scan caps and fires first: a `[` run deep enough
+    // to approach the 64-delimiter general nesting cap has already exceeded the
+    // tighter `[`-depth cap, so it is reported as the (more precise)
     // ComplexityLimitExceeded rather than NestingLimitExceeded. Both map to
     // GQLSTATUS 5GQL1 PROGRAM_LIMIT_EXCEEDED.
     let source = format!(
@@ -181,20 +181,21 @@ fn record_field_names_count_against_budget() {
 
 #[test]
 fn rejects_excessive_record_type_nesting() {
-    // `RECORD{ ... }` nesting opens one `{` per level, so a depth past the
-    // nesting cap also opens far more than the complexity cap of `{` openers.
-    // The pre-pest byte-scan complexity guard fires first; like the nesting
-    // guard it maps to GQLSTATUS 5GQL1 PROGRAM_LIMIT_EXCEEDED.
+    // `RECORD{ ... }` nesting opens one `{` per level. `{` is not a demonstrated
+    // super-linear backtracking vector — only `[` carries the tighter dedicated
+    // complexity cap — so a `{` run past the general all-bracket nesting cap is
+    // reported as a NestingLimitExceeded violation. Both map to GQLSTATUS 5GQL1
+    // PROGRAM_LIMIT_EXCEEDED.
     let depth = NESTING_LIMIT + 1;
     let source = format!(
         "CREATE NODE TYPE :DeepRecord (v :: {}INTEGER{})",
         "RECORD{f :: ".repeat(depth),
         "}".repeat(depth)
     );
-    let error = parse(&source).expect_err("over-complex record type name rejects");
+    let error = parse(&source).expect_err("over-deep record type name rejects");
     assert!(
-        matches!(error, ParserError::ComplexityLimitExceeded { .. }),
-        "expected ComplexityLimitExceeded, got {error:?}"
+        matches!(error, ParserError::NestingLimitExceeded { .. }),
+        "expected NestingLimitExceeded, got {error:?}"
     );
 }
 

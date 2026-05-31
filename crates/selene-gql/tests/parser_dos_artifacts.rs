@@ -3,13 +3,16 @@
 //!
 //! # Background
 //!
-//! pest is not packrat-memoized, so a wide, shallow fan-out of `[` openers
+//! pest is not packrat-memoized, so a run of *unclosed* `[` openers is
 //! re-explored under the three `[`-prefixed expression rules
-//! (`list_access_op`, `list_comprehension`, `list_lit`) drives super-linear
-//! parse time — seconds-to-minutes for sub-kilobyte inputs — even though net
-//! nesting depth stays under the 64-delimiter nesting cap. Parsing precedes
+//! (`list_access_op`, `list_comprehension`, `list_lit`) at every nesting
+//! level, driving super-linear parse time — seconds-to-minutes for sub-kilobyte
+//! inputs — even though net nesting depth stays under the 64-delimiter general
+//! nesting cap (the corpus blows up around 57 nested `[`). Parsing precedes
 //! execution, so an execution deadline cannot interrupt the blow-up; the
-//! pre-pest byte-scan guard bounds the *total* opener count instead.
+//! pre-pest byte-scan guard bounds the *depth of simultaneously-open `[`*
+//! instead (these artifacts are pure unclosed `[`, so their `[`-depth equals
+//! their opener count).
 //!
 //! These six artifacts were surfaced by the v1.1.0 release fuzz soak. They are
 //! gitignored under `fuzz/artifacts/parse_gql/` (the whole artifacts tree is
@@ -58,21 +61,25 @@ const ARTIFACTS: &[(&str, &[u8])] = &[
     ("timeout-f3a4d77", TIMEOUT_F3A4D77),
 ];
 
-/// Per-artifact wall-clock ceiling.
+/// Per-artifact wall-clock ceiling — a coarse, deliberately loose tripwire.
 ///
-/// The goal is to catch *any* pest involvement, not only the catastrophic
-/// seconds-to-minutes blow-up: post-fix the byte-scan guard rejects each
-/// artifact before pest runs at all, so the real cost is sub-microsecond.
-/// The original blow-up was super-linear (seconds-to-minutes), but a *partial*
-/// regression — where the guard is broken and pest begins backtracking but is
-/// only fed one of these small inputs — could land in the 10–30ms range and
-/// would slip past a loose 50ms ceiling. A 10ms budget is ~10,000x today's
-/// worst case (ample headroom for cold-start / heavy CI parallelism on the
-/// dozens of gql test binaries) while still failing on intermediate
-/// regressions where pest is reached at all. If CI parallelism ever produces a
-/// false positive below 10ms, raise this constant rather than weakening the
-/// guard.
-const PARSE_BUDGET: Duration = Duration::from_millis(10);
+/// The *primary*, deterministic guarantee is structural and lives in
+/// `artifacts_reject_with_program_limit_exceeded_status`: each artifact is
+/// rejected by the pre-pest byte-scan guard (`ComplexityLimitExceeded`), so
+/// pest is never reached and the real cost is sub-microsecond. That assertion
+/// does not depend on wall-clock and cannot flake.
+///
+/// This timing check is only a secondary backstop against a hypothetical future
+/// change that reintroduces the catastrophic super-linear blow-up (the original
+/// was seconds-to-minutes). Because `Instant::elapsed` includes scheduler
+/// pauses — and these tests run alongside dozens of other gql binaries under
+/// nextest, where a transient deschedule on a throttled CI runner can stall a
+/// thread for tens of milliseconds — the budget is set generously at 250ms.
+/// That is ~25,000x today's sub-microsecond cost (immune to realistic CI
+/// jitter) while still tripping by 10–100x+ on a multi-second regression. A
+/// broken guard that lets an artifact reach pest is caught deterministically by
+/// the structural test above (the error type changes), not by this timing.
+const PARSE_BUDGET: Duration = Duration::from_millis(250);
 
 /// The PARSER-DOS complexity-guard regression module: artifact replay plus the
 /// boundary unit cases relocated out of `parser/mod.rs` to keep that near-cap
@@ -86,8 +93,8 @@ mod dos {
 
     /// Net-nesting cap (`guard::MAX_NESTING_DEPTH`); the public crate does not
     /// re-export the parser constant, so it is mirrored here. A `[` run one
-    /// longer than this is comfortably above the complexity cap of 20 and must
-    /// be rejected by the complexity guard before pest runs.
+    /// longer than this is well above the dedicated `[`-depth complexity cap of
+    /// 32 and must be rejected by the complexity guard before pest runs.
     const NESTING_CAP: usize = 64;
 
     #[test]
@@ -108,12 +115,12 @@ mod dos {
                  super-linear bracket-backtracking blow-up has regressed"
             );
 
-            // Contract: "parse or reject". Every artifact opens 56-159 brackets
-            // (far above the cap of 20), so today each is rejected; a future
-            // change that lets one parse is acceptable only if it stays within
-            // PARSE_BUDGET above. The one thing that is never acceptable is a
-            // rejection reached *after* expensive recursive descent, so any
-            // error MUST be the pre-pest complexity guard.
+            // Contract: "parse or reject". Every artifact nests 56-159 unclosed
+            // `[` (far above the `[`-depth cap of 32), so today each is
+            // rejected; a future change that lets one parse is acceptable only
+            // if it stays within PARSE_BUDGET above. The one thing that is never
+            // acceptable is a rejection reached *after* expensive recursive
+            // descent, so any error MUST be the pre-pest complexity guard.
             match result {
                 Ok(_) => {}
                 Err(ParserError::ComplexityLimitExceeded { .. }) => {}
@@ -152,12 +159,13 @@ mod dos {
 
     #[test]
     fn bracket_complexity_limit_maps_to_program_limit_exceeded() {
-        // A `[` run one longer than the net-nesting cap also blows the (tighter)
-        // complexity cap, so it is reported as the more precise complexity
-        // violation, mapping to GQLSTATUS 5GQL1 PROGRAM_LIMIT_EXCEEDED.
+        // A run of `[` nested past the dedicated `[`-depth complexity cap (and
+        // here also past the general nesting cap) is reported as the more
+        // precise complexity violation, mapping to GQLSTATUS 5GQL1
+        // PROGRAM_LIMIT_EXCEEDED.
         let over_cap = "[".repeat(NESTING_CAP + 1);
         let source = format!("RETURN {over_cap}0");
-        let error = parse(&source).expect_err("a long bracket run exceeds the complexity cap");
+        let error = parse(&source).expect_err("a deep bracket run exceeds the complexity cap");
         assert!(
             matches!(error, ParserError::ComplexityLimitExceeded { .. }),
             "expected ComplexityLimitExceeded, got {error:?}"
@@ -167,16 +175,28 @@ mod dos {
 
     #[test]
     fn bracket_complexity_allows_legitimate_boundary_queries() {
-        // The largest single-statement opener count anywhere in the workspace
-        // is 9 (a 9-argument trigonometric RETURN). Queries at and below that
-        // count must still parse cleanly under the complexity cap of 20.
+        // The complexity cap bounds `[` *nesting depth* (32), not a total opener
+        // count, so deeply nested `[` is the only thing it rejects. The deepest
+        // legitimate `[` nesting in the workspace is 3 (`[[[1]]]`).
         let nine_call_return = "RETURN sin(0), cos(0), tan(0), cot(1), asin(0), \
              acos(1), atan(0), degrees(3.0), radians(180)";
-        parse(nine_call_return).expect("a 9-opener RETURN is well under the complexity cap");
+        parse(nine_call_return).expect("a 9-call RETURN nests no list brackets");
 
-        // A nested list literal three levels deep (3 openers) and a record with
-        // a nested list (3 openers) both sit far below the cap.
+        // A nested list literal three levels deep and a record with two lists
+        // both sit far below the `[`-depth cap.
         parse("RETURN [[[1]]]").expect("a depth-3 list literal parses");
         parse("RETURN {a: [1, 2], b: [3, 4]}").expect("a record of two lists parses");
+
+        // Regression guard for the false-positive a total-opener-count cap would
+        // hit: a long fixed path has many balanced `(`/`[` openers (here 31 `(`
+        // plus 30 `[` = 61 openers, more than the smallest hostile artifact's
+        // 56) but `[`-depth 1 — each edge bracket closes before the next opens —
+        // so it must parse no matter how many hops.
+        let mut long_path = String::from("MATCH (n0)");
+        for hop in 1..=30 {
+            long_path.push_str(&format!("-[:E]->(n{hop})"));
+        }
+        long_path.push_str(" RETURN n0");
+        parse(&long_path).expect("a 30-hop fixed path has list-bracket depth 1 and must parse");
     }
 }

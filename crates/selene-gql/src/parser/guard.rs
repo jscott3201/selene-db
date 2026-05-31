@@ -8,34 +8,38 @@ use crate::{SourceSpan, error::ParserError};
 /// ordinary query, list, record, and subquery nesting comfortably below the cap.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
-/// Maximum total count of grouping, list, and record openers admitted in a
-/// single statement, regardless of how deeply they nest.
+/// Maximum simultaneously-open `[` (list / index / comprehension) nesting
+/// depth admitted in a single statement.
 ///
-/// pest is not packrat-memoized, so every failed sub-parse of an opener is
-/// recomputed. The three `[`-prefixed expression rules
-/// (`list_access_op`, `list_comprehension`, `list_lit`; see `grammar.pest`)
-/// each re-explore a run of openers, so a wide, shallow fan-out of `[` (or
-/// `(`/`{`) runs drives super-linear backtracking — seconds-to-minutes parse
-/// time for sub-kilobyte hostile inputs — even when net nesting stays well
-/// under [`MAX_NESTING_DEPTH`]. Because parsing precedes execution, an
-/// execution deadline cannot interrupt it; the only safe place to stop the
-/// blow-up is before recursive descent begins.
+/// pest is not packrat-memoized, so a `[` opener is re-explored by each of the
+/// three `[`-prefixed expression rules (`list_access_op`, `list_comprehension`,
+/// `list_lit`; see `grammar.pest`) before the parser can commit. A run of
+/// *unclosed* `[` therefore nests those ambiguous sub-parses, and the failed
+/// branches are recomputed at every level — super-linear backtracking that
+/// reaches seconds-to-minutes parse time for sub-kilobyte hostile inputs (the
+/// fuzz corpus blows up around 57 nested `[`), well under [`MAX_NESTING_DEPTH`].
+/// Parsing precedes execution, so an execution deadline cannot interrupt it;
+/// the only safe place to stop the blow-up is before recursive descent begins.
 ///
-/// This is a conservative *complexity budget*, not an exact root-cause metric:
-/// one observed 56-opener artifact parses fast and a 57-opener one is slow, so
-/// the cap is set generously above the legitimate maximum rather than at the
-/// empirical blow-up point. The largest single-statement opener count in the
-/// positive corpus is 9 (a 9-argument trigonometric `RETURN`), and no
-/// legitimate query anywhere in the workspace exceeds 9, so a cap of 20 leaves
-/// comfortable headroom while rejecting every known hostile artifact (the
-/// smallest of which uses 56 openers).
-pub(crate) const MAX_BRACKET_OPENER_COUNT: u32 = 20;
+/// This caps the *depth* of simultaneously-open `[`, **not** a total opener
+/// count, because depth is the actual blow-up driver. A balanced, promptly
+/// closed bracket never nests: an edge pattern `-[:E]->` and a flat list
+/// `[1, 2, 3]` each return to `[`-depth 0 before the next opener, so a path of
+/// arbitrarily many hops or an arbitrarily wide list stays at `[`-depth 1 and
+/// is always admitted — only genuinely nested `[` accrue depth. (A total-count
+/// cap, by contrast, would reject a legitimate ten-hop fixed path purely for
+/// its opener count.) The cap of 32 is an order of magnitude above the deepest
+/// legitimate `[` nesting anywhere in the workspace (3, a `[[[1]]]` literal)
+/// and comfortably below the ~57-deep empirical blow-up point. `(` and `{`
+/// nesting is not a demonstrated backtracking vector (the fuzz corpus contains
+/// only `[`) and is bounded by [`MAX_NESTING_DEPTH`] alone.
+pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 
 pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let bytes = source.as_bytes();
     let mut index = 0;
     let mut depth = 0_u32;
-    let mut openers = 0_u32;
+    let mut list_depth = 0_u32;
 
     while index < bytes.len() {
         match bytes[index] {
@@ -45,16 +49,25 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             b'/' if next_is(bytes, index, b'/') => index = skip_line_comment(bytes, index + 2),
             b'-' if next_is(bytes, index, b'-') => index = skip_line_comment(bytes, index + 2),
             b'/' if next_is(bytes, index, b'*') => index = skip_block_comment(bytes, index + 2),
-            b'(' | b'[' | b'{' => {
-                // Bound total openers first: it is the tighter cap and the
-                // primary defense against the wide fan-out blow-up. A balanced
-                // input deep enough to exceed MAX_NESTING_DEPTH also exceeds
-                // this cap, so it is reported as the (tighter, more honest)
-                // complexity violation rather than a nesting violation.
-                openers += 1;
-                if openers > MAX_BRACKET_OPENER_COUNT {
+            b'(' | b'{' => {
+                depth += 1;
+                if depth > MAX_NESTING_DEPTH {
+                    return Err(ParserError::NestingLimitExceeded {
+                        limit: MAX_NESTING_DEPTH,
+                        span: point_span(index),
+                    });
+                }
+            }
+            b'[' => {
+                // `[` is the demonstrated super-linear backtracking vector, so
+                // it carries the tighter dedicated depth cap on top of the
+                // shared nesting cap. Check the tighter cap first so a deeply
+                // nested `[` run is reported as the more precise complexity
+                // violation rather than a generic nesting violation.
+                list_depth += 1;
+                if list_depth > MAX_LIST_NESTING_DEPTH {
                     return Err(ParserError::ComplexityLimitExceeded {
-                        limit: MAX_BRACKET_OPENER_COUNT,
+                        limit: MAX_LIST_NESTING_DEPTH,
                         span: point_span(index),
                     });
                 }
@@ -66,7 +79,11 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                     });
                 }
             }
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b')' | b'}' => depth = depth.saturating_sub(1),
+            b']' => {
+                depth = depth.saturating_sub(1);
+                list_depth = list_depth.saturating_sub(1);
+            }
             _ => {}
         }
         index += 1;

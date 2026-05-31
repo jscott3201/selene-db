@@ -198,30 +198,32 @@ pub enum ParserError {
         span: SourceSpan,
     },
 
-    /// Query opened more bracket delimiters than the parser's complexity cap
-    /// allows, regardless of how deeply they nest.
+    /// Query nested `[` (list / index / comprehension) openers more deeply than
+    /// the parser's complexity cap allows.
     ///
     /// Maps to GQLSTATUS 5GQL1 (PROGRAM_LIMIT_EXCEEDED), a selene-db
     /// implementation-defined class per ISO/IEC 39075:2024 section 23.1 (see
     /// [`GqlStatus::PROGRAM_LIMIT_EXCEEDED`]).
     ///
-    /// Distinct from [`Self::NestingLimitExceeded`], which bounds *net* nesting
-    /// depth. This variant bounds the *total* count of `(`, `[`, and `{`
-    /// openers in a single statement. A wide, shallow fan-out of openers (e.g.
-    /// many sibling `[` runs at modest depth) re-explored under several
-    /// `[`-prefixed grammar rules drives super-linear pest backtracking even
-    /// though net depth stays under the nesting cap, so the byte-scan guard
-    /// rejects it before recursive descent begins.
-    #[error("parser complexity limit exceeded ({limit} bracket openers)")]
+    /// Distinct from [`Self::NestingLimitExceeded`], which bounds *all-bracket*
+    /// net nesting depth at a looser cap. This variant bounds the depth of
+    /// simultaneously-open `[` specifically: pest is not packrat-memoized, so a
+    /// run of *unclosed* `[` nests the three ambiguous `[`-prefixed grammar
+    /// rules and recomputes their failed branches at every level, driving
+    /// super-linear backtracking that blows up well under the general nesting
+    /// cap. The byte-scan guard rejects it before recursive descent begins.
+    /// Balanced, promptly closed `[` (an edge pattern, a flat list) never
+    /// accrue depth, so legitimate wide paths and lists are unaffected.
+    #[error("parser complexity limit exceeded (max {limit} nested list brackets)")]
     #[diagnostic(
         code(SLENE_GQL_5GQL1),
         help(
-            "queries are bounded to a total count of grouping, list, and record openers per \
-             statement"
+            "queries are bounded to a maximum `[` (list, index, comprehension) nesting depth \
+             per statement; deeply nested `[` drives super-linear parser backtracking"
         )
     )]
     ComplexityLimitExceeded {
-        /// Maximum admitted total bracket-opener count.
+        /// Maximum admitted `[` (list / index / comprehension) nesting depth.
         limit: u32,
         /// Source span of the opener that crossed the limit.
         #[label("exceeds parser complexity limit")]
