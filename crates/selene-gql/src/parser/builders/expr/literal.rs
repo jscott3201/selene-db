@@ -83,6 +83,11 @@ fn build_literal_child(
     let child_span = span(&child);
     match child.as_rule() {
         Rule::null_lit => Ok(Literal::Null(child_span)),
+        // Per ISO/IEC 39075:2024 §21.2 <boolean literal> ::= TRUE | FALSE |
+        // UNKNOWN. UNKNOWN is the boolean unknown truth value; the runtime
+        // represents it as `Value::Null` (validated three-valued logic), so the
+        // parser lowers it to the same `Literal::Null` node as `NULL`.
+        Rule::unknown_lit => Ok(Literal::Null(child_span)),
         Rule::bool_lit => Ok(Literal::Bool(
             child.as_str().eq_ignore_ascii_case("true"),
             child_span,

@@ -507,3 +507,81 @@ fn is_typed_list_enforces_element_type() {
         Value::Bool(true)
     );
 }
+
+/// Evaluate `- <value>` by binding the operand to a variable (so non-literal
+/// numeric `Value` variants can be exercised) and negating it.
+fn negate_value(value: Value) -> Result<Value, ExecutorError> {
+    let name = intern("v").unwrap();
+    let expr = ValueExpr::UnaryOp {
+        op: UnaryOp::Negate,
+        operand: Box::new(var(name)),
+        span: span(),
+    };
+    let binding = Binding::new([value]);
+    let schema = BindingTableSchema {
+        columns: vec![named_column(name)],
+    };
+    eval_with_binding(&expr, &binding, &schema)
+}
+
+// GQLRT-01: unary negate must accept every numeric `Value` variant, not just
+// `Int`/`Float`. The analyzer types `-$p` as Dynamic and passes it through, so
+// the runtime is the only line of defense; rejecting a numeric operand here is
+// a wrong-answer/spurious-error bug.
+#[test]
+fn negate_over_each_numeric_value_type() {
+    // i64
+    assert_eq!(negate_value(Value::Int(5)).unwrap(), Value::Int(-5));
+    // i64 overflow boundary: -i64::MIN is not representable.
+    let err = negate_value(Value::Int(i64::MIN)).expect_err("i64::MIN negate overflows");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
+
+    // f64
+    assert_eq!(negate_value(Value::Float(2.5)).unwrap(), Value::Float(-2.5));
+
+    // u64 promotes to i64.
+    assert_eq!(negate_value(Value::Uint(5)).unwrap(), Value::Int(-5));
+    // u64 that does not fit i64 → NumericValueOutOfRange.
+    let err = negate_value(Value::Uint(u64::MAX)).expect_err("u64::MAX negate exceeds i64 range");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
+    // u64 at exactly i64::MAX still fits (boundary accept).
+    assert_eq!(
+        negate_value(Value::Uint(i64::MAX as u64)).unwrap(),
+        Value::Int(-i64::MAX)
+    );
+
+    // i128
+    assert_eq!(negate_value(Value::Int128(7)).unwrap(), Value::Int128(-7));
+    let err = negate_value(Value::Int128(i128::MIN)).expect_err("i128::MIN negate overflows");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
+
+    // u128 promotes to i128.
+    assert_eq!(negate_value(Value::Uint128(7)).unwrap(), Value::Int128(-7));
+    let err =
+        negate_value(Value::Uint128(u128::MAX)).expect_err("u128::MAX negate exceeds i128 range");
+    assert_eq!(err.gqlstatus().as_str(), "22003");
+    // u128 at exactly i128::MAX still fits (boundary accept).
+    assert_eq!(
+        negate_value(Value::Uint128(i128::MAX as u128)).unwrap(),
+        Value::Int128(-i128::MAX)
+    );
+
+    // f32 negates within f32.
+    assert_eq!(
+        negate_value(Value::Float32(1.5)).unwrap(),
+        Value::Float32(-1.5)
+    );
+
+    // Decimal has a unary negation.
+    assert_eq!(
+        negate_value(Value::Decimal("3.25".parse().unwrap())).unwrap(),
+        Value::Decimal("-3.25".parse().unwrap())
+    );
+
+    // Null propagates.
+    assert_eq!(negate_value(Value::Null).unwrap(), Value::Null);
+
+    // A non-numeric operand still errors.
+    let err = negate_value(Value::Bool(true)).expect_err("boolean negate is a data exception");
+    assert!(matches!(err, ExecutorError::DataException { .. }));
+}
