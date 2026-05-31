@@ -155,6 +155,7 @@ fn rebase_parser_error(error: &mut ParserError, offset: usize) {
         | ParserError::UnsupportedFeature { span, .. }
         | ParserError::InternerBudgetExceeded { span, .. }
         | ParserError::NestingLimitExceeded { span, .. }
+        | ParserError::ComplexityLimitExceeded { span, .. }
         | ParserError::NotImplemented { span, .. } => rebase_span(span, offset),
     }
 }

@@ -799,4 +799,11 @@ mod tests {
             "error span {span:?} should point into the second statement"
         );
     }
+
+    // PARSER-DOS complexity-guard unit tests live in the dedicated integration
+    // suite `tests/parser_dos_artifacts.rs` (the `dos` regression module),
+    // alongside the embedded fuzz artifacts, so this near-cap module file stays
+    // comfortably under the 700-LOC gate. The guard maps to GQLSTATUS 5GQL1
+    // PROGRAM_LIMIT_EXCEEDED per ISO/IEC 39075:2024 section 23.1; see
+    // `crate::error::GqlStatus::PROGRAM_LIMIT_EXCEEDED` for the Table 8 grounding.
 }

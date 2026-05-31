@@ -8,20 +8,56 @@ use crate::{SourceSpan, error::ParserError};
 /// ordinary query, list, record, and subquery nesting comfortably below the cap.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
+/// Maximum simultaneously-open `[` (list / index / comprehension) nesting
+/// depth admitted in a single statement.
+///
+/// pest is not packrat-memoized, so a `[` opener is re-explored by each of the
+/// three `[`-prefixed expression rules (`list_access_op`, `list_comprehension`,
+/// `list_lit`; see `grammar.pest`) before the parser can commit. A run of
+/// *unclosed* `[` therefore nests those ambiguous sub-parses, and the failed
+/// branches are recomputed at every level — super-linear backtracking that
+/// reaches seconds-to-minutes parse time for sub-kilobyte hostile inputs (the
+/// fuzz corpus blows up around 57 nested `[`), well under [`MAX_NESTING_DEPTH`].
+/// Parsing precedes execution, so an execution deadline cannot interrupt it;
+/// the only safe place to stop the blow-up is before recursive descent begins.
+///
+/// This caps the *depth* of simultaneously-open `[`, **not** a total opener
+/// count, because depth is the actual blow-up driver. A balanced, promptly
+/// closed bracket never nests: an edge pattern `-[:E]->` and a flat list
+/// `[1, 2, 3]` each return to `[`-depth 0 before the next opener, so a path of
+/// arbitrarily many hops or an arbitrarily wide list stays at `[`-depth 1 and
+/// is always admitted — only genuinely nested `[` accrue depth. (A total-count
+/// cap, by contrast, would reject a legitimate ten-hop fixed path purely for
+/// its opener count.) The cap of 32 is an order of magnitude above the deepest
+/// legitimate `[` nesting anywhere in the workspace (3, a `[[[1]]]` literal)
+/// and comfortably below the ~57-deep empirical blow-up point. `(` and `{`
+/// nesting is not a demonstrated backtracking vector (the fuzz corpus contains
+/// only `[`) and is bounded by [`MAX_NESTING_DEPTH`] alone.
+pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
+
 pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let bytes = source.as_bytes();
+    // Index of the final `'` in the input. A single-quoted string treats `\'`
+    // as an escaped quote ONLY when a later `'` exists (pest `escaped_quote`);
+    // when the `'` after a `\` is the last quote, the `\` is a dangling escape
+    // and the `'` closes the string (pest `dangling_escape`). Mirroring this is
+    // load-bearing: a blanket "`\` escapes the next byte" rule lets `RETURN '\'`
+    // skip past the real closing quote to EOF, hiding a hostile `[` run that
+    // pest still closes the string before and parses — a parser-time DoS bypass.
+    let last_single_quote = bytes.iter().rposition(|byte| *byte == b'\'');
     let mut index = 0;
     let mut depth = 0_u32;
+    let mut list_depth = 0_u32;
 
     while index < bytes.len() {
         match bytes[index] {
-            b'\'' => index = skip_single_quoted(bytes, index + 1),
+            b'\'' => index = skip_single_quoted(bytes, index + 1, last_single_quote),
             b'"' => index = skip_double_quoted(bytes, index + 1),
             b'`' => index = skip_backtick_quoted(bytes, index + 1),
             b'/' if next_is(bytes, index, b'/') => index = skip_line_comment(bytes, index + 2),
             b'-' if next_is(bytes, index, b'-') => index = skip_line_comment(bytes, index + 2),
             b'/' if next_is(bytes, index, b'*') => index = skip_block_comment(bytes, index + 2),
-            b'(' | b'[' | b'{' => {
+            b'(' | b'{' => {
                 depth += 1;
                 if depth > MAX_NESTING_DEPTH {
                     return Err(ParserError::NestingLimitExceeded {
@@ -30,7 +66,32 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                     });
                 }
             }
-            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'[' => {
+                // `[` is the demonstrated super-linear backtracking vector, so
+                // it carries the tighter dedicated depth cap on top of the
+                // shared nesting cap. Check the tighter cap first so a deeply
+                // nested `[` run is reported as the more precise complexity
+                // violation rather than a generic nesting violation.
+                list_depth += 1;
+                if list_depth > MAX_LIST_NESTING_DEPTH {
+                    return Err(ParserError::ComplexityLimitExceeded {
+                        limit: MAX_LIST_NESTING_DEPTH,
+                        span: point_span(index),
+                    });
+                }
+                depth += 1;
+                if depth > MAX_NESTING_DEPTH {
+                    return Err(ParserError::NestingLimitExceeded {
+                        limit: MAX_NESTING_DEPTH,
+                        span: point_span(index),
+                    });
+                }
+            }
+            b')' | b'}' => depth = depth.saturating_sub(1),
+            b']' => {
+                depth = depth.saturating_sub(1);
+                list_depth = list_depth.saturating_sub(1);
+            }
             _ => {}
         }
         index += 1;
@@ -43,9 +104,18 @@ fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {
     bytes.get(index + 1).is_some_and(|value| *value == expected)
 }
 
-fn skip_single_quoted(bytes: &[u8], mut index: usize) -> usize {
+fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
     while index < bytes.len() {
         match bytes[index] {
+            // `\'` where the `'` is the final quote in the input is a *dangling*
+            // escape (pest `dangling_escape`): the `\` is literal and the `'`
+            // closes the string. Return the `'` position so the scan resumes
+            // after it and still counts any following brackets — matching pest,
+            // which closes the string here too. Any other `\X` (including a
+            // `\'` with a later quote — pest `escaped_quote`) escapes one byte.
+            b'\\' if bytes.get(index + 1) == Some(&b'\'') && Some(index + 1) == last_quote => {
+                return index + 1;
+            }
             b'\\' => index += 2,
             b'\'' if next_is(bytes, index, b'\'') => index += 2,
             b'\'' => return index,
