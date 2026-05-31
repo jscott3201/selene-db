@@ -12,20 +12,41 @@
 //!    `snapshot.store` → store-before-schema-bump → no-op provider fan-out.
 //!
 //! The committer is the **sole writer of the [`ArcSwap`] snapshot cell**. That
-//! single-writer + single-threaded-FIFO discipline is what preserves D10
-//! strict-serializability once `seal()` drops the write lock early: publish
-//! order is the FIFO order of [`Work`] items, which equals seal order, which
-//! equals lock-acquisition order. **This is a new, load-bearing, NOT
-//! type-enforced invariant** — a second committer or a second `ArcSwap` writer
-//! anywhere would silently break serializability (see the v1.2 design §4 "the
-//! one honest shift"). Every snapshot publisher routes here; the rerouting
-//! completeness is grep-gated and load-bearing.
+//! single-writer + seal-sequence-ordered discipline is what preserves D10
+//! strict-serializability once `seal()` drops the write lock early.
 //!
-//! BRIEF 1 is **durability-neutral**: the WAL stays in `SyncPolicy::EveryN(1)`
-//! and the drain cap is `1`, so behavior is identical to the pre-v1.2
-//! per-commit fsync — only the threading model changes. BRIEF 2 raises the cap
-//! and swaps `EveryN(1)` for `OnFlushOnly` + one group flush per batch.
+//! # Publish order == seal order (the P0 correctness invariant)
+//!
+//! `seal()` consumes the [`crate::WriteTxn`], so the write lock drops as it
+//! returns — *before* the caller enqueues the bundle. Two sessions can seal in
+//! lock order (A then B) yet `send()` in the opposite order, so raw channel
+//! arrival order is **not** seal order. To publish in the correct total order
+//! anyway, each publishable unit ([`Work::Commit`] and [`Work::Compact`]) is
+//! stamped with a strictly-monotonic `seal_seq` **under the write lock**, and
+//! the committer publishes strictly in ascending `seal_seq` via a reorder
+//! buffer ([`run_committer`]). Channel arrival order only governs *when* an item
+//! reaches the buffer, never the order it publishes. **This is a new,
+//! load-bearing, NOT type-enforced invariant** — a second committer or a second
+//! `ArcSwap` writer anywhere would silently break serializability (see the v1.2
+//! design §4 "the one honest shift"). Every snapshot publisher routes here; the
+//! rerouting completeness is grep-gated and load-bearing.
+//!
+//! # No committer-held write lock (deadlock surface removed)
+//!
+//! Compaction also follows seal-and-handover: `SharedGraph::compact` acquires
+//! the write lock on the **caller** thread, allocates a `seal_seq`, densifies
+//! the live graph, writes it back into `*shared`, releases the lock, and hands
+//! the committer a *pre-built* dense snapshot. The committer therefore **never**
+//! takes the write lock for any work item — eliminating the
+//! send-under-lock/queued-compact deadlock entirely (a session is never
+//! simultaneously lock-holding and blocked on the committer).
+//!
+//! BRIEF 1 is **durability-neutral**: the WAL stays in `SyncPolicy::EveryN(1)`,
+//! so each `write_commit` fsyncs — behavior is identical to the pre-v1.2
+//! per-commit fsync, only the threading model changes. BRIEF 2 swaps `EveryN(1)`
+//! for `OnFlushOnly` + one group flush per drained run of contiguous commits.
 
+use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -33,7 +54,6 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
 use arc_swap::ArcSwap;
-use parking_lot::RwLock;
 
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
@@ -47,29 +67,19 @@ use crate::write_txn::{CommitOutcome, SealedCommit, publish_sealed};
 /// healthy committer, while still bounding unbounded fan-in memory.
 const WORK_CHANNEL_CAPACITY: usize = 1024;
 
-/// BRIEF 1 drain cap: process exactly one [`Work::Commit`] per loop turn.
-///
-/// Batching (raising this cap + swapping `EveryN(1)` for `OnFlushOnly` + one
-/// group flush) is BRIEF 2. The drain loop is structured so BRIEF 2 only raises
-/// this constant and adds the group-flush stage. Compact items are always batch
-/// boundaries regardless of the cap.
-const MAX_COMMIT_BATCH: usize = 1;
-
-/// Work submitted to the committer thread.
+/// Work submitted to the committer thread, each tagged with its publish-order
+/// `seal_seq` (allocated under the write lock by the caller).
 ///
 /// `Commit` carries a fully-built, frozen [`SealedCommit`] (no lock, no graph
 /// reference): the committer never re-validates, re-allocates ids, or re-applies
-/// a change list. `Compact` is the only variant for which the committer touches
-/// the write lock itself (it must read the live graph to build the dense
-/// result), so it is always a batch boundary.
+/// a change list. `Compact` carries a *pre-built* dense snapshot (built on the
+/// caller thread under the lock, like a commit) — the committer never touches
+/// the write lock.
 ///
 /// Index DDL is **not** a distinct variant: `create_property_index_named` /
 /// `drop_property_index` build + `seal()` their `WriteTxn` on the caller thread
 /// (releasing the lock) exactly like any other write, then submit a
-/// `Work::Commit`. Routing DDL through the same seal path avoids duplicating the
-/// build logic on the committer thread and keeps the committer's lock surface to
-/// the single `Compact` case (which is what the deadlock invariant below
-/// guards).
+/// `Work::Commit`.
 enum Work {
     /// Publish a pre-sealed commit (the common path: autocommit, explicit-txn
     /// terminal COMMIT, and index DDL).
@@ -77,20 +87,34 @@ enum Work {
         sealed: SealedCommit,
         reply: SyncSender<GraphResult<CommitOutcome>>,
     },
-    /// Compact the live graph in place and republish. The committer acquires the
-    /// write lock itself for this variant — see the deadlock invariant.
+    /// Publish a pre-built dense compacted snapshot. Built + written into
+    /// `*shared` on the caller thread under the lock; the committer only swaps
+    /// the [`ArcSwap`] cell in `seal_seq` order.
     Compact {
+        seal_seq: u64,
+        dense: Arc<SeleneGraph>,
+        report: crate::CompactionReport,
         reply: SyncSender<GraphResult<crate::CompactionReport>>,
     },
 }
 
-/// Long-lived Arc handles the committer thread needs to publish + compact.
+impl Work {
+    /// The publish-order key under which the reorder buffer releases this item.
+    fn seal_seq(&self) -> u64 {
+        match self {
+            Work::Commit { sealed, .. } => sealed.seal_seq,
+            Work::Compact { seal_seq, .. } => *seal_seq,
+        }
+    }
+}
+
+/// Long-lived Arc handles the committer thread needs to publish.
 ///
 /// These are clones of the [`crate::SharedGraph`] internals. The committer owns
 /// them for its whole life; it is the only thread that calls `snapshot.store`.
+/// It does **not** hold the write lock (`shared`) — compaction builds on the
+/// caller thread — so no `RwLock` handle is needed here.
 pub(crate) struct CommitterHandles {
-    /// The single graph write lock (only taken by the committer for `Compact`).
-    pub(crate) shared: Arc<RwLock<Arc<SeleneGraph>>>,
     /// The published-snapshot cell. The committer is its sole writer.
     pub(crate) snapshot: Arc<ArcSwap<SeleneGraph>>,
     /// Plan-cache schema epoch, bumped strictly after `snapshot.store`.
@@ -112,10 +136,16 @@ pub(crate) struct CommitterHandles {
 #[derive(Clone)]
 pub(crate) struct Committer {
     sender: SyncSender<Work>,
-    /// Set true if the committer thread died (panic). Subsequent submits
-    /// fail fast with [`GraphError::Durable`] instead of blocking forever on a
-    /// `recv()` whose `SyncSender` was dropped.
+    /// Set true if the committer thread died (panic) or a post-seal commit
+    /// failed durably. Subsequent submits fail fast with [`GraphError::Durable`]
+    /// instead of blocking forever on a `recv()` whose `SyncSender` was dropped,
+    /// or trusting an in-memory graph that diverged from the published snapshot.
     poisoned: Arc<std::sync::atomic::AtomicBool>,
+    /// Strictly-monotonic publish-order allocator. Each `seal()` / `compact()`
+    /// takes the next value **under the write lock**, so the sequence order is
+    /// the lock-acquisition (total) order. The committer publishes in this
+    /// order via its reorder buffer.
+    next_seal_seq: Arc<AtomicU64>,
 }
 
 /// Owner-side committer state held by [`crate::SharedGraph`]: the canonical
@@ -132,6 +162,7 @@ pub(crate) struct CommitterThread {
     /// for each `WriteTxn`. Taken (dropped) first on shutdown.
     sender: Option<SyncSender<Work>>,
     poisoned: Arc<std::sync::atomic::AtomicBool>,
+    next_seal_seq: Arc<AtomicU64>,
     join: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -140,6 +171,9 @@ impl CommitterThread {
     pub(crate) fn spawn(handles: CommitterHandles) -> Self {
         let (sender, receiver) = sync_channel::<Work>(WORK_CHANNEL_CAPACITY);
         let poisoned = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        // seal_seq starts at 0; the committer's reorder buffer expects the first
+        // published item to carry seal_seq 0 (its `next_publish_seq` init).
+        let next_seal_seq = Arc::new(AtomicU64::new(0));
         let thread_poisoned = Arc::clone(&poisoned);
         let join = std::thread::Builder::new()
             .name("selene-committer".to_owned())
@@ -148,6 +182,7 @@ impl CommitterThread {
         Self {
             sender: Some(sender),
             poisoned,
+            next_seal_seq,
             join: Mutex::new(Some(join)),
         }
     }
@@ -157,13 +192,8 @@ impl CommitterThread {
         Committer {
             sender: self.sender.clone().expect("committer sender live"),
             poisoned: Arc::clone(&self.poisoned),
+            next_seal_seq: Arc::clone(&self.next_seal_seq),
         }
-    }
-
-    /// Submit a compaction request and block until the committer publishes the
-    /// dense graph or reports an error.
-    pub(crate) fn compact(&self) -> GraphResult<crate::CompactionReport> {
-        self.handle().submit_compact()
     }
 }
 
@@ -181,13 +211,23 @@ impl Drop for CommitterThread {
 }
 
 impl Committer {
+    /// Allocate the next strictly-monotonic publish-order key.
+    ///
+    /// MUST be called while holding the write lock (in `seal()` / `compact()`),
+    /// so the allocation order equals lock-acquisition order. `Relaxed` is sound
+    /// for the counter itself: the cross-thread ordering comes from the write
+    /// lock's release/acquire, not from this atomic.
+    pub(crate) fn next_seal_seq(&self) -> u64 {
+        self.next_seal_seq.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Seal-and-submit a commit, blocking until it is durable + visible.
     ///
     /// The caller MUST have released the write lock (i.e. `sealed` came from a
-    /// consumed [`crate::WriteTxn`]) **before** calling this. Holding the lock
-    /// here would deadlock against a queued `Work::Compact` for which the
-    /// committer must acquire the same lock — the load-bearing deadlock
-    /// invariant (v1.2 design §3.2).
+    /// consumed [`crate::WriteTxn`]) **before** calling this — `seal()` does
+    /// exactly that. The committer publishes strictly in `sealed.seal_seq`
+    /// order, so channel arrival order (which can differ from seal order) does
+    /// not affect the published total order.
     pub(crate) fn submit_commit(&self, sealed: SealedCommit) -> GraphResult<CommitOutcome> {
         if self.poisoned.load(Ordering::Acquire) {
             return Err(committer_dead());
@@ -199,18 +239,37 @@ impl Committer {
                 reply: reply_tx,
             })
             .map_err(|_| committer_dead())?;
-        // BLOCKS until the committer publishes (Stage 3) and acks (Stage 4),
-        // so a session never observes its own commit before linearization.
+        // BLOCKS until the committer publishes and acks, so a session never
+        // observes its own commit before linearization.
         reply_rx.recv().map_err(|_| committer_dead())?
     }
 
-    fn submit_compact(&self) -> GraphResult<crate::CompactionReport> {
+    /// Submit a pre-built dense compacted snapshot, blocking until the committer
+    /// publishes it (in `seal_seq` order) or reports an error.
+    ///
+    /// The dense graph is built + written into `*shared` on the caller thread
+    /// under the write lock (see [`crate::SharedGraph::compact`]); the committer
+    /// only swaps the `ArcSwap` cell. Because the `seal_seq` was allocated under
+    /// the same lock, a compact can never be reordered ahead of an
+    /// earlier-sealed commit, so the published snapshot never regresses to a
+    /// stale (non-dense) layout (P1 fix).
+    pub(crate) fn submit_compact(
+        &self,
+        seal_seq: u64,
+        dense: Arc<SeleneGraph>,
+        report: crate::CompactionReport,
+    ) -> GraphResult<crate::CompactionReport> {
         if self.poisoned.load(Ordering::Acquire) {
             return Err(committer_dead());
         }
         let (reply_tx, reply_rx) = sync_channel::<GraphResult<crate::CompactionReport>>(1);
         self.sender
-            .send(Work::Compact { reply: reply_tx })
+            .send(Work::Compact {
+                seal_seq,
+                dense,
+                report,
+                reply: reply_tx,
+            })
             .map_err(|_| committer_dead())?;
         reply_rx.recv().map_err(|_| committer_dead())?
     }
@@ -224,89 +283,126 @@ fn committer_dead() -> GraphError {
     }
 }
 
-/// Committer thread entry point: drain [`Work`] in FIFO and publish.
+/// Committer thread entry point: drain [`Work`] into a reorder buffer and
+/// publish strictly in `seal_seq` order.
+///
+/// Items can arrive out of seal order (the lock drops inside `seal()`, before
+/// the caller's `send`). The committer buffers each arrival keyed by `seal_seq`
+/// and only publishes the contiguous run starting at `next_publish_seq`. This
+/// makes publish order == seal order == lock-acquisition order regardless of
+/// channel arrival order — the P0 publish-ordering invariant.
 fn run_committer(
     receiver: Receiver<Work>,
     handles: CommitterHandles,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
 ) {
-    // A compaction request can surface while draining a commit batch (mpsc has
-    // no un-receive). Stash it here and service it as a boundary immediately
-    // after the in-flight commit batch publishes, preserving FIFO order.
-    let mut pending_compact: Option<SyncSender<GraphResult<crate::CompactionReport>>> = None;
+    // The seal_seq the next publish must carry. Allocation starts at 0, so the
+    // first published item is seal_seq 0; thereafter strictly +1 with no gaps
+    // (an aborted/cancelled seal never consumes a seal_seq — see
+    // `WriteTxn::seal`, which allocates only after every fallible step).
+    let mut next_publish_seq: u64 = 0;
+    let mut reorder: BTreeMap<u64, Work> = BTreeMap::new();
     loop {
-        // Block for the first item, unless a compact was deferred from the
-        // previous turn's commit drain. Channel-closed => owner dropped => exit.
-        let work = match pending_compact.take() {
-            Some(reply) => Work::Compact { reply },
-            None => match receiver.recv() {
-                Ok(work) => work,
-                Err(_) => return,
-            },
+        // Block for the next arrival. Channel-closed => owner dropped => exit.
+        // A clean shutdown drops the canonical sender only after every
+        // WriteTxn-held clone is gone, so no in-flight commit can still be
+        // mid-seal when the channel closes; any buffered-but-unpublishable item
+        // (a gap that will never fill) is dropped, which Errs its waiter via the
+        // dropped reply sender — correct, since shutdown means no more commits.
+        let work = match receiver.recv() {
+            Ok(work) => work,
+            Err(_) => return,
         };
+        reorder.insert(work.seal_seq(), work);
 
-        match work {
-            Work::Compact { reply } => {
-                // Compact is always a batch boundary: it reads + mutates the
-                // live graph under the lock, so it cannot share a WAL batch.
-                let result = run_protected(|| compact_on_committer(&handles));
-                let result = unwrap_protected(result, poisoned);
-                let _ = reply.send(result);
+        // Publish every contiguous item now available, in seal_seq order.
+        while let Some(work) = reorder.remove(&next_publish_seq) {
+            publish_work(work, poisoned, &handles);
+            next_publish_seq += 1;
+            if poisoned.load(Ordering::Acquire) {
+                // A publish panicked or failed durably. Fail every buffered
+                // waiter (never drop a reply SyncSender silently → never a
+                // RecvError hang) and exit; the engine is poisoned and must be
+                // reopened. Subsequent submits fail fast via the poison flag.
+                drain_buffer_with_error(&mut reorder);
+                return;
             }
-            Work::Commit { sealed, reply } => {
-                // Drain up to MAX_COMMIT_BATCH commits (BRIEF 1: cap 1).
-                let mut batch: Vec<(SealedCommit, SyncSender<GraphResult<CommitOutcome>>)> =
-                    vec![(sealed, reply)];
-                while batch.len() < MAX_COMMIT_BATCH {
-                    match receiver.try_recv() {
-                        Ok(Work::Commit { sealed, reply }) => batch.push((sealed, reply)),
-                        // A Compact ends the commit batch and is serviced next
-                        // turn as a boundary (FIFO preserved).
-                        Ok(Work::Compact { reply }) => {
-                            pending_compact = Some(reply);
-                            break;
-                        }
-                        Err(_) => break,
-                    }
-                }
-                run_commit_batch(&mut batch, poisoned, &handles);
-            }
-        }
-
-        if poisoned.load(Ordering::Acquire) {
-            return;
         }
     }
 }
 
-/// Publish a drained commit batch in FIFO. Each item is published independently
-/// (BRIEF 1 keeps `EveryN(1)`, so each `write_commit` fsyncs); a panic in any
-/// item poisons the committer and Errs every remaining waiter in the batch.
-fn run_commit_batch(
-    batch: &mut Vec<(SealedCommit, SyncSender<GraphResult<CommitOutcome>>)>,
+/// Publish a single work item: a frozen commit or a pre-built dense compaction.
+/// Each runs inside `catch_unwind`; a panic OR a returned error poisons the
+/// committer (see [`unwrap_protected`]).
+fn publish_work(
+    work: Work,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
     handles: &CommitterHandles,
 ) {
-    let mut drained = batch.drain(..);
-    for (sealed, reply) in drained.by_ref() {
-        if poisoned.load(Ordering::Acquire) {
-            // A prior item in this batch panicked: fail every still-unacked
-            // waiter so no SyncSender is dropped silently (which would hang its
-            // recv() with a RecvError). Never publish after a poison.
-            let _ = reply.send(Err(committer_dead()));
-            continue;
+    match work {
+        Work::Commit { sealed, reply } => {
+            let result = run_protected(|| {
+                publish_sealed(
+                    sealed,
+                    &handles.snapshot,
+                    &handles.schema_version,
+                    &handles.providers,
+                    &handles.durable_providers,
+                )
+            });
+            let result = unwrap_protected(result, poisoned);
+            let _ = reply.send(result);
         }
-        let result = run_protected(|| {
-            publish_sealed(
-                sealed,
-                &handles.snapshot,
-                &handles.schema_version,
-                &handles.providers,
-                &handles.durable_providers,
-            )
-        });
-        let result = unwrap_protected(result, poisoned);
-        let _ = reply.send(result);
+        Work::Compact {
+            seal_seq: _,
+            dense,
+            report,
+            reply,
+        } => {
+            // The dense graph was already built + written into `*shared` on the
+            // caller thread under the lock; the committer only swaps the cell,
+            // in seal_seq order, so it can never clobber a later commit nor be
+            // clobbered by an earlier one (P1 fix). Wrapped in catch_unwind for
+            // symmetry (store + the debug assert can panic on drift).
+            let result = run_protected(|| publish_dense(&dense, &handles.snapshot, report));
+            let result = unwrap_protected(result, poisoned);
+            let _ = reply.send(result);
+        }
+    }
+}
+
+/// Publish a pre-built dense snapshot (compaction). Pure space reclamation: no
+/// WAL append, no schema bump, no fan-out — only the `ArcSwap` swap.
+///
+/// The dense graph's structural consistency was already verified inside
+/// [`crate::compaction::compact_core`] (debug-only), on the caller thread,
+/// **before** it was written into `*shared` — so a broken dense graph never
+/// reaches this point. Re-asserting here, after the store, would risk the same
+/// "returns-Err-but-actually-published" inversion the commit path avoids (P2),
+/// for zero added coverage. Wrapped in `catch_unwind` by the caller only so a
+/// `store` panic still poisons rather than aborts the committer thread.
+fn publish_dense(
+    dense: &Arc<SeleneGraph>,
+    snapshot: &ArcSwap<SeleneGraph>,
+    report: crate::CompactionReport,
+) -> GraphResult<crate::CompactionReport> {
+    snapshot.store(Arc::clone(dense));
+    Ok(report)
+}
+
+/// Fail every buffered waiter with `committer_dead` so no reply `SyncSender` is
+/// dropped silently (which would hang its `recv()` with a `RecvError`). Called
+/// once the committer is poisoned and about to exit.
+fn drain_buffer_with_error(reorder: &mut BTreeMap<u64, Work>) {
+    for (_, work) in std::mem::take(reorder) {
+        match work {
+            Work::Commit { reply, .. } => {
+                let _ = reply.send(Err(committer_dead()));
+            }
+            Work::Compact { reply, .. } => {
+                let _ = reply.send(Err(committer_dead()));
+            }
+        }
     }
 }
 
@@ -320,13 +416,32 @@ fn run_protected<T>(
 }
 
 /// Convert a `catch_unwind` result into a `GraphResult`, poisoning the committer
-/// on panic so subsequent submits fail fast.
+/// on a panic **or a returned error** so subsequent submits fail fast.
+///
+/// A returned `Err` from a publish is a *post-seal* failure: `seal()` already
+/// wove the commit's mutation into `*shared` (and a later seal may have forked
+/// off it), so the live in-memory graph cannot be surgically rolled back to
+/// exclude only the failed commit. Poisoning is therefore the only consistent
+/// recovery — the durable WAL never received the failed entry, so a reopen
+/// (recovery) heals the divergence. This restores the pre-v1.2 invariant that a
+/// commit reporting `Err` never leaks into the published snapshot or any later
+/// commit's baseline (the failed-`write_commit` regression, P0).
 fn unwrap_protected<T>(
     result: Result<GraphResult<T>, Box<dyn std::any::Any + Send>>,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
 ) -> GraphResult<T> {
     match result {
-        Ok(ok) => ok,
+        Ok(Ok(value)) => Ok(value),
+        Ok(Err(error)) => {
+            // Post-seal durable failure: the in-memory `*shared` already
+            // advanced past this commit and cannot be unwound, so poison.
+            poisoned.store(true, Ordering::Release);
+            tracing::error!(
+                error = %error,
+                "selene-graph: commit failed after seal; engine poisoned, reopen required",
+            );
+            Err(error)
+        }
         Err(payload) => {
             poisoned.store(true, Ordering::Release);
             let description = crate::panic_payload::describe(&payload);
@@ -346,21 +461,10 @@ fn unwrap_protected<T>(
     }
 }
 
-/// Compact the live graph in place on the committer thread (the one case where
-/// the committer takes the write lock). Mirrors the pre-v1.2 `SharedGraph::compact`
-/// body verbatim, but runs on the sole publisher so it serializes with commits.
-fn compact_on_committer(handles: &CommitterHandles) -> GraphResult<crate::CompactionReport> {
-    let mut guard = handles.shared.write();
-    let compacted = crate::compaction::compact_core(&guard)?;
-    let dense = Arc::new(compacted.graph);
-    *guard = Arc::clone(&dense);
-    handles.snapshot.store(dense);
-    Ok(compacted.report)
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{Duration, Instant};
 
     use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, PropertyMap, intern};
@@ -405,8 +509,63 @@ mod tests {
         .expect("graph builds with synthetic durable provider")
     }
 
+    /// Durable provider that **returns `Err`** (does not panic) on its FIRST
+    /// `write_commit`, then succeeds (ascending sequences) for every subsequent
+    /// call.
+    ///
+    /// This isolates the *poison* effect from "the provider just always fails":
+    /// the first commit fails post-seal (its mutation is already woven into
+    /// `*shared`). Without poisoning, a healthy engine would let the SECOND
+    /// commit succeed — and that second commit would fork from the diverged
+    /// `*shared` (carrying the failed commit's leaked node) and publish BOTH
+    /// nodes. Poisoning makes the second commit fail fast, so the leaked node can
+    /// never reach the published snapshot (the P0 failed-`write_commit`
+    /// regression).
+    struct FailFirstWriteCommit {
+        calls: AtomicU64,
+    }
+
+    impl DurableProvider for FailFirstWriteCommit {
+        fn provider_tag(&self) -> ProviderTag {
+            ProviderTag(*b"FRST")
+        }
+        fn write_commit(
+            &self,
+            _principal: Option<&[u8]>,
+            _changes: &[Change],
+            _timestamp: HlcTimestamp,
+        ) -> Result<u64, ProviderError> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n == 0 {
+                Err(ProviderError::Inconsistent {
+                    reason: "synthetic first-commit durable failure".to_owned(),
+                })
+            } else {
+                Ok(n)
+            }
+        }
+    }
+
+    fn graph_with_fail_first_durable(id: u64) -> SharedGraph {
+        SharedGraph::from_graph_with_core_and_durables(
+            crate::SeleneGraph::new(GraphId::new(id)),
+            Vec::new(),
+            vec![Arc::new(FailFirstWriteCommit {
+                calls: AtomicU64::new(0),
+            }) as Arc<dyn DurableProvider>],
+            None,
+            None,
+        )
+        .expect("graph builds with synthetic fail-first durable provider")
+    }
+
     #[test]
-    fn cancel_cutline_pre_append_aborts_with_no_burned_state() {
+    fn cancel_cutline_in_seal_rolls_back_with_no_burned_state() {
+        // The BRIEF-117 cut-line is sampled inside seal(), under the write lock,
+        // before Drop is disarmed. An already-set token must abort the commit
+        // with Cancelled AND roll the in-memory graph back (via Drop) so NOTHING
+        // is left advanced — not the published snapshot, not the live RwLock
+        // graph, not the WAL — exactly as an aborted transaction would leave it.
         let dir = std::env::temp_dir().join(format!(
             "selene-committer-cancel-{}-{:?}",
             std::process::id(),
@@ -425,33 +584,42 @@ mod tests {
         txn.mutator()
             .create_node(LabelSet::new(), PropertyMap::new())
             .unwrap();
-        // Attach an already-cancelled token after sealing: the committer must
-        // abort at the pre-WAL cut-line and never append or publish.
+        // An already-set token makes seal() return Cancelled and roll back.
         let flag = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let sealed = txn.seal(None).unwrap().with_cancel(Arc::clone(&flag));
-        let err = shared
-            .submit_sealed_for_test(sealed)
-            .expect_err("pre-append cancel returns Err");
+        let err = match txn.seal(None, Some(&flag)) {
+            Ok(_) => panic!("pre-publish cancel must return Err from seal"),
+            Err(err) => err,
+        };
         assert!(matches!(err, GraphError::Cancelled), "got {err:?}");
         assert_eq!(err.gqlstatus(), "5GQL2");
 
-        // Nothing published, nothing appended.
+        // Nothing published, nothing appended, and the LIVE RwLock graph is
+        // rolled back too (not just the published ArcSwap): published snapshot
+        // and the locked graph agree, both at the pre-commit baseline.
         assert_eq!(shared.read().node_count(), 0);
         assert_eq!(shared.read().meta.generation, 0);
+        assert_eq!(shared.locked_generation_for_test(), 0);
+        assert_eq!(
+            shared.locked_arc_ptr_for_test(),
+            Arc::as_ptr(&shared.read()),
+            "live RwLock graph and published snapshot are the same Arc after a \
+             cancelled seal — no divergence",
+        );
 
         // A subsequent uncancelled commit gets WAL seq 1 — the cancelled commit
-        // burned no durable sequence (it never appended).
+        // burned no durable sequence (it never appended) and no seal_seq.
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(LabelSet::new(), PropertyMap::new())
             .unwrap();
         let outcome = txn.commit().unwrap();
         assert_eq!(outcome.durable_at, Some(1));
+        assert_eq!(outcome.generation, 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
-    fn cancel_cutline_post_check_is_irrevocable() {
+    fn cancel_token_unset_at_seal_proceeds_and_is_irrevocable() {
         // When the cut-line samples the token as false it proceeds; flipping the
         // token afterward cannot revoke the published commit.
         let shared = SharedGraph::new(GraphId::new(91_002));
@@ -461,7 +629,7 @@ mod tests {
             .create_node(LabelSet::new(), PropertyMap::new())
             .unwrap();
         let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let sealed = txn.seal(None).unwrap().with_cancel(Arc::clone(&flag));
+        let sealed = txn.seal(None, Some(&flag)).expect("uncancelled seal");
         let outcome = shared
             .submit_sealed_for_test(sealed)
             .expect("uncancelled commit publishes");
@@ -504,12 +672,13 @@ mod tests {
     }
 
     #[test]
-    fn mid_batch_panic_errs_every_waiter_in_flight() {
-        // With MAX_COMMIT_BATCH == 1 each batch holds one commit, so a panic in
-        // a batch's only item must Err that waiter. Multiple subsequent waiters
-        // queued behind it all fail fast rather than block forever. Drive many
-        // panicking commits concurrently and assert every one returns Err in
-        // bounded time.
+    fn concurrent_panicking_commits_all_err_without_hanging() {
+        // Many panicking commits driven concurrently: the first to reach the
+        // committer panics + poisons; every other waiter (whether buffered in
+        // the reorder buffer, in-channel, or arriving post-poison) must receive
+        // Err in bounded time — never a dropped SyncSender → silent RecvError
+        // hang. (Was misnamed `mid_batch_panic`; with cap-1 there is no >1 batch
+        // — this exercises the poison-fan-out + drain-buffer paths.)
         let shared = Arc::new(graph_with_panicking_durable(91_005));
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut handles = Vec::new();
@@ -531,5 +700,202 @@ mod tests {
             );
         }
         assert!(Instant::now() < deadline, "no waiter hung after the panic");
+    }
+
+    #[test]
+    fn returned_write_commit_err_poisons_so_failed_commit_never_leaks() {
+        // P0 (failed-write_commit regression): a durable provider RETURNS Err
+        // (does not panic) on the first commit, AFTER seal() already wove the
+        // mutation into `*shared`. The committer must NOT publish, must report
+        // Err, and must POISON so the diverged in-memory graph is never trusted.
+        //
+        // The provider succeeds on the SECOND commit, so this distinguishes the
+        // poison fix from "provider always fails": WITHOUT poison, the second
+        // commit would succeed and publish a snapshot forked from the diverged
+        // `*shared` (which still carries the first, never-persisted node) —
+        // leaking it into the published state. WITH poison, the second commit
+        // fails fast and the leaked node never becomes visible.
+        let shared = graph_with_fail_first_durable(91_006);
+
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(istr("L")), PropertyMap::new())
+            .unwrap();
+        let first = txn.commit();
+        assert!(
+            matches!(first, Err(GraphError::Durable { .. })),
+            "a returned write_commit Err surfaces as Durable, got {first:?}"
+        );
+
+        // Not visible: the published snapshot never advanced past the failure.
+        assert_eq!(shared.read().node_count(), 0);
+        assert_eq!(shared.read().meta.generation, 0);
+
+        // Engine poisoned: the next commit fails fast even though the provider
+        // would now succeed — so the diverged `*shared` (carrying the leaked
+        // first node) can NEVER reach the published snapshot. Bounded; no hang.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        let second = txn.commit();
+        assert!(Instant::now() < deadline, "post-poison commit did not hang");
+        assert!(
+            matches!(second, Err(GraphError::Durable { .. })),
+            "post-poison commit fails fast (engine poisoned), got {second:?}"
+        );
+
+        // The leaked first node never became visible — the regression's blast
+        // radius (a never-persisted node silently published by a later commit)
+        // is closed.
+        assert_eq!(
+            shared.read().node_count(),
+            0,
+            "the failed commit's node never leaked into the published snapshot",
+        );
+    }
+
+    #[test]
+    fn reorder_buffer_publishes_in_seal_order_not_arrival_order() {
+        // P0 (publish-order == seal-order): force the exact reorder race. Seal A
+        // first (seal_seq 0) and B second (seal_seq 1) under the lock — B forks
+        // off A's frozen Arc, so A's snapshot does NOT contain B's node and B's
+        // gen is strictly higher. Then submit B's bundle to the committer FIRST
+        // (reverse of seal order) and A's SECOND. A correct reorder-buffer
+        // committer publishes A (seq 0) then B (seq 1); the final published
+        // snapshot is B's gen-2 graph containing BOTH nodes. A raw-FIFO committer
+        // would publish B then A, leaving the final snapshot = A's gen-1 graph
+        // missing B's node and regressing the generation — turning this RED.
+        let shared = Arc::new(SharedGraph::new(GraphId::new(91_007)));
+
+        // Seal A under the lock (seal_seq 0); lock released as seal() returns.
+        let mut txn_a = shared.begin_write();
+        let a = txn_a
+            .mutator()
+            .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+            .unwrap();
+        let sealed_a = txn_a.seal(None, None).expect("A seals");
+
+        // Seal B under the lock (seal_seq 1); B's guard_mut forks off A's Arc.
+        let mut txn_b = shared.begin_write();
+        let b = txn_b
+            .mutator()
+            .create_node(LabelSet::single(istr("B")), PropertyMap::new())
+            .unwrap();
+        let sealed_b = txn_b.seal(None, None).expect("B seals");
+
+        // Submit B FIRST (reverse of seal order) on a background thread — it
+        // sends B then blocks in recv until B publishes. The committer buffers B
+        // (waiting for seq 0). A short yield gives B's send time to land, then
+        // we submit A, which unblocks the contiguous publish of A then B.
+        let shared_b = Arc::clone(&shared);
+        let b_thread = std::thread::spawn(move || {
+            shared_b
+                .submit_sealed_for_test(sealed_b)
+                .expect("B publishes after A")
+        });
+        // Yield so B's send reaches the committer's reorder buffer before A's.
+        for _ in 0..1000 {
+            std::thread::yield_now();
+        }
+        let outcome_a = shared
+            .submit_sealed_for_test(sealed_a)
+            .expect("A publishes");
+        let outcome_b = b_thread.join().expect("B thread did not panic");
+
+        // Generations reflect seal order regardless of submit order.
+        assert_eq!(outcome_a.generation, 1, "A is seal_seq 0 ⇒ generation 1");
+        assert_eq!(outcome_b.generation, 2, "B is seal_seq 1 ⇒ generation 2");
+
+        // The FINAL published snapshot is B's (the higher seal_seq), and it
+        // contains BOTH nodes — the publish order was A then B, not B then A.
+        let snap = shared.read();
+        assert_eq!(
+            snap.meta.generation, 2,
+            "final published gen == max seal_seq"
+        );
+        assert!(
+            snap.is_node_alive(a),
+            "A's node survived in the final snapshot"
+        );
+        assert!(
+            snap.is_node_alive(b),
+            "B's node is present in the final snapshot"
+        );
+        assert_eq!(snap.node_count(), 2);
+    }
+
+    #[test]
+    fn compact_cannot_clobber_an_earlier_sealed_commit() {
+        // P1 (compact-vs-commit reorder / lost reclamation): seal a commit A
+        // (seal_seq 0) WITHOUT publishing it, then run compact() — which takes
+        // its seal_seq (1) under the lock, AFTER A's. Submit the compact's
+        // publish FIRST and A SECOND. Because the committer publishes in seal_seq
+        // order, A (seq 0) publishes before the compact (seq 1), so the dense
+        // compacted snapshot is the FINAL published state — its reclamation is
+        // never clobbered by A's stale pre-compaction frozen snapshot.
+        let shared = Arc::new(SharedGraph::new(GraphId::new(91_008)));
+        // Seed reclaimable holes: create then delete.
+        {
+            let mut txn = shared.begin_write();
+            let mut ids = Vec::new();
+            for _ in 0..20 {
+                ids.push(
+                    txn.mutator()
+                        .create_node(LabelSet::single(istr("S")), PropertyMap::new())
+                        .unwrap(),
+                );
+            }
+            txn.commit().unwrap();
+            let mut txn = shared.begin_write();
+            for id in &ids {
+                txn.mutator().delete_node(*id).unwrap();
+            }
+            txn.commit().unwrap();
+        }
+
+        // Seal A (a fresh node) but do not submit yet — seal_seq is the next.
+        let mut txn_a = shared.begin_write();
+        let a = txn_a
+            .mutator()
+            .create_node(LabelSet::single(istr("A")), PropertyMap::new())
+            .unwrap();
+        let sealed_a = txn_a.seal(None, None).expect("A seals");
+
+        // Run compact on a background thread (it seals_seq AFTER A under the lock
+        // and then blocks until its publish lands). Yield so compact's enqueue
+        // reaches the buffer before A's, then submit A.
+        let shared_c = Arc::clone(&shared);
+        let compactor = std::thread::spawn(move || shared_c.compact().expect("compaction ok"));
+        for _ in 0..1000 {
+            std::thread::yield_now();
+        }
+        let outcome_a = shared
+            .submit_sealed_for_test(sealed_a)
+            .expect("A publishes");
+        let report = compactor.join().expect("compactor did not panic");
+
+        // A published at seal_seq 0 (generation = the third commit).
+        assert_eq!(outcome_a.generation, 3);
+        // The compaction reclaimed the 20 deleted holes.
+        assert!(report.reclaimed_nodes >= 20, "report: {report:?}");
+
+        // The FINAL published snapshot is the dense compacted one: A is present
+        // AND the row layout is dense (node row count == live node count == 1).
+        // A clobber (raw FIFO) would leave A's non-dense frozen snapshot with the
+        // holes intact, so the published store would still carry the 20 dead
+        // rows — turning the density assertion RED.
+        let snap = shared.read();
+        assert!(snap.is_node_alive(a));
+        assert_eq!(snap.node_count(), 1, "only A is alive");
+        assert_eq!(
+            snap.node_store.len(),
+            1,
+            "published snapshot is dense — the compaction's reclamation was not \
+             clobbered by A's stale pre-compaction snapshot",
+        );
+        snap.assert_indexes_consistent()
+            .expect("published snapshot is structurally consistent");
     }
 }

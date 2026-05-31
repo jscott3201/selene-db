@@ -62,7 +62,7 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
-pub use write_txn::{CommitOutcome, CommitWarning, SealedCommit, WriteTxn};
+pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]
 mod closed_graph_tests;

@@ -153,6 +153,78 @@ fn gg02_violation_aborts_in_seal_and_rolls_back_generation_bump() {
 }
 
 #[test]
+fn gg02_aborts_under_contention_never_advance_published_generation() {
+    // P2: GG02 abort rollback under contention. Half the threads submit valid
+    // commits, half submit guaranteed-GG02-violating commits, in a synchronized
+    // storm on a closed graph. Each violating commit must abort on its own
+    // session thread (in seal(), under the lock) and roll back its generation
+    // bump via Drop, so the published generation only ever advances per VALID
+    // commit. Final published node_count and generation must equal exactly the
+    // number of valid commits — no aborted txn ever advanced the published
+    // state, even with concurrent valid writers racing the same lock.
+    let shared = Arc::new(
+        SharedGraph::builder(GraphId::new(1_015))
+            .bound_to(person_graph_type())
+            .unwrap()
+            .build()
+            .unwrap(),
+    );
+    let writer_threads: usize = 6;
+    let per: usize = 30;
+    let valid_threads = writer_threads / 2;
+    let barrier = Arc::new(Barrier::new(writer_threads));
+    let mut handles = Vec::new();
+    for t in 0..writer_threads {
+        let shared = Arc::clone(&shared);
+        let barrier = Arc::clone(&barrier);
+        let valid = t % 2 == 0;
+        handles.push(thread::spawn(move || {
+            barrier.wait();
+            for _ in 0..per {
+                let mut txn = shared.begin_write();
+                if valid {
+                    txn.mutator()
+                        .create_node(
+                            LabelSet::single(istr("Person")),
+                            prop("name", Value::String(istr("ada"))),
+                        )
+                        .unwrap();
+                    txn.commit().expect("valid Person commit succeeds");
+                } else {
+                    // A Person with no `name` violates the closed-graph type.
+                    txn.mutator()
+                        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+                        .unwrap();
+                    let err = txn.commit().expect_err("GG02 violation aborts");
+                    assert!(
+                        matches!(err, GraphError::TypeViolation(_)),
+                        "expected closed-graph violation, got {err:?}"
+                    );
+                }
+            }
+        }));
+    }
+    for h in handles {
+        h.join().expect("no writer thread panicked");
+    }
+
+    let expected_valid = (valid_threads * per) as u64;
+    let snap = shared.read();
+    assert_eq!(
+        snap.node_count() as u64,
+        expected_valid,
+        "only valid commits are visible",
+    );
+    assert_eq!(
+        snap.meta.generation, expected_valid,
+        "the published generation advanced once per valid commit; no aborted \
+         GG02 txn ever advanced it",
+    );
+    snap.assert_indexes_consistent()
+        .expect("final snapshot is structurally consistent");
+}
+
+#[test]
 fn abort_isolation_does_not_leak_into_next_commit() {
     let shared = SharedGraph::builder(GraphId::new(1_005))
         .bound_to(person_graph_type())
@@ -185,25 +257,113 @@ fn abort_isolation_does_not_leak_into_next_commit() {
 }
 
 #[test]
-fn durable_commit_reports_sequence_after_committer_fsync() {
+fn durable_commit_is_recoverable_proving_wal_first() {
+    // The single durability test now proves durable-BEFORE-visible by actually
+    // reopening from the WAL: a commit that returned Ok (durable_at == Some(1))
+    // must be present after recovery, proving the committer's `write_commit`
+    // really persisted the entry before publishing (WAL-first), not just bumped
+    // an in-memory sequence counter.
     let dir = temp_dir("durable-seq");
     let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
-    let shared = SharedGraph::builder(GraphId::new(1_006))
-        .with_wal(&wal_path, WalConfig::default())
-        .unwrap()
-        .build()
-        .unwrap();
+    let graph_id = GraphId::new(1_006);
+    let id;
+    {
+        let shared = SharedGraph::builder(graph_id)
+            .with_wal(&wal_path, WalConfig::default())
+            .unwrap()
+            .build()
+            .unwrap();
 
-    let mut txn = shared.begin_write();
-    let id = txn
-        .mutator()
-        .create_node(LabelSet::new(), PropertyMap::new())
-        .unwrap();
-    let outcome = txn.commit().unwrap();
+        let mut txn = shared.begin_write();
+        id = txn
+            .mutator()
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        let outcome = txn.commit().unwrap();
 
-    assert_eq!(id, NodeId::new(1));
-    // durable_at is only delivered after the committer's WAL append (WAL-first).
-    assert_eq!(outcome.durable_at, Some(1));
+        assert_eq!(id, NodeId::new(1));
+        // durable_at is only delivered after the committer's WAL append.
+        assert_eq!(outcome.durable_at, Some(1));
+        // Drop the graph: joins the committer thread and closes the WAL.
+    }
+
+    // Reopen from the WAL alone. If `write_commit` had not actually persisted
+    // the entry before publishing, the node would be absent here.
+    let recovered = SharedGraph::recover(&dir, graph_id).expect("recover from WAL");
+    assert!(
+        recovered.read().is_node_alive(id),
+        "the acked commit was actually persisted to the WAL (durable-before-visible)",
+    );
+    assert_eq!(recovered.read().node_count(), 1);
+}
+
+#[test]
+fn concurrent_commits_persist_a_gapfree_durable_sequence() {
+    // P1 (highest-value missing test): make publish/durable order observable.
+    // N threads each fire a burst of WAL-backed commits; collect every returned
+    // `durable_at`. The single committer appends in seal-sequence order, so the
+    // returned sequences must be EXACTLY 1..=total with no gaps or duplicates —
+    // a reordering / dropping / double-appending committer would violate this.
+    // Then reopen from the WAL and assert every node is recovered, proving the
+    // sequences correspond to real persisted entries.
+    let dir = temp_dir("durable-order");
+    let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let graph_id = GraphId::new(1_009);
+    let threads: usize = 8;
+    let per: usize = 25;
+    let total = (threads * per) as u64;
+
+    let seqs = Arc::new(std::sync::Mutex::new(Vec::<u64>::with_capacity(
+        total as usize,
+    )));
+    {
+        let shared = Arc::new(
+            SharedGraph::builder(graph_id)
+                .with_wal(&wal_path, WalConfig::default())
+                .unwrap()
+                .build()
+                .unwrap(),
+        );
+        let barrier = Arc::new(Barrier::new(threads));
+        let mut handles = Vec::new();
+        for _ in 0..threads {
+            let shared = Arc::clone(&shared);
+            let barrier = Arc::clone(&barrier);
+            let seqs = Arc::clone(&seqs);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..per {
+                    let mut txn = shared.begin_write();
+                    txn.mutator()
+                        .create_node(LabelSet::single(istr("D")), PropertyMap::new())
+                        .unwrap();
+                    let outcome = txn.commit().unwrap();
+                    let seq = outcome
+                        .durable_at
+                        .expect("WAL-backed commit has a sequence");
+                    seqs.lock().unwrap().push(seq);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().expect("no writer panicked");
+        }
+        assert_eq!(shared.read().node_count() as u64, total);
+    }
+
+    // The durable sequences returned to waiters are exactly 1..=total, gap-free
+    // and duplicate-free: the single committer assigned them in a strict total
+    // order. (A committer that reordered, dropped, or re-acked publishes would
+    // produce a gap or a duplicate here.)
+    let mut sorted = seqs.lock().unwrap().clone();
+    sorted.sort_unstable();
+    let expected: Vec<u64> = (1..=total).collect();
+    assert_eq!(sorted, expected, "durable sequences are gap-free 1..=total");
+
+    // Every persisted entry recovers — the sequences are backed by real WAL
+    // records, not just an advancing in-memory counter.
+    let recovered = SharedGraph::recover(&dir, graph_id).expect("recover from WAL");
+    assert_eq!(recovered.read().node_count() as u64, total);
 }
 
 #[test]
@@ -371,12 +531,15 @@ fn istr_admission_race_class_concurrency_is_consistent() {
 
 #[test]
 fn explicit_txn_releases_lock_before_recv_block_no_deadlock() {
-    // Deadlock invariant: an explicit transaction must release the write lock at
-    // seal() BEFORE enqueueing + recv-blocking, so a queued Compact (for which
-    // the committer takes the lock) cannot wedge. Here, thread A holds a long
-    // explicit txn, commits it (seal drops the lock, then enqueue+recv), while
-    // thread B issues a compact. If the lock were held across recv, B's compact
-    // would deadlock the committer and A would never get its ack.
+    // Deadlock invariant: an explicit transaction releases the write lock at
+    // seal() BEFORE it enqueues + recv-blocks on the committer. Since the P0/P1
+    // fix, compaction also builds its dense graph on the CALLER thread under the
+    // lock (seal-and-handover) and hands the committer a pre-built snapshot, so
+    // the committer never takes the write lock for ANY work item — the
+    // send-under-lock/queued-compact deadlock surface is structurally gone. This
+    // test pins the liveness: a long explicit-txn commit storm racing a compact
+    // storm (each compactor briefly holds the lock to build) completes within a
+    // bounded deadline with no wedge.
     let shared = Arc::new(SharedGraph::new(GraphId::new(1_013)));
     {
         let mut txn = shared.begin_write();
@@ -446,4 +609,45 @@ fn back_pressure_holds_under_fan_in_burst() {
     }
     assert_eq!(count.load(Ordering::Relaxed) as usize, threads * per);
     assert_eq!(shared.read().node_count(), threads * per);
+}
+
+#[test]
+fn dropping_shared_graph_terminates_the_committer_promptly() {
+    // P2 liveness pin: dropping a SharedGraph joins the committer thread
+    // unconditionally. That relies on every WriteTxn-held submit handle being
+    // gone first (they borrow &SharedGraph, so they are). Pin that the join
+    // returns within a bounded deadline — a future change that let a submit
+    // handle escape to a 'static owner would wedge this drop in join() forever.
+    let dir = temp_dir("shutdown");
+    let wal_path = dir.join(DEFAULT_WAL_FILE_NAME);
+    let shared = SharedGraph::builder(GraphId::new(1_016))
+        .with_wal(&wal_path, WalConfig::default())
+        .unwrap()
+        .build()
+        .unwrap();
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::new(), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    // Drop on a worker thread and require it to finish (committer joined) within
+    // a deadline. The watchdog thread asserts the drop did not hang.
+    let done = Arc::new(AtomicU64::new(0));
+    let done_writer = Arc::clone(&done);
+    let dropper = thread::spawn(move || {
+        drop(shared);
+        done_writer.store(1, Ordering::Release);
+    });
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while done.load(Ordering::Acquire) == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "dropping SharedGraph did not join the committer within the deadline",
+        );
+        thread::yield_now();
+    }
+    dropper.join().expect("dropper thread did not panic");
 }

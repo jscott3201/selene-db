@@ -58,10 +58,29 @@ pub struct CommitOutcome {
 /// publishes the frozen snapshot, and bumps the schema epoch.
 ///
 /// The HLC timestamp is deliberately **not** stamped here: the committer stamps
-/// it per bundle in FIFO drain order so HLC is monotonic in commit order
-/// (== publish order == seal order). Stamping it on the session thread would
-/// break that monotonicity once seal-order and stamp-order could diverge.
-pub struct SealedCommit {
+/// it per bundle in **seal-sequence** drain order so HLC is monotonic in commit
+/// order (== publish order == seal order). Stamping it on the session thread
+/// would break that monotonicity once seal-order and stamp-order diverge.
+///
+/// # Why a `seal_seq` (publish-order correctness, P0 fix)
+///
+/// `seal()` consumes the [`WriteTxn`], so the write lock + allocator guards drop
+/// as it returns — **before** the caller enqueues the bundle. Two sessions can
+/// therefore seal in lock order (A then B) yet `send()` in the opposite order
+/// (B before A) if A is preempted between lock-release and send. A naive FIFO
+/// committer would then publish B's gen-`N+1` snapshot before A's gen-`N`
+/// snapshot, regressing the published snapshot and losing A's older view under
+/// B — a D10 serializability violation. To prevent it, `seal()` stamps a
+/// strictly-monotonic `seal_seq` **while still holding the write lock** (so
+/// seal-seq order == lock-acquisition order == the intended total order), and
+/// the committer publishes strictly in `seal_seq` order via a reorder buffer,
+/// regardless of channel arrival order. Compaction takes a `seal_seq` from the
+/// same counter under the same lock, so a compact can never be reordered ahead
+/// of an earlier-sealed commit.
+pub(crate) struct SealedCommit {
+    /// Strictly-monotonic publish-order key, allocated under the write lock in
+    /// [`WriteTxn::seal`]. The committer publishes in ascending `seal_seq`.
+    pub(crate) seal_seq: u64,
     /// Fully-built next snapshot, frozen under the session's write lock.
     pub(crate) next_snapshot: Arc<SeleneGraph>,
     /// Persisted change list (the WAL/changeset payload).
@@ -81,25 +100,6 @@ pub struct SealedCommit {
     pub(crate) next_edge_id: u64,
     /// Non-fatal validation warnings collected during seal.
     pub(crate) warnings: Vec<CommitWarning>,
-    /// BRIEF-117 cancellation cut-line token. Checked once by the committer
-    /// immediately **before** `write_commit`: a pre-WAL cancel returns
-    /// `Cancelled` and appends nothing (no id burned beyond the monotonic hole
-    /// already allocated under the lock); past the append it is irrevocable.
-    pub(crate) cancel: Option<Arc<AtomicBool>>,
-}
-
-impl SealedCommit {
-    /// Attach a BRIEF-117 cancellation token so the committer can abort this
-    /// commit at the pre-WAL cut-line.
-    ///
-    /// The token is sampled exactly once, immediately before the WAL append.
-    /// Once the append has run the commit is irrevocable. With no token (the
-    /// default produced by [`WriteTxn::seal`]) the commit is never cancelled.
-    #[must_use]
-    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
-        self.cancel = Some(cancel);
-        self
-    }
 }
 
 /// Compile-time proof that [`SealedCommit`] is `Send + 'static`, so it can be
@@ -219,12 +219,11 @@ impl<'g> WriteTxn<'g> {
         // Clone the submit handle BEFORE sealing — `seal()` consumes `self`
         // (dropping the write lock + allocator guards as it returns), so the
         // session releases the lock strictly before it enqueues and blocks on
-        // `recv()`. This ordering is the load-bearing deadlock invariant: a
-        // session is never simultaneously lock-holding and recv-blocked, so it
-        // cannot wedge a queued `Compact` for which the committer must take the
-        // same lock (v1.2 design §3.2).
+        // `recv()`. The committer never takes the write lock (compaction builds
+        // on the caller thread too, since v1.2 BRIEF 1 P0 fix), so a session is
+        // never simultaneously lock-holding and recv-blocked.
         let committer = self.committer.clone();
-        let sealed = self.seal(principal)?;
+        let sealed = self.seal(principal, None)?;
         committer.submit_commit(sealed)
     }
 
@@ -235,20 +234,44 @@ impl<'g> WriteTxn<'g> {
     /// detection, the generation/meta bump (`generation += 1` + write the next
     /// ids into `GraphMeta`), and GG02 closed-graph validation — which **still
     /// aborts synchronously here** (the `?` propagates and `Drop` rolls back the
-    /// generation bump, exactly as in v1.0/v1.1). Then it disarms `Drop`
-    /// (`pre_txn = None`), clones the now-frozen next snapshot, `mem::take`s the
-    /// change list / truncate expansions / warnings, builds the truncate-expanded
-    /// fan-out view, and returns. The write lock + allocator guards drop as this
-    /// method returns (it consumes `self`).
+    /// generation bump, exactly as in v1.0/v1.1). It then samples the optional
+    /// BRIEF-117 cancellation token **while the lock is still held and before
+    /// `Drop` is disarmed** (see below), allocates the strictly-monotonic
+    /// `seal_seq` under the lock, disarms `Drop` (`pre_txn = None`), clones the
+    /// now-frozen next snapshot, `mem::take`s the change list / truncate
+    /// expansions / warnings, builds the truncate-expanded fan-out view, and
+    /// returns. The write lock + allocator guards drop as this method returns
+    /// (it consumes `self`).
+    ///
+    /// # Cancellation cut-line (BRIEF-117, P0 fix)
+    ///
+    /// The cancellation token is sampled **here, under the write lock, before
+    /// disarming `Drop`** — not on the committer before the WAL append. In the
+    /// seal-and-handover model multiple commits can be sealed-but-unpublished at
+    /// once, each forking `*shared` off the previous; a commit's mutation is
+    /// therefore already woven into `*shared` (and possibly built upon by a
+    /// later seal) by the time the committer would run a pre-WAL check, so a
+    /// committer-side cancel could not surgically remove it without poisoning
+    /// the engine. Sampling under the lock means a cancelled commit is rolled
+    /// back by `Drop` exactly like a GG02 abort — `*shared` is restored, no
+    /// `seal_seq` is consumed, nothing is enqueued — so the cut-line's
+    /// guarantee ("no append, no publish, exactly as an aborted transaction
+    /// would leave it") is *literally* true. A cancel observed after `seal`
+    /// returns is too late: the commit is already in flight and irrevocable.
     ///
     /// The HLC timestamp is **not** stamped here (see [`SealedCommit`]); the
-    /// committer stamps it per bundle in FIFO drain order.
+    /// committer stamps it per bundle in seal-sequence drain order.
     ///
     /// # Errors
     ///
-    /// Returns the GG02 / closed-graph validation error
+    /// Returns [`GraphError::Cancelled`] when `cancel` is set at entry (rolled
+    /// back via `Drop`), or the GG02 / closed-graph validation error
     /// ([`GraphError::TypeViolation`]) when a change violates the bound type.
-    pub fn seal(mut self, principal: Option<Arc<[u8]>>) -> GraphResult<SealedCommit> {
+    pub(crate) fn seal(
+        mut self,
+        principal: Option<Arc<[u8]>>,
+        cancel: Option<&AtomicBool>,
+    ) -> GraphResult<SealedCommit> {
         debug_assert!(
             self.pre_txn.is_some(),
             "pre_txn must be present at seal entry"
@@ -299,6 +322,24 @@ impl<'g> WriteTxn<'g> {
             }
         }
 
+        // BRIEF-117 cut-line: sample the cancellation token while the lock is
+        // still held and `Drop` is still armed. A cancel here returns Err with
+        // the generation bump + staged mutations still on the guard-Arc; `Drop`
+        // then restores `pre_txn`, rolling everything back exactly as a GG02
+        // abort or an aborted transaction would. Nothing is enqueued or
+        // published, and no `seal_seq` is consumed.
+        if let Some(flag) = cancel
+            && flag.load(Ordering::Acquire)
+        {
+            return Err(GraphError::Cancelled);
+        }
+
+        // Allocate the publish-order key under the lock so seal-seq order equals
+        // lock-acquisition order (the intended total order). Done after every
+        // fallible step so an aborted seal consumes no sequence number, keeping
+        // the committer's reorder sequence gap-free.
+        let seal_seq = self.committer.next_seal_seq();
+
         // Disarm Drop-rollback: from here the commit is handed to the committer
         // and the in-place mutations become the published state.
         self.pre_txn = None;
@@ -316,6 +357,7 @@ impl<'g> WriteTxn<'g> {
         let fanout_changes = expand_truncates_for_fanout(&changes, &truncate_expansions);
 
         Ok(SealedCommit {
+            seal_seq,
             next_snapshot,
             changes,
             fanout_changes,
@@ -325,7 +367,6 @@ impl<'g> WriteTxn<'g> {
             next_node_id,
             next_edge_id,
             warnings,
-            cancel: None,
         })
     }
 
@@ -366,11 +407,19 @@ fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimest
 /// `commit_with_principal` did under the lock pre-v1.2, in the **identical**
 /// order — only the thread changed.
 ///
-/// Ordering (verbatim from the pre-v1.2 commit body):
-/// 1. Stamp the HLC timestamp **here**, in committer FIFO order, so HLC is
-///    monotonic in commit order (== publish order).
-/// 2. BRIEF-117 cut-line: sample `cancel` once; if set, return `Cancelled`
-///    before any `write_commit` — nothing is appended or published.
+/// Ordering (verbatim from the pre-v1.2 commit body, except the debug assert
+/// moved earlier — see (1)):
+/// 1. Debug-only index-consistency assertion on the frozen `next_snapshot`
+///    **before** any durable append or publish. The snapshot is immutable from
+///    seal time, so checking it here is equally sound — and a detected
+///    violation now aborts the commit with **nothing durable and nothing
+///    visible** (it poisons via the committer's catch_unwind, but no WAL entry
+///    was written and the published cell never advanced, so a reopen is clean).
+///    Running it after the store (as pre-fix) would return `Err` for a commit
+///    that *did* persist + publish — a "returns-Err-but-actually-committed"
+///    contract inversion (P2).
+/// 2. Stamp the HLC timestamp **here**, in committer seal-sequence order, so
+///    HLC is monotonic in commit order (== publish order).
 /// 3. WAL-first: `write_commit` for each durable provider; its error aborts the
 ///    commit (and BRIEF 1 keeps `EveryN(1)`, so this also fsyncs). Past this
 ///    point the commit is irrevocable.
@@ -378,14 +427,24 @@ fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimest
 ///    the committer is its sole writer).
 /// 5. store-before-schema-bump (PR #127 P1): bump `schema_version` strictly
 ///    after the store.
-/// 6. Debug-only index-consistency assertion on the just-stored snapshot.
-/// 7. No-op provider fan-out under the [`FanoutGuard`] (now committer-thread-
+/// 6. No-op provider fan-out under the [`FanoutGuard`] (now committer-thread-
 ///    local — sound with one committer).
+///
+/// # Failure ⇒ engine poison
+///
+/// Any error returned here is a **post-seal** failure: `seal()` already wove
+/// this commit's mutation into `*shared` (and a later seal may have forked off
+/// it), so the live in-memory graph cannot be surgically rolled back. The
+/// committer therefore poisons the engine on any returned `Err` (mirroring the
+/// committer-death path); the durable WAL never received the entry, so a reopen
+/// recovers a consistent state. The cancellation cut-line is *not* here — it
+/// moved into [`WriteTxn::seal`], under the lock, where `Drop`-rollback is still
+/// possible (so a cancel leaves no trace and does **not** poison).
 ///
 /// # Errors
 ///
-/// Returns [`GraphError::Cancelled`] at the pre-WAL cut-line, or
-/// [`GraphError::Durable`] if a durable provider's `write_commit` failed.
+/// Returns [`GraphError::Durable`] if a durable provider's `write_commit`
+/// failed (which poisons the committer).
 pub(crate) fn publish_sealed(
     sealed: SealedCommit,
     snapshot: &ArcSwap<SeleneGraph>,
@@ -395,6 +454,7 @@ pub(crate) fn publish_sealed(
 ) -> GraphResult<CommitOutcome> {
     let started = Instant::now();
     let SealedCommit {
+        seal_seq: _,
         next_snapshot,
         changes,
         fanout_changes,
@@ -404,23 +464,26 @@ pub(crate) fn publish_sealed(
         next_node_id,
         next_edge_id,
         warnings,
-        cancel,
     } = sealed;
 
-    // (1) Stamp the HLC in committer FIFO order (monotonic in commit order).
-    let timestamp = commit_timestamp(durable_providers);
-
-    // (2) BRIEF-117 pre-WAL cut-line: sample the token exactly once. A cancel
-    // observed here appends nothing and publishes nothing; the monotonic id
-    // hole already allocated under the session's lock simply stays a permanent
-    // hole (D11/D22), exactly as an aborted transaction would leave it.
-    if let Some(flag) = &cancel
-        && flag.load(Ordering::Acquire)
-    {
-        return Err(GraphError::Cancelled);
+    // (1) Debug-only structural net on the frozen snapshot, BEFORE any durable
+    // append or publish. The snapshot is immutable from seal time, so this is
+    // just as sound as asserting after the store — but a detected violation now
+    // aborts with nothing durable and nothing visible (no `Err`-but-committed
+    // inversion). A pure read of the immutable snapshot — never re-enters
+    // begin_write. Compiled out in release builds.
+    #[cfg(debug_assertions)]
+    if let Err(reason) = next_snapshot.assert_indexes_consistent() {
+        panic!("selene-graph: pre-publish index consistency violation: {reason}");
     }
 
-    // (3) WAL-first: the append gates the commit. Irrevocable past here.
+    // (2) Stamp the HLC in committer seal-sequence order (monotonic in commit
+    // order).
+    let timestamp = commit_timestamp(durable_providers);
+
+    // (3) WAL-first: the append gates the commit. Irrevocable past here. A
+    // returned error poisons the committer (see the doc above) because the
+    // session-thread seal already mutated `*shared` and cannot be rolled back.
     let mut durable_at: Option<u64> = None;
     for durable in durable_providers {
         let seq = durable
@@ -441,15 +504,7 @@ pub(crate) fn publish_sealed(
         schema_version.fetch_add(1, Ordering::AcqRel);
     }
 
-    // (6) Debug-only structural net on the exact snapshot just stored (a pure
-    // read of the immutable snapshot — never re-enters begin_write). Now runs
-    // on the committer thread; compiled out in release builds.
-    #[cfg(debug_assertions)]
-    if let Err(reason) = next_snapshot.assert_indexes_consistent() {
-        panic!("selene-graph: post-commit index consistency violation: {reason}");
-    }
-
-    // (7) No-op provider fan-out. The FanoutGuard's thread-local counter now
+    // (6) No-op provider fan-out. The FanoutGuard's thread-local counter now
     // guards the COMMITTER thread: a provider that re-enters begin_write on the
     // committer thread panics before locking, and the boundary below catches
     // it. Safe with exactly one committer (v1.2 design §7.7).

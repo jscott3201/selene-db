@@ -174,6 +174,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Single per-graph committer thread + `WriteTxn::seal()` (v1.2 multi-writer,
+  BRIEF 1).** Commit now splits into a session-thread `seal()` (generation/meta
+  bump + GG02 validation under the write lock, then **lock release**) and a
+  durable+publish tail that runs on one dedicated committer thread per graph —
+  the **sole writer** of the published-snapshot `ArcSwap` cell. The public
+  `commit()` contract is unchanged ("returns ⇒ durable + visible"); only the
+  internal threading model differs. Every snapshot publisher (autocommit,
+  explicit-txn terminal COMMIT, index DDL, and compaction) routes through the
+  committer. Publish order is kept equal to seal order — and thus to
+  lock-acquisition order — by stamping each publishable unit with a
+  strictly-monotonic `seal_seq` under the write lock and publishing strictly in
+  `seal_seq` order via a reorder buffer; this is a new, load-bearing,
+  **not** type-enforced D10 invariant (a second committer or second `ArcSwap`
+  writer would silently break strict-serializability). Compaction builds its
+  dense graph on the caller thread under the lock (seal-and-handover) so the
+  committer never holds the write lock. A post-seal durable failure or a
+  committer-body panic **poisons** the engine (reopen-required; the durable WAL
+  never received the failed entry, so recovery heals it) rather than leaving the
+  live in-memory graph diverged from the published snapshot. The BRIEF-117
+  cancellation cut-line is sampled inside `seal()` under the lock, so a cancel
+  rolls back via `Drop` exactly like an aborted transaction (no trace, no
+  poison). Durability-neutral: the WAL stays in `SyncPolicy::EveryN(1)` (WAL
+  group commit lands in BRIEF 2).
 - **`selene-algorithms` is now a mandatory first-class crate with a native
   Rust API.** **BREAKING** (promotes a previously opt-in crate; `selene-gql`
   now build-depends on it). Every algorithm is callable directly from Rust

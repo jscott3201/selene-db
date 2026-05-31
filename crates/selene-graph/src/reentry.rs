@@ -15,10 +15,12 @@
 //! This guard is therefore set on the committer thread during fan-out. It stays
 //! sound precisely because there is exactly **one** committer: a provider whose
 //! `on_change` re-enters `begin_write` does so on the committer thread, where
-//! `in_fanout()` is true, so it panics before locking (and could otherwise
-//! deadlock against the committer's own compaction write-lock hold). A second
-//! committer would break this thread-local reasoning — the single-committer
-//! constraint is load-bearing (v1.2 design §4, §7.7).
+//! `in_fanout()` is true, so it panics before locking. (The committer itself
+//! never holds the write lock — even compaction builds its dense graph on the
+//! caller thread and hands the committer a pre-built snapshot — so the panic is
+//! about preventing an unbounded re-entrant publish, not a self-deadlock on the
+//! write lock.) A second committer would break this thread-local reasoning —
+//! the single-committer constraint is load-bearing (v1.2 design §4, §7.7).
 //!
 //! ## Cross-thread misuse — out of scope
 //!
