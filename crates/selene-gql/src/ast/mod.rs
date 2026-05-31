@@ -12,6 +12,7 @@ pub mod span;
 pub mod statement;
 pub mod types;
 pub mod util;
+mod walk;
 
 pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{

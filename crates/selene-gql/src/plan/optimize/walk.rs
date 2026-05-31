@@ -1,7 +1,7 @@
 //! Shared optimizer walkers.
 
 use crate::{
-    IsCheckKind, PatternElement, StatementCategory, ValueExpr,
+    PatternElement, StatementCategory, ValueExpr,
     plan::{
         BindingDef, BindingTableSchema, CatalogOp, EdgeMatch, ExecutionPlan, FilterPredicate,
         FilterPredicateKind, JoinTree, MutationOp, OrderKey, PipelineOp,
@@ -454,79 +454,21 @@ fn sync_binding_refs(
 }
 
 fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> bool) -> bool {
-    let changed_children = match expr {
-        ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => false,
-        ValueExpr::PropertyAccess { target, .. } => walk_expr(target, visit),
-        ValueExpr::ListAccess { target, index, .. } => {
-            walk_expr(target, visit) | walk_expr(index, visit)
-        }
-        ValueExpr::ListLiteral { items, .. } => items
-            .iter_mut()
-            .fold(false, |changed, item| walk_expr(item, visit) | changed),
-        ValueExpr::RecordLiteral { fields, .. } => {
-            fields.iter_mut().fold(false, |changed, (_, value)| {
-                walk_expr(value, visit) | changed
-            })
-        }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => walk_expr(lhs, visit) | walk_expr(rhs, visit),
-        ValueExpr::UnaryOp { operand, .. } => walk_expr(operand, visit),
-        ValueExpr::FunctionCall { args, .. } => args
-            .iter_mut()
-            .fold(false, |changed, arg| walk_expr(arg, visit) | changed),
-        ValueExpr::Normalize { source, .. } => walk_expr(source, visit),
-        ValueExpr::Trim {
-            character, source, ..
-        } => {
-            let character_changed = character
-                .as_mut()
-                .is_some_and(|character| walk_expr(character, visit));
-            character_changed | walk_expr(source, visit)
-        }
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            walk_expr(operand, visit) | walk_is_check(kind, visit)
-        }
-        ValueExpr::InList { operand, list, .. } => {
-            walk_expr(operand, visit)
-                | list
-                    .iter_mut()
-                    .fold(false, |changed, item| walk_expr(item, visit) | changed)
-        }
-        ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => items
-            .iter_mut()
-            .fold(false, |changed, item| walk_expr(item, visit) | changed),
-        ValueExpr::PropertyExists { target, .. } => walk_expr(target, visit),
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            ..
-        } => {
-            let branch_changed = branches.iter_mut().fold(false, |changed, (when, then)| {
-                walk_expr(when, visit) | walk_expr(then, visit) | changed
-            });
-            let else_changed = else_branch
-                .as_mut()
-                .is_some_and(|value| walk_expr(value, visit));
-            branch_changed | else_changed
-        }
-        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
-            walk_match_clause(pattern, visit)
-        }
-        ValueExpr::ValueSubquery { .. } => false,
-        ValueExpr::Cast { value, .. } => walk_expr(value, visit),
-    };
-    visit(expr) | changed_children
-}
-
-fn walk_is_check(kind: &mut IsCheckKind, visit: &mut impl FnMut(&mut ValueExpr) -> bool) -> bool {
-    match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => walk_expr(value, visit),
-        IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
-        | IsCheckKind::Typed(_)
-        | IsCheckKind::Normalized(_) => false,
+    // Recurse into direct `ValueExpr` children (post-order), tracking whether
+    // any descendant was rewritten. `for_each_child_mut` yields the `IS
+    // [SOURCE|DESTINATION] OF` operand as a child, so the edge-binding walk that
+    // the optimizer relies on is preserved. Subquery bodies are not `ValueExpr`
+    // children: `Exists`/`CountSubquery` descend into their `MatchClause`
+    // explicitly, and `ValueSubquery` is intentionally not descended (matching
+    // the prior `=> false` arm) — its body is optimized as its own plan.
+    let mut changed_children = false;
+    expr.for_each_child_mut(&mut |child| {
+        changed_children |= walk_expr(child, visit);
+    });
+    if let ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } = expr {
+        changed_children |= walk_match_clause(pattern, visit);
     }
+    visit(expr) | changed_children
 }
 
 fn walk_match_clause(

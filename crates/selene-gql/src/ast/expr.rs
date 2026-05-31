@@ -396,4 +396,20 @@ impl Literal {
             | Self::Null(span) => *span,
         }
     }
+
+    /// Return a mutable reference to this literal's source span.
+    ///
+    /// Used by [`ValueExpr::for_each_span_mut`](crate::ValueExpr::for_each_span_mut)
+    /// so span-rewriting walkers (parser span rebasing, span-erasing equality)
+    /// can reach the span stored inside the literal variant.
+    pub const fn span_mut(&mut self) -> &mut SourceSpan {
+        match self {
+            Self::Bool(_, span)
+            | Self::Integer(_, span)
+            | Self::Float(_, span)
+            | Self::String(_, span)
+            | Self::Uuid(_, span)
+            | Self::Null(span) => span,
+        }
+    }
 }

@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 use crate::{
-    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, ValueExpr,
+    BinaryOp, GqlType, Literal, SourceSpan, ValueExpr,
     analyze::BindingId,
     plan::{BindingDef, FilterPredicate, FilterPredicateKind},
 };
@@ -239,98 +239,24 @@ fn reverse_comparison(op: BinaryOp) -> BinaryOp {
 }
 
 fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
+    // Pre-order: visit this node, then recurse into direct `ValueExpr` children.
+    //
+    // `for_each_child` yields the `IS SOURCE OF` / `IS DESTINATION OF` operand as
+    // a child. That operand must be walked so collected binding-refs include the
+    // edge it binds (e.g. `{n, e}`); omitting it would let the optimizer's filter
+    // pushdown treat the predicate as single-binding and push it onto the node
+    // scan/expand before the edge is bound. Subquery variants
+    // (`Exists`/`CountSubquery`/`ValueSubquery`) carry no `ValueExpr` children and
+    // are deliberately not descended here — their outer-binding uses are
+    // collected separately by the caller.
     visit(expr);
-    match expr {
-        ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
-        ValueExpr::PropertyAccess { target, .. } => walk_expr(target, visit),
-        ValueExpr::ListAccess { target, index, .. } => {
-            walk_expr(target, visit);
-            walk_expr(index, visit);
-        }
-        ValueExpr::ListLiteral { items, .. } => {
-            for item in items {
-                walk_expr(item, visit);
-            }
-        }
-        ValueExpr::RecordLiteral { fields, .. } => {
-            for (_, value) in fields {
-                walk_expr(value, visit);
-            }
-        }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => {
-            walk_expr(lhs, visit);
-            walk_expr(rhs, visit);
-        }
-        ValueExpr::UnaryOp { operand, .. } => walk_expr(operand, visit),
-        ValueExpr::FunctionCall { args, .. } => {
-            for arg in args {
-                walk_expr(arg, visit);
-            }
-        }
-        ValueExpr::Normalize { source, .. } => walk_expr(source, visit),
-        ValueExpr::Trim {
-            character, source, ..
-        } => {
-            if let Some(character) = character {
-                walk_expr(character, visit);
-            }
-            walk_expr(source, visit);
-        }
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            walk_expr(operand, visit);
-            // `n IS SOURCE OF e` / `n IS DESTINATION OF e` bind the edge in
-            // `kind`; that operand must be walked so the collected binding-refs
-            // include the edge (e.g. `{n, e}`). Omitting it lets the optimizer's
-            // filter pushdown treat the predicate as single-binding and push it
-            // onto the node scan/expand before the edge is bound. Mirrors
-            // `plan::optimize::walk::walk_is_check`.
-            match kind {
-                IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-                    walk_expr(value, visit);
-                }
-                IsCheckKind::Null
-                | IsCheckKind::Directed
-                | IsCheckKind::Labeled(_)
-                | IsCheckKind::TruthValue(_)
-                | IsCheckKind::Typed(_)
-                | IsCheckKind::Normalized(_) => {}
-            }
-        }
-        ValueExpr::InList { operand, list, .. } => {
-            walk_expr(operand, visit);
-            for item in list {
-                walk_expr(item, visit);
-            }
-        }
-        ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-            for item in items {
-                walk_expr(item, visit);
-            }
-        }
-        ValueExpr::PropertyExists { target, .. } => walk_expr(target, visit),
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            ..
-        } => {
-            for (when, then) in branches {
-                walk_expr(when, visit);
-                walk_expr(then, visit);
-            }
-            if let Some(value) = else_branch {
-                walk_expr(value, visit);
-            }
-        }
-        ValueExpr::Cast { value, .. } => walk_expr(value, visit),
-        ValueExpr::Exists { .. }
-        | ValueExpr::CountSubquery { .. }
-        | ValueExpr::ValueSubquery { .. } => {}
-    }
+    expr.for_each_child(&mut |child| walk_expr(child, visit));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::IsCheckKind;
     use crate::analyze::types::AnalyzedType;
     use crate::plan::BindingElement;
 
