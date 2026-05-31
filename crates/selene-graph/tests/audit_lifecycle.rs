@@ -19,8 +19,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use selene_core::GraphId;
 use selene_graph::{GraphError, SharedGraph};
 use selene_persist::{
-    AUDIT_KIND_PACK_LIFECYCLE, AuditLog, AuditRecord, DEFAULT_AUDIT_FILE_NAME,
-    DEFAULT_WAL_FILE_NAME, WalConfig,
+    AUDIT_KIND_RESERVED_0, AuditLog, AuditRecord, DEFAULT_AUDIT_FILE_NAME, DEFAULT_WAL_FILE_NAME,
+    WalConfig,
 };
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -45,7 +45,7 @@ fn audit_path(dir: &Path) -> PathBuf {
 fn sample_record(seq: u64) -> AuditRecord {
     AuditRecord {
         recorded_at_unix_nanos: 1_000 + seq,
-        kind: AUDIT_KIND_PACK_LIFECYCLE,
+        kind: AUDIT_KIND_RESERVED_0,
         payload: vec![seq as u8, 0xAB, 0xCD],
     }
 }

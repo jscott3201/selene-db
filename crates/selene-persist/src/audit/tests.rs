@@ -51,7 +51,7 @@ fn append_then_read_all_round_trips() {
     let dir = temp_dir("round-trip");
     let path = log_path(&dir);
     let mut log = AuditLog::open(&path).unwrap();
-    let r = record(1_000, AUDIT_KIND_PACK_LIFECYCLE, b"activate pack alpha");
+    let r = record(1_000, AUDIT_KIND_RESERVED_0, b"reserved event alpha");
     log.append(&r).unwrap();
     assert_eq!(AuditLog::read_all(&path).unwrap(), vec![r]);
     let _ = fs::remove_dir_all(dir);
@@ -63,13 +63,7 @@ fn multiple_records_preserve_oldest_first_order() {
     let path = log_path(&dir);
     let mut log = AuditLog::open(&path).unwrap();
     let recs: Vec<AuditRecord> = (0..5)
-        .map(|i| {
-            record(
-                100 + i,
-                AUDIT_KIND_PACK_LIFECYCLE,
-                format!("ev{i}").as_bytes(),
-            )
-        })
+        .map(|i| record(100 + i, AUDIT_KIND_RESERVED_0, format!("ev{i}").as_bytes()))
         .collect();
     for r in &recs {
         log.append(r).unwrap();
@@ -189,6 +183,44 @@ fn payload_too_large_is_rejected() {
     assert!(matches!(err, PersistError::PayloadTooLarge { .. }));
     // The rejected append wrote nothing.
     assert_eq!(AuditLog::read_all(&path).unwrap(), Vec::new());
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn read_one_record_near_cap_payload_len_is_treated_as_torn_tail() {
+    // PERSIST-25 symmetry: read_one_record now uses saturating_add for
+    // payload_end (mirroring the WAL reader). A trailing record header whose
+    // payload_len sits just under the cap but runs past EOF must be treated as a
+    // torn tail (Ok(None) → truncated), never an arithmetic overflow or panic.
+    let dir = temp_dir("near-cap-torn");
+    let path = log_path(&dir);
+    {
+        let mut log = AuditLog::open(&path).unwrap();
+        log.append(&record(1, 1, b"keep")).unwrap();
+    }
+    // Append a torn record header claiming a near-cap payload_len with no payload
+    // bytes following it. recorded_at(8) + kind(2) + reserved(2) + payload_len(4)
+    // + checksum(4) = 20-byte header.
+    {
+        use std::io::Write;
+        let mut header = [0_u8; 20];
+        // recorded_at_unix_nanos = 0 (bytes 0..8 already zero)
+        // kind = 1
+        header[8..10].copy_from_slice(&1_u16.to_le_bytes());
+        // payload_len just under the cap (well past EOF).
+        let near_cap = (MAX_AUDIT_PAYLOAD_BYTES as u32) - 1;
+        header[12..16].copy_from_slice(&near_cap.to_le_bytes());
+        // checksum left zero.
+        let mut f = fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(&header).unwrap();
+    }
+    // read_all stops at the torn record without panicking or erroring.
+    let all = AuditLog::read_all(&path).unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].payload, b"keep");
+    // Re-open truncates the torn header back to the durable tail.
+    let _log = AuditLog::open(&path).unwrap();
+    assert_eq!(AuditLog::read_all(&path).unwrap().len(), 1);
     let _ = fs::remove_dir_all(dir);
 }
 

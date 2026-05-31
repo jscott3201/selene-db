@@ -32,6 +32,18 @@
 //! diverge from the embedder's configuration, the dual-write divergence the
 //! audit's "single writer per concern" lesson rules out. The MANIFEST's
 //! reserved `retention_present` byte stays reserved.
+//!
+//! # Prune cadence is the embedder's responsibility
+//!
+//! The MANIFEST's `archived_wal_seqs` vector gains one entry per rotation and is
+//! only ever shrunk by [`prune`]; it is *not* soft-capped by the engine. An
+//! embedder that never prunes therefore grows the vector — and the MANIFEST it
+//! is re-encoded into every rotation — without bound. This is the documented
+//! contract, not a defect: retention is opt-in engine policy, and bounding the
+//! archive history is exactly what calling [`prune`] (or
+//! [`crate::WalWriter::prune`]) on a cadence does. Prune is idempotent and
+//! MANIFEST-atomic, so a periodic call is safe and a no-op when nothing is
+//! reclaimable.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -143,9 +155,12 @@ pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome
     // prune never resurrects a crash-orphan archive into the committed manifest.
     let snapshots = scan(dir, parse_snapshot_filename)?;
     let archives_on_disk = scan(dir, parse_wal_archive_filename)?;
+    // O(log n) membership for the archive selection below (the persisted MANIFEST
+    // `archived_wal_seqs` stays a Vec; this set is a per-prune lookup accelerator).
+    let tracked_seqs: BTreeSet<u64> = manifest.archived_wal_seqs.iter().copied().collect();
     let tracked: Vec<FileEntry> = archives_on_disk
         .iter()
-        .filter(|e| manifest.archived_wal_seqs.contains(&e.seq))
+        .filter(|e| tracked_seqs.contains(&e.seq))
         .cloned()
         .collect();
 
@@ -201,7 +216,7 @@ pub fn prune(dir: &Path, policy: &RetentionPolicy) -> PersistResult<PruneOutcome
     // live snapshot captures every change they hold). The current-epoch boundary
     // (seq >= live) is left to rotation's idempotent retry, never to prune.
     for entry in &archives_on_disk {
-        let tracked = manifest.archived_wal_seqs.contains(&entry.seq);
+        let tracked = tracked_seqs.contains(&entry.seq);
         let retained = retained_archs.contains(&entry.seq);
         let superseded_orphan = !tracked && entry.seq < live;
         if (tracked && !retained) || superseded_orphan {

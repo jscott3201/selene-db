@@ -18,7 +18,7 @@
 //! mutation funnel) stamps the time and serializes the typed event into the
 //! payload, so `audit.rs` stays deterministic in tests and free of any clock or
 //! lifecycle dependency. `kind` tags are reserved here (e.g.
-//! [`AUDIT_KIND_PACK_LIFECYCLE`]); the meaning of the payload lives one layer up.
+//! [`AUDIT_KIND_RESERVED_0`]); the meaning of the payload lives one layer up.
 //!
 //! # Format (`format_version = 1`)
 //!
@@ -63,12 +63,11 @@ pub const AUDIT_FORMAT_VERSION: u16 = 1;
 pub const DEFAULT_AUDIT_FILE_NAME: &str = "audit.log";
 /// Maximum opaque payload bytes per audit record (1 MiB).
 pub const MAX_AUDIT_PAYLOAD_BYTES: usize = 1 << 20;
-/// Reserved `kind` tag (value `1`), historically used for procedure-pack
-/// lifecycle events. The pack producer was removed in the extension teardown;
-/// the tag stays reserved so the `kind` space stays stable for the forward
-/// user-action audit framework. The payload meaning lives in the layer that
-/// writes it; `audit.rs` only stores the tag.
-pub const AUDIT_KIND_PACK_LIFECYCLE: u16 = 1;
+/// Reserved `kind` tag (value `1`). No engine event currently produces it; it
+/// is held reserved so the `kind` space stays stable for the forward
+/// user-action / first-party engine audit framework. The payload meaning lives
+/// in the layer that writes it; `audit.rs` only stores the tag.
+pub const AUDIT_KIND_RESERVED_0: u16 = 1;
 
 const AUDIT_FILE_HEADER_LEN: usize = 8;
 const AUDIT_RECORD_HEADER_LEN: usize = 20;
@@ -78,7 +77,7 @@ const AUDIT_RECORD_HEADER_LEN: usize = 20;
 /// `recorded_at_unix_nanos` is a caller-supplied wall-clock stamp (nanoseconds
 /// since the Unix epoch) used for age-based retention and ordering; this crate
 /// never reads the system clock itself. `kind` tags the payload's schema (see
-/// [`AUDIT_KIND_PACK_LIFECYCLE`]); `payload` is opaque to this layer.
+/// [`AUDIT_KIND_RESERVED_0`]); `payload` is opaque to this layer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuditRecord {
     /// Wall-clock append time, nanoseconds since the Unix epoch (caller-stamped).
@@ -94,7 +93,7 @@ pub struct AuditRecord {
 /// Both constraints are **conjunctive**: a record is retained only if it is
 /// among the newest [`keep_n_events`](Self::keep_n_events) *and* not older than
 /// [`max_age`](Self::max_age). `None` disables a constraint. The default retains
-/// everything — pack-lifecycle events are sparse, so unbounded growth is the
+/// everything — engine audit events are sparse, so unbounded growth is the
 /// safe default and the embedder opts into trimming.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AuditRetentionPolicy {
@@ -385,8 +384,8 @@ fn read_one_record(
     if payload_len > MAX_AUDIT_PAYLOAD_BYTES {
         return Ok(None); // garbage length: treat as torn tail
     }
-    let payload_start = offset + AUDIT_RECORD_HEADER_LEN as u64;
-    let payload_end = payload_start + payload_len as u64;
+    let payload_start = offset.saturating_add(AUDIT_RECORD_HEADER_LEN as u64);
+    let payload_end = payload_start.saturating_add(payload_len as u64);
     if payload_end > file_len {
         return Ok(None); // torn payload
     }
@@ -411,7 +410,17 @@ fn read_one_record(
 /// record), via write-tmp → fsync → rename → dir fsync.
 fn rewrite_atomic(path: &Path, records: &[AuditRecord]) -> PersistResult<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let tmp_path = path.with_extension("log.tmp");
+    // Append `.tmp` to the *full* file name (matching the snapshot/manifest tmp
+    // convention) rather than replacing the extension — `with_extension("log.tmp")`
+    // would turn `events.dat` into `events.log.tmp`, dropping the real extension.
+    let tmp_path = match path.file_name() {
+        Some(name) => {
+            let mut tmp_name = name.to_os_string();
+            tmp_name.push(".tmp");
+            dir.join(tmp_name)
+        }
+        None => dir.join("audit.log.tmp"),
+    };
 
     let result = (|| -> PersistResult<()> {
         let mut tmp = OpenOptions::new()

@@ -31,7 +31,9 @@ iai-callgrind.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
+rust_decimal.workspace = true
 selene-testing = { path = "../selene-testing", version = "1.0.0" }
+uuid.workspace = true
 
 [[bench]]
 name = "wal"

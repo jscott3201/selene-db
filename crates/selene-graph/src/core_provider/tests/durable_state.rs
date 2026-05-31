@@ -18,7 +18,7 @@ use std::sync::Barrier;
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_persist::{AUDIT_KIND_PACK_LIFECYCLE, AuditLog};
+use selene_persist::{AUDIT_KIND_RESERVED_0, AuditLog};
 
 use super::*;
 
@@ -148,7 +148,7 @@ fn append_audit_event_without_log_returns_false() {
     // (the caller distinguishes "audit disabled" from "appended").
     let durable = durable_state("audit-none");
     assert!(
-        !durable.append_audit_event(AUDIT_KIND_PACK_LIFECYCLE, vec![1, 2, 3]),
+        !durable.append_audit_event(AUDIT_KIND_RESERVED_0, vec![1, 2, 3]),
         "append_audit_event must return false when no audit log is attached",
     );
 }
@@ -165,13 +165,13 @@ fn append_audit_event_with_log_round_trips_kind_payload_timestamp() {
 
     let payload = vec![0xDE_u8, 0xAD, 0xBE, 0xEF];
     assert!(
-        durable.append_audit_event(AUDIT_KIND_PACK_LIFECYCLE, payload.clone()),
+        durable.append_audit_event(AUDIT_KIND_RESERVED_0, payload.clone()),
         "append_audit_event returns true on a successful append",
     );
     // Drop the DurableState's audit handle by reading the file independently.
     let records = AuditLog::read_all(&audit_path).unwrap();
     assert_eq!(records.len(), 1, "exactly one event persisted");
-    assert_eq!(records[0].kind, AUDIT_KIND_PACK_LIFECYCLE);
+    assert_eq!(records[0].kind, AUDIT_KIND_RESERVED_0);
     assert_eq!(records[0].payload, payload);
     let after = now_unix_nanos();
     assert!(

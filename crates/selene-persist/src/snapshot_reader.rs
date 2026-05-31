@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::compression::decompress_zstd_bounded;
 use crate::section::{
@@ -17,7 +18,7 @@ use crate::{PersistError, PersistResult, SnapshotFileHeader};
 pub struct SnapshotReader {
     file: File,
     header: SnapshotFileHeader,
-    sections: Vec<SectionEntry>,
+    sections: Arc<[SectionEntry]>,
 }
 
 impl SnapshotReader {
@@ -38,7 +39,7 @@ impl SnapshotReader {
         Ok(Self {
             file,
             header,
-            sections,
+            sections: Arc::from(sections),
         })
     }
 
@@ -52,6 +53,16 @@ impl SnapshotReader {
     #[must_use]
     pub fn sections(&self) -> &[SectionEntry] {
         &self.sections
+    }
+
+    /// Return a cheap shared handle to the decoded section table.
+    ///
+    /// Cloning the returned [`Arc`] is a pointer bump, so a caller that needs to
+    /// iterate the sections while also re-borrowing `&mut self` for payload reads
+    /// can do so without deep-copying the section Vec.
+    #[must_use]
+    pub fn sections_arc(&self) -> Arc<[SectionEntry]> {
+        Arc::clone(&self.sections)
     }
 
     /// Read a section by provider/sub tag.
@@ -107,8 +118,10 @@ impl SnapshotReader {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&table);
         let mut buf = [0_u8; 8 * 1024];
-        let entries = self.sections.clone();
-        for entry in entries {
+        // Cheap Arc pointer-bump (not a deep Vec clone) sidesteps the `&self`
+        // borrow conflict between `self.sections` and the `&mut self.file` reads.
+        let entries = Arc::clone(&self.sections);
+        for entry in entries.iter() {
             self.file.seek(SeekFrom::Start(entry.payload_offset))?;
             let mut remaining = entry.payload_len;
             while remaining > 0 {

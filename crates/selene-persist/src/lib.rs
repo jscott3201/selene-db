@@ -30,7 +30,7 @@ mod writer;
 mod writer_rotation;
 
 pub use crate::audit::{
-    AUDIT_FORMAT_VERSION, AUDIT_KIND_PACK_LIFECYCLE, AUDIT_MAGIC, AuditLog, AuditPruneOutcome,
+    AUDIT_FORMAT_VERSION, AUDIT_KIND_RESERVED_0, AUDIT_MAGIC, AuditLog, AuditPruneOutcome,
     AuditRecord, AuditRetentionPolicy, DEFAULT_AUDIT_FILE_NAME, MAX_AUDIT_PAYLOAD_BYTES,
 };
 pub use crate::entry_header::{

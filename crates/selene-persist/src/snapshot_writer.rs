@@ -10,6 +10,7 @@ use rayon::prelude::*;
 use selene_core::metrics;
 
 use crate::compression::compress_zstd;
+use crate::manifest::sync_dir;
 use crate::section::{
     MAX_SECTION_COUNT, SECTION_TABLE_ROW_LEN, SectionEntry, body_hash, section_table_bytes,
     validate_section_payload_len,
@@ -153,8 +154,11 @@ impl SnapshotBuilder {
     /// the final path already has a snapshot for this sequence; this is the
     /// race-safe alternative to `rename` (which silently overwrites on POSIX)
     /// without requiring `unsafe` for `renameat2(RENAME_NOREPLACE)`. On a
-    /// collision the tmp is removed best-effort. The parent directory is not
-    /// fsynced in v1.0.
+    /// collision the tmp is removed best-effort. When `config.fsync` is set the
+    /// parent directory is fsynced after the `hard_link` so the new directory
+    /// entry is durable — closing the crash window for a downstream embedder that
+    /// publishes a snapshot via `finalize` directly. (The rotation path adds its
+    /// own fsync-independent re-open/`sync_all` barrier on top of this.)
     ///
     /// # Errors
     ///
@@ -200,6 +204,12 @@ impl SnapshotBuilder {
         match std::fs::hard_link(&tmp_path, &final_path) {
             Ok(()) => {
                 let _ = std::fs::remove_file(&tmp_path);
+                // Make the new directory entry durable AFTER the publish (the
+                // file's own sync_data above precedes it). Gated on config.fsync
+                // so the no-fsync benchmark/offline path stays barrier-free.
+                if self.config.fsync {
+                    sync_dir(&self.config.dir)?;
+                }
                 metrics::counter_inc(metrics::SNAPSHOTS_TOTAL);
                 metrics::histogram_record(
                     metrics::SNAPSHOT_DURATION_SECONDS,
@@ -425,6 +435,59 @@ mod tests {
         assert!(!snapshot_tmp_path(&dir, 6).exists());
         assert_eq!(fs::read(snapshot_path(&dir, 6)).unwrap(), b"existing");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn snapshot_finalize_same_sequence_is_race_safe() {
+        // Two concurrent finalizes of the SAME sequence must resolve to exactly
+        // one durable snapshot: one Ok, the rest a typed AlreadyExists from either
+        // the tmp `create_new` or the final-path `hard_link` (the tmp path is not
+        // pid/thread-unique, so both collision points are exercised). Never two
+        // winners, never a panic, never a torn final file.
+        use std::sync::{Arc as StdArc, Barrier};
+
+        let dir = StdArc::new(temp_dir("same-seq-race"));
+        const THREADS: usize = 6;
+        let barrier = StdArc::new(Barrier::new(THREADS));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|i| {
+                let dir = StdArc::clone(&dir);
+                let barrier = StdArc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let mut builder =
+                        SnapshotBuilder::new(config((*dir).clone(), 20, SectionCompression::None));
+                    builder
+                        .add_section(*b"CORE", *b"META", vec![i as u8; 64])
+                        .unwrap();
+                    barrier.wait();
+                    match builder.finalize() {
+                        Ok(_) => true,
+                        Err(PersistError::Io(error))
+                            if error.kind() == std::io::ErrorKind::AlreadyExists =>
+                        {
+                            false
+                        }
+                        Err(other) => panic!("unexpected finalize error: {other:?}"),
+                    }
+                })
+            })
+            .collect();
+
+        let wins = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .filter(|won| *won)
+            .count();
+        assert_eq!(wins, 1, "exactly one same-sequence finalize may win");
+
+        // The single durable snapshot reads back cleanly.
+        let path = snapshot_path(&dir, 20);
+        assert!(path.exists());
+        let mut reader = SnapshotReader::open(&path).unwrap();
+        reader.verify_body_hash().unwrap();
+        // No tmp residue from the losing finalizes.
+        assert!(!snapshot_tmp_path(&dir, 20).exists());
+        let _ = fs::remove_dir_all(dir.as_path());
     }
 
     #[test]
