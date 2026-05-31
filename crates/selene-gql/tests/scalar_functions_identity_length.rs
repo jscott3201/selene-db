@@ -67,7 +67,6 @@ impl ProcedureRegistry for BindingTableFixtureRegistry {
             },
             ProcedureTier::Graph,
             ProcedureMutability::Read,
-            None,
         ))
     }
 

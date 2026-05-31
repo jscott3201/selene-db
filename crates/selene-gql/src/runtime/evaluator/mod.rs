@@ -45,9 +45,9 @@ pub fn evaluate(
     match expr {
         ValueExpr::Literal(literal) => Ok(literal_value(literal)),
         ValueExpr::Variable { name, span } => lookup_variable(*name, *span, binding, schema),
-        ValueExpr::PropertyAccess { target, key, .. } => {
+        ValueExpr::PropertyAccess { target, key, span } => {
             let target = evaluate(target, binding, schema, ctx)?;
-            property_access(&target, *key, ctx)
+            property_access(&target, *key, *span, ctx)
         }
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             let lhs = evaluate(lhs, binding, schema, ctx)?;
@@ -159,7 +159,10 @@ pub fn evaluate(
 /// This preserves the public test helper surface for expression families that
 /// do not require planned subqueries. Statement execution uses [`evaluate`]
 /// with the owning execution plan's registries.
-#[allow(dead_code)]
+///
+/// Gated to the test/`test-harness` surface (D21) so this scaffolding stays off
+/// the always-on public API; the re-export in `runtime` carries the same gate.
+#[cfg(any(test, feature = "test-harness"))]
 pub fn evaluate_for_test(
     expr: &ValueExpr,
     binding: &Binding,
@@ -224,6 +227,7 @@ fn resolve_parameter(
 pub(super) fn property_access(
     target: &Value,
     key: selene_core::IStr,
+    span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match target {
@@ -231,9 +235,15 @@ pub(super) fn property_access(
         Value::NodeRef(id) => Ok(property_from_node(*id, key, ctx)),
         Value::EdgeRef(id) => Ok(property_from_edge(*id, key, ctx)),
         Value::Record(record) => Ok(record_field(record, key)),
-        _ => Err(ExecutorError::ImplementationDefined {
-            detail: "property access target is not graph element",
-        }),
+        // A non-element / non-record target (reachable when analysis types the
+        // target as Dynamic, e.g. `[1,2,3].foo` or `(123).foo`) is a runtime
+        // type error, not an internal-invariant break. `Value::RecordTyped`
+        // stays fail-closed here (catalog-bound, no inline-name index).
+        _ => Err(ExecutorError::data_exception(
+            crate::runtime::DataExceptionSubclass::InvalidValueType,
+            "property access target is not a node, edge, or record".to_owned(),
+            span,
+        )),
     }
 }
 

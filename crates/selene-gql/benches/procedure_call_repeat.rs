@@ -38,7 +38,6 @@ impl RepeatRegistry {
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
-                None,
             ),
         }
     }

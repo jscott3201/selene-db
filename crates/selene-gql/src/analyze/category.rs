@@ -70,9 +70,6 @@ const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
 const fn classify_mutability(mutability: ProcedureMutability) -> StatementCategory {
     match mutability {
         ProcedureMutability::Read => StatementCategory::ReadOnly,
-        ProcedureMutability::GraphWrite => StatementCategory::DataModifying,
-        ProcedureMutability::SchemaWrite | ProcedureMutability::Admin => {
-            StatementCategory::CatalogModifying
-        }
+        ProcedureMutability::SchemaWrite => StatementCategory::CatalogModifying,
     }
 }

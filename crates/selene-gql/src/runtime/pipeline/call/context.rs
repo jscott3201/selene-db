@@ -8,11 +8,6 @@ use crate::{
 };
 
 pub(super) fn validate_call_tier(call: &PlannedCall) -> Result<(), ExecutorError> {
-    if call.tier == ProcedureTier::Persist {
-        return Err(ExecutorError::ImplementationDefined {
-            detail: "persist-tier procedures not implemented in v1.0",
-        });
-    }
     let expected = tier_for_mutability(call.mutability);
     if call.tier != expected {
         return Err(procedure_error(
@@ -47,7 +42,7 @@ where
             let cancellation = ctx.cancellation_checker();
             let binding_tables = ctx.binding_table_registry();
             let mutator = ctx.mutator_with_span(
-                "GraphWrite procedure requires a write transaction",
+                "mutation-tier procedure requires a write transaction",
                 call.span,
             )?;
             Ok(ProcedureContext::Mutation(MutationContext::new(
@@ -57,9 +52,6 @@ where
                 binding_tables,
             )))
         }
-        ProcedureTier::Persist => Err(ExecutorError::ImplementationDefined {
-            detail: "persist-tier procedures not implemented in v1.0",
-        }),
     }
 }
 
@@ -79,11 +71,8 @@ where
             ctx.binding_table_registry(),
         ))),
         ProcedureTier::Mutation => Err(ExecutorError::InvalidTransactionState {
-            detail: "GraphWrite procedure requires a write transaction",
+            detail: "mutation-tier procedure requires a write transaction",
             span: call.span,
-        }),
-        ProcedureTier::Persist => Err(ExecutorError::ImplementationDefined {
-            detail: "persist-tier procedures not implemented in v1.0",
         }),
     }
 }
@@ -91,9 +80,7 @@ where
 pub(super) const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
     match mutability {
         ProcedureMutability::Read => ProcedureTier::Graph,
-        ProcedureMutability::GraphWrite
-        | ProcedureMutability::SchemaWrite
-        | ProcedureMutability::Admin => ProcedureTier::Mutation,
+        ProcedureMutability::SchemaWrite => ProcedureTier::Mutation,
     }
 }
 

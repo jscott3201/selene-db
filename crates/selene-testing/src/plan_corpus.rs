@@ -124,7 +124,7 @@ impl PlanCorpus {
                     istr("changed"),
                     GqlType::Boolean,
                 )],
-                ProcedureMutability::GraphWrite,
+                ProcedureMutability::SchemaWrite,
             )
     }
 }

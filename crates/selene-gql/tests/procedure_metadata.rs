@@ -105,7 +105,7 @@ fn default_registry_exposes_non_empty_metadata_for_all_24_procedures() {
 }
 
 #[test]
-fn show_procedures_exposes_seven_columns_and_zero_arg_description() {
+fn show_procedures_exposes_six_columns_and_zero_arg_description() {
     let graph = SharedGraph::new(GraphId::new(120_001));
     let registry = full_registry();
     let mut session = Session::new(&graph);
@@ -131,7 +131,6 @@ fn show_procedures_exposes_seven_columns_and_zero_arg_description() {
             "signature",
             "description",
             "since_version",
-            "capability_required",
         ]
     );
     assert_eq!(table.row_count(), 24);

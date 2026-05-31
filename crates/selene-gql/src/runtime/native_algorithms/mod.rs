@@ -187,7 +187,6 @@ impl AlgoKind {
             },
             ProcedureTier::Graph,
             ProcedureMutability::Read,
-            None,
         )
         .with_description(description)
     }

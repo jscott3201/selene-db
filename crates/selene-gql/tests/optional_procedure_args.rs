@@ -33,7 +33,6 @@ impl RecordingRegistry {
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
-                None,
             ),
         );
         Self {

@@ -106,11 +106,10 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 5] = [
 impl BuiltinKind {
     /// Build the planner-visible metadata for this built-in.
     ///
-    /// Mirrors the pack registry's `procedure_metadata`: static parameter /
-    /// output columns are converted with the same `with_description` /
-    /// `with_default_doc` / `with_default` rules, the `since_version` rides on
-    /// the [`ProcedureSignature`], tier/mutability come from the procedure, and
-    /// `capability_required` is `None` for every platform built-in.
+    /// Static parameter / output columns are converted with the
+    /// `with_description` / `with_default_doc` / `with_default` rules, the
+    /// `since_version` rides on the [`ProcedureSignature`], and tier/mutability
+    /// come from the procedure.
     pub(super) fn metadata(
         self,
         handle: ProcedureHandle,
@@ -126,7 +125,6 @@ impl BuiltinKind {
             },
             self.tier(),
             self.mutability(),
-            None,
         )
         .with_description(description)
     }

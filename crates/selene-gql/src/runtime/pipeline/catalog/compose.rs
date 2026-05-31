@@ -91,8 +91,16 @@ fn check_property_match(
             parent,
             child_type,
             "value type",
-            render_property_value_type(parent.value_type, parent.list_element_type.as_ref()),
-            render_property_value_type(child.value_type, child.list_element_type.as_ref()),
+            render_property_value_type(
+                parent.value_type,
+                parent.list_element_type.as_ref(),
+                parent.record_field_types.as_ref(),
+            ),
+            render_property_value_type(
+                child.value_type,
+                child.list_element_type.as_ref(),
+                child.record_field_types.as_ref(),
+            ),
             span,
         ));
     }
@@ -175,7 +183,7 @@ fn render_list_element(element: Option<&PropertyElementType>) -> String {
     match element {
         None => "none".to_owned(),
         Some(PropertyElementType::Scalar(value_type)) => {
-            render_property_value_type(*value_type, None)
+            render_property_value_type(*value_type, None, None)
         }
         Some(PropertyElementType::List(inner)) => {
             format!("LIST<{}>", render_list_element(Some(inner)))

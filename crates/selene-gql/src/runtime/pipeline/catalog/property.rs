@@ -296,13 +296,50 @@ fn gql_type_to_scalar_property_value_type(
 pub(super) fn render_property_value_type(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
+    record_field_types: Option<&RecordFieldTypes>,
 ) -> String {
     if value_type == PropertyValueType::List
         && let Some(element_type) = list_element_type
     {
         return format!("LIST<{}>", render_property_element_type(element_type));
     }
+    // A closed RECORD carries its field-type descriptor; render the structure
+    // so SHOW round-trips `RECORD { name :: TYPE, ... }` rather than a bare
+    // `RECORD` that loses the open-vs-closed distinction. An open/bare RECORD
+    // (no descriptor) stays `RECORD`.
+    if value_type == PropertyValueType::RecordTyped
+        && let Some(fields) = record_field_types
+    {
+        return render_record_field_types(fields);
+    }
     scalar_property_value_type_name(value_type).to_owned()
+}
+
+fn render_record_field_types(fields: &RecordFieldTypes) -> String {
+    let rendered = fields
+        .0
+        .iter()
+        .map(|field| {
+            format!(
+                "{} :: {}",
+                field.name,
+                render_record_field_type(&field.field_type)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("RECORD {{ {rendered} }}")
+}
+
+fn render_record_field_type(field_type: &RecordFieldType) -> String {
+    match field_type {
+        RecordFieldType::Scalar(value_type) => {
+            scalar_property_value_type_name(*value_type).to_owned()
+        }
+        RecordFieldType::List(inner) => format!("LIST<{}>", render_record_field_type(inner)),
+        RecordFieldType::Record(inner) => render_record_field_types(inner),
+        _ => "<unsupported-record-field>".to_owned(),
+    }
 }
 
 fn render_property_element_type(element_type: &PropertyElementType) -> String {

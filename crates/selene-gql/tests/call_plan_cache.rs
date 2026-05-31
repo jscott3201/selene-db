@@ -38,7 +38,6 @@ impl TestRegistry {
                 },
                 ProcedureTier::Graph,
                 ProcedureMutability::Read,
-                None,
             ),
             version,
             value,

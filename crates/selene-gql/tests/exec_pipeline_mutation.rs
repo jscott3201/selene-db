@@ -196,8 +196,9 @@ fn undirected_insert_edge_is_rejected_at_runtime() {
 
     assert!(matches!(
         err,
-        ExecutorError::ImplementationDefined {
-            detail: "INSERT undirected edge not implemented",
+        ExecutorError::FeatureNotInV1_1 {
+            feature: "INSERT undirected edge",
+            ..
         }
     ));
     assert_eq!(graph.read().edge_count(), 0);
@@ -493,7 +494,7 @@ fn mutator_error_surfaces_as_graph_mutation_executor_error() {
 }
 
 #[test]
-fn insert_with_label_disjunction_returns_implementation_defined() {
+fn insert_with_label_disjunction_returns_feature_not_in_v1_1() {
     let graph = empty_graph();
     let plan = planned("INSERT (n:Person|Company) RETURN n");
 
@@ -501,14 +502,15 @@ fn insert_with_label_disjunction_returns_implementation_defined() {
 
     assert!(matches!(
         err,
-        ExecutorError::ImplementationDefined {
-            detail: "INSERT label expression form not implemented"
+        ExecutorError::FeatureNotInV1_1 {
+            feature: "INSERT label expression form",
+            ..
         }
     ));
 }
 
 #[test]
-fn delete_path_target_returns_implementation_defined() {
+fn delete_path_target_returns_feature_not_in_v1_1() {
     let graph = graph_with_edge();
     let plan = planned("MATCH p = (a)-[:REL]->(b) DELETE p FINISH");
 
@@ -516,8 +518,9 @@ fn delete_path_target_returns_implementation_defined() {
 
     assert!(matches!(
         err,
-        ExecutorError::ImplementationDefined {
-            detail: "DELETE path target not implemented"
+        ExecutorError::FeatureNotInV1_1 {
+            feature: "DELETE path target",
+            ..
         }
     ));
 }

@@ -4,7 +4,35 @@
 //! Included via `#[path]` from `exec_pipeline_catalog.rs` to keep that test root under the
 //! 700-LOC cap; reuses the parent binary's `planned`/`run_write`/`empty_closed_graph`.
 
+use selene_core::Value;
+use selene_gql::parse;
+
 use super::{empty_closed_graph, planned, run_write};
+
+#[test]
+fn show_node_types_renders_closed_record_field_structure() {
+    // GQLRT-23: a closed RECORD property must render its field structure in SHOW
+    // (so open vs closed is distinguishable) and round-trip through the parser,
+    // rather than collapsing to a bare "RECORD".
+    let graph = empty_closed_graph(3719);
+    let ddl = planned("CREATE NODE TYPE :Host (config :: RECORD{host :: STRING, port :: INT})");
+    run_write(&graph, &ddl)
+        .expect("closed RECORD type executes")
+        .1
+        .expect("closed RECORD property type commits");
+
+    let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
+    outcome.expect("show commits");
+
+    let Value::String(definition) = table.rows()[0].values()[1] else {
+        panic!("definition is a string");
+    };
+    assert_eq!(
+        definition.as_str(),
+        "CREATE NODE TYPE :Host (config :: RECORD { host :: STRING, port :: INTEGER })"
+    );
+    parse(definition.as_str()).expect("closed-RECORD definition round-trips through the parser");
+}
 
 #[test]
 fn closed_record_property_type_lowers_end_to_end() {
