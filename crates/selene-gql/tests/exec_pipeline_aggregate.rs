@@ -3,7 +3,6 @@
 mod exec_common;
 
 use selene_core::Value;
-use selene_gql::ExecutorError;
 
 use exec_common::{column_values, execute_read};
 
@@ -250,8 +249,8 @@ fn collect_empty_returns_empty_list() {
 #[test]
 fn function_call_with_let_shadow_does_not_misread_column() {
     use selene_gql::{
-        AnalyzedType, Binding, BindingTableColumn, BindingTableSchema, ImplDefinedCaps, NonEmpty,
-        SourceSpan, ValueExpr, runtime::evaluate_for_test,
+        AnalyzedType, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
+        ImplDefinedCaps, NonEmpty, SourceSpan, ValueExpr, runtime::evaluate_for_test,
     };
 
     let sum = exec_common::istr("sum");

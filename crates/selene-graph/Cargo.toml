@@ -7,10 +7,11 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+description = "In-memory property-graph storage core (ArcSwap + imbl CoW, label/typed indexes, write funnel) for selene-db."
 autobenches = false
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.0.0" }
+selene-core = { path = "../selene-core", version = "1.1.0" }
 selene-persist.workspace = true
 arc-swap.workspace = true
 parking_lot.workspace = true
@@ -38,7 +39,7 @@ mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 rust_decimal.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.0.0" }
+selene-testing = { path = "../selene-testing", version = "1.1.0" }
 
 [[bench]]
 name = "single_graph"

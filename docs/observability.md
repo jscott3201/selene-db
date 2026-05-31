@@ -36,7 +36,7 @@ executing statements:
 
 ```toml
 [dependencies]
-selene-gql = { version = "1.0.0", features = ["metrics"] }
+selene-gql = { version = "1.1.0", features = ["metrics"] }
 ```
 
 ```rust

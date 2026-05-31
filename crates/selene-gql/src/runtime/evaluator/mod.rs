@@ -21,10 +21,14 @@ mod uuid_fns;
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
-    Literal, SourceSpan, SubqueryRegistry, ValueExpr,
-    analyze::ExprIdLookup,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError, TxContext},
+    Literal, SourceSpan, ValueExpr,
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
+// Used only by `evaluate_for_test` below, which is itself gated to the
+// test/`test-harness` surface (D21). Without the matching gate these imports
+// are unused in a default-features lib build (`cargo clippy --locked`).
+#[cfg(any(test, feature = "test-harness"))]
+use crate::{SubqueryRegistry, analyze::ExprIdLookup, runtime::TxContext};
 
 use self::{
     binary_ops::{eval_binary, eval_in_list, eval_unary},
