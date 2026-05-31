@@ -367,6 +367,93 @@ fn istr_deserialize_admits_to_interner() {
 }
 
 #[test]
+fn record_fields_none_open_closed_postcard_round_trip() {
+    // CORE-11: the None / Some(Open) / Some(Closed) distinction on
+    // PropertyDef.record_fields is load-bearing — WAL replay degrades a bare
+    // RECORD to Null if the Open marker does not round-trip. Pin all three
+    // durable states at the core level.
+    let not_record = PropertyDef {
+        name: istr("core-11.not-record"),
+        value_type: ValueType::predefined(PredefinedValueType::String),
+        nullable: false,
+        default: None,
+        immutable: false,
+        record_fields: None,
+    };
+    rt(&not_record);
+
+    let bare_record = PropertyDef {
+        name: istr("core-11.bare-record"),
+        value_type: ValueType::predefined(PredefinedValueType::String),
+        nullable: true,
+        default: None,
+        immutable: false,
+        record_fields: Some(Box::new(RecordFieldStructure::Open)),
+    };
+    rt(&bare_record);
+
+    let closed_record = PropertyDef {
+        name: istr("core-11.closed-record"),
+        value_type: ValueType::predefined(PredefinedValueType::String),
+        nullable: false,
+        default: None,
+        immutable: false,
+        record_fields: Some(Box::new(RecordFieldStructure::Closed(vec![
+            RecordFieldStructureDef {
+                name: istr("core-11.field.scalar"),
+                field_type: RecordFieldStructureType::Scalar(PropertyValueType::Int),
+                required: true,
+            },
+        ]))),
+    };
+    rt(&closed_record);
+}
+
+#[test]
+fn nested_record_field_structure_postcard_round_trip() {
+    // CORE-11: GV48 nested record types — a closed RECORD whose fields are
+    // themselves a LIST<RECORD{..}> and a nested closed RECORD. Exercises the
+    // recursive RecordFieldStructureType { Scalar, List, Record } codec.
+    let inner_closed = RecordFieldStructure::Closed(vec![RecordFieldStructureDef {
+        name: istr("core-11.nested.inner"),
+        field_type: RecordFieldStructureType::Scalar(PropertyValueType::Bool),
+        required: false,
+    }]);
+
+    let structure = RecordFieldStructure::Closed(vec![
+        RecordFieldStructureDef {
+            name: istr("core-11.nested.list-of-records"),
+            field_type: RecordFieldStructureType::List(Box::new(RecordFieldStructureType::Record(
+                Box::new(inner_closed.clone()),
+            ))),
+            required: true,
+        },
+        RecordFieldStructureDef {
+            name: istr("core-11.nested.nested-record"),
+            field_type: RecordFieldStructureType::Record(Box::new(RecordFieldStructure::Open)),
+            required: false,
+        },
+        RecordFieldStructureDef {
+            name: istr("core-11.nested.nested-closed"),
+            field_type: RecordFieldStructureType::Record(Box::new(inner_closed)),
+            required: true,
+        },
+    ]);
+    rt(&structure);
+
+    // And the same structure carried on a PropertyDef.record_fields slot.
+    let def = PropertyDef {
+        name: istr("core-11.nested.def"),
+        value_type: ValueType::predefined(PredefinedValueType::String),
+        nullable: false,
+        default: None,
+        immutable: false,
+        record_fields: Some(Box::new(structure)),
+    };
+    rt(&def);
+}
+
+#[test]
 fn extended_value_payload_postcard_round_trip() {
     let value = Value::Extended {
         type_id: ExtensionTypeId(0x100),

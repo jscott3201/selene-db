@@ -107,14 +107,14 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("IE002"),
         ImplDefinedChoice {
-            choice: "serializable only in v1.0",
+            choice: "serializable only",
             settled_in: "spec 03 section 6.4",
         },
     ),
     (
         AnnexBId("IE004"),
         ImplDefinedChoice {
-            choice: "no relaxation from serializable in v1.0",
+            choice: "no relaxation from serializable",
             settled_in: "spec 03 section 6.4",
         },
     ),
@@ -191,7 +191,7 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("IV011"),
         ImplDefinedChoice {
-            choice: "Value minus RecordTyped; registered Extended values allowed",
+            choice: "Value minus RecordTyped; Value::Extended carries opaque sister-project payloads",
             settled_in: "spec 02 section 3.1",
         },
     ),
@@ -219,8 +219,8 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("IW010"),
         ImplDefinedChoice {
-            choice: "procedure-pack model",
-            settled_in: "spec 05",
+            choice: "single frozen native BuiltinProcedureRegistry; no loadable extensions",
+            settled_in: "spec 08",
         },
     ),
     (

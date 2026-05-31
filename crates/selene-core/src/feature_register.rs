@@ -1,7 +1,7 @@
 //! ISO/IEC 39075:2024 feature and implementation-defined registers.
 //!
-//! This file is the canonical source for selene-db's v1.0 language claim.
-//! The markdown tables for Spec 01, Spec 07, and Spec 09 are rendered or
+//! This file is the canonical source for selene-db's optional-feature language
+//! claim. The markdown tables for Spec 01, Spec 07, and Spec 09 are rendered or
 //! checked from these constants by `build/regen_feature_docs.sh`.
 
 use std::fmt;
@@ -186,7 +186,7 @@ feature_ids! {
     GV90 = "GV90" => "Explicit value type nullability";
 }
 
-/// v1.0 supported optional feature set.
+/// Supported optional feature set.
 ///
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
@@ -293,15 +293,15 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV55,
 ];
 
-/// Rationale for referenced optional features not claimed in v1.0.
+/// Rationale for referenced optional features not currently claimed.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::G002,
-        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred from v1.1",
+        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred to a future release",
     ),
     (
         FeatureId::G003,
-        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred from v1.1",
+        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred to a future release",
     ),
     (
         FeatureId::G019,
@@ -313,67 +313,67 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GP03,
-        "explicit variable-scope inline procedures are deferred from v1.1",
+        "explicit variable-scope inline procedures are deferred to a future release",
     ),
     (
         FeatureId::GP05,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP06,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP07,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP08,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP09,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP10,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP11,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP12,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP13,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP14,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP15,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP18,
-        "mixed catalog/data transaction behavior remains forbidden in v1.0",
+        "mixed catalog/data transaction behavior remains forbidden",
     ),
     (
         FeatureId::GC02,
-        "CREATE/DROP SCHEMA is outside the v1.0 catalog claim (graph-schema vs graph-type vs graph)",
+        "CREATE/DROP SCHEMA is outside the current catalog claim (graph-schema vs graph-type vs graph)",
     ),
     (
         FeatureId::GC04,
-        "CREATE GRAPH stays outside the v1.0 catalog claim (D1 single-graph embeddable cannot create a second graph); DROP GRAPH is the IM_DROP_GRAPH factory-reset extension, not GC04",
+        "CREATE GRAPH stays outside the current catalog claim (D1 single-graph embeddable cannot create a second graph); DROP GRAPH is the IM_DROP_GRAPH factory-reset extension, not GC04",
     ),
     (
         FeatureId::GC05,
-        "CREATE GRAPH IF NOT EXISTS modifier remains outside the v1.0 catalog claim",
+        "CREATE GRAPH IF NOT EXISTS modifier remains outside the current catalog claim",
     ),
     (
         FeatureId::GS01,
@@ -413,7 +413,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GT03,
-        "multi-graph transactions are out of v1.0 scope",
+        "multi-graph transactions are out of scope under the D1 single-graph embeddable model",
     ),
     (
         FeatureId::GV15,
@@ -425,7 +425,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GV20,
-        "REAL spelling is outside the v1.0 claim; FLOAT16 remains deferred",
+        "REAL spelling is outside the current claim; FLOAT16 remains deferred",
     ),
     (
         FeatureId::GV22,
@@ -455,7 +455,7 @@ mod annex_b;
 
 pub use annex_b::{ANNEX_B_REGISTER, AnnexBId, ImplDefinedChoice};
 
-/// True when `id` is in the v1.0 supported feature set.
+/// True when `id` is in the supported feature set.
 pub fn is_supported(id: FeatureId) -> bool {
     SUPPORTED_FEATURES.contains(&id)
 }
@@ -474,9 +474,106 @@ pub fn feature_id_from_str(id: &str) -> Option<FeatureId> {
         .find_map(|(feature, _)| (feature.as_str() == id).then_some(*feature))
 }
 
-/// Return the v1.0 non-support rationale for a referenced feature ID.
+/// Return the non-support rationale for a referenced feature ID.
 pub fn non_supported_rationale(id: FeatureId) -> Option<&'static str> {
     NOT_SUPPORTED_RATIONALE
         .iter()
         .find_map(|(feature, rationale)| (*feature == id).then_some(*rationale))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn supported_features_has_no_duplicates() {
+        // CORE-15: a duplicated feature in SUPPORTED would silently inflate the
+        // conformance claim count and is otherwise invisible.
+        let mut seen = HashSet::new();
+        for feature in SUPPORTED_FEATURES {
+            assert!(
+                seen.insert(*feature),
+                "{feature} appears more than once in SUPPORTED_FEATURES"
+            );
+        }
+    }
+
+    #[test]
+    fn not_supported_rationale_has_no_duplicates() {
+        let mut seen = HashSet::new();
+        for (feature, _) in NOT_SUPPORTED_RATIONALE {
+            assert!(
+                seen.insert(*feature),
+                "{feature} appears more than once in NOT_SUPPORTED_RATIONALE"
+            );
+        }
+    }
+
+    #[test]
+    fn supported_and_not_supported_are_disjoint() {
+        // CORE-15: SUPPORTED ∩ NOT_SUPPORTED = ∅ — a feature cannot be both
+        // claimed and rationalized-as-unclaimed.
+        let supported: HashSet<FeatureId> = SUPPORTED_FEATURES.iter().copied().collect();
+        for (feature, _) in NOT_SUPPORTED_RATIONALE {
+            assert!(
+                !supported.contains(feature),
+                "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
+            );
+        }
+    }
+
+    #[test]
+    fn at_least_one_graph_type_feature_is_claimed() {
+        // CORE-15: ISO §4 requires at least one of GG01 (open graph) or GG02
+        // (closed graph). selene-db claims both, but the floor is the OR.
+        assert!(
+            is_supported(FeatureId::GG01) || is_supported(FeatureId::GG02),
+            "neither GG01 (open graph) nor GG02 (closed graph) is claimed"
+        );
+    }
+
+    #[test]
+    fn every_referenced_feature_resolves_by_string() {
+        // Round-trips the stable string ABI both ways.
+        for (feature, _) in REFERENCED_FEATURES {
+            assert_eq!(feature_id_from_str(feature.as_str()), Some(*feature));
+            assert!(name_of(*feature).is_some(), "{feature} has no display name");
+        }
+    }
+
+    #[test]
+    fn annex_b_register_carries_no_pack_or_spec_05_residue() {
+        // CORE-01: post-#196 the procedure-pack model is gone. No Annex B entry
+        // may still name "pack" or point at the deleted spec 05 / spec 15.
+        for (id, choice) in ANNEX_B_REGISTER {
+            let haystacks = [choice.choice, choice.settled_in];
+            for text in haystacks {
+                let lower = text.to_ascii_lowercase();
+                assert!(
+                    !lower.contains("pack"),
+                    "Annex B {} still references a 'pack': {text:?}",
+                    id.as_str()
+                );
+                assert!(
+                    !lower.contains("spec 05") && !lower.contains("spec 15"),
+                    "Annex B {} still points at a deleted spec: {text:?}",
+                    id.as_str()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn annex_b_register_has_no_duplicate_ids() {
+        let mut seen = HashSet::new();
+        for (id, _) in ANNEX_B_REGISTER {
+            assert!(
+                seen.insert(*id),
+                "{} appears more than once in ANNEX_B_REGISTER",
+                id.as_str()
+            );
+        }
+    }
 }

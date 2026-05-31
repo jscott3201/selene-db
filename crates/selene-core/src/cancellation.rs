@@ -1,9 +1,9 @@
-//! Cooperative cancellation primitives shared by executor and extension crates.
+//! Cooperative cancellation primitives shared by the executor and algorithm crates.
 //!
 //! Cancellation is cooperative: callers request cancellation through a
-//! [`CancellationToken`], and long-running executor, procedure-pack, or
-//! algorithm loops observe it at explicit checkpoints. Work between
-//! checkpoints is allowed to finish before the cancellation surfaces.
+//! [`CancellationToken`], and long-running executor or algorithm loops observe
+//! it at explicit checkpoints. Work between checkpoints is allowed to finish
+//! before the cancellation surfaces.
 
 use std::{
     sync::{
@@ -57,7 +57,7 @@ pub enum CancellationCause {
 ///
 /// The checker combines an optional cancellation token with an optional
 /// absolute deadline. It is intentionally `Copy` so callers can pass it into
-/// nested loops and procedure-pack adapters without allocation.
+/// nested loops and algorithm hot loops without allocation.
 #[derive(Clone, Copy, Debug)]
 pub struct CancellationChecker<'a> {
     token: Option<&'a CancellationToken>,
@@ -105,5 +105,60 @@ impl<'a> CancellationChecker<'a> {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_checker_never_trips() {
+        let checker = CancellationChecker::disabled();
+        assert!(checker.is_disabled());
+        assert_eq!(checker.check(), Ok(()));
+    }
+
+    #[test]
+    fn checker_with_token_is_not_disabled() {
+        let token = CancellationToken::new();
+        let checker = CancellationChecker::new(Some(&token), None);
+        assert!(!checker.is_disabled());
+    }
+
+    #[test]
+    fn checker_with_deadline_is_not_disabled() {
+        let deadline = Instant::now();
+        let checker = CancellationChecker::new(None, Some(deadline));
+        assert!(!checker.is_disabled());
+    }
+
+    #[test]
+    fn token_wins_over_deadline_when_both_tripped() {
+        // CORE-09: both a cancelled token AND an elapsed deadline are set. The
+        // checker must report Cancelled (explicit caller intent), not Timeout.
+        let token = CancellationToken::new();
+        token.cancel();
+        let elapsed_deadline = Instant::now() - Duration::from_secs(1);
+        let checker = CancellationChecker::new(Some(&token), Some(elapsed_deadline));
+        assert_eq!(checker.check(), Err(CancellationCause::Cancelled));
+    }
+
+    #[test]
+    fn deadline_reported_when_only_deadline_tripped() {
+        let elapsed_deadline = Instant::now() - Duration::from_secs(1);
+        let checker = CancellationChecker::new(None, Some(elapsed_deadline));
+        assert!(matches!(
+            checker.check(),
+            Err(CancellationCause::Timeout { .. })
+        ));
+    }
+
+    #[test]
+    fn live_token_with_future_deadline_passes() {
+        let token = CancellationToken::new();
+        let future_deadline = Instant::now() + Duration::from_secs(3600);
+        let checker = CancellationChecker::new(Some(&token), Some(future_deadline));
+        assert_eq!(checker.check(), Ok(()));
     }
 }
