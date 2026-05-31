@@ -38,6 +38,19 @@ pub enum SyncPolicy {
     ///
     /// This is an explicit opt-in for benchmark parity and offline paths where
     /// durability is provided elsewhere. It is not the production default.
+    ///
+    /// # selene-graph forces this for the committer WAL (v1.2 BRIEF 2)
+    ///
+    /// When a [`WalWriter`] is owned by selene-graph's single committer thread
+    /// (via `SharedGraphBuilder::with_wal` / `SharedGraph::from_graph_with_wal` /
+    /// recovery), the committer is the **sole fsync caller**: it appends a
+    /// contiguous run of commits with fsync deferred, then issues exactly one
+    /// [`WalWriter::flush`] per run as the fsync-before-publish barrier. To make
+    /// that the only fsync path, selene-graph **overrides `WalConfig::sync_policy`
+    /// to `OnFlushOnly`** before opening such a WAL, discarding any caller policy
+    /// (the fsync cadence is instead set by `selene_graph::CommitBatching`). A
+    /// `WalWriter` opened directly (outside selene-graph) still honors whatever
+    /// policy the caller passes — the override lives in selene-graph, not here.
     OnFlushOnly,
 }
 

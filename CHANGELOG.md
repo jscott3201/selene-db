@@ -197,6 +197,36 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rolls back via `Drop` exactly like an aborted transaction (no trace, no
   poison). Durability-neutral: the WAL stays in `SyncPolicy::EveryN(1)` (WAL
   group commit lands in BRIEF 2).
+- **WAL group commit — R1 fsync-before-publish barrier + `CommitBatching`
+  (v1.2 multi-writer, BRIEF 2).** The committer's per-commit durable+publish
+  tail is split into Stage 1 **append** (`write_commit` with fsync deferred),
+  Stage 2 **flush** (one `flush_durables` per drained run — the single group
+  fsync), and Stage 3+4 **publish** (`publish_appended`, now **infallible** —
+  returns `CommitOutcome`, not `Result`, structurally foreclosing the
+  "returns-`Err`-but-already-published" inversion). The committer forms a
+  contiguous-`seal_seq` run of appended commits, fsyncs the whole run **once**,
+  then publishes + acks each member in `seal_seq` order, so neither the
+  published snapshot nor the acked `durable_at` is observable before fsync
+  (durable-before-visible holds for the whole batch). New embedder knob
+  `SharedGraphBuilder::with_commit_batching(CommitBatching)`:
+  `CommitBatching::Off` (the default) caps each run at one commit — one append +
+  one fsync + one publish + one ack, behaviorally **identical** to BRIEF 1's
+  `EveryN(1)`; `CommitBatching::On { max_commits, max_bytes }` (and the
+  conventional `CommitBatching::DEFAULT_ON` = 64 commits / 8 MiB) coalesces a
+  contiguous run into one group fsync for higher write throughput and lower tail
+  latency under concurrent fan-in. A `CALL`-issued compaction stays a hard flush
+  boundary (never co-batched — its dense snapshot already embeds every
+  lower-`seal_seq` commit's mutation, so the pending run is flushed + published
+  before the dense store), and a flush failure / partial-append failure /
+  publish panic poisons the engine and error-acks every in-flight run member
+  (no silently-dropped reply channel, no `recv()` hang). **Behavioral note:**
+  because the committer is now the sole fsync caller for the committer-managed
+  WAL, `SharedGraphBuilder::with_wal` / `SharedGraph::from_graph_with_wal` /
+  recovery **force the WAL into `SyncPolicy::OnFlushOnly`**, discarding any
+  caller `WalConfig::sync_policy`; fsync cadence is set by `CommitBatching`
+  instead. A `WalWriter` opened directly (outside `selene-graph`) still honors
+  the caller's policy. D10 strict-serializability is preserved (single committer,
+  sole `ArcSwap` writer, `seal_seq`-ordered publishing).
 - **`selene-algorithms` is now a mandatory first-class crate with a native
   Rust API.** **BREAKING** (promotes a previously opt-in crate; `selene-gql`
   now build-depends on it). Every algorithm is callable directly from Rust

@@ -14,6 +14,7 @@
 pub mod adjacency;
 pub mod chunked_vec;
 pub(crate) mod committer;
+pub(crate) mod committer_batch;
 pub mod compaction;
 pub(crate) mod composite_property_index;
 pub mod composite_typed_index;
@@ -38,6 +39,7 @@ pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
 pub use chunked_vec::ChunkedVec;
+pub use committer_batch::CommitBatching;
 pub use compaction::{CompactedCore, CompactionReport, LiveIdSet, compact_core, live_id_set};
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,

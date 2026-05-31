@@ -41,10 +41,26 @@
 //! send-under-lock/queued-compact deadlock entirely (a session is never
 //! simultaneously lock-holding and blocked on the committer).
 //!
-//! BRIEF 1 is **durability-neutral**: the WAL stays in `SyncPolicy::EveryN(1)`,
-//! so each `write_commit` fsyncs — behavior is identical to the pre-v1.2
-//! per-commit fsync, only the threading model changes. BRIEF 2 swaps `EveryN(1)`
-//! for `OnFlushOnly` + one group flush per drained run of contiguous commits.
+//! # Group commit (v1.2 multi-writer, BRIEF 2)
+//!
+//! The committer now drives WAL durability in [`SyncPolicy::OnFlushOnly`]
+//! (forced by the builder — see [`crate::SharedGraphBuilder::with_wal`]) and is
+//! the **sole fsync caller**. Each loop iteration forms a contiguous-`seal_seq`
+//! run of commits ([`crate::committer_batch::drain_contiguous_batch`] — Stage 1
+//! append, fsync deferred), runs ONE group flush
+//! ([`crate::write_txn::flush_durables`] — Stage 2, the R1
+//! fsync-before-publish barrier), then publishes + acks each member in
+//! `seal_seq` order ([`crate::write_txn::publish_appended`] — Stage 3/4). The
+//! run length is capped at 1 when [`CommitBatching::Off`] (the default) and at
+//! N when [`CommitBatching::On`], so **OFF is the degenerate `N=1` case of the
+//! identical batched code** — one append + one fsync + one publish + one ack,
+//! the same syscalls in the same order as BRIEF 1's `EveryN(1)`. A
+//! [`Work::Compact`] is a hard flush boundary: it is never co-batched (F2 — its
+//! dense snapshot already contains every lower-`seal_seq` commit's mutation, so
+//! the pending commit run must be flushed + published first to keep
+//! durable-before-visible).
+//!
+//! [`SyncPolicy::OnFlushOnly`]: crate::SyncPolicy::OnFlushOnly
 
 use std::collections::BTreeMap;
 use std::panic::AssertUnwindSafe;
@@ -55,11 +71,14 @@ use std::thread::JoinHandle;
 
 use arc_swap::ArcSwap;
 
+use crate::committer_batch::{
+    BatchDrain, BatchLimits, CommitBatching, drain_contiguous_batch, flush_and_publish_batch,
+};
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::index_provider::IndexProvider;
-use crate::write_txn::{CommitOutcome, SealedCommit, publish_sealed};
+use crate::write_txn::{CommitOutcome, SealedCommit};
 
 /// Bound on the inbound work queue (global back-pressure). A full channel
 /// blocks the enqueuing session — natural global back-pressure with no
@@ -80,7 +99,7 @@ const WORK_CHANNEL_CAPACITY: usize = 1024;
 /// `drop_property_index` build + `seal()` their `WriteTxn` on the caller thread
 /// (releasing the lock) exactly like any other write, then submit a
 /// `Work::Commit`.
-enum Work {
+pub(crate) enum Work {
     /// Publish a pre-sealed commit (the common path: autocommit, explicit-txn
     /// terminal COMMIT, and index DDL).
     Commit {
@@ -100,7 +119,7 @@ enum Work {
 
 impl Work {
     /// The publish-order key under which the reorder buffer releases this item.
-    fn seal_seq(&self) -> u64 {
+    pub(crate) fn seal_seq(&self) -> u64 {
         match self {
             Work::Commit { sealed, .. } => sealed.seal_seq,
             Work::Compact { seal_seq, .. } => *seal_seq,
@@ -125,6 +144,10 @@ pub(crate) struct CommitterHandles {
     /// `write_commit`/`flush` caller, which is what makes the BRIEF 2
     /// `OnFlushOnly` toggle committer-exclusive.
     pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
+    /// Group-commit policy (BRIEF 2). `Off` (the default) caps each drained run
+    /// at one commit ⇒ one append + one fsync per commit (BRIEF-1 behavior);
+    /// `On` coalesces a contiguous run into one group flush.
+    pub(crate) batching: CommitBatching,
 }
 
 /// Handle to the per-graph committer thread, owned by [`crate::SharedGraph`].
@@ -277,20 +300,33 @@ impl Committer {
 
 /// Error returned to every waiter when the committer thread is gone (panicked
 /// or shutting down). Maps to GQLSTATUS `5GQL0` like any durable failure.
-fn committer_dead() -> GraphError {
+pub(crate) fn committer_dead() -> GraphError {
     GraphError::Durable {
         reason: "commit thread is no longer running; the graph must be reopened".to_owned(),
     }
 }
 
 /// Committer thread entry point: drain [`Work`] into a reorder buffer and
-/// publish strictly in `seal_seq` order.
+/// publish strictly in `seal_seq` order, batching contiguous commits into one
+/// group fsync (v1.2 multi-writer, BRIEF 2).
 ///
 /// Items can arrive out of seal order (the lock drops inside `seal()`, before
 /// the caller's `send`). The committer buffers each arrival keyed by `seal_seq`
 /// and only publishes the contiguous run starting at `next_publish_seq`. This
 /// makes publish order == seal order == lock-acquisition order regardless of
 /// channel arrival order — the P0 publish-ordering invariant.
+///
+/// Each contiguous-run pass:
+/// 1. If the head is a [`Work::Compact`], publish it **solo** (store the dense
+///    Arc, no append/flush/schema-bump/fan-out) — a hard flush boundary (F2).
+/// 2. Otherwise form the contiguous commit run
+///    ([`drain_contiguous_batch`] — append, fsync deferred), then
+///    [`flush_and_publish_batch`] (ONE group flush == the R1 barrier, then
+///    publish + ack each member in `seal_seq` order).
+///
+/// With [`CommitBatching::Off`] each run is capped at one commit, so this is the
+/// degenerate `N=1` case of the identical code — one append + one fsync + one
+/// publish + one ack per commit (BRIEF-1 behavior).
 fn run_committer(
     receiver: Receiver<Work>,
     handles: CommitterHandles,
@@ -302,6 +338,7 @@ fn run_committer(
     // `WriteTxn::seal`, which allocates only after every fallible step).
     let mut next_publish_seq: u64 = 0;
     let mut reorder: BTreeMap<u64, Work> = BTreeMap::new();
+    let limits = BatchLimits::resolve(handles.batching);
     loop {
         // Block for the next arrival. Channel-closed => owner dropped => exit.
         // A clean shutdown drops the canonical sender only after every
@@ -315,60 +352,82 @@ fn run_committer(
         };
         reorder.insert(work.seal_seq(), work);
 
-        // Publish every contiguous item now available, in seal_seq order.
-        while let Some(work) = reorder.remove(&next_publish_seq) {
-            publish_work(work, poisoned, &handles);
-            next_publish_seq += 1;
-            if poisoned.load(Ordering::Acquire) {
-                // A publish panicked or failed durably. Fail every buffered
-                // waiter (never drop a reply SyncSender silently → never a
-                // RecvError hang) and exit; the engine is poisoned and must be
-                // reopened. Subsequent submits fail fast via the poison flag.
-                drain_buffer_with_error(&mut reorder);
-                return;
+        // Drain every contiguous run now available, in seal_seq order.
+        while reorder.contains_key(&next_publish_seq) {
+            // F2: a Compact at head publishes solo (empty batch by
+            // construction — all lower seqs are already durable + visible, so
+            // this needs zero flush calls). It is never co-batched with commits.
+            if matches!(reorder.get(&next_publish_seq), Some(Work::Compact { .. })) {
+                let Some(work) = reorder.remove(&next_publish_seq) else {
+                    unreachable!("checked Compact at next_publish_seq above");
+                };
+                publish_compact(work, poisoned, &handles);
+                next_publish_seq += 1;
+                if poisoned.load(Ordering::Acquire) {
+                    drain_buffer_with_error(&mut reorder);
+                    return;
+                }
+                continue;
+            }
+
+            // Phase 1: form the contiguous commit run (append, fsync deferred).
+            match drain_contiguous_batch(
+                &receiver,
+                &mut reorder,
+                &mut next_publish_seq,
+                limits,
+                &handles,
+                poisoned,
+            ) {
+                BatchDrain::Run { batch } => {
+                    // Phase 2 (R1 barrier) + Phase 3/4 (publish + ack). Returns
+                    // true when poisoned + drained ⇒ stop.
+                    if flush_and_publish_batch(batch, &mut reorder, &handles, poisoned) {
+                        return;
+                    }
+                }
+                BatchDrain::AppendFailed { appended } => {
+                    // A Stage-1 append failed: the failed waiter was already
+                    // Err'd inside drain_contiguous_batch; here we Err every
+                    // already-appended member (their unflushed bytes are correct
+                    // to lose on reopen), drain the buffer, and exit. Nothing in
+                    // the run was flushed or published.
+                    crate::committer_batch::ack_appended_with_error(appended);
+                    drain_buffer_with_error(&mut reorder);
+                    return;
+                }
             }
         }
     }
 }
 
-/// Publish a single work item: a frozen commit or a pre-built dense compaction.
-/// Each runs inside `catch_unwind`; a panic OR a returned error poisons the
-/// committer (see [`unwrap_protected`]).
-fn publish_work(
+/// Publish a pre-built dense compaction (F2 hard flush boundary): store the
+/// dense Arc only — no append, no flush, no schema-bump, no fan-out. Wrapped in
+/// `catch_unwind`; a `store` panic poisons (see [`unwrap_protected`]). All lower
+/// `seal_seq` commits are already durable + visible by the time a compact
+/// reaches head, so it needs zero flush calls.
+fn publish_compact(
     work: Work,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
     handles: &CommitterHandles,
 ) {
-    match work {
-        Work::Commit { sealed, reply } => {
-            let result = run_protected(|| {
-                publish_sealed(
-                    sealed,
-                    &handles.snapshot,
-                    &handles.schema_version,
-                    &handles.providers,
-                    &handles.durable_providers,
-                )
-            });
-            let result = unwrap_protected(result, poisoned);
-            let _ = reply.send(result);
-        }
-        Work::Compact {
-            seal_seq: _,
-            dense,
-            report,
-            reply,
-        } => {
-            // The dense graph was already built + written into `*shared` on the
-            // caller thread under the lock; the committer only swaps the cell,
-            // in seal_seq order, so it can never clobber a later commit nor be
-            // clobbered by an earlier one (P1 fix). Wrapped in catch_unwind for
-            // symmetry (store + the debug assert can panic on drift).
-            let result = run_protected(|| publish_dense(&dense, &handles.snapshot, report));
-            let result = unwrap_protected(result, poisoned);
-            let _ = reply.send(result);
-        }
-    }
+    let Work::Compact {
+        seal_seq: _,
+        dense,
+        report,
+        reply,
+    } = work
+    else {
+        unreachable!("publish_compact is only called with Work::Compact");
+    };
+    // The dense graph was already built + written into `*shared` on the caller
+    // thread under the lock; the committer only swaps the cell, in seal_seq
+    // order, so it can never clobber a later commit nor be clobbered by an
+    // earlier one (P1 fix). Wrapped in catch_unwind for symmetry (store + the
+    // debug assert can panic on drift).
+    let result = run_protected(|| publish_dense(&dense, &handles.snapshot, report));
+    let result = unwrap_protected(result, poisoned);
+    let _ = reply.send(result);
 }
 
 /// Publish a pre-built dense snapshot (compaction). Pure space reclamation: no
@@ -393,7 +452,7 @@ fn publish_dense(
 /// Fail every buffered waiter with `committer_dead` so no reply `SyncSender` is
 /// dropped silently (which would hang its `recv()` with a `RecvError`). Called
 /// once the committer is poisoned and about to exit.
-fn drain_buffer_with_error(reorder: &mut BTreeMap<u64, Work>) {
+pub(crate) fn drain_buffer_with_error(reorder: &mut BTreeMap<u64, Work>) {
     for (_, work) in std::mem::take(reorder) {
         match work {
             Work::Commit { reply, .. } => {
@@ -409,7 +468,7 @@ fn drain_buffer_with_error(reorder: &mut BTreeMap<u64, Work>) {
 /// Run a committer body inside `catch_unwind`. parking_lot does not poison, so
 /// a panic leaves locks usable; the engine is poisoned at a higher level
 /// instead (no further commits trusted).
-fn run_protected<T>(
+pub(crate) fn run_protected<T>(
     body: impl FnOnce() -> GraphResult<T>,
 ) -> Result<GraphResult<T>, Box<dyn std::any::Any + Send>> {
     std::panic::catch_unwind(AssertUnwindSafe(body))
@@ -426,7 +485,7 @@ fn run_protected<T>(
 /// (recovery) heals the divergence. This restores the pre-v1.2 invariant that a
 /// commit reporting `Err` never leaks into the published snapshot or any later
 /// commit's baseline (the failed-`write_commit` regression, P0).
-fn unwrap_protected<T>(
+pub(crate) fn unwrap_protected<T>(
     result: Result<GraphResult<T>, Box<dyn std::any::Any + Send>>,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
 ) -> GraphResult<T> {
@@ -505,6 +564,7 @@ mod tests {
             vec![Arc::new(PanicOnWriteCommit) as Arc<dyn DurableProvider>],
             None,
             None,
+            crate::committer_batch::CommitBatching::Off,
         )
         .expect("graph builds with synthetic durable provider")
     }
@@ -555,6 +615,7 @@ mod tests {
             }) as Arc<dyn DurableProvider>],
             None,
             None,
+            crate::committer_batch::CommitBatching::Off,
         )
         .expect("graph builds with synthetic fail-first durable provider")
     }

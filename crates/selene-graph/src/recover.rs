@@ -124,7 +124,18 @@ impl SharedGraph {
         // graph whose commits go to memory only — a crash after recovery
         // would lose every post-recovery change even though the feature
         // advertises live WAL durability.
-        let writer = WalWriter::open(&dir.join(DEFAULT_WAL_FILE_NAME), WalConfig::default())?;
+        //
+        // v1.2 BRIEF 2: the single committer is the sole fsync caller, so the
+        // reopened WAL is driven in OnFlushOnly (the committer flushes once per
+        // drained run). Recovery uses CommitBatching::Off below, so the committer
+        // still fsyncs once per post-recovery commit — durability is unchanged.
+        let writer = WalWriter::open(
+            &dir.join(DEFAULT_WAL_FILE_NAME),
+            WalConfig {
+                sync_policy: selene_persist::SyncPolicy::OnFlushOnly,
+                ..WalConfig::default()
+            },
+        )?;
         // Reattach the audit log iff one exists on disk (its `SLAU` presence
         // means the embedder enabled audit) so post-recovery lifecycle commits
         // keep being mirrored. The historical events already persist in the file
@@ -142,6 +153,8 @@ impl SharedGraph {
             Vec::new(),
             Some(writer),
             audit_log,
+            // Recovery uses the BRIEF-1-equivalent policy: one fsync per commit.
+            crate::committer_batch::CommitBatching::Off,
         )
     }
 }
