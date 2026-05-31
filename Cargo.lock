@@ -1816,6 +1816,7 @@ dependencies = [
  "pest_derive",
  "proptest",
  "rstest",
+ "rust_decimal",
  "rustc-hash",
  "selene-algorithms",
  "selene-core",

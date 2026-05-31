@@ -2,7 +2,9 @@
 
 mod exec_common;
 
-use exec_common::{ExecFixture, column_values, execute_pattern, execute_read, planned, props};
+use exec_common::{
+    ExecFixture, column_values, execute_pattern, execute_read, planned, planned_result, props,
+};
 use selene_core::{LabelSet, Value};
 use selene_gql::{
     AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema, ExecutorError,
@@ -123,17 +125,44 @@ fn three_arm_union_with_middle_limit_is_per_arm_static_attachment() {
 }
 
 #[test]
-fn union_uses_lhs_schema_when_arms_have_different_column_names() {
-    let table = execute_read("RETURN 1 AS lhs_name UNION ALL RETURN 2 AS rhs_name");
+fn union_with_matching_arm_column_names_succeeds() {
+    // ISO §14.2 SR v: arms that are column name-equal combine cleanly. (Migrated
+    // from the prior lenient-relabel fixture, which expected the right arm to be
+    // silently relabeled to the left arm's name — now an error, see
+    // `union_arms_with_differing_column_names_are_rejected`.)
+    let table = execute_read("RETURN 1 AS shared UNION ALL RETURN 2 AS shared");
 
     assert_eq!(
-        table.schema().columns[0].name.expect("lhs name").as_str(),
-        "lhs_name"
+        table.schema().columns[0]
+            .name
+            .expect("shared name")
+            .as_str(),
+        "shared"
     );
     assert_eq!(
-        column_values(&table, "lhs_name"),
+        column_values(&table, "shared"),
         vec![Value::Int(1), Value::Int(2)]
     );
+}
+
+#[test]
+fn union_arms_with_differing_column_names_are_rejected() {
+    // ISO §14.2 SR v: set-composition arms must be column name-equal. selene
+    // binds each arm independently, so this must be caught at lowering, not
+    // silently relabeled to the LHS schema.
+    let err = planned_result("RETURN 1 AS lhs_name UNION ALL RETURN 2 AS rhs_name")
+        .expect_err("mismatched arm names are rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "42001");
+}
+
+#[test]
+fn union_with_both_arms_unnamed_succeeds() {
+    // Both columns unnamed is still column name-equal (the unnamed↔unnamed
+    // bijection), so `RETURN 1 UNION RETURN 2` stays legal.
+    let table = execute_read("RETURN 1 UNION ALL RETURN 2");
+
+    assert_eq!(table.row_count(), 2);
 }
 
 #[test]
@@ -194,17 +223,33 @@ fn union_rhs_sees_same_snapshot_as_lhs() {
 }
 
 #[test]
-fn pattern_star_union_composes_positionally_with_lhs_schema() {
-    let table = execute_read("MATCH (n:Person) RETURN * UNION ALL MATCH (m:Sensor) RETURN *");
+fn pattern_union_with_matching_alias_composes() {
+    // ISO §14.2 SR v: the arms must be column name-equal. `RETURN *` arms whose
+    // bindings differ (`n` vs `m`) are non-combinable; aliasing both to the same
+    // name makes them combinable. (Migrated from
+    // `pattern_star_union_composes_positionally_with_lhs_schema`, which expected
+    // the lenient positional relabel that is now rejected.)
+    let table = execute_read(
+        "MATCH (n:Person) RETURN n AS node UNION ALL MATCH (m:Sensor) RETURN m AS node",
+    );
 
     assert_eq!(
         table.schema().columns[0]
             .name
-            .expect("lhs binding")
+            .expect("shared binding")
             .as_str(),
-        "n"
+        "node"
     );
     assert_eq!(table.row_count(), 4);
+}
+
+#[test]
+fn pattern_star_union_with_differing_bindings_is_rejected() {
+    // `RETURN *` arms binding `n` vs `m` are not column name-equal (ISO §14.2).
+    let err = planned_result("MATCH (n:Person) RETURN * UNION ALL MATCH (m:Sensor) RETURN *")
+        .expect_err("differing RETURN * arm bindings are rejected");
+
+    assert_eq!(err.gqlstatus().as_str(), "42001");
 }
 
 #[test]

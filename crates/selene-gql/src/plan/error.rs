@@ -95,6 +95,27 @@ pub enum PlannerError {
         span: SourceSpan,
     },
 
+    /// Set-composition arms are not column name-equal (ISO/IEC 39075:2024
+    /// §14.2 SR v "FCQE and FLQE shall be column name-equal and
+    /// column-combinable"). The binder binds each arm independently, so a
+    /// `RETURN 1 AS x UNION ALL RETURN 2 AS y` would otherwise silently
+    /// relabel the right arm to the left arm's schema.
+    #[error("{op} arms are not column name-equal at column {position}: lhs={lhs:?}, rhs={rhs:?}")]
+    #[diagnostic(code(SLENE_P_019))]
+    SetOpArmsNotCombinable {
+        /// Set operator keyword.
+        op: &'static str,
+        /// Zero-based column position of the first name mismatch.
+        position: usize,
+        /// Left arm column name (`None` for an unnamed column).
+        lhs: Option<IStr>,
+        /// Right arm column name (`None` for an unnamed column).
+        rhs: Option<IStr>,
+        /// Source span of the composite query.
+        #[label("set-op arms must have equal column names")]
+        span: SourceSpan,
+    },
+
     /// A planner-visible implementation-defined limit would be exceeded.
     #[error("{limit_name} {actual} exceeds implementation-defined limit {limit}")]
     #[diagnostic(code(SLENE_P_018))]
@@ -125,6 +146,9 @@ impl PlannerError {
             | Self::ProcedureMetadataMismatch { .. }
             | Self::InternerCapExhausted { .. } => GqlStatus::IMPLEMENTATION_DEFINED_ERROR,
             Self::ProgramLimitExceeded { .. } => GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            // ISO §14.2 SR v is a Syntax Rule; its violation is the syntax
+            // error class (matching the analyzer's SR-violation precedents).
+            Self::SetOpArmsNotCombinable { .. } => GqlStatus::SYNTAX_ERROR,
         }
     }
 }

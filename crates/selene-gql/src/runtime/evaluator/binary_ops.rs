@@ -1,5 +1,6 @@
 use std::{cmp::Ordering, sync::Arc};
 
+use rust_decimal::prelude::ToPrimitive;
 use selene_core::Value;
 
 use crate::{
@@ -213,8 +214,60 @@ fn eval_arithmetic(
         (Value::Uint(lhs), Value::Int(rhs)) => {
             eval_i128_arithmetic(op, i128::from(lhs), i128::from(rhs), span)
         }
+        // 128-bit unsigned arithmetic (GQLRT-30). `Uint128 + Uint128` stays
+        // unsigned (overflow → 22003); a `Uint`/`Uint128` mix widens to u128.
+        (Value::Uint128(lhs), Value::Uint128(rhs)) => eval_u128_arithmetic(op, lhs, rhs, span),
+        (Value::Uint128(lhs), Value::Uint(rhs)) => {
+            eval_u128_arithmetic(op, lhs, u128::from(rhs), span)
+        }
+        (Value::Uint(lhs), Value::Uint128(rhs)) => {
+            eval_u128_arithmetic(op, u128::from(lhs), rhs, span)
+        }
+        // 128-bit signed/unsigned mix folds into i128 (the unsigned side must
+        // fit i128; out-of-range → 22003).
+        (Value::Int128(lhs), Value::Uint128(rhs)) => {
+            eval_i128_arithmetic(op, lhs, i128_from_u128(rhs, span)?, span)
+        }
+        (Value::Uint128(lhs), Value::Int128(rhs)) => {
+            eval_i128_arithmetic(op, i128_from_u128(lhs, span)?, rhs, span)
+        }
+        // DECIMAL arithmetic (GQLRT-30). Decimal op Decimal/integer stays in the
+        // exact base-10 channel; Decimal op float collapses to f64 below.
+        (Value::Decimal(lhs), Value::Decimal(rhs)) => eval_decimal_arithmetic(op, lhs, rhs, span),
+        (Value::Decimal(lhs), Value::Int(rhs)) => {
+            eval_decimal_arithmetic(op, lhs, rust_decimal::Decimal::from(rhs), span)
+        }
+        (Value::Int(lhs), Value::Decimal(rhs)) => {
+            eval_decimal_arithmetic(op, rust_decimal::Decimal::from(lhs), rhs, span)
+        }
+        (Value::Decimal(lhs), Value::Uint(rhs)) => {
+            eval_decimal_arithmetic(op, lhs, rust_decimal::Decimal::from(rhs), span)
+        }
+        (Value::Uint(lhs), Value::Decimal(rhs)) => {
+            eval_decimal_arithmetic(op, rust_decimal::Decimal::from(lhs), rhs, span)
+        }
+        (Value::Decimal(lhs), Value::Int128(rhs)) => {
+            eval_decimal_arithmetic(op, lhs, decimal_from_i128(rhs, span)?, span)
+        }
+        (Value::Int128(lhs), Value::Decimal(rhs)) => {
+            eval_decimal_arithmetic(op, decimal_from_i128(lhs, span)?, rhs, span)
+        }
+        (Value::Decimal(lhs), Value::Uint128(rhs)) => eval_decimal_arithmetic(
+            op,
+            lhs,
+            decimal_from_i128(i128_from_u128(rhs, span)?, span)?,
+            span,
+        ),
+        (Value::Uint128(lhs), Value::Decimal(rhs)) => eval_decimal_arithmetic(
+            op,
+            decimal_from_i128(i128_from_u128(lhs, span)?, span)?,
+            rhs,
+            span,
+        ),
+        // Any remaining numeric mix involving a binary float (e.g. Decimal +
+        // Float, Int128 + Float already handled above) collapses to f64.
         (lhs, rhs) => {
-            let (Some(lhs), Some(rhs)) = (as_f64(&lhs), as_f64(&rhs)) else {
+            let (Some(lhs), Some(rhs)) = (numeric_to_f64(&lhs), numeric_to_f64(&rhs)) else {
                 return data_exception("arithmetic operands are not numeric", span);
             };
             eval_float_arithmetic(op, lhs, rhs, span)
@@ -428,6 +481,90 @@ fn eval_i128_arithmetic(
     })
 }
 
+fn eval_u128_arithmetic(
+    op: BinaryOp,
+    lhs: u128,
+    rhs: u128,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let value = match op {
+        BinaryOp::Add => lhs.checked_add(rhs),
+        BinaryOp::Sub => lhs.checked_sub(rhs),
+        BinaryOp::Mul => lhs.checked_mul(rhs),
+        BinaryOp::Div => (rhs != 0).then(|| lhs.checked_div(rhs)).flatten(),
+        BinaryOp::Mod => (rhs != 0).then(|| lhs.checked_rem(rhs)).flatten(),
+        _ => None,
+    };
+    value.map(Value::Uint128).ok_or_else(|| {
+        let subclass = if matches!(op, BinaryOp::Div | BinaryOp::Mod) && rhs == 0 {
+            DataExceptionSubclass::DivisionByZero
+        } else {
+            // No wider unsigned type exists, so overflow is a hard 22003.
+            DataExceptionSubclass::NumericValueOutOfRange
+        };
+        data_exception_value_with(
+            subclass,
+            "unsigned 128-bit arithmetic overflow or division by zero",
+            span,
+        )
+    })
+}
+
+fn eval_decimal_arithmetic(
+    op: BinaryOp,
+    lhs: rust_decimal::Decimal,
+    rhs: rust_decimal::Decimal,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    let value = match op {
+        BinaryOp::Add => lhs.checked_add(rhs),
+        BinaryOp::Sub => lhs.checked_sub(rhs),
+        BinaryOp::Mul => lhs.checked_mul(rhs),
+        BinaryOp::Div => (!rhs.is_zero()).then(|| lhs.checked_div(rhs)).flatten(),
+        BinaryOp::Mod => (!rhs.is_zero()).then(|| lhs.checked_rem(rhs)).flatten(),
+        _ => None,
+    };
+    value.map(Value::Decimal).ok_or_else(|| {
+        let subclass = if matches!(op, BinaryOp::Div | BinaryOp::Mod) && rhs.is_zero() {
+            DataExceptionSubclass::DivisionByZero
+        } else {
+            DataExceptionSubclass::NumericValueOutOfRange
+        };
+        data_exception_value_with(
+            subclass,
+            "decimal arithmetic overflow or division by zero",
+            span,
+        )
+    })
+}
+
+/// Narrow a `u128` to `i128` for signed/unsigned 128-bit arithmetic, raising
+/// 22003 when it exceeds the signed range.
+fn i128_from_u128(value: u128, span: SourceSpan) -> Result<i128, ExecutorError> {
+    i128::try_from(value).map_err(|_| {
+        data_exception_value_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "unsigned 128-bit value exceeds the signed integer range",
+            span,
+        )
+    })
+}
+
+/// Promote an `i128` to `Decimal` for mixed Decimal arithmetic, raising 22003
+/// when it exceeds Decimal's range.
+fn decimal_from_i128(
+    value: i128,
+    span: SourceSpan,
+) -> Result<rust_decimal::Decimal, ExecutorError> {
+    rust_decimal::Decimal::try_from_i128_with_scale(value, 0).map_err(|_| {
+        data_exception_value_with(
+            DataExceptionSubclass::NumericValueOutOfRange,
+            "128-bit value exceeds the DECIMAL range",
+            span,
+        )
+    })
+}
+
 fn eval_float_arithmetic(
     op: BinaryOp,
     lhs: f64,
@@ -507,6 +644,7 @@ pub(super) fn numeric_to_f64(value: &Value) -> Option<f64> {
     as_f64(value).or(match value {
         Value::Int128(value) => Some(*value as f64),
         Value::Uint128(value) => Some(*value as f64),
+        Value::Decimal(value) => value.to_f64(),
         _ => None,
     })
 }

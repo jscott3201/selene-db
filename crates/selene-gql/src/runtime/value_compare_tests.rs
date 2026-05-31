@@ -371,6 +371,225 @@ fn compare_for_sort_orders_extended_scalar_payloads() {
     assert_sort_less(Value::Uint128(1), Value::Uint128(2));
 }
 
+// --- GQLRT-14: RECORD equality / ordering is field-name-keyed (ISO §4.15) ---
+
+fn open_record(fields: &[(&str, Value)]) -> Value {
+    let mut record = smallvec![];
+    for (name, value) in fields {
+        record.push((intern_with_admission(name).unwrap().0, value.clone()));
+    }
+    Value::Record(Box::new(Record::Open(record)))
+}
+
+#[test]
+fn record_equal_ignores_field_order() {
+    // ISO §4.15: records are equal under a field-name bijection, not positional.
+    let lhs = open_record(&[("a", Value::Int(1)), ("b", Value::Int(2))]);
+    let rhs = open_record(&[("b", Value::Int(2)), ("a", Value::Int(1))]);
+
+    assert_eq!(gql_equal_non_null(&lhs, &rhs), Some(true));
+    assert!(equal_non_null(&lhs, &rhs));
+}
+
+#[test]
+fn record_unequal_when_field_sets_differ() {
+    let lhs = open_record(&[("a", Value::Int(1))]);
+    let rhs = open_record(&[("a", Value::Int(1)), ("b", Value::Int(2))]);
+
+    assert_eq!(gql_equal_non_null(&lhs, &rhs), Some(false));
+    assert!(!equal_non_null(&lhs, &rhs));
+}
+
+#[test]
+fn record_unequal_when_field_names_differ_same_arity() {
+    let lhs = open_record(&[("a", Value::Int(1))]);
+    let rhs = open_record(&[("z", Value::Int(1))]);
+
+    assert_eq!(gql_equal_non_null(&lhs, &rhs), Some(false));
+}
+
+#[test]
+fn record_null_field_yields_unknown_regardless_of_order() {
+    let lhs = open_record(&[("a", Value::Int(1)), ("b", Value::Null)]);
+    let rhs = open_record(&[("b", Value::Null), ("a", Value::Int(1))]);
+
+    assert_eq!(gql_equal_non_null(&lhs, &rhs), None);
+}
+
+#[test]
+fn record_unequal_short_circuits_before_null_field() {
+    // A definite mismatch on a shared field beats a NULL elsewhere → Some(false),
+    // not None.
+    let lhs = open_record(&[("a", Value::Int(1)), ("b", Value::Null)]);
+    let rhs = open_record(&[("a", Value::Int(2)), ("b", Value::Null)]);
+
+    assert_eq!(gql_equal_non_null(&lhs, &rhs), Some(false));
+}
+
+#[test]
+fn nested_record_equal_ignores_inner_field_order() {
+    let inner_lhs = open_record(&[("x", Value::Int(1)), ("y", Value::Int(2))]);
+    let inner_rhs = open_record(&[("y", Value::Int(2)), ("x", Value::Int(1))]);
+    let lhs = open_record(&[("inner", inner_lhs)]);
+    let rhs = open_record(&[("inner", inner_rhs)]);
+
+    assert_eq!(gql_equal_non_null(&lhs, &rhs), Some(true));
+}
+
+#[test]
+fn record_compare_is_field_name_keyed() {
+    // Permuted-but-equal records compare Equal; differing field values order by
+    // the field-name-sorted view.
+    let lhs = open_record(&[("a", Value::Int(1)), ("b", Value::Int(2))]);
+    let rhs = open_record(&[("b", Value::Int(2)), ("a", Value::Int(1))]);
+    assert_eq!(compare_non_null(&lhs, &rhs), Some(Ordering::Equal));
+
+    let smaller = open_record(&[("a", Value::Int(1)), ("b", Value::Int(2))]);
+    let larger = open_record(&[("b", Value::Int(9)), ("a", Value::Int(1))]);
+    assert_eq!(compare_non_null(&smaller, &larger), Some(Ordering::Less));
+}
+
+// --- GQLRT-26: cross-type numeric equality for Int128 / Uint128 / Decimal ---
+//
+// Ordering (`compare_non_null`) already handles every numeric cross-type pair;
+// equality (`equal_non_null` / `gql_equal_non_null`) must agree so that
+// `$int128_one = 1` is TRUE exactly when `<=1 AND >=1` is TRUE. Each `Equal`
+// outcome from ordering must coincide with `equal_non_null == true` (parity).
+
+/// Exhaustive numeric cross-product used to pin the equality↔ordering parity.
+fn numeric_cross_product() -> Vec<Value> {
+    vec![
+        Value::Int(1),
+        Value::Int(-3),
+        Value::Uint(1),
+        Value::Uint(5),
+        Value::Int128(1),
+        Value::Int128(-3),
+        Value::Int128(170_141_183_460_469_231_731_687_303_715_884_105_727),
+        Value::Uint128(1),
+        Value::Uint128(u128::MAX),
+        Value::Float(1.0),
+        Value::Float(-3.0),
+        Value::Float(1.5),
+        Value::Float32(1.0),
+        Value::Float32(1.5),
+        Value::Decimal("1".parse().unwrap()),
+        Value::Decimal("-3".parse().unwrap()),
+        Value::Decimal("1.5".parse().unwrap()),
+        Value::Decimal("1.1".parse().unwrap()),
+    ]
+}
+
+#[test]
+fn numeric_equality_agrees_with_ordering_across_cross_product() {
+    let values = numeric_cross_product();
+    for lhs in &values {
+        for rhs in &values {
+            let ordering = compare_non_null(lhs, rhs);
+            let equal = equal_non_null(lhs, rhs);
+            // Parity: ordering says Equal IFF equality says true.
+            match ordering {
+                Some(Ordering::Equal) => assert!(
+                    equal,
+                    "ordering Equal but equality false for {lhs:?} vs {rhs:?}"
+                ),
+                Some(_) => assert!(
+                    !equal,
+                    "ordering non-Equal but equality true for {lhs:?} vs {rhs:?}"
+                ),
+                None => {}
+            }
+        }
+    }
+}
+
+#[test]
+fn int128_equals_int_when_representable() {
+    assert!(equal_non_null(&Value::Int128(1), &Value::Int(1)));
+    assert!(equal_non_null(&Value::Int(1), &Value::Int128(1)));
+    assert!(!equal_non_null(&Value::Int128(2), &Value::Int(1)));
+}
+
+#[test]
+fn uint128_equals_uint_and_int() {
+    assert!(equal_non_null(&Value::Uint128(1), &Value::Uint(1)));
+    assert!(equal_non_null(&Value::Uint128(1), &Value::Int(1)));
+    assert!(!equal_non_null(&Value::Uint128(1), &Value::Int(-1)));
+}
+
+#[test]
+fn int128_equals_uint128_when_value_matches() {
+    assert!(equal_non_null(&Value::Int128(7), &Value::Uint128(7)));
+    assert!(!equal_non_null(&Value::Int128(-1), &Value::Uint128(1)));
+}
+
+#[test]
+fn decimal_equals_integer_when_integral() {
+    assert!(equal_non_null(
+        &Value::Decimal("1".parse().unwrap()),
+        &Value::Int(1)
+    ));
+    assert!(equal_non_null(
+        &Value::Int(1),
+        &Value::Decimal("1".parse().unwrap())
+    ));
+    assert!(equal_non_null(
+        &Value::Decimal("1".parse().unwrap()),
+        &Value::Uint(1)
+    ));
+    assert!(equal_non_null(
+        &Value::Decimal("1".parse().unwrap()),
+        &Value::Int128(1)
+    ));
+    assert!(equal_non_null(
+        &Value::Decimal("1".parse().unwrap()),
+        &Value::Uint128(1)
+    ));
+    assert!(!equal_non_null(
+        &Value::Decimal("1.5".parse().unwrap()),
+        &Value::Int(1)
+    ));
+    assert!(!equal_non_null(
+        &Value::Decimal("1.5".parse().unwrap()),
+        &Value::Int(2)
+    ));
+}
+
+#[test]
+fn decimal_equals_float_when_exact() {
+    // 1.5 and 0.5 are dyadic — exactly representable in both bases.
+    assert!(equal_non_null(
+        &Value::Decimal("1.5".parse().unwrap()),
+        &Value::Float(1.5)
+    ));
+    assert!(equal_non_null(
+        &Value::Float(1.5),
+        &Value::Decimal("1.5".parse().unwrap())
+    ));
+    assert!(equal_non_null(
+        &Value::Decimal("0.5".parse().unwrap()),
+        &Value::Float32(0.5)
+    ));
+    // 0.1_f64 is not exactly 0.1 in decimal, so they are NOT equal.
+    assert!(!equal_non_null(
+        &Value::Decimal("0.1".parse().unwrap()),
+        &Value::Float(0.1)
+    ));
+}
+
+#[test]
+fn decimal_nan_float_equality_is_unknown() {
+    // NaN poisons equality (3VL): the gql layer returns None when a NaN operand
+    // shares a numeric comparison arm.
+    assert_eq!(
+        gql_equal_non_null(
+            &Value::Decimal("1.5".parse().unwrap()),
+            &Value::Float(f64::NAN)
+        ),
+        None
+    );
+}
+
 fn assert_sort_less(lhs: Value, rhs: Value) {
     assert_eq!(
         compare_for_sort(&lhs, &rhs, NullSortOrder::Last),
