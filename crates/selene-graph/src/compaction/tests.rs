@@ -12,6 +12,7 @@ use std::collections::HashSet;
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 
 use super::compact_core;
+use crate::error::GraphError;
 use crate::store::RowIndex;
 use crate::{AdjacencyEntry, CompactionReport, SeleneGraph, SharedGraph};
 
@@ -437,4 +438,120 @@ fn republished_compacted_graph_allocates_without_reuse() {
     assert!(g.is_node_alive(NodeId::new(4)));
     // The reclaimed deleted id is not resurrected by the new create.
     assert!(g.row_for_node_id(NodeId::new(2)).is_none());
+}
+
+// ───────────────────────── GRAPH-37: fail-loud guards ─────────────────────────
+//
+// `compact_core` has three `GraphError::Inconsistent` guards that only fire on a
+// corrupt (raw-column-built) graph the funnel can never produce: an alive node
+// row with no mapped external id, an alive edge row with no mapped id, and an
+// edge that survives compaction whose endpoint node does not. The funnel's
+// delete-node cascade guarantees the last can't happen for engine graphs, so
+// these are tested by hand-building the corrupt store. A regression that
+// silently dropped a dangling edge (instead of failing loud) would rebuild
+// adjacency keyed by a vanished node — exactly the corruption these reject.
+
+/// A single alive node (id 1, row 0) with a valid id↔row binding, ready to have
+/// a corrupt edge attached.
+fn graph_with_one_live_node() -> SeleneGraph {
+    let mut graph = SeleneGraph::new(GraphId::new(1));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(intern("cmp.live").unwrap()));
+    graph.node_store.properties.push(PropertyMap::new());
+    graph.node_store.row_to_id.push(NodeId::new(1));
+    graph.node_store.alive.insert(0);
+    graph
+        .node_id_to_row
+        .insert(NodeId::new(1), RowIndex::new(0));
+    graph
+}
+
+/// Run `compact_core` expecting an [`GraphError::Inconsistent`], returning it.
+/// Used instead of `Result::expect_err` because the `Ok` variant
+/// (`CompactedCore`) is intentionally not `Debug` (it holds a whole graph).
+fn expect_compact_inconsistent(graph: &SeleneGraph) -> GraphError {
+    match compact_core(graph) {
+        Ok(_) => panic!("compaction should have failed loudly on a corrupt graph"),
+        Err(err) => {
+            assert!(
+                matches!(err, GraphError::Inconsistent { .. }),
+                "expected GraphError::Inconsistent, got {err:?}",
+            );
+            err
+        }
+    }
+}
+
+#[test]
+fn compaction_rejects_edge_with_dead_endpoint() {
+    // Alive edge (row 0) from the live node (1) to a node id (99) that is NOT in
+    // the alive set: the edge "survives compaction but its endpoint does not".
+    let mut graph = graph_with_one_live_node();
+    graph.edge_store.label.push(intern("cmp.dangling").unwrap());
+    graph.edge_store.source.push(NodeId::new(1));
+    graph.edge_store.target.push(NodeId::new(99)); // dead endpoint
+    graph.edge_store.properties.push(PropertyMap::new());
+    graph.edge_store.row_to_id.push(EdgeId::new(1));
+    graph.edge_store.alive.insert(0);
+    graph
+        .edge_id_to_row
+        .insert(EdgeId::new(1), RowIndex::new(0));
+
+    let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
+        unreachable!("helper returns only Inconsistent");
+    };
+    assert!(
+        reason.contains("survives compaction but endpoint"),
+        "expected dead-endpoint rejection, got: {reason}",
+    );
+}
+
+#[test]
+fn compaction_rejects_alive_node_row_with_no_external_id() {
+    // An alive node row whose `row_to_id` holds the TOMBSTONE sentinel resolves to
+    // no external id — a corrupt id↔row mapping that must fail loud rather than
+    // rebuild a dense store with a phantom row.
+    let mut graph = SeleneGraph::new(GraphId::new(1));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(intern("cmp.noid").unwrap()));
+    graph.node_store.properties.push(PropertyMap::new());
+    graph.node_store.row_to_id.push(NodeId::TOMBSTONE); // alive but no id
+    graph.node_store.alive.insert(0);
+
+    let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
+        unreachable!("helper returns only Inconsistent");
+    };
+    assert!(
+        reason.contains("alive node row") && reason.contains("no external id"),
+        "expected missing-node-id rejection, got: {reason}",
+    );
+}
+
+#[test]
+fn compaction_rejects_alive_edge_row_with_no_external_id() {
+    // The edge-side missing-id guard: an alive edge row whose `row_to_id` holds
+    // the TOMBSTONE sentinel (endpoints are the live node so the dead-endpoint
+    // guard is not what fires).
+    let mut graph = graph_with_one_live_node();
+    graph
+        .edge_store
+        .label
+        .push(intern("cmp.noid.edge").unwrap());
+    graph.edge_store.source.push(NodeId::new(1));
+    graph.edge_store.target.push(NodeId::new(1));
+    graph.edge_store.properties.push(PropertyMap::new());
+    graph.edge_store.row_to_id.push(EdgeId::TOMBSTONE); // alive but no id
+    graph.edge_store.alive.insert(0);
+
+    let GraphError::Inconsistent { reason } = expect_compact_inconsistent(&graph) else {
+        unreachable!("helper returns only Inconsistent");
+    };
+    assert!(
+        reason.contains("alive edge row") && reason.contains("no external id"),
+        "expected missing-edge-id rejection, got: {reason}",
+    );
 }

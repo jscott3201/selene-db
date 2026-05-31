@@ -19,10 +19,14 @@ use crate::graph::PropertyIndexEntry;
 use crate::typed_index::TypedIndex;
 use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
+#[path = "tests/codec_symmetry.rs"]
+mod codec_symmetry;
 #[path = "tests/composites.rs"]
 mod composites;
 #[path = "tests/cpix.rs"]
 mod cpix;
+#[path = "tests/durable_state.rs"]
+mod durable_state;
 #[path = "tests/gtyp.rs"]
 mod gtyp;
 

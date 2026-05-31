@@ -4,307 +4,25 @@
 //! Every committed op is checked three ways: the debug-only post-commit hook
 //! (active because tests build in debug), an explicit
 //! `assert_indexes_consistent()` call (so the test fails with a readable
-//! message even if the hook is disabled), an alive-set oracle, and a strictly
-//! monotonic generation counter. A fraction of transactions are rolled back to
-//! assert an aborted txn leaves zero derived-state drift.
+//! message even if the hook is disabled), an alive-set + CONTENT oracle, and a
+//! strictly monotonic generation counter. A fraction of transactions are rolled
+//! back to assert an aborted txn leaves zero derived-state drift.
+//!
+//! The shared funnel harness (op generators, the [`Oracle`], `apply_op`) lives
+//! in `funnel_harness` so this in-memory suite and the durability round-trip in
+//! `recovery_property.rs` drive the funnel through the exact same oracle.
 
-use std::collections::BTreeSet;
+mod funnel_harness;
 
 use proptest::prelude::*;
-use selene_core::{
-    EdgeId, GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, intern,
+use selene_core::{GraphId, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, intern};
+
+use selene_graph::{SharedGraph, TypedIndexKind};
+
+use funnel_harness::{
+    Oracle, apply_op, arb_op, assert_snapshot_matches_oracle, edge_labels, labels, prop_keys,
+    register_indexes,
 };
-use smallvec::smallvec;
-
-use selene_graph::{SeleneGraph, SharedGraph, TypedIndexKind};
-
-// ---------------------------------------------------------------------------
-// Shared label / property pools (small so index maintenance is exercised).
-// ---------------------------------------------------------------------------
-
-fn labels() -> [IStr; 3] {
-    [
-        intern("proptest.label.alpha").unwrap(),
-        intern("proptest.label.beta").unwrap(),
-        intern("proptest.label.gamma").unwrap(),
-    ]
-}
-
-fn prop_keys() -> [IStr; 3] {
-    [
-        intern("proptest.key.age").unwrap(),
-        intern("proptest.key.score").unwrap(),
-        intern("proptest.key.name").unwrap(),
-    ]
-}
-
-fn edge_labels() -> [IStr; 2] {
-    [
-        intern("proptest.edge.knows").unwrap(),
-        intern("proptest.edge.likes").unwrap(),
-    ]
-}
-
-/// Register the indexes the random workload maintains: one I64 index, one F64
-/// index, and one composite (I64, String) index.
-fn register_indexes(shared: &SharedGraph) {
-    let [alpha, ..] = labels();
-    let [age, score, name] = prop_keys();
-    shared
-        .create_property_index(alpha, age, TypedIndexKind::I64)
-        .unwrap();
-    shared
-        .create_property_index(alpha, score, TypedIndexKind::F64)
-        .unwrap();
-    let props: smallvec::SmallVec<[IStr; 4]> = smallvec![age, name];
-    let kinds: smallvec::SmallVec<[TypedIndexKind; 4]> =
-        smallvec![TypedIndexKind::I64, TypedIndexKind::String];
-    let mut txn = shared.begin_write();
-    txn.mutator()
-        .create_composite_property_index_named(alpha, props, kinds, None)
-        .expect("composite index registration");
-    txn.commit().unwrap();
-}
-
-// ---------------------------------------------------------------------------
-// Random value generators.
-// ---------------------------------------------------------------------------
-
-fn arb_value() -> impl Strategy<Value = Value> {
-    prop_oneof![
-        (0i64..5).prop_map(Value::Int),
-        (0u8..3).prop_map(|n| Value::Float(f64::from(n))),
-        Just(Value::String(intern("proptest.value.x").unwrap())),
-        Just(Value::String(intern("proptest.value.y").unwrap())),
-        Just(Value::Null),
-    ]
-}
-
-fn arb_label_set() -> impl Strategy<Value = LabelSet> {
-    proptest::collection::vec(0usize..3, 0..=3).prop_map(|idxs| {
-        let pool = labels();
-        let mut set = LabelSet::new();
-        for i in idxs {
-            set.insert(pool[i]);
-        }
-        set
-    })
-}
-
-fn arb_props() -> impl Strategy<Value = PropertyMap> {
-    proptest::collection::vec((0usize..3, arb_value()), 0..=3).prop_map(|pairs| {
-        let keys = prop_keys();
-        let mut map = PropertyMap::new();
-        for (idx, value) in pairs {
-            map.set(keys[idx], value).unwrap();
-        }
-        map
-    })
-}
-
-#[derive(Clone, Debug)]
-enum Op {
-    CreateNode {
-        labels: LabelSet,
-        props: PropertyMap,
-    },
-    CreateEdge {
-        label_idx: usize,
-    },
-    UpdateNode {
-        props: PropertyMap,
-        flip_label: usize,
-    },
-    UpdateEdge {
-        props: PropertyMap,
-    },
-    DeleteNode,
-    DeleteEdge,
-}
-
-fn arb_op() -> impl Strategy<Value = Op> {
-    prop_oneof![
-        4 => (arb_label_set(), arb_props()).prop_map(|(labels, props)| Op::CreateNode { labels, props }),
-        2 => (0usize..2).prop_map(|label_idx| Op::CreateEdge { label_idx }),
-        2 => (arb_props(), 0usize..3).prop_map(|(props, flip_label)| Op::UpdateNode { props, flip_label }),
-        1 => arb_props().prop_map(|props| Op::UpdateEdge { props }),
-        1 => Just(Op::DeleteNode),
-        1 => Just(Op::DeleteEdge),
-    ]
-}
-
-// ---------------------------------------------------------------------------
-// Oracle.
-// ---------------------------------------------------------------------------
-
-#[derive(Default)]
-struct Oracle {
-    nodes: Vec<NodeId>,
-    edges: Vec<EdgeId>,
-    alive_nodes: BTreeSet<NodeId>,
-    alive_edges: BTreeSet<EdgeId>,
-}
-
-impl Oracle {
-    fn pick_alive_node(&self, seed: usize) -> Option<NodeId> {
-        if self.alive_nodes.is_empty() {
-            return None;
-        }
-        self.alive_nodes
-            .iter()
-            .nth(seed % self.alive_nodes.len())
-            .copied()
-    }
-
-    fn pick_alive_edge(&self, seed: usize) -> Option<EdgeId> {
-        if self.alive_edges.is_empty() {
-            return None;
-        }
-        self.alive_edges
-            .iter()
-            .nth(seed % self.alive_edges.len())
-            .copied()
-    }
-}
-
-fn assert_snapshot_matches_oracle(graph: &SeleneGraph, oracle: &Oracle) {
-    assert_eq!(
-        graph.node_count(),
-        oracle.alive_nodes.len(),
-        "node_count drift vs oracle"
-    );
-    assert_eq!(
-        graph.edge_count(),
-        oracle.alive_edges.len(),
-        "edge_count drift vs oracle"
-    );
-    for node in &oracle.nodes {
-        assert_eq!(
-            graph.is_node_alive(*node),
-            oracle.alive_nodes.contains(node),
-            "node {node} liveness drift"
-        );
-    }
-    for edge in &oracle.edges {
-        assert_eq!(
-            graph.is_edge_alive(*edge),
-            oracle.alive_edges.contains(edge),
-            "edge {edge} liveness drift"
-        );
-    }
-}
-
-/// Apply one op through the funnel, updating the oracle. Returns whether the
-/// commit happened (some ops no-op when the graph has no alive entity).
-fn apply_op(shared: &SharedGraph, oracle: &mut Oracle, op: &Op, seed: usize) -> bool {
-    let mut txn = shared.begin_write();
-    let mut committed = true;
-    let mut created_node: Option<NodeId> = None;
-    let mut created_edge: Option<EdgeId> = None;
-    let mut deleted_nodes: Vec<NodeId> = Vec::new();
-    let mut deleted_edges: Vec<EdgeId> = Vec::new();
-    {
-        let mut mutator = txn.mutator();
-        match op {
-            Op::CreateNode { labels, props } => {
-                let id = mutator.create_node(labels.clone(), props.clone()).unwrap();
-                created_node = Some(id);
-            }
-            Op::CreateEdge { label_idx } => {
-                let source = oracle.pick_alive_node(seed);
-                let target = oracle.pick_alive_node(seed.wrapping_add(7));
-                match (source, target) {
-                    (Some(source), Some(target)) => {
-                        let label = edge_labels()[*label_idx];
-                        let id = mutator
-                            .create_edge(label, source, target, PropertyMap::new())
-                            .unwrap();
-                        created_edge = Some(id);
-                    }
-                    _ => committed = false,
-                }
-            }
-            Op::UpdateNode { props, flip_label } => {
-                if let Some(node) = oracle.pick_alive_node(seed) {
-                    let label = labels()[*flip_label];
-                    let has = shared
-                        .read()
-                        .node_labels(node)
-                        .is_some_and(|set| set.contains(&label));
-                    let label_diff = if has {
-                        LabelDiff::new([], [label]).unwrap()
-                    } else {
-                        LabelDiff::new([label], []).unwrap()
-                    };
-                    let set: Vec<(IStr, Value)> =
-                        props.iter().map(|(k, v)| (*k, v.clone())).collect();
-                    let prop_diff = PropertyDiff::new(set, []).unwrap();
-                    mutator.update_node(node, label_diff, prop_diff).unwrap();
-                } else {
-                    committed = false;
-                }
-            }
-            Op::UpdateEdge { props } => {
-                if let Some(edge) = oracle.pick_alive_edge(seed) {
-                    let set: Vec<(IStr, Value)> =
-                        props.iter().map(|(k, v)| (*k, v.clone())).collect();
-                    let prop_diff = PropertyDiff::new(set, []).unwrap();
-                    mutator.update_edge(edge, prop_diff).unwrap();
-                } else {
-                    committed = false;
-                }
-            }
-            Op::DeleteNode => {
-                if let Some(node) = oracle.pick_alive_node(seed) {
-                    // Cascade also deletes incident edges; capture them.
-                    let snapshot = shared.read();
-                    let mut incident = BTreeSet::new();
-                    if let Some(out) = snapshot.outgoing_edges(node) {
-                        incident.extend(out.iter().map(|e| e.edge_id));
-                    }
-                    if let Some(inc) = snapshot.incoming_edges(node) {
-                        incident.extend(inc.iter().map(|e| e.edge_id));
-                    }
-                    mutator.delete_node(node).unwrap();
-                    deleted_nodes.push(node);
-                    deleted_edges.extend(incident);
-                } else {
-                    committed = false;
-                }
-            }
-            Op::DeleteEdge => {
-                if let Some(edge) = oracle.pick_alive_edge(seed) {
-                    mutator.delete_edge(edge).unwrap();
-                    deleted_edges.push(edge);
-                } else {
-                    committed = false;
-                }
-            }
-        }
-    }
-
-    if !committed {
-        txn.rollback();
-        return false;
-    }
-    txn.commit().unwrap();
-
-    if let Some(node) = created_node {
-        oracle.nodes.push(node);
-        oracle.alive_nodes.insert(node);
-    }
-    if let Some(edge) = created_edge {
-        oracle.edges.push(edge);
-        oracle.alive_edges.insert(edge);
-    }
-    for node in deleted_nodes {
-        oracle.alive_nodes.remove(&node);
-    }
-    for edge in deleted_edges {
-        oracle.alive_edges.remove(&edge);
-    }
-    true
-}
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(
@@ -330,7 +48,7 @@ proptest! {
                 "{}",
                 snapshot.assert_indexes_consistent().unwrap_err()
             );
-            // (ii) Alive-set parity vs the oracle.
+            // (ii) Alive-set + content parity vs the oracle.
             assert_snapshot_matches_oracle(&snapshot, &oracle);
             // (iii) Generation monotonicity: exactly +1 per committed op.
             if committed {
@@ -368,7 +86,7 @@ proptest! {
                 let mut mutator = txn.mutator();
                 for op in &batch {
                     // Best-effort: create_node always works; others may no-op.
-                    if let Op::CreateNode { labels, props } = op {
+                    if let funnel_harness::Op::CreateNode { labels, props } = op {
                         let _ = mutator.create_node(labels.clone(), props.clone());
                     }
                 }
