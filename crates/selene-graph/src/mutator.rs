@@ -771,6 +771,9 @@ mod tests;
 mod id_map_tests;
 
 #[cfg(test)]
+mod row_cap_tests;
+
+#[cfg(test)]
 mod truncate_tests;
 
 #[cfg(test)]

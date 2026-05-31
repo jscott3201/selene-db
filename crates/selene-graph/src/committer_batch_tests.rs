@@ -766,3 +766,8 @@ fn t5b_publish_tail_panic_acks_member_errs_rest_and_poisons() {
 /// `use super::*`.
 #[path = "committer_batch_wal_tests.rs"]
 mod wal;
+
+/// F4 byte-cap + `encoded_estimate` tests (GRAPH-11). Separate file, same
+/// 700-LOC-cap split rationale; reuses the parent helpers via `use super::*`.
+#[path = "committer_batch_estimate_tests.rs"]
+mod estimate;
