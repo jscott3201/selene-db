@@ -149,6 +149,14 @@ pub enum GraphError {
         reason: String,
     },
 
+    /// The commit was cancelled at the pre-WAL cut-line (BRIEF-117): the
+    /// committer observed the cancellation token set before it appended the
+    /// commit to the WAL, so nothing was persisted or published. Past the WAL
+    /// append a commit is irrevocable and this is never returned.
+    #[error("commit cancelled before durable append")]
+    #[diagnostic(code(SLENE_G_019))]
+    Cancelled,
+
     /// Error propagated from selene-core.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -184,6 +192,7 @@ impl GraphError {
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",
+            Self::Cancelled => "5GQL2",
             Self::Provider(_) | Self::Persist(_) => "5GQL0",
         }
     }
@@ -250,6 +259,7 @@ mod tests {
     )]
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
+    #[case(GraphError::Cancelled, "5GQL2")]
     #[case(
         GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag DEMO".to_owned() }),
         "5GQL0"

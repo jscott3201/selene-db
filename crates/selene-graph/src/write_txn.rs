@@ -2,7 +2,7 @@
 
 use std::sync::{
     Arc,
-    atomic::{AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::time::Instant;
 
@@ -10,6 +10,7 @@ use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
 use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
+use crate::committer::Committer;
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
@@ -44,15 +45,87 @@ pub struct CommitOutcome {
     pub warnings: Vec<CommitWarning>,
 }
 
+/// A frozen, owned, `Send + 'static` commit bundle handed from a session thread
+/// to the single committer thread (v1.2 multi-writer, BRIEF 1).
+///
+/// Produced by [`WriteTxn::seal`] **after** the generation/meta bump + GG02
+/// validation have run under the write lock on the session thread (so error
+/// timing is unchanged), and after the lock + allocator guards have been
+/// released. It contains the fully-built next snapshot plus everything the
+/// committer needs to run the durable+publish tail — **no guards, no graph
+/// reference, no borrow**. The committer never re-validates, re-allocates ids,
+/// or re-applies a change list; it just stamps the HLC, appends to the WAL,
+/// publishes the frozen snapshot, and bumps the schema epoch.
+///
+/// The HLC timestamp is deliberately **not** stamped here: the committer stamps
+/// it per bundle in FIFO drain order so HLC is monotonic in commit order
+/// (== publish order == seal order). Stamping it on the session thread would
+/// break that monotonicity once seal-order and stamp-order could diverge.
+pub struct SealedCommit {
+    /// Fully-built next snapshot, frozen under the session's write lock.
+    pub(crate) next_snapshot: Arc<SeleneGraph>,
+    /// Persisted change list (the WAL/changeset payload).
+    pub(crate) changes: Vec<Change>,
+    /// Truncate-expanded fan-out view, built on the session thread, or `None`
+    /// when no truncate/reset expansion is staged (the common path).
+    pub(crate) fanout_changes: Option<Vec<Change>>,
+    /// Opaque caller-supplied principal bytes for the WAL entry header (D12).
+    pub(crate) principal: Option<Arc<[u8]>>,
+    /// Whether the change list bumps the schema epoch.
+    pub(crate) schema_changed: bool,
+    /// Already-bumped graph generation.
+    pub(crate) generation: u64,
+    /// Next node id after this commit (peeked under the lock).
+    pub(crate) next_node_id: u64,
+    /// Next edge id after this commit (peeked under the lock).
+    pub(crate) next_edge_id: u64,
+    /// Non-fatal validation warnings collected during seal.
+    pub(crate) warnings: Vec<CommitWarning>,
+    /// BRIEF-117 cancellation cut-line token. Checked once by the committer
+    /// immediately **before** `write_commit`: a pre-WAL cancel returns
+    /// `Cancelled` and appends nothing (no id burned beyond the monotonic hole
+    /// already allocated under the lock); past the append it is irrevocable.
+    pub(crate) cancel: Option<Arc<AtomicBool>>,
+}
+
+impl SealedCommit {
+    /// Attach a BRIEF-117 cancellation token so the committer can abort this
+    /// commit at the pre-WAL cut-line.
+    ///
+    /// The token is sampled exactly once, immediately before the WAL append.
+    /// Once the append has run the commit is irrevocable. With no token (the
+    /// default produced by [`WriteTxn::seal`]) the commit is never cancelled.
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: Arc<AtomicBool>) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+}
+
+/// Compile-time proof that [`SealedCommit`] is `Send + 'static`, so it can be
+/// moved to the committer thread. A guard or borrow leaking into the struct
+/// would fail this assertion at compile time.
+const _: fn() = || {
+    fn assert_send_static<T: Send + 'static>() {}
+    assert_send_static::<SealedCommit>();
+};
+
 /// RAII owner of the single graph write lock.
+///
+/// Since v1.2 (BRIEF 1) the transaction no longer holds the snapshot cell,
+/// schema-version, or provider handles — those moved to the single committer
+/// thread, which the transaction reaches via the cheap [`Committer`] submit
+/// handle. The transaction still owns the write lock + allocator guards for the
+/// duration of execution and releases them when [`Self::seal`] consumes it.
 pub struct WriteTxn<'g> {
     pub(crate) guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
-    pub(crate) snapshot: Arc<ArcSwap<SeleneGraph>>,
-    pub(crate) schema_version: Arc<AtomicU64>,
+    pub(crate) committer: Committer,
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
+    /// Index-provider registry, retained so `Mutator::index_provider_by_tag`
+    /// can resolve a provider during execution. The committer holds its own
+    /// clone for fan-out; this is the execution-time lookup copy.
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
-    pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
     pub(crate) changes: Vec<Change>,
     /// Per-truncate per-row tombstone expansions, keyed by the index of the
     /// declarative truncate change in [`Self::changes`] that produced them.
@@ -72,21 +145,17 @@ pub struct WriteTxn<'g> {
 impl<'g> WriteTxn<'g> {
     pub(crate) fn new(
         guard: RwLockWriteGuard<'g, Arc<SeleneGraph>>,
-        snapshot: Arc<ArcSwap<SeleneGraph>>,
-        schema_version: Arc<AtomicU64>,
+        committer: Committer,
         allocator: MutexGuard<'g, IdAllocator>,
         providers: Vec<Arc<dyn IndexProvider>>,
-        durable_providers: Vec<Arc<dyn DurableProvider>>,
     ) -> Self {
         let pre_txn = Some(Arc::clone(&*guard));
         Self {
             guard,
-            snapshot,
-            schema_version,
+            committer,
             pre_txn,
             allocator,
             providers,
-            durable_providers,
             changes: Vec::new(),
             truncate_expansions: Vec::new(),
             warnings: Vec::new(),
@@ -116,33 +185,73 @@ impl<'g> WriteTxn<'g> {
 
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
-    /// Registered index providers are notified after the
-    /// new graph snapshot is published, **with the write lock and allocator
-    /// mutex still held**, so that two concurrent commits cannot interleave
-    /// their `on_change` callbacks (the per-graph serialization contract from
-    /// Spec 06).
-    /// Same-thread re-entrant
-    /// provider calls into `SharedGraph::begin_write()` are detected via a
+    /// Since v1.2 (BRIEF 1) commit is **seal-and-handover**: this method runs
+    /// [`Self::seal`] on the calling thread (generation/meta bump + GG02
+    /// validation under the write lock, then **lock release**), then submits the
+    /// resulting [`SealedCommit`] to the per-graph single committer thread and
+    /// blocks until it is durable + visible. The public contract is unchanged —
+    /// "`commit()` returns ⇒ durable + visible" — only the internal threading
+    /// model differs.
+    ///
+    /// GG02 closed-graph violations still abort here, on the calling thread,
+    /// before any handoff, so error timing is identical to v1.0/v1.1.
+    ///
+    /// Registered index providers are notified by the committer after the new
+    /// snapshot is published; the same-thread re-entrancy guard now protects the
+    /// committer thread (one committer ⇒ still sound). Same-thread re-entrant
+    /// provider calls into `SharedGraph::begin_write()` are detected via the
     /// thread-local fanout counter and panic with a clear message; the
-    /// outer fan-out boundary catches those panics (along with callback-internal
-    /// panics and returned errors) so a single misbehaving provider
-    /// can never abort the writer thread.
-    /// Cross-thread re-entry (a provider waiting on a spawned worker that
-    /// calls `begin_write`) is documented misuse — see `reentry.rs` and
-    /// the `IndexProvider` rustdoc.
+    /// committer's fan-out boundary catches those panics (along with
+    /// callback-internal panics and returned errors) so a single misbehaving
+    /// provider can never crash the committer thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns the GG02 / validation error from [`Self::seal`], or a
+    /// [`GraphError::Durable`] if the WAL append failed or the committer thread
+    /// is no longer running.
     #[tracing::instrument(
         name = "selene.graph.commit",
         skip(self, principal),
         fields(change_count = self.change_count())
     )]
-    pub fn commit_with_principal(
-        mut self,
-        principal: Option<Arc<[u8]>>,
-    ) -> GraphResult<CommitOutcome> {
-        let started = Instant::now();
+    pub fn commit_with_principal(self, principal: Option<Arc<[u8]>>) -> GraphResult<CommitOutcome> {
+        // Clone the submit handle BEFORE sealing — `seal()` consumes `self`
+        // (dropping the write lock + allocator guards as it returns), so the
+        // session releases the lock strictly before it enqueues and blocks on
+        // `recv()`. This ordering is the load-bearing deadlock invariant: a
+        // session is never simultaneously lock-holding and recv-blocked, so it
+        // cannot wedge a queued `Compact` for which the committer must take the
+        // same lock (v1.2 design §3.2).
+        let committer = self.committer.clone();
+        let sealed = self.seal(principal)?;
+        committer.submit_commit(sealed)
+    }
+
+    /// Run the under-lock half of commit and hand back an owned, `Send`
+    /// [`SealedCommit`] for the committer thread (v1.2 multi-writer, BRIEF 1).
+    ///
+    /// Runs, on the calling thread under the held write lock: schema-change
+    /// detection, the generation/meta bump (`generation += 1` + write the next
+    /// ids into `GraphMeta`), and GG02 closed-graph validation — which **still
+    /// aborts synchronously here** (the `?` propagates and `Drop` rolls back the
+    /// generation bump, exactly as in v1.0/v1.1). Then it disarms `Drop`
+    /// (`pre_txn = None`), clones the now-frozen next snapshot, `mem::take`s the
+    /// change list / truncate expansions / warnings, builds the truncate-expanded
+    /// fan-out view, and returns. The write lock + allocator guards drop as this
+    /// method returns (it consumes `self`).
+    ///
+    /// The HLC timestamp is **not** stamped here (see [`SealedCommit`]); the
+    /// committer stamps it per bundle in FIFO drain order.
+    ///
+    /// # Errors
+    ///
+    /// Returns the GG02 / closed-graph validation error
+    /// ([`GraphError::TypeViolation`]) when a change violates the bound type.
+    pub fn seal(mut self, principal: Option<Arc<[u8]>>) -> GraphResult<SealedCommit> {
         debug_assert!(
             self.pre_txn.is_some(),
-            "pre_txn must be present at commit entry"
+            "pre_txn must be present at seal entry"
         );
 
         let schema_changed = self
@@ -168,6 +277,9 @@ impl<'g> WriteTxn<'g> {
         if let Some(type_def) = self.read().meta.bound_type.as_deref() {
             for change in &self.changes {
                 validation_warnings.extend(
+                    // NB: `?` here returns Err with the generation bump still
+                    // applied to the guard-Arc; `Drop` then restores `pre_txn`
+                    // and undoes the bump — error timing + rollback unchanged.
                     crate::type_validator::validate_change(change, self.read(), type_def)?
                         .into_iter()
                         .map(|warning| CommitWarning { warning }),
@@ -187,80 +299,33 @@ impl<'g> WriteTxn<'g> {
             }
         }
 
-        let timestamp = commit_timestamp(&self.durable_providers);
-        let mut durable_at: Option<u64> = None;
-        for durable in &self.durable_providers {
-            let seq = durable
-                .write_commit(principal.as_deref(), &self.changes, timestamp)
-                .map_err(|error| GraphError::Durable {
-                    reason: format!("{}: {error}", durable.provider_tag()),
-                })?;
-            durable_at = Some(durable_at.map_or(seq, |highest| highest.max(seq)));
-        }
-
+        // Disarm Drop-rollback: from here the commit is handed to the committer
+        // and the in-place mutations become the published state.
         self.pre_txn = None;
-        self.snapshot.store(Arc::clone(&*self.guard));
-        // Publish the schema-version bump AFTER snapshot.store so any reader
-        // observing the new epoch is guaranteed to also observe the new
-        // snapshot. Reverse ordering would let a reader read `epoch=N` and
-        // then load the prior snapshot, planning against stale schema and
-        // caching the plan under the new epoch (Codex PR #127 auto-review P1).
-        if schema_changed {
-            self.schema_version.fetch_add(1, Ordering::AcqRel);
-        }
-
-        // Debug-only structural net: re-derive every index from the published
-        // snapshot's authoritative columns and panic on the first drift. Runs
-        // on the exact snapshot just stored, while the write lock is still
-        // held (a pure read of the immutable snapshot — never re-enters
-        // begin_write). Compiled out entirely in release builds so committed
-        // perf baselines are byte-identical.
-        #[cfg(debug_assertions)]
-        if let Err(reason) = self.snapshot.load().assert_indexes_consistent() {
-            panic!("selene-graph: post-commit index consistency violation: {reason}");
-        }
+        // Freeze the next snapshot under the lock. The committer publishes this
+        // exact Arc and never rebuilds it.
+        let next_snapshot = Arc::clone(&*self.guard);
 
         let changes = std::mem::take(&mut self.changes);
         let truncate_expansions = std::mem::take(&mut self.truncate_expansions);
         let warnings = std::mem::take(&mut self.warnings);
 
-        // BRIEF-150 / audit Item 11: the persisted `changes` carry O(1)
-        // declarative truncate variants, but index providers must see
-        // the same per-row `NodeDeleted`/`EdgeDeleted` multiset that
-        // `MATCH (n:L) DETACH DELETE n` produces. Build a fan-out-only view that
-        // substitutes each truncate change with the staged per-row expansion
-        // the mutator captured. Non-truncate commits skip this entirely (no
-        // allocation), preserving the hot-path shape.
-        let fanout_view = expand_truncates_for_fanout(&changes, &truncate_expansions);
-        let fanout_changes: &[Change] = fanout_view.as_deref().unwrap_or(&changes);
+        // BRIEF-150 / audit Item 11: build the fan-out-only truncate-expanded
+        // view on the session thread so the committer holds a fully-owned
+        // bundle. `None` on the common (non-truncate) path → zero allocation.
+        let fanout_changes = expand_truncates_for_fanout(&changes, &truncate_expansions);
 
-        // Hold guard + allocator across fanout. The thread-local fanout
-        // guard increments a counter that `SharedGraph::begin_write` checks
-        // before attempting any locking, so same-thread re-entrant writes
-        // from inside `on_change` panic before reaching this lock — no
-        // deadlock, and commit serialization is preserved. Concurrent
-        // writers from other threads queue normally on the write lock.
-        {
-            let _fanout_guard = crate::reentry::FanoutGuard::enter();
-            notify_providers(&self.providers, fanout_changes);
-        }
-
-        metrics::counter_inc(metrics::COMMITS_TOTAL);
-        metrics::histogram_record(
-            metrics::COMMIT_DURATION_SECONDS,
-            started.elapsed().as_secs_f64(),
-        );
-        metrics::gauge_set(metrics::GRAPH_NODES, self.read().node_count() as f64);
-        metrics::gauge_set(metrics::GRAPH_EDGES, self.read().edge_count() as f64);
-
-        Ok(CommitOutcome {
-            generation,
+        Ok(SealedCommit {
+            next_snapshot,
             changes,
+            fanout_changes,
             principal,
-            durable_at,
+            schema_changed,
+            generation,
             next_node_id,
             next_edge_id,
             warnings,
+            cancel: None,
         })
     }
 
@@ -294,6 +359,123 @@ fn commit_timestamp(durable_providers: &[Arc<dyn DurableProvider>]) -> HlcTimest
     durable_providers
         .first()
         .map_or_else(HlcTimestamp::zero, |provider| provider.next_timestamp())
+}
+
+/// Run the durable + publish tail of a sealed commit on the committer thread
+/// (v1.2 multi-writer, BRIEF 1). This is the second half of what
+/// `commit_with_principal` did under the lock pre-v1.2, in the **identical**
+/// order — only the thread changed.
+///
+/// Ordering (verbatim from the pre-v1.2 commit body):
+/// 1. Stamp the HLC timestamp **here**, in committer FIFO order, so HLC is
+///    monotonic in commit order (== publish order).
+/// 2. BRIEF-117 cut-line: sample `cancel` once; if set, return `Cancelled`
+///    before any `write_commit` — nothing is appended or published.
+/// 3. WAL-first: `write_commit` for each durable provider; its error aborts the
+///    commit (and BRIEF 1 keeps `EveryN(1)`, so this also fsyncs). Past this
+///    point the commit is irrevocable.
+/// 4. Publish: `snapshot.store(next_snapshot)` (the ArcSwap linearization point;
+///    the committer is its sole writer).
+/// 5. store-before-schema-bump (PR #127 P1): bump `schema_version` strictly
+///    after the store.
+/// 6. Debug-only index-consistency assertion on the just-stored snapshot.
+/// 7. No-op provider fan-out under the [`FanoutGuard`] (now committer-thread-
+///    local — sound with one committer).
+///
+/// # Errors
+///
+/// Returns [`GraphError::Cancelled`] at the pre-WAL cut-line, or
+/// [`GraphError::Durable`] if a durable provider's `write_commit` failed.
+pub(crate) fn publish_sealed(
+    sealed: SealedCommit,
+    snapshot: &ArcSwap<SeleneGraph>,
+    schema_version: &AtomicU64,
+    providers: &[Arc<dyn IndexProvider>],
+    durable_providers: &[Arc<dyn DurableProvider>],
+) -> GraphResult<CommitOutcome> {
+    let started = Instant::now();
+    let SealedCommit {
+        next_snapshot,
+        changes,
+        fanout_changes,
+        principal,
+        schema_changed,
+        generation,
+        next_node_id,
+        next_edge_id,
+        warnings,
+        cancel,
+    } = sealed;
+
+    // (1) Stamp the HLC in committer FIFO order (monotonic in commit order).
+    let timestamp = commit_timestamp(durable_providers);
+
+    // (2) BRIEF-117 pre-WAL cut-line: sample the token exactly once. A cancel
+    // observed here appends nothing and publishes nothing; the monotonic id
+    // hole already allocated under the session's lock simply stays a permanent
+    // hole (D11/D22), exactly as an aborted transaction would leave it.
+    if let Some(flag) = &cancel
+        && flag.load(Ordering::Acquire)
+    {
+        return Err(GraphError::Cancelled);
+    }
+
+    // (3) WAL-first: the append gates the commit. Irrevocable past here.
+    let mut durable_at: Option<u64> = None;
+    for durable in durable_providers {
+        let seq = durable
+            .write_commit(principal.as_deref(), &changes, timestamp)
+            .map_err(|error| GraphError::Durable {
+                reason: format!("{}: {error}", durable.provider_tag()),
+            })?;
+        durable_at = Some(durable_at.map_or(seq, |highest| highest.max(seq)));
+    }
+
+    // (4) Publish — the sole ArcSwap writer.
+    snapshot.store(Arc::clone(&next_snapshot));
+    // (5) Publish the schema-version bump AFTER snapshot.store so any reader
+    // observing the new epoch is guaranteed to also observe the new snapshot
+    // (Codex PR #127 auto-review P1). Reverse ordering would let a reader read
+    // `epoch=N` then load the prior snapshot, planning against stale schema.
+    if schema_changed {
+        schema_version.fetch_add(1, Ordering::AcqRel);
+    }
+
+    // (6) Debug-only structural net on the exact snapshot just stored (a pure
+    // read of the immutable snapshot — never re-enters begin_write). Now runs
+    // on the committer thread; compiled out in release builds.
+    #[cfg(debug_assertions)]
+    if let Err(reason) = next_snapshot.assert_indexes_consistent() {
+        panic!("selene-graph: post-commit index consistency violation: {reason}");
+    }
+
+    // (7) No-op provider fan-out. The FanoutGuard's thread-local counter now
+    // guards the COMMITTER thread: a provider that re-enters begin_write on the
+    // committer thread panics before locking, and the boundary below catches
+    // it. Safe with exactly one committer (v1.2 design §7.7).
+    let fanout: &[Change] = fanout_changes.as_deref().unwrap_or(&changes);
+    {
+        let _fanout_guard = crate::reentry::FanoutGuard::enter();
+        notify_providers(providers, fanout);
+    }
+
+    metrics::counter_inc(metrics::COMMITS_TOTAL);
+    metrics::histogram_record(
+        metrics::COMMIT_DURATION_SECONDS,
+        started.elapsed().as_secs_f64(),
+    );
+    metrics::gauge_set(metrics::GRAPH_NODES, next_snapshot.node_count() as f64);
+    metrics::gauge_set(metrics::GRAPH_EDGES, next_snapshot.edge_count() as f64);
+
+    Ok(CommitOutcome {
+        generation,
+        changes,
+        principal,
+        durable_at,
+        next_node_id,
+        next_edge_id,
+        warnings,
+    })
 }
 
 /// Fan out committed changes to every registered provider, swallowing

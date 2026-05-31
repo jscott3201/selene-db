@@ -25,6 +25,15 @@ use crate::typed_index::TypedIndexKind;
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
+///
+/// Since v1.2 (BRIEF 1) every snapshot publish is funneled through a single
+/// per-graph committer thread ([`crate::committer::CommitterThread`]), which is
+/// the **sole writer** of the `snapshot` [`ArcSwap`] cell. `begin_write` hands
+/// each [`WriteTxn`] a cheap submit handle; `commit`/`compact` seal-and-submit
+/// to the committer and block until it publishes. This single-committer +
+/// sole-publisher discipline is what preserves D10 strict-serializability once
+/// `seal()` drops the write lock early — it is load-bearing and NOT
+/// type-enforced (a second committer or ArcSwap writer would silently break it).
 pub struct SharedGraph {
     shared: Arc<RwLock<Arc<SeleneGraph>>>,
     snapshot: Arc<ArcSwap<SeleneGraph>>,
@@ -32,6 +41,10 @@ pub struct SharedGraph {
     allocator: Arc<Mutex<IdAllocator>>,
     providers: Vec<Arc<dyn IndexProvider>>,
     durable_providers: Vec<Arc<dyn DurableProvider>>,
+    /// The single per-graph committer thread; sole publisher of `snapshot`.
+    /// Dropped last via [`SharedGraph`]'s implicit drop order, which joins the
+    /// thread once every outstanding [`WriteTxn`] submit handle is gone.
+    committer: crate::committer::CommitterThread,
 }
 
 /// Builder for a [`SharedGraph`] and its fixed provider registry.
@@ -192,13 +205,28 @@ impl SharedGraph {
 
         let graph = Arc::new(graph);
         snapshot.store(Arc::clone(&graph));
+        let shared = Arc::new(RwLock::new(graph));
+        let schema_version = Arc::new(AtomicU64::new(0));
+        let allocator = Arc::new(Mutex::new(allocator));
+        // Spawn the single per-graph committer thread. It captures clones of
+        // every handle it needs to publish + compact; it is the sole writer of
+        // `snapshot`. All commit/compact/index-DDL publishes route through it.
+        let committer =
+            crate::committer::CommitterThread::spawn(crate::committer::CommitterHandles {
+                shared: Arc::clone(&shared),
+                snapshot: Arc::clone(&snapshot),
+                schema_version: Arc::clone(&schema_version),
+                providers: providers.clone(),
+                durable_providers: durable_providers.clone(),
+            });
         Ok(Self {
-            shared: Arc::new(RwLock::new(graph)),
+            shared,
             snapshot,
-            schema_version: Arc::new(AtomicU64::new(0)),
-            allocator: Arc::new(Mutex::new(allocator)),
+            schema_version,
+            allocator,
             providers,
             durable_providers,
+            committer,
         })
     }
 
@@ -235,14 +263,17 @@ impl SharedGraph {
     /// recompacted graph fails its consistency check (see
     /// [`compact_core`](crate::compact_core)).
     pub fn compact(&self) -> GraphResult<crate::CompactionReport> {
-        let mut guard = self.shared.write();
-        let compacted = crate::compaction::compact_core(&guard)?;
-        // `compacted.live` is the CORE liveness set, available to callers that
-        // want it; CORE-internal densify has no further consumer.
-        let dense = Arc::new(compacted.graph);
-        *guard = Arc::clone(&dense);
-        self.snapshot.store(dense);
-        Ok(compacted.report)
+        // Route through the single committer so compaction's republish is
+        // serialized with concurrent commits — the committer is the sole
+        // ArcSwap writer (v1.2 BRIEF 1). The committer acquires the write lock
+        // itself for compaction (the one case where it does), reads + densifies
+        // the live graph, and publishes the dense result in FIFO order. This
+        // call blocks until the committer publishes or reports an error.
+        //
+        // The caller MUST NOT hold the write lock here (it does not — `compact`
+        // takes `&self` and no longer locks), so it cannot deadlock the
+        // committer's own write-lock acquisition (the deadlock invariant).
+        self.committer.compact()
     }
 
     /// Return the runtime schema-version epoch used for plan-cache invalidation.
@@ -363,41 +394,46 @@ impl SharedGraph {
     /// lock; the engine does **not** panic legitimate concurrent writes
     /// during another commit's provider fanout.
     ///
+    /// Since v1.2 (BRIEF 1) the actual snapshot publish happens on the single
+    /// committer thread, not here: `WriteTxn::commit` seals under this lock,
+    /// releases it, and hands the frozen bundle to the committer. Provider
+    /// fan-out therefore now runs on the **committer thread**, so the
+    /// re-entrancy guard below protects the committer thread (sound with exactly
+    /// one committer — see `reentry.rs` and the v1.2 design §7.7).
+    ///
     /// # Panics
     ///
     /// Panics when called from inside an [`IndexProvider`] callback **on
-    /// the same thread** as the active fanout. Same-thread re-entrant
-    /// writes are unsupported in v1.0; the outer commit holds the write
-    /// lock and the fanout serializer, so a nested write would deadlock or
-    /// recurse indefinitely. The panic is caught by the outer commit's
-    /// `notify_providers` boundary; provider state may drift, but the
-    /// outer commit still completes.
+    /// the committer thread** as the active fanout. Re-entrant writes from a
+    /// provider callback are unsupported; the committer is publishing and
+    /// (for compaction) may hold the write lock, so a nested write would
+    /// deadlock or recurse indefinitely. The panic is caught by the committer's
+    /// `notify_providers` boundary; provider state may drift, but the commit
+    /// still completes.
     ///
     /// Cross-thread re-entry — a provider spawning a worker thread that
     /// calls `begin_write` and waiting for it — is **documented misuse**
     /// rather than a detectable footgun (the engine cannot trace causal
     /// thread ancestry). See the module docs in `reentry.rs` and the
-    /// `IndexProvider` rustdoc for the v1.0 contract.
+    /// `IndexProvider` rustdoc for the contract.
     #[must_use]
     #[tracing::instrument(name = "selene.graph.begin_write", skip(self))]
     pub fn begin_write(&self) -> WriteTxn<'_> {
         if crate::reentry::in_fanout() {
             panic!(
                 "selene-graph: SharedGraph::begin_write() called from within \
-                 a provider fan-out callback on the same thread; same-thread \
-                 re-entrant writes are not supported in v1.0. The outer \
-                 commit's fan-out boundary will catch this panic; \
-                 the outer commit succeeds, but the offending provider's \
+                 a provider fan-out callback on the committer thread; \
+                 re-entrant writes from a provider callback are not supported. \
+                 The committer's fan-out boundary will catch this panic; \
+                 the commit succeeds, but the offending provider's \
                  chained mutation does not."
             );
         }
         WriteTxn::new(
             self.shared.write(),
-            Arc::clone(&self.snapshot),
-            Arc::clone(&self.schema_version),
+            self.committer.handle(),
             self.allocator.lock(),
             self.providers.clone(),
-            self.durable_providers.clone(),
         )
     }
 
@@ -405,6 +441,18 @@ impl SharedGraph {
     pub(crate) fn locked_arc_ptr_for_test(&self) -> *const SeleneGraph {
         let guard = self.shared.read();
         Arc::as_ptr(&*guard)
+    }
+
+    /// Submit an already-[`seal`](crate::WriteTxn::seal)ed commit straight to the
+    /// committer, blocking until it is durable + visible. Test-only seam for
+    /// exercising the BRIEF-117 cancellation cut-line (which has no production
+    /// producer yet) without re-entering `commit_with_principal`.
+    #[cfg(test)]
+    pub(crate) fn submit_sealed_for_test(
+        &self,
+        sealed: crate::SealedCommit,
+    ) -> GraphResult<crate::CommitOutcome> {
+        self.committer.handle().submit_commit(sealed)
     }
 }
 

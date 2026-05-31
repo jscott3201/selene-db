@@ -1,11 +1,24 @@
 //! Thread-local re-entrancy guard for the provider-fanout phase of commit.
 //!
 //! Re-entrant writes from inside an `IndexProvider::on_change` callback are
-//! misuse: the outer commit holds the write lock and the fanout serializer,
-//! so a same-thread nested write would deadlock or recurse indefinitely. We
-//! detect the same-thread case here via a thread-local counter and let
-//! `begin_write` panic with a clear message; the outer `notify_providers`
-//! catches that unwind so the outer commit still completes.
+//! misuse: a nested write would deadlock or recurse indefinitely. We detect the
+//! same-thread case here via a thread-local counter and let `begin_write` panic
+//! with a clear message; the `notify_providers` boundary catches that unwind so
+//! the commit still completes.
+//!
+//! ## v1.2 relocation — fanout now runs on the committer thread
+//!
+//! Before v1.2 fanout ran on the writer (session) thread under the held write
+//! lock. Since v1.2 (BRIEF 1) the snapshot publish + provider fan-out run on the
+//! single per-graph **committer thread** (`committer.rs`); `WriteTxn::seal`
+//! releases the write lock on the session thread before handing the bundle off.
+//! This guard is therefore set on the committer thread during fan-out. It stays
+//! sound precisely because there is exactly **one** committer: a provider whose
+//! `on_change` re-enters `begin_write` does so on the committer thread, where
+//! `in_fanout()` is true, so it panics before locking (and could otherwise
+//! deadlock against the committer's own compaction write-lock hold). A second
+//! committer would break this thread-local reasoning — the single-committer
+//! constraint is load-bearing (v1.2 design §4, §7.7).
 //!
 //! ## Cross-thread misuse — out of scope
 //!

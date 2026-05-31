@@ -13,6 +13,7 @@
 
 pub mod adjacency;
 pub mod chunked_vec;
+pub(crate) mod committer;
 pub mod compaction;
 pub(crate) mod composite_property_index;
 pub mod composite_typed_index;
@@ -61,7 +62,7 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
-pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
+pub use write_txn::{CommitOutcome, CommitWarning, SealedCommit, WriteTxn};
 
 #[cfg(test)]
 mod closed_graph_tests;
