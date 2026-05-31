@@ -42,13 +42,13 @@ fn property_def(
             // surface it as an honest capability-gap deferral (42N01) rather than
             // a generic internal error, mirroring the inline-INDEXED-on-edge path.
             PlannedTypePropertyConstraint::Unique(span) => {
-                return Err(ExecutorError::FeatureNotInV1_1 {
+                return Err(ExecutorError::FeatureNotSupportedYet {
                     feature: "UNIQUE property constraint",
                     span: *span,
                 });
             }
             PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
-                return Err(ExecutorError::FeatureNotInV1_1 {
+                return Err(ExecutorError::FeatureNotSupportedYet {
                     feature: "inline INDEXED on edge properties",
                     span: *span,
                 });
@@ -86,11 +86,11 @@ fn property_default_value(
         Literal::Bool(value, _) => Ok(PropertyDefaultValue::Boolean(*value)),
         Literal::Integer(value, _) => Ok(PropertyDefaultValue::Integer(*value)),
         Literal::String(value, _) => Ok(PropertyDefaultValue::String(*value)),
-        Literal::Float(_, _) => Err(ExecutorError::FeatureNotInV1_1 {
+        Literal::Float(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "floating-point DEFAULT literals",
             span,
         }),
-        Literal::Uuid(_, _) => Err(ExecutorError::FeatureNotInV1_1 {
+        Literal::Uuid(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "UUID DEFAULT literals",
             span,
         }),

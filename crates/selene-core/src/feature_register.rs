@@ -77,7 +77,17 @@ feature_ids! {
     GE04 = "GE04" => "Parameters";
     GE05 = "GE05" => "Named parameters";
     GE07 = "GE07" => "XOR operator";
-    GE08 = "GE08" => "CAST operator";
+    // ISO/IEC 39075:2024 Annex D Table D.1 row 77 / subclause 17.7: GE08 is
+    // "Reference parameters", NOT a CAST feature. selene-db does not implement
+    // reference parameters, so GE08 is referenced-but-not-supported (see
+    // NOT_SUPPORTED_RATIONALE). CAST is `<cast specification>` (§20.8 /
+    // Table D.1 row 53 = GA05, "Cast specification"). Per ISO Annex A item 52
+    // (Feature GA05), without GA05 "conforming GQL language shall not contain a
+    // <cast specification>" — CAST is gated behind GA05, NOT baseline. selene-db
+    // implements the cast construct, so it claims GA05 in SUPPORTED_FEATURES and
+    // stamps it on every `ValueExpr::Cast`.
+    GE08 = "GE08" => "Reference parameters";
+    GA05 = "GA05" => "Cast specification";
     GF01 = "GF01" => "Enhanced numeric functions";
     GF02 = "GF02" => "Trigonometric functions";
     GF03 = "GF03" => "Logarithmic functions";
@@ -211,13 +221,13 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G114,
     FeatureId::G115,
     FeatureId::GA01,
+    FeatureId::GA05,
     FeatureId::GA07,
     FeatureId::GC03,
     FeatureId::GD01,
     FeatureId::GE04,
     FeatureId::GE05,
     FeatureId::GE07,
-    FeatureId::GE08,
     FeatureId::GF01,
     FeatureId::GF02,
     FeatureId::GF03,
@@ -239,7 +249,6 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG01,
     FeatureId::GG02,
     FeatureId::GG20,
-    FeatureId::GG21,
     FeatureId::GP01,
     FeatureId::GP02,
     FeatureId::GP04,
@@ -294,6 +303,19 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 ];
 
 /// Rationale for referenced optional features not currently claimed.
+///
+/// This list is reserved for features that are *parser-reachable but rejected*:
+/// each entry is backed by a negative conformance-corpus case proving the
+/// `UnsupportedFeature` rejection (see `corpus_covers_feature_register`).
+/// Features that have no syntactic surface at all — and so can be neither
+/// claimed nor rejected — are NOT listed here; they remain in
+/// `REFERENCED_FEATURES` only and surface as the `"referenced"` status in
+/// `selene.feature_status()`. GE08 ("Reference parameters", §17.7 —
+/// unimplemented) and GG21 ("Explicit element type key label sets",
+/// §18.2/18.3 — no `<implies>` grammar) are deliberately in that
+/// referenced-only bucket (CONFORMANCE-00). GA05 ("Cast specification", §20.8)
+/// is instead CLAIMED in `SUPPORTED_FEATURES`: CAST is gated behind GA05 per
+/// ISO Annex A item 52 and selene-db implements the cast construct.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::G002,
@@ -522,6 +544,65 @@ mod tests {
                 "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
             );
         }
+    }
+
+    #[test]
+    fn ge08_is_reference_parameters_referenced_only() {
+        // CONFORMANCE-00: GE08 is ISO Annex D Table D.1 row 77 / §17.7
+        // "Reference parameters" — NOT a CAST feature. It must carry the correct
+        // ISO name, must NOT be claimed (reference parameters are unimplemented),
+        // and — having no syntactic surface to reject — must NOT be in
+        // NOT_SUPPORTED_RATIONALE (which is reserved for parser-rejected
+        // features). It surfaces as the "referenced" status instead.
+        assert_eq!(name_of(FeatureId::GE08), Some("Reference parameters"));
+        assert!(
+            !is_supported(FeatureId::GE08),
+            "GE08 (Reference parameters) is not implemented and must not be claimed"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GE08).is_none(),
+            "GE08 has no parser surface to reject; it is referenced-only, not rationalized"
+        );
+    }
+
+    #[test]
+    fn ga05_cast_specification_is_supported() {
+        // CONFORMANCE-00 (Codex review follow-up): GA05 "Cast specification"
+        // (Annex D row 53 / §20.8) is the real ISO feature for CAST. Per ISO
+        // Annex A item 52, without GA05 "conforming GQL language shall not
+        // contain a <cast specification>" — CAST is gated behind GA05, not
+        // baseline. selene-db implements the cast construct, so it CLAIMS GA05
+        // (and so GA05 carries no non-supported rationale).
+        assert_eq!(name_of(FeatureId::GA05), Some("Cast specification"));
+        assert!(
+            is_supported(FeatureId::GA05),
+            "GA05 is claimed: selene-db implements <cast specification>"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GA05).is_none(),
+            "GA05 is supported, so it has no non-supported rationale"
+        );
+    }
+
+    #[test]
+    fn gg21_explicit_key_label_sets_is_destamped() {
+        // CONFORMANCE-00: GG21 "Explicit element type key label sets" is
+        // de-stamped (Option B). The type-DDL grammar has no <implies> token
+        // (ISO §18.2/18.3), so an explicit key label set can be neither
+        // expressed nor rejected — GG21 is referenced-only. GG02/GG20 stay
+        // claimed.
+        assert!(
+            !is_supported(FeatureId::GG21),
+            "GG21 is de-stamped until <implies> key-label-set syntax lands"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GG21).is_none(),
+            "GG21 has no parser surface to reject; it is referenced-only"
+        );
+        assert!(
+            is_supported(FeatureId::GG02) && is_supported(FeatureId::GG20),
+            "GG02 (closed graph type) and GG20 (explicit element type names) stay claimed"
+        );
     }
 
     #[test]

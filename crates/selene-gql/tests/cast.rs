@@ -1,12 +1,15 @@
 //! BRIEF-135a commit 1 + commit 2 acceptance bars — CAST(<expr> AS <type>)
-//! parser, analyzer, walker, format, GQLSTATUS, feature-flag, and runtime
-//! ISO §22 dispatch matrix coverage.
+//! parser, analyzer, walker, format, GQLSTATUS, and runtime ISO §22 dispatch
+//! matrix coverage. The CONFORMANCE-00 conformance-honesty bars (CAST records
+//! GA05 "Cast specification"; GA05 claimed, GE08 not; corpus + CHANGELOG pins)
+//! live in the sibling `cast_conformance.rs` so both files stay under the
+//! 700-LOC cap.
 
-use selene_core::{GraphId, Record, Value, feature_register::FeatureId, intern};
+use selene_core::{GraphId, Record, Value, intern};
 use selene_gql::{
     AnalysisError, AnalyzedStatement, AnalyzedStatementKind, AnalyzedType, EmptyProcedureRegistry,
     GqlStatus, GqlType, PipelineStatement, ReturnItem, Session, Statement, StatementOutput,
-    ValueExpr, analyze, ast::format::format_read_statement, feature_walk, parse,
+    ValueExpr, analyze, ast::format::format_read_statement, parse,
 };
 use selene_graph::SharedGraph;
 
@@ -187,23 +190,6 @@ fn analyze_hash_distinguishes_cast_integer_vs_float_target() {
             "CAST projections with different target_type must hash to distinct ExprIds"
         );
     }
-}
-
-#[test]
-fn flagger_records_ge08_for_cast_expression() {
-    // F7 fold: every parsed `CAST` records FeatureId::GE08 in the
-    // feature-walk output. The current GE08 SUPPORTED flip lands in commit 3,
-    // so until then `analyze` may surface FeatureNotSupported; this test is
-    // therefore phrased to walk the parsed Statement directly.
-    let stmt = parse_or_panic("RETURN CAST(1 AS STRING) AS s");
-    let features = feature_walk(&stmt)
-        .into_iter()
-        .map(|f| f.feature_id)
-        .collect::<Vec<_>>();
-    assert!(
-        features.contains(&FeatureId::GE08),
-        "CAST must record GE08, observed {features:?}"
-    );
 }
 
 #[test]
@@ -688,86 +674,4 @@ fn cast_anything_to_null_returns_42n01() {
     // selene-db's type grammar accepts `NULL` per `ast/types.rs:84`.
     let source = "RETURN CAST(1 AS NULL) AS v";
     assert_eq!(execute_first_status(source), "42N01");
-}
-
-// ---------------------------------------------------------------------------
-// §F commit 3 bars — feature registration + corpus + CHANGELOG
-// ---------------------------------------------------------------------------
-
-#[test]
-fn feature_ge08_registered_as_supported() {
-    use selene_core::feature_register::SUPPORTED_FEATURES;
-    assert!(
-        SUPPORTED_FEATURES.contains(&FeatureId::GE08),
-        "FeatureId::GE08 must be in SUPPORTED_FEATURES; observed {:?}",
-        SUPPORTED_FEATURES
-            .iter()
-            .map(|f| f.as_str())
-            .collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn iso_conformance_ge08_positive_corpus_all_pass() {
-    // Walk every GE08-declared positive corpus entry and confirm it
-    // parses, analyzes, and surfaces GE08 in the feature-walk output.
-    use selene_testing::corpus::{CorpusKind, Expectation, load_default_corpus};
-
-    let cases = load_default_corpus().expect("corpus loads");
-    let ge08_cases: Vec<_> = cases
-        .iter()
-        .filter(|case| {
-            case.kind == CorpusKind::Positive
-                && case.expectation == Expectation::ParseOk
-                && case.declared_features().any(|f| f == FeatureId::GE08)
-        })
-        .collect();
-    assert!(
-        ge08_cases.len() >= 5,
-        "commit 3 lands at least 5 GE08 positive corpus entries; found {}",
-        ge08_cases.len()
-    );
-    for case in ge08_cases {
-        let statement = parse(&case.source)
-            .unwrap_or_else(|err| panic!("{} failed to parse: {err:?}", case.path.display()));
-        let features = feature_walk(&statement)
-            .into_iter()
-            .map(|f| f.feature_id)
-            .collect::<Vec<_>>();
-        assert!(
-            features.contains(&FeatureId::GE08),
-            "{} did not record GE08; observed {features:?}",
-            case.path.display()
-        );
-        analyze(statement, &EmptyProcedureRegistry, None)
-            .unwrap_or_else(|err| panic!("{} failed to analyze: {err:?}", case.path.display()));
-    }
-}
-
-#[test]
-fn changelog_unreleased_added_entry() {
-    // Pin the CHANGELOG entry verbatim so a forgotten or relocated
-    // entry breaks the build, not the release prep.
-    let changelog = include_str!("../../../CHANGELOG.md");
-    let unreleased = changelog
-        .split("## [Unreleased]")
-        .nth(1)
-        .expect("CHANGELOG has an [Unreleased] section");
-    let added = unreleased
-        .split("### ")
-        .find(|section| section.starts_with("Added"))
-        .expect("[Unreleased] has an `Added` section");
-    assert!(
-        added.contains("CAST(<expr> AS <type>)"),
-        "[Unreleased].Added must mention `CAST(<expr> AS <type>)`; observed first 400 chars: {}",
-        &added[..added.len().min(400)]
-    );
-    assert!(
-        added.contains("GE08"),
-        "[Unreleased].Added must mention feature `GE08`"
-    );
-    assert!(
-        added.contains("22018"),
-        "[Unreleased].Added must mention the new GQLSTATUS `22018`"
-    );
 }

@@ -166,7 +166,7 @@ fn gql_type_to_index_kind(
         GqlType::Float64 => Ok(TypedIndexKind::F64),
         GqlType::Date => Ok(TypedIndexKind::Date),
         GqlType::LocalDateTime => Ok(TypedIndexKind::LocalDateTime),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "inline INDEXED for this GQL type",
             span,
         }),

@@ -19,4 +19,7 @@ bash .github/scripts/check-no-secrets.sh
 echo "[pre-commit] id<->row arithmetic gate (BRIEF-Item-4a)"
 bash .github/scripts/check-no-rowid-arith.sh
 
+echo "[pre-commit] version-locked feature-error gate (CONFORMANCE-00)"
+bash .github/scripts/check-no-version-locked-feature-error.sh
+
 echo "[pre-commit] ok"

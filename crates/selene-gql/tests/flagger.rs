@@ -294,9 +294,41 @@ fn deferred_grammar_surfaces_report_not_implemented_with_42n01() {
 
 #[test]
 fn closed_type_ddl_features_are_supported() {
+    // GG02 (closed graph type) + GG20 (explicit element type names) are claimed;
+    // GG21 (explicit element type key label sets) is de-stamped (CONFORMANCE-00).
     parse("CREATE NODE TYPE IF NOT EXISTS :Person (name :: STRING)")
-        .expect("GG02/GG20/GG21 are claimed");
+        .expect("GG02/GG20 are claimed");
     parse("DROP EDGE TYPE IF EXISTS :KNOWS").expect("type DROP is claimed");
+}
+
+#[test]
+fn type_ddl_flags_gg02_gg20_but_not_destamped_gg21() {
+    // CONFORMANCE-00: type DDL flags GG02 (closed graph type) + GG20 (explicit
+    // element type names — the `:Name` after NODE/EDGE TYPE is an explicit
+    // `<node/edge type name>`, ISO §18.2/18.3). GG21 "Explicit element type key
+    // label sets" requires a `<type key label set>` (`[ <label set phrase> ]
+    // <implies>`), which the grammar cannot express (no `<implies>` token), so
+    // it must NOT be flagged.
+    for source in [
+        "CREATE NODE TYPE :Person (name :: STRING)",
+        "CREATE EDGE TYPE :KNOWS (since :: INTEGER)",
+        "DROP NODE TYPE :Person",
+        "SHOW NODE TYPES",
+    ] {
+        let statement = parse(source).unwrap_or_else(|err| panic!("{source} parses: {err:?}"));
+        let observed = feature_walk(&statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            observed.contains(&FeatureId::GG02) && observed.contains(&FeatureId::GG20),
+            "{source}: type DDL must flag GG02 + GG20; observed {observed:?}"
+        );
+        assert!(
+            !observed.contains(&FeatureId::GG21),
+            "{source}: GG21 is de-stamped and must NOT be flagged; observed {observed:?}"
+        );
+    }
 }
 
 #[test]
@@ -405,12 +437,19 @@ fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
         !ids(&default).contains(&FeatureId::IM_DROP_CASCADE),
         "default drop must NOT flag IM_DROP_CASCADE"
     );
-    // The existing type-DDL flags are unchanged on every path.
+    // The existing type-DDL flags are unchanged on every path: GG02 (closed
+    // graph type) + GG20 (explicit element type names). GG21 ("Explicit element
+    // type key label sets") is de-stamped (CONFORMANCE-00): the grammar has no
+    // `<implies>` token (ISO §18.2/18.3), so an explicit key label set cannot be
+    // expressed and must NOT be flagged.
     for statement in [&cascade_node, &restrict, &default] {
         let observed = ids(statement);
         assert!(observed.contains(&FeatureId::GG02));
         assert!(observed.contains(&FeatureId::GG20));
-        assert!(observed.contains(&FeatureId::GG21));
+        assert!(
+            !observed.contains(&FeatureId::GG21),
+            "type DDL must NOT flag de-stamped GG21; observed {observed:?}"
+        );
     }
 }
 

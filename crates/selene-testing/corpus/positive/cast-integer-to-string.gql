@@ -1,4 +1,4 @@
 // corpus: positive
-// feature: GE08
+// feature: GA05
 // expects: parse-ok
 RETURN CAST(1 AS STRING) AS value

@@ -128,7 +128,7 @@ fn build_procedure_call(
             Rule::yield_filter => {
                 return Err(not_implemented(
                     &child,
-                    "YIELD WHERE filters are not yet supported in v1.0",
+                    "YIELD WHERE filters are not yet supported",
                 ));
             }
             _ => return Err(unexpected_pair(child, "unexpected procedure-call child")),

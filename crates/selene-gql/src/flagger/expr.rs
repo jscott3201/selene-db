@@ -140,7 +140,14 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             target_type,
             span,
         } => {
-            record_feature(uses, FeatureId::GE08, *span);
+            // Per ISO/IEC 39075:2024 §20.8 <cast specification>: CAST is the
+            // optional feature GA05 "Cast specification" (Annex D Table D.1 row
+            // 53), NOT GE08 ("Reference parameters", §17.7). ISO Annex A item 52
+            // requires GA05 for any `<cast specification>` — CAST is not
+            // baseline — so the Cast node records GA05. It is recorded before
+            // recursing the value child and walking the target type so the
+            // node's own feature stays first in walk order.
+            record_feature(uses, FeatureId::GA05, *span);
             self::value(value, uses);
             gql_type(target_type, *span, uses);
         }

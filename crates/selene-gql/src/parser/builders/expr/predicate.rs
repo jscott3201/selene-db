@@ -373,6 +373,6 @@ fn build_type_name_with_depth(
     }
     Err(not_implemented(
         &pair,
-        "this GQL type constructor is not yet supported in v1.0",
+        "this GQL type constructor is not yet supported",
     ))
 }

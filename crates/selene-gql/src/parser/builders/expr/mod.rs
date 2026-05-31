@@ -73,13 +73,13 @@ pub(super) fn build_value_expr(
         Rule::cast_expr => build_cast_expr(pair, budget),
         Rule::labels_expr => Err(not_implemented(
             &pair,
-            "LABELS expressions are not yet supported in v1.0",
+            "LABELS expressions are not yet supported",
         )),
         Rule::trim_expr => call::build_trim_expr(pair, budget),
         Rule::list_iter_expr | Rule::list_comprehension | Rule::list_quant | Rule::list_reduce => {
             Err(not_implemented(
                 &pair,
-                "list-iteration expressions are not yet supported in v1.0",
+                "list-iteration expressions are not yet supported",
             ))
         }
         _ => Err(unexpected_pair(pair, "expected value expression")),
