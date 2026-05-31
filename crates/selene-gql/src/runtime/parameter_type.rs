@@ -44,7 +44,7 @@ fn render_gql_type(ty: &GqlType) -> Cow<'static, str> {
         GqlType::Decimal => "DECIMAL".into(),
         GqlType::Float32 => "FLOAT32".into(),
         GqlType::Float64 => "FLOAT64".into(),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => "BYTES".into(),
+        GqlType::Bytes => "BYTES".into(),
         GqlType::Uuid => "UUID".into(),
         GqlType::ZonedDateTime => "ZONED DATETIME".into(),
         GqlType::LocalDateTime => "LOCAL DATETIME".into(),

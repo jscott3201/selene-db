@@ -10,7 +10,7 @@ use crate::{
     error::ParserError,
 };
 
-use super::{Rule, expr, first_child, intern_pair, span, unexpected_pair};
+use super::{Rule, expr, first_child, intern_pair, keyword_tokens_eq, span, unexpected_pair};
 use crate::parser::budget::InternerBudget;
 
 pub(super) fn build_match_clause(
@@ -63,22 +63,25 @@ pub(super) fn build_match_clause(
 }
 
 fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
-    let text = pair
-        .as_str()
-        .to_ascii_uppercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    match text.as_str() {
-        "ANY" => Ok(PathSelector::Any),
-        "ALL" => Ok(PathSelector::All),
-        "ANY SHORTEST" => Ok(PathSelector::AnyShortest),
-        "ALL SHORTEST" => Ok(PathSelector::AllShortest),
-        _ => Err(ParserError::syntax(
+    // Match the selector keyword(s) token-wise (case- and whitespace-
+    // insensitive) without allocating a normalized `String`. `ANY SHORTEST` /
+    // `ALL SHORTEST` keep their two-token match; check them before the bare
+    // single-token `ANY`/`ALL` so the longer spelling wins.
+    let text = pair.as_str();
+    if keyword_tokens_eq(text, &["ANY", "SHORTEST"]) {
+        Ok(PathSelector::AnyShortest)
+    } else if keyword_tokens_eq(text, &["ALL", "SHORTEST"]) {
+        Ok(PathSelector::AllShortest)
+    } else if keyword_tokens_eq(text, &["ANY"]) {
+        Ok(PathSelector::Any)
+    } else if keyword_tokens_eq(text, &["ALL"]) {
+        Ok(PathSelector::All)
+    } else {
+        Err(ParserError::syntax(
             "unknown path selector",
             span(pair),
             None,
-        )),
+        ))
     }
 }
 

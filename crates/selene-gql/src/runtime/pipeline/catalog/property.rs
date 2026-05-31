@@ -37,14 +37,14 @@ fn property_def(
                 default_span = *span;
             }
             PlannedTypePropertyConstraint::Immutable(_) => immutable = true,
-            PlannedTypePropertyConstraint::Unique(_)
-            | PlannedTypePropertyConstraint::Searchable(_)
-            | PlannedTypePropertyConstraint::Dictionary(_)
-            | PlannedTypePropertyConstraint::Fill(_, _)
-            | PlannedTypePropertyConstraint::Interval(_, _)
-            | PlannedTypePropertyConstraint::Encoding(_, _) => {
-                return Err(ExecutorError::ImplementationDefined {
-                    detail: "type property constraint not implemented",
+            // UNIQUE is an ISO-relevant property constraint (ISO/IEC 39075:2024
+            // §18) but enforcement of property uniqueness is not yet implemented;
+            // surface it as an honest capability-gap deferral (42N01) rather than
+            // a generic internal error, mirroring the inline-INDEXED-on-edge path.
+            PlannedTypePropertyConstraint::Unique(span) => {
+                return Err(ExecutorError::FeatureNotInV1_1 {
+                    feature: "UNIQUE property constraint",
+                    span: *span,
                 });
             }
             PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
@@ -271,7 +271,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::Float | GqlType::Float64 => PropertyValueType::Float,
         GqlType::Float32 => PropertyValueType::Float32,
         GqlType::Decimal => PropertyValueType::Decimal,
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => PropertyValueType::Bytes,
+        GqlType::Bytes => PropertyValueType::Bytes,
         GqlType::Uuid => PropertyValueType::Uuid,
         GqlType::ZonedDateTime => PropertyValueType::ZonedDateTime,
         GqlType::LocalDateTime => PropertyValueType::LocalDateTime,

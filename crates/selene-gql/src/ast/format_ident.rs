@@ -75,8 +75,7 @@ const KEYWORDS: &[&str] = &[
     "STDDEV_SAMP", "STRICT", "STRING", "SUM", "THEN", "TIME", "TIMESTAMP", "TO",
     "TRAIL", "TRAILING", "TRANSACTION", "TRIM", "TRUE", "TYPE", "TYPED",
     "TYPES", "UINT", "UNION", "UNIQUE", "UNKNOWN", "UNWIND", "UUID", "VARCHAR",
-    "VECTOR", "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR", "YEAR", "YIELD",
-    "ZONED",
+    "WALK", "WARN", "WHEN", "WHERE", "WITH", "XOR", "YEAR", "YIELD", "ZONED",
 ];
 
 /// Format an identifier slot (binding name, alias name, property key).

@@ -7,8 +7,8 @@ use crate::{
     Statement, WithClause,
     ast::{
         pattern::{
-            EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode,
-            NodePattern, PathMode, PathSelector, PatternElement, Quantifier,
+            EdgeDirection, EdgePattern, GraphPattern, MatchClause, MatchMode, NodePattern,
+            PathMode, PathSelector, PatternElement, Quantifier,
         },
         statement::{LetBinding, OrderTerm, UnwindStatement},
     },
@@ -205,9 +205,6 @@ pub(crate) fn graph_pattern(pattern: &GraphPattern, uses: &mut Vec<FeatureUse>) 
 }
 
 fn node_pattern(pattern: &NodePattern, uses: &mut Vec<FeatureUse>) {
-    if let Some(label_expr) = &pattern.label_expr {
-        label_expression(label_expr);
-    }
     for (_, value) in &pattern.properties {
         expr::value(value, uses);
     }
@@ -234,26 +231,11 @@ fn edge_pattern(pattern: &EdgePattern, uses: &mut Vec<FeatureUse>) {
             }
         }
     }
-    if let Some(label_expr) = &pattern.label_expr {
-        label_expression(label_expr);
-    }
     for (_, value) in &pattern.properties {
         expr::value(value, uses);
     }
     if let Some(inline_where) = &pattern.inline_where {
         expr::value(inline_where, uses);
-    }
-}
-
-fn label_expression(expression: &LabelExpr) {
-    match expression {
-        LabelExpr::Single(_) | LabelExpr::Wildcard => {}
-        LabelExpr::Conjunction(parts) | LabelExpr::Disjunction(parts) => {
-            for part in parts {
-                label_expression(part);
-            }
-        }
-        LabelExpr::Negation(inner) => label_expression(inner),
     }
 }
 

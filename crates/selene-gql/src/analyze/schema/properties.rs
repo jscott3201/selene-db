@@ -261,7 +261,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Decimal, G::Decimal)
             | (P::String, G::String)
             | (P::Uuid, G::Uuid)
-            | (P::Bytes, G::Bytes | G::Binary | G::VarBinary)
+            | (P::Bytes, G::Bytes)
             | (P::List, G::List(_))
             // Every record property declaration — open `RECORD` and closed `RECORD{..}`
             // alike — lowers to `P::RecordTyped` (catalog/property.rs), while a `RECORD{..}`
@@ -348,14 +348,6 @@ mod tests {
         assert!(property_type_compatible(
             PropertyValueType::Bytes,
             &GqlType::Bytes
-        ));
-        assert!(property_type_compatible(
-            PropertyValueType::Bytes,
-            &GqlType::Binary
-        ));
-        assert!(property_type_compatible(
-            PropertyValueType::Bytes,
-            &GqlType::VarBinary
         ));
         assert!(!property_type_compatible(
             PropertyValueType::Bytes,

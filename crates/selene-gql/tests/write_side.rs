@@ -205,12 +205,37 @@ fn parse_edge_type_and_show_ddl() {
 
 #[test]
 fn parse_type_property_constraints_exhaustively() {
+    // The five ISO/IEC 39075:2024 §18 property constraints the grammar accepts.
+    // Donor full-text/time-series constraints (SEARCHABLE/DICTIONARY/FILL/
+    // INTERVAL/ENCODING) were removed from the grammar — see
+    // `donor_property_constraints_are_syntax_errors`.
     let DdlStatement::CreateNodeType { properties, .. } = parse_ddl(
-        "CREATE NODE TYPE :Sensor (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED SEARCHABLE DICTIONARY FILL LOCF INTERVAL '60s' ENCODING RLE)",
+        "CREATE NODE TYPE :Sensor (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED)",
     ) else {
         panic!("expected CREATE NODE TYPE");
     };
-    assert_eq!(properties[0].constraints.len(), 10);
+    assert_eq!(properties[0].constraints.len(), 5);
+}
+
+#[test]
+fn donor_property_constraints_are_syntax_errors() {
+    // SEARCHABLE/DICTIONARY/FILL/INTERVAL/ENCODING are donor full-text/
+    // time-series residue with no place in ISO/IEC 39075:2024; the grammar no
+    // longer recognizes them, so they fail as 42001 syntax errors at parse time.
+    for source in [
+        "CREATE NODE TYPE :S (v :: STRING SEARCHABLE)",
+        "CREATE NODE TYPE :S (v :: STRING DICTIONARY)",
+        "CREATE NODE TYPE :S (v :: STRING FILL LOCF)",
+        "CREATE NODE TYPE :S (v :: STRING INTERVAL '60s')",
+        "CREATE NODE TYPE :S (v :: STRING ENCODING RLE)",
+    ] {
+        let err = selene_gql::parse(source).expect_err("donor constraint should be rejected");
+        assert_eq!(
+            err.gqlstatus(),
+            selene_gql::GqlStatus::SYNTAX_ERROR,
+            "expected 42001 for {source:?}"
+        );
+    }
 }
 
 #[test]

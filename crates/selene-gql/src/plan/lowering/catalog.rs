@@ -184,21 +184,6 @@ fn lower_property_constraint(
             name: *name,
             span: *span,
         },
-        TypePropertyConstraint::Searchable(span) => {
-            PlannedTypePropertyConstraint::Searchable(*span)
-        }
-        TypePropertyConstraint::Dictionary(span) => {
-            PlannedTypePropertyConstraint::Dictionary(*span)
-        }
-        TypePropertyConstraint::Fill(value, span) => {
-            PlannedTypePropertyConstraint::Fill(*value, *span)
-        }
-        TypePropertyConstraint::Interval(value, span) => {
-            PlannedTypePropertyConstraint::Interval(*value, *span)
-        }
-        TypePropertyConstraint::Encoding(value, span) => {
-            PlannedTypePropertyConstraint::Encoding(*value, *span)
-        }
     })
 }
 
