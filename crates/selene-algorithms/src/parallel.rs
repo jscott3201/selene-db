@@ -20,11 +20,12 @@ pub const MAX_PARALLELISM_THREADS: usize = 1024;
 /// Error returned by [`Parallelism::from_thread_count`] for an out-of-range
 /// thread count.
 ///
-/// The two variants are kept distinct so callers (e.g. the GQL procedure
-/// registry) can render the historical adapter-specific error messages
-/// verbatim: a too-large `u64`/`usize` argument versus a request that exceeds
-/// [`MAX_PARALLELISM_THREADS`].
+/// Currently the sole failure mode is a request exceeding
+/// [`MAX_PARALLELISM_THREADS`] ([`ParallelismCapError::ExceedsCap`]).
+/// `#[non_exhaustive]` follows the crate-wide error-enum discipline so future
+/// cap-policy refinements can add variants without a breaking change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ParallelismCapError {
     /// The requested thread count exceeds [`MAX_PARALLELISM_THREADS`].
     ///

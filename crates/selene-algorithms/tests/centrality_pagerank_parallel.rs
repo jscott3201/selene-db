@@ -167,6 +167,52 @@ fn assert_outputs_abs_close(
     }
 }
 
+/// Build a projection over a label that matches no node → an empty projection.
+fn empty_projection() -> GraphProjection {
+    let shared = SharedGraph::new(GraphId::new(85_099));
+    let snapshot = shared.read();
+    GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "empty".to_string(),
+            node_labels: vec![istr("Nonexistent")],
+            edge_labels: vec![],
+            weight_property: None,
+        },
+        None,
+    )
+    .unwrap()
+}
+
+#[test]
+fn pagerank_empty_projection_returns_empty_under_all_parallelism() {
+    // ALGO-15: the empty-projection early return lives *inside* every parallel
+    // body, ahead of the `ParallelRunner` pool build. Exercising it under Auto
+    // and Threads(4) (not just Sequential) proves the early return fires before
+    // any pool is spun up — the `Threads(4)` arm would otherwise build a 4-OS-
+    // thread pool over zero work.
+    let proj = empty_projection();
+    assert_eq!(proj.node_count(), 0);
+
+    for parallelism in [Parallelism::Sequential, Parallelism::Auto, threads4()] {
+        let scores = pagerank(&proj, config(16, 0.0, parallelism));
+        assert!(
+            scores.is_empty(),
+            "empty projection yields empty PageRank under {parallelism:?}"
+        );
+    }
+}
+
+#[test]
+fn parallelism_effective_threads_matches_requested_pool_size() {
+    // ALGO-15: `Threads(n)` reports the exact requested pool size (the
+    // `ParallelRunner` builds a dedicated n-thread pool); `Sequential` reports
+    // 1; `Auto` reports a positive count from the ambient pool.
+    assert_eq!(threads4().effective_threads(), 4);
+    assert_eq!(Parallelism::Sequential.effective_threads(), 1);
+    assert!(Parallelism::Auto.effective_threads() >= 1);
+}
+
 #[test]
 fn pagerank_parallel_matches_sequential_fixed_iter() {
     let proj = fixture_projection();

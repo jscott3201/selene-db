@@ -17,6 +17,10 @@ use crate::pathfinding::sssp::sssp_with_checker;
 use crate::projection::GraphProjection;
 
 /// Configuration for all-pairs shortest path.
+///
+/// Literal construction via struct expression is part of the ergonomic
+/// contract (matching `ProjectionConfig`); fields added later land via a future
+/// builder pattern rather than via `#[non_exhaustive]`.
 #[derive(Debug, Clone, Copy)]
 pub struct ApspConfig {
     /// Caller-supplied upper bound for the projection node count.

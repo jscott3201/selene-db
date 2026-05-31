@@ -29,6 +29,10 @@ use crate::projection::GraphProjection;
 use crate::structural::{RowIndex, SENTINEL};
 
 /// Configuration for betweenness centrality.
+///
+/// Literal construction via struct expression is part of the ergonomic
+/// contract (matching `ProjectionConfig`); fields added later land via a future
+/// builder pattern rather than via `#[non_exhaustive]`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BetweennessConfig {
     /// Optional deterministic sample size for approximate betweenness.
@@ -312,4 +316,55 @@ fn project_and_sort_centrality_pairs(
         .collect();
     result.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.get().cmp(&b.0.get())));
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_sample_sources;
+
+    /// ALGO-14: direct branch-matrix coverage for the §E24 endpoint-aware
+    /// sampling formula `i * (n - 1) / (k - 1)`. Each arm is asserted on its
+    /// exact `(sources, scale)` output rather than only indirectly through
+    /// betweenness magnitudes.
+    #[test]
+    fn compute_sample_sources_branch_matrix() {
+        // Arm: `Some(0)` → no sources, scale 1.0 (zero-centrality result).
+        assert_eq!(compute_sample_sources(5, Some(0)), (vec![], 1.0));
+
+        // Arm: `Some(1)` with `n > 1` → single source at dense index 0, scale n.
+        assert_eq!(compute_sample_sources(5, Some(1)), (vec![0u32], 5.0));
+
+        // Arm: `Some(k)` with `2 <= k < n` → endpoint-aware spacing, scale n/k.
+        // n=5, k=4: span=4, divisor=3 → [0*4/3, 1*4/3, 2*4/3, 3*4/3] = [0,1,2,4].
+        assert_eq!(
+            compute_sample_sources(5, Some(4)),
+            (vec![0u32, 1, 2, 4], 5.0 / 4.0)
+        );
+        // n=10, k=3: span=9, divisor=2 → [0, 4, 9].
+        assert_eq!(
+            compute_sample_sources(10, Some(3)),
+            (vec![0u32, 4, 9], 10.0 / 3.0)
+        );
+
+        // Catch-all arm (`_`): all sources, scale 1.0. Reached by:
+        //  - `None`,
+        //  - `Some(k)` with `k >= n` (sample no smaller than the population),
+        //  - `Some(1)` when `n <= 1` (the `n > 1` guard fails).
+        assert_eq!(compute_sample_sources(4, None), (vec![0u32, 1, 2, 3], 1.0));
+        assert_eq!(
+            compute_sample_sources(3, Some(3)),
+            (vec![0u32, 1, 2], 1.0),
+            "k == n falls through to the full-population arm"
+        );
+        assert_eq!(
+            compute_sample_sources(3, Some(9)),
+            (vec![0u32, 1, 2], 1.0),
+            "k > n falls through to the full-population arm"
+        );
+        assert_eq!(
+            compute_sample_sources(1, Some(1)),
+            (vec![0u32], 1.0),
+            "Some(1) with n == 1 fails the `n > 1` guard → full-population arm"
+        );
+    }
 }

@@ -17,6 +17,13 @@ use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
 /// A shortest-path result: sequence of visited `NodeId`s plus total cost.
+///
+/// This is an **output** value type. Fields added later land via a future
+/// builder/accessor pattern rather than via `#[non_exhaustive]`: as an output
+/// produced inside this crate, `#[non_exhaustive]` would only bar external
+/// construction and would not protect the in-crate literal construction sites,
+/// so it carries the same "literal now, evolve via API later" stance as
+/// `ProjectionConfig`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathResult {
     /// Nodes along the path in traversal order — source first, target last.

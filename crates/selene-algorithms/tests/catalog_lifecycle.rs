@@ -199,6 +199,134 @@ fn project_overwrites_existing_name() {
 }
 
 #[test]
+fn concurrent_ensure_fresh_rebuild_is_race_free() {
+    // 16 threads race to refresh a stale projection. The double-checked-locking
+    // rebuild path (catalog.rs Phase 1 read-check → Phase 2 write-lock re-check)
+    // must let exactly one writer perform the rebuild while the rest observe the
+    // refreshed entry under the Phase-2 re-check and return Ok without rebuilding
+    // again. All callers see Ok and end at gen_v2.
+    let (shared, _) = fixture_small();
+    let snapshot_v1 = shared.read();
+    let catalog = ProjectionCatalog::new();
+    catalog
+        .project(&snapshot_v1, &social_config(), None)
+        .unwrap();
+    let gen_v1 = catalog.get("social").unwrap().generation();
+    drop(snapshot_v1);
+
+    // Advance the generation so the cached projection is stale.
+    let mut txn = shared.begin_write();
+    txn.mutator()
+        .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot_v2 = shared.read();
+    let gen_v2 = snapshot_v2.meta.generation;
+    assert!(gen_v2 > gen_v1, "generation must advance after commit");
+
+    const THREADS: usize = 16;
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let snapshot_ref = &snapshot_v2;
+                let catalog_ref = &catalog;
+                scope.spawn(move || {
+                    catalog_ref
+                        .ensure_fresh(snapshot_ref, "social")
+                        .expect("concurrent ensure_fresh must succeed for every racer");
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().expect("ensure_fresh thread panicked");
+        }
+    });
+
+    // Exactly one logical rebuild: the entry is fresh at gen_v2 and sees the
+    // new node. (We cannot count rebuilds without instrumenting the catalog,
+    // but the Phase-2 re-check is what prevents a second writer from rebuilding
+    // an already-fresh entry; the assertions below confirm the converged state.)
+    let proj_ref = catalog.get("social").unwrap();
+    assert_eq!(
+        proj_ref.generation(),
+        gen_v2,
+        "all racers converge on the gen_v2 rebuild"
+    );
+    assert_eq!(proj_ref.node_count(), 4, "rebuilt projection sees new node");
+    assert_eq!(catalog.len(), 1, "the catalog still holds a single entry");
+}
+
+#[test]
+fn concurrent_ensure_fresh_project_drop_interleave() {
+    // Stress the catalog with concurrent ensure_fresh / project / drop / get on
+    // a single name. The only invariant is that no operation panics or
+    // deadlocks; ensure_fresh and get tolerate NoSuchProjection / None because a
+    // concurrent drop may have removed the entry between operations.
+    let (shared, _) = fixture_small();
+    // `SharedGraph::read()` already hands back an `Arc<SeleneGraph>`, so the
+    // snapshot is `'static + Send + Sync` and can be shared across spawned
+    // threads by cloning the Arc.
+    let snapshot = shared.read();
+    let catalog = std::sync::Arc::new(ProjectionCatalog::new());
+    catalog.project(&snapshot, &social_config(), None).unwrap();
+
+    const ITERATIONS: usize = 200;
+    let mut handles = Vec::new();
+
+    // Refresher.
+    {
+        let catalog = catalog.clone();
+        let snapshot = snapshot.clone();
+        handles.push(thread::spawn(move || {
+            for _ in 0..ITERATIONS {
+                match catalog.ensure_fresh(&snapshot, "social") {
+                    Ok(()) => {}
+                    Err(AlgorithmsError::NoSuchProjection { .. }) => {}
+                    Err(other) => panic!("unexpected ensure_fresh error: {other:?}"),
+                }
+            }
+        }));
+    }
+    // Re-projector.
+    {
+        let catalog = catalog.clone();
+        let snapshot = snapshot.clone();
+        handles.push(thread::spawn(move || {
+            for _ in 0..ITERATIONS {
+                catalog
+                    .project(&snapshot, &social_config(), None)
+                    .expect("project always rebuilds the entry");
+            }
+        }));
+    }
+    // Dropper.
+    {
+        let catalog = catalog.clone();
+        handles.push(thread::spawn(move || {
+            for _ in 0..ITERATIONS {
+                let _ = catalog.drop_projection("social");
+            }
+        }));
+    }
+    // Reader (drops the ref promptly to avoid blocking writers).
+    {
+        let catalog = catalog.clone();
+        handles.push(thread::spawn(move || {
+            for _ in 0..ITERATIONS {
+                if let Some(proj_ref) = catalog.get("social") {
+                    let _ = proj_ref.node_count();
+                }
+            }
+        }));
+    }
+
+    for handle in handles {
+        handle.join().expect("interleave thread panicked");
+    }
+}
+
+#[test]
 fn concurrent_reads_share_projection() {
     let (shared, _) = fixture_small();
     let snapshot = shared.read();

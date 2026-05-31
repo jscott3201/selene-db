@@ -17,6 +17,10 @@ use crate::projection::GraphProjection;
 
 /// Caller-supplied PageRank configuration (spec 16 §E22 — no in-crate
 /// defaults).
+///
+/// Literal construction via struct expression is part of the ergonomic
+/// contract (matching `ProjectionConfig`); fields added later land via a future
+/// builder pattern rather than via `#[non_exhaustive]`.
 #[derive(Debug, Clone, Copy)]
 pub struct PageRankConfig {
     /// Damping factor — probability of following an out-edge versus random

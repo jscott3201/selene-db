@@ -23,6 +23,10 @@ use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
 /// Configuration for per-node triangle count.
+///
+/// Literal construction via struct expression is part of the ergonomic
+/// contract (matching `ProjectionConfig`); fields added later land via a future
+/// builder pattern rather than via `#[non_exhaustive]`.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TriangleCountConfig {
     /// Requested parallel execution policy.
@@ -40,121 +44,70 @@ pub struct TriangleCountConfig {
 /// single edge in the binary-search adjacency.
 #[must_use]
 pub fn triangle_count(proj: &GraphProjection, config: TriangleCountConfig) -> Vec<(NodeId, usize)> {
-    match config.parallelism {
-        Parallelism::Sequential => triangle_count_sequential(proj),
-        Parallelism::Auto | Parallelism::Threads(_) => {
-            triangle_count_parallel(proj, config.parallelism)
-        }
-    }
+    triangle_count_with_checker(proj, config, CancellationChecker::disabled())
+        .expect("disabled cancellation checker never aborts")
 }
 
 /// Count triangles per node with cooperative cancellation checkpoints.
+///
+/// A disabled checker takes the cheap early-return path inside every checkpoint
+/// (see [`check_algorithm`] / [`check_algorithm_stride`]), so the single
+/// checker-threaded impl is the crate-standard shape used by every other
+/// algorithm — there is no hand-duplicated fast path.
 pub fn triangle_count_with_checker(
     proj: &GraphProjection,
     config: TriangleCountConfig,
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
-    if checker.is_disabled() {
-        return Ok(triangle_count(proj, config));
-    }
-
-    match config.parallelism {
-        Parallelism::Sequential => triangle_count_sequential_checked(proj, checker),
-        Parallelism::Auto | Parallelism::Threads(_) => {
-            triangle_count_parallel_checked(proj, config.parallelism, checker)
-        }
-    }
-}
-
-fn triangle_count_sequential(proj: &GraphProjection) -> Vec<(NodeId, usize)> {
-    let adjacency = build_dense_adjacency(proj);
-    if adjacency.is_empty() {
-        return Vec::new();
-    }
-
-    let result = (0..adjacency.row_count())
-        .map(|row| {
-            (
-                adjacency.node_at_row(row),
-                count_triangles_at_row(row, &adjacency),
-            )
-        })
-        .collect();
-    sort_triangle_count_results(result)
-}
-
-fn triangle_count_sequential_checked(
-    proj: &GraphProjection,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
-    let adjacency = build_dense_adjacency_checked(proj, checker)?;
+    let adjacency = build_dense_adjacency(proj, checker)?;
     if adjacency.is_empty() {
         return Ok(Vec::new());
     }
 
+    let result = match config.parallelism {
+        Parallelism::Sequential => count_triangles_sequential(&adjacency, checker)?,
+        Parallelism::Auto | Parallelism::Threads(_) => {
+            count_triangles_parallel(&adjacency, config.parallelism, checker)?
+        }
+    };
+    Ok(sort_triangle_count_results(result))
+}
+
+fn count_triangles_sequential(
+    adjacency: &DenseAdjacency,
+    checker: CancellationChecker<'_>,
+) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
     let mut rows_since_check = 0usize;
-    let result = (0..adjacency.row_count())
+    (0..adjacency.row_count())
         .map(|row| {
             check_algorithm_stride(checker, &mut rows_since_check)?;
             Ok((
                 adjacency.node_at_row(row),
-                count_triangles_at_row(row, &adjacency),
+                count_triangles_at_row(row, adjacency),
             ))
         })
-        .collect::<Result<Vec<_>, AlgorithmAborted>>()?;
-    Ok(sort_triangle_count_results(result))
+        .collect()
 }
 
-fn triangle_count_parallel(
-    proj: &GraphProjection,
-    parallelism: Parallelism,
-) -> Vec<(NodeId, usize)> {
-    let adjacency = build_dense_adjacency(proj);
-    if adjacency.is_empty() {
-        return Vec::new();
-    }
-
-    let runner =
-        ParallelRunner::new(parallelism).expect("ParallelRunner builds for valid parallelism");
-    let result = runner.install(|| {
-        (0..adjacency.row_count())
-            .into_par_iter()
-            .map(|row| {
-                (
-                    adjacency.node_at_row(row),
-                    count_triangles_at_row(row, &adjacency),
-                )
-            })
-            .collect()
-    });
-    sort_triangle_count_results(result)
-}
-
-fn triangle_count_parallel_checked(
-    proj: &GraphProjection,
+fn count_triangles_parallel(
+    adjacency: &DenseAdjacency,
     parallelism: Parallelism,
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, usize)>, AlgorithmAborted> {
-    let adjacency = build_dense_adjacency_checked(proj, checker)?;
-    if adjacency.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let runner =
         ParallelRunner::new(parallelism).expect("ParallelRunner builds for valid parallelism");
-    let result = runner.install(|| {
+    runner.install(|| {
         (0..adjacency.row_count())
             .into_par_iter()
             .map(|row| {
                 check_algorithm(checker)?;
                 Ok((
                     adjacency.node_at_row(row),
-                    count_triangles_at_row(row, &adjacency),
+                    count_triangles_at_row(row, adjacency),
                 ))
             })
             .collect::<Result<Vec<_>, AlgorithmAborted>>()
-    })?;
-    Ok(sort_triangle_count_results(result))
+    })
 }
 
 struct DenseAdjacency<'a> {
@@ -180,37 +133,7 @@ impl DenseAdjacency<'_> {
     }
 }
 
-fn build_dense_adjacency(proj: &GraphProjection) -> DenseAdjacency<'_> {
-    let idx = proj.row_index();
-    let n = idx.len();
-
-    // Build sorted+deduped undirected adjacency per dense index. Self-loops
-    // are filtered (a triangle requires 3 distinct vertices per §E29).
-    let mut adj = vec![Vec::new(); n];
-    for d in 0..n as u32 {
-        let node = idx.node_id_of(d);
-        let neighbors = &mut adj[d as usize];
-        for nb in proj.out_neighbors(node) {
-            if let Some(nd) = idx.dense_of_node(nb.node_id)
-                && nd != d
-            {
-                neighbors.push(nd);
-            }
-        }
-        for nb in proj.in_neighbors(node) {
-            if let Some(nd) = idx.dense_of_node(nb.node_id)
-                && nd != d
-            {
-                neighbors.push(nd);
-            }
-        }
-        neighbors.sort_unstable();
-        neighbors.dedup();
-    }
-    DenseAdjacency { idx, adj }
-}
-
-fn build_dense_adjacency_checked<'a>(
+fn build_dense_adjacency<'a>(
     proj: &'a GraphProjection,
     checker: CancellationChecker<'_>,
 ) -> Result<DenseAdjacency<'a>, AlgorithmAborted> {
