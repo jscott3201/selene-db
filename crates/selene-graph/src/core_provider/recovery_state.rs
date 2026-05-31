@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use selene_core::{Change, EdgeId, GraphId, IStr, NodeId, PropertyDiff, PropertyMap, SchemaChange};
+use selene_core::{Change, EdgeId, GraphId, NodeId, PropertyDiff, PropertyMap, SchemaChange};
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
@@ -17,11 +17,17 @@ use crate::core_provider::{
 };
 use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
-use crate::typed_index::{TypedIndex, TypedIndexKind};
+use crate::typed_index::TypedIndex;
 
+mod index_replay;
 mod materialize;
 mod schema_replay;
 
+use index_replay::{
+    PendingCompositeIndex, PendingIndex, pending_composite_property_index_change,
+    pending_property_index_change, replay_composite_property_index_changes,
+    replay_property_index_changes,
+};
 use materialize::{insert_edge_row, insert_node_row};
 
 /// Accumulator populated by snapshot sections and WAL replay.
@@ -36,10 +42,10 @@ pub(crate) struct RecoveryState {
     edges: BTreeMap<EdgeId, EdgeRow>,
     /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
     /// committed id was decoded at, so `into_graph` materializes snapshot rows
-    /// **positionally** instead of by `id - 1` arithmetic. Aborted-tx hole rows
-    /// (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as the
-    /// pad slots between the real rows the column places. WAL-created ids absent
-    /// here fall back to arithmetic placement (live append; 4e revisits this for
+    /// **positionally** rather than by deriving the row from the id. Aborted-tx
+    /// hole rows (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as
+    /// the pad slots between the real rows the column places. WAL-created ids
+    /// absent here append at the dense end (BRIEF-Item-4c; 4e revisits this for
     /// WAL events that cross a 4b compaction epoch).
     node_snapshot_rows: BTreeMap<NodeId, u32>,
     edge_snapshot_rows: BTreeMap<EdgeId, u32>,
@@ -59,34 +65,6 @@ pub(crate) struct RecoveryState {
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PendingIndex {
-    Create {
-        label: IStr,
-        property: IStr,
-        kind: TypedIndexKind,
-        name: Option<IStr>,
-    },
-    Drop {
-        label: IStr,
-        property: IStr,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum PendingCompositeIndex {
-    Create {
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
-        kinds: SmallVec<[TypedIndexKind; 4]>,
-        name: Option<IStr>,
-    },
-    Drop {
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
-    },
-}
 
 impl RecoveryState {
     /// Construct an empty recovery accumulator.
@@ -448,14 +426,15 @@ impl RecoveryState {
         let mut graph = SeleneGraph::new(meta.graph_id);
         graph.meta = meta;
 
-        // BRIEF-Item-4a STEP 9: materialize each row at its true row index.
-        // Snapshot rows use their decoded position (`node_snapshot_rows`); a
-        // WAL-created id absent from the snapshot falls back to `id - 1`
-        // arithmetic (the live append slot in the identity-era store). Iteration
-        // is id-ascending (BTreeMap), and `insert_node_row` pads-then-sets, so an
-        // out-of-order snapshot (id != row+1, a 4b preview) still lands each row
-        // at its recorded position. The hole slots between recorded positions are
-        // padded with `NodeId::TOMBSTONE` and stay out of the id->row map.
+        // BRIEF-Item-4a STEP 9 / BRIEF-Item-4c: materialize each row at its true
+        // row index. Snapshot rows use their decoded position
+        // (`node_snapshot_rows`); a WAL-created id absent from the snapshot
+        // appends at the dense end (the live-append slot). Iteration is
+        // id-ascending (BTreeMap), and `insert_node_row` pads-then-sets, so a
+        // snapshot whose rows are not in id order (a compacted snapshot) still
+        // lands each row at its recorded position. The hole slots between
+        // recorded positions are padded with `NodeId::TOMBSTONE` and stay out of
+        // the id->row map.
         let mut next_node_id = graph.meta.next_node_id.max(1);
         for (id, row) in self.nodes {
             next_node_id = next_node_id.max(id.get().saturating_add(1));
@@ -530,146 +509,18 @@ impl RecoveryState {
                 ),
             );
         }
-        crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
+        // Apply the post-snapshot WAL index intents to the registration set
+        // only. `into_graph` deliberately does NOT rebuild index contents or
+        // re-validate the closed-graph state here: the single rebuild + validate
+        // site is `SharedGraph::from_graph_parts_and_snapshot`, which every
+        // recovered graph flows through next (GRAPH-06 dedup). Doing it twice was
+        // pure redundant work on the cold startup path.
         replay_property_index_changes(&mut graph, &self.pending_property_index_changes)?;
         replay_composite_property_index_changes(
             &mut graph,
             &self.pending_composite_property_index_changes,
         )?;
-        if let Some(type_def) = graph.meta.bound_type.as_deref() {
-            crate::type_validator::validate_entity_state(&graph, type_def).map_err(|error| {
-                crate::GraphError::Provider(inconsistent(format!(
-                    "recovered closed graph violates bound type: {error}"
-                )))
-            })?;
-        }
         Ok(graph)
-    }
-}
-
-fn pending_property_index_change(change: &SchemaChange) -> Option<PendingIndex> {
-    match change {
-        SchemaChange::PropertyIndexCreated {
-            label,
-            property,
-            kind,
-        } => Some(PendingIndex::Create {
-            label: *label,
-            property: *property,
-            kind: typed_kind_from(*kind),
-            name: None,
-        }),
-        SchemaChange::PropertyIndexCreatedNamed {
-            label,
-            property,
-            kind,
-            name,
-        } => Some(PendingIndex::Create {
-            label: *label,
-            property: *property,
-            kind: typed_kind_from(*kind),
-            name: *name,
-        }),
-        SchemaChange::PropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
-            label: *label,
-            property: *property,
-        }),
-        _ => None,
-    }
-}
-
-fn replay_property_index_changes(
-    graph: &mut SeleneGraph,
-    changes: &[PendingIndex],
-) -> crate::GraphResult<()> {
-    for change in changes {
-        match *change {
-            PendingIndex::Create {
-                label,
-                property,
-                kind,
-                name,
-            } => {
-                let index = crate::property_index::build_property_index_lenient(
-                    graph, label, property, kind,
-                )?;
-                graph
-                    .property_index
-                    .insert((label, property), PropertyIndexEntry::new(index, name));
-            }
-            PendingIndex::Drop { label, property } => {
-                graph.property_index.remove(&(label, property));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn pending_composite_property_index_change(change: &SchemaChange) -> Option<PendingCompositeIndex> {
-    match change {
-        SchemaChange::CompositePropertyIndexCreated {
-            label,
-            properties,
-            kinds,
-            name,
-        } => Some(PendingCompositeIndex::Create {
-            label: *label,
-            properties: properties.clone(),
-            kinds: kinds.iter().copied().map(typed_kind_from).collect(),
-            name: *name,
-        }),
-        SchemaChange::CompositePropertyIndexDropped { label, properties } => {
-            Some(PendingCompositeIndex::Drop {
-                label: *label,
-                properties: properties.clone(),
-            })
-        }
-        _ => None,
-    }
-}
-
-fn replay_composite_property_index_changes(
-    graph: &mut SeleneGraph,
-    changes: &[PendingCompositeIndex],
-) -> crate::GraphResult<()> {
-    for change in changes {
-        match change {
-            PendingCompositeIndex::Create {
-                label,
-                properties,
-                kinds,
-                name,
-            } => {
-                let index =
-                    crate::composite_property_index::build_composite_property_index_lenient(
-                        graph,
-                        *label,
-                        properties.clone(),
-                        kinds.clone(),
-                    )?;
-                let key = crate::graph::composite_property_key(properties);
-                graph.composite_property_index.insert(
-                    (*label, key),
-                    CompositePropertyIndexEntry::new(index, properties.clone(), *name),
-                );
-            }
-            PendingCompositeIndex::Drop { label, properties } => {
-                let key = crate::graph::composite_property_key(properties);
-                graph.composite_property_index.remove(&(*label, key));
-            }
-        }
-    }
-    Ok(())
-}
-
-const fn typed_kind_from(kind: selene_core::SchemaPropertyIndexKind) -> TypedIndexKind {
-    match kind {
-        selene_core::SchemaPropertyIndexKind::I64 => TypedIndexKind::I64,
-        selene_core::SchemaPropertyIndexKind::F64 => TypedIndexKind::F64,
-        selene_core::SchemaPropertyIndexKind::String => TypedIndexKind::String,
-        selene_core::SchemaPropertyIndexKind::Date => TypedIndexKind::Date,
-        selene_core::SchemaPropertyIndexKind::LocalDateTime => TypedIndexKind::LocalDateTime,
-        selene_core::SchemaPropertyIndexKind::Uuid => TypedIndexKind::Uuid,
     }
 }
 

@@ -299,12 +299,18 @@ fn wal_replay_restores_property_index_created_after_node_state() {
     )
     .unwrap();
 
+    // `finish_recovery` (into_graph) now produces only the index *registration*;
+    // the bitmap contents are rebuilt by `SharedGraph::try_from_graph`'s single
+    // rebuild pass (GRAPH-06). Drive the recovered graph through that public path,
+    // then assert the registered index actually indexes the recovered content.
     let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    let rows = recovered
+    assert_eq!(recovered.property_index_count(), 1);
+    let shared = SharedGraph::try_from_graph(recovered).unwrap();
+    let read = shared.read();
+    let rows = read
         .nodes_with_property_eq(&label, &property, &Value::Int(42))
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
-    assert_eq!(recovered.property_index_count(), 1);
 }
 
 #[test]
@@ -468,10 +474,17 @@ fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
     )
     .unwrap();
 
+    // The lenient index rebuild now runs in `SharedGraph::try_from_graph`
+    // (GRAPH-06): a String value under an I64-declared index is skipped, not
+    // fatal. Route through the rebuild so the lenient path is actually exercised
+    // (asserting on the bare `finish_recovery` placeholder would falsely pass).
     let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    let rows = recovered
+    assert!(recovered.property_index_for(&label, &property).is_some());
+    let shared = SharedGraph::try_from_graph(recovered).unwrap();
+    let read = shared.read();
+    let rows = read
         .nodes_with_property_eq(&label, &property, &Value::Int(42))
         .unwrap();
     assert!(rows.is_empty());
-    assert!(recovered.property_index_for(&label, &property).is_some());
+    assert!(read.property_index_for(&label, &property).is_some());
 }

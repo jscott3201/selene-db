@@ -549,7 +549,7 @@ mod tests {
         }
         fn write_commit(
             &self,
-            _principal: Option<&[u8]>,
+            _principal: Option<&Arc<[u8]>>,
             _changes: &[Change],
             _timestamp: HlcTimestamp,
         ) -> Result<u64, ProviderError> {
@@ -591,7 +591,7 @@ mod tests {
         }
         fn write_commit(
             &self,
-            _principal: Option<&[u8]>,
+            _principal: Option<&Arc<[u8]>>,
             _changes: &[Change],
             _timestamp: HlcTimestamp,
         ) -> Result<u64, ProviderError> {

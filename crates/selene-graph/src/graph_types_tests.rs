@@ -1,4 +1,4 @@
-use selene_core::{PropertyValueType, intern};
+use selene_core::{PropertyValueType, Value, intern};
 
 use super::*;
 
@@ -372,16 +372,6 @@ fn node_type_index_returns_none_for_oneof() {
 }
 
 #[test]
-fn node_type_indices_borrow_shape() {
-    assert!(EdgeEndpointDef::Any.node_type_indices().is_empty());
-    assert_eq!(EdgeEndpointDef::NodeType(7).node_type_indices(), &[7]);
-    assert_eq!(
-        EdgeEndpointDef::OneOf(vec![1, 2, 3]).node_type_indices(),
-        &[1, 2, 3]
-    );
-}
-
-#[test]
 fn display_oneof_renders_indices() {
     assert_eq!(format!("{}", EdgeEndpointDef::Any), "Any");
     assert_eq!(format!("{}", EdgeEndpointDef::NodeType(4)), "4");
@@ -406,4 +396,29 @@ fn rkyv_round_trips_graph_type_def_with_oneof() {
         decoded.edge_types[0].target_node_type,
         EdgeEndpointDef::OneOf(vec![1, 2])
     );
+}
+
+#[test]
+fn list_element_null_is_rejected_strictly() {
+    // GRAPH-41 / GV90 (Explicit value type nullability — NOT_SUPPORTED): the
+    // engine cannot spell `LIST<T NULL>` or `LIST<T NOT NULL>`; a `LIST<T>`
+    // descriptor matches elements strictly by type, so a NULL element never
+    // conforms to a non-NULL element type. This pins the single, internally
+    // consistent "not offered" semantics — a change here is a deliberate GV90
+    // decision, not an accident.
+    let int_list = PropertyElementType::Scalar(PropertyValueType::Int);
+    assert!(
+        int_list.matches(&Value::Int(7)),
+        "a typed Int element conforms to LIST<Int>"
+    );
+    assert!(
+        !int_list.matches(&Value::Null),
+        "a NULL element does NOT conform to LIST<Int> (no per-element nullability)"
+    );
+
+    // Only an explicit LIST<NULL> descriptor accepts a NULL element — the engine
+    // offers no element-nullability modifier on a non-NULL element type.
+    let null_list = PropertyElementType::Scalar(PropertyValueType::Null);
+    assert!(null_list.matches(&Value::Null));
+    assert!(!null_list.matches(&Value::Int(7)));
 }

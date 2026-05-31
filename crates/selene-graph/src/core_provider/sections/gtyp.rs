@@ -1,4 +1,4 @@
-use super::{decode_rkyv, encode_rkyv, ensure_section_within_cap, validate_sorted_unique};
+use super::codec::{decode_rkyv, encode_rkyv, ensure_section_within_cap, validate_sorted_unique};
 use crate::graph::SeleneGraph;
 use crate::graph_types::GraphTypeDef;
 

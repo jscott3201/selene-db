@@ -21,10 +21,6 @@ impl ReentrantProvider {
 }
 
 impl IndexProvider for ReentrantProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -98,10 +94,6 @@ struct PanickingProvider {
 }
 
 impl IndexProvider for PanickingProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -159,10 +151,6 @@ struct SlowProvider {
 }
 
 impl IndexProvider for SlowProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -251,10 +239,6 @@ struct ConditionallyTagPanickingProvider {
 }
 
 impl IndexProvider for ConditionallyTagPanickingProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         if self
             .panic_during_fanout

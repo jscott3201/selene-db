@@ -10,13 +10,16 @@ use crate::chunked_vec::ChunkedVec;
 /// structure-of-arrays columns.
 ///
 /// Distinct from the external [`NodeId`]/[`EdgeId`]: a `RowIndex` is dense,
-/// reused after compaction (D22 / BRIEF-Item-4b), and **never persisted** — only
-/// external ids reach the WAL, snapshot, or `Change` stream. Today the mapping
-/// is the identity `RowIndex(r) <-> *Id(r + 1)`; the
+/// remappable by compaction (D22 / BRIEF-Item-4b/4c), and **never persisted** —
+/// only external ids reach the WAL, snapshot, or `Change` stream. There is **no**
+/// fixed arithmetic relationship between a row and its id: post-4c new rows are
+/// appended at the dense end (the current row count) while the monotonic id
+/// counter advances independently, and a compaction pass renumbers rows under
+/// stable ids. The mapping is resolved *only* through the
 /// [`SeleneGraph`](crate::SeleneGraph) `node_id_to_row`/`edge_id_to_row` maps and
-/// the per-store `row_to_id` columns make it explicit so a later compaction epoch
-/// can renumber rows while external ids stay stable. Keeping it a newtype lets
-/// the compiler flag any site that still conflates a row with an external id.
+/// the per-store `row_to_id` reverse columns — never by index arithmetic.
+/// Keeping it a newtype lets the compiler flag any site that still conflates a
+/// row with an external id.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RowIndex(u32);
 

@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 
-use super::{compact_core, live_id_set};
+use super::compact_core;
 use crate::store::RowIndex;
 use crate::{AdjacencyEntry, CompactionReport, SeleneGraph, SharedGraph};
 
@@ -190,19 +190,6 @@ fn compaction_preserves_observable_reads() {
 }
 
 #[test]
-fn live_id_set_reflects_alive_external_ids() {
-    let shared = graph_with_a_deletion();
-    let live = live_id_set(&shared.read());
-    assert_eq!(
-        live.nodes,
-        HashSet::from([NodeId::new(1), NodeId::new(3), NodeId::new(4)])
-    );
-    assert!(!live.contains_node(NodeId::new(2)));
-    assert!(live.contains_edge(EdgeId::new(1)) && live.contains_edge(EdgeId::new(3)));
-    assert!(!live.contains_edge(EdgeId::new(2)), "cascade-deleted edge");
-}
-
-#[test]
 fn compacted_graph_republishes_cleanly() {
     // The compacted graph is a valid publishable graph: SharedGraph::from_graph
     // re-runs the full rebuild + (debug) consistency assertion, and every read
@@ -272,7 +259,6 @@ fn compaction_of_empty_graph_is_a_clean_noop() {
     assert_eq!(compacted.graph.edge_store.len(), 0);
     assert_eq!(compacted.graph.node_count(), 0);
     assert_eq!(compacted.report, CompactionReport::default());
-    assert!(compacted.live.nodes.is_empty() && compacted.live.edges.is_empty());
     // High-water marks of a virgin allocator carry through untouched.
     assert_eq!(compacted.graph.meta.next_node_id, before.meta.next_node_id);
     // An empty compacted graph is still a valid publishable graph.
@@ -404,7 +390,6 @@ fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
         g.meta.next_node_id, next_node_before,
         "burned id 2 must never be reissued"
     );
-    assert!(!compacted.live.contains_node(NodeId::new(2)));
 }
 
 #[test]

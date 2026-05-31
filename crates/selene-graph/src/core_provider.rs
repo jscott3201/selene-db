@@ -91,16 +91,16 @@ impl DurableState {
         }
     }
 
-    /// Attach an audit log so pack-lifecycle events committed through this
-    /// provider are mirrored to it (Item 7 / Seam D, D24).
+    /// Attach an audit log so engine-owned events committed through this
+    /// provider are mirrored to it (Item 7 / D24).
     ///
     /// Mirroring is **WAL-first, audit-after**: the WAL append is the source of
     /// truth and gates the commit; the audit write runs only after it succeeds
     /// and is best-effort (a failure is logged, never failing the commit). The
-    /// lifecycle event also remains in the WAL, so a failed mirror degrades to
-    /// the pre-Item-7 WAL-only behavior rather than losing the event. Per the
-    /// donor lesson "audit lag is recoverable, fiction is not," the audit can
-    /// only lag the WAL, never lead it.
+    /// event also remains in the WAL, so a failed mirror degrades to the
+    /// pre-Item-7 WAL-only behavior rather than losing the event. Per the donor
+    /// lesson "audit lag is recoverable, fiction is not," the audit can only lag
+    /// the WAL, never lead it.
     #[must_use]
     pub fn with_audit_log(mut self, audit: AuditLog) -> Self {
         self.audit = Some(Mutex::new(audit));
@@ -220,23 +220,29 @@ impl CoreProvider {
     }
 
     fn write_section_inner(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        let inner = self.inner.lock();
-        match &*inner {
-            CoreInner::Live { snapshot, .. } => {
-                let graph = snapshot.load_full();
-                match sub_tag.0 {
-                    CORE_GTYP_SUB => encode_graph_types(&graph),
-                    CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
-                    CORE_NODE_SUB => encode_nodes(&graph),
-                    CORE_EDGE_SUB => encode_edges(&graph),
-                    CORE_SCMA_SUB => encode_schemas(&graph),
-                    CORE_CPIX_SUB => encode_composite_schemas(&graph),
-                    _ => Err(invalid_sub_tag(sub_tag)),
+        // The snapshot is an `Arc<ArcSwap<SeleneGraph>>`: `load_full()` clones the
+        // Arc lock-free. Hold `inner` ONLY long enough to grab that Arc, then drop
+        // the guard so the (potentially ≤1 GiB) rkyv encode runs lock-free and
+        // never blocks the commit hot path that shares this Mutex.
+        let graph = {
+            let inner = self.inner.lock();
+            match &*inner {
+                CoreInner::Live { snapshot, .. } => snapshot.load_full(),
+                CoreInner::Recovery { .. } => {
+                    return Err(inconsistent(
+                        "write_section called on recovery-mode CoreProvider",
+                    ));
                 }
             }
-            CoreInner::Recovery { .. } => Err(inconsistent(
-                "write_section called on recovery-mode CoreProvider",
-            )),
+        };
+        match sub_tag.0 {
+            CORE_GTYP_SUB => encode_graph_types(&graph),
+            CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
+            CORE_NODE_SUB => encode_nodes(&graph),
+            CORE_EDGE_SUB => encode_edges(&graph),
+            CORE_SCMA_SUB => encode_schemas(&graph),
+            CORE_CPIX_SUB => encode_composite_schemas(&graph),
+            _ => Err(invalid_sub_tag(sub_tag)),
         }
     }
 
@@ -250,10 +256,6 @@ impl CoreProvider {
 }
 
 impl IndexProvider for CoreProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         ProviderTag(CORE_PROVIDER_TAG)
     }
@@ -301,7 +303,7 @@ impl DurableProvider for CoreProvider {
 
     fn write_commit(
         &self,
-        principal: Option<&[u8]>,
+        principal: Option<&Arc<[u8]>>,
         changes: &[Change],
         timestamp: HlcTimestamp,
     ) -> Result<u64, ProviderError> {
@@ -311,7 +313,9 @@ impl DurableProvider for CoreProvider {
                 durable: Some(durable),
                 ..
             } => {
-                let principal = principal.map(Arc::<[u8]>::from);
+                // Cheap refcount bump — the caller already owns the bytes as an
+                // `Arc<[u8]>`; no slice re-allocation or copy.
+                let principal = principal.cloned();
                 // WAL-first: the append gates the commit (its error fails it).
                 let sequence = {
                     let mut writer = durable.writer.lock();

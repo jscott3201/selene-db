@@ -3,9 +3,10 @@
 //! between.
 //!
 //! Split out of `recovery_state.rs` to keep that file under the 700-LOC cap.
-//! BRIEF-Item-4a STEP 9: the `row_index` is supplied by `into_graph` (snapshot
-//! position, or `id - 1` arithmetic for WAL-created ids) rather than derived
-//! from the id here, so non-identity snapshots round-trip.
+//! BRIEF-Item-4a STEP 9 / BRIEF-Item-4c: the `row_index` is supplied by
+//! `into_graph` (the decoded snapshot position, or the dense-end append slot for
+//! WAL-created ids) rather than derived from the id here, so snapshots whose rows
+//! are not in id order round-trip.
 
 use std::sync::OnceLock;
 

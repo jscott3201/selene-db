@@ -3,10 +3,10 @@
 //! The graph crate owns node/edge storage, label sets, property maps, directed
 //! adjacency, built-in label/property indexes, typed mutation validation, and
 //! the CORE persistence provider. `SharedGraph` serializes writes through a
-//! transaction boundary while readers observe immutable snapshots. Higher
-//! layers own GQL binding/planning, procedure-pack entry points, and extension
-//! provider semantics; edge property indexes remain outside the v1.0 storage
-//! contract. See Spec 03 and Spec 06.
+//! transaction boundary while readers observe immutable snapshots. selene-db is
+//! a single native engine: the higher `selene-gql` layer owns GQL
+//! binding/planning and the one frozen native procedure registry. Edge property
+//! indexes remain outside the v1.0 storage contract.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -40,7 +40,7 @@ pub mod write_txn;
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
 pub use chunked_vec::ChunkedVec;
 pub use committer_batch::CommitBatching;
-pub use compaction::{CompactedCore, CompactionReport, LiveIdSet, compact_core, live_id_set};
+pub use compaction::{CompactedCore, CompactionReport, compact_core};
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,
 };
