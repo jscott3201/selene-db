@@ -131,11 +131,16 @@ fn union_all_edges_with_checker(
                 uf.union(d, other);
             }
         }
-        // `in_neighbors` is redundant after every out-edge is unioned (each
-        // edge appears once in `out_neighbors(source)` and once in
-        // `in_neighbors(target)`), but iterating in_neighbors as well does no
-        // harm and guarantees the undirected closure even if a future
-        // projection ever stored asymmetric out/in adjacency.
+        // The in-neighbor pass is redundant in release: every edge appears once
+        // in `out_neighbors(source)` and once in `in_neighbors(target)`, and the
+        // CSR transpose invariant (asserted in `GraphProjection::build`) keeps
+        // out/in adjacency symmetric — so unioning out-edges already forms the
+        // full undirected closure. We retain the in-neighbor union ONLY in debug
+        // builds: it is a cheap cross-check of that invariant (if a future
+        // projection ever stored asymmetric out/in adjacency, the debug build
+        // still produces the correct undirected closure), while release skips
+        // the duplicate union-find work.
+        #[cfg(debug_assertions)]
         for nb in proj.in_neighbors(nid) {
             if let Some(other) = idx.dense_of_node(nb.node_id) {
                 uf.union(d, other);

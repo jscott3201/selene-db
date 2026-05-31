@@ -14,6 +14,10 @@ fn weight_props(value: f64) -> PropertyMap {
     PropertyMap::from_pairs([(istr("weight"), Value::Float(value))]).unwrap()
 }
 
+fn props_with_weight(value: Value) -> PropertyMap {
+    PropertyMap::from_pairs([(istr("weight"), value)]).unwrap()
+}
+
 /// Build a small fixture:
 ///   Person(1) -- friend(weight=2.5) --> Person(2)
 ///   Person(2) -- friend(weight=4.0) --> Company(3)
@@ -284,6 +288,108 @@ fn projection_weight_missing_defaults_to_one() {
     // The other edges still carry their declared weights.
     assert_eq!(proj.out_neighbors(nodes[0])[0].weight, 2.5);
     assert_eq!(proj.out_neighbors(nodes[1])[0].weight, 4.0);
+}
+
+#[test]
+fn projection_weight_uint_coerced_to_f64() {
+    // ALGO-13: a `Value::Uint` weight goes through `extract_weight`'s Uint
+    // coercion branch (`*u as f64`), distinct from the Int and Float branches.
+    let shared = SharedGraph::new(GraphId::new(13_001));
+    let label = istr("N");
+    let rel = istr("R");
+    let weight = istr("weight");
+    let mut txn = shared.begin_write();
+    let a = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    let b = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    txn.mutator()
+        .create_edge(rel, a, b, props_with_weight(Value::Uint(7)))
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot = shared.read();
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "uint-weight".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: Some(weight),
+        },
+        None,
+    )
+    .unwrap();
+
+    let out = proj.out_neighbors(a);
+    assert_eq!(out.len(), 1);
+    assert_eq!(
+        out[0].weight, 7.0,
+        "Value::Uint(7) must coerce to 7.0 via the Uint branch"
+    );
+}
+
+#[test]
+fn projection_weight_null_or_non_numeric_defaults_to_one() {
+    // ALGO-13: a weight property that IS present but holds Null or a
+    // non-numeric value falls through `extract_weight`'s `_ => 1.0` arm. This
+    // is a different code path from a *missing* property (the earlier
+    // `properties.get(prop)` returns `None`) — here `get` returns `Some(..)`
+    // but the variant is not Float/Int/Uint.
+    let shared = SharedGraph::new(GraphId::new(13_002));
+    let label = istr("N");
+    let rel = istr("R");
+    let weight = istr("weight");
+    let mut txn = shared.begin_write();
+    let a = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    let b = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    let c = txn
+        .mutator()
+        .create_node(LabelSet::single(label), PropertyMap::new())
+        .unwrap();
+    // a -> b: weight present but Null.
+    txn.mutator()
+        .create_edge(rel, a, b, props_with_weight(Value::Null))
+        .unwrap();
+    // b -> c: weight present but non-numeric (Bool).
+    txn.mutator()
+        .create_edge(rel, b, c, props_with_weight(Value::Bool(true)))
+        .unwrap();
+    txn.commit().unwrap();
+
+    let snapshot = shared.read();
+    let proj = GraphProjection::build(
+        &snapshot,
+        &ProjectionConfig {
+            name: "null-weight".to_string(),
+            node_labels: vec![],
+            edge_labels: vec![],
+            weight_property: Some(weight),
+        },
+        None,
+    )
+    .unwrap();
+
+    assert_eq!(
+        proj.out_neighbors(a)[0].weight,
+        1.0,
+        "present-but-Null weight defaults to 1.0 per spec 16 §E04"
+    );
+    assert_eq!(
+        proj.out_neighbors(b)[0].weight,
+        1.0,
+        "present-but-non-numeric weight defaults to 1.0 per spec 16 §E04"
+    );
 }
 
 #[test]

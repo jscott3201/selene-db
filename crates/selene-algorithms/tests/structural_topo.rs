@@ -111,7 +111,15 @@ fn topo_cycle_returns_not_a_dag() {
 #[test]
 fn topo_partial_cycle_returns_not_a_dag() {
     // DAG portion: n1 -> n2; cycle portion: n3 -> n4 -> n3. The whole graph is
-    // not a DAG — Kahn's reports an error and the hint points at a cycle node.
+    // not a DAG — Kahn's reports an error and the hint MUST name a node from
+    // the cyclic subset, never one of the DAG-portion nodes.
+    //
+    // ALGO-16: a weaker test would only assert the error *variant*
+    // (`matches!(NotADag { .. })`). Here we pin the hint to the exact cyclic
+    // subset {n3, n4} and assert it is NOT one of the DAG nodes {n1, n2}: n1
+    // (in-degree 0) and n2 (in-degree 1, satisfied by n1) both drain during the
+    // sweep, so only the cycle members retain positive in-degree when Kahn's
+    // stalls. Tolerant of *which* cycle member surfaces.
     let (shared, nodes) = build_graph(4, &[(0, 1), (2, 3), (3, 2)]);
     let proj = build_proj(&shared);
     let err = topological_sort(&proj).unwrap_err();
@@ -119,9 +127,16 @@ fn topo_partial_cycle_returns_not_a_dag() {
         panic!("expected NotADag, got {err:?}");
     };
     let hint = cycle_hint.expect("cycle hint should be present");
+
+    let cyclic_subset = [nodes[2], nodes[3]];
+    let dag_subset = [nodes[0], nodes[1]];
     assert!(
-        hint == nodes[2] || hint == nodes[3],
-        "hint must point at a cycle node (n3 or n4), got {hint:?}"
+        cyclic_subset.contains(&hint),
+        "hint {hint:?} must be a cycle member (one of {cyclic_subset:?})"
+    );
+    assert!(
+        !dag_subset.contains(&hint),
+        "hint {hint:?} must NOT be a DAG-portion node ({dag_subset:?}) — those drain before the stall"
     );
 }
 

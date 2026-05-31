@@ -190,14 +190,15 @@ pub fn louvain_with_checker(
         }
     }
 
-    // Final result: community IDs are dense indices. Remap to NodeId values
-    // (smallest NodeId in each community would be the WCC/SCC convention, but
-    // Louvain communities are not "components" in the connectivity sense —
-    // donor leaves the dense-index labels as-is, which is fine because they
-    // are stable identifiers within a single run). We emit the dense-index
-    // form converted to `u64` to match the type signature; if a future brief
-    // wants smallest-NodeId-in-community canonicalization, it lives behind a
-    // separate canonicalization step (no information loss).
+    // Final result: `community[d]` holds the dense index of the community's
+    // seed node (the singleton each merge chain folded into). We emit that
+    // seed's external NodeId — `idx.node_id_of(community[d]).get()` — as the
+    // community label. This is a stable identifier within a single run, NOT
+    // the smallest NodeId in the community: it deliberately differs from the
+    // min-NodeId canonicalization used by WCC / SCC / label_propagation
+    // (§E12), because Louvain communities are not connectivity components.
+    // Smallest-NodeId-in-community canonicalization, if a future brief wants
+    // it, is a separate post-pass (no information loss).
     let mut result: Vec<(NodeId, u64, u32)> = (0..n as u32)
         .map(|d| {
             (
@@ -219,12 +220,7 @@ pub fn louvain_with_checker(
 /// candidate community, `k_i` is the node's weighted degree, and `sigma_tot`
 /// is the target community's weighted-degree sum. The movement delta is the
 /// candidate term minus the current-community term.
-pub(crate) fn compute_modularity_delta(
-    total_weight: f64,
-    ki_in: f64,
-    ki: f64,
-    sigma_tot: f64,
-) -> f64 {
+fn compute_modularity_delta(total_weight: f64, ki_in: f64, ki: f64, sigma_tot: f64) -> f64 {
     ki_in / total_weight - (ki * sigma_tot) / (2.0 * total_weight * total_weight)
 }
 

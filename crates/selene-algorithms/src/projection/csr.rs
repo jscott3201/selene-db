@@ -185,6 +185,11 @@ fn build_csr(
         };
         total
     ];
+    // Why: the per-dense write cursor must start at each row's base offset, but
+    // `offsets` is still read immutably here (and is then moved into `ProjCsr`
+    // below as the canonical row-base array). A clone gives the cursor an
+    // independent mutable copy without aliasing the offsets we keep. This is a
+    // build-time-only allocation, trivial next to the `neighbors` Vec.
     let mut cursor = offsets.clone();
 
     for row_u32 in nodes {

@@ -10,6 +10,11 @@
 //! Algorithm functions are referenced via fully-qualified `crate::` paths so the
 //! facade can reuse the canonical `*_with_checker` names without shadowing the
 //! underlying algorithm functions.
+//!
+//! Delegation shape: every convenience runner forwards to its `*_with_checker`
+//! sibling with [`CancellationChecker::disabled`]; the projection-resolution
+//! body lives once in the `*_with_checker` variant. There is no separate
+//! private `*_checked` helper tier.
 
 use selene_core::{CancellationChecker, NodeId};
 use selene_graph::SeleneGraph;
@@ -119,7 +124,7 @@ pub fn label_propagation(
     name: &str,
     max_iter: usize,
 ) -> Result<Vec<(NodeId, u64)>, ApiError> {
-    label_propagation_checked(
+    label_propagation_with_checker(
         catalog,
         snapshot,
         name,
@@ -135,16 +140,6 @@ pub fn label_propagation(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn label_propagation_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    max_iter: usize,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, u64)>, ApiError> {
-    label_propagation_checked(catalog, snapshot, name, max_iter, checker)
-}
-
-fn label_propagation_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -170,7 +165,7 @@ pub fn louvain(
     name: &str,
     max_iter: usize,
 ) -> Result<Vec<(NodeId, u64, u32)>, ApiError> {
-    louvain_checked(
+    louvain_with_checker(
         catalog,
         snapshot,
         name,
@@ -186,16 +181,6 @@ pub fn louvain(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn louvain_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    max_iter: usize,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, u64, u32)>, ApiError> {
-    louvain_checked(catalog, snapshot, name, max_iter, checker)
-}
-
-fn louvain_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -221,7 +206,7 @@ pub fn triangle_count(
     name: &str,
     config: TriangleCountConfig,
 ) -> Result<Vec<(NodeId, usize)>, ApiError> {
-    triangle_count_checked(
+    triangle_count_with_checker(
         catalog,
         snapshot,
         name,
@@ -237,16 +222,6 @@ pub fn triangle_count(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn triangle_count_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    config: TriangleCountConfig,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, usize)>, ApiError> {
-    triangle_count_checked(catalog, snapshot, name, config, checker)
-}
-
-fn triangle_count_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -275,7 +250,7 @@ pub fn wcc(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<Vec<(NodeId, u64)>, ApiError> {
-    wcc_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    wcc_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`wcc`].
@@ -285,15 +260,6 @@ pub fn wcc(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn wcc_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, u64)>, ApiError> {
-    wcc_checked(catalog, snapshot, name, checker)
-}
-
-fn wcc_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -315,7 +281,7 @@ pub fn scc(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<Vec<(NodeId, u64)>, ApiError> {
-    scc_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    scc_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`scc`].
@@ -325,15 +291,6 @@ pub fn scc(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn scc_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, u64)>, ApiError> {
-    scc_checked(catalog, snapshot, name, checker)
-}
-
-fn scc_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -355,7 +312,7 @@ pub fn wcc_count(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<usize, ApiError> {
-    wcc_count_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    wcc_count_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`wcc_count`].
@@ -365,15 +322,6 @@ pub fn wcc_count(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn wcc_count_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<usize, ApiError> {
-    wcc_count_checked(catalog, snapshot, name, checker)
-}
-
-fn wcc_count_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -397,7 +345,7 @@ pub fn scc_count(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<usize, ApiError> {
-    scc_count_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    scc_count_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`scc_count`].
@@ -407,15 +355,6 @@ pub fn scc_count(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn scc_count_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<usize, ApiError> {
-    scc_count_checked(catalog, snapshot, name, checker)
-}
-
-fn scc_count_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -439,7 +378,7 @@ pub fn topological_sort(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<Vec<(NodeId, usize)>, ApiError> {
-    topological_sort_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    topological_sort_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`topological_sort`].
@@ -449,15 +388,6 @@ pub fn topological_sort(
 /// Returns [`ApiError::Projection`] on projection resolution failure, or
 /// [`ApiError::TopoSort`] on a directed cycle / cancellation.
 pub fn topological_sort_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, usize)>, ApiError> {
-    topological_sort_checked(catalog, snapshot, name, checker)
-}
-
-fn topological_sort_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -481,7 +411,7 @@ pub fn articulation_points(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<Vec<NodeId>, ApiError> {
-    articulation_points_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    articulation_points_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`articulation_points`].
@@ -491,15 +421,6 @@ pub fn articulation_points(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn articulation_points_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<NodeId>, ApiError> {
-    articulation_points_checked(catalog, snapshot, name, checker)
-}
-
-fn articulation_points_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -522,7 +443,7 @@ pub fn bridges(
     snapshot: &SeleneGraph,
     name: &str,
 ) -> Result<Vec<(NodeId, NodeId)>, ApiError> {
-    bridges_checked(catalog, snapshot, name, CancellationChecker::disabled())
+    bridges_with_checker(catalog, snapshot, name, CancellationChecker::disabled())
 }
 
 /// Cancellable [`bridges`].
@@ -532,15 +453,6 @@ pub fn bridges(
 /// Returns [`ApiError::Projection`] on projection resolution failure or
 /// [`ApiError::Aborted`] on cancellation / timeout.
 pub fn bridges_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, NodeId)>, ApiError> {
-    bridges_checked(catalog, snapshot, name, checker)
-}
-
-fn bridges_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -573,7 +485,7 @@ pub fn dijkstra(
     from: NodeId,
     to: NodeId,
 ) -> Result<Option<PathResult>, ApiError> {
-    dijkstra_checked(
+    dijkstra_with_checker(
         catalog,
         snapshot,
         name,
@@ -590,17 +502,6 @@ pub fn dijkstra(
 /// Returns [`ApiError::Projection`] on projection resolution failure, or
 /// [`ApiError::Pathfinding`] on a bad edge weight / cancellation.
 pub fn dijkstra_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    from: NodeId,
-    to: NodeId,
-    checker: CancellationChecker<'_>,
-) -> Result<Option<PathResult>, ApiError> {
-    dijkstra_checked(catalog, snapshot, name, from, to, checker)
-}
-
-fn dijkstra_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -627,7 +528,7 @@ pub fn sssp(
     name: &str,
     source: NodeId,
 ) -> Result<Vec<(NodeId, f64)>, ApiError> {
-    sssp_checked(
+    sssp_with_checker(
         catalog,
         snapshot,
         name,
@@ -643,16 +544,6 @@ pub fn sssp(
 /// Returns [`ApiError::Projection`] on projection resolution failure, or
 /// [`ApiError::Pathfinding`] on a bad edge weight / cancellation.
 pub fn sssp_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    source: NodeId,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, f64)>, ApiError> {
-    sssp_checked(catalog, snapshot, name, source, checker)
-}
-
-fn sssp_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
@@ -679,7 +570,7 @@ pub fn apsp(
     name: &str,
     config: ApspConfig,
 ) -> Result<Vec<(NodeId, NodeId, f64)>, ApiError> {
-    apsp_checked(
+    apsp_with_checker(
         catalog,
         snapshot,
         name,
@@ -695,16 +586,6 @@ pub fn apsp(
 /// Returns [`ApiError::Projection`] on projection resolution failure, or
 /// [`ApiError::Pathfinding`] on a bad edge weight / size guard / cancellation.
 pub fn apsp_with_checker(
-    catalog: &ProjectionCatalog,
-    snapshot: &SeleneGraph,
-    name: &str,
-    config: ApspConfig,
-    checker: CancellationChecker<'_>,
-) -> Result<Vec<(NodeId, NodeId, f64)>, ApiError> {
-    apsp_checked(catalog, snapshot, name, config, checker)
-}
-
-fn apsp_checked(
     catalog: &ProjectionCatalog,
     snapshot: &SeleneGraph,
     name: &str,
