@@ -10,8 +10,8 @@ homepage.workspace = true
 description = "Graph algorithms for selene-db (projection, structural, pathfinding, centrality, community)"
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.0.0" }
-selene-graph = { path = "../selene-graph", version = "1.0.0" }
+selene-core = { path = "../selene-core", version = "1.1.0" }
+selene-graph = { path = "../selene-graph", version = "1.1.0" }
 parking_lot.workspace = true
 rayon.workspace = true
 roaring.workspace = true
@@ -24,7 +24,7 @@ criterion.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
-selene-testing = { path = "../selene-testing", version = "1.0.0" }
+selene-testing = { path = "../selene-testing", version = "1.1.0" }
 
 [features]
 test-harness = []

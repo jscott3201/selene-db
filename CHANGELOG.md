@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-05-31
+
 ### Removed
 
 - **Vector index extension externalized.** The `selene-vector` and
@@ -316,28 +318,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   stable. The `ProcedureRegistry` trait is kept as the plan/execute seam.
 - **Dedicated `audit.log` for engine-owned events**, with retention independent
   of the WAL + snapshot lineage (BRIEF-Item-7, deletion+reclamation audit Item 7
-  / Seam D, D24). Fixes the bug where pack-lifecycle audit events — written to
-  the WAL as `SchemaChange::ProcedurePackLifecycle` — were moved into
-  `wal.{N}.archive` by rotation and then silently lost when an embedder pruned
-  archives ([D26](#)). Lifecycle events are now **also** mirrored to an
-  append-only `audit.log` (`SLAU`) that retention prunes separately, so pack
-  history survives. New selene-persist API: `AuditLog` (`open` / `append` /
-  `read_all` / `prune`, with a torn-tail-truncating scan-on-open mirroring the
-  WAL's crash recovery), `AuditRecord`, `AuditRetentionPolicy { keep_n_events,
-  max_age }` (conjunctive; default unbounded — lifecycle events are sparse;
-  prune is an atomic read-filter-rewrite), and `AUDIT_KIND_PACK_LIFECYCLE`.
+  / Seam D, D24). An append-only `audit.log` (`SLAU`) that retention prunes
+  separately from the WAL/snapshot lineage, so an engine event survives even when
+  an embedder prunes WAL archives ([D26](#)). New selene-persist API: `AuditLog`
+  (`open` / `append` / `read_all` / `prune`, with a torn-tail-truncating
+  scan-on-open mirroring the WAL's crash recovery), `AuditRecord`,
+  `AuditRetentionPolicy { keep_n_events, max_age }` (conjunctive; default
+  unbounded — events are sparse; prune is an atomic read-filter-rewrite).
   Records are generic `kind`-tagged opaque payloads with a caller-supplied
   wall-clock stamp, so `selene-persist` stays below lifecycle semantics and the
   system clock. Wire it up via `SharedGraphBuilder::with_audit_log` (requires
-  `with_wal`); pack-lifecycle commits are mirrored **WAL-first, audit-after**
+  `with_wal`); engine events are mirrored **WAL-first, audit-after**
   (the WAL append gates the commit; the audit write is best-effort and the event
   also stays in the WAL, so a failed mirror degrades to WAL-only rather than
   losing data — "audit lag is recoverable, fiction is not"). Recovery reattaches
   the audit log when the file is present, so post-recovery commits keep
   mirroring. **Scoped surgically:** the D12 per-commit principal stays in the WAL
   entry header (no WAL-format break, no hot-path write-amplification); only
-  engine-owned events move to `audit.log`. `selene_persist::prune` (D26) never
-  touches `audit.log`.
+  engine-owned events move to `audit.log`. The substrate is retained as the
+  durable channel reserved for future first-party engine events.
+  `selene_persist::prune` (D26) never touches `audit.log`.
 - **Snapshot + WAL-archive retention** via a typed `RetentionPolicy` and a
   MANIFEST-atomic `prune` (BRIEF-Item-5, deletion+reclamation audit Item 5 /
   D26). `selene_persist::prune(dir, &policy)` (and the `WalWriter::prune`
@@ -370,9 +370,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   turning a previously closed (GG02) graph back into an open (GG01) one.
   Recorded as exactly **one** declarative `Change::GraphReset` regardless of
   instance count (O(1) WAL), while per-row `NodeDeleted`/`EdgeDeleted`
-  tombstones are fanned out to `ChangeSubscriber`s (so derived state such as
-  vector indexes is reclaimed without leaks) on both the runtime and the
-  recovery-replay paths. Recovery re-derives the wiped rows from the recovered
+  tombstones are still produced on both the runtime and the recovery-replay
+  paths so index providers stay consistent. Recovery re-derives the wiped rows from the recovered
   store and forces the graph open — a `recover_closed(bound_type)` after a
   reset reconstructs the identical empty+open state. The MANIFEST epoch and WAL
   archive lineage are untouched (this is one committed WAL entry, not a
@@ -402,23 +401,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   default carry only the existing `GG02`/`GG20`/`GG21` type-DDL flags.
   `selene-graph::DropBehavior` parameterizes the single write funnel so no I/O
   surface can bypass the policy; `selene-gql::DropBehavior` is its AST mirror.
-  No new `Change` variants — `selene-vector` needs no edits.
 - `IM_TRUNCATE` vendor extension: `TRUNCATE NODE TYPE :L` and
   `TRUNCATE EDGE TYPE :L` declarative bulk delete (BRIEF-150, deletion+
   reclamation audit Item 11). A truncate is observationally identical to
   `MATCH (n:L) DETACH DELETE n` — same final graph state, incident edges of
-  every type cascaded, no dangling edges, and the same per-row D25
-  `ChangeSubscriber` tombstone fan-out so derived state (e.g. vector indexes)
-  is reclaimed without leaks. The crucial difference is the WAL: exactly ONE
+  every type cascaded, no dangling edges, and the same per-row tombstones so
+  index providers stay consistent. The crucial difference is the WAL: exactly ONE
   declarative `Change::NodesOfTypeTruncated { label }` /
   `Change::EdgesOfTypeTruncated { label }` is written regardless of the number
   of instances removed (O(1) WAL). Recovery re-derives the affected rows by
   walking the recovered store and expands them to the same per-row tombstones,
-  so subscriber tombstoning is byte-identical on the runtime and recovery
+  so tombstoning is byte-identical on the runtime and recovery
   paths. New `Mutator::truncate_node_type` / `truncate_edge_type` route through
   the single write funnel (reusable by future `DROP NODE TYPE CASCADE` /
   `DROP GRAPH`). Two new `ChangeKind` discriminants (`NodesOfTypeTruncated`=11,
-  `EdgesOfTypeTruncated`=12); `ChangeKindSet::ALL` widens to 13 bits. The GQL
+  `EdgesOfTypeTruncated`=12). The GQL
   Flagger stamps `FeatureId::IM_TRUNCATE` on every truncate statement
   (clause 24.6); `IM_TRUNCATE` is registered in `SUPPORTED_FEATURES`. TRUNCATE
   is valid on both open (GG01) and closed (GG02) graphs — it removes instances
@@ -468,12 +465,8 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Dedicated `Change::NodePropertyRemoved`, `Change::EdgePropertyRemoved`, and
   `Change::NodeLabelRemoved` variants. GQL `REMOVE` now emits these variants
   instead of drop-only `NodeUpdated`/`EdgeUpdated` diffs, while direct mutator
-  update APIs retain their existing diff contract. This widens `ChangeKindSet`
-  to `u16` and preserves postcard tag stability by appending the variants.
-- `ChangeSubscriber` and `ChangeKindSet` for runtime and recovery fan-out in
-  `selene-graph`. Vector providers now tombstone derived vector state on
-  `Change::NodeDeleted`, closing Seam A from the 2026-05-26 deletion +
-  reclamation audit and planting D25.
+  update APIs retain their existing diff contract. This preserves postcard tag
+  stability by appending the variants.
 - Vendor `IM_TYPED_PARAMS` inline typed parameter declarations in
   `selene-gql`: `$id :: TYPE` is now parsed at expression and LIMIT/OFFSET
   parameter sites, typed by the analyzer, validated against bound session
@@ -484,11 +477,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `LimitValue::Parameter` changed from tuple to struct shape and
   `#[non_exhaustive]` was added to both `LimitValue` and `LimitAmount`.
 - Composite-property node indexes across `selene-graph`, `selene-core`,
-  `selene-persist`, `selene-gql`, and `selene-pack`: `CREATE INDEX <name> ON
+  `selene-persist`, and `selene-gql`: `CREATE INDEX <name> ON
   :Label(a, b, c)` now registers durable tuple indexes, maintains them across
   node create/update/delete commits, recovers them from WAL plus CORE/CPIX
-  snapshots, wires optimizer composite lookups to storage-backed execution, and
-  includes pack verification coverage. Query-planner composite lookup substrate
+  snapshots, and wires optimizer composite lookups to storage-backed execution.
+  Query-planner composite lookup substrate
   was already present; edge-property and SHOW INDEX aggregation remain split
   into BRIEF-140c/140d.
 - Implementation-defined named index DDL in `selene-gql`: `CREATE INDEX <name>
@@ -619,14 +612,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CALL` statements across short-lived sessions, with graph-id and
   schema-version keyed invalidation plus a cache-hit metric.
 - Feature-gated `metrics` facade with query, commit, persistence, recovery,
-  cancellation, vector search, algorithm, and graph-size metrics.
+  cancellation, algorithm, and graph-size metrics.
 - `EXCEPT`, `EXCEPT ALL`, `INTERSECT`, `INTERSECT ALL`, and `OTHERWISE`
   set-operation runtime support per ISO GQL §14, including `RuntimeEqKey`
   grouping semantics and a configurable implementation-defined set-op key cap.
-- Named vector indexes for `selene-vector-pack`, including
-  `vector.create_index`, `vector.drop_index`, and `vector.list_indexes`.
-  The default HNSW and IVF indexes remain compatibility anchors for v1.0
-  WAL payloads and snapshot sections.
 - `StatementOutput::Written` write metadata for committed GQL catalog and
   data mutations, including optional rows for write statements with `RETURN`.
 - `Session::flush()` and `DurableProvider::flush()` for explicit durability
@@ -676,17 +665,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cooperative cancellation and per-statement resource limits:
   `CancellationToken`, `Session::with_cancellation_token(...)`,
   `Session::with_deadline(Instant)`, and `Session::with_row_cap(usize)`.
-  Cancellation is cooperative across executor pipeline checkpoints,
-  procedure-pack adapters, algorithm hot loops, and bulk vector payload
-  construction. Row caps apply only to outermost statement output rows.
+  Cancellation is cooperative across executor pipeline checkpoints and
+  algorithm hot loops. Row caps apply only to outermost statement output rows.
   New `ExecutorError::{Cancelled, Timeout, RowCapExceeded}` map to
   implementation-defined GQLSTATUS codes `5GQL2`, `5GQL3`, and reused
   `5GQL1`, respectively.
-- GQL surface completeness: `SHOW INDEXES` now lists built-in property indexes
-  only (vector indexes remain available through `CALL vector.list_indexes()`),
+- GQL surface completeness: `SHOW INDEXES` now lists built-in property indexes,
   `SHOW PROCEDURES` lists registered procedures, `EXPLAIN <statement>` returns
   an indented plan dump without executing the inner statement, and
-  `selene.feature_status` is registered in selene-pack. The analyzer now
+  `selene.feature_status` is a registered platform built-in. The analyzer now
   bounds value-expression recursion at depth 256 with
   `AnalysisError::RecursionLimitExceeded` (GQLSTATUS `5GQL1`). Named
   `CREATE INDEX` / `DROP INDEX` DDL lowering remains deferred pending
@@ -695,13 +682,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `STRICT` / `WARN` validation modes. CORE/GTYP snapshots and schema WAL
   changes use additive v2 encodings while preserving legacy recovery; relaxed
   writes emit implementation-defined warning GQLSTATUS `01N01`.
-- `vector.search` and `vector.ivf_search` now accept an optional nullable
-  `metric` argument (`cosine`, `l2`, or `dot`) that overrides query-time
-  scoring. HNSW overrides score against the existing build-time topology; IVF
-  supports every override except Cosine on non-Cosine-built indexes, where
-  reconstructed-norm side data is absent and the call returns GQLSTATUS
-  `22G03`. IVF top-k search now uses a bounded heap and reusable per-thread
-  scratch buffers.
 - `IStrAdmissionPolicy` and `Session::with_istr_admission_policy(...)` let
   embedders opt into graceful interner-cap fallback at runtime string-admission
   boundaries. The default remains `Reject`; `FallbackToExternal` carries
@@ -991,4 +971,6 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
+[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
 [1.0.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.0.0
