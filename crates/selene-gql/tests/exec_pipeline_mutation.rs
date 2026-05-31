@@ -196,7 +196,7 @@ fn undirected_insert_edge_is_rejected_at_runtime() {
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
+        ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT undirected edge",
             ..
         }
@@ -502,7 +502,7 @@ fn insert_with_label_disjunction_returns_feature_not_in_v1_1() {
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
+        ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT label expression form",
             ..
         }
@@ -518,7 +518,7 @@ fn delete_path_target_returns_feature_not_in_v1_1() {
 
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
+        ExecutorError::FeatureNotSupportedYet {
             feature: "DELETE path target",
             ..
         }

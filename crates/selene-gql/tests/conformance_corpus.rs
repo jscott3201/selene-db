@@ -160,7 +160,10 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         ("GV45-record-literal.gql", &["GV45", "GV50"]),
         ("GV46-closed-record-type.gql", &["GV45", "GV46"]),
         ("GV48-nested-record-type.gql", &["GV45", "GV46", "GV48"]),
-        ("IMU-uuid-cast.gql", &["GE08", "IM_UUID"]),
+        // CONFORMANCE-00: CAST records no ISO optional-feature marker (GE08 is
+        // "Reference parameters" per §17.7, not CAST), so only IM_UUID — the
+        // selene-db UUID target type — is observed here.
+        ("IMU-uuid-cast.gql", &["IM_UUID"]),
     ];
 
     let cases = load_default_corpus().expect("corpus loads");

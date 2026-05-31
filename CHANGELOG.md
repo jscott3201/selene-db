@@ -6,6 +6,42 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Conformance-honesty: feature-ID corrections (CONFORMANCE-00).** Three
+  fixes so the advertised optional-feature set matches the ISO taxonomy and the
+  implemented surface:
+  - **`GE08` reclaimed for its real ISO meaning — "Reference parameters"**
+    (ISO/IEC 39075:2024 §17.7 / Annex D Table D.1 row 77). It was mislabeled
+    "CAST operator" and stamped on every `ValueExpr::Cast`. `CAST` is
+    `<cast specification>` (§20.8), whose optional feature is **`GA05` "Cast
+    specification"** (Annex D row 53), not `GE08`. `CAST` now records **no** ISO
+    optional-feature marker — it ships as baseline value-expression surface
+    gated only by its source/target *type* optional features — and `GE08` is
+    moved out of `SUPPORTED_FEATURES` (reference parameters are unimplemented;
+    it is referenced-but-not-claimed with a rationale). `GA05` is added to the
+    referenced register, reserved (not yet claimed). `CALL selene.feature_status()`
+    no longer reports `GE08` as a CAST feature. The `GE08-cast*.gql` corpus
+    files were renamed to `cast-*.gql` and re-declared `feature: none`.
+  - **`GG21` "Explicit element type key label sets" de-stamped** (ISO §18.2/18.3).
+    `GG21` requires a `<node/edge type key label set>` — `[ <label set phrase> ]
+    <implies>` — but the type-DDL grammar has **no `<implies>` token**: `CREATE
+    NODE TYPE :Person (...)` uses an explicit `<node type name>` (that is `GG20`,
+    which stays claimed) and the key label set is *implied* from `:Person` per
+    §18.2 Syntax Rule 3c, not explicitly specified. With no syntax to express an
+    explicit key label set, `GG21` was an over-claim and is removed from
+    `SUPPORTED_FEATURES` and the type-DDL flagger. `GG02` (closed graph type) and
+    `GG20` (explicit element type names) are unaffected. Re-stamp `GG21` only
+    when explicit `<implies>` key-label-set syntax lands.
+  - **`ExecutorError::FeatureNotInV1_1` renamed to `FeatureNotSupportedYet`**
+    and its (and sibling parser/analyzer) user-facing messages degraded to
+    version-agnostic phrasing (e.g. "feature not yet supported") so they do not
+    go stale across releases. The GQLSTATUS mapping is unchanged (still `42N01`
+    `FEATURE_NOT_SUPPORTED`). A CI/pre-commit gate
+    (`.github/scripts/check-no-version-locked-feature-error.sh`) forbids the old
+    variant name and version-locked "not supported in vX" message strings from
+    returning.
+
 ## [1.1.0] — 2026-05-31
 
 ### Removed

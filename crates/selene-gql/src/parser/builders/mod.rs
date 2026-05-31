@@ -170,7 +170,7 @@ fn build_pipeline_statement(
         Rule::limit_stmt => build_limit_or_offset(pair, budget).map(PipelineStatement::Limit),
         Rule::return_stmt => build_return_clause(pair, budget).map(PipelineStatement::Return),
         Rule::with_stmt => build_with_clause(pair, budget).map(PipelineStatement::With),
-        Rule::for_stmt => Err(not_implemented(&pair, "FOR is not yet supported in v1.0")),
+        Rule::for_stmt => Err(not_implemented(&pair, "FOR is not yet supported")),
         Rule::call_stmt => call::build_pipeline_call(pair, budget),
         _ => Err(unexpected_pair(pair, "expected pipeline statement")),
     }
@@ -213,7 +213,7 @@ fn build_select_pipeline(
                 } else {
                     return Err(not_implemented(
                         &from_child,
-                        "SELECT FROM graph-name resolution is not yet supported in v1.0",
+                        "SELECT FROM graph-name resolution is not yet supported",
                     ));
                 }
             }
@@ -427,7 +427,7 @@ pub(super) fn build_return_clause(
             Rule::no_bindings => {
                 return Err(not_implemented(
                     &child,
-                    "RETURN NO BINDINGS is not yet supported in v1.0",
+                    "RETURN NO BINDINGS is not yet supported",
                 ));
             }
             _ => return Err(unexpected_pair(child, "unexpected RETURN child")),
@@ -693,7 +693,7 @@ pub(super) fn not_implemented(pair: &Pair<'_, Rule>, message: &'static str) -> P
         message,
         span(pair),
         Some(
-            "this construct is not yet supported in v1.0; use `CALL selene.feature_status()` for feature status or `SHOW PROCEDURES` for registered procedures",
+            "this construct is not yet supported; use `CALL selene.feature_status()` for feature status or `SHOW PROCEDURES` for registered procedures",
         ),
     )
 }

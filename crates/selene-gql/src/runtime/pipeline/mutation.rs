@@ -407,8 +407,8 @@ fn execute_delete_target(
                 }
             }
             ElementKind::Path => {
-                // DELETE of a path target is ISO-legal but not yet implemented in v1.1; 42N01.
-                return Err(ExecutorError::FeatureNotInV1_1 {
+                // DELETE of a path target is ISO-legal but not yet implemented; 42N01.
+                return Err(ExecutorError::FeatureNotSupportedYet {
                     feature: "DELETE path target",
                     span,
                 });
@@ -461,8 +461,8 @@ fn node_labels(
         None => Ok(LabelSet::new()),
         Some(LabelExpr::Single(label)) => Ok(LabelSet::single(*label)),
         // ISO-legal label-expression forms (conjunction/disjunction) are not yet
-        // implemented in the v1.1 mutation surface; 42N01, not an internal-invariant break.
-        Some(_) => Err(ExecutorError::FeatureNotInV1_1 {
+        // implemented in the mutation surface; 42N01, not an internal-invariant break.
+        Some(_) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT label expression form",
             span,
         }),
@@ -477,8 +477,8 @@ fn edge_label(label_expr: Option<&LabelExpr>, span: SourceSpan) -> Result<IStr, 
         None => Err(ExecutorError::ImplementationDefined {
             detail: "INSERT edge label required",
         }),
-        // ISO-legal edge label-expression forms are not yet implemented in v1.1; 42N01.
-        Some(_) => Err(ExecutorError::FeatureNotInV1_1 {
+        // ISO-legal edge label-expression forms are not yet implemented; 42N01.
+        Some(_) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT edge label expression form",
             span,
         }),
@@ -513,8 +513,8 @@ fn edge_endpoints(
     match direction {
         EdgeDirection::Right => Ok((left, right)),
         EdgeDirection::Left => Ok((right, left)),
-        // INSERT of an undirected edge is ISO-legal but not yet implemented in v1.1; 42N01.
-        EdgeDirection::Undirected => Err(ExecutorError::FeatureNotInV1_1 {
+        // INSERT of an undirected edge is ISO-legal but not yet implemented; 42N01.
+        EdgeDirection::Undirected => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "INSERT undirected edge",
             span,
         }),

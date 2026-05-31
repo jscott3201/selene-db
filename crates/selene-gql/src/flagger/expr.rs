@@ -140,7 +140,15 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             target_type,
             span,
         } => {
-            record_feature(uses, FeatureId::GE08, *span);
+            // Per ISO/IEC 39075:2024 §20.8 <cast specification>: CAST is a
+            // baseline value-expression construct. The matching optional
+            // feature is GA05 "Cast specification" (Annex D Table D.1 row 53),
+            // NOT GE08 (which is "Reference parameters", §17.7). selene-db does
+            // not gate CAST behind an optional feature today — it is reachable
+            // baseline surface constrained only by its source/target TYPE
+            // optional features — so the Cast node records no ISO optional-
+            // feature marker. (Re-add a GA05 marker here only if CAST is later
+            // made an explicit optional feature.)
             self::value(value, uses);
             gql_type(target_type, *span, uses);
         }

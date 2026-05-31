@@ -674,7 +674,7 @@ fn unique_property_constraint_is_deferred() {
     let err = run_write(&graph, &plan).expect_err("UNIQUE property constraint is deferred");
     assert!(matches!(
         err,
-        ExecutorError::FeatureNotInV1_1 {
+        ExecutorError::FeatureNotSupportedYet {
             feature: "UNIQUE property constraint",
             ..
         }

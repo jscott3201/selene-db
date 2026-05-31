@@ -256,17 +256,18 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
-    /// Expression feature is intentionally outside the v1.1 evaluator surface.
+    /// Construct is ISO-legal but not yet implemented in the evaluator surface.
     ///
     /// Maps to GQLSTATUS 42N01, a selene-db implementation-defined subclass
-    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
-    #[error("feature not supported in v1.1: {feature}")]
+    /// under standard class 42 per ISO/IEC 39075:2024 section 23.1. The message
+    /// is deliberately version-agnostic so it does not go stale across releases.
+    #[error("feature not yet supported: {feature}")]
     #[diagnostic(code(SLENE_X_42N01))]
-    FeatureNotInV1_1 {
+    FeatureNotSupportedYet {
         /// Stable feature tag.
         feature: &'static str,
         /// Source span requiring the feature.
-        #[label("feature not supported")]
+        #[label("feature not yet supported")]
         span: SourceSpan,
     },
 
@@ -438,7 +439,7 @@ impl ExecutorError {
             Self::UnknownFunction { .. }
             | Self::FunctionArityMismatch { .. }
             | Self::InvalidFunctionModifier { .. } => GqlStatus::DATATYPE_MISMATCH,
-            Self::FeatureNotInV1_1 { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
+            Self::FeatureNotSupportedYet { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
             Self::DuplicateObject { .. } => GqlStatus::DUPLICATE_OBJECT,
             Self::InvalidTransactionState { .. } => GqlStatus::READ_ONLY_TRANSACTION_VIOLATION,
             Self::TransactionAlreadyActive { .. } => GqlStatus::ACTIVE_TRANSACTION,

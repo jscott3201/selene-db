@@ -10,9 +10,9 @@
 //! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric or
 //!   float→integer that exceeds the target's range (the truncated integer
 //!   would not fit).
-//! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the v1.1
-//!   explicit-cast scope (NODE / EDGE / PATH / RECORD source, or any cast
-//!   whose target is `NULL` / `NOTHING`).
+//! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
+//!   currently implemented explicit-cast scope (NODE / EDGE / PATH / RECORD
+//!   source, or any cast whose target is `NULL` / `NOTHING`).
 
 use selene_core::{Record, Value};
 use smallvec::SmallVec;
@@ -31,7 +31,7 @@ use super::uuid_fns::parse_uuid_string;
 /// representation of `target_type` (`Integer` → `Value::Int(i64)`, `STRING`
 /// → `Value::String(IStr)`, etc.). NULL propagates as NULL (ISO §22
 /// universal rule). Unsupported source/target combinations produce
-/// `FeatureNotInV1_1` with a descriptive `feature` tag.
+/// `FeatureNotSupportedYet` with a descriptive `feature` tag.
 pub(super) fn eval_cast(
     value: Value,
     target_type: &GqlType,
@@ -40,13 +40,13 @@ pub(super) fn eval_cast(
     // Target-level rejections evaluated up-front.
     match target_type {
         GqlType::Null => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST to NULL",
                 span,
             });
         }
         GqlType::Nothing => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST to NOTHING",
                 span,
             });
@@ -69,19 +69,19 @@ pub(super) fn eval_cast(
     // Source-level rejections (graph-element / path / record).
     match &value {
         Value::NodeRef(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST from NODE",
                 span,
             });
         }
         Value::EdgeRef(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST from EDGE",
                 span,
             });
         }
         Value::Path(_) => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST from PATH",
                 span,
             });
@@ -112,7 +112,7 @@ pub(super) fn eval_cast(
         GqlType::String => cast_to_string(value, span),
         GqlType::Uuid => cast_to_uuid(value, span),
         GqlType::List(element_type) => cast_to_list(value, element_type, span),
-        other => Err(ExecutorError::FeatureNotInV1_1 {
+        other => Err(ExecutorError::FeatureNotSupportedYet {
             feature: cast_to_type_feature(other),
             span,
         }),
@@ -126,7 +126,7 @@ fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
         Value::Float(f) => float_to_integer(f, span),
         Value::String(s) => string_to_integer(s.as_str(), span),
         Value::ExternalString(s) => string_to_integer(s.as_ref(), span),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for INTEGER target",
             span,
         }),
@@ -145,7 +145,7 @@ fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError>
         Value::Bool(b) => Ok(Value::Float(if b { 1.0 } else { 0.0 })),
         Value::String(s) => string_to_float(s.as_str(), span),
         Value::ExternalString(s) => string_to_float(s.as_ref(), span),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for FLOAT target",
             span,
         }),
@@ -164,7 +164,7 @@ fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
         )),
         Value::String(s) => string_to_boolean(s.as_str(), span),
         Value::ExternalString(s) => string_to_boolean(s.as_ref(), span),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for BOOLEAN target",
             span,
         }),
@@ -180,7 +180,7 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         Value::ExternalString(s) => s.as_ref().to_owned(),
         Value::Uuid(v) => v.to_string(),
         _ => {
-            return Err(ExecutorError::FeatureNotInV1_1 {
+            return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST source not supported for STRING target",
                 span,
             });
@@ -200,7 +200,7 @@ fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> 
         Value::Uuid(v) => Ok(Value::Uuid(v)),
         Value::String(s) => parse_uuid_string(s.as_str(), span).map(Value::Uuid),
         Value::ExternalString(s) => parse_uuid_string(s.as_ref(), span).map(Value::Uuid),
-        _ => Err(ExecutorError::FeatureNotInV1_1 {
+        _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for UUID target",
             span,
         }),
@@ -213,7 +213,7 @@ fn cast_to_list(
     span: SourceSpan,
 ) -> Result<Value, ExecutorError> {
     let Value::List(items) = value else {
-        return Err(ExecutorError::FeatureNotInV1_1 {
+        return Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST to LIST requires a LIST source",
             span,
         });
@@ -286,7 +286,7 @@ fn cast_to_record(
                 // `Value::Record(Record::Open)`, handled name-keyed above). Name-keyed
                 // projection lands with the future RecordTyped read-path producer brief.
                 Value::RecordTyped(_) => {
-                    return Err(ExecutorError::FeatureNotInV1_1 {
+                    return Err(ExecutorError::FeatureNotSupportedYet {
                         feature: "CAST of a catalog-bound RECORD (RecordTyped) source value",
                         span,
                     });
@@ -487,7 +487,7 @@ mod tests {
     fn recordtyped_source_to_closed_record_is_fail_closed() {
         // A catalog-bound `Value::RecordTyped` source carries no inline field names, and the
         // named-record-type catalog needed to resolve them is unbuilt — so CAST rejects it
-        // (42N01 feature-not-in-v1.1) rather than projecting positionally (name-blind).
+        // (42N01 feature-not-yet-supported) rather than projecting positionally (name-blind).
         // RecordTyped is not grammar-reachable, hence this unit test.
         use selene_core::{RecordTypeId, RecordTyped};
         let value = Value::RecordTyped(Box::new(RecordTyped {
@@ -500,8 +500,8 @@ mod tests {
         let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
         let err = eval_cast(value, &target, span()).expect_err("RecordTyped source rejected");
         assert!(
-            matches!(err, ExecutorError::FeatureNotInV1_1 { .. }),
-            "expected FeatureNotInV1_1, got {err:?}"
+            matches!(err, ExecutorError::FeatureNotSupportedYet { .. }),
+            "expected FeatureNotSupportedYet, got {err:?}"
         );
         assert_eq!(err.gqlstatus().as_str(), "42N01");
     }

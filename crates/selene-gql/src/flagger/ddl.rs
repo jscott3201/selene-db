@@ -112,9 +112,15 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
 }
 
 fn type_ddl(span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
+    // ISO/IEC 39075:2024 §18.2/18.3: a closed-graph type-DDL statement uses an
+    // explicit `<node/edge type name>` (the `:Name` after `NODE/EDGE TYPE`),
+    // which is GG20 "Explicit element type names" under a closed graph type
+    // (GG02). GG21 "Explicit element type key label sets" is NOT flagged: it
+    // requires a `<node/edge type key label set>` (`[ <label set phrase> ]
+    // <implies>`), and the grammar has no `<implies>` token — the key label
+    // set is *implied* from `:Name` per §18.2 SR 3c, not explicitly stated.
     record_feature(uses, FeatureId::GG02, span);
     record_feature(uses, FeatureId::GG20, span);
-    record_feature(uses, FeatureId::GG21, span);
 }
 
 fn property_defs(properties: &[TypePropertyDef], uses: &mut Vec<FeatureUse>) {

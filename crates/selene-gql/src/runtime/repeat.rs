@@ -23,7 +23,7 @@ pub(crate) fn execute(
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     if path_mode != PathMode::Walk && max.is_some() {
-        return Err(ExecutorError::FeatureNotInV1_1 {
+        return Err(ExecutorError::FeatureNotSupportedYet {
             feature: "non-WALK variable-length edge execution",
             span: edge.span,
         });

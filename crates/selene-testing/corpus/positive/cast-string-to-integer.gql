@@ -1,4 +1,4 @@
 // corpus: positive
-// feature: GE08
+// feature: none
 // expects: parse-ok
 RETURN CAST('42' AS INTEGER) AS n

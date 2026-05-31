@@ -74,7 +74,7 @@ fn bind_inline_call(
     }
     if call.in_transactions {
         return Err(AnalysisError::NotImplemented {
-            message: "CALL { ... } IN TRANSACTIONS is not supported in v1.1".into(),
+            message: "CALL { ... } IN TRANSACTIONS is not yet supported".into(),
             span: call.span,
             hint: None,
         });
@@ -85,7 +85,7 @@ fn bind_inline_call(
     });
     if let Err(AnalysisError::MutatingProcedureInReadPipeline { span, .. }) = bind_result {
         return Err(AnalysisError::NotImplemented {
-            message: "write operations inside CALL { ... } are not supported in v1.1".into(),
+            message: "write operations inside CALL { ... } are not yet supported".into(),
             span,
             hint: None,
         });
