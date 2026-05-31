@@ -475,6 +475,25 @@ mod tests {
     }
 
     #[test]
+    fn payload_at_cap_is_accepted() {
+        // The +1 rejection has a test; pin the accept-at-cap twin. Target
+        // `WalEntryHeader::new` (which calls `ensure_payload_len`) with the cap
+        // value directly so no 256 MiB buffer is allocated.
+        ensure_payload_len(MAX_WAL_ENTRY_BYTES).expect("cap-length payload is accepted");
+        let header = WalEntryHeader::new(
+            MAX_WAL_ENTRY_BYTES,
+            0,
+            1,
+            HlcTimestamp::zero(),
+            Origin::Local,
+            0,
+            None,
+        )
+        .expect("WalEntryHeader::new accepts a cap-length payload");
+        assert_eq!(header.payload_len as usize, MAX_WAL_ENTRY_BYTES);
+    }
+
+    #[test]
     fn payload_cap_is_enforced() {
         let err = WalEntryHeader::new(
             MAX_WAL_ENTRY_BYTES + 1,

@@ -1,16 +1,18 @@
 use std::fs;
 
 use selene_core::{
-    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelDiff, LabelSet, NodeId, NodeTypeRef,
-    PropertyDiff, PropertyMap, SchemaChange, Value, intern,
+    Change, EdgeId, EdgeTypeDefV1, GraphId, GraphTypeId, LabelDiff, LabelSet, NodeId,
+    NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDefV1, PropertyDiff, PropertyMap,
+    SchemaChange, Value, ValueType, ValueTypeCardinality, intern,
 };
 use smallvec::smallvec;
 
 use crate::{
-    EdgeEndpointDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind, ValidationMode,
+    DropBehavior, EdgeEndpointDef, NodeTypeDef, PropertyTypeDef, SharedGraph, TypedIndexKind,
+    ValidationMode,
 };
 
-use super::{append_wal, expect_prop, prop, temp_dir};
+use super::{append_wal, empty_closed_graph_type, expect_prop, prop, temp_dir};
 
 fn person_closed_graph_type() -> crate::GraphTypeDef {
     let person = intern("recover.closed.person").unwrap();
@@ -327,7 +329,7 @@ fn recover_from_wal_only_replays_edge_type_added_and_dropped() {
                 ValidationMode::Strict,
             )
             .unwrap();
-        mutator.drop_edge_type(rel).unwrap();
+        mutator.drop_edge_type(rel, DropBehavior::Restrict).unwrap();
         txn.commit().unwrap()
     };
     append_wal(&dir, 0, &outcome.changes);
@@ -408,7 +410,9 @@ fn recover_from_wal_only_replays_node_type_dropped() {
         .unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
-        txn.mutator().drop_node_type(person).unwrap();
+        txn.mutator()
+            .drop_node_type(person, DropBehavior::Restrict)
+            .unwrap();
         txn.commit().unwrap()
     };
     append_wal(&dir, 0, &outcome.changes);
@@ -424,6 +428,130 @@ fn recover_from_wal_only_replays_node_type_dropped() {
             ..
         }]
     ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_from_wal_only_replays_cascade_truncate_then_node_type_dropped() {
+    // CASCADE drop emits [NodesOfTypeTruncated, NodeTypeDropped] in one txn;
+    // recovery must replay both in WAL order to the identical post-state:
+    // instances gone (re-derived from recovered store state) AND type dropped.
+    let dir = temp_dir("cascade-node-drop-replay");
+    let graph_id = GraphId::new(709);
+    let base = person_closed_graph_type();
+    let person = base.node_types[0].name;
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let create_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    assert_eq!(shared.read().node_count(), 2);
+
+    let cascade_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .drop_node_type(person, DropBehavior::Cascade)
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    // The CASCADE changeset is exactly truncate-then-drop, in order.
+    assert!(matches!(
+        cascade_outcome.changes.as_slice(),
+        [
+            Change::NodesOfTypeTruncated { .. },
+            Change::SchemaChanged {
+                change: selene_core::SchemaChange::NodeTypeDropped { .. },
+                ..
+            }
+        ]
+    ));
+    // Replay all changes in WAL order: the two node creations, then the
+    // CASCADE truncate-then-drop. The truncate re-derives the live rows it
+    // removes from the recovered store state (no ids persisted).
+    let mut all_changes = create_outcome.changes.clone();
+    all_changes.extend(cascade_outcome.changes.iter().cloned());
+    append_wal(&dir, 0, &all_changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    assert!(graph_type.node_types.is_empty());
+    assert!(graph_type.edge_types.is_empty());
+    assert_eq!(recovered.read().node_count(), 0);
+    assert_eq!(recovered.read().edge_count(), 0);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_from_wal_only_replays_graph_reset_to_empty_and_open() {
+    // BRIEF-152: DROP GRAPH emits one declarative Change::GraphReset. Recovery
+    // must replay it by re-deriving every live row from the recovered store and
+    // marking it dead (no ids persisted), and must reset the schema to open —
+    // even when recover_closed is handed a bound type, the replayed reset wins,
+    // reconstructing the identical empty+open post-state the runtime produced.
+    let dir = temp_dir("graph-reset-replay");
+    let graph_id = GraphId::new(710);
+    let base = person_closed_graph_type();
+    let person = base.node_types[0].name;
+    let shared = SharedGraph::builder(graph_id)
+        .bound_to(base.clone())
+        .unwrap()
+        .build()
+        .unwrap();
+    let create_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap()
+    };
+    assert_eq!(shared.read().node_count(), 2);
+
+    let reset_outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator().factory_reset().unwrap();
+        txn.commit().unwrap()
+    };
+    // O(1): the persisted changeset is exactly one declarative GraphReset.
+    assert!(matches!(
+        reset_outcome.changes.as_slice(),
+        [Change::GraphReset {}]
+    ));
+
+    // Replay create...+GraphReset in WAL order. recover_closed is GIVEN the
+    // closed `base`, but the replayed reset forces the recovered graph open.
+    let mut all_changes = create_outcome.changes.clone();
+    all_changes.extend(reset_outcome.changes.iter().cloned());
+    append_wal(&dir, 0, &all_changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    assert!(
+        recovered.graph_type().is_none(),
+        "GraphReset replay resets the schema to open, overriding the recover_closed base"
+    );
+    assert!(!recovered.is_closed());
+    assert_eq!(
+        recovered.read().node_count(),
+        0,
+        "all nodes wiped on replay"
+    );
+    assert_eq!(
+        recovered.read().edge_count(),
+        0,
+        "all edges wiped on replay"
+    );
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -514,5 +642,77 @@ fn recover_from_wal_only_replays_property_index_dropped() {
             }
         ]
     ));
+    let _ = fs::remove_dir_all(dir);
+}
+
+fn legacy_string_property(name: &str, required: bool) -> PropertyDefV1 {
+    PropertyDefV1 {
+        name: intern(name).unwrap(),
+        value_type: ValueType {
+            predefined: Some(PredefinedValueType::String),
+            union: None,
+            list_of: None,
+            record: None,
+            not_null: required,
+            cardinality: ValueTypeCardinality::ExactlyOne,
+        },
+        nullable: !required,
+        default: None,
+    }
+}
+
+#[test]
+fn recover_closed_wal_only_decodes_legacy_catalog_ddl_v1() {
+    let dir = temp_dir("closed-schema-legacy-wal-only");
+    let graph_id = GraphId::new(20);
+    let base = empty_closed_graph_type();
+    let graph_type = GraphTypeId::new(1).unwrap();
+    let sensor = intern("LegacySensor").unwrap();
+    let linked = intern("LEGACY_LINKED").unwrap();
+    let changes = vec![
+        Change::SchemaChanged {
+            graph: graph_id,
+            change: SchemaChange::NodeTypeAdded {
+                graph_type,
+                label: sensor,
+                def: NodeTypeDefV1 {
+                    labels: LabelSet::single(sensor),
+                    properties: smallvec![legacy_string_property("serial", true)],
+                    key: None,
+                },
+            },
+        },
+        Change::SchemaChanged {
+            graph: graph_id,
+            change: SchemaChange::EdgeTypeAdded {
+                graph_type,
+                label: linked,
+                def: EdgeTypeDefV1 {
+                    label: linked,
+                    source_node_type: NodeTypeRef(sensor),
+                    target_node_type: NodeTypeRef(sensor),
+                    properties: smallvec![legacy_string_property("since", false)],
+                },
+            },
+        },
+    ];
+    append_wal(&dir, 0, &changes);
+
+    let recovered = SharedGraph::recover_closed(&dir, graph_id, base).unwrap();
+    let graph_type = recovered.graph_type().unwrap();
+    let node_type = &graph_type.node_types[0];
+    assert_eq!(node_type.name, sensor);
+    assert_eq!(node_type.validation_mode, ValidationMode::Strict);
+    assert_eq!(node_type.properties[0].name.as_str(), "serial");
+    assert!(node_type.properties[0].required);
+    assert!(!node_type.properties[0].immutable);
+    let edge_type = &graph_type.edge_types[0];
+    assert_eq!(edge_type.name, linked);
+    assert_eq!(edge_type.source_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.target_node_type, EdgeEndpointDef::NodeType(0));
+    assert_eq!(edge_type.validation_mode, ValidationMode::Strict);
+    assert_eq!(edge_type.properties[0].name.as_str(), "since");
+    assert!(!edge_type.properties[0].required);
+    assert!(!edge_type.properties[0].immutable);
     let _ = fs::remove_dir_all(dir);
 }

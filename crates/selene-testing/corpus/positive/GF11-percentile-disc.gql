@@ -1,5 +1,5 @@
--- corpus: positive
--- feature: GF11
--- expects: parse-ok
+// corpus: positive
+// feature: GF11
+// expects: parse-ok
 UNWIND [1, 2, 3, 4] AS value
 RETURN percentile_disc(value, 0.5) AS median

@@ -18,7 +18,7 @@ use super::{
     },
     identity_length_fns,
     string_fns::{self, eval_fixed_args, eval_range_args},
-    uuid_fns,
+    temporal_fns, uuid_fns,
 };
 
 pub(super) fn eval_function_call(
@@ -58,13 +58,11 @@ pub(super) fn eval_function_call(
             span,
         ),
         "ceil" | "ceiling" => eval_unary_numeric(
-            &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::ceil,
         ),
         "floor" => eval_unary_numeric(
-            &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::floor,
@@ -154,7 +152,6 @@ pub(super) fn eval_function_call(
             span,
         ),
         "round" => eval_unary_numeric(
-            &display_name,
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
             f64::round,
@@ -258,6 +255,28 @@ pub(super) fn eval_function_call(
             eval_fixed_args(&display_name, args, 1, span, binding, schema, ctx)?,
             span,
         ),
+        // ISO/IEC 39075:2024 section 20.27 current-datetime functions. Each is
+        // niladic and reads the session time zone threaded into the context.
+        "current_timestamp" | "now" => {
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
+            temporal_fns::eval_current_timestamp(ctx)
+        }
+        "localtimestamp" => {
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
+            temporal_fns::eval_localtimestamp(ctx)
+        }
+        "current_date" => {
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
+            temporal_fns::eval_current_date(ctx)
+        }
+        "current_time" => {
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
+            temporal_fns::eval_current_time(ctx)
+        }
+        "localtime" => {
+            eval_fixed_args(&display_name, args, 0, span, binding, schema, ctx)?;
+            temporal_fns::eval_localtime(ctx)
+        }
         _ => Err(ExecutorError::UnknownFunction {
             name: display_name,
             span,
@@ -296,7 +315,6 @@ fn eval_abs(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> 
 }
 
 fn eval_unary_numeric(
-    _name: &str,
     args: Vec<Value>,
     span: SourceSpan,
     op: fn(f64) -> f64,

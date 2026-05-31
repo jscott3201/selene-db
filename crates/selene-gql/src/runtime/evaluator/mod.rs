@@ -15,23 +15,26 @@ mod predicates;
 mod scalar_fns;
 mod string_fns;
 mod subquery;
+mod temporal_fns;
 mod uuid_fns;
 
 use selene_core::{EdgeId, NodeId, Value};
 
 use crate::{
-    Literal, SourceSpan, SubqueryRegistry, ValueExpr,
-    analyze::ExprIdLookup,
-    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError, TxContext},
+    Literal, SourceSpan, ValueExpr,
+    runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
+// Used only by `evaluate_for_test` below, which is itself gated to the
+// test/`test-harness` surface (D21). Without the matching gate these imports
+// are unused in a default-features lib build (`cargo clippy --locked`).
+#[cfg(any(test, feature = "test-harness"))]
+use crate::{SubqueryRegistry, analyze::ExprIdLookup, runtime::TxContext};
 
 use self::{
     binary_ops::{eval_binary, eval_in_list, eval_unary},
     case::eval_case,
-    collections::{eval_list_access, eval_record_literal},
-    predicates::{
-        eval_all_different, eval_between, eval_is_check, eval_like, eval_property_exists, eval_same,
-    },
+    collections::{eval_list_access, eval_record_literal, record_field},
+    predicates::{eval_all_different, eval_is_check, eval_property_exists, eval_same},
     scalar_fns::eval_function_call,
     subquery::{eval_count_subquery, eval_exists, eval_value_subquery},
 };
@@ -46,9 +49,9 @@ pub fn evaluate(
     match expr {
         ValueExpr::Literal(literal) => Ok(literal_value(literal)),
         ValueExpr::Variable { name, span } => lookup_variable(*name, *span, binding, schema),
-        ValueExpr::PropertyAccess { target, key, .. } => {
+        ValueExpr::PropertyAccess { target, key, span } => {
             let target = evaluate(target, binding, schema, ctx)?;
-            property_access(&target, *key, ctx)
+            property_access(&target, *key, *span, ctx)
         }
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             let lhs = evaluate(lhs, binding, schema, ctx)?;
@@ -129,19 +132,6 @@ pub fn evaluate(
         ValueExpr::ValueSubquery { span, .. } => {
             eval_value_subquery(expr, *span, binding, schema, ctx)
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            negated,
-            span,
-        } => eval_like(operand, pattern, *negated, *span, binding, schema, ctx),
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated,
-            span,
-        } => eval_between(operand, (low, high), *negated, *span, binding, schema, ctx),
         ValueExpr::AllDifferent { items, span } => {
             eval_all_different(items, *span, binding, schema, ctx)
         }
@@ -173,7 +163,10 @@ pub fn evaluate(
 /// This preserves the public test helper surface for expression families that
 /// do not require planned subqueries. Statement execution uses [`evaluate`]
 /// with the owning execution plan's registries.
-#[allow(dead_code)]
+///
+/// Gated to the test/`test-harness` surface (D21) so this scaffolding stays off
+/// the always-on public API; the re-export in `runtime` carries the same gate.
+#[cfg(any(test, feature = "test-harness"))]
 pub fn evaluate_for_test(
     expr: &ValueExpr,
     binding: &Binding,
@@ -238,15 +231,23 @@ fn resolve_parameter(
 pub(super) fn property_access(
     target: &Value,
     key: selene_core::IStr,
+    span: SourceSpan,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
     match target {
         Value::Null => Ok(Value::Null),
         Value::NodeRef(id) => Ok(property_from_node(*id, key, ctx)),
         Value::EdgeRef(id) => Ok(property_from_edge(*id, key, ctx)),
-        _ => Err(ExecutorError::ImplementationDefined {
-            detail: "property access target is not graph element",
-        }),
+        Value::Record(record) => Ok(record_field(record, key)),
+        // A non-element / non-record target (reachable when analysis types the
+        // target as Dynamic, e.g. `[1,2,3].foo` or `(123).foo`) is a runtime
+        // type error, not an internal-invariant break. `Value::RecordTyped`
+        // stays fail-closed here (catalog-bound, no inline-name index).
+        _ => Err(ExecutorError::data_exception(
+            crate::runtime::DataExceptionSubclass::InvalidValueType,
+            "property access target is not a node, edge, or record".to_owned(),
+            span,
+        )),
     }
 }
 

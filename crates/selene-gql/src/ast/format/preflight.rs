@@ -2,7 +2,8 @@
 
 use crate::ast::{
     EdgePattern, GqlType, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause, NodePattern,
-    PatternElement, ProcedureCall, QueryPipeline, ReturnClause, Statement, ValueExpr, WithClause,
+    PatternElement, ProcedureCall, QueryPipeline, RecordType, ReturnClause, Statement, ValueExpr,
+    WithClause,
 };
 
 use super::FormatError;
@@ -13,7 +14,7 @@ use super::FormatError;
 ///
 /// Returns [`FormatError::Unsupported`] when the tree contains AST-only type
 /// variants that the parser cannot read back from formatted source.
-pub fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
+pub(crate) fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
     match stmt {
         Statement::Query(pipeline) => validate_pipeline(pipeline),
         Statement::Composite { first, rest, .. } => {
@@ -35,7 +36,11 @@ pub fn validate_formattable(stmt: &Statement) -> Result<(), FormatError> {
         | Statement::Explain { .. }
         | Statement::StartTransaction { .. }
         | Statement::Commit { .. }
-        | Statement::Rollback { .. } => Ok(()),
+        | Statement::Rollback { .. }
+        | Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => Ok(()),
     }
 }
 
@@ -187,19 +192,6 @@ fn validate_expr(expr: &ValueExpr) -> Result<(), FormatError> {
             validate_expr(operand)?;
             validate_exprs(list)
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            validate_expr(operand)?;
-            validate_expr(pattern)
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            validate_expr(operand)?;
-            validate_expr(low)?;
-            validate_expr(high)
-        }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             validate_exprs(items)
         }
@@ -254,15 +246,23 @@ fn validate_type(ty: &GqlType) -> Result<(), FormatError> {
     if let Some(variant) = ast_only_type_variant(ty) {
         return Err(FormatError::Unsupported { variant });
     }
-    if let GqlType::List(inner) = ty {
-        validate_type(inner)?;
+    match ty {
+        GqlType::List(inner) => validate_type(inner)?,
+        // Closed record types render their field structure, so each field's
+        // value type must also be formattable (a nested reference type would
+        // otherwise slip past the gate). The open form has no fields to check.
+        GqlType::Record(RecordType::Closed(fields)) => {
+            for (_name, field_ty) in fields {
+                validate_type(field_ty)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
 
 fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
     match ty {
-        GqlType::Record(_) => Some("Record"),
         GqlType::GraphRef => Some("GraphRef"),
         GqlType::NodeRef => Some("NodeRef"),
         GqlType::EdgeRef => Some("EdgeRef"),
@@ -280,8 +280,31 @@ mod tests {
     };
 
     #[test]
-    fn preflight_rejects_record_type() {
-        assert_unsupported(GqlType::Record(RecordType::Open), "Record");
+    fn preflight_accepts_open_and_closed_record_types() {
+        // GV47 open and GV46 closed record TYPES round-trip through the
+        // formatter, so the preflight gate must let them through.
+        validate_formattable(&statement_with_type(GqlType::Record(RecordType::Open)))
+            .expect("open record type is formattable");
+        let closed = GqlType::Record(RecordType::Closed(vec![(
+            selene_core::intern_with_admission("name")
+                .expect("intern name")
+                .0,
+            GqlType::String,
+        )]));
+        validate_formattable(&statement_with_type(closed)).expect("closed record type formattable");
+    }
+
+    #[test]
+    fn preflight_rejects_reference_type_inside_closed_record_field() {
+        // A reference type nested in a closed-record field is still AST-only and
+        // must be caught by the recursive field walk.
+        let closed = GqlType::Record(RecordType::Closed(vec![(
+            selene_core::intern_with_admission("ref")
+                .expect("intern ref")
+                .0,
+            GqlType::NodeRef,
+        )]));
+        assert_unsupported(closed, "NodeRef");
     }
 
     #[test]

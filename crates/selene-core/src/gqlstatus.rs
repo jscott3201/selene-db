@@ -9,10 +9,7 @@
 pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
     ("00000", "successful-completion"),
     ("08000", "connection-exception"),
-    ("0G001", "extension-type-id-conflict"),
-    ("0G002", "extension-type-id-unregistered"),
     ("0G003", "zero-identifier"),
-    ("0G004", "transient-codec-error"),
     ("0G008", "compact-key-value-length-mismatch"),
     ("0G009", "overlapping-diff"),
     ("01G11", "null-value-eliminated-in-set-function"),
@@ -37,6 +34,7 @@ pub const ALL_GQLSTATUS_NAMES: &[(&str, &str)] = &[
         "22G0T",
         "number-of-edge-properties-exceeds-supported-maximum",
     ),
+    ("22G0U", "record-fields-do-not-match"),
     ("22G0X", "record-data-field-unassignable"),
     ("25G01", "active-gql-transaction"),
     ("25G02", "invalid-transaction-state-mixing"),

@@ -74,6 +74,8 @@ pub enum DdlStatement {
         label: IStr,
         /// `IF EXISTS`.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
         /// Source span.
         span: SourceSpan,
     },
@@ -83,6 +85,30 @@ pub enum DdlStatement {
         label: IStr,
         /// `IF EXISTS`.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `TRUNCATE NODE TYPE` (selene-db `IM_TRUNCATE` vendor extension).
+    ///
+    /// Bulk-removes every node carrying `label` and all incident edges,
+    /// observationally identical to `MATCH (n:label) DETACH DELETE n` but with an
+    /// O(1) WAL write (deletion-reclamation audit Item 11). An absent label is a
+    /// clean no-op; no `IF EXISTS` is needed.
+    TruncateNodeType {
+        /// Node label whose instances are removed.
+        label: IStr,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `TRUNCATE EDGE TYPE` (selene-db `IM_TRUNCATE` vendor extension).
+    ///
+    /// Bulk-removes every edge carrying `label` with an O(1) WAL write. Absent
+    /// label is a clean no-op.
+    TruncateEdgeType {
+        /// Edge label whose instances are removed.
+        label: IStr,
         /// Source span.
         span: SourceSpan,
     },
@@ -114,8 +140,8 @@ pub enum DdlStatement {
     ShowEdgeTypes(SourceSpan),
     /// `SHOW INDEXES`.
     ///
-    /// Lists built-in property indexes only. Vector indexes remain exposed via
-    /// `CALL vector.list_indexes()`.
+    /// Lists registered property indexes (built-in plus those created with
+    /// `CREATE INDEX`).
     ShowIndexes(SourceSpan),
     /// `SHOW PROCEDURES`.
     ShowProcedures(SourceSpan),
@@ -132,6 +158,8 @@ impl DdlStatement {
             | Self::CreateEdgeType { span, .. }
             | Self::DropNodeType { span, .. }
             | Self::DropEdgeType { span, .. }
+            | Self::TruncateNodeType { span, .. }
+            | Self::TruncateEdgeType { span, .. }
             | Self::CreateIndex { span, .. }
             | Self::DropIndex { span, .. }
             | Self::ShowNodeTypes(span)
@@ -140,6 +168,22 @@ impl DdlStatement {
             | Self::ShowProcedures(span) => *span,
         }
     }
+}
+
+/// `DROP NODE TYPE` / `DROP EDGE TYPE` drop behavior.
+///
+/// `Restrict` is the default when no behavior keyword is written. It is the
+/// Seam-B fix from the deletion-reclamation audit (Item 3): dropping a type
+/// whose instances still exist is rejected with `G2000` rather than silently
+/// orphaning instances on a closed (GG02) graph. `Cascade` is the selene-db
+/// `IM_DROP_CASCADE` vendor extension: it truncates the type's instances first,
+/// then drops the type, atomically in one transaction.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum DropBehavior {
+    /// Reject the drop when instances or inbound type dependencies remain.
+    Restrict,
+    /// Truncate the type's instances, then drop the type (`IM_DROP_CASCADE`).
+    Cascade,
 }
 
 /// Type-validation mode.
@@ -203,16 +247,6 @@ pub enum TypePropertyConstraint {
         /// Source span.
         span: SourceSpan,
     },
-    /// `SEARCHABLE`.
-    Searchable(SourceSpan),
-    /// `DICTIONARY`.
-    Dictionary(SourceSpan),
-    /// `FILL name`.
-    Fill(IStr, SourceSpan),
-    /// `INTERVAL 'duration'`.
-    Interval(IStr, SourceSpan),
-    /// `ENCODING name`.
-    Encoding(IStr, SourceSpan),
 }
 
 impl TypePropertyConstraint {
@@ -223,12 +257,7 @@ impl TypePropertyConstraint {
             Self::NotNull(span)
             | Self::Default(_, span)
             | Self::Immutable(span)
-            | Self::Unique(span)
-            | Self::Searchable(span)
-            | Self::Dictionary(span)
-            | Self::Fill(_, span)
-            | Self::Interval(_, span)
-            | Self::Encoding(_, span) => *span,
+            | Self::Unique(span) => *span,
             Self::Indexed { span, .. } => *span,
         }
     }

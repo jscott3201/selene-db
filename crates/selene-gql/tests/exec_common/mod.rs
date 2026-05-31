@@ -169,9 +169,14 @@ pub fn istr(value: &str) -> IStr {
 }
 
 pub fn planned(source: &str) -> ExecutionPlan {
+    planned_result(source).expect("test input plans")
+}
+
+#[allow(dead_code)]
+pub fn planned_result(source: &str) -> Result<ExecutionPlan, selene_gql::PlannerError> {
     let statement = parse(source).expect("test input parses");
     let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("test input analyzes");
-    plan(&analyzed, &EmptyProcedureRegistry).expect("test input plans")
+    plan(&analyzed, &EmptyProcedureRegistry)
 }
 
 pub fn optimized(source: &str, catalog: &MockIndexCatalog) -> ExecutionPlan {

@@ -7,7 +7,6 @@ use selene_core::{
 use super::*;
 use crate::SharedGraph;
 use crate::graph_types::{NodeTypeDef, ValidationMode};
-use crate::store::node_row_index;
 
 fn empty_node(mutator: &mut Mutator<'_, '_>) -> NodeId {
     mutator
@@ -275,7 +274,11 @@ fn read_within_tx_sees_label_index_updates() {
     let id = mutator
         .create_node(LabelSet::single(label), PropertyMap::new())
         .expect("create_node ok");
-    let row = node_row_index(id).unwrap();
+    let row = mutator
+        .read()
+        .row_for_node_id(id)
+        .expect("created node is mapped")
+        .get();
     assert!(
         mutator
             .read()
@@ -306,21 +309,6 @@ fn multi_step_tx_emits_changes_in_order() {
     assert!(matches!(outcome.changes[0], Change::NodeCreated { .. }));
     assert!(matches!(outcome.changes[1], Change::NodeUpdated { .. }));
     assert_eq!(outcome.changes[2], Change::NodeDeleted { id });
-}
-
-#[test]
-fn extension_event_emits_change_passthrough() {
-    let shared = SharedGraph::new(GraphId::new(1));
-    let mut txn = shared.begin_write();
-    {
-        let mut mutator = txn.mutator();
-        mutator.extension_event(intern("provider").unwrap(), Arc::from([1_u8, 2]));
-    }
-    let outcome = txn.commit().unwrap();
-    assert!(matches!(
-        outcome.changes[0],
-        Change::IndexExtensionEvent { .. }
-    ));
 }
 
 #[test]
@@ -505,6 +493,8 @@ fn remove_node_property_rejects_immutable_property() {
                 required: false,
                 default: None,
                 immutable: true,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
@@ -634,7 +624,9 @@ proptest! {
             let mut expected: std::collections::BTreeMap<IStr, RoaringBitmap> =
                 std::collections::BTreeMap::new();
             for (id, node_labels) in &alive {
-                let row = node_row_index(*id).unwrap();
+                // BRIEF-Item-4c: rows are append-assigned, so resolve each id's row
+                // through the authoritative map rather than `id - 1` arithmetic.
+                let row = mutator.read().row_for_node_id(*id).unwrap().get();
                 for label in node_labels {
                     expected.entry(*label).or_default().insert(row);
                 }
@@ -682,43 +674,6 @@ fn four_writer_stress_no_double_allocation() {
         snapshot.meta.next_node_id,
         (4 * nodes_per_thread + 1) as u64
     );
-}
-
-#[test]
-fn create_node_returns_id_overflow_when_allocator_past_u32() {
-    let mut graph = crate::SeleneGraph::new(GraphId::new(1));
-    graph.meta.next_node_id = u32::MAX as u64 + 2;
-    let shared = SharedGraph::from_graph(graph);
-    let mut txn = shared.begin_write();
-    let mut mutator = txn.mutator();
-    let err = mutator
-        .create_node(LabelSet::new(), PropertyMap::new())
-        .unwrap_err();
-    assert!(matches!(err, GraphError::IdOverflow { kind: "node", .. }));
-}
-
-#[test]
-fn create_edge_returns_id_overflow_when_allocator_past_u32() {
-    let mut graph = crate::SeleneGraph::new(GraphId::new(1));
-    graph.meta.next_edge_id = u32::MAX as u64 + 2;
-    let shared = SharedGraph::from_graph(graph);
-    let mut txn = shared.begin_write();
-    let mut mutator = txn.mutator();
-    let source = mutator
-        .create_node(LabelSet::new(), PropertyMap::new())
-        .expect("create_node ok");
-    let target = mutator
-        .create_node(LabelSet::new(), PropertyMap::new())
-        .expect("create_node ok");
-    let err = mutator
-        .create_edge(
-            intern("edge.overflow").unwrap(),
-            source,
-            target,
-            PropertyMap::new(),
-        )
-        .unwrap_err();
-    assert!(matches!(err, GraphError::IdOverflow { kind: "edge", .. }));
 }
 
 #[test]

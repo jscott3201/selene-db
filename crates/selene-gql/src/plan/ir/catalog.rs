@@ -2,7 +2,7 @@
 
 use selene_core::IStr;
 
-use crate::{EdgeEndpointSpec, GqlType, SourceSpan, ValidationMode};
+use crate::{DropBehavior, EdgeEndpointSpec, GqlType, SourceSpan, ValidationMode};
 
 use super::ProjectExpr;
 
@@ -71,6 +71,8 @@ pub enum CatalogOp {
         label: IStr,
         /// Whether `IF EXISTS` was requested.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
         /// Source span.
         span: SourceSpan,
     },
@@ -80,6 +82,22 @@ pub enum CatalogOp {
         label: IStr,
         /// Whether `IF EXISTS` was requested.
         if_exists: bool,
+        /// `RESTRICT` (default) or `CASCADE` drop behavior.
+        behavior: DropBehavior,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// Truncate (bulk-delete instances of) a node type (`IM_TRUNCATE`).
+    TruncateNodeType {
+        /// Node label whose instances are removed.
+        label: IStr,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// Truncate (bulk-delete instances of) an edge type (`IM_TRUNCATE`).
+    TruncateEdgeType {
+        /// Edge label whose instances are removed.
+        label: IStr,
         /// Source span.
         span: SourceSpan,
     },
@@ -146,14 +164,4 @@ pub enum PlannedTypePropertyConstraint {
         /// Source span.
         span: SourceSpan,
     },
-    /// `SEARCHABLE`.
-    Searchable(SourceSpan),
-    /// `DICTIONARY`.
-    Dictionary(SourceSpan),
-    /// `FILL name`.
-    Fill(IStr, SourceSpan),
-    /// `INTERVAL value`.
-    Interval(IStr, SourceSpan),
-    /// `ENCODING name`.
-    Encoding(IStr, SourceSpan),
 }

@@ -1,6 +1,5 @@
 //! Core error types and ISO GQLSTATUS mappings.
 
-use crate::extension_type_ids::ExtensionTypeId;
 use crate::istr::IStr;
 
 /// Result alias for `selene-core` operations.
@@ -43,7 +42,7 @@ pub enum CoreError {
         max: u32,
     },
 
-    /// A decimal exceeded the v1.0 significant-digit precision.
+    /// A decimal exceeded the implementation-defined significant-digit precision.
     #[error("decimal precision exceeded: {got} significant digits (max {max})")]
     #[diagnostic(code(SLENE_C_004))]
     DecimalPrecisionExceeded {
@@ -51,22 +50,6 @@ pub enum CoreError {
         got: u32,
         /// Maximum significant-digit count.
         max: u32,
-    },
-
-    /// An extension type ID was registered by more than one adapter.
-    #[error("extension type id conflict: {type_id:?} already registered")]
-    #[diagnostic(code(SLENE_C_005))]
-    ExtensionTypeIdConflict {
-        /// Conflicting extension type ID.
-        type_id: ExtensionTypeId,
-    },
-
-    /// No adapter is registered for the requested extension type ID.
-    #[error("extension type id unregistered: {type_id:?}")]
-    #[diagnostic(code(SLENE_C_006))]
-    ExtensionTypeIdUnregistered {
-        /// Missing extension type ID.
-        type_id: ExtensionTypeId,
     },
 
     /// Identifier value zero is reserved as the tombstone sentinel.
@@ -108,8 +91,6 @@ impl CoreError {
             Self::IStrCapExceeded { .. } => "5GQL1",
             Self::StringTooLong { .. } | Self::ConstructedValueTooLarge { .. } => "22G03",
             Self::DecimalPrecisionExceeded { .. } => "22003",
-            Self::ExtensionTypeIdConflict { .. } => "0G001",
-            Self::ExtensionTypeIdUnregistered { .. } => "0G002",
             Self::ZeroIdentifier => "0G003",
             Self::CompactKeyValueLengthMismatch { .. } => "0G008",
             Self::OverlappingDiff { .. } => "0G009",
@@ -136,16 +117,6 @@ mod tests {
         CoreError::DecimalPrecisionExceeded { got: 29, max: 28 },
         "22003",
         "SLENE_C_004"
-    )]
-    #[case(
-        CoreError::ExtensionTypeIdConflict { type_id: ExtensionTypeId(0x100) },
-        "0G001",
-        "SLENE_C_005"
-    )]
-    #[case(
-        CoreError::ExtensionTypeIdUnregistered { type_id: ExtensionTypeId(0x100) },
-        "0G002",
-        "SLENE_C_006"
     )]
     #[case(CoreError::ZeroIdentifier, "0G003", "SLENE_C_007")]
     #[case(

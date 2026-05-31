@@ -67,6 +67,62 @@ pub enum Statement {
         /// Source span.
         span: SourceSpan,
     },
+    /// `SESSION SET VALUE <param> = <value expression>` (ISO feature GS03).
+    ///
+    /// Binds a session-local value parameter. The `if_not_exists` flag carries
+    /// the `IF NOT EXISTS` qualifier from `<session set parameter name>`
+    /// (ISO/IEC 39075:2024 section 7.4): when set, an existing binding is left
+    /// untouched.
+    SessionSetValue {
+        /// Interned parameter name without the leading `$`.
+        param: IStr,
+        /// Value expression bound to the parameter.
+        value: Box<ValueExpr>,
+        /// `IF NOT EXISTS` was present on the parameter specification.
+        if_not_exists: bool,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION SET TIME ZONE <time zone string>` (ISO feature GS15).
+    SessionSetTimeZone {
+        /// Decoded IANA region name or fixed-offset string.
+        zone: String,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION RESET [ <session reset arguments> ]` (ISO features GS04/GS07/GS08/GS16).
+    SessionReset {
+        /// Reset target selected by the arguments (bare = all characteristics).
+        target: SessionResetTarget,
+        /// Source span.
+        span: SourceSpan,
+    },
+    /// `SESSION CLOSE` (ISO/IEC 39075:2024 section 7.3).
+    ///
+    /// Sets the session termination flag; no ISO feature code (Conformance
+    /// Rules: None).
+    SessionClose {
+        /// Source span.
+        span: SourceSpan,
+    },
+}
+
+/// Target selected by `<session reset arguments>` (ISO/IEC 39075:2024 section 7.2).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+#[non_exhaustive]
+pub enum SessionResetTarget {
+    /// `SESSION RESET` (bare) or `RESET [ALL] CHARACTERISTICS`: reset every
+    /// session characteristic (parameters and time zone). ISO feature GS04.
+    AllCharacteristics,
+    /// `SESSION RESET [ALL] PARAMETERS`: clear all session parameters only.
+    /// ISO feature GS08.
+    Parameters,
+    /// `SESSION RESET TIME ZONE`: reset the session time zone to the ID048
+    /// default. ISO feature GS07.
+    TimeZone,
+    /// `SESSION RESET [PARAMETER] <param>`: clear a single named session
+    /// parameter. ISO feature GS16.
+    Parameter(IStr),
 }
 
 impl Statement {
@@ -83,6 +139,10 @@ impl Statement {
             Self::StartTransaction { span } | Self::Commit { span } | Self::Rollback { span } => {
                 *span
             }
+            Self::SessionSetValue { span, .. }
+            | Self::SessionSetTimeZone { span, .. }
+            | Self::SessionReset { span, .. }
+            | Self::SessionClose { span } => *span,
         }
     }
 }

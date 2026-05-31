@@ -86,8 +86,11 @@ pub(super) fn build_value_expr(
     }
 }
 
-pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    predicate::build_type_name(pair)
+pub(super) fn build_type_name(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<GqlType, ParserError> {
+    predicate::build_type_name(pair, budget)
 }
 
 fn build_cast_expr(
@@ -110,7 +113,7 @@ fn build_cast_expr(
     let type_pair = type_pair
         .ok_or_else(|| ParserError::syntax("CAST is missing target type", source_span, None))?;
     let value = build_value_expr(value_pair, budget)?;
-    let target_type = build_type_name(type_pair)?;
+    let target_type = build_type_name(type_pair, budget)?;
     Ok(ValueExpr::Cast {
         value: Box::new(value),
         target_type: Box::new(target_type),
@@ -118,11 +121,9 @@ fn build_cast_expr(
     })
 }
 
-pub(super) fn intern_string_literal(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<selene_core::IStr, ParserError> {
-    literal::parse_string_pair(pair, budget)
+/// Decode a `string_lit` pair into raw text (unquoted, escapes resolved).
+pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
+    literal::decode_string_text(pair)
 }
 
 fn build_left_assoc(
@@ -207,7 +208,6 @@ fn build_add_op(pair: &Pair<'_, Rule>) -> BinaryOp {
 fn build_mul_op(pair: &Pair<'_, Rule>) -> BinaryOp {
     match pair.as_str() {
         "/" => BinaryOp::Div,
-        "%" => BinaryOp::Mod,
         _ => BinaryOp::Mul,
     }
 }
@@ -335,12 +335,6 @@ fn build_postfix(
                     index: Box::new(build_value_expr(index_pair, budget)?),
                     span: SourceSpan::merge(previous_span, op_span),
                 };
-            }
-            Rule::temporal_prop_access => {
-                return Err(not_implemented(
-                    &op_child,
-                    "temporal property access is not yet supported in v1.0",
-                ));
             }
             _ => return Err(unexpected_pair(op_child, "expected postfix operator")),
         }

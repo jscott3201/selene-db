@@ -1,4 +1,4 @@
--- corpus: negative
--- feature: G003
--- expects: parse-rejected(G003)
+// corpus: negative
+// feature: G003
+// expects: parse-rejected(G003)
 MATCH REPEATABLE ELEMENTS (n) RETURN n

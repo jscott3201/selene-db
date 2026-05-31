@@ -182,7 +182,9 @@ fn preserves_set_op_in_composite_plan() {
 
 #[test]
 fn composite_subplans_keep_pattern_bindings_local() {
-    let plan = plan_one("MATCH (n) RETURN n UNION MATCH (m) RETURN m");
+    // Arms must be column name-equal (ISO §14.2 SR v), so both project to `x`;
+    // the internal pattern bindings (`n` vs `m`) stay arm-local regardless.
+    let plan = plan_one("MATCH (n) RETURN n AS x UNION MATCH (m) RETURN m AS x");
     let first_pattern = plan.pattern_plan.as_ref().expect("first pattern");
     assert_eq!(first_pattern.bindings.len(), 1);
     assert_eq!(first_pattern.bindings[0].name.as_str(), "n");

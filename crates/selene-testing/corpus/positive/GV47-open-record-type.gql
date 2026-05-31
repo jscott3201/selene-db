@@ -1,0 +1,5 @@
+// corpus: positive
+// feature: GV47
+// also-covers: GV45
+// expects: parse-ok
+RETURN RECORD {name: 'Ada'} IS TYPED RECORD AS r

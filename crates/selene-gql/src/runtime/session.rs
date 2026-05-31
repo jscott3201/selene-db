@@ -45,6 +45,23 @@ pub struct Session<'g> {
     pub(crate) row_cap: Option<usize>,
     pub(crate) istr_admission_policy: IStrAdmissionPolicy,
     pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
+    /// When set, `execute_source` runs the optimizer with a snapshot-pinned
+    /// [`LiveIndexCatalog`] so label / typed / composite index access paths are
+    /// selected. Default `true` (greenfield default-on). Toggle off via
+    /// [`Session::without_index_selection`] to lower the byte-identical Linear
+    /// plan (perf-baseline pinning / debugging).
+    pub(crate) index_selection: bool,
+    /// Session-local time-zone displacement (ISO/IEC 39075:2024 section 4.5.2.1).
+    ///
+    /// `None` is the ID048 default (UTC); `SESSION SET TIME ZONE` sets it and
+    /// `SESSION RESET TIME ZONE` clears it back to `None`. The threaded value
+    /// is consumed by the section 20.27 current-datetime functions.
+    pub(crate) time_zone: Option<jiff::tz::TimeZone>,
+    /// Session termination flag (ISO/IEC 39075:2024 section 7.3).
+    ///
+    /// Set by `SESSION CLOSE`; once set, every subsequent `execute_source`
+    /// request returns [`ExecutorError::SessionClosed`].
+    pub(crate) closed: bool,
 }
 
 pub(crate) fn materialize_parameter_values<'a>(
@@ -133,6 +150,9 @@ impl<'g> Session<'g> {
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
+            index_selection: true,
+            time_zone: None,
+            closed: false,
         }
     }
 
@@ -155,13 +175,16 @@ impl<'g> Session<'g> {
             row_cap: None,
             istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
+            index_selection: true,
+            time_zone: None,
+            closed: false,
         }
     }
 
     /// Attach a cooperative cancellation token to subsequent statements.
     ///
     /// Cancellation is cooperative: statements observe the token at executor,
-    /// procedure-pack, and algorithm checkpoints. If a statement inside an
+    /// built-in-procedure, and algorithm checkpoints. If a statement inside an
     /// explicit transaction returns `Cancelled`, the transaction enters the
     /// failed state until `ROLLBACK`.
     #[must_use]
@@ -280,6 +303,69 @@ impl<'g> Session<'g> {
         self.scalar_parameters.clear();
     }
 
+    /// True when a session-local parameter named `name` is currently bound.
+    ///
+    /// Used to honor `SESSION SET VALUE IF NOT EXISTS` (ISO section 7.4): an
+    /// existing binding is left untouched.
+    #[must_use]
+    pub(crate) fn has_parameter(&self, name: &IStr) -> bool {
+        self.parameters.contains_key(name)
+    }
+
+    /// Set the session-local time-zone displacement (ISO feature GS15).
+    ///
+    /// Consumed by the section 20.27 current-datetime functions; persists across
+    /// transaction boundaries like the other session characteristics.
+    pub(crate) fn set_time_zone(&mut self, zone: jiff::tz::TimeZone) {
+        self.time_zone = Some(zone);
+    }
+
+    /// Reset the session time zone to the ID048 default, UTC (ISO feature GS07).
+    pub(crate) fn reset_time_zone(&mut self) {
+        self.time_zone = None;
+    }
+
+    /// Return the time zone temporal evaluation should use for this session.
+    ///
+    /// `None` maps to the ID048 default of UTC.
+    #[must_use]
+    pub(crate) fn effective_time_zone(&self) -> jiff::tz::TimeZone {
+        self.time_zone.clone().unwrap_or(jiff::tz::TimeZone::UTC)
+    }
+
+    /// Reset every session characteristic (ISO feature GS04).
+    ///
+    /// Clears all session parameters and resets the time zone to its default.
+    pub(crate) fn reset_characteristics(&mut self) {
+        self.clear_parameters();
+        self.reset_time_zone();
+    }
+
+    /// Reset all session parameters, leaving other characteristics (ISO feature GS08).
+    pub(crate) fn reset_parameters(&mut self) {
+        self.clear_parameters();
+    }
+
+    /// Reset one named session parameter (ISO feature GS16).
+    pub(crate) fn reset_parameter(&mut self, name: &IStr) {
+        self.clear_parameter(name);
+    }
+
+    /// Mark this session closed (ISO/IEC 39075:2024 section 7.3).
+    ///
+    /// Any active explicit transaction is rolled back first so a closed session
+    /// leaves no dangling write lock.
+    pub(crate) fn close(&mut self) {
+        self.abort();
+        self.closed = true;
+    }
+
+    /// True when `SESSION CLOSE` has terminated this session.
+    #[must_use]
+    pub const fn is_closed(&self) -> bool {
+        self.closed
+    }
+
     /// Borrow the session-local query-parameter map used for statement execution.
     #[must_use]
     #[cfg(test)]
@@ -293,6 +379,32 @@ impl<'g> Session<'g> {
         registry: &BindingTableRegistry,
     ) -> Cow<'a, BTreeMap<IStr, Value>> {
         materialize_parameter_values(&self.parameters, &self.scalar_parameters, registry)
+    }
+
+    /// Disable optimizer index selection; all scans fall back to
+    /// [`ScanAccess::Linear`](crate::ScanAccess::Linear).
+    ///
+    /// With index selection off, `execute_source` skips the optimizer entirely
+    /// and lowers the byte-identical Linear plan (and EXPLAIN output) of
+    /// pre-optimizer-wiring HEAD. This is the escape hatch for committed
+    /// perf-baseline reproduction and access-path debugging.
+    #[must_use]
+    pub const fn without_index_selection(mut self) -> Self {
+        self.index_selection = false;
+        self
+    }
+
+    /// (Re-)enable optimizer index selection (the default).
+    ///
+    /// When enabled, `execute_source` builds a snapshot-pinned
+    /// [`LiveIndexCatalog`](crate::LiveIndexCatalog) per cache-miss statement
+    /// and runs the optimizer so label / typed / composite index access paths
+    /// are selected. Linear remains the always-correct fallback inside every
+    /// rule, so results are byte-identical to the disabled path.
+    #[must_use]
+    pub const fn with_index_selection(mut self) -> Self {
+        self.index_selection = true;
+        self
     }
 
     /// Enable this session's source-string plan cache with the given capacity.

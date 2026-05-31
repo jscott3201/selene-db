@@ -31,7 +31,7 @@ impl fmt::Display for EntityId {
 pub enum TypeViolation {
     /// Node labels do not match any node type.
     #[error("node {id} has labels {labels:?}, which do not match any node type")]
-    #[diagnostic(code(SLENE_G_010))]
+    #[diagnostic(code(SLENE_G_030))]
     UnknownNodeLabel {
         /// Node ID.
         id: NodeId,
@@ -41,7 +41,7 @@ pub enum TypeViolation {
 
     /// Edge label does not match any edge type.
     #[error("edge {id} has label {label}, which does not match any edge type")]
-    #[diagnostic(code(SLENE_G_011))]
+    #[diagnostic(code(SLENE_G_031))]
     UnknownEdgeLabel {
         /// Edge ID.
         id: EdgeId,
@@ -53,7 +53,7 @@ pub enum TypeViolation {
     #[error(
         "edge {id} label {label} expected endpoint types ({expected_source_type}, {expected_target_type}) but observed ({observed_source_type}, {observed_target_type})"
     )]
-    #[diagnostic(code(SLENE_G_012))]
+    #[diagnostic(code(SLENE_G_032))]
     EdgeEndpointTypeMismatch {
         /// Edge ID.
         id: EdgeId,
@@ -71,7 +71,7 @@ pub enum TypeViolation {
 
     /// Required property is absent or null.
     #[error("{entity_id} is missing required property {property} declared in {declared_in}")]
-    #[diagnostic(code(SLENE_G_013))]
+    #[diagnostic(code(SLENE_G_033))]
     MissingRequiredProperty {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -83,7 +83,7 @@ pub enum TypeViolation {
 
     /// Property value has the wrong runtime type.
     #[error("{entity_id} property {property} expected {expected} but observed {observed}")]
-    #[diagnostic(code(SLENE_G_014))]
+    #[diagnostic(code(SLENE_G_034))]
     PropertyTypeMismatch {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -95,9 +95,9 @@ pub enum TypeViolation {
         observed: &'static str,
     },
 
-    /// Extension-owned values are not declarable in v1.0 graph types.
-    #[error("{entity_id} property {property} uses an extension-owned value")]
-    #[diagnostic(code(SLENE_G_015))]
+    /// `Value::Extended` is not a declarable closed-graph type.
+    #[error("{entity_id} property {property} uses a Value::Extended payload")]
+    #[diagnostic(code(SLENE_G_035))]
     ExtensionValueRejected {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -107,7 +107,7 @@ pub enum TypeViolation {
 
     /// Property is not declared by the matched node or edge type.
     #[error("{entity_id} property {property} is not declared by the matched type")]
-    #[diagnostic(code(SLENE_G_016))]
+    #[diagnostic(code(SLENE_G_036))]
     UndeclaredProperty {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -117,7 +117,7 @@ pub enum TypeViolation {
 
     /// Immutable property was updated or removed.
     #[error("{entity_id} property {property} declared in {declared_in} is immutable")]
-    #[diagnostic(code(SLENE_G_017))]
+    #[diagnostic(code(SLENE_G_037))]
     ImmutablePropertyUpdate {
         /// Entity that violated the declaration.
         entity_id: EntityId,
@@ -237,10 +237,20 @@ pub fn validate_change(
             warnings.extend(revalidate_incident_edges(*id, graph, type_def)?);
             Ok(warnings)
         }
+        // Truncation removes INSTANCES and keeps the bound type intact (the
+        // node/edge type still exists), and node-truncate cascades incident
+        // edges so the graph stays dangling-free — it can never violate GG02,
+        // exactly like NodeDeleted/EdgeDeleted. BRIEF-150 / audit Item 11.
+        // GraphReset sets bound_type = None in the same txn, so validate_change
+        // is never even invoked for it (the commit-time loop is gated on a Some
+        // bound_type). The arm is kept for exhaustiveness and is a no-op:
+        // wiping the whole graph + dropping the type can never violate GG02.
         Change::NodeDeleted { .. }
         | Change::EdgeDeleted { .. }
-        | Change::SchemaChanged { .. }
-        | Change::IndexExtensionEvent { .. } => Ok(Vec::new()),
+        | Change::NodesOfTypeTruncated { .. }
+        | Change::EdgesOfTypeTruncated { .. }
+        | Change::GraphReset { .. }
+        | Change::SchemaChanged { .. } => Ok(Vec::new()),
     }
 }
 
@@ -274,10 +284,16 @@ pub fn validate_entity_state(
 ) -> Result<Vec<TypeWarning>, TypeViolation> {
     let mut warnings = Vec::new();
     for row in graph.node_store.alive.iter() {
-        warnings.extend(validate_node_state(NodeId::new(row as u64 + 1), graph, type_def)?.1);
+        let id = graph
+            .node_id_for_row(crate::store::RowIndex::new(row))
+            .expect("alive node row has a mapped external id (BRIEF-Item-4a)");
+        warnings.extend(validate_node_state(id, graph, type_def)?.1);
     }
     for row in graph.edge_store.alive.iter() {
-        warnings.extend(validate_edge_state(EdgeId::new(row as u64 + 1), graph, type_def)?.1);
+        let id = graph
+            .edge_id_for_row(crate::store::RowIndex::new(row))
+            .expect("alive edge row has a mapped external id (BRIEF-Item-4a)");
+        warnings.extend(validate_edge_state(id, graph, type_def)?.1);
     }
     Ok(warnings)
 }
@@ -287,25 +303,28 @@ fn validate_node_state(
     graph: &SeleneGraph,
     type_def: &GraphTypeDef,
 ) -> Result<(u32, Vec<TypeWarning>), TypeViolation> {
-    let labels = graph.node_labels(id).cloned().unwrap_or_else(LabelSet::new);
+    // Borrow the live LabelSet/PropertyMap through; only the None (missing-row)
+    // path materializes an empty default, and only the error path clones the
+    // label set. On schema-changing commits this avoids deep-cloning every alive
+    // node's LabelSet + PropertyMap solely to read them.
+    let empty_labels = LabelSet::new();
+    let labels = graph.node_labels(id).unwrap_or(&empty_labels);
     let node_type_index =
         type_def
-            .find_node_type_index(&labels)
+            .find_node_type_index(labels)
             .ok_or_else(|| TypeViolation::UnknownNodeLabel {
                 id,
                 labels: labels.clone(),
             })?;
     let node_type = &type_def.node_types[node_type_index as usize];
-    let properties = graph
-        .node_properties(id)
-        .cloned()
-        .unwrap_or_else(PropertyMap::new);
+    let empty_props = PropertyMap::new();
+    let properties = graph.node_properties(id).unwrap_or(&empty_props);
     let warnings = validate_properties(
         EntityId::Node(id),
         node_type.name,
         node_type.validation_mode,
         &node_type.properties,
-        &properties,
+        properties,
     )?;
     Ok((node_type_index, warnings))
 }
@@ -341,16 +360,14 @@ fn validate_edge_state<'a>(
             observed_target_type: target_type,
         });
     };
-    let properties = graph
-        .edge_properties(id)
-        .cloned()
-        .unwrap_or_else(PropertyMap::new);
+    let empty_props = PropertyMap::new();
+    let properties = graph.edge_properties(id).unwrap_or(&empty_props);
     warnings.extend(validate_properties(
         EntityId::Edge(id),
         edge_type.name,
         edge_type.validation_mode,
         &edge_type.properties,
-        &properties,
+        properties,
     )?);
     Ok((edge_type, warnings))
 }
@@ -451,308 +468,38 @@ fn validate_properties(
 }
 
 fn property_value_matches(declaration: &PropertyTypeDef, value: &Value) -> bool {
-    if !declaration.value_type.matches(value) {
-        return false;
-    }
-    if declaration.value_type != PropertyValueType::List {
-        return true;
-    }
-    let Some(element_type) = declaration.list_element_type.as_ref() else {
-        return true;
-    };
-    match value {
-        Value::List(values) => values.iter().all(|value| element_type.matches(value)),
-        _ => false,
+    match declaration.value_type {
+        PropertyValueType::List => {
+            let Some(element_type) = declaration.list_element_type.as_ref() else {
+                return matches!(value, Value::List(_));
+            };
+            match value {
+                Value::List(values) => values.iter().all(|value| element_type.matches(value)),
+                _ => false,
+            }
+        }
+        // A RECORD-typed property accepts either record value form — the open
+        // `Value::Record` (the `RECORD{...}` constructor / by-name form) or the positional
+        // `Value::RecordTyped` — because the constructor always yields the open form
+        // regardless of the declared type. Structural conformance against a closed
+        // descriptor (or permissive acceptance for an open/bare `None` descriptor) is then
+        // decided by [`RecordFieldTypes::matches`].
+        // Why: closed/typed RECORD conformance per ISO 39075:2024 §4.15.4 (a closed record
+        // value must have the same field-name set as the descriptor and each field must
+        // match) → graph type violation G2000 (§4.13.2.1).
+        PropertyValueType::Record | PropertyValueType::RecordTyped => {
+            if !matches!(value, Value::Record(_) | Value::RecordTyped(_)) {
+                return false;
+            }
+            match declaration.record_field_types.as_ref() {
+                Some(fields) => fields.matches(value),
+                None => true,
+            }
+        }
+        _ => declaration.value_type.matches(value),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use selene_core::{ExtensionTypeId, GraphId, intern};
-
-    use super::*;
-    use crate::{GraphError, SharedGraph};
-
-    fn istr(name: &str) -> IStr {
-        intern(name).unwrap()
-    }
-
-    fn prop(name: &str, value: Value) -> PropertyMap {
-        PropertyMap::from_pairs([(istr(name), value)]).unwrap()
-    }
-
-    fn graph_type() -> GraphTypeDef {
-        GraphTypeDef {
-            name: istr("validator.graph"),
-            node_types: vec![
-                crate::NodeTypeDef {
-                    name: istr("validator.person"),
-                    key_labels: LabelSet::single(istr("Person")),
-                    properties: vec![PropertyTypeDef {
-                        name: istr("name"),
-                        value_type: PropertyValueType::String,
-                        list_element_type: None,
-                        required: true,
-                        default: None,
-                        immutable: false,
-                    }],
-                    validation_mode: ValidationMode::Strict,
-                },
-                crate::NodeTypeDef {
-                    name: istr("validator.company"),
-                    key_labels: LabelSet::single(istr("Company")),
-                    properties: vec![PropertyTypeDef {
-                        name: istr("name"),
-                        value_type: PropertyValueType::String,
-                        list_element_type: None,
-                        required: true,
-                        default: None,
-                        immutable: false,
-                    }],
-                    validation_mode: ValidationMode::Strict,
-                },
-            ],
-            edge_types: vec![crate::EdgeTypeDef {
-                name: istr("validator.works_at"),
-                label: istr("WORKS_AT"),
-                source_node_type: EdgeEndpointDef::NodeType(0),
-                target_node_type: EdgeEndpointDef::NodeType(1),
-                properties: vec![PropertyTypeDef {
-                    name: istr("since"),
-                    value_type: PropertyValueType::Int,
-                    list_element_type: None,
-                    required: false,
-                    default: None,
-                    immutable: false,
-                }],
-                validation_mode: ValidationMode::Strict,
-            }],
-        }
-    }
-
-    fn valid_graph() -> SeleneGraph {
-        let shared = SharedGraph::builder(GraphId::new(1)).build().unwrap();
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            let person = mutator
-                .create_node(
-                    LabelSet::single(istr("Person")),
-                    prop("name", Value::String(istr("Alice"))),
-                )
-                .unwrap();
-            let company = mutator
-                .create_node(
-                    LabelSet::single(istr("Company")),
-                    prop("name", Value::String(istr("Acme"))),
-                )
-                .unwrap();
-            mutator
-                .create_edge(
-                    istr("WORKS_AT"),
-                    person,
-                    company,
-                    prop("since", Value::Int(2026)),
-                )
-                .unwrap();
-        }
-        txn.commit().unwrap();
-        shared.read().as_ref().clone()
-    }
-
-    #[test]
-    fn validate_entity_state_accepts_valid_graph() {
-        validate_entity_state(&valid_graph(), &graph_type()).unwrap();
-    }
-
-    #[test]
-    fn validate_change_accepts_applied_node_created() {
-        let graph = valid_graph();
-        validate_change(
-            &Change::NodeCreated {
-                id: NodeId::new(1),
-                labels: LabelSet::single(istr("Person")),
-                properties: prop("name", Value::String(istr("Alice"))),
-            },
-            &graph,
-            &graph_type(),
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn rejects_unknown_node_label() {
-        let shared = SharedGraph::builder(GraphId::new(2)).build().unwrap();
-        let mut txn = shared.begin_write();
-        let node = {
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(LabelSet::single(istr("Project")), PropertyMap::new())
-                .unwrap()
-        };
-        txn.commit().unwrap();
-        assert!(matches!(
-            validate_entity_state(shared.read().as_ref(), &graph_type()),
-            Err(TypeViolation::UnknownNodeLabel { id, .. }) if id == node
-        ));
-    }
-
-    #[test]
-    fn rejects_unknown_edge_label() {
-        let mut graph = valid_graph();
-        graph.edge_store.label.set(0, istr("KNOWS"));
-        assert!(matches!(
-            validate_entity_state(&graph, &graph_type()),
-            Err(TypeViolation::UnknownEdgeLabel { id, label })
-                if id == EdgeId::new(1) && label == istr("KNOWS")
-        ));
-    }
-
-    #[test]
-    fn rejects_edge_endpoint_mismatch() {
-        let shared = SharedGraph::builder(GraphId::new(3)).build().unwrap();
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            let a = mutator
-                .create_node(
-                    LabelSet::single(istr("Company")),
-                    prop("name", Value::String(istr("A"))),
-                )
-                .unwrap();
-            let b = mutator
-                .create_node(
-                    LabelSet::single(istr("Person")),
-                    prop("name", Value::String(istr("B"))),
-                )
-                .unwrap();
-            mutator
-                .create_edge(istr("WORKS_AT"), a, b, PropertyMap::new())
-                .unwrap();
-        }
-        txn.commit().unwrap();
-        assert!(matches!(
-            validate_entity_state(shared.read().as_ref(), &graph_type()),
-            Err(TypeViolation::EdgeEndpointTypeMismatch {
-                observed_source_type: 1,
-                observed_target_type: 0,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn rejects_missing_required_property() {
-        let shared = SharedGraph::builder(GraphId::new(4)).build().unwrap();
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(LabelSet::single(istr("Person")), PropertyMap::new())
-                .unwrap();
-        }
-        txn.commit().unwrap();
-        assert!(matches!(
-            validate_entity_state(shared.read().as_ref(), &graph_type()),
-            Err(TypeViolation::MissingRequiredProperty { property, .. }) if property == istr("name")
-        ));
-    }
-
-    #[test]
-    fn rejects_property_type_mismatch() {
-        let shared = SharedGraph::builder(GraphId::new(5)).build().unwrap();
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(
-                    LabelSet::single(istr("Person")),
-                    prop("name", Value::Int(7)),
-                )
-                .unwrap();
-        }
-        txn.commit().unwrap();
-        assert!(matches!(
-            validate_entity_state(shared.read().as_ref(), &graph_type()),
-            Err(TypeViolation::PropertyTypeMismatch {
-                expected: PropertyValueType::String,
-                observed: "Int",
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn legacy_untyped_list_declaration_accepts_any_list_elements() {
-        let declaration = PropertyTypeDef {
-            name: istr("legacy"),
-            value_type: PropertyValueType::List,
-            list_element_type: None,
-            required: false,
-            default: None,
-            immutable: false,
-        };
-
-        assert!(property_value_matches(
-            &declaration,
-            &Value::List(vec![Value::Int(1), Value::String(istr("two"))])
-        ));
-        assert!(!property_value_matches(&declaration, &Value::Int(1)));
-    }
-
-    #[test]
-    fn rejects_extension_value() {
-        let shared = SharedGraph::builder(GraphId::new(6)).build().unwrap();
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(
-                    LabelSet::single(istr("Person")),
-                    prop(
-                        "name",
-                        Value::Extended {
-                            type_id: ExtensionTypeId(0x100),
-                            payload: Arc::from([1_u8]),
-                        },
-                    ),
-                )
-                .unwrap();
-        }
-        txn.commit().unwrap();
-        assert!(matches!(
-            validate_entity_state(shared.read().as_ref(), &graph_type()),
-            Err(TypeViolation::ExtensionValueRejected { property, .. }) if property == istr("name")
-        ));
-    }
-
-    #[test]
-    fn rejects_undeclared_property() {
-        let shared = SharedGraph::builder(GraphId::new(7)).build().unwrap();
-        let mut txn = shared.begin_write();
-        {
-            let mut mutator = txn.mutator();
-            let mut props = prop("name", Value::String(istr("Alice")));
-            props.set(istr("extra"), Value::Bool(true)).unwrap();
-            mutator
-                .create_node(LabelSet::single(istr("Person")), props)
-                .unwrap();
-        }
-        txn.commit().unwrap();
-        assert!(matches!(
-            validate_entity_state(shared.read().as_ref(), &graph_type()),
-            Err(TypeViolation::UndeclaredProperty { property, .. }) if property == istr("extra")
-        ));
-    }
-
-    #[test]
-    fn graph_error_wraps_type_violation() {
-        let error = GraphError::from(TypeViolation::UnknownEdgeLabel {
-            id: EdgeId::new(1),
-            label: istr("BAD"),
-        });
-        assert_eq!(error.gqlstatus(), "G2000");
-    }
-}
+#[path = "type_validator_tests.rs"]
+mod tests;

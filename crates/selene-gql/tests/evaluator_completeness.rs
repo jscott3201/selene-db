@@ -350,29 +350,47 @@ fn power_treats_128_bit_integers_as_numeric_for_float_path() {
 }
 
 #[test]
-fn predicate_completion_covers_like_between_all_different_and_same() {
+fn non_iso_like_and_between_are_rejected_at_parse_time() {
+    // `LIKE` and `BETWEEN` are SQL drift; the grammar rejects them so they
+    // never reach analysis or execution. ISO replacements (STARTS WITH /
+    // ENDS WITH / CONTAINS and `x >= lo AND x <= hi`) cover the same intent
+    // and execute at HEAD (asserted below).
+    for source in [
+        "RETURN 'alphabet' LIKE 'a%bet' AS v",
+        "RETURN 5 BETWEEN 1 AND 10 AS v",
+    ] {
+        let err = selene_gql::parse(source).expect_err(source);
+        assert_eq!(
+            err.gqlstatus(),
+            selene_gql::GqlStatus::SYNTAX_ERROR,
+            "{source}",
+        );
+    }
+}
+
+#[test]
+fn iso_string_match_and_range_replacements_execute() {
+    // STARTS WITH covers the `LIKE 'a%'` prefix intent.
     assert_eq!(
-        single_value(
-            "RETURN 'alphabet' LIKE 'a%bet' AS like_value, 5 BETWEEN 1 AND 10 AS between_value, \
-             ALL_DIFFERENT(1, 2, 3) AS diff_value",
-            "like_value",
-        ),
+        single_value("RETURN 'alphabet' STARTS WITH 'a' AS v", "v"),
         Value::Bool(true)
     );
+    // CONTAINS covers the `LIKE '%bet%'` substring intent.
     assert_eq!(
-        single_value(
-            "RETURN 'alphabet' LIKE 'a%bet' AS like_value, 5 BETWEEN 1 AND 10 AS between_value, \
-             ALL_DIFFERENT(1, 2, 3) AS diff_value",
-            "between_value",
-        ),
+        single_value("RETURN 'alphabet' CONTAINS 'bet' AS v", "v"),
         Value::Bool(true)
     );
+    // `x >= lo AND x <= hi` covers the `BETWEEN lo AND hi` intent.
     assert_eq!(
-        single_value(
-            "RETURN 'alphabet' LIKE 'a%bet' AS like_value, 5 BETWEEN 1 AND 10 AS between_value, \
-             ALL_DIFFERENT(1, 2, 3) AS diff_value",
-            "diff_value",
-        ),
+        single_value("RETURN 5 >= 1 AND 5 <= 10 AS v", "v"),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn predicate_completion_covers_all_different_and_same() {
+    assert_eq!(
+        single_value("RETURN ALL_DIFFERENT(1, 2, 3) AS diff_value", "diff_value"),
         Value::Bool(true)
     );
 
@@ -591,9 +609,27 @@ fn case_list_access_and_record_literal_evaluate() {
         ),
         Value::Int(2)
     );
+    // 1-based ordinal subscript (ISO §14.8): list[1] is the first element.
     assert_eq!(
         single_value("RETURN [10, 20, 30][1] AS value", "value"),
+        Value::Int(10)
+    );
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][2] AS value", "value"),
         Value::Int(20)
+    );
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][3] AS value", "value"),
+        Value::Int(30)
+    );
+    // Ordinal 0 and beyond-cardinality fall outside 1..=cardinality -> NULL.
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][0] AS value", "value"),
+        Value::Null
+    );
+    assert_eq!(
+        single_value("RETURN [10, 20, 30][4] AS value", "value"),
+        Value::Null
     );
     assert_eq!(
         single_value("RETURN [10][-1] AS value", "value"),
@@ -627,7 +663,7 @@ fn case_list_access_and_record_literal_evaluate() {
             vec![index],
         )
         .unwrap(),
-        Value::Int(2)
+        Value::Int(1)
     );
     assert_eq!(
         eval_with_binding(
@@ -639,7 +675,7 @@ fn case_list_access_and_record_literal_evaluate() {
             vec![index],
         )
         .unwrap(),
-        Value::Int(1)
+        Value::Null
     );
     assert_eq!(
         eval(&list_access(

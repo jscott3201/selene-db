@@ -17,6 +17,20 @@ use super::{parse, to_u32};
 /// Semicolons inside strings, delimited identifiers, and comments do not split
 /// statements. Empty segments are skipped.
 ///
+/// # DoS guards are enforced per-statement, not per-call
+///
+/// Each non-empty segment is handed to [`parse`], which constructs a fresh
+/// [`InternerBudget`](super::budget::InternerBudget) and runs the nesting
+/// [`guard`](super::guard) over that segment alone. The interner-admission
+/// budget therefore **resets at every statement boundary** — a program of N
+/// statements may admit up to `N × MAX_NEW_ADMISSIONS_PER_PARSE` distinct new
+/// strings in aggregate (the global interner cap remains the absolute
+/// backstop), and the syntactic nesting limit applies to each statement's own
+/// delimiter depth rather than the summed depth of the whole input. A single
+/// segment that exceeds either guard is rejected with that segment's error,
+/// span-rebased to the original multi-statement source; preceding statements
+/// that already parsed are discarded with it.
+///
 /// # Errors
 ///
 /// Returns the first [`ParserError`] produced by a non-empty segment, with its
@@ -171,6 +185,13 @@ fn rebase_statement_spans(statement: &mut Statement, offset: usize) {
         Statement::StartTransaction { span }
         | Statement::Commit { span }
         | Statement::Rollback { span } => rebase_span(span, offset),
+        Statement::SessionSetValue { value, span, .. } => {
+            rebase_span(span, offset);
+            rebase_value(value, offset);
+        }
+        Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionReset { span, .. }
+        | Statement::SessionClose { span } => rebase_span(span, offset),
     }
 }
 
@@ -384,28 +405,6 @@ fn rebase_value(value: &mut ValueExpr, offset: usize) {
                 rebase_value(item, offset);
             }
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-            rebase_value(pattern, offset);
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            span,
-            ..
-        } => {
-            rebase_span(span, offset);
-            rebase_value(operand, offset);
-            rebase_value(low, offset);
-            rebase_value(high, offset);
-        }
         ValueExpr::AllDifferent { items, span } | ValueExpr::Same { items, span } => {
             rebase_span(span, offset);
             for item in items {
@@ -515,6 +514,8 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
         | DdlStatement::DropGraph { span, .. }
         | DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
+        | DdlStatement::TruncateNodeType { span, .. }
+        | DdlStatement::TruncateEdgeType { span, .. }
         | DdlStatement::CreateIndex { span, .. }
         | DdlStatement::DropIndex { span, .. } => rebase_span(span, offset),
         DdlStatement::CreateNodeType {
@@ -543,12 +544,7 @@ fn rebase_property_def(property: &mut TypePropertyDef, offset: usize) {
         match constraint {
             TypePropertyConstraint::NotNull(span)
             | TypePropertyConstraint::Immutable(span)
-            | TypePropertyConstraint::Unique(span)
-            | TypePropertyConstraint::Searchable(span)
-            | TypePropertyConstraint::Dictionary(span)
-            | TypePropertyConstraint::Fill(_, span)
-            | TypePropertyConstraint::Interval(_, span)
-            | TypePropertyConstraint::Encoding(_, span) => rebase_span(span, offset),
+            | TypePropertyConstraint::Unique(span) => rebase_span(span, offset),
             TypePropertyConstraint::Indexed { span, .. } => rebase_span(span, offset),
             TypePropertyConstraint::Default(value, span) => {
                 rebase_span(span, offset);

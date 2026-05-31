@@ -59,12 +59,16 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 for (_, value) in fields {
                     bind_value_expr(ctx, value)?;
                 }
-                // Why: GV45-GV48 (RECORD types) are demoted to
-                // NOT_SUPPORTED_RATIONALE per CLAUDE.md D2 amendment
-                // (2026-05-08). The parser is the gate for whether a
-                // RecordLiteral reaches the analyzer; leave the type cell Dynamic
-                // rather than implying claimed-feature support.
-                AnalyzedType::Dynamic
+                // An open `RECORD{...}` value literal resolves to the open
+                // record type. `RecordType::Open` carries no per-field types, so
+                // this is a pure tag (no field inference). Resolving it (vs
+                // `Dynamic`) routes closed-graph (GG02) RECORD property writes
+                // through the declared property-type compatibility check instead
+                // of bypassing it via the `Dynamic` fast-path. The value form is
+                // ISO feature GV45 (`<record constructor>`, clause 20.18);
+                // typed/closed RECORD *type* expressions (GV46-GV48) stay
+                // deferred to the typed-RECORD brief.
+                AnalyzedType::Resolved(crate::GqlType::Record(crate::RecordType::Open))
             }
             ValueExpr::BinaryOp { op, lhs, rhs, .. } => {
                 let lhs_id = bind_value_expr(ctx, lhs)?;
@@ -112,33 +116,6 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
                 let operand_id = bind_value_expr(ctx, operand)?;
                 let items = bind_many_with_spans(ctx, list)?;
                 infer::in_list(ctx.expr_type(operand_id), operand.span(), &items)?
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                let operand_id = bind_value_expr(ctx, operand)?;
-                let pattern_id = bind_value_expr(ctx, pattern)?;
-                infer::like(
-                    ctx.expr_type(operand_id),
-                    operand.span(),
-                    ctx.expr_type(pattern_id),
-                    pattern.span(),
-                )?
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                let operand_id = bind_value_expr(ctx, operand)?;
-                let low_id = bind_value_expr(ctx, low)?;
-                let high_id = bind_value_expr(ctx, high)?;
-                infer::between(
-                    ctx.expr_type(operand_id),
-                    operand.span(),
-                    ctx.expr_type(low_id),
-                    low.span(),
-                    ctx.expr_type(high_id),
-                    high.span(),
-                )?
             }
             ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
                 bind_many(ctx, items)?;
@@ -194,12 +171,10 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             }
             ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
             ValueExpr::Cast {
-                value,
-                target_type,
-                span,
+                value, target_type, ..
             } => {
-                let value_id = bind_value_expr(ctx, value)?;
-                infer::cast(target_type, ctx.expr_type(value_id), *span)?
+                bind_value_expr(ctx, value)?;
+                infer::cast(target_type)?
             }
         };
         Ok(ctx.allocate_expr(expr, ty))
@@ -262,19 +237,6 @@ fn check_expr_depth(expr: &ValueExpr) -> Result<(), AnalysisError> {
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter().rev().map(|item| (item, next)));
-                stack.push((operand, next));
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push((pattern, next));
-                stack.push((operand, next));
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push((high, next));
-                stack.push((low, next));
                 stack.push((operand, next));
             }
             ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
@@ -466,19 +428,6 @@ fn check_expr_subquery_depth(expr: &ValueExpr, depth: u32) -> Result<(), Analysi
                     | IsCheckKind::Typed(_)
                     | IsCheckKind::Normalized(_) => {}
                 }
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push((pattern, depth));
-                stack.push((operand, depth));
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push((high, depth));
-                stack.push((low, depth));
-                stack.push((operand, depth));
             }
             ValueExpr::Case {
                 branches,

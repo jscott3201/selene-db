@@ -17,6 +17,7 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         required,
         default: None,
         immutable: false,
+        record_field_types: None,
     }
 }
 

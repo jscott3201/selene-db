@@ -28,7 +28,6 @@ use selene_core::{CancellationChecker, NodeId};
 
 use crate::error::{AlgorithmAborted, check_algorithm, check_algorithm_stride};
 use crate::projection::GraphProjection;
-use crate::structural::RowIndex;
 
 /// Compute community assignments via single-pass Louvain modularity.
 ///
@@ -52,7 +51,7 @@ pub fn louvain_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, u64, u32)>, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
@@ -68,7 +67,7 @@ pub fn louvain_with_checker(
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
+            if idx.dense_of_node(nb.node_id).is_some() {
                 total_weight += nb.weight;
             }
         }
@@ -96,12 +95,12 @@ pub fn louvain_with_checker(
         let node = idx.node_id_of(d);
         let mut deg = 0.0;
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
+            if idx.dense_of_node(nb.node_id).is_some() {
                 deg += nb.weight;
             }
         }
         for nb in proj.in_neighbors(node) {
-            if idx.dense_of(node_sparse_row(nb.node_id)).is_some() {
+            if idx.dense_of_node(nb.node_id).is_some() {
                 deg += nb.weight;
             }
         }
@@ -140,13 +139,13 @@ pub fn louvain_with_checker(
 
             comm_weights.clear();
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(nd) = idx.dense_of_node(nb.node_id) {
                     let nb_comm = community[nd as usize];
                     *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
                 }
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of(node_sparse_row(nb.node_id)) {
+                if let Some(nd) = idx.dense_of_node(nb.node_id) {
                     let nb_comm = community[nd as usize];
                     *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
                 }
@@ -191,14 +190,15 @@ pub fn louvain_with_checker(
         }
     }
 
-    // Final result: community IDs are dense indices. Remap to NodeId values
-    // (smallest NodeId in each community would be the WCC/SCC convention, but
-    // Louvain communities are not "components" in the connectivity sense —
-    // donor leaves the dense-index labels as-is, which is fine because they
-    // are stable identifiers within a single run). We emit the dense-index
-    // form converted to `u64` to match the type signature; if a future brief
-    // wants smallest-NodeId-in-community canonicalization, it lives behind a
-    // separate canonicalization step (no information loss).
+    // Final result: `community[d]` holds the dense index of the community's
+    // seed node (the singleton each merge chain folded into). We emit that
+    // seed's external NodeId — `idx.node_id_of(community[d]).get()` — as the
+    // community label. This is a stable identifier within a single run, NOT
+    // the smallest NodeId in the community: it deliberately differs from the
+    // min-NodeId canonicalization used by WCC / SCC / label_propagation
+    // (§E12), because Louvain communities are not connectivity components.
+    // Smallest-NodeId-in-community canonicalization, if a future brief wants
+    // it, is a separate post-pass (no information loss).
     let mut result: Vec<(NodeId, u64, u32)> = (0..n as u32)
         .map(|d| {
             (
@@ -212,11 +212,6 @@ pub fn louvain_with_checker(
     Ok(result)
 }
 
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
-}
-
 /// Compute the scalar Louvain gain term for moving a node into one community.
 ///
 /// This pins the formula used by the movement loop:
@@ -225,12 +220,7 @@ fn node_sparse_row(nid: NodeId) -> u32 {
 /// candidate community, `k_i` is the node's weighted degree, and `sigma_tot`
 /// is the target community's weighted-degree sum. The movement delta is the
 /// candidate term minus the current-community term.
-pub(crate) fn compute_modularity_delta(
-    total_weight: f64,
-    ki_in: f64,
-    ki: f64,
-    sigma_tot: f64,
-) -> f64 {
+fn compute_modularity_delta(total_weight: f64, ki_in: f64, ki: f64, sigma_tot: f64) -> f64 {
     ki_in / total_weight - (ki * sigma_tot) / (2.0 * total_weight * total_weight)
 }
 

@@ -2,6 +2,7 @@
 
 mod bounds_detail;
 mod catalog_summary;
+mod op_summary;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -9,18 +10,18 @@ use std::{
 };
 
 use crate::{
-    LabelExpr,
     analyze::BindingId,
     plan::{
         Aggregate, BindingDef, BindingTableColumn, EdgeMatch, ExecutionPlan, FilterPredicate,
-        JoinTree, MutationOp, NodeOrEdgeScan, OrderAccess, OrderKey, PipelineOp, PlannedYieldItem,
-        RepeatEdgeMatch, ScanAccess, ScanKind, TxOp, YieldKind,
+        JoinTree, NodeOrEdgeScan, OrderAccess, OrderKey, PipelineOp, PlannedYieldItem,
+        RepeatEdgeMatch, ScanAccess, ScanKind, YieldKind,
     },
 };
 
 use super::{DEFAULT_RULES, OptimizeContext, RULE_NAMES, Rule};
 use bounds_detail::bounds_detail_for_access;
 use catalog_summary::catalog_summary;
+use op_summary::{mutation_summary, session_summary, tx_summary};
 
 /// Optimize a plan and return a deterministic summary for snapshot tests.
 #[must_use]
@@ -41,6 +42,11 @@ pub struct PlanSnapshot {
     pub output_columns: Vec<String>,
     /// Optimizer rules that reported a change at least once.
     pub fired_rules: Vec<&'static str>,
+    /// Pipeline-op high-water mark after optimization. Captured so a test can
+    /// assert the recording driver agrees with the production
+    /// `optimize_with_rules` (PLAN-20). Deliberately NOT rendered by
+    /// [`fmt::Display`] so the golden `.snap` corpus is unaffected.
+    pub next_pipeline_op_id: u32,
 }
 
 /// Stable summary of one pipeline operation.
@@ -113,6 +119,7 @@ impl PlanSnapshot {
                 .map(|pattern| pattern_snapshot(pattern, &plan.pipeline)),
             output_columns: output_columns(&plan.output_schema.columns),
             fired_rules,
+            next_pipeline_op_id: plan.next_pipeline_op_id.get(),
         }
     }
 
@@ -222,6 +229,13 @@ fn optimize_recording(
             break;
         }
     }
+    // Why (PLAN-20): mirror the production `optimize_with_rules` post-loop
+    // step. Without this, the recording driver leaves `next_pipeline_op_id` at
+    // its lowering-time value while production refreshes it from the final
+    // pipeline length, so the corpus + idempotence snapshots would pin the
+    // test driver instead of the shipped optimizer. Parity is asserted in the
+    // `recording_driver_matches_production_pipeline_op_high_water` test below.
+    plan.refresh_pipeline_op_high_water();
     let mut fired_rules = fired.into_iter().collect::<Vec<_>>();
     fired_rules.sort_unstable_by_key(|name| {
         RULE_NAMES
@@ -391,6 +405,10 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
             kind: "Tx",
             payload: tx_summary(tx),
         },
+        PipelineOp::Session(session) => PipelineOpSummary {
+            kind: "Session",
+            payload: session_summary(session),
+        },
     }
 }
 
@@ -434,7 +452,8 @@ fn collect_order_access(pipeline: &[PipelineOp]) -> Vec<Option<String>> {
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
-            | PipelineOp::Tx(_) => {}
+            | PipelineOp::Tx(_)
+            | PipelineOp::Session(_) => {}
         }
     }
     access
@@ -699,57 +718,6 @@ fn yield_summary(item: &PlannedYieldItem) -> String {
     item.alias
         .map(|alias| format!("{column} as {}", alias.as_str()))
         .unwrap_or(column)
-}
-
-fn mutation_summary(mutation: &MutationOp) -> String {
-    match mutation {
-        MutationOp::InsertNode {
-            label_expr,
-            property_inits,
-            ..
-        } => format!(
-            "op=InsertNode(label={}, props={})",
-            label_expr_summary(label_expr.as_ref()),
-            property_inits.len()
-        ),
-        MutationOp::InsertEdge {
-            label_expr,
-            property_inits,
-            ..
-        } => format!(
-            "op=InsertEdge(label={}, props={})",
-            label_expr_summary(label_expr.as_ref()),
-            property_inits.len()
-        ),
-        MutationOp::SetProperty { key, .. } => format!("op=SetProperty(key={})", key.as_str()),
-        MutationOp::SetLabel { label, .. } => format!("op=SetLabel(label={})", label.as_str()),
-        MutationOp::RemoveProperty { key, .. } => {
-            format!("op=RemoveProperty(key={})", key.as_str())
-        }
-        MutationOp::RemoveLabel { label, .. } => {
-            format!("op=RemoveLabel(label={})", label.as_str())
-        }
-        MutationOp::DeleteTarget { mode, .. } => format!("op=DeleteTarget(mode={mode:?})"),
-    }
-}
-
-fn tx_summary(tx: &TxOp) -> String {
-    match tx {
-        TxOp::Start { .. } => "op=Start".to_owned(),
-        TxOp::Commit { .. } => "op=Commit".to_owned(),
-        TxOp::Rollback { .. } => "op=Rollback".to_owned(),
-    }
-}
-
-fn label_expr_summary(label: Option<&LabelExpr>) -> String {
-    match label {
-        Some(LabelExpr::Single(label)) => label.as_str().to_owned(),
-        Some(LabelExpr::Conjunction(_)) => "conjunction".to_owned(),
-        Some(LabelExpr::Disjunction(_)) => "disjunction".to_owned(),
-        Some(LabelExpr::Negation(_)) => "negation".to_owned(),
-        Some(LabelExpr::Wildcard) => "*".to_owned(),
-        None => "none".to_owned(),
-    }
 }
 
 fn display_list(values: &[&str]) -> String {

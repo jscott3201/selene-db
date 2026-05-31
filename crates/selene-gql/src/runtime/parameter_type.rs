@@ -2,9 +2,9 @@
 
 use std::borrow::Cow;
 
-use selene_core::{IStr, Record, Value};
+use selene_core::{IStr, Value};
 
-use crate::{GqlType, RecordType, SourceSpan, runtime::ExecutorError};
+use crate::{GqlType, SourceSpan, runtime::ExecutorError, runtime::value_type_match};
 
 pub(crate) fn validate_declared_type(
     name: IStr,
@@ -12,7 +12,7 @@ pub(crate) fn validate_declared_type(
     declared_type: &GqlType,
     span: SourceSpan,
 ) -> Result<(), ExecutorError> {
-    if value_matches_gql_type(value, declared_type) {
+    if value_type_match::value_matches_gql_type(value, declared_type) {
         return Ok(());
     }
     Err(ExecutorError::InvalidParameterType {
@@ -21,84 +21,6 @@ pub(crate) fn validate_declared_type(
         actual: value_gql_type_name(value),
         span,
     })
-}
-
-fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
-    match ty {
-        GqlType::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
-        GqlType::Uuid => matches!(value, Value::Uuid(_)),
-        GqlType::Boolean => matches!(value, Value::Bool(_)),
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => matches!(value, Value::Int(_)),
-        GqlType::Int128 => matches!(value, Value::Int128(_)),
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            matches!(value, Value::Uint(_))
-        }
-        GqlType::Uint128 => matches!(value, Value::Uint128(_)),
-        GqlType::Float => matches!(value, Value::Float(_) | Value::Float32(_)),
-        GqlType::Float32 => matches!(value, Value::Float32(_)),
-        GqlType::Float64 => matches!(value, Value::Float(_)),
-        GqlType::Decimal => matches!(value, Value::Decimal(_)),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => matches!(value, Value::Bytes(_)),
-        GqlType::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
-        GqlType::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
-        GqlType::Date => matches!(value, Value::Date(_)),
-        GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
-        GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
-        GqlType::Duration => matches!(value, Value::Duration(_)),
-        GqlType::Record(record) => value_matches_record_type(value, record),
-        GqlType::List(inner) => match value {
-            Value::List(values) => values
-                .iter()
-                .all(|value| value_matches_gql_type(value, inner)),
-            _ => false,
-        },
-        GqlType::Path => matches!(value, Value::Path(_)),
-        GqlType::GraphRef => matches!(value, Value::GraphRef(_)),
-        GqlType::NodeRef => matches!(value, Value::NodeRef(_)),
-        GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
-        GqlType::TableRef => matches!(value, Value::TableRef(_)),
-        GqlType::Null => matches!(value, Value::Null),
-        GqlType::Nothing => false,
-    }
-}
-
-fn value_matches_record_type(value: &Value, record: &RecordType) -> bool {
-    match record {
-        RecordType::Open => matches!(value, Value::Record(_) | Value::RecordTyped(_)),
-        RecordType::Closed(fields) => match value {
-            Value::Record(record) => match record.as_ref() {
-                Record::Open(values) => {
-                    values.len() == fields.len()
-                        && fields.iter().all(|(name, ty)| {
-                            values
-                                .iter()
-                                .find(|(field, _)| field == name)
-                                .is_some_and(|(_, value)| value_matches_gql_type(value, ty))
-                        })
-                }
-                _ => false,
-            },
-            Value::RecordTyped(record) => {
-                record.values.len() == fields.len()
-                    && record
-                        .values
-                        .iter()
-                        .zip(fields.iter())
-                        .all(|(value, (_, ty))| {
-                            value
-                                .as_ref()
-                                .is_some_and(|value| value_matches_gql_type(value, ty))
-                        })
-            }
-            _ => false,
-        },
-    }
 }
 
 fn render_gql_type(ty: &GqlType) -> Cow<'static, str> {
@@ -122,7 +44,7 @@ fn render_gql_type(ty: &GqlType) -> Cow<'static, str> {
         GqlType::Decimal => "DECIMAL".into(),
         GqlType::Float32 => "FLOAT32".into(),
         GqlType::Float64 => "FLOAT64".into(),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => "BYTES".into(),
+        GqlType::Bytes => "BYTES".into(),
         GqlType::Uuid => "UUID".into(),
         GqlType::ZonedDateTime => "ZONED DATETIME".into(),
         GqlType::LocalDateTime => "LOCAL DATETIME".into(),

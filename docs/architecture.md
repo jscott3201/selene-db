@@ -2,8 +2,8 @@
 
 This document describes how selene-db is built. It assumes you have read
 [`README.md`](../README.md) and want to understand the layering, concurrency
-model, persistence design, extension surface, and the numbered architecture
-decisions that shape the workspace.
+model, persistence design, the native procedure surface, and the numbered
+architecture decisions that shape the workspace.
 
 selene-db is an embeddable property graph engine for Rust that targets
 ISO/IEC 39075:2024 GQL minimum conformance plus a curated subset of optional
@@ -13,58 +13,44 @@ in-process.
 
 For operational detail on durability and recovery see
 [`persistence-and-recovery.md`](persistence-and-recovery.md). For the GQL
-surface see [`gql-reference.md`](gql-reference.md). For algorithm and vector
-extension surfaces see [`graph-algorithms.md`](graph-algorithms.md) and
-[`vector-search.md`](vector-search.md).
+surface see [`gql-reference.md`](gql-reference.md). For graph algorithm
+surfaces see [`graph-algorithms.md`](graph-algorithms.md).
 
 ---
 
 ## 1. Crate dependency graph
 
-The workspace is a flat tree of ten crates with no umbrella facade
-(decision D8). `selene-core` is the leaf. Every other crate transitively
-depends on it. `selene-testing` is dev-only and is consumed via
-`[dev-dependencies]`.
+The workspace is a flat tree of six mandatory crates with no umbrella facade
+(decision D8). There are no opt-in extension crates. `selene-core` is the
+leaf; every other crate transitively depends on it. The runtime dependency
+direction is linear — `core → graph → algorithms → gql` — and
+`selene-algorithms` never imports `selene-gql`. `selene-testing` is dev-only
+and is consumed via `[dev-dependencies]`.
 
 ```text
-                                 selene-core
-                                      |
-            +-------------+-----------+-----------+----------------+
-            |             |                       |                |
-       selene-persist  selene-graph        selene-algorithms  selene-vector
-            ^             ^                       ^                ^
-            |             |                       |                |
-            +------+------+                       |                |
-                   |                              |                |
-              selene-gql                          |                |
-                   ^                              |                |
-                   |                              |                |
-              selene-pack <---- selene-algorithms-pack             |
-                   ^                                               |
-                   |                                               |
-                   +------------- selene-vector-pack --------------+
+   selene-core ──▶ selene-graph ──▶ selene-algorithms ──▶ selene-gql
 
-   (dev-only)  selene-testing  depends on selene-core, selene-gql, selene-graph
+   selene-persist ──▶ selene-core   (graph-blind durability; never sees Graph)
+
+   (dev-only)  selene-testing  depends on selene-core, selene-graph
+                                (+ selene-algorithms for fixtures)
 ```
 
-| Crate | Role |
-|---|---|
-| `selene-core` | Foundation types: `Value`, `IStr` interner, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Change`, GQLSTATUS table, ISO feature register. Zero deps on other selene crates. |
-| `selene-persist` | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN` magic) + two-step recovery. Depends on `selene-core` only. |
-| `selene-graph` | In-memory property graph: storage primitives, `Mutator` write funnel, label / typed / composite indexes, `IndexProvider` extension hook, `GraphTypeDef` runtime binding, `SharedGraph` + `WriteTxn`. |
-| `selene-gql` | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, `ProcedureRegistry` trait, Flagger. Depends on `selene-core` + `selene-graph`. |
-| `selene-pack` | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate activation state machine, atomic mutation-funnel audit, blake3 content hashing, platform built-ins (`selene.health`, `selene.create_index`, `selene.drop_index`, `selene.pack.history`). Widest dep set: `selene-core` + `selene-persist` + `selene-graph` + `selene-gql`. |
-| `selene-algorithms` | `GraphProjection` + `ProjectionCatalog`, four algorithm families (structural / pathfinding / centrality / community), D21 snapshot harness. Independent of `selene-gql`. |
-| `selene-algorithms-pack` | Procedure-pack adapter that exposes `selene-algorithms` through GQL `CALL` by registering an external pack with `selene-pack`. |
-| `selene-vector` | Opt-in HNSW and IVF vector index extension with search, mutation replay, snapshots, quantization, and `IndexProvider` registration. |
-| `selene-vector-pack` | Procedure-pack adapter that exposes vector search, mutation, bulk mutation, IVF search, and IVF stats through GQL `CALL`. |
-| `selene-testing` | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / procedure-pack / algorithm corpora. Consumed via `[dev-dependencies]`. |
+| Crate | Depends on | Owns |
+|---|---|---|
+| `selene-core` | none | Foundation types: `Value` (the 4 mandatory ISO types + `Value::Extended` + `Value::ExternalString(Arc<str>)`), `IStr` interner, `PropertyMap`, `LabelSet`, schema model, `Codec`, `Origin`, `Changeset`, GQLSTATUS table, ISO feature register. |
+| `selene-graph` | core | In-memory property graph: ArcSwap + RwLock + imbl storage primitives, `Mutator` write funnel, RoaringBitmap label / typed / composite indexes, `IndexProvider` / `DurableProvider` / `RecoveryProvider` hooks, `GraphTypeDef` runtime binding, `LiveIdSet` / `CompactionReport` / `compact_core` (CORE-internal densify compaction), `SharedGraph` + `WriteTxn`. |
+| `selene-persist` | core | Graph-blind WAL (`SLDB` magic) + rkyv-archived snapshots (`SLSN`, TLV-tagged sections) + recovery + the append-only `audit.log` (`SLAU`, D17). Never sees `Graph` — takes `&[Change]`, returns `RecoveryResult`. |
+| `selene-algorithms` | core, graph | `GraphProjection` + `ProjectionCatalog` foundation, 19 public algorithm surfaces (structural / pathfinding / centrality / community), and the native Rust API (free functions + the `GraphAlgorithms` extension trait — a methods-on-graph convenience, with the 1024-thread `Parallelism` cap) + the D20 snapshot harness. Independent of `selene-gql`. |
+| `selene-gql` | core, graph, algorithms | Pest GQL grammar, AST, semantic analyzer, planner, rule-based optimizer, row-at-a-time executor, Flagger, the `ProcedureRegistry` trait (D15), and its sole frozen production impl `BuiltinProcedureRegistry` — 5 platform built-ins (`selene.{health,feature_status,verify,create_index,drop_index}`) + 19 `algo.*` procedures binding `CALL algo.*` directly over the native algorithms API. |
+| `selene-testing` | core, graph (+ algorithms for fixtures) | Shared fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs for the planner / executor / algorithm corpora. Consumed via `[dev-dependencies]`. |
 
 The dependency graph is intentionally acyclic with a single sink
-(`selene-core`) and a single broad consumer of the runtime layer
-(`selene-pack`). Pack-adapter crates (`selene-algorithms-pack`,
-`selene-vector-pack`) sit on top so that the runtime crates never grow
-non-graph capability surface.
+(`selene-core`) and a single broad runtime consumer (`selene-gql`).
+`selene-algorithms` is a mandatory first-class crate that sits between
+`selene-graph` and `selene-gql`: it owns the native algorithm API and never
+imports the GQL layer, so the graph storage core stays free of the
+query/procedure surface.
 
 ---
 
@@ -160,8 +146,10 @@ All graph writes funnel through `selene_graph::Mutator`. The mutator builds
 a `Vec<Change>` (label diffs, property diffs, node/edge create/delete,
 schema mutations). On `WriteTxn::commit` the mutator atomically swaps a new
 graph snapshot into the `ArcSwap` and hands the `&[Change]` slice to
-`selene-persist` for WAL append. Lifecycle audit events for procedure-pack
-activation route through the same funnel; there is no parallel ledger (D18).
+`selene-persist` for WAL append. Engine-owned audit events route through the
+same funnel into a dedicated append-only `audit.log` substrate (`SLAU`,
+D17), WAL-first then audit-after, so there is no parallel ledger and no
+audit-vs-graph split-brain.
 
 ### Persistence
 
@@ -244,9 +232,9 @@ limits before handing decoded changes back to providers.
 This separation has three consequences:
 
 1. The WAL format can evolve independently of the graph data model.
-2. Non-graph providers (vector indexes, future fulltext, future
-   timeseries) can ride the same WAL by emitting their own `Change`
-   variants without touching persistence code.
+2. First-party derived-state providers (the `IndexProvider` /
+   `DurableProvider` / `RecoveryProvider` plumbing) ride the same WAL by
+   emitting their own `Change` variants without touching persistence code.
 3. Recovery is a pure data pipeline: read snapshot, then replay the
    tail of the WAL.
 
@@ -278,9 +266,12 @@ durability.
 
 ---
 
-## 5. Extension boundary
+## 5. Internal seams
 
-selene-db has exactly two extension points. Both are stable APIs.
+selene-db is a single native graph engine: there is no loadable-extension or
+procedure-pack system, and there are no third-party plug-in points. The
+internal seams below are load-bearing *engine* architecture — they keep the
+durable-state and plan/execute boundaries clean — not a public extension API.
 
 ### `IndexProvider` trait
 
@@ -297,51 +288,49 @@ trait IndexProvider: Send + Sync + 'static {
 }
 ```
 
-Provider authors:
+The provider plumbing (first-party only):
 
-- Reserve a 4-byte uppercase ASCII `ProviderTag` (first-party allocations
-  include `VECT`, `FULL`, `TIMS`, `GRPR`).
-- Implement interior mutability (`parking_lot::RwLock`, `papaya::HashMap`,
-  etc.); the engine stores providers as `Arc<dyn IndexProvider>` and
-  guarantees serialized calls per graph.
-- Honor the re-entrancy contract: `on_change` must not initiate a write
+- Reserves a 4-byte uppercase ASCII `ProviderTag` so its snapshot sections
+  are addressable independently of the CORE sections.
+- Implements interior mutability (`parking_lot::RwLock`, etc.); the engine
+  stores providers as `Arc<dyn IndexProvider>` and guarantees serialized
+  calls per graph.
+- Honors the re-entrancy contract: `on_change` must not initiate a write
   transaction on the same graph. Cross-thread re-entry that blocks the
   callback on a worker that itself calls `begin_write` deadlocks; this
   is documented misuse.
 
-### Procedure packs
+### `ProcedureRegistry` trait
 
-Defined in `selene-pack`, a procedure pack is a JSON-manifest-validated,
-content-hashed bundle of named procedures registered into a frozen
-`ProcedurePackRegistry` at construct time. The manifest is validated
-against a JSON Schema 2020-12 schema with explicit gates
-(`MANIFEST_LEVEL_GATES`, `PROCEDURE_LEVEL_GATES`,
-`MANIFEST_VALIDATION_COVERAGE`, `FINAL_VALIDATION_COVERAGE`).
+`CALL` dispatch is mediated by the `ProcedureRegistry` trait (D15), defined
+in `selene-gql`. It is the plan/execute seam: the planner resolves procedure
+signatures and the executor dispatches calls through a `&dyn
+ProcedureRegistry`. The trait has exactly one frozen production
+implementation — the concrete native `BuiltinProcedureRegistry`
+(`selene-gql/src/runtime/builtin_registry.rs`) — which registers 24
+procedures at construction (the 5 `selene.*` platform built-ins plus the 19
+`algo.*` procedures) and reports a constant `registry_version()` of `0` so
+the CALL plan cache never invalidates. The injectable `&dyn` seam exists for
+the test harness, not for third-party packs: there is no loadable-pack
+apparatus, no manifest validation, and no activation lifecycle.
 
-External packs implement the `ExternalProcedurePack` interface and supply
-`ExternalGraphProcedure` (read-tier) or `ExternalMutationProcedure`
-(write-tier) implementations. The registry tracks activation state through
-a typestate state machine (`Uploaded -> Validating -> Staged -> Active`,
-plus `Deprecated` and `Disabled` terminals). Activation transitions and
-audit records are committed atomically with graph state through the same
-mutation funnel (D18); there is no parallel ledger.
+### Why algorithms live outside `selene-graph`
 
-### Why algorithms and vectors live outside `selene-graph`
-
-Decision D5 forbids non-graph capabilities from leaking into
-`selene-graph`. The graph crate ships pure graph storage plus the
-`IndexProvider` hook. Vector search lives in `selene-vector` and registers
-through that hook; graph algorithms live in `selene-algorithms` and operate
-over a frozen `GraphProjection`. The pack-adapter crates
-(`selene-algorithms-pack`, `selene-vector-pack`) expose those capabilities
-through GQL `CALL`. This split keeps the graph core honest: an embedder
-who wants neither extension simply does not depend on those crates.
+Graph storage and graph algorithms are kept in separate crates so the
+storage core never grows the algorithm surface. `selene-graph` ships pure
+graph storage plus the `IndexProvider` hook; the algorithms live in the
+mandatory `selene-algorithms` crate and operate over a frozen
+`GraphProjection`. `selene-gql`'s `BuiltinProcedureRegistry` binds `CALL
+algo.*` directly over the native `selene-algorithms` Rust API — no adapter
+crate, no `CALL`-grammar extension (the ISO `CALL` surface is unchanged per
+IW010). The algorithm crate never imports `selene-gql`, which keeps the
+`core → graph → algorithms → gql` direction acyclic.
 
 ---
 
-## 6. Architecture decisions D1-D21
+## 6. Architecture decisions D1-D20
 
-The workspace shape is codified by twenty-one numbered decisions. They are
+The workspace shape is codified by twenty numbered decisions. They are
 referenced from spec files and brief logs throughout the codebase.
 
 ### D1 — Library only
@@ -375,12 +364,14 @@ Writers never mutate a snapshot in place; they construct a new
 `Arc<SeleneGraph>` and atomically swap it. This is the durability of
 `ArcSwap::store` plus the immutability of `imbl` collections.
 
-### D5 — Non-graph capabilities in extension crates
+### D5 — Non-graph capabilities are externalized
 
-Vectors, fulltext, time series, RDF, and graph algorithms ship as separate
-crates outside `selene-graph`. They plug in through `IndexProvider` and the
-procedure-pack registry. Refusing to widen the graph core is what keeps
-the cold dependency closure for a graph-only embedder bounded.
+selene-db is one cohesive native graph engine. Graph algorithms ship in the
+mandatory `selene-algorithms` crate outside `selene-graph` (storage and
+algorithms stay in separate crates), while non-graph capabilities — vectors,
+time-series, RDF, GraphRAG — are externalized to separate dedicated
+projects, never in-tree extensions. Refusing to widen the graph core is what
+keeps the cold dependency closure for a graph-only embedder bounded.
 
 ### D6 — `Value` is a closed substitution union
 
@@ -401,10 +392,12 @@ in-process engine treats poison as a non-feature.
 ### D8 — Multi-crate workspace, no umbrella
 
 `selene-core` is the leaf; `selene-persist` depends only on `selene-core`;
-`selene-graph` builds on both; `selene-gql` and `selene-algorithms` depend
-on `selene-core` + `selene-graph`; `selene-pack` is the widest, depending
-on `selene-core` + `selene-persist` + `selene-graph` + `selene-gql`. There
-is no `selene` umbrella crate that re-exports the others.
+`selene-graph` builds on `selene-core`; `selene-algorithms` builds on
+`selene-core` + `selene-graph`; `selene-gql` is the widest runtime crate,
+depending on `selene-core` + `selene-graph` + `selene-algorithms`. The
+runtime direction is the linear chain `core → graph → algorithms → gql`, and
+`selene-algorithms` never imports `selene-gql`. There is no `selene` umbrella
+crate that re-exports the others.
 
 ### D9 — Forbid unsafe
 
@@ -445,64 +438,62 @@ intermediates and archiving with rkyv 0.8 (`pointer_width_64`,
 The `unaligned` feature lets rkyv decode out of 1-byte-aligned byte
 buffers, which is what the snapshot reader produces.
 
-### D15 — Procedure-pack manifest as JSON Schema
+### D15 — Frozen native procedure registry
 
-Procedure-pack manifests are validated against a JSON Schema 2020-12
-schema with explicit gates. The schema is the contract; deviating manifests
-are rejected at construction time, never at runtime.
+`CALL` is dispatched through the `ProcedureRegistry` trait, whose sole
+production implementation, `BuiltinProcedureRegistry`, registers its full
+procedure set (24 procedures: 5 `selene.*` platform built-ins + 19 `algo.*`
+procedures) once at construction. The registry is frozen — nothing is added
+or removed after construction, and `registry_version()` is a constant `0` —
+which lets the analyzer and planner trust the registry and keep the CALL plan
+cache stable without locking on every lookup.
 
-### D16 — Frozen registry
-
-Procedure-pack registration happens at registry construction. Once a
-`ProcedurePackRegistry` is built, no packs can be added or removed.
-This is what lets the analyzer and planner trust the registry without
-locking on every lookup.
-
-### D17 — Tiered procedure contexts
+### D16 — Tiered procedure contexts
 
 Procedures are partitioned by tier: read-tier (`GraphContext`),
 write-tier (`MutationContext`), and procedure-tier (`ProcedureContext`).
 Each tier has a concrete `Context` struct and a dyn-compatible `Procedure`
 trait. The planner enforces tier compatibility against the surrounding
-statement category at plan time.
+statement category at plan time, and the registry re-checks the tier on
+dispatch so a read-only built-in can never re-enter the write funnel.
 
-### D18 — Lifecycle audit through the mutation funnel
+### D17 — Engine-owned audit through the mutation funnel
 
-Procedure-pack lifecycle events (`LifecycleEvent::Activated`,
-`Deprecated`, `Disabled`, etc.) are emitted as `Change` variants through
-the same `Mutator` that graph writes use. Audit records and graph writes
-commit atomically; there is no parallel ledger and no audit-vs-graph
-split-brain scenario.
+Engine-owned audit events route through the same `Mutator` that graph writes
+use, into a dedicated append-only `audit.log` substrate (`SLAU`) with
+retention independent of the WAL/snapshot lineage. Writes are WAL-first then
+audit-after through the one funnel, so there is no parallel ledger and no
+audit-vs-graph split-brain scenario.
 
-### D19 — Blake3 for content hashing
+### D18 — Blake3 for content hashing
 
-Procedure-pack content hashes, snapshot section digests, and any other
-"is this byte stream identical" checks use blake3. The hash function is
-the same in every crate that needs one.
+Snapshot section digests and any other "is this byte stream identical"
+checks use blake3. The hash function is the same in every crate that needs
+one.
 
-### D20 — Rustls-only TLS posture
+### D19 — Rustls-only TLS posture
 
 Transitive dependencies must use rustls, never native-tls. CI enforces
 this via `cargo-deny`. The engine itself ships no TLS code (per D1), but
 its dependency closure cannot pull in OpenSSL bindings.
 
-### D21 — Snapshot harness pattern
+### D20 — Snapshot harness pattern
 
 Every runtime surface that can drift (planner output, executor output,
-procedure-pack signatures, algorithm output) is pinned by golden
+procedure signatures, algorithm output) is pinned by golden
 `.snap` files. The pattern uses a pure-mirror DSL in `selene-testing`,
 a renderer + integration test in the target crate, and `insta` for
 snapshot management. See section 7 for the full pattern description.
 
 ---
 
-## 7. Snapshot harness pattern (D21)
+## 7. Snapshot harness pattern (D20)
 
 The snapshot harness exists because selene-db has many independent
 producers of structured output that must not drift silently: planner
-rewrites, executor row materialization, procedure-pack metadata
-serialization, algorithm result shapes, vector-index section bytes,
-recovery results. A change to any of these surfaces would otherwise hide
+rewrites, executor row materialization, procedure-signature metadata
+serialization, algorithm result shapes, recovery results. A change to
+any of these surfaces would otherwise hide
 behind passing unit tests until an embedder noticed a wire-shape
 difference.
 
@@ -600,7 +591,7 @@ but does not reimplement these surfaces.
 
 ### Marathon mindset
 
-Correctness, performance, and a stable extension contract come before
+Correctness, performance, and a cohesive native engine come before
 near-term shortcuts. Every PR ships with units, edge cases, error paths,
 concurrency tests where state is shared, and property tests where
 invariants are checkable.

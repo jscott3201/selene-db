@@ -3,8 +3,8 @@ use selene_core::{
 };
 
 use crate::{
-    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
-    SharedGraph, TypeViolation, ValidationMode,
+    DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef,
+    PropertyTypeDef, SharedGraph, ValidationMode,
 };
 
 fn closed_empty_graph(id: u64) -> SharedGraph {
@@ -84,6 +84,8 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
                         required: true,
                         default: None,
                         immutable: false,
+
+                        record_field_types: None,
                     }],
                     ValidationMode::Strict,
                 )
@@ -158,13 +160,16 @@ fn drop_node_type_refuses_endpoint_reindexing() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Person").unwrap())
+        .drop_node_type(intern("Person").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
+    // Person is referenced directly by WORKS_AT's source endpoint, so the
+    // dependency check rejects with the "still references it" message before the
+    // broader reindexing guard runs.
     assert!(matches!(
         err,
         GraphError::Inconsistent { reason }
-            if reason.contains("would require reindexing")
+            if reason.contains("still references it")
     ));
 }
 
@@ -178,7 +183,9 @@ fn drop_edge_type_removes_type_and_emits_schema_change() {
     let works_at = intern("WORKS_AT").unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
-        txn.mutator().drop_edge_type(works_at).unwrap();
+        txn.mutator()
+            .drop_edge_type(works_at, DropBehavior::Restrict)
+            .unwrap();
         txn.commit().unwrap()
     };
 
@@ -215,7 +222,10 @@ fn catalog_type_ddl_on_open_graph_is_rejected() {
 }
 
 #[test]
-fn schema_change_commit_validates_full_entity_state() {
+fn drop_node_type_restrict_rejects_early_with_surviving_instances() {
+    // Seam-B fix (audit Item 3): RESTRICT default rejects at the drop op itself
+    // — not late at commit with a mislabelled UnknownNodeLabel — and leaves both
+    // the type and its instances intact (no partial state).
     let shared = SharedGraph::builder(GraphId::new(15))
         .bound_to(person_type())
         .unwrap()
@@ -233,15 +243,174 @@ fn schema_change_commit_validates_full_entity_state() {
     }
 
     let mut txn = shared.begin_write();
-    txn.mutator()
-        .drop_node_type(intern("Person").unwrap())
-        .expect("catalog mutation itself succeeds");
-    let err = txn.commit().unwrap_err();
-
+    let err = txn
+        .mutator()
+        .drop_node_type(intern("Person").unwrap(), DropBehavior::Restrict)
+        .expect_err("RESTRICT rejects the drop op itself");
     assert!(matches!(
         err,
-        GraphError::TypeViolation(TypeViolation::UnknownNodeLabel { .. })
+        GraphError::Inconsistent { reason }
+            if reason.contains("1 instance(s) still exist") && reason.contains("CASCADE")
     ));
+    drop(txn);
+
+    // Nothing dropped, nothing removed.
+    assert_eq!(shared.graph_type().unwrap().node_types.len(), 1);
+    assert_eq!(shared.read().node_count(), 1);
+}
+
+#[test]
+fn drop_node_type_cascade_truncates_then_drops_in_one_txn() {
+    let shared = SharedGraph::builder(GraphId::new(150))
+        .bound_to(person_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(intern("Person").unwrap()),
+                PropertyMap::new(),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let person = intern("Person").unwrap();
+    let outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .drop_node_type(person, DropBehavior::Cascade)
+            .expect("CASCADE drops a type with surviving instances");
+        txn.commit().unwrap()
+    };
+
+    // Both the truncate change and the schema drop landed in ONE committed
+    // changeset, in order.
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [
+            Change::NodesOfTypeTruncated { label },
+            Change::SchemaChanged {
+                change: SchemaChange::NodeTypeDropped { name, .. },
+                ..
+            },
+        ] if *label == person && *name == person
+    ));
+    assert!(shared.graph_type().unwrap().node_types.is_empty());
+    assert_eq!(shared.read().node_count(), 0);
+}
+
+#[test]
+fn drop_edge_type_restrict_rejects_early_with_surviving_instances() {
+    let shared = SharedGraph::builder(GraphId::new(151))
+        .bound_to(person_self_knows_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let person = intern("Person").unwrap();
+    let knows = intern("KNOWS").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let a = txn
+            .mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        let b = txn
+            .mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.mutator()
+            .create_edge(knows, a, b, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let mut txn = shared.begin_write();
+    let err = txn
+        .mutator()
+        .drop_edge_type(knows, DropBehavior::Restrict)
+        .expect_err("RESTRICT rejects edge-type drop with surviving edges");
+    assert!(matches!(
+        err,
+        GraphError::Inconsistent { reason }
+            if reason.contains("1 instance(s) still exist") && reason.contains("CASCADE")
+    ));
+    drop(txn);
+    assert_eq!(shared.graph_type().unwrap().edge_types.len(), 1);
+    assert_eq!(shared.read().edge_count(), 1);
+}
+
+#[test]
+fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
+    let shared = SharedGraph::builder(GraphId::new(152))
+        .bound_to(person_self_knows_type())
+        .unwrap()
+        .build()
+        .unwrap();
+    let person = intern("Person").unwrap();
+    let knows = intern("KNOWS").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let a = txn
+            .mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        let b = txn
+            .mutator()
+            .create_node(LabelSet::single(person), PropertyMap::new())
+            .unwrap();
+        txn.mutator()
+            .create_edge(knows, a, b, PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let outcome = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .drop_edge_type(knows, DropBehavior::Cascade)
+            .expect("CASCADE drops an edge type with surviving edges");
+        txn.commit().unwrap()
+    };
+
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [
+            Change::EdgesOfTypeTruncated { label },
+            Change::SchemaChanged {
+                change: SchemaChange::EdgeTypeDropped { name, .. },
+                ..
+            },
+        ] if *label == knows && *name == knows
+    ));
+    assert!(shared.graph_type().unwrap().edge_types.is_empty());
+    assert_eq!(shared.read().edge_count(), 0);
+    // Nodes (the KNOWS endpoints) survive — only edges of the type were removed.
+    assert_eq!(shared.read().node_count(), 2);
+}
+
+fn person_self_knows_type() -> GraphTypeDef {
+    let person = intern("Person").unwrap();
+    let knows = intern("KNOWS").unwrap();
+    GraphTypeDef {
+        name: intern("catalog.person.knows.graph").unwrap(),
+        node_types: vec![NodeTypeDef {
+            name: person,
+            key_labels: LabelSet::single(person),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: vec![EdgeTypeDef {
+            name: knows,
+            label: knows,
+            source_node_type: EdgeEndpointDef::NodeType(0),
+            target_node_type: EdgeEndpointDef::NodeType(0),
+            properties: Vec::new(),
+            validation_mode: ValidationMode::Strict,
+        }],
+    }
 }
 
 fn person_company_school_with_oneof_edge_type() -> GraphTypeDef {
@@ -296,22 +465,23 @@ fn drop_node_type_rejects_when_oneof_endpoint_references_dropped_type() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("Company").unwrap())
+        .drop_node_type(intern("Company").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
+    // Company (index 1) is directly carried by OneOf([1, 2]); the dependency
+    // check rejects with the clear "still references it" message.
     assert!(matches!(
         err,
         GraphError::Inconsistent { reason }
-            if reason.contains("would require reindexing")
+            if reason.contains("still references it")
     ));
 }
 
 #[test]
-fn drop_node_type_rejects_when_oneof_endpoint_references_shifted_type() {
-    // Tail-index drop (School at index 2) still requires reindexing because
-    // OneOf([1, 2]) carries School at the tail; removing it would also shift
-    // any later indices and the helper conservatively rejects rather than
-    // rewriting OneOf payloads in place.
+fn drop_node_type_rejects_when_oneof_endpoint_references_tail_type() {
+    // Tail-index drop (School at index 2) is rejected because OneOf([1, 2])
+    // carries School directly; the dependency check rejects it as a dangling
+    // endpoint rather than rewriting OneOf payloads in place.
     let shared = SharedGraph::builder(GraphId::new(17))
         .bound_to(person_company_school_with_oneof_edge_type())
         .unwrap()
@@ -320,12 +490,14 @@ fn drop_node_type_rejects_when_oneof_endpoint_references_shifted_type() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .drop_node_type(intern("School").unwrap())
+        .drop_node_type(intern("School").unwrap(), DropBehavior::Restrict)
         .unwrap_err();
 
+    // School (index 2) is also directly carried by OneOf([1, 2]); the dependency
+    // check rejects with the clear "still references it" message.
     assert!(matches!(
         err,
         GraphError::Inconsistent { reason }
-            if reason.contains("would require reindexing")
+            if reason.contains("still references it")
     ));
 }

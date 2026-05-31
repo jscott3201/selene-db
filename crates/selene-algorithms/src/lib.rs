@@ -17,11 +17,12 @@
 //! # Dependency boundary
 //!
 //! Per Spec 16 §E01, this crate depends on [`selene_core`] and
-//! [`selene_graph`] only — never on `selene-gql`, `selene-pack`, or
-//! `selene-persist`. A future `selene-algorithms-pack` (out-of-tree v1.x)
-//! adapts these algorithms to procedure-pack tiers; the algorithms crate
-//! itself stays independent of the GQL surface.
+//! [`selene_graph`] only — never on `selene-gql` or `selene-persist`. The
+//! native `selene-gql` procedure registry binds these algorithms to the
+//! `CALL algo.*` surface; the algorithms crate itself stays independent of
+//! the GQL surface.
 
+pub mod api;
 pub mod catalog;
 pub mod centrality;
 pub mod community;
@@ -33,6 +34,7 @@ pub mod projection;
 pub mod snapshot_summary;
 pub mod structural;
 
+pub use api::{ApiError, GraphAlgorithms, ProjectionInfo};
 pub use catalog::{ProjectionCatalog, ProjectionRef};
 pub use centrality::{
     BetweennessConfig, PageRankConfig, betweenness, betweenness_with_checker, pagerank,
@@ -43,7 +45,7 @@ pub use community::{
     louvain_with_checker, triangle_count, triangle_count_with_checker,
 };
 pub use error::{AlgorithmAborted, AlgorithmsError};
-pub use parallel::Parallelism;
+pub use parallel::{MAX_PARALLELISM_THREADS, Parallelism, ParallelismCapError};
 pub use pathfinding::{
     ApspConfig, PathResult, PathfindingError, apsp, apsp_with_checker, dijkstra,
     dijkstra_with_checker, sssp, sssp_with_checker,

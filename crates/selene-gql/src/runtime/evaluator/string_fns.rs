@@ -266,7 +266,14 @@ pub(super) fn eval_normalize(
 }
 
 pub(super) fn is_normalized(value: &str, form: NormalForm) -> bool {
-    normalize_string(value, form) == value
+    // Allocation-free per-form quick check — avoids materializing a normalized
+    // copy per row when the input is already normalized (the common case).
+    match form {
+        NormalForm::Nfc => unicode_normalization::is_nfc(value),
+        NormalForm::Nfd => unicode_normalization::is_nfd(value),
+        NormalForm::Nfkc => unicode_normalization::is_nfkc(value),
+        NormalForm::Nfkd => unicode_normalization::is_nfkd(value),
+    }
 }
 
 pub(super) fn eval_trim(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
@@ -305,12 +312,13 @@ pub(super) fn eval_coalesce(
     Ok(Value::Null)
 }
 
-pub(super) fn eval_nullif(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
-    let lhs = args[0].clone();
-    let rhs = args[1].clone();
-    match eval_equality(BinaryOp::Eq, &lhs, &rhs)? {
+pub(super) fn eval_nullif(mut args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Borrow both operands for the equality test; only the lhs is ever returned
+    // (by value, via swap_remove), so neither clone is needed.
+    let equal = eval_equality(BinaryOp::Eq, &args[0], &args[1])?;
+    match equal {
         Value::Bool(true) => Ok(Value::Null),
-        Value::Bool(false) | Value::Null => Ok(lhs),
+        Value::Bool(false) | Value::Null => Ok(args.swap_remove(0)),
         _ => data_exception("nullif comparison did not produce boolean", span),
     }
 }

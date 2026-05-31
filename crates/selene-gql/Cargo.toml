@@ -7,14 +7,19 @@ authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
+description = "ISO/IEC 39075:2024 GQL parser, planner, optimizer, and executor for selene-db."
 autobenches = false
 
 [dependencies]
-selene-core = { path = "../selene-core", version = "1.0.0" }
-selene-graph = { path = "../selene-graph", version = "1.0.0" }
+selene-core = { path = "../selene-core", version = "1.1.0" }
+selene-graph = { path = "../selene-graph", version = "1.1.0" }
+selene-algorithms = { path = "../selene-algorithms", version = "1.1.0" }
+jiff.workspace = true
 miette.workspace = true
+parking_lot.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
+rust_decimal.workspace = true
 serde.workspace = true
 smallvec.workspace = true
 rustc-hash.workspace = true
@@ -39,15 +44,16 @@ metrics.workspace = true
 parking_lot.workspace = true
 proptest.workspace = true
 rstest.workspace = true
-selene-persist = { path = "../selene-persist", version = "1.0.0" }
-selene-pack = { path = "../selene-pack", version = "1.0.0" }
-selene-vector = { path = "../selene-vector", version = "1.0.0" }
-selene-vector-pack = { path = "../selene-vector-pack", version = "1.0.0" }
-selene-algorithms-pack = { path = "../selene-algorithms-pack", version = "1.0.0" }
-selene-testing = { path = "../selene-testing", version = "1.0.0" }
+rust_decimal.workspace = true
+selene-persist = { path = "../selene-persist", version = "1.1.0" }
+selene-testing = { path = "../selene-testing", version = "1.1.0" }
 serde_json.workspace = true
 tempfile.workspace = true
 tracing-subscriber.workspace = true
+
+[[test]]
+name = "cost_estimators"
+required-features = ["test-harness"]
 
 [[test]]
 name = "plan_snapshot_corpus"

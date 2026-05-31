@@ -44,6 +44,28 @@ fn diagnostic_report_wraps_interner_budget_exceeded() {
     assert!(rendered.contains("8192 distinct new interner admissions"));
 }
 
+#[test]
+fn diagnostic_report_exposes_source_and_label() {
+    // PARSE-21: the public `source()` / `named_source()` accessors had no test.
+    // Pin that they return the exact source text and the label passed at
+    // construction (via miette's NamedSource name).
+    let source = "MATCH (n RETURN n";
+    let report = parse_with_source(Arc::<str>::from(source), "query.gql")
+        .expect_err("invalid query reports");
+
+    assert_eq!(report.source(), source, "source() must echo the input text");
+
+    let named = report.named_source();
+    assert_eq!(
+        named.name(),
+        "query.gql",
+        "named_source() carries the label"
+    );
+    // The wrapped error is also reachable and is the parser error, not a
+    // re-wrapped variant.
+    assert!(matches!(report.error(), ParserError::SyntaxError { .. }));
+}
+
 fn render(report: &DiagnosticReport) -> String {
     let mut rendered = String::new();
     NarratableReportHandler::new()

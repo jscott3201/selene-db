@@ -132,7 +132,8 @@ pub(crate) fn recurse_subplans(
             | PipelineOp::Call(_)
             | PipelineOp::Mutation(_)
             | PipelineOp::Catalog(_)
-            | PipelineOp::Tx(_) => {}
+            | PipelineOp::Tx(_)
+            | PipelineOp::Session(_) => {}
         }
     }
     Transformed { plan, changed }
@@ -152,8 +153,13 @@ where
 
 /// Visit `Expand` edges that are safe targets for filter pushdown.
 ///
-/// Excludes WCO and `Subplan` boundaries (rules don't reach across those),
-/// and the optional-side subtree of any `JoinTree::Outer`.
+/// Recurses only into `Expand` children, both `HashJoin` sides, and the
+/// preserved (`left`) side of `Outer`. Every other join-tree node terminates
+/// the walk: `Scan` and `DisjunctiveScan` (leaf scans with no `Expand`
+/// underneath), `Repeat` / `Questioned` / `PathSearch` / `PathModeFilter`
+/// (path-shaped wrappers whose edges are not plain pushdown targets), and the
+/// `WorstCaseOptimal` / `Subplan` boundaries (rules don't reach across those).
+/// The optional (`right`) side of `Outer` is likewise skipped.
 ///
 /// Why: pushing a single-binding predicate into an `Expand` edge under
 /// `JoinTree::Outer.right` evaluates it before null-extension, dropping
@@ -332,7 +338,10 @@ fn walk_pipeline_op_exprs(
         | PipelineOp::Chain(_)
         | PipelineOp::CallSubquery(_)
         | PipelineOp::ExplainPlan { .. }
-        | PipelineOp::Tx(_) => false,
+        | PipelineOp::Tx(_)
+        // SESSION SET VALUE's RHS is a value specification evaluated against an
+        // empty binding, so it carries no binding references for the optimizer.
+        | PipelineOp::Session(_) => false,
     }
 }
 
@@ -378,12 +387,7 @@ fn walk_catalog_exprs(
                         PlannedTypePropertyConstraint::NotNull(_)
                         | PlannedTypePropertyConstraint::Immutable(_)
                         | PlannedTypePropertyConstraint::Unique(_)
-                        | PlannedTypePropertyConstraint::Indexed { .. }
-                        | PlannedTypePropertyConstraint::Searchable(_)
-                        | PlannedTypePropertyConstraint::Dictionary(_)
-                        | PlannedTypePropertyConstraint::Fill(_, _)
-                        | PlannedTypePropertyConstraint::Interval(_, _)
-                        | PlannedTypePropertyConstraint::Encoding(_, _) => constraint_changed,
+                        | PlannedTypePropertyConstraint::Indexed { .. } => constraint_changed,
                     })
                     | changed
             })
@@ -392,6 +396,8 @@ fn walk_catalog_exprs(
         | CatalogOp::DropGraph { .. }
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
+        | CatalogOp::TruncateNodeType { .. }
+        | CatalogOp::TruncateEdgeType { .. }
         | CatalogOp::CreateIndex { .. }
         | CatalogOp::DropIndex { .. }
         | CatalogOp::ShowNodeTypes(_)
@@ -485,12 +491,6 @@ fn walk_expr(expr: &mut ValueExpr, visit: &mut impl FnMut(&mut ValueExpr) -> boo
                     .iter_mut()
                     .fold(false, |changed, item| walk_expr(item, visit) | changed)
         }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => walk_expr(operand, visit) | walk_expr(pattern, visit),
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => walk_expr(operand, visit) | walk_expr(low, visit) | walk_expr(high, visit),
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => items
             .iter_mut()
             .fold(false, |changed, item| walk_expr(item, visit) | changed),

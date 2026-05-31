@@ -3,9 +3,8 @@
 mod exec_common;
 
 use selene_core::Value;
-use selene_gql::ExecutorError;
 
-use exec_common::{column_values, execute_read, execute_read_result};
+use exec_common::{column_values, execute_read};
 
 #[test]
 fn avg_empty_group_returns_null_not_division_by_zero() {
@@ -41,6 +40,52 @@ fn stddev_pop_and_samp_use_welford_accumulator() {
         panic!("expected sample stddev float, got {values:?}");
     };
     assert!((sample - 2.138_089_935_299_395).abs() < 1.0e-12);
+}
+
+#[test]
+fn stddev_is_numerically_stable_under_large_offset() {
+    // GQLRT-25: the existing stddev test uses small magnitudes [2,4,..,9], where
+    // a naive single-pass Σx² accumulator gives the right answer within
+    // tolerance. Shifting the same data by a ~1e9 offset leaves the true
+    // standard deviation unchanged (variance is translation-invariant) but makes
+    // a naive Σx² variance catastrophically cancel: each (1e9 + k)^2 loses the
+    // low-order bits, so sumsq/n - mean^2 collapses to ~0. Welford's online
+    // algorithm stays accurate. This data would FAIL (return ~0) under a
+    // naive-variance regression.
+    let offset: i64 = 1_000_000_000;
+    let values = [2i64, 4, 4, 4, 5, 5, 7, 9]
+        .iter()
+        .map(|value| (value + offset).to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let table = execute_read(&format!(
+        "UNWIND [{values}] AS x RETURN stddev_pop(x) AS pop, stddev_samp(x) AS samp"
+    ));
+
+    let pop_values = column_values(&table, "pop");
+    let [Value::Float(pop)] = pop_values.as_slice() else {
+        panic!("expected pop stddev float, got {pop_values:?}");
+    };
+    // The true population stddev of the unshifted data is exactly 2.0; Welford
+    // recovers it to within f64 round-off even at the 1e9 offset. A naive Σx²
+    // accumulator returns ~0 here, which the `> 1.0` bound also excludes.
+    assert!(
+        (pop - 2.0).abs() < 1.0e-6,
+        "Welford stddev_pop must stay ~2.0 under a 1e9 offset, got {pop}"
+    );
+    assert!(
+        *pop > 1.0,
+        "a naive Σx² variance would cancel to ~0 here; {pop} proves it did not"
+    );
+
+    let samp_values = column_values(&table, "samp");
+    let [Value::Float(samp)] = samp_values.as_slice() else {
+        panic!("expected samp stddev float, got {samp_values:?}");
+    };
+    assert!(
+        (samp - 2.138_089_935_299_395).abs() < 1.0e-6,
+        "Welford stddev_samp must match the unshifted value, got {samp}"
+    );
 }
 
 #[test]
@@ -94,11 +139,16 @@ fn sum_skips_null_inputs() {
 }
 
 #[test]
-fn sum_overflow_returns_data_exception() {
-    let err = execute_read_result("UNWIND [9223372036854775807, 1] AS x RETURN sum(x) AS s")
-        .expect_err("sum overflow errors");
+fn sum_widens_past_i64_into_i128() {
+    // GQLRT-27: an i64 SUM that overflows i64 widens to i128 rather than
+    // erroring (GV13/GV14 128-bit support is honest). `i64::MAX + 1` is exactly
+    // `i128::from(i64::MAX) + 1`.
+    let table = execute_read("UNWIND [9223372036854775807, 1] AS x RETURN sum(x) AS s");
 
-    assert!(matches!(err, ExecutorError::DataException { .. }));
+    assert_eq!(
+        column_values(&table, "s"),
+        vec![Value::Int128(i128::from(i64::MAX) + 1)]
+    );
 }
 
 #[test]
@@ -199,8 +249,8 @@ fn collect_empty_returns_empty_list() {
 #[test]
 fn function_call_with_let_shadow_does_not_misread_column() {
     use selene_gql::{
-        AnalyzedType, Binding, BindingTableColumn, BindingTableSchema, ImplDefinedCaps, NonEmpty,
-        SourceSpan, ValueExpr, runtime::evaluate_for_test,
+        AnalyzedType, Binding, BindingTableColumn, BindingTableSchema, ExecutorError,
+        ImplDefinedCaps, NonEmpty, SourceSpan, ValueExpr, runtime::evaluate_for_test,
     };
 
     let sum = exec_common::istr("sum");

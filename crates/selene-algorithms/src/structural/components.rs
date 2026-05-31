@@ -43,12 +43,12 @@ pub fn wcc_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, u64)>, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(Vec::new());
     }
     let mut uf = UnionFind::new(idx.len());
-    union_all_edges_with_checker(proj, &idx, &mut uf, checker)?;
+    union_all_edges_with_checker(proj, idx, &mut uf, checker)?;
 
     // First pass: collect (NodeId, current_root_dense) for every projection
     // node.
@@ -95,12 +95,12 @@ pub fn wcc_count_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<usize, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     if idx.is_empty() {
         return Ok(0);
     }
     let mut uf = UnionFind::new(idx.len());
-    union_all_edges_with_checker(proj, &idx, &mut uf, checker)?;
+    union_all_edges_with_checker(proj, idx, &mut uf, checker)?;
 
     let mut count = 0usize;
     let mut rows_since_check = 0usize;
@@ -127,17 +127,22 @@ fn union_all_edges_with_checker(
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let nid = idx.node_id_of(d);
         for nb in proj.out_neighbors(nid) {
-            if let Some(other) = idx.dense_of(node_sparse_row(nb.node_id)) {
+            if let Some(other) = idx.dense_of_node(nb.node_id) {
                 uf.union(d, other);
             }
         }
-        // `in_neighbors` is redundant after every out-edge is unioned (each
-        // edge appears once in `out_neighbors(source)` and once in
-        // `in_neighbors(target)`), but iterating in_neighbors as well does no
-        // harm and guarantees the undirected closure even if a future
-        // projection ever stored asymmetric out/in adjacency.
+        // The in-neighbor pass is redundant in release: every edge appears once
+        // in `out_neighbors(source)` and once in `in_neighbors(target)`, and the
+        // CSR transpose invariant (asserted in `GraphProjection::build`) keeps
+        // out/in adjacency symmetric — so unioning out-edges already forms the
+        // full undirected closure. We retain the in-neighbor union ONLY in debug
+        // builds: it is a cheap cross-check of that invariant (if a future
+        // projection ever stored asymmetric out/in adjacency, the debug build
+        // still produces the correct undirected closure), while release skips
+        // the duplicate union-find work.
+        #[cfg(debug_assertions)]
         for nb in proj.in_neighbors(nid) {
-            if let Some(other) = idx.dense_of(node_sparse_row(nb.node_id)) {
+            if let Some(other) = idx.dense_of_node(nb.node_id) {
                 uf.union(d, other);
             }
         }
@@ -208,8 +213,8 @@ pub fn scc_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<Vec<(NodeId, u64)>, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
-    let state = run_tarjan(proj, &idx, checker)?;
+    let idx = proj.row_index();
+    let state = run_tarjan(proj, idx, checker)?;
 
     let mut result: Vec<(NodeId, u64)> = Vec::with_capacity(idx.len());
     for component in &state.components {
@@ -239,8 +244,8 @@ pub fn scc_count_with_checker(
     checker: CancellationChecker<'_>,
 ) -> Result<usize, AlgorithmAborted> {
     check_algorithm(checker)?;
-    let idx = RowIndex::new(proj);
-    let state = run_tarjan(proj, &idx, checker)?;
+    let idx = proj.row_index();
+    let state = run_tarjan(proj, idx, checker)?;
     Ok(state.components.len())
 }
 
@@ -319,7 +324,7 @@ fn tarjan_strongconnect(
         let neighbors = neighbors_cache.entry(v).or_insert_with(|| {
             proj.out_neighbors(idx.node_id_of(v))
                 .iter()
-                .filter_map(|nb| idx.dense_of(node_sparse_row(nb.node_id)))
+                .filter_map(|nb| idx.dense_of_node(nb.node_id))
                 .collect()
         });
 
@@ -371,14 +376,3 @@ fn tarjan_strongconnect(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Map a `NodeId` (1-based per selene-graph) to its sparse row index
-/// (0-based). Used at the projection boundary to look up neighbor rows before
-/// converting to dense indices via [`RowIndex`].
-///
-/// Why: `NodeId::new(0)` is the TOMBSTONE sentinel; alive nodes start at row
-/// 0 with `NodeId(1)`. Spec 16 §E11.
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
-}

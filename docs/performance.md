@@ -20,8 +20,6 @@ The most recent measurements (Apple M5, 10 cores, 16 GiB, rustc 1.95.0):
 | Typed index point lookup                  | **4.53 ns**     | Flat across scales; tri-state `Cow<RoaringBitmap>` |
 | Semantic analyze (m5c corpus)             | **5.32 µs**     | Strict ISO GQL analysis on the representative corpus. |
 | Betweenness centrality (100k nodes, parallel) | **110.2 ms**    | 2.40× speedup over sequential at 100k.             |
-| IVF search (k=10, dim=256, 256 vectors)   | **2.88 µs**     | Trained IVF; ~6× faster than HNSW at this corpus.  |
-| HNSW build (n=1000, dim=16, M=8, efC=64)  | **53.25 ms**    | Direct construction with the cold-start tuning.    |
 | WAL append (single, batched x1000)        | **10.95 ms / 100k entries** | Group-commit dominates; 54× faster than per-entry. |
 | Full recovery (snapshot + 100k WAL)       | **24.75 ms**    | Snapshot reconciliation + WAL v2 replay.           |
 
@@ -54,7 +52,7 @@ Three conventions are load-bearing:
    depend on `mimalloc`; embedders pick their own allocator.
 3. **Deterministic fixtures.** Bench fixtures are deterministic
    (`BenchFixture::build(N)` and friends from `selene-testing`). The same N
-   produces the same graph, the same vector corpus, the same query mix.
+   produces the same graph and the same query mix.
 
 Benchmarks are intentionally **local-only**. There is no GitHub Actions
 benchmark job, no gh-pages trend dashboard, no per-PR regression gate. The
@@ -109,7 +107,7 @@ If you need to run a single bench, the runner takes a `--filter` argument
 that passes through to criterion:
 
 ```bash
-scripts/run-benches.sh --profile quick --layer criterion --filter vector_hnsw_build
+scripts/run-benches.sh --profile quick --layer criterion --filter graph_node_fetch
 ```
 
 ## Tuning knobs
@@ -138,76 +136,6 @@ rather than one `commit` per `Change`) is the biggest single win.
 
 See [persistence-and-recovery.md](persistence-and-recovery.md) for the full
 `SyncPolicy` semantics.
-
-### HNSW configuration
-
-The HNSW provider exposes the standard three knobs through its construction
-config: `M` (max edges per node per layer), `ef_construction` (beam width
-during build), and `ef_search` (beam width during query).
-
-| Knob              | Direction                  | Default tuning                                |
-| :---------------- | :------------------------- | :-------------------------------------------- |
-| `M`               | Higher = better recall, larger memory footprint and slower build. | 8–16 typical; build cost is `O(N · M²)`. |
-| `ef_construction` | Higher = better recall, slower build. | 64–200 typical.                              |
-| `ef_search`       | Higher = better recall, slower query. | Workload-dependent; tune against a target recall. |
-
-The `vector_hnsw_build` benchmark in `BENCHMARKS.md` uses `M=8`,
-`ef_construction=64` at dim 16 — small enough to fit comfortably in cache
-and a tractable baseline. Production workloads at dim 384–1536 will be
-substantially slower per insert; the `M²` factor in build cost is the
-dominant scaling term.
-
-### IVF configuration
-
-The IVF provider exposes coarse-quantizer training (`n_centroids`) and
-search-time `n_probe`. The trade-off:
-
-| Knob          | Direction                                                       |
-| :------------ | :-------------------------------------------------------------- |
-| `n_centroids` | Higher = smaller per-probe scan, more memory for centroids.     |
-| `n_probe`     | Higher = better recall, linear cost increase.                   |
-
-The `vector_ivfpq_recall_at_10` row in `BENCHMARKS.md` shows the linear
-scaling:
-
-| `n_probe` | Search latency |
-| :-------- | :------------- |
-| 1         | 699.7 ns       |
-| 4         | 2.68 µs        |
-| 8         | 4.97 µs        |
-
-Sub-µs cold-cache lookups at `n_probe=1`, linear up from there.
-
-### Quantization
-
-Three quantizers ship in `selene-vector`:
-
-| Quantizer | Bytes per vector (dim D)        | Recall posture (with rescore tier) |
-| :-------- | :------------------------------ | :--------------------------------- |
-| `f32`     | `4 · D`                         | Baseline.                          |
-| `SQ8`     | `D + small overhead`            | Essentially free; 0.994 recall@10 with rescore, ~4× memory reduction. |
-| `PQ`      | `M_pq · log2(K) / 8` (small)    | Collapses to ~0.5 alone; 0.984 with rescore tier. |
-| `OPQ`     | Same footprint as PQ.           | Same recall posture as PQ + rescore; ~48× slower on insert due to rotation. |
-
-The pattern that wins for vector search is **quantize for memory, pair with
-a rescore tier for recall**. SQ8 by itself is the fastest cheap option. PQ
-and OPQ are only worth it when memory is the tight constraint and a rescore
-tier is configured to recover recall.
-
-OPQ rotation on insert is expensive: the `composition_replay` benchmarks
-measure ~48× slower inserts than plain PQ. Favor `plain_pq` unless the
-workload is read-dominant and OPQ's polysemous code-tying is needed.
-
-### Procedure-pack registry: lazy vs eager activation
-
-The procedure-pack registry (`selene-pack::ProcedureRegistry`) activates
-packs lazily by default — the first `CALL` against a pack triggers manifest
-validation and typestate transition. Eager activation (activating every
-pack at startup) trades startup latency for steady-state predictability.
-
-For workloads with a small fixed set of `CALL`s on the hot path, eager
-activation removes the once-per-pack cold path. For workloads that touch
-many packs sparsely, lazy activation keeps startup fast.
 
 ### Parallelization gating
 
@@ -280,46 +208,6 @@ Embedders that batch their mutations into multi-`Change` transactions
 benefit twice: from amortized commit-side bookkeeping and from
 group-commit WAL fsync.
 
-## HNSW + IVF performance
-
-Build, search, and mutation throughput for the vector index extension.
-Search is the primary cost on most workloads; build is amortized; mutation
-is rare in batch-ingest patterns but hot in streaming patterns.
-
-Build (HNSW, direct construction, dim=16, M=8, ef_construction=64,
-deterministic seed):
-
-| n    | Time      |
-| :--- | :-------- |
-| 100  | 2.79 ms   |
-| 1000 | 53.25 ms  |
-| 5000 | 340.09 ms |
-
-Cost scales roughly as `O(n · log n · M²)` — the 5× increase from 1k to 5k
-nodes costs ~6.4× wall-clock.
-
-Search (HNSW, k=10, recall@10):
-
-| Variant                | k=10       | k=25       | k=50      | k=100     |
-| :--------------------- | :--------- | :--------- | :-------- | :-------- |
-| `f32` baseline         | 705.6 µs / 0.881 | 1.24 ms / 0.991 | 2.18 ms / 1.000 | 4.60 ms / 1.000 |
-| `SQ8` + rescore        | 749.3 µs / 0.884 | 1.28 ms / 0.991 | 2.23 ms / 1.000 | 4.81 ms / 1.000 |
-| `PQ` + rescore         | 746.0 µs / 0.503 | 1.26 ms / 0.778 | 2.30 ms / 0.931 | 4.92 ms / 0.984 |
-| `OPQ` + rescore        | 733.3 µs / 0.500 | 1.26 ms / 0.781 | 2.31 ms / 0.925 | 4.95 ms / 0.994 |
-
-(latency / recall@10.)
-
-Bulk mutation (HNSW vs IVF, 100-vector batch, dim=256):
-
-| Provider | Bulk-upsert time | Per-vector time |
-| :------- | :--------------- | :-------------- |
-| HNSW     | 4.22 ms          | 42 µs           |
-| IVF      | 57.37 µs         | 0.57 µs         |
-
-IVF bulk mutation is roughly 70× faster than HNSW at this batch size
-because IVF appends to posting lists rather than inserting into a
-hierarchical graph.
-
 ## Graph algorithm performance
 
 The graph algorithm library parallelizes through `rayon`. Numbers from the
@@ -361,9 +249,6 @@ operating envelope is shaped by that. Some honest limits:
   participates in. Property values that are large strings or large
   `Value::Binary` instances dominate the footprint at scale. Plan storage
   budget accordingly.
-- **HNSW build is `O(N · log N · M²)`**. At dim 768+ with `M=16`, build
-  time for millions of vectors is significant. IVF training is faster but
-  carries a separate trade-off (no incremental refinement).
 - **APSP is `O(N · (V + E) · log V)`**. For 100k nodes the workspace
   measures the bench at 200/500/1000 sources, not all-pairs over 100k.
   All-pairs at 100k is not a practical workload for any single-machine
@@ -418,4 +303,3 @@ starting point for adapting workloads.
 - Bench profile envelopes: `crates/selene-testing/src/bench_profiles.rs`
 - Parallelism policy: [`crates/selene-algorithms/src/parallel.rs`](../crates/selene-algorithms/src/parallel.rs)
 - WAL writer: [`crates/selene-persist/src/writer.rs`](../crates/selene-persist/src/writer.rs)
-- Vector index: [`crates/selene-vector`](../crates/selene-vector)

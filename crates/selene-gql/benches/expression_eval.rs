@@ -23,13 +23,13 @@ struct ExpressionCase {
 const CASES: &[ExpressionCase] = &[
     ExpressionCase {
         group: "predicate",
-        name: "like",
-        source: "RETURN 'alphabet' LIKE 'a%bet' AS v",
+        name: "starts_with",
+        source: "RETURN 'alphabet' STARTS WITH 'a' AS v",
     },
     ExpressionCase {
         group: "predicate",
-        name: "between",
-        source: "RETURN 5 BETWEEN 1 AND 10 AS v",
+        name: "range",
+        source: "RETURN 5 >= 1 AND 5 <= 10 AS v",
     },
     ExpressionCase {
         group: "scalar_fn",

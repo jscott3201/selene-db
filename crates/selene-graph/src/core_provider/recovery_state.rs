@@ -1,11 +1,9 @@
 //! Recovery-mode state for the core graph provider.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
-use selene_core::{
-    Change, EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyDiff, PropertyMap, SchemaChange,
-};
+use selene_core::{Change, EdgeId, GraphId, NodeId, PropertyDiff, PropertyMap, SchemaChange};
 use smallvec::SmallVec;
 
 use crate::core_provider::sections::{
@@ -19,10 +17,18 @@ use crate::core_provider::{
 };
 use crate::graph::{CompositePropertyIndexEntry, GraphMeta, PropertyIndexEntry, SeleneGraph};
 use crate::graph_types::GraphTypeDef;
-use crate::store::{edge_row_index, node_row_index};
-use crate::typed_index::{TypedIndex, TypedIndexKind};
+use crate::typed_index::TypedIndex;
 
+mod index_replay;
+mod materialize;
 mod schema_replay;
+
+use index_replay::{
+    PendingCompositeIndex, PendingIndex, pending_composite_property_index_change,
+    pending_property_index_change, replay_composite_property_index_changes,
+    replay_property_index_changes,
+};
+use materialize::{insert_edge_row, insert_node_row};
 
 /// Accumulator populated by snapshot sections and WAL replay.
 #[derive(Default)]
@@ -34,40 +40,31 @@ pub(crate) struct RecoveryState {
     pending_composite_property_index_changes: Vec<PendingCompositeIndex>,
     nodes: BTreeMap<NodeId, NodeRow>,
     edges: BTreeMap<EdgeId, EdgeRow>,
+    /// BRIEF-Item-4a STEP 9: the snapshot row (= section position) each
+    /// committed id was decoded at, so `into_graph` materializes snapshot rows
+    /// **positionally** rather than by deriving the row from the id. Aborted-tx
+    /// hole rows (`*Id::TOMBSTONE`) are not recorded — they are re-materialized as
+    /// the pad slots between the real rows the column places. WAL-created ids
+    /// absent here append at the dense end (BRIEF-Item-4c; 4e revisits this for
+    /// WAL events that cross a 4b compaction epoch).
+    node_snapshot_rows: BTreeMap<NodeId, u32>,
+    edge_snapshot_rows: BTreeMap<EdgeId, u32>,
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     sequence: u64,
+    /// Set once a [`Change::GraphReset`] (BRIEF-152, audit Item 10) is replayed.
+    ///
+    /// A factory-reset moots all schema/index intents seen so far in the WAL, so
+    /// the reset arm clears the pending lists and sets this flag. `into_graph`
+    /// then short-circuits the snapshot/caller bound-type reconciliation and
+    /// forces `bound_type = None` (open), matching the runtime reset. Without
+    /// this, a `recover_closed(bound_type)` after a reset would reject (snapshot
+    /// declares no binding, caller asserts one) or silently restore the
+    /// pre-reset type from the snapshot.
+    schema_reset_to_open: bool,
 }
 
 const V1_BOUND_GRAPH_TYPE_INDEX: u32 = 0;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PendingIndex {
-    Create {
-        label: IStr,
-        property: IStr,
-        kind: TypedIndexKind,
-        name: Option<IStr>,
-    },
-    Drop {
-        label: IStr,
-        property: IStr,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum PendingCompositeIndex {
-    Create {
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
-        kinds: SmallVec<[TypedIndexKind; 4]>,
-        name: Option<IStr>,
-    },
-    Drop {
-        label: IStr,
-        properties: SmallVec<[IStr; 4]>,
-    },
-}
 
 impl RecoveryState {
     /// Construct an empty recovery accumulator.
@@ -98,10 +95,33 @@ impl RecoveryState {
                 self.meta = Some(payload);
             }
             CORE_NODE_SUB => {
-                self.nodes = decode_nodes(bytes)?.into_iter().collect();
+                // BRIEF-Item-4a STEP 9: the section is positional. Record each
+                // committed id's row (= decode position) for positional
+                // materialization; skip `NodeId::TOMBSTONE` hole rows — they are
+                // re-padded between the real rows in `into_graph` and binding
+                // their (absent) id would resurrect an aborted-tx id as NotAlive.
+                for (position, (id, row)) in decode_nodes(bytes)?.into_iter().enumerate() {
+                    if id == NodeId::TOMBSTONE {
+                        continue;
+                    }
+                    let position = u32::try_from(position).map_err(|_| {
+                        invalid_payload("CORE/NODE row position exceeds u32::MAX".to_string())
+                    })?;
+                    self.node_snapshot_rows.insert(id, position);
+                    self.nodes.insert(id, row);
+                }
             }
             CORE_EDGE_SUB => {
-                self.edges = decode_edges(bytes)?.into_iter().collect();
+                for (position, (id, row)) in decode_edges(bytes)?.into_iter().enumerate() {
+                    if id == EdgeId::TOMBSTONE {
+                        continue;
+                    }
+                    let position = u32::try_from(position).map_err(|_| {
+                        invalid_payload("CORE/EDGE row position exceeds u32::MAX".to_string())
+                    })?;
+                    self.edge_snapshot_rows.insert(id, position);
+                    self.edges.insert(id, row);
+                }
             }
             CORE_SCMA_SUB => {
                 self.schemas = decode_schemas(bytes)?.into_iter().collect();
@@ -211,51 +231,82 @@ impl RecoveryState {
                 let row = require_live_node(&mut self.nodes, *id)?;
                 row.labels.remove(label);
             }
-            Change::SchemaChanged { change, .. } => {
-                match change {
-                    SchemaChange::NodeTypeAdded { .. }
-                    | SchemaChange::EdgeTypeAdded { .. }
-                    | SchemaChange::NodeTypeAddedV2 { .. }
-                    | SchemaChange::EdgeTypeAddedV2 { .. }
-                    | SchemaChange::NodeTypeDropped { .. }
-                    | SchemaChange::EdgeTypeDropped { .. } => {
-                        self.pending_schema_changes.push(change.clone());
+            Change::NodesOfTypeTruncated { label } => {
+                // Re-derive the truncated rows from the recovered store: every
+                // alive node carrying the label, plus every alive edge incident
+                // to such a node (any edge type). This reconstructs the exact
+                // post-`delete_node`-cascade state without persisting any ids.
+                let mut truncated_nodes = std::collections::BTreeSet::new();
+                for (id, row) in self.nodes.iter_mut() {
+                    if row.alive && row.labels.contains(label) {
+                        row.alive = false;
+                        truncated_nodes.insert(*id);
                     }
-                    SchemaChange::PropertyIndexCreated { .. }
-                    | SchemaChange::PropertyIndexCreatedNamed { .. }
-                    | SchemaChange::PropertyIndexDropped { .. } => {
-                        let pending = pending_property_index_change(change)
-                            .expect("property-index variants map to pending recovery intent");
-                        self.pending_property_index_changes.push(pending);
-                    }
-                    SchemaChange::CompositePropertyIndexCreated { .. }
-                    | SchemaChange::CompositePropertyIndexDropped { .. } => {
-                        let pending = pending_composite_property_index_change(change).expect(
-                            "composite property-index variants map to pending recovery intent",
-                        );
-                        self.pending_composite_property_index_changes.push(pending);
-                    }
-                    SchemaChange::ProcedurePackLifecycle { .. } => {
-                        // Procedure-pack lifecycle changes are pure audit history.
-                        // Pack-history readers consume them from the WAL directly;
-                        // graph-state recovery has no materialized state to update.
-                    }
-                    SchemaChange::ProcedurePackActivated { .. }
-                    | SchemaChange::ProcedurePackDeprecated { .. }
-                    | SchemaChange::ProcedurePackDisabled { .. } => {
-                        // Why: legacy, never emitted; postcard discriminant
-                        // pinned for ABI stability.
-                    }
-                    SchemaChange::GraphCreated { .. }
-                    | SchemaChange::GraphDropped { .. }
-                    | SchemaChange::GraphTypeCreated { .. }
-                    | SchemaChange::GraphTypeDropped { .. }
-                    | SchemaChange::RecordTypeAdded { .. } => {
-                        return Err(schema_replay::unsupported_schema_recovery(change));
+                }
+                for row in self.edges.values_mut() {
+                    if row.alive
+                        && (truncated_nodes.contains(&row.source)
+                            || truncated_nodes.contains(&row.target))
+                    {
+                        row.alive = false;
                     }
                 }
             }
-            Change::IndexExtensionEvent { .. } => {}
+            Change::EdgesOfTypeTruncated { label } => {
+                for row in self.edges.values_mut() {
+                    if row.alive && row.label == *label {
+                        row.alive = false;
+                    }
+                }
+            }
+            Change::GraphReset {} => {
+                // Re-derive every live row from the recovered store at this WAL
+                // position and mark it dead — identical to the runtime mutator,
+                // which carries no ids in the declarative change ("replay walks
+                // the store"). Wipes ALL nodes/edges incl untyped ones.
+                for row in self.nodes.values_mut() {
+                    row.alive = false;
+                }
+                for row in self.edges.values_mut() {
+                    row.alive = false;
+                }
+                // A reset moots every prior schema/index intent in the WAL up to
+                // this point, and forces the recovered graph open.
+                self.schema_reset_to_open = true;
+                self.pending_schema_changes.clear();
+                self.pending_property_index_changes.clear();
+                self.pending_composite_property_index_changes.clear();
+            }
+            Change::SchemaChanged { change, .. } => match change {
+                SchemaChange::NodeTypeAdded { .. }
+                | SchemaChange::EdgeTypeAdded { .. }
+                | SchemaChange::NodeTypeAddedV2 { .. }
+                | SchemaChange::EdgeTypeAddedV2 { .. }
+                | SchemaChange::NodeTypeDropped { .. }
+                | SchemaChange::EdgeTypeDropped { .. } => {
+                    self.pending_schema_changes.push(change.clone());
+                }
+                SchemaChange::PropertyIndexCreated { .. }
+                | SchemaChange::PropertyIndexCreatedNamed { .. }
+                | SchemaChange::PropertyIndexDropped { .. } => {
+                    let pending = pending_property_index_change(change)
+                        .expect("property-index variants map to pending recovery intent");
+                    self.pending_property_index_changes.push(pending);
+                }
+                SchemaChange::CompositePropertyIndexCreated { .. }
+                | SchemaChange::CompositePropertyIndexDropped { .. } => {
+                    let pending = pending_composite_property_index_change(change)
+                        .expect("composite property-index variants map to pending recovery intent");
+                    self.pending_composite_property_index_changes.push(pending);
+                }
+                SchemaChange::GraphCreated { .. }
+                | SchemaChange::GraphDropped { .. }
+                | SchemaChange::GraphTypeCreated { .. }
+                | SchemaChange::GraphTypeDropped { .. }
+                | SchemaChange::RecordTypeAdded { .. } => {
+                    return Err(schema_replay::unsupported_schema_recovery(change));
+                }
+            },
         }
         Ok(())
     }
@@ -274,7 +325,37 @@ impl RecoveryState {
                  structurally inconsistent",
             )));
         }
+        // BRIEF-152: a replayed GraphReset forces the recovered graph open and
+        // moots every prior schema intent. Short-circuit the snapshot/caller
+        // bound-type reconciliation entirely — bind to None regardless of what
+        // the snapshot or caller asserted — so a `recover_closed(bound_type)`
+        // after a reset reconstructs the identical empty+open post-state the
+        // runtime produced instead of rejecting on the reconciliation conflict.
+        let schema_reset_to_open = self.schema_reset_to_open;
         let meta = match self.meta {
+            Some(meta) if schema_reset_to_open => {
+                if meta.graph_id != expected_graph_id {
+                    return Err(crate::GraphError::Provider(inconsistent(format!(
+                        "CORE/META declares {} but caller asserted {} during recovery; \
+                         refusing to silently reconstruct under the wrong identity",
+                        meta.graph_id, expected_graph_id,
+                    ))));
+                }
+                GraphMeta {
+                    graph_id: meta.graph_id,
+                    generation: meta.generation,
+                    next_node_id: meta.next_node_id,
+                    next_edge_id: meta.next_edge_id,
+                    bound_type: None,
+                }
+            }
+            None if schema_reset_to_open => GraphMeta {
+                graph_id: expected_graph_id,
+                generation: 0,
+                next_node_id: 1,
+                next_edge_id: 1,
+                bound_type: None,
+            },
             Some(meta) => {
                 if meta.graph_id != expected_graph_id {
                     return Err(crate::GraphError::Provider(inconsistent(format!(
@@ -345,17 +426,63 @@ impl RecoveryState {
         let mut graph = SeleneGraph::new(meta.graph_id);
         graph.meta = meta;
 
+        // BRIEF-Item-4a STEP 9 / BRIEF-Item-4c: materialize each row at its true
+        // row index. Snapshot rows use their decoded position
+        // (`node_snapshot_rows`); a WAL-created id absent from the snapshot
+        // appends at the dense end (the live-append slot). Iteration is
+        // id-ascending (BTreeMap), and `insert_node_row` pads-then-sets, so a
+        // snapshot whose rows are not in id order (a compacted snapshot) still
+        // lands each row at its recorded position. The hole slots between
+        // recorded positions are padded with `NodeId::TOMBSTONE` and stay out of
+        // the id->row map.
         let mut next_node_id = graph.meta.next_node_id.max(1);
         for (id, row) in self.nodes {
             next_node_id = next_node_id.max(id.get().saturating_add(1));
-            insert_node_row(&mut graph, id, row)?;
+            // BRIEF-Item-4c: WAL-created ids (absent from the snapshot) APPEND at
+            // the dense end, not `id - 1`. After a compacted snapshot loads (dense
+            // rows, sparse high-water ids) a post-compaction `NodeCreated` would
+            // otherwise re-pad the reclaimed holes on reload. WAL-created ids are
+            // monotonic and greater than every snapshot id, and iteration is
+            // id-ascending, so by the time one is reached every snapshot row is
+            // placed and `len()` is the next dense slot — matching the live
+            // append create path.
+            let row_index = match self.node_snapshot_rows.get(&id) {
+                Some(&position) => position as usize,
+                None => {
+                    let len = graph.node_store.len();
+                    // u32::MAX is reserved as RowIndex::TOMBSTONE; the last real
+                    // row is u32::MAX - 1, so a live row never aliases the sentinel.
+                    if !u32::try_from(len).is_ok_and(|row| row != u32::MAX) {
+                        return Err(crate::GraphError::Provider(invalid_payload(format!(
+                            "WAL-created node id {id} exceeds the u32 row space"
+                        ))));
+                    }
+                    len
+                }
+            };
+            insert_node_row(&mut graph, id, row, row_index)?;
         }
         graph.meta.next_node_id = next_node_id;
 
         let mut next_edge_id = graph.meta.next_edge_id.max(1);
         for (id, row) in self.edges {
             next_edge_id = next_edge_id.max(id.get().saturating_add(1));
-            insert_edge_row(&mut graph, id, row)?;
+            // BRIEF-Item-4c: WAL-created edge ids APPEND at the dense end (see the
+            // node arm above).
+            let row_index = match self.edge_snapshot_rows.get(&id) {
+                Some(&position) => position as usize,
+                None => {
+                    let len = graph.edge_store.len();
+                    // u32::MAX is reserved as RowIndex::TOMBSTONE (see the node arm).
+                    if !u32::try_from(len).is_ok_and(|row| row != u32::MAX) {
+                        return Err(crate::GraphError::Provider(invalid_payload(format!(
+                            "WAL-created edge id {id} exceeds the u32 row space"
+                        ))));
+                    }
+                    len
+                }
+            };
+            insert_edge_row(&mut graph, id, row, row_index)?;
         }
         graph.meta.next_edge_id = next_edge_id;
 
@@ -382,146 +509,18 @@ impl RecoveryState {
                 ),
             );
         }
-        crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
+        // Apply the post-snapshot WAL index intents to the registration set
+        // only. `into_graph` deliberately does NOT rebuild index contents or
+        // re-validate the closed-graph state here: the single rebuild + validate
+        // site is `SharedGraph::from_graph_parts_and_snapshot`, which every
+        // recovered graph flows through next (GRAPH-06 dedup). Doing it twice was
+        // pure redundant work on the cold startup path.
         replay_property_index_changes(&mut graph, &self.pending_property_index_changes)?;
         replay_composite_property_index_changes(
             &mut graph,
             &self.pending_composite_property_index_changes,
         )?;
-        if let Some(type_def) = graph.meta.bound_type.as_deref() {
-            crate::type_validator::validate_entity_state(&graph, type_def).map_err(|error| {
-                crate::GraphError::Provider(inconsistent(format!(
-                    "recovered closed graph violates bound type: {error}"
-                )))
-            })?;
-        }
         Ok(graph)
-    }
-}
-
-fn pending_property_index_change(change: &SchemaChange) -> Option<PendingIndex> {
-    match change {
-        SchemaChange::PropertyIndexCreated {
-            label,
-            property,
-            kind,
-        } => Some(PendingIndex::Create {
-            label: *label,
-            property: *property,
-            kind: typed_kind_from(*kind),
-            name: None,
-        }),
-        SchemaChange::PropertyIndexCreatedNamed {
-            label,
-            property,
-            kind,
-            name,
-        } => Some(PendingIndex::Create {
-            label: *label,
-            property: *property,
-            kind: typed_kind_from(*kind),
-            name: *name,
-        }),
-        SchemaChange::PropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
-            label: *label,
-            property: *property,
-        }),
-        _ => None,
-    }
-}
-
-fn replay_property_index_changes(
-    graph: &mut SeleneGraph,
-    changes: &[PendingIndex],
-) -> crate::GraphResult<()> {
-    for change in changes {
-        match *change {
-            PendingIndex::Create {
-                label,
-                property,
-                kind,
-                name,
-            } => {
-                let index = crate::property_index::build_property_index_lenient(
-                    graph, label, property, kind,
-                )?;
-                graph
-                    .property_index
-                    .insert((label, property), PropertyIndexEntry::new(index, name));
-            }
-            PendingIndex::Drop { label, property } => {
-                graph.property_index.remove(&(label, property));
-            }
-        }
-    }
-    Ok(())
-}
-
-fn pending_composite_property_index_change(change: &SchemaChange) -> Option<PendingCompositeIndex> {
-    match change {
-        SchemaChange::CompositePropertyIndexCreated {
-            label,
-            properties,
-            kinds,
-            name,
-        } => Some(PendingCompositeIndex::Create {
-            label: *label,
-            properties: properties.clone(),
-            kinds: kinds.iter().copied().map(typed_kind_from).collect(),
-            name: *name,
-        }),
-        SchemaChange::CompositePropertyIndexDropped { label, properties } => {
-            Some(PendingCompositeIndex::Drop {
-                label: *label,
-                properties: properties.clone(),
-            })
-        }
-        _ => None,
-    }
-}
-
-fn replay_composite_property_index_changes(
-    graph: &mut SeleneGraph,
-    changes: &[PendingCompositeIndex],
-) -> crate::GraphResult<()> {
-    for change in changes {
-        match change {
-            PendingCompositeIndex::Create {
-                label,
-                properties,
-                kinds,
-                name,
-            } => {
-                let index =
-                    crate::composite_property_index::build_composite_property_index_lenient(
-                        graph,
-                        *label,
-                        properties.clone(),
-                        kinds.clone(),
-                    )?;
-                let key = crate::graph::composite_property_key(properties);
-                graph.composite_property_index.insert(
-                    (*label, key),
-                    CompositePropertyIndexEntry::new(index, properties.clone(), *name),
-                );
-            }
-            PendingCompositeIndex::Drop { label, properties } => {
-                let key = crate::graph::composite_property_key(properties);
-                graph.composite_property_index.remove(&(*label, key));
-            }
-        }
-    }
-    Ok(())
-}
-
-const fn typed_kind_from(kind: selene_core::SchemaPropertyIndexKind) -> TypedIndexKind {
-    match kind {
-        selene_core::SchemaPropertyIndexKind::I64 => TypedIndexKind::I64,
-        selene_core::SchemaPropertyIndexKind::F64 => TypedIndexKind::F64,
-        selene_core::SchemaPropertyIndexKind::String => TypedIndexKind::String,
-        selene_core::SchemaPropertyIndexKind::Date => TypedIndexKind::Date,
-        selene_core::SchemaPropertyIndexKind::LocalDateTime => TypedIndexKind::LocalDateTime,
-        selene_core::SchemaPropertyIndexKind::Uuid => TypedIndexKind::Uuid,
     }
 }
 
@@ -582,73 +581,6 @@ fn apply_property_diff(
         map.remove(key);
     }
     Ok(())
-}
-
-fn insert_node_row(graph: &mut SeleneGraph, id: NodeId, row: NodeRow) -> crate::GraphResult<()> {
-    let row_index = node_row_index(id).ok_or_else(|| {
-        crate::GraphError::Provider(invalid_payload(format!(
-            "CORE/NODE payload used invalid node id {id}"
-        )))
-    })? as usize;
-    while graph.node_store.len() < row_index {
-        graph.node_store.labels.push(LabelSet::new());
-        graph.node_store.properties.push(PropertyMap::new());
-    }
-    if graph.node_store.len() == row_index {
-        graph.node_store.labels.push(row.labels);
-        graph.node_store.properties.push(row.properties);
-    } else {
-        graph.node_store.labels.set(row_index, row.labels);
-        graph.node_store.properties.set(row_index, row.properties);
-    }
-    set_alive(&mut graph.node_store.alive, row_index, row.alive);
-    Ok(())
-}
-
-fn insert_edge_row(graph: &mut SeleneGraph, id: EdgeId, row: EdgeRow) -> crate::GraphResult<()> {
-    let row_index = edge_row_index(id).ok_or_else(|| {
-        crate::GraphError::Provider(invalid_payload(format!(
-            "CORE/EDGE payload used invalid edge id {id}"
-        )))
-    })? as usize;
-    while graph.edge_store.len() < row_index {
-        graph.edge_store.label.push(edge_hole_label()?);
-        graph.edge_store.source.push(NodeId::TOMBSTONE);
-        graph.edge_store.target.push(NodeId::TOMBSTONE);
-        graph.edge_store.properties.push(PropertyMap::new());
-    }
-    if graph.edge_store.len() == row_index {
-        graph.edge_store.label.push(row.label);
-        graph.edge_store.source.push(row.source);
-        graph.edge_store.target.push(row.target);
-        graph.edge_store.properties.push(row.properties);
-    } else {
-        graph.edge_store.label.set(row_index, row.label);
-        graph.edge_store.source.set(row_index, row.source);
-        graph.edge_store.target.set(row_index, row.target);
-        graph.edge_store.properties.set(row_index, row.properties);
-    }
-    set_alive(&mut graph.edge_store.alive, row_index, row.alive);
-    Ok(())
-}
-
-fn set_alive(bitmap: &mut roaring::RoaringBitmap, row_index: usize, alive: bool) {
-    let row = u32::try_from(row_index).expect("row index was validated before liveness update");
-    if alive {
-        bitmap.insert(row);
-    } else {
-        bitmap.remove(row);
-    }
-}
-
-fn edge_hole_label() -> Result<IStr, crate::GraphError> {
-    static CELL: OnceLock<IStr> = OnceLock::new();
-    if let Some(label) = CELL.get() {
-        return Ok(*label);
-    }
-    let label = selene_core::intern("__selene_hole").map_err(crate::GraphError::Core)?;
-    let _ = CELL.set(label);
-    Ok(label)
 }
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 //! Commit-critical durable provider protocol.
 
+use std::sync::Arc;
+
 use selene_core::{Change, HlcTimestamp};
 
 use crate::index_provider::{ProviderError, ProviderTag};
@@ -26,13 +28,17 @@ pub trait DurableProvider: Send + Sync + 'static {
     ///
     /// Returns the durable sequence number assigned by this provider.
     ///
+    /// `principal` is borrowed as `Option<&Arc<[u8]>>` so an implementor that
+    /// retains the bytes (e.g. the CORE WAL header) clones the existing `Arc`
+    /// (a refcount bump) rather than re-allocating and copying the slice.
+    ///
     /// # Errors
     ///
     /// Returns [`ProviderError`] when the durable write fails. The caller aborts
     /// the commit and rolls the graph state back.
     fn write_commit(
         &self,
-        principal: Option<&[u8]>,
+        principal: Option<&Arc<[u8]>>,
         changes: &[Change],
         timestamp: HlcTimestamp,
     ) -> Result<u64, ProviderError>;

@@ -6,18 +6,15 @@
 //! canonical lexicographic order by [`IStr::as_str`] and re-sort into the
 //! receiver's local handle order after decode.
 
-use std::sync::Arc;
-
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
 
 use crate::{
     CoreError, CoreResult, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
-    IStr, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PackLifecycleEvent, PropertyMap,
-    RecordTypeDef, Value,
+    IStr, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyMap, RecordTypeDef, Value,
 };
 
-/// A graph, schema, or extension-provider change carried by the WAL.
+/// A graph or schema change carried by the WAL.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 // Invariant: serde+postcard tag stability - append new variants, never insert.
@@ -78,17 +75,6 @@ pub enum Change {
         /// Schema change payload.
         change: SchemaChange,
     },
-    /// Opaque event emitted by an index extension provider.
-    ///
-    /// `provider` is a human-readable interned provider name (for example,
-    /// `selene-vector`). The named provider owns deserialization of `payload`
-    /// during WAL replay per D15.
-    IndexExtensionEvent {
-        /// Provider name.
-        provider: IStr,
-        /// Provider-owned payload bytes.
-        payload: Arc<[u8]>,
-    },
     /// Node property removal.
     NodePropertyRemoved {
         /// Updated node ID.
@@ -110,6 +96,52 @@ pub enum Change {
         /// Removed label.
         label: IStr,
     },
+    /// Bulk removal of every node carrying `label` plus all incident edges.
+    ///
+    /// This is the O(1)-WAL declarative truncate change (BRIEF-150, deletion-
+    /// reclamation audit Item 11). It carries **only** the label — never the
+    /// affected node/edge ids — so a `TRUNCATE NODE TYPE :L` of N nodes still
+    /// writes exactly one WAL change. Recovery re-derives the affected rows by
+    /// walking the recovered store ("replay walks store"), marking dead every
+    /// alive node with `label` and every alive edge incident to such a node, so
+    /// the recovered state is byte-identical to `MATCH (n:L) DETACH DELETE n`.
+    /// Derived-state index providers never receive this declarative variant; the
+    /// producing side expands it into per-row `NodeDeleted`/`EdgeDeleted`
+    /// tombstones on both the runtime and recovery paths so derived state is
+    /// reclaimed without leaks.
+    NodesOfTypeTruncated {
+        /// Node label whose instances (and incident edges) were removed.
+        label: IStr,
+    },
+    /// Bulk removal of every edge carrying `label`.
+    ///
+    /// The edge-type counterpart to [`Change::NodesOfTypeTruncated`]
+    /// (`TRUNCATE EDGE TYPE :L`). Carries only the label (O(1) WAL); recovery
+    /// re-derives the affected edges from the recovered store. Index providers
+    /// receive per-row `EdgeDeleted` tombstones, never this declarative variant.
+    EdgesOfTypeTruncated {
+        /// Edge label whose instances were removed.
+        label: IStr,
+    },
+    /// Factory-reset of the entire graph: wipe **all** nodes and edges (every
+    /// label, including untyped/arbitrary-label rows) **and** reset the schema
+    /// to open (`bound_type` -> `None`), in one declarative O(1)-WAL change.
+    ///
+    /// This is the `DROP GRAPH` factory-reset change (BRIEF-152, deletion-
+    /// reclamation audit Item 10). Under D1 single-graph it targets the one
+    /// bound graph. It carries **nothing** — never the affected node/edge ids
+    /// nor any schema payload — so a reset of a graph with N rows still writes
+    /// exactly one WAL change. Recovery re-derives every affected row by walking
+    /// the recovered store ("replay walks store"), marking dead every alive node
+    /// and edge, and forces the recovered `bound_type` to `None`, so the
+    /// recovered state is byte-identical to `MATCH (n) DETACH DELETE n` followed
+    /// by a full schema drop. Derived-state index providers never receive this
+    /// declarative variant; the producing side expands it into per-row
+    /// `NodeDeleted`/`EdgeDeleted` tombstones on both the runtime and recovery
+    /// paths so derived state is reclaimed without leaks. The MANIFEST epoch and
+    /// WAL archive lineage are untouched: a factory-reset is one committed WAL
+    /// entry on top of the existing snapshot, not a file-level wipe.
+    GraphReset {},
 }
 
 /// Label set difference.
@@ -350,47 +382,6 @@ pub enum SchemaChange {
         /// Record type definition.
         def: RecordTypeDef,
     },
-    /// Reserved — legacy procedure-pack activation placeholder.
-    ///
-    /// Retained at this position so the `postcard` discriminant of every
-    /// subsequent variant stays stable. No selene-db code emits this variant;
-    /// recovery does not act on it. New code emits
-    /// [`SchemaChange::ProcedurePackLifecycle`] instead.
-    #[doc(hidden)]
-    ProcedurePackActivated {
-        /// Procedure pack name.
-        pack_name: IStr,
-        /// Procedure pack version.
-        version: IStr,
-    },
-    /// Reserved — legacy procedure-pack deprecation placeholder.
-    ///
-    /// Retained for `postcard` ABI stability (see
-    /// [`SchemaChange::ProcedurePackActivated`]). No selene-db code emits or
-    /// applies this variant.
-    #[doc(hidden)]
-    ProcedurePackDeprecated {
-        /// Procedure pack name.
-        pack_name: IStr,
-        /// Procedure pack version.
-        version: IStr,
-        /// Interned short reason.
-        reason: IStr,
-    },
-    /// Reserved — legacy procedure-pack disable placeholder.
-    ///
-    /// Retained for `postcard` ABI stability (see
-    /// [`SchemaChange::ProcedurePackActivated`]). No selene-db code emits or
-    /// applies this variant.
-    #[doc(hidden)]
-    ProcedurePackDisabled {
-        /// Procedure pack name.
-        pack_name: IStr,
-        /// Procedure pack version.
-        version: IStr,
-        /// Interned short reason.
-        reason: IStr,
-    },
     /// Property index creation.
     PropertyIndexCreated {
         /// Indexed node label.
@@ -406,16 +397,6 @@ pub enum SchemaChange {
         label: IStr,
         /// Indexed property key.
         property: IStr,
-    },
-    /// Procedure-pack lifecycle audit event.
-    ///
-    /// Declared after [`SchemaChange::PropertyIndexDropped`] so the
-    /// `postcard` discriminants of all earlier variants remain stable. The
-    /// legacy `ProcedurePack*` variants above this entry are
-    /// retained but never emitted; new code emits `ProcedurePackLifecycle`.
-    ProcedurePackLifecycle {
-        /// Pack lifecycle event payload.
-        event: PackLifecycleEvent,
     },
     /// Property index creation with optional explicit catalog name.
     ///
@@ -622,17 +603,8 @@ mod tests {
     }
 
     #[test]
-    fn index_extension_event_payload_round_trip() {
-        let change = Change::IndexExtensionEvent {
-            provider: istr("selene-vector"),
-            payload: Arc::from([1_u8, 2, 3]),
-        };
-        assert_eq!(change.clone(), change);
-    }
-
-    #[test]
     fn change_all_covers_every_variant() {
-        assert_eq!(Change::VARIANT_COUNT, 11);
+        assert_eq!(Change::VARIANT_COUNT, 13);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Change::ALL {
@@ -791,57 +763,21 @@ mod tests {
     }
 
     #[test]
-    fn schema_change_procedure_pack_lifecycle() {
-        let name = istr("pack");
-        let reason = istr("retired");
-        let staged = SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Staged {
-                pack_name: name,
-                content_hash: [0_u8; 32],
-                principal: istr("principal"),
-                at: jiff::Timestamp::new(1, 0).unwrap(),
-            },
-        };
-        let deprecated = SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Deprecated {
-                pack_name: name,
-                reason,
-                principal: istr("principal"),
-                at: jiff::Timestamp::new(2, 0).unwrap(),
-            },
-        };
-        let disabled = SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Disabled {
-                pack_name: name,
-                principal: istr("principal"),
-                at: jiff::Timestamp::new(3, 0).unwrap(),
-            },
-        };
-        assert_ne!(staged, deprecated);
-        assert_ne!(deprecated, disabled);
-    }
-
-    #[test]
-    fn empty_diffs_and_empty_payload_are_valid() {
+    fn empty_diffs_are_valid() {
         assert!(LabelDiff::new([], []).unwrap().is_empty());
         assert!(PropertyDiff::new([], []).unwrap().is_empty());
-        let event = Change::IndexExtensionEvent {
-            provider: istr("empty-provider"),
-            payload: Arc::from([]),
-        };
-        assert_eq!(event.clone(), event);
     }
 
     #[test]
     fn schema_change_variants_construct() {
         let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
         assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-        assert_eq!(SchemaChange::VARIANT_COUNT, 20);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
     }
 
     #[test]
     fn schema_change_all_covers_every_variant() {
-        assert_eq!(SchemaChange::VARIANT_COUNT, 20);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in SchemaChange::ALL {

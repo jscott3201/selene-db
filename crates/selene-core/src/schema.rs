@@ -9,7 +9,9 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
-use crate::{CoreError, CoreResult, ExtensionTypeId, IStr, LabelSet, RecordTypeId, Value};
+use crate::{
+    CoreError, CoreResult, ExtensionTypeId, IStr, LabelSet, PropertyValueType, RecordTypeId, Value,
+};
 
 /// Graph-type-scoped schema identifier.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -66,7 +68,11 @@ pub struct GraphType {
     pub edge_types: BTreeMap<IStr, EdgeTypeDef>,
     /// Record types keyed by record type ID.
     pub record_types: BTreeMap<RecordTypeId, RecordTypeDef>,
-    /// Policy for overlap between key label sets.
+    /// Reserved policy for relationships between key label sets. **Not yet
+    /// consulted:** closed-graph element binding uses exact key-label-set
+    /// equality, and every type's key label set is currently a singleton
+    /// (cardinality 1), so no overlap/containment relationship can arise to
+    /// apply a policy to. See [`KeyLabelSetPolicy`].
     pub key_label_set_policy: KeyLabelSetPolicy,
 }
 
@@ -311,6 +317,61 @@ pub struct NodeTypeRef(pub IStr);
 #[repr(transparent)]
 pub struct RecordTypeRef(pub RecordTypeId);
 
+/// Inline, recursively-nestable closed/typed RECORD field-type structure carried on
+/// the WAL change stream (postcard). This is the serde/WAL counterpart of the rkyv
+/// snapshot-side `selene_graph::graph_types::RecordFieldTypes`; the two carry the same
+/// structure and must round-trip into each other.
+///
+/// Record structure is inlined on [`PropertyDef::record_fields`] rather than on
+/// [`ValueType::record`] (a [`RecordTypeRef`] by-ID that cannot hold inline structure),
+/// symmetric to how `LIST` inlines its element type.
+// Why: Per ISO 39075:2024 §18.9 <record type> / <field types specification> and §18.10
+// <field type>; features GV46 (closed record types) / GV47 (open record types) / GV48
+// (nested record types).
+//
+// Three durable record states are encoded jointly with the `Option` on
+// [`PropertyDef::record_fields`]: absent (`None`) ⇒ the property is not a record;
+// `Some(Open)` ⇒ an open/bare `RECORD` (no declared fields, any record value conforms);
+// `Some(Closed(..))` ⇒ a closed/typed `RECORD{..}`. The open variant is what makes a bare
+// `RECORD` property survive WAL replay as `RecordTyped` rather than degrading to `Null`
+// (it carries no field list, so the absent/open distinction cannot ride the inner `Vec`).
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum RecordFieldStructure {
+    /// Open/bare `RECORD` — no declared field types; any record value conforms (GV47).
+    Open,
+    /// Closed/typed `RECORD{..}` — the declared field-type list (GV46/GV48).
+    Closed(Vec<RecordFieldStructureDef>),
+}
+
+/// One declared field of a closed/typed RECORD: name, its (possibly nested) type, and
+/// whether the field is required (non-nullable).
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct RecordFieldStructureDef {
+    /// Field name.
+    pub name: IStr,
+    /// Declared field type (recursively nestable).
+    pub field_type: RecordFieldStructureType,
+    /// `true` when the field is required (NOT NULL).
+    pub required: bool,
+}
+
+/// Recursively-nestable field-type for a closed/typed RECORD declaration (serde/WAL side).
+///
+/// Deliberately **not** `#[non_exhaustive]`: it is matched cross-crate by the
+/// selene-graph rkyv⇄serde conversions, where exhaustive matching is wanted so a future
+/// variant forces both conversion directions to be updated.
+// Why: Per ISO 39075:2024 §18.10 CR1 (GV48 nested record types) — a field type may itself
+// contain a list or record type.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub enum RecordFieldStructureType {
+    /// Scalar field type.
+    Scalar(PropertyValueType),
+    /// LIST field type.
+    List(Box<RecordFieldStructureType>),
+    /// Nested RECORD field type.
+    Record(Box<RecordFieldStructure>),
+}
+
 /// Property schema definition.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PropertyDef {
@@ -325,6 +386,17 @@ pub struct PropertyDef {
     /// Whether updates to this property are forbidden after creation.
     #[serde(default)]
     pub immutable: bool,
+    /// Inline RECORD field structure when [`PropertyDef::value_type`] resolves to a
+    /// `RecordTyped` property. `None` for every non-record property; `Some(Open)` for an
+    /// open/bare `RECORD`; `Some(Closed(..))` for a closed/typed `RECORD{..}`. The
+    /// `None`-vs-`Some(Open)` distinction is load-bearing: it is the only durable signal
+    /// that a bare `RECORD` property is record-typed (its `ValueType` is otherwise
+    /// indistinguishable from a scalar `Null` on the WAL side), so without it WAL replay
+    /// would degrade an open record to `Null`. Carried for WAL durability, symmetric to
+    /// the rkyv snapshot-side
+    /// `selene_graph::graph_types::PropertyTypeDef::record_field_types`.
+    #[serde(default)]
+    pub record_fields: Option<Box<RecordFieldStructure>>,
 }
 
 /// Legacy WAL property definition carried by v1 catalog-DDL schema changes.
@@ -348,6 +420,7 @@ impl From<PropertyDefV1> for PropertyDef {
             nullable: value.nullable,
             default: value.default,
             immutable: false,
+            record_fields: None,
         }
     }
 }
@@ -487,13 +560,26 @@ pub struct RecordTypeDef {
     pub fields: SmallVec<[PropertyDef; 4]>,
 }
 
-/// Policy for relationships between key label sets.
+/// Reserved policy for relationships between the key label sets of a closed
+/// graph type's element types.
+///
+/// **Currently inert.** This value is persisted on [`GraphType`] but is not yet
+/// consulted by any binding or validation path: closed-graph element binding
+/// uses exact key-label-set equality, and the catalog DDL only produces
+/// singleton key label sets (one label per type — see
+/// `selene-gql`'s `create_node_type` lowering), so no two key label sets can
+/// stand in an overlap/containment relationship. The variants reserve the two
+/// ISO postures that become meaningful once multi-label key label sets are
+/// supported (a v1.2+ feature; see the deep-review deferred-briefs catalog).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum KeyLabelSetPolicy {
-    /// Key label sets may not overlap.
+    /// Reserved: key label sets must be pairwise disjoint.
     NoOverlap,
-    /// Key label sets may be contained by one another. This is the v1.0
-    /// default from spec 02 section 6.1.
+    /// Reserved: key label sets may contain one another, enabling ISO/IEC
+    /// 39075:2024 §4.13.2.7 *key label set implication consistency* — a type
+    /// whose key label set is a subset of another type's label set "implies"
+    /// that super-type. The current default; activated when multi-label key
+    /// label sets ship.
     #[default]
     Containment,
 }

@@ -6,10 +6,12 @@
 //! algorithm-emitted result vectors and produces a stable textual form for
 //! `insta::assert_snapshot!` comparison.
 //!
-//! Snapshot-determinism (§E31): `NodeId` rendered as `n<sparse_row>` (row =
-//! `NodeId.get() - 1` per the §E20 invariant in selene-graph's store, valid
-//! when no tombstones intervene — corpus fixtures are append-only); `f64`
-//! scores rendered as `{:.6}`; result vectors NOT re-sorted at render time
+//! Snapshot-determinism (§E31): `NodeId` rendered as `n<label>` using
+//! `NodeId.get() - 1` as a stable graph-less display label (NOT the production
+//! id↔row mapping, which lives in `node_id_to_row` per BRIEF-Item-4a — the
+//! renderer holds no graph; corpus fixtures are append-only so the label is
+//! unambiguous; see `render_node`); `f64` scores rendered as `{:.6}`; result
+//! vectors NOT re-sorted at render time
 //! (preserves §E12/§E17/§E21/§E27 algorithm-emitted order); empty results
 //! rendered as the literal token `RESULT EMPTY`.
 
@@ -220,10 +222,15 @@ fn render_result(result: &AlgoResult<'_>, out: &mut Vec<String>) {
     }
 }
 
-/// Render a `NodeId` as `n<sparse_row>` per §E31. Requires `NodeId.get() >= 1`
-/// (the §E20 invariant in selene-graph's store: row 0 = NodeId 1; row N-1 =
-/// NodeId N). Corpus fixtures are append-only so the row mapping is always
-/// `row = NodeId.get() - 1`.
+/// Render a `NodeId` as `n<label>` per §E31, using `NodeId.get() - 1` as the
+/// display label. This is a **graph-less display convention for the harness**,
+/// not a correctness path: the production id↔row mapping now lives in the
+/// `node_id_to_row` map (BRIEF-Item-4a), but the renderer only has a `NodeId`,
+/// and the corpus fixtures are append-only (never deleted/compacted) so the
+/// `id - 1` label is stable and unambiguous for golden output. It is deliberately
+/// NOT routed through `SeleneGraph::node_id_for_row` (the renderer holds no
+/// graph); a future compacted corpus would render by id rather than synthesized
+/// row.
 ///
 /// Rejects `NodeId(0)` — the tombstone sentinel per D11 — with a distinct
 /// `<tombstone>` token rather than saturating to `n0`. This protects the

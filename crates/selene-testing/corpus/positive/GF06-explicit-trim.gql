@@ -1,6 +1,6 @@
--- corpus: positive
--- feature: GF06
--- expects: parse-ok
+// corpus: positive
+// feature: GF06
+// expects: parse-ok
 RETURN TRIM(BOTH 'x' FROM 'xxhellox') AS both_trimmed,
        TRIM(LEADING 'x' FROM 'xxhellox') AS leading_trimmed,
        TRIM(TRAILING 'x' FROM 'xxhellox') AS trailing_trimmed,

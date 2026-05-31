@@ -1,5 +1,0 @@
----
-source: crates/selene-algorithms-pack/tests/algo_pack_snapshot_corpus.rs
-expression: entry.render()
----
-pagerank_defaults [Algorithm] CALL algo.pagerank('p', NULL, NULL, NULL, NULL)

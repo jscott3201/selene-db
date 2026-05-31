@@ -25,7 +25,8 @@ pub use crate::analyze::{
 pub use crate::ast::{
     call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem},
     ddl::{
-        DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
+        DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
+        ValidationMode,
     },
     expr::{BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr},
     format::format_procedure_call,
@@ -40,7 +41,8 @@ pub use crate::ast::{
     span::SourceSpan,
     statement::{
         LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-        QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, UnwindStatement, WithClause,
+        QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement,
+        UnwindStatement, WithClause,
     },
     types::{GqlType, RecordType},
     util::{EmptyVecError, NonEmpty, Vec2OrMore},
@@ -51,17 +53,16 @@ pub use crate::flagger::{FeatureUse, feature_walk};
 pub use crate::parser::{parse, parse_many, parse_with_source};
 pub use crate::plan::{
     Aggregate, AggregateArg, BindingDef, BindingElement, BindingTableColumn, BindingTableSchema,
-    BuildSide, CatalogOp, CompositeIndexHandle, EdgeMatch, EdgeStatistics, EmptyIndexCatalog,
-    ExecutionPlan, FilterPredicate, FilterPredicateKind, HiddenBindingId, HopContributor,
-    ImplDefinedCaps, IndexCatalog, IndexHandle, IndexKey, IndexKind, IndexTarget,
-    InsertEndpointRef, InsertSiteId, JoinTree, LimitAmount, MutationOp, NodeIdOrdering,
-    NodeOrEdgeScan, OptimizeContext, OrderAccess, OrderKey, OuterBindingRef, PathContributor,
-    PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery,
-    PlannedTableSubquery, PlannedTableSubqueryYield, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, PlannedYieldItem, PlannerError, ProjectExpr, PropertyHistogram,
-    PropertyInit, RepeatEdgeMatch, Rule, ScanAccess, ScanKind, SubqueryBody, SubqueryKind,
-    SubqueryRegistry, TailBinding, Transformed, TxOp, TypedIndexBounds, TypedIndexLookup,
-    WanderJoinSampler, YieldKind, optimize, plan,
+    BuildSide, CatalogOp, CompositeIndexHandle, EdgeMatch, EmptyIndexCatalog, ExecutionPlan,
+    FilterPredicate, FilterPredicateKind, HiddenBindingId, HopContributor, ImplDefinedCaps,
+    IndexCatalog, IndexHandle, IndexKey, IndexKind, IndexTarget, InsertEndpointRef, InsertSiteId,
+    JoinTree, LimitAmount, LiveIndexCatalog, MutationOp, NodeIdOrdering, NodeOrEdgeScan,
+    OptimizeContext, OrderAccess, OrderKey, OuterBindingRef, PathContributor, PathPlan,
+    PatternPlan, PipelineOp, PipelineOpId, PlannedCall, PlannedSubquery, PlannedTableSubquery,
+    PlannedTableSubqueryYield, PlannedTypePropertyConstraint, PlannedTypePropertyDef,
+    PlannedYieldItem, PlannerError, ProjectExpr, PropertyInit, RepeatEdgeMatch, Rule, ScanAccess,
+    ScanKind, SessionOp, SubqueryBody, SubqueryKind, SubqueryRegistry, TailBinding, Transformed,
+    TxOp, TypedIndexBounds, TypedIndexLookup, YieldKind, optimize, plan,
 };
 pub use crate::procedure_registry::{
     EmptyProcedureRegistry, ProcedureArity, ProcedureDefaultValue, ProcedureError, ProcedureHandle,
@@ -70,11 +71,11 @@ pub use crate::procedure_registry::{
     Value,
 };
 pub use crate::runtime::{
-    AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, CallPlanCache,
-    CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError, ExecutorWarning,
-    GraphContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext, RollbackOutcome,
-    Session, SessionParameterValue, StatementOutput, TransactionOutcome, TxContext, WarningSink,
-    WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
+    AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
+    CallPlanCache, CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError,
+    ExecutorWarning, GraphContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext,
+    RollbackOutcome, Session, SessionParameterValue, StatementOutput, TransactionOutcome,
+    TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
 pub use selene_core::{
     CancellationCause, CancellationChecker, CancellationToken, IStrAdmissionPolicy,

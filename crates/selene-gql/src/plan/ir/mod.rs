@@ -5,6 +5,7 @@ mod call;
 mod catalog;
 mod filter;
 mod mutation;
+mod session;
 mod subquery;
 mod tx;
 
@@ -23,6 +24,7 @@ pub use filter::{
     ProjectExpr,
 };
 pub use mutation::{InsertEndpointRef, InsertSiteId, MutationOp, PropertyInit};
+pub use session::SessionOp;
 pub use subquery::{
     OuterBindingRef, PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
     SubqueryBody, SubqueryKind, SubqueryRegistry,
@@ -74,14 +76,6 @@ impl ExecutionPlan {
     pub(crate) fn alloc_expr_id(&mut self) -> ExprId {
         let id = self.next_expr_id;
         self.next_expr_id = ExprId::new(id.get().saturating_add(1));
-        id
-    }
-
-    /// Allocate a fresh pipeline op ID for future adaptive execution hooks.
-    #[allow(dead_code)]
-    pub(crate) fn alloc_pipeline_op_id(&mut self) -> PipelineOpId {
-        let id = self.next_pipeline_op_id;
-        self.next_pipeline_op_id = PipelineOpId::new(id.get().saturating_add(1));
         id
     }
 
@@ -171,8 +165,6 @@ pub enum BindingElement {
     Edge,
     /// Path binding.
     Path,
-    /// Value alias binding.
-    Alias,
 }
 
 /// Binding endpoint used by path-level operators.
@@ -314,8 +306,6 @@ pub enum JoinTree {
         max: Option<u32>,
         /// Path mode in scope for this repeat.
         path_mode: PathMode,
-        /// Path selector in scope for this repeat.
-        selector: Option<PathSelector>,
     },
     /// Selector wrapper over one complete path pattern.
     ///
@@ -376,7 +366,16 @@ pub enum JoinTree {
         /// Node-id orderings used to break symmetric WCO traversals.
         node_id_ordering: Vec<NodeIdOrdering>,
     },
-    /// Nested subplan placeholder.
+    /// A fully nested [`ExecutionPlan`] executed as a single join-tree node.
+    ///
+    /// Reserved for correlated-`CALL` subquery lowering: a `CALL { ... }` whose
+    /// body imports outer bindings will lower to this variant so the inner
+    /// pipeline runs per outer row. No production lowering rule constructs it
+    /// yet (correlated-`CALL` is not lowered at HEAD; only tests build it), but
+    /// the runtime path is complete — the sole executor is
+    /// [`crate::runtime::subplan::execute`], reached from the
+    /// `JoinTree::Subplan` arm of pattern walking. It is kept (not removed) as
+    /// the working substrate for that near-term direction.
     Subplan(Box<ExecutionPlan>),
     /// Per-label sub-scans wrapping a flat-disjunctive-label pattern.
     ///
@@ -530,8 +529,8 @@ pub struct RepeatEdgeMatch {
 /// Pipeline operation over binding tables.
 ///
 /// `#[non_exhaustive]` so future planner work (e.g., MERGE lowering, CALL
-/// subquery form, INDEX DDL via selene-pack) can add variants without
-/// breaking downstream pattern matches.
+/// subquery form, INDEX DDL) can add variants without breaking downstream
+/// pattern matches.
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]
@@ -608,6 +607,8 @@ pub enum PipelineOp {
     },
     /// Transaction-control operation.
     Tx(TxOp),
+    /// Session-control operation (ISO/IEC 39075:2024 section 7).
+    Session(SessionOp),
 }
 
 /// Planner implementation-defined limits.
@@ -624,11 +625,16 @@ pub struct ImplDefinedCaps {
     pub max_wco_traversal_nodes: u32,
     /// Maximum unique row keys a set operation may hold while counting rows.
     pub set_op_key_cap: NonZeroUsize,
+    /// Maximum distinct groups a `GROUP BY` may materialize.
+    pub group_by_key_cap: NonZeroUsize,
 }
 
 impl ImplDefinedCaps {
     /// Default maximum unique row keys a set operation may hold.
     pub const DEFAULT_SET_OP_KEY_CAP: usize = 1_000_000;
+
+    /// Default maximum distinct groups a `GROUP BY` may materialize.
+    pub const DEFAULT_GROUP_BY_KEY_CAP: usize = 1_000_000;
 
     /// Return the configured set-operation key cap.
     #[must_use]
@@ -642,6 +648,19 @@ impl ImplDefinedCaps {
         self.set_op_key_cap = set_op_key_cap;
         self
     }
+
+    /// Return the configured `GROUP BY` distinct-group cap.
+    #[must_use]
+    pub const fn group_by_key_cap(&self) -> usize {
+        self.group_by_key_cap.get()
+    }
+
+    /// Return a copy with a different `GROUP BY` distinct-group cap.
+    #[must_use]
+    pub const fn with_group_by_key_cap(mut self, group_by_key_cap: NonZeroUsize) -> Self {
+        self.group_by_key_cap = group_by_key_cap;
+        self
+    }
 }
 
 impl Default for ImplDefinedCaps {
@@ -653,6 +672,8 @@ impl Default for ImplDefinedCaps {
             max_wco_traversal_nodes: 64,
             set_op_key_cap: NonZeroUsize::new(Self::DEFAULT_SET_OP_KEY_CAP)
                 .expect("default set-op key cap is non-zero"),
+            group_by_key_cap: NonZeroUsize::new(Self::DEFAULT_GROUP_BY_KEY_CAP)
+                .expect("default group-by key cap is non-zero"),
         }
     }
 }
@@ -719,7 +740,6 @@ mod tests {
             min: 0,
             max: Some(2),
             path_mode: PathMode::Walk,
-            selector: None,
         };
 
         let JoinTree::Repeat { edge, min, max, .. } = tree else {

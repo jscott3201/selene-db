@@ -42,7 +42,11 @@ pub(super) fn inherit_statement_parameter_declarations(
         }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
-        | Statement::Rollback { .. } => {}
+        | Statement::Rollback { .. }
+        | Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => {}
     }
 }
 
@@ -152,6 +156,8 @@ fn inherit_ddl_parameter_declarations(statement: &mut DdlStatement, declarations
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
+        | DdlStatement::TruncateNodeType { .. }
+        | DdlStatement::TruncateEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. }
         | DdlStatement::ShowNodeTypes(_)
@@ -299,19 +305,6 @@ fn inherit_value_parameter_declarations(value: &mut ValueExpr, declarations: &De
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter_mut());
-                stack.push(operand.as_mut());
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push(pattern.as_mut());
-                stack.push(operand.as_mut());
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push(high.as_mut());
-                stack.push(low.as_mut());
                 stack.push(operand.as_mut());
             }
             ValueExpr::Case {

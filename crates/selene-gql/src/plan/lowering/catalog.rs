@@ -78,19 +78,31 @@ pub(crate) fn lower_ddl(
         DdlStatement::DropNodeType {
             label,
             if_exists,
+            behavior,
             span,
         } => CatalogOp::DropNodeType {
             label: *label,
             if_exists: *if_exists,
+            behavior: *behavior,
             span: *span,
         },
         DdlStatement::DropEdgeType {
             label,
             if_exists,
+            behavior,
             span,
         } => CatalogOp::DropEdgeType {
             label: *label,
             if_exists: *if_exists,
+            behavior: *behavior,
+            span: *span,
+        },
+        DdlStatement::TruncateNodeType { label, span } => CatalogOp::TruncateNodeType {
+            label: *label,
+            span: *span,
+        },
+        DdlStatement::TruncateEdgeType { label, span } => CatalogOp::TruncateEdgeType {
+            label: *label,
             span: *span,
         },
         DdlStatement::CreateIndex {
@@ -172,21 +184,6 @@ fn lower_property_constraint(
             name: *name,
             span: *span,
         },
-        TypePropertyConstraint::Searchable(span) => {
-            PlannedTypePropertyConstraint::Searchable(*span)
-        }
-        TypePropertyConstraint::Dictionary(span) => {
-            PlannedTypePropertyConstraint::Dictionary(*span)
-        }
-        TypePropertyConstraint::Fill(value, span) => {
-            PlannedTypePropertyConstraint::Fill(*value, *span)
-        }
-        TypePropertyConstraint::Interval(value, span) => {
-            PlannedTypePropertyConstraint::Interval(*value, *span)
-        }
-        TypePropertyConstraint::Encoding(value, span) => {
-            PlannedTypePropertyConstraint::Encoding(*value, *span)
-        }
     })
 }
 
@@ -235,10 +232,6 @@ where
                 (
                     "since_version",
                     "static SHOW PROCEDURES column 'since_version'",
-                ),
-                (
-                    "capability_required",
-                    "static SHOW PROCEDURES column 'capability_required'",
                 ),
             ],
             intern,

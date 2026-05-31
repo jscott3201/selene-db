@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use selene_core::{
     Change, EdgeTypeDefV1, GraphId, GraphTypeId, LabelSet, NodeId, NodeTypeDefV1, NodeTypeRef,
-    PackLifecycleEvent, PredefinedValueType, PropertyDefV1, PropertyMap, SchemaChange,
-    SchemaPropertyIndexKind, Value, ValueType, ValueTypeCardinality, intern,
+    PredefinedValueType, PropertyDefV1, PropertyMap, SchemaChange, SchemaPropertyIndexKind, Value,
+    ValueType, ValueTypeCardinality, intern,
 };
 use selene_persist::RecoveryProvider;
 use smallvec::smallvec;
@@ -273,31 +273,6 @@ fn wal_replay_node_type_added_against_open_snapshot_returns_inconsistent() {
 }
 
 #[test]
-fn wal_replay_procedure_pack_lifecycle_is_graph_state_noop() {
-    let provider = CoreProvider::new_for_recovery();
-    RecoveryProvider::on_change(
-        provider.as_ref(),
-        &Change::SchemaChanged {
-            graph: GraphId::new(1),
-            change: SchemaChange::ProcedurePackLifecycle {
-                event: PackLifecycleEvent::Activated {
-                    pack_name: intern("demo_pack").unwrap(),
-                    content_hash: [0_u8; 32],
-                    principal: intern("recovery.principal").unwrap(),
-                    at: jiff::Timestamp::new(1, 0).unwrap(),
-                },
-            },
-        },
-    )
-    .unwrap();
-
-    let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    assert_eq!(recovered.node_count(), 0);
-    assert_eq!(recovered.edge_count(), 0);
-    assert_eq!(recovered.property_index_count(), 0);
-}
-
-#[test]
 fn wal_replay_restores_property_index_created_after_node_state() {
     let provider = CoreProvider::new_for_recovery();
     let label = intern("RecoveredPerson").unwrap();
@@ -324,12 +299,18 @@ fn wal_replay_restores_property_index_created_after_node_state() {
     )
     .unwrap();
 
+    // `finish_recovery` (into_graph) now produces only the index *registration*;
+    // the bitmap contents are rebuilt by `SharedGraph::try_from_graph`'s single
+    // rebuild pass (GRAPH-06). Drive the recovered graph through that public path,
+    // then assert the registered index actually indexes the recovered content.
     let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    let rows = recovered
+    assert_eq!(recovered.property_index_count(), 1);
+    let shared = SharedGraph::try_from_graph(recovered).unwrap();
+    let read = shared.read();
+    let rows = read
         .nodes_with_property_eq(&label, &property, &Value::Int(42))
         .unwrap();
     assert_eq!(rows.iter().collect::<Vec<_>>(), vec![0]);
-    assert_eq!(recovered.property_index_count(), 1);
 }
 
 #[test]
@@ -493,10 +474,17 @@ fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
     )
     .unwrap();
 
+    // The lenient index rebuild now runs in `SharedGraph::try_from_graph`
+    // (GRAPH-06): a String value under an I64-declared index is skipped, not
+    // fatal. Route through the rebuild so the lenient path is actually exercised
+    // (asserting on the bare `finish_recovery` placeholder would falsely pass).
     let recovered = provider.finish_recovery(GraphId::new(1), None).unwrap();
-    let rows = recovered
+    assert!(recovered.property_index_for(&label, &property).is_some());
+    let shared = SharedGraph::try_from_graph(recovered).unwrap();
+    let read = shared.read();
+    let rows = read
         .nodes_with_property_eq(&label, &property, &Value::Int(42))
         .unwrap();
     assert!(rows.is_empty());
-    assert!(recovered.property_index_for(&label, &property).is_some());
+    assert!(read.property_index_for(&label, &property).is_some());
 }

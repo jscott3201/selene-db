@@ -1,14 +1,26 @@
 //! Closed graph type catalog definitions.
 
+mod record_types;
+
 use std::{collections::BTreeSet, fmt};
 
 use selene_core::{IStr, LabelSet, PropertyValueType, Value};
 use serde::{Deserialize, Serialize};
 
+use record_types::validate_record_field_types;
+pub use record_types::{RecordFieldType, RecordFieldTypeDef, RecordFieldTypes};
+
 use crate::error::{GraphError, GraphResult};
 
 /// Maximum supported nesting for catalog `LIST<T>` property element descriptors.
 pub const MAX_LIST_TYPE_NESTING: u32 = 64;
+
+/// Maximum supported nesting for catalog typed-`RECORD` field-type descriptors.
+///
+/// Shares the `LIST` budget: a single `depth` counter threads the heterogeneous
+/// `LIST`/`RECORD` nesting tower. Impl-defined per ISO 39075:2024 §4.15.4 (IL015),
+/// not an ISO constant.
+pub const MAX_RECORD_TYPE_NESTING: u32 = MAX_LIST_TYPE_NESTING;
 
 /// Definition of a closed graph type per ISO clause 18.
 #[derive(
@@ -220,10 +232,23 @@ fn validate_property_element_types(
                 continue;
             };
             validate_property_element_type(type_name, property.name, element_type, 1)?;
+        } else if property.value_type == PropertyValueType::RecordTyped {
+            // Bare RecordTyped is permissive (mirrors legacy untyped LIST): with no
+            // declared field structure there is nothing to validate.
+            if let Some(fields) = property.record_field_types.as_ref() {
+                validate_record_field_types(type_name, property.name, fields, 1)?;
+            }
         } else if property.list_element_type.is_some() {
             return Err(GraphError::Inconsistent {
                 reason: format!(
                     "property {} on type {type_name} declares a list element type for non-LIST value type {}",
+                    property.name, property.value_type
+                ),
+            });
+        } else if property.record_field_types.is_some() {
+            return Err(GraphError::Inconsistent {
+                reason: format!(
+                    "property {} on type {type_name} declares record field types for non-RECORD value type {}",
                     property.name, property.value_type
                 ),
             });
@@ -367,27 +392,12 @@ impl EdgeEndpointDef {
     ///
     /// Returns `None` for [`EdgeEndpointDef::Any`] and
     /// [`EdgeEndpointDef::OneOf`] — callers that need to enumerate the
-    /// candidate set should match the variant explicitly or use
-    /// [`EdgeEndpointDef::node_type_indices`].
+    /// candidate set should match the variant explicitly.
     #[must_use]
     pub const fn node_type_index(&self) -> Option<u32> {
         match self {
             Self::Any | Self::OneOf(_) => None,
             Self::NodeType(index) => Some(*index),
-        }
-    }
-
-    /// Return the candidate node-type indices for this endpoint.
-    ///
-    /// Returns an empty slice for [`EdgeEndpointDef::Any`], a single-element
-    /// slice borrow for [`EdgeEndpointDef::NodeType`], and the underlying
-    /// sorted index set for [`EdgeEndpointDef::OneOf`].
-    #[must_use]
-    pub fn node_type_indices(&self) -> &[u32] {
-        match self {
-            Self::Any => &[],
-            Self::NodeType(index) => std::slice::from_ref(index),
-            Self::OneOf(indices) => indices.as_slice(),
         }
     }
 }
@@ -473,6 +483,11 @@ pub struct PropertyTypeDef {
     pub default: Option<PropertyDefaultValue>,
     /// Whether updates to this property are forbidden after creation.
     pub immutable: bool,
+    /// Declared field types when [`PropertyTypeDef::value_type`] is `RecordTyped`.
+    /// `Some` only for closed/typed `RECORD` declarations; `None` for open `Record`
+    /// and every non-record value type (symmetric to
+    /// [`PropertyTypeDef::list_element_type`]).
+    pub record_field_types: Option<RecordFieldTypes>,
 }
 
 /// Persistable element-type descriptor for `LIST<T>` property declarations.
@@ -512,6 +527,17 @@ impl PropertyElementType {
     }
 
     /// Return true when `value` belongs to this element type.
+    ///
+    /// **Element nullability is not representable (GV90 NOT_SUPPORTED).** A
+    /// `LIST<T>` descriptor matches a list element strictly by type, so a
+    /// `Value::Null` element only conforms to a `LIST<NULL>` descriptor — never
+    /// to a `LIST<Int>`. The engine has no way to spell *either* `LIST<T NULL>`
+    /// (element may be null) or `LIST<T NOT NULL>` (element must be non-null):
+    /// per-element nullability is governed by ISO 39075:2024 GV90 (Explicit value
+    /// type nullability), which selene-db does NOT offer. The single strict
+    /// "element matches T" rule below is therefore internally consistent — the
+    /// honest "not offered" path, not a partial implementation. See the pin test
+    /// `list_element_null_is_rejected_strictly` in `graph_types_tests.rs`.
     #[must_use]
     pub fn matches(&self, value: &Value) -> bool {
         match self {
@@ -595,6 +621,28 @@ pub enum ValidationMode {
     Strict,
     /// Allow undeclared-property writes and record a warning.
     Warn,
+}
+
+/// Behavior of a `DROP NODE TYPE` / `DROP EDGE TYPE` statement when the type
+/// still has surviving instances or inbound type dependencies.
+///
+/// `Restrict` (the default when no behavior keyword is written) is the
+/// Seam-B fix from the deletion-reclamation audit (Item 3): dropping a type
+/// whose instances still exist would otherwise leave orphan instances whose
+/// declared type no longer exists (a silent graph-type-consistency violation
+/// on a closed GG02 graph). `Restrict` makes that rejection explicit and early.
+/// `Cascade` (selene-db `IM_DROP_CASCADE` vendor extension) truncates the
+/// instances first, then drops the type, atomically in one transaction.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum DropBehavior {
+    /// Reject the drop when instances or inbound type dependencies remain; the
+    /// type is not dropped and no `Change` is recorded (no partial state).
+    #[default]
+    Restrict,
+    /// Truncate every instance of the type first (reusing the
+    /// `Mutator::truncate_*` funnel), then drop the type — both in one
+    /// transaction.
+    Cascade,
 }
 
 fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {

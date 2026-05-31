@@ -1,7 +1,7 @@
 //! ISO/IEC 39075:2024 feature and implementation-defined registers.
 //!
-//! This file is the canonical source for selene-db's v1.0 language claim.
-//! The markdown tables for Spec 01, Spec 07, and Spec 09 are rendered or
+//! This file is the canonical source for selene-db's optional-feature language
+//! claim. The markdown tables for Spec 01, Spec 07, and Spec 09 are rendered or
 //! checked from these constants by `build/regen_feature_docs.sh`.
 
 use std::fmt;
@@ -91,6 +91,10 @@ feature_ids! {
     IM_EXTENDS = "IM_EXTENDS" => "selene-db EXTENDS type composition extension";
     IM_INDEX_DDL = "IM_INDEX_DDL" => "selene-db named index DDL extension";
     IM_TYPED_PARAMS = "IM_TYPED_PARAMS" => "selene-db inline typed parameter declaration extension";
+    IM_TRUNCATE = "IM_TRUNCATE" => "selene-db bulk truncate extension";
+    IM_DROP_CASCADE = "IM_DROP_CASCADE" => "selene-db cascading DROP TYPE extension";
+    IM_LIST_SUBSCRIPT = "IM_LIST_SUBSCRIPT" => "selene-db 1-based list element subscript extension";
+    IM_DROP_GRAPH = "IM_DROP_GRAPH" => "selene-db DROP GRAPH factory-reset extension";
     GH02 = "GH02" => "Undirected edge patterns";
     GG01 = "GG01" => "Graph with an open graph type";
     GG02 = "GG02" => "Graph with a closed graph type";
@@ -124,6 +128,21 @@ feature_ids! {
     GQ15 = "GQ15" => "GROUP BY clause";
     GQ18 = "GQ18" => "Scalar value query expression";
     GQ20 = "GQ20" => "Linear query composition";
+    GS01 = "GS01" => "SESSION SET command: session-local graph parameters";
+    GS02 = "GS02" => "SESSION SET command: session-local binding table parameters";
+    GS03 = "GS03" => "SESSION SET command: session-local value parameters";
+    GS04 = "GS04" => "SESSION RESET command: reset all characteristics";
+    GS05 = "GS05" => "SESSION RESET command: reset session schema";
+    GS06 = "GS06" => "SESSION RESET command: reset session graph";
+    GS07 = "GS07" => "SESSION RESET command: reset time zone displacement";
+    GS08 = "GS08" => "SESSION RESET command: reset all session parameters";
+    GS10 = "GS10" => "Session-local binding table parameters based on subqueries";
+    GS11 = "GS11" => "Session-local value parameters based on subqueries";
+    GS12 = "GS12" => "Session-local graph parameters based on simple graph expressions or references";
+    GS13 = "GS13" => "Session-local binding table parameters based on simple expressions or references";
+    GS14 = "GS14" => "Session-local value parameters based on simple expressions";
+    GS15 = "GS15" => "SESSION SET command: set time zone displacement";
+    GS16 = "GS16" => "SESSION RESET command: reset individual session parameters";
     GT01 = "GT01" => "Explicit transaction commands";
     GT03 = "GT03" => "Multi-graph transactions";
     GV01 = "GV01" => "8 bit unsigned integer numbers";
@@ -167,7 +186,7 @@ feature_ids! {
     GV90 = "GV90" => "Explicit value type nullability";
 }
 
-/// v1.0 supported optional feature set.
+/// Supported optional feature set.
 ///
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
@@ -212,6 +231,10 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::IM_EXTENDS,
     FeatureId::IM_INDEX_DDL,
     FeatureId::IM_TYPED_PARAMS,
+    FeatureId::IM_TRUNCATE,
+    FeatureId::IM_DROP_CASCADE,
+    FeatureId::IM_LIST_SUBSCRIPT,
+    FeatureId::IM_DROP_GRAPH,
     FeatureId::GH02,
     FeatureId::GG01,
     FeatureId::GG02,
@@ -232,6 +255,12 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GQ15,
     FeatureId::GQ18,
     FeatureId::GQ20,
+    FeatureId::GS03,
+    FeatureId::GS04,
+    FeatureId::GS07,
+    FeatureId::GS08,
+    FeatureId::GS15,
+    FeatureId::GS16,
     FeatureId::GT01,
     FeatureId::GV01,
     FeatureId::GV02,
@@ -256,19 +285,23 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GV39,
     FeatureId::GV40,
     FeatureId::GV41,
+    FeatureId::GV45,
+    FeatureId::GV46,
+    FeatureId::GV47,
+    FeatureId::GV48,
     FeatureId::GV50,
     FeatureId::GV55,
 ];
 
-/// Rationale for referenced optional features not claimed in v1.0.
+/// Rationale for referenced optional features not currently claimed.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::G002,
-        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred from v1.1",
+        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred to a future release",
     ),
     (
         FeatureId::G003,
-        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred from v1.1",
+        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred to a future release",
     ),
     (
         FeatureId::G019,
@@ -280,71 +313,107 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GP03,
-        "explicit variable-scope inline procedures are deferred from v1.1",
+        "explicit variable-scope inline procedures are deferred to a future release",
     ),
     (
         FeatureId::GP05,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP06,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP07,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP08,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP09,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP10,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP11,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP12,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP13,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP14,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP15,
-        "procedure-local definitions require the procedure body parser; unsupported in v1.0",
+        "procedure-local definitions require the procedure body parser; not yet supported",
     ),
     (
         FeatureId::GP18,
-        "mixed catalog/data transaction behavior remains forbidden in v1.0",
+        "mixed catalog/data transaction behavior remains forbidden",
     ),
     (
         FeatureId::GC02,
-        "CREATE/DROP SCHEMA is outside the v1.0 catalog claim (graph-schema vs graph-type vs graph)",
+        "CREATE/DROP SCHEMA is outside the current catalog claim (graph-schema vs graph-type vs graph)",
     ),
     (
         FeatureId::GC04,
-        "CREATE/DROP GRAPH parses but graph management DDL remains outside the v1.0 catalog claim",
+        "CREATE GRAPH stays outside the current catalog claim (D1 single-graph embeddable cannot create a second graph); DROP GRAPH is the IM_DROP_GRAPH factory-reset extension, not GC04",
     ),
     (
         FeatureId::GC05,
-        "graph management IF [NOT] EXISTS modifiers remain outside the v1.0 catalog claim",
+        "CREATE GRAPH IF NOT EXISTS modifier remains outside the current catalog claim",
+    ),
+    (
+        FeatureId::GS01,
+        "SESSION SET <name> GRAPH binds a session-local graph parameter; D1 single-graph embeddable has one graph and no <graph expression>/CURRENT_GRAPH (GV60) or catalog to bind",
+    ),
+    (
+        FeatureId::GS02,
+        "SESSION SET <name> BINDING TABLE binds a typed binding-table reference value (GV61); the reference-type surface is deferred, so D1 has no spelling to bind",
+    ),
+    (
+        FeatureId::GS05,
+        "SESSION RESET SCHEMA resets the session schema; D1 single-graph embeddable has no schema layer (section 4.2.5.1) to reset",
+    ),
+    (
+        FeatureId::GS06,
+        "SESSION RESET GRAPH resets the session graph; D1 single-graph embeddable has exactly one graph and no working-graph switch to reset",
+    ),
+    (
+        FeatureId::GS10,
+        "session-local binding table parameters from subqueries depend on GS02 (binding-table parameters) and a procedure body; both deferred under D1",
+    ),
+    (
+        FeatureId::GS11,
+        "session-local value parameters from subqueries depend on procedure-body support; SESSION SET VALUE restricts the RHS to a value expression with no row context",
+    ),
+    (
+        FeatureId::GS12,
+        "session-local graph parameters from simple graph expressions/references depend on GS01 (graph parameters); D1-blocked",
+    ),
+    (
+        FeatureId::GS13,
+        "session-local binding table parameters from simple expressions/references depend on GS02 (binding-table parameters); deferred",
+    ),
+    (
+        FeatureId::GS14,
+        "selene-db evaluates SESSION SET VALUE against an empty binding so the RHS is restricted to a <value specification> (literal/parameter); the full <value expression> form (GS14) is not claimed",
     ),
     (
         FeatureId::GT03,
-        "multi-graph transactions are out of v1.0 scope",
+        "multi-graph transactions are out of scope under the D1 single-graph embeddable model",
     ),
     (
         FeatureId::GV15,
@@ -356,7 +425,7 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (
         FeatureId::GV20,
-        "REAL spelling is outside the v1.0 claim; FLOAT16 remains deferred",
+        "REAL spelling is outside the current claim; FLOAT16 remains deferred",
     ),
     (
         FeatureId::GV22,
@@ -368,22 +437,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),
-    (
-        FeatureId::GV45,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
-    (
-        FeatureId::GV46,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
-    (
-        FeatureId::GV47,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
-    (
-        FeatureId::GV48,
-        "record type expressions require type_name grammar + RecordType builder; reclaim with the type-system extension brief",
-    ),
     (
         FeatureId::GV60,
         "GRAPH/TABLE reference type spellings require type_name grammar + reference-type builder; reclaim alongside record types",
@@ -398,256 +451,11 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     ),
 ];
 
-/// ISO Annex B implementation-defined identifier.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-#[repr(transparent)]
-pub struct AnnexBId(&'static str);
+mod annex_b;
 
-impl AnnexBId {
-    /// Return the ISO Annex B ID string, such as `IL001`.
-    pub const fn as_str(self) -> &'static str {
-        self.0
-    }
-}
+pub use annex_b::{ANNEX_B_REGISTER, AnnexBId, ImplDefinedChoice};
 
-/// Chosen value for an implementation-defined element.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ImplDefinedChoice {
-    /// Human-readable summary of selene-db's choice.
-    pub choice: &'static str,
-    /// Spec section that owns the detailed behavior.
-    pub settled_in: &'static str,
-}
-
-/// Canonical Annex B register entries settled by the current specs.
-pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
-    (
-        AnnexBId("IA001"),
-        ImplDefinedChoice {
-            choice: "f64 default; Float32 distinct; NaN total_cmp",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IA025"),
-        ImplDefinedChoice {
-            choice: "numeric ordering follows total_cmp for f32/f64",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID001"),
-        ImplDefinedChoice {
-            choice: "caller-supplied principal bytes; opaque to selene-db",
-            settled_in: "spec 04 section 3.2",
-        },
-    ),
-    (
-        AnnexBId("ID016"),
-        ImplDefinedChoice {
-            choice: "en-US diagnostic text by default",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("ID017"),
-        ImplDefinedChoice {
-            choice: "structured diagnostic map may carry selene provider fields",
-            settled_in: "spec 06 section 3.3",
-        },
-    ),
-    (
-        AnnexBId("ID028"),
-        ImplDefinedChoice {
-            choice: "i64 default; i128 if context demands",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID034"),
-        ImplDefinedChoice {
-            choice: "28 significant digits via rust_decimal",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID037"),
-        ImplDefinedChoice {
-            choice: "binary64 default; binary32 if context demands",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID090"),
-        ImplDefinedChoice {
-            choice: "node terminology",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("ID091"),
-        ImplDefinedChoice {
-            choice: "edge terminology",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IE001"),
-        ImplDefinedChoice {
-            choice: "auto-commit per statement; explicit START TRANSACTION for multi-statement",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE002"),
-        ImplDefinedChoice {
-            choice: "serializable only in v1.0",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE004"),
-        ImplDefinedChoice {
-            choice: "no relaxation from serializable in v1.0",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE006"),
-        ImplDefinedChoice {
-            choice: "catalog statements inside data transactions are rejected",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IE007"),
-        ImplDefinedChoice {
-            choice: "data mutations inside catalog transactions are rejected",
-            settled_in: "spec 03 section 6.4",
-        },
-    ),
-    (
-        AnnexBId("IL001"),
-        ImplDefinedChoice {
-            choice: "node labels min 0; edge labels exactly 1",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IL013"),
-        ImplDefinedChoice {
-            choice: "2^32 - 1 bytes per inline string",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IL015"),
-        ImplDefinedChoice {
-            choice: "2^32 - 1 constructed-value elements",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IL018"),
-        ImplDefinedChoice {
-            choice: "path quantifier upper bound 100",
-            settled_in: "spec 08 section 9",
-        },
-    ),
-    (
-        AnnexBId("IL020"),
-        ImplDefinedChoice {
-            choice: "flat catalog, nesting depth 0",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("IL024"),
-        ImplDefinedChoice {
-            choice: "nanosecond temporal precision",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IS001"),
-        ImplDefinedChoice {
-            choice: "caller-bounded session scope",
-            settled_in: "spec 08 section 9",
-        },
-    ),
-    (
-        AnnexBId("IV001-IV016"),
-        ImplDefinedChoice {
-            choice: "Value enum closed substitution union",
-            settled_in: "spec 02 section 3",
-        },
-    ),
-    (
-        AnnexBId("IV011"),
-        ImplDefinedChoice {
-            choice: "Value minus RecordTyped; registered Extended values allowed",
-            settled_in: "spec 02 section 3.1",
-        },
-    ),
-    (
-        AnnexBId("IW001"),
-        ImplDefinedChoice {
-            choice: "caller responsibility per D1",
-            settled_in: "spec 01 section 4",
-        },
-    ),
-    (
-        AnnexBId("IW002"),
-        ImplDefinedChoice {
-            choice: "caller responsibility per D1",
-            settled_in: "spec 01 section 4",
-        },
-    ),
-    (
-        AnnexBId("IW007"),
-        ImplDefinedChoice {
-            choice: "raw code plus structured fields; miette for terminals",
-            settled_in: "spec 09 section 6",
-        },
-    ),
-    (
-        AnnexBId("IW010"),
-        ImplDefinedChoice {
-            choice: "procedure-pack model",
-            settled_in: "spec 05",
-        },
-    ),
-    (
-        AnnexBId("IW014"),
-        ImplDefinedChoice {
-            choice: "byte-exact comparison only",
-            settled_in: "spec 08 section 9",
-        },
-    ),
-    (
-        AnnexBId("IW015"),
-        ImplDefinedChoice {
-            choice: "no automatic directory/schema creation",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("IW016"),
-        ImplDefinedChoice {
-            choice: "no automatic directory/schema creation",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-    (
-        AnnexBId("IW025"),
-        ImplDefinedChoice {
-            choice: "catalog-modifying procedures are transactional via Mutator::commit",
-            settled_in: "spec 09 section 5",
-        },
-    ),
-];
-
-/// True when `id` is in the v1.0 supported feature set.
+/// True when `id` is in the supported feature set.
 pub fn is_supported(id: FeatureId) -> bool {
     SUPPORTED_FEATURES.contains(&id)
 }
@@ -666,9 +474,106 @@ pub fn feature_id_from_str(id: &str) -> Option<FeatureId> {
         .find_map(|(feature, _)| (feature.as_str() == id).then_some(*feature))
 }
 
-/// Return the v1.0 non-support rationale for a referenced feature ID.
+/// Return the non-support rationale for a referenced feature ID.
 pub fn non_supported_rationale(id: FeatureId) -> Option<&'static str> {
     NOT_SUPPORTED_RATIONALE
         .iter()
         .find_map(|(feature, rationale)| (*feature == id).then_some(*rationale))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
+    #[test]
+    fn supported_features_has_no_duplicates() {
+        // CORE-15: a duplicated feature in SUPPORTED would silently inflate the
+        // conformance claim count and is otherwise invisible.
+        let mut seen = HashSet::new();
+        for feature in SUPPORTED_FEATURES {
+            assert!(
+                seen.insert(*feature),
+                "{feature} appears more than once in SUPPORTED_FEATURES"
+            );
+        }
+    }
+
+    #[test]
+    fn not_supported_rationale_has_no_duplicates() {
+        let mut seen = HashSet::new();
+        for (feature, _) in NOT_SUPPORTED_RATIONALE {
+            assert!(
+                seen.insert(*feature),
+                "{feature} appears more than once in NOT_SUPPORTED_RATIONALE"
+            );
+        }
+    }
+
+    #[test]
+    fn supported_and_not_supported_are_disjoint() {
+        // CORE-15: SUPPORTED ∩ NOT_SUPPORTED = ∅ — a feature cannot be both
+        // claimed and rationalized-as-unclaimed.
+        let supported: HashSet<FeatureId> = SUPPORTED_FEATURES.iter().copied().collect();
+        for (feature, _) in NOT_SUPPORTED_RATIONALE {
+            assert!(
+                !supported.contains(feature),
+                "{feature} is in BOTH SUPPORTED_FEATURES and NOT_SUPPORTED_RATIONALE"
+            );
+        }
+    }
+
+    #[test]
+    fn at_least_one_graph_type_feature_is_claimed() {
+        // CORE-15: ISO §4 requires at least one of GG01 (open graph) or GG02
+        // (closed graph). selene-db claims both, but the floor is the OR.
+        assert!(
+            is_supported(FeatureId::GG01) || is_supported(FeatureId::GG02),
+            "neither GG01 (open graph) nor GG02 (closed graph) is claimed"
+        );
+    }
+
+    #[test]
+    fn every_referenced_feature_resolves_by_string() {
+        // Round-trips the stable string ABI both ways.
+        for (feature, _) in REFERENCED_FEATURES {
+            assert_eq!(feature_id_from_str(feature.as_str()), Some(*feature));
+            assert!(name_of(*feature).is_some(), "{feature} has no display name");
+        }
+    }
+
+    #[test]
+    fn annex_b_register_carries_no_pack_or_spec_05_residue() {
+        // CORE-01: post-#196 the procedure-pack model is gone. No Annex B entry
+        // may still name "pack" or point at the deleted spec 05 / spec 15.
+        for (id, choice) in ANNEX_B_REGISTER {
+            let haystacks = [choice.choice, choice.settled_in];
+            for text in haystacks {
+                let lower = text.to_ascii_lowercase();
+                assert!(
+                    !lower.contains("pack"),
+                    "Annex B {} still references a 'pack': {text:?}",
+                    id.as_str()
+                );
+                assert!(
+                    !lower.contains("spec 05") && !lower.contains("spec 15"),
+                    "Annex B {} still points at a deleted spec: {text:?}",
+                    id.as_str()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn annex_b_register_has_no_duplicate_ids() {
+        let mut seen = HashSet::new();
+        for (id, _) in ANNEX_B_REGISTER {
+            assert!(
+                seen.insert(*id),
+                "{} appears more than once in ANNEX_B_REGISTER",
+                id.as_str()
+            );
+        }
+    }
 }

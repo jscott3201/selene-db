@@ -3,7 +3,7 @@
 use selene_core::IStr;
 
 use crate::{
-    BinaryOp, GqlType, Literal, SourceSpan, ValueExpr,
+    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, ValueExpr,
     analyze::BindingId,
     plan::{BindingDef, FilterPredicate, FilterPredicateKind},
 };
@@ -15,10 +15,6 @@ use crate::{
 /// (BRIEF-154 §B.2). The `declared_type` borrow lets call sites run plan-time
 /// typed-incompatibility checks without cloning [`GqlType`].
 #[derive(Clone, Copy, Debug)]
-// Commit 1 lands the helper surface; Commit 2 wires the first caller
-// (`compatible_value` in `range_index_scan`). Until then the struct is
-// dead-code from the compiler's perspective.
-#[allow(dead_code)]
 pub(crate) struct ParameterRef<'a> {
     /// Parameter name without the leading `$`.
     pub name: IStr,
@@ -39,13 +35,6 @@ pub(crate) enum PropertyPredicateShape<'a> {
         op: BinaryOp,
         /// Literal-side expression.
         value: &'a ValueExpr,
-    },
-    /// `binding.key BETWEEN low AND high`.
-    Between {
-        /// Lower bound expression.
-        low: &'a ValueExpr,
-        /// Upper bound expression.
-        high: &'a ValueExpr,
     },
     /// `binding.key IN [items]`.
     InList(Vec<&'a ValueExpr>),
@@ -82,11 +71,16 @@ pub(crate) fn collect_binding_refs(
             }
         }
         // Subquery patterns can reference outer bindings via pattern element
-        // names (e.g., `EXISTS ((n)-[:r]->(b))` references outer `n`) without
-        // emitting an explicit `Variable` expression. Trigger the unresolved
-        // fallback so callers preserve the parent's annotated `binding_refs`
-        // instead of silently dropping the subquery's outer references.
-        ValueExpr::Exists { .. } | ValueExpr::CountSubquery { .. } => {
+        // names (e.g., `EXISTS ((n)-[:r]->(b))` references outer `n`) or via a
+        // body expression, without emitting an explicit `Variable` expression
+        // at this level (the walker treats subquery bodies as opaque). Trigger
+        // the unresolved fallback so callers preserve the parent's annotated
+        // `binding_refs` instead of silently dropping the subquery's outer
+        // references — a sibling rewrite must not strip a ValueSubquery's
+        // correlated refs.
+        ValueExpr::Exists { .. }
+        | ValueExpr::CountSubquery { .. }
+        | ValueExpr::ValueSubquery { .. } => {
             unresolved = true;
         }
         _ => {}
@@ -151,9 +145,6 @@ pub(crate) fn literal(expr: &ValueExpr) -> Option<&Literal> {
 /// declarations: untyped slots (the BRIEF-115 baseline) and typed slots
 /// (BRIEF-137 `$id :: TYPE`) are both returned. Plan-time and execute-time
 /// validation lives in the optimizer rules and runtime resolver respectively.
-// Commit 1 lands the helper; Commit 2 wires the first caller. Allow the
-// `dead_code` warning until then so `-D warnings` clippy stays green.
-#[allow(dead_code)]
 pub(crate) fn parameter(expr: &ValueExpr) -> Option<ParameterRef<'_>> {
     let ValueExpr::Parameter {
         name,
@@ -182,20 +173,6 @@ fn match_property_expr<'a>(
             ) =>
         {
             match_binary_property(*op, lhs, rhs, bindings)
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated: false,
-            ..
-        } => {
-            let (binding, key) = match_property_access(operand, bindings)?;
-            Some(MatchedPropertyPredicate {
-                binding,
-                key,
-                shape: PropertyPredicateShape::Between { low, high },
-            })
         }
         ValueExpr::InList {
             operand,
@@ -299,25 +276,31 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
             }
             walk_expr(source, visit);
         }
-        ValueExpr::IsCheck { operand, .. } => walk_expr(operand, visit),
+        ValueExpr::IsCheck { operand, kind, .. } => {
+            walk_expr(operand, visit);
+            // `n IS SOURCE OF e` / `n IS DESTINATION OF e` bind the edge in
+            // `kind`; that operand must be walked so the collected binding-refs
+            // include the edge (e.g. `{n, e}`). Omitting it lets the optimizer's
+            // filter pushdown treat the predicate as single-binding and push it
+            // onto the node scan/expand before the edge is bound. Mirrors
+            // `plan::optimize::walk::walk_is_check`.
+            match kind {
+                IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
+                    walk_expr(value, visit);
+                }
+                IsCheckKind::Null
+                | IsCheckKind::Directed
+                | IsCheckKind::Labeled(_)
+                | IsCheckKind::TruthValue(_)
+                | IsCheckKind::Typed(_)
+                | IsCheckKind::Normalized(_) => {}
+            }
+        }
         ValueExpr::InList { operand, list, .. } => {
             walk_expr(operand, visit);
             for item in list {
                 walk_expr(item, visit);
             }
-        }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            walk_expr(operand, visit);
-            walk_expr(pattern, visit);
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            walk_expr(operand, visit);
-            walk_expr(low, visit);
-            walk_expr(high, visit);
         }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             for item in items {
@@ -342,5 +325,72 @@ fn walk_expr(expr: &ValueExpr, visit: &mut impl FnMut(&ValueExpr)) {
         ValueExpr::Exists { .. }
         | ValueExpr::CountSubquery { .. }
         | ValueExpr::ValueSubquery { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analyze::types::AnalyzedType;
+    use crate::plan::BindingElement;
+
+    // `intern_with_admission` (not the budget-bypassing `intern`) keeps this
+    // test module clear of the `no_unbudgeted_intern_call_in_selene_gql` guard.
+    fn name_of(name: &str) -> selene_core::IStr {
+        selene_core::intern_with_admission(name).unwrap().0
+    }
+
+    fn binding_def(name: &str, raw: u32, element: BindingElement) -> BindingDef {
+        BindingDef {
+            binding: BindingId::new(raw),
+            name: name_of(name),
+            element,
+            ty: AnalyzedType::Dynamic,
+            label_predicate: None,
+            span: SourceSpan::new(0, 1),
+        }
+    }
+
+    fn var(name: &str) -> ValueExpr {
+        ValueExpr::Variable {
+            name: name_of(name),
+            span: SourceSpan::new(0, 1),
+        }
+    }
+
+    // PLAN-01: `n IS SOURCE OF e` / `n IS DESTINATION OF e` reference BOTH the
+    // node operand and the edge bound inside `kind`. The collector must yield
+    // both bindings; if it dropped the edge, `expand_filter_pushdown` would push
+    // the predicate onto `n`'s scan before `e` is bound (a plan-correctness bug).
+    #[test]
+    fn collect_binding_refs_includes_edge_in_is_source_of() {
+        let bindings = [
+            binding_def("n", 0, BindingElement::Node),
+            binding_def("e", 1, BindingElement::Edge),
+        ];
+        let expr = ValueExpr::IsCheck {
+            operand: Box::new(var("n")),
+            kind: IsCheckKind::SourceOf(Box::new(var("e"))),
+            negated: false,
+            span: SourceSpan::new(0, 1),
+        };
+        let refs = collect_binding_refs(&expr, &bindings).expect("all variables resolve");
+        assert_eq!(refs, vec![BindingId::new(0), BindingId::new(1)]);
+    }
+
+    #[test]
+    fn collect_binding_refs_includes_edge_in_is_destination_of() {
+        let bindings = [
+            binding_def("n", 0, BindingElement::Node),
+            binding_def("e", 1, BindingElement::Edge),
+        ];
+        let expr = ValueExpr::IsCheck {
+            operand: Box::new(var("n")),
+            kind: IsCheckKind::DestinationOf(Box::new(var("e"))),
+            negated: false,
+            span: SourceSpan::new(0, 1),
+        };
+        let refs = collect_binding_refs(&expr, &bindings).expect("all variables resolve");
+        assert_eq!(refs, vec![BindingId::new(0), BindingId::new(1)]);
     }
 }

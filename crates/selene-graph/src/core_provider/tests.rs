@@ -5,12 +5,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use arc_swap::ArcSwap;
 use selene_core::{
     Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    PropertyValueType, SchemaChange, Value, intern,
+    PropertyValueType, Value, intern,
 };
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
 use super::sections::{
-    SchemaEntry, SchemaEntryV1, SchemaKey, decode_edges, decode_graph_types, decode_meta,
+    SCMA_VERSION, SchemaEntry, SchemaKey, decode_edges, decode_graph_types, decode_meta,
     decode_nodes, decode_schemas, encode_edges, encode_graph_types, encode_meta, encode_nodes,
     ensure_section_within_cap,
 };
@@ -19,8 +19,14 @@ use crate::graph::PropertyIndexEntry;
 use crate::typed_index::TypedIndex;
 use crate::{DurableProvider, GraphError, SeleneGraph, SharedGraph, TypedIndexKind};
 
+#[path = "tests/codec_symmetry.rs"]
+mod codec_symmetry;
+#[path = "tests/composites.rs"]
+mod composites;
 #[path = "tests/cpix.rs"]
 mod cpix;
+#[path = "tests/durable_state.rs"]
+mod durable_state;
 #[path = "tests/gtyp.rs"]
 mod gtyp;
 
@@ -166,6 +172,8 @@ fn graph_type() -> crate::GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,
         }],
@@ -248,23 +256,30 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
         label: apple,
         property: apple_prop,
     };
+    // Out-of-handle-order rows under the current (versioned) layout. `decode_schemas`
+    // must re-sort by the (label, property) key regardless of input order.
     let rows = vec![
         (
             apple_key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::I64,
+                name: None,
             },
         ),
         (
             zebra_key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::String,
+                name: None,
             },
         ),
     ];
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
-        .unwrap()
-        .into_vec();
+    let mut bytes = vec![SCMA_VERSION];
+    bytes.extend(
+        rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+            .unwrap()
+            .into_vec(),
+    );
 
     let decoded = decode_schemas(&bytes).unwrap();
 
@@ -322,24 +337,52 @@ fn scma_decode_rejects_duplicate_keys_after_resort() {
     let rows = vec![
         (
             key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::I64,
+                name: None,
             },
         ),
         (
             key,
-            SchemaEntryV1 {
+            SchemaEntry {
                 kind: TypedIndexKind::String,
+                name: None,
             },
         ),
     ];
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
-        .unwrap()
-        .into_vec();
+    let mut bytes = vec![SCMA_VERSION];
+    bytes.extend(
+        rkyv::to_bytes::<rkyv::rancor::Error>(&rows)
+            .unwrap()
+            .into_vec(),
+    );
 
     let result = decode_schemas(&bytes);
 
     assert!(result.is_err());
+}
+
+#[test]
+fn scma_decode_rejects_empty_or_mismatched_version() {
+    // GRAPH-23 clean break: with the legacy v1 no-magic fallback removed,
+    // an empty section or a wrong leading version byte is a hard decode error.
+    assert!(
+        matches!(
+            decode_schemas(&[]),
+            Err(crate::ProviderError::InvalidPayload { .. })
+        ),
+        "empty CORE/SCMA must be rejected"
+    );
+    // A non-current version byte (e.g. the retired 0xA5 v2-magic value used a
+    // different layout) must hard-reject rather than silently fall back.
+    let wrong_version = SCMA_VERSION.wrapping_add(1);
+    assert!(
+        matches!(
+            decode_schemas(&[wrong_version, 0, 0, 0, 0]),
+            Err(crate::ProviderError::InvalidPayload { .. })
+        ),
+        "mismatched CORE/SCMA version must be rejected"
+    );
 }
 
 #[test]
@@ -454,7 +497,11 @@ fn properties_blob_round_trips_full_value_set() {
 }
 
 #[test]
-fn encoded_nodes_are_sorted_by_node_id() {
+fn encoded_nodes_carry_explicit_row_to_id() {
+    // BRIEF-Item-4a STEP 9: the CORE/NODE section persists the explicit external
+    // id from the `row_to_id` column (no longer synthesized as row+1, and no
+    // longer contractually sorted-by-id). For this identity graph the single
+    // committed node round-trips its real id at its row position.
     let graph = graph_with_node();
     let rows = decode_nodes(&encode_nodes(&graph).unwrap()).unwrap();
     let keys: Vec<_> = rows.into_iter().map(|(id, _)| id).collect();
@@ -565,7 +612,9 @@ fn core_provider_threads_principal_through_wal() {
     }];
 
     let timestamp = DurableProvider::next_timestamp(provider.as_ref());
-    DurableProvider::write_commit(provider.as_ref(), Some(b"alice"), &changes, timestamp).unwrap();
+    let principal: Arc<[u8]> = Arc::from(&b"alice"[..]);
+    DurableProvider::write_commit(provider.as_ref(), Some(&principal), &changes, timestamp)
+        .unwrap();
     DurableProvider::flush(provider.as_ref()).unwrap();
     drop(provider);
 
@@ -652,29 +701,6 @@ fn recovery_mode_on_change_applies_each_change_variant() {
         &Change::EdgeUpdated {
             id: EdgeId::new(1),
             properties_diff: PropertyDiff::new([(prop_key, Value::Int(7))], []).unwrap(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::SchemaChanged {
-            graph: GraphId::new(1),
-            change: SchemaChange::ProcedurePackLifecycle {
-                event: selene_core::PackLifecycleEvent::Activated {
-                    pack_name: intern("core.pack").unwrap(),
-                    content_hash: [0_u8; 32],
-                    principal: intern("core.principal").unwrap(),
-                    at: jiff::Timestamp::new(1, 0).unwrap(),
-                },
-            },
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::IndexExtensionEvent {
-            provider: intern("core.extension").unwrap(),
-            payload: Arc::from([1_u8, 2]),
         },
     )
     .unwrap();

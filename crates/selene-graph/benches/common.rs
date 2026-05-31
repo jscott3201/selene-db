@@ -48,10 +48,6 @@ impl BenchProvider {
 }
 
 impl IndexProvider for BenchProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }

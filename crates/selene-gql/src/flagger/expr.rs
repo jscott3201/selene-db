@@ -28,7 +28,12 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             }
         }
         ValueExpr::PropertyAccess { target, .. } => self::value(target, uses),
-        ValueExpr::ListAccess { target, index, .. } => {
+        ValueExpr::ListAccess {
+            target,
+            index,
+            span,
+        } => {
+            record_feature(uses, FeatureId::IM_LIST_SUBSCRIPT, *span);
             self::value(target, uses);
             self::value(index, uses);
         }
@@ -36,7 +41,8 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::GV50, *span);
             values(items, uses);
         }
-        ValueExpr::RecordLiteral { fields, .. } => {
+        ValueExpr::RecordLiteral { fields, span } => {
+            record_feature(uses, FeatureId::GV45, *span);
             for (_, value) in fields {
                 self::value(value, uses);
             }
@@ -96,19 +102,6 @@ pub(crate) fn value(value: &ValueExpr, uses: &mut Vec<FeatureUse>) {
         ValueExpr::InList { operand, list, .. } => {
             self::value(operand, uses);
             values(list, uses);
-        }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            self::value(operand, uses);
-            self::value(pattern, uses);
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            self::value(operand, uses);
-            self::value(low, uses);
-            self::value(high, uses);
         }
         ValueExpr::AllDifferent { items, span } => {
             record_feature(uses, FeatureId::G113, *span);
@@ -274,7 +267,7 @@ pub(crate) fn gql_type(ty: &GqlType, span: crate::SourceSpan, uses: &mut Vec<Fea
         GqlType::Decimal => record_feature(uses, FeatureId::GV17, span),
         GqlType::Float32 => record_feature(uses, FeatureId::GV21, span),
         GqlType::Float64 => record_feature(uses, FeatureId::GV24, span),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => {
+        GqlType::Bytes => {
             record_feature(uses, FeatureId::GV35, span);
         }
         GqlType::Date | GqlType::LocalDateTime | GqlType::LocalTime => {

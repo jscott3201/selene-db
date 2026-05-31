@@ -1,8 +1,9 @@
 //! Write-side parser coverage for BRIEF-18.
 
 use selene_gql::{
-    DdlStatement, DeleteMode, GqlStatus, GqlType, MutationStatement, MutationTerminator,
-    PipelineStatement, Statement, TypePropertyConstraint, ValidationMode, YieldColumn, parse,
+    DdlStatement, DeleteMode, DropBehavior, GqlStatus, GqlType, MutationStatement,
+    MutationTerminator, PipelineStatement, Statement, TypePropertyConstraint, ValidationMode,
+    YieldColumn, parse,
 };
 
 fn parse_mutation(source: &str) -> selene_gql::MutationPipeline {
@@ -96,13 +97,20 @@ fn parse_finish_terminator() {
 
 #[test]
 fn parse_graph_ddl() {
-    for source in [
-        "CREATE GRAPH foo",
-        "CREATE GRAPH IF NOT EXISTS foo",
-        "DROP GRAPH IF EXISTS foo",
-    ] {
+    // CREATE GRAPH stays parse-rejected under D1 single-graph (GC04 unsupported
+    // — cannot create a second graph).
+    for source in ["CREATE GRAPH foo", "CREATE GRAPH IF NOT EXISTS foo"] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
+    }
+    // DROP GRAPH now parses (BRIEF-152): it is the IM_DROP_GRAPH factory-reset
+    // extension, reaching the executor instead of dying in the flagger. Under
+    // D1 the parsed name is informational and IF EXISTS is trivially satisfied.
+    for source in ["DROP GRAPH foo", "DROP GRAPH IF EXISTS foo"] {
+        let DdlStatement::DropGraph { if_exists, .. } = parse_ddl(source) else {
+            panic!("expected DROP GRAPH DDL for {source}");
+        };
+        assert_eq!(if_exists, source.contains("IF EXISTS"), "{source}");
     }
 }
 
@@ -154,16 +162,36 @@ fn parse_edge_type_and_show_ddl() {
     assert_eq!(endpoints.from_labels[0].as_str(), "Person");
     assert_eq!(properties[0].gql_type, GqlType::Date);
 
+    // Default (no behavior keyword) lowers to RESTRICT.
     assert!(matches!(
         parse_ddl("DROP NODE TYPE IF EXISTS :Person"),
         DdlStatement::DropNodeType {
             if_exists: true,
+            behavior: DropBehavior::Restrict,
             ..
         }
     ));
     assert!(matches!(
         parse_ddl("DROP EDGE TYPE :KNOWS"),
-        DdlStatement::DropEdgeType { .. }
+        DdlStatement::DropEdgeType {
+            behavior: DropBehavior::Restrict,
+            ..
+        }
+    ));
+    // Explicit CASCADE / RESTRICT keywords are carried on the AST.
+    assert!(matches!(
+        parse_ddl("DROP NODE TYPE :Person CASCADE"),
+        DdlStatement::DropNodeType {
+            behavior: DropBehavior::Cascade,
+            ..
+        }
+    ));
+    assert!(matches!(
+        parse_ddl("DROP EDGE TYPE :KNOWS RESTRICT"),
+        DdlStatement::DropEdgeType {
+            behavior: DropBehavior::Restrict,
+            ..
+        }
     ));
     assert!(matches!(
         parse_ddl("SHOW NODE TYPES"),
@@ -177,12 +205,37 @@ fn parse_edge_type_and_show_ddl() {
 
 #[test]
 fn parse_type_property_constraints_exhaustively() {
+    // The five ISO/IEC 39075:2024 §18 property constraints the grammar accepts.
+    // Donor full-text/time-series constraints (SEARCHABLE/DICTIONARY/FILL/
+    // INTERVAL/ENCODING) were removed from the grammar — see
+    // `donor_property_constraints_are_syntax_errors`.
     let DdlStatement::CreateNodeType { properties, .. } = parse_ddl(
-        "CREATE NODE TYPE :Sensor (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED SEARCHABLE DICTIONARY FILL LOCF INTERVAL '60s' ENCODING RLE)",
+        "CREATE NODE TYPE :Sensor (v :: STRING NOT NULL DEFAULT 'x' IMMUTABLE UNIQUE INDEXED)",
     ) else {
         panic!("expected CREATE NODE TYPE");
     };
-    assert_eq!(properties[0].constraints.len(), 10);
+    assert_eq!(properties[0].constraints.len(), 5);
+}
+
+#[test]
+fn donor_property_constraints_are_syntax_errors() {
+    // SEARCHABLE/DICTIONARY/FILL/INTERVAL/ENCODING are donor full-text/
+    // time-series residue with no place in ISO/IEC 39075:2024; the grammar no
+    // longer recognizes them, so they fail as 42001 syntax errors at parse time.
+    for source in [
+        "CREATE NODE TYPE :S (v :: STRING SEARCHABLE)",
+        "CREATE NODE TYPE :S (v :: STRING DICTIONARY)",
+        "CREATE NODE TYPE :S (v :: STRING FILL LOCF)",
+        "CREATE NODE TYPE :S (v :: STRING INTERVAL '60s')",
+        "CREATE NODE TYPE :S (v :: STRING ENCODING RLE)",
+    ] {
+        let err = selene_gql::parse(source).expect_err("donor constraint should be rejected");
+        assert_eq!(
+            err.gqlstatus(),
+            selene_gql::GqlStatus::SYNTAX_ERROR,
+            "expected 42001 for {source:?}"
+        );
+    }
 }
 
 #[test]
@@ -297,22 +350,39 @@ fn parse_transaction_control() {
 
 #[test]
 fn deferred_surfaces_return_not_implemented() {
-    for source in [
-        "MERGE (n:Person {name: 'X'})",
-        "CREATE TRIGGER trig AFTER INSERT ON :Person EXECUTE SET n.x = 1",
-        "CREATE MATERIALIZED VIEW v AS MATCH (n) RETURN n",
-        "CREATE PROCEDURE pkg.fn() { RETURN 1 }",
-        "CREATE USER alice SET PASSWORD 'pw'",
-        "CREATE ROLE admin",
-        "GRANT ROLE admin TO alice",
-        "FOR x IN [1,2,3] RETURN x",
-    ] {
+    // These remain ISO-legal but are deferred in v1.0, so they parse and the
+    // builder rejects them with FEATURE_NOT_SUPPORTED (42N01).
+    for source in ["MERGE (n:Person {name: 'X'})", "FOR x IN [1,2,3] RETURN x"] {
         let error = parse(source).expect_err(source);
         assert_eq!(
             error.gqlstatus(),
             GqlStatus::FEATURE_NOT_SUPPORTED,
             "{source}"
         );
+    }
+}
+
+#[test]
+fn removed_non_iso_grammar_is_syntax_error() {
+    // Triggers, materialized views, procedure DDL, and auth (users/roles/grants)
+    // are out of spec entirely (auth = embedder concern D1; procedures are native
+    // built-ins; triggers/views are not in the v1.0 claim list). They have no
+    // ISO equivalent and were removed from the grammar, so they now fail to
+    // parse with SYNTAX_ERROR (42601) rather than FEATURE_NOT_SUPPORTED.
+    for source in [
+        "CREATE TRIGGER trig AFTER INSERT ON :Person EXECUTE SET n.x = 1",
+        "CREATE MATERIALIZED VIEW v AS MATCH (n) RETURN n",
+        "CREATE PROCEDURE pkg.fn() { RETURN 1 }",
+        "CREATE USER alice SET PASSWORD 'pw'",
+        "CREATE ROLE admin",
+        "GRANT ROLE admin TO alice",
+        "REVOKE ROLE admin FROM alice",
+        "DROP TRIGGER trig",
+        "SHOW TRIGGERS",
+        "MATCH VIEW v YIELD x",
+    ] {
+        let error = parse(source).expect_err(source);
+        assert_eq!(error.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
     }
 }
 

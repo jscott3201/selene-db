@@ -202,7 +202,10 @@ fn collect_subqueries_in_pipeline_op(
             collect_subqueries_in_mutation(op, analyzed, registry, entries)?
         }
         PipelineOp::Catalog(op) => collect_subqueries_in_catalog(op, analyzed, registry, entries)?,
-        PipelineOp::Limit { .. } | PipelineOp::Distinct | PipelineOp::Tx(_) => {}
+        PipelineOp::Limit { .. }
+        | PipelineOp::Distinct
+        | PipelineOp::Tx(_)
+        | PipelineOp::Session(_) => {}
     }
     Ok(())
 }
@@ -343,6 +346,8 @@ fn collect_subqueries_in_catalog(
         | CatalogOp::DropGraph { .. }
         | CatalogOp::DropNodeType { .. }
         | CatalogOp::DropEdgeType { .. }
+        | CatalogOp::TruncateNodeType { .. }
+        | CatalogOp::TruncateEdgeType { .. }
         | CatalogOp::CreateIndex { .. }
         | CatalogOp::DropIndex { .. }
         | CatalogOp::ShowNodeTypes(_)
@@ -419,19 +424,6 @@ fn collect_subqueries_in_expr(
             for item in list {
                 collect_subqueries_in_expr(item, analyzed, registry, entries)?;
             }
-        }
-        ValueExpr::Like {
-            operand, pattern, ..
-        } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(pattern, analyzed, registry, entries)?;
-        }
-        ValueExpr::Between {
-            operand, low, high, ..
-        } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(low, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(high, analyzed, registry, entries)?;
         }
         ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
             for item in items {

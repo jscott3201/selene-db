@@ -1,65 +1,21 @@
 //! Predicate expression evaluation.
 //!
 //! Implements residual predicate forms that are not lowered into scan access:
-//! `LIKE`, `BETWEEN`, `IS` sub-kinds, graph predicate functions, and
+//! `IS` sub-kinds, graph predicate functions, `ALL_DIFFERENT`, `SAME`, and
 //! `PROPERTY_EXISTS`. Predicate negation preserves `NULL` as unknown.
 
 use selene_core::{IStr, Value};
 
 use crate::{
-    BinaryOp, GqlType, IsCheckKind, LabelExpr, SourceSpan, TruthValue, ValueExpr,
+    BinaryOp, IsCheckKind, LabelExpr, SourceSpan, TruthValue, ValueExpr,
     runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{
-    binary_ops::{data_exception, eval_equality, eval_ordering, string_slice},
+    binary_ops::{data_exception, eval_equality, string_slice},
     evaluate, property_access, string_fns,
 };
 use crate::runtime::scan;
-
-pub(super) fn eval_like(
-    operand: &ValueExpr,
-    pattern: &ValueExpr,
-    negated: bool,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    let operand = evaluate(operand, binding, schema, ctx)?;
-    let pattern = evaluate(pattern, binding, schema, ctx)?;
-    if matches!(operand, Value::Null) || matches!(pattern, Value::Null) {
-        return Ok(Value::Null);
-    }
-    let (Some(operand), Some(pattern)) = (string_slice(&operand), string_slice(&pattern)) else {
-        return data_exception("LIKE operands are not both strings", span);
-    };
-    Ok(nullable_bool(like_matches(operand, pattern), negated))
-}
-
-pub(super) fn eval_between(
-    operand: &ValueExpr,
-    bounds: (&ValueExpr, &ValueExpr),
-    negated: bool,
-    span: SourceSpan,
-    binding: &Binding,
-    schema: &BindingTableSchema,
-    ctx: &EvalCtx<'_, '_, '_, '_>,
-) -> Result<Value, ExecutorError> {
-    let operand = evaluate(operand, binding, schema, ctx)?;
-    let low = evaluate(bounds.0, binding, schema, ctx)?;
-    let high = evaluate(bounds.1, binding, schema, ctx)?;
-    if matches!(operand, Value::Null) || matches!(low, Value::Null) || matches!(high, Value::Null) {
-        return Ok(Value::Null);
-    }
-
-    let lower_ok = eval_ordering(BinaryOp::Le, low, operand.clone(), span)?;
-    let upper_ok = eval_ordering(BinaryOp::Le, operand, high, span)?;
-    match (bool_or_null(lower_ok, span)?, bool_or_null(upper_ok, span)?) {
-        (Some(lower_ok), Some(upper_ok)) => Ok(nullable_bool(lower_ok && upper_ok, negated)),
-        _ => Ok(Value::Null),
-    }
-}
 
 pub(super) fn eval_is_check(
     operand: &ValueExpr,
@@ -75,8 +31,10 @@ pub(super) fn eval_is_check(
         IsCheckKind::Null => Value::Bool(matches!(operand, Value::Null)),
         IsCheckKind::Directed => eval_is_directed(operand, span, ctx)?,
         IsCheckKind::Labeled(label_expr) => eval_is_labeled(operand, label_expr, span, ctx)?,
-        IsCheckKind::TruthValue(truth_value) => eval_is_truth_value(operand, *truth_value),
-        IsCheckKind::Typed(ty) => Value::Bool(value_matches_type(&operand, ty)),
+        IsCheckKind::TruthValue(truth_value) => eval_is_truth_value(operand, *truth_value, span)?,
+        IsCheckKind::Typed(ty) => Value::Bool(
+            crate::runtime::value_type_match::value_matches_gql_type(&operand, ty),
+        ),
         IsCheckKind::SourceOf(value) => {
             eval_is_endpoint(operand, value, true, span, binding, schema, ctx)?
         }
@@ -184,7 +142,7 @@ pub(super) fn eval_same(
 pub(super) fn eval_property_exists(
     target: &ValueExpr,
     key: IStr,
-    _span: SourceSpan,
+    span: SourceSpan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
@@ -193,7 +151,7 @@ pub(super) fn eval_property_exists(
     if matches!(target, Value::Null) {
         return Ok(Value::Null);
     }
-    let value = property_access(&target, key, ctx)?;
+    let value = property_access(&target, key, span, ctx)?;
     Ok(Value::Bool(!matches!(value, Value::Null)))
 }
 
@@ -244,15 +202,22 @@ fn eval_is_labeled(
     }
 }
 
-fn eval_is_truth_value(value: Value, truth_value: TruthValue) -> Value {
+fn eval_is_truth_value(
+    value: Value,
+    truth_value: TruthValue,
+    span: SourceSpan,
+) -> Result<Value, ExecutorError> {
+    // Per ISO/IEC 39075:2024 §19, `<value> IS [NOT] {TRUE|FALSE|UNKNOWN}` takes a
+    // boolean-valued operand; NULL maps to UNKNOWN. A non-boolean operand
+    // (e.g. `5 IS TRUE`) is a data exception (22G03), not a silent FALSE.
     let matches_truth = match (value, truth_value) {
         (Value::Bool(true), TruthValue::True)
         | (Value::Bool(false), TruthValue::False)
         | (Value::Null, TruthValue::Unknown) => true,
         (Value::Bool(_), _) | (Value::Null, _) => false,
-        _ => false,
+        _ => return data_exception("IS <truth value> operand is not boolean", span),
     };
-    Value::Bool(matches_truth)
+    Ok(Value::Bool(matches_truth))
 }
 
 fn eval_is_endpoint(
@@ -288,58 +253,6 @@ fn eval_is_endpoint(
     ))
 }
 
-fn value_matches_type(value: &Value, ty: &GqlType) -> bool {
-    match ty {
-        GqlType::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
-        GqlType::Uuid => matches!(value, Value::Uuid(_)),
-        GqlType::Boolean => matches!(value, Value::Bool(_)),
-        GqlType::Integer
-        | GqlType::Int8
-        | GqlType::Int16
-        | GqlType::Int32
-        | GqlType::Int64
-        | GqlType::SmallInt
-        | GqlType::BigInt => matches!(value, Value::Int(_)),
-        GqlType::Int128 => matches!(value, Value::Int128(_)),
-        GqlType::Uint8 | GqlType::Uint16 | GqlType::Uint32 | GqlType::Uint64 => {
-            matches!(value, Value::Uint(_))
-        }
-        GqlType::Uint128 => matches!(value, Value::Uint128(_)),
-        GqlType::Float => matches!(value, Value::Float(_) | Value::Float32(_)),
-        GqlType::Float32 => matches!(value, Value::Float32(_)),
-        GqlType::Float64 => matches!(value, Value::Float(_)),
-        GqlType::Decimal => matches!(value, Value::Decimal(_)),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => matches!(value, Value::Bytes(_)),
-        GqlType::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
-        GqlType::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
-        GqlType::Date => matches!(value, Value::Date(_)),
-        GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
-        GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
-        GqlType::Duration => matches!(value, Value::Duration(_)),
-        GqlType::Record(_) => matches!(value, Value::Record(_) | Value::RecordTyped(_)),
-        GqlType::List(_) => matches!(value, Value::List(_)),
-        GqlType::Path => matches!(value, Value::Path(_)),
-        GqlType::GraphRef => matches!(value, Value::GraphRef(_)),
-        GqlType::NodeRef => matches!(value, Value::NodeRef(_)),
-        GqlType::EdgeRef => matches!(value, Value::EdgeRef(_)),
-        GqlType::TableRef => matches!(value, Value::TableRef(_)),
-        GqlType::Null => matches!(value, Value::Null),
-        GqlType::Nothing => false,
-    }
-}
-
-fn bool_or_null(value: Value, span: SourceSpan) -> Result<Option<bool>, ExecutorError> {
-    match value {
-        Value::Bool(value) => Ok(Some(value)),
-        Value::Null => Ok(None),
-        _ => data_exception("predicate comparison did not produce boolean", span),
-    }
-}
-
-fn nullable_bool(value: bool, negated: bool) -> Value {
-    Value::Bool(if negated { !value } else { value })
-}
-
 fn negate_predicate(value: Value, negated: bool) -> Result<Value, ExecutorError> {
     if !negated {
         return Ok(value);
@@ -349,67 +262,4 @@ fn negate_predicate(value: Value, negated: bool) -> Result<Value, ExecutorError>
         Value::Null => Value::Null,
         other => other,
     })
-}
-
-#[derive(Clone, Copy)]
-enum LikeToken {
-    Literal(char),
-    AnyOne,
-    AnySequence,
-}
-
-fn like_matches(value: &str, pattern: &str) -> bool {
-    let value: Vec<char> = value.chars().collect();
-    let pattern = like_tokens(pattern);
-    let mut memo = vec![vec![None; pattern.len() + 1]; value.len() + 1];
-    like_matches_at(&value, &pattern, 0, 0, &mut memo)
-}
-
-fn like_matches_at(
-    value: &[char],
-    pattern: &[LikeToken],
-    value_index: usize,
-    pattern_index: usize,
-    memo: &mut [Vec<Option<bool>>],
-) -> bool {
-    if let Some(result) = memo[value_index][pattern_index] {
-        return result;
-    }
-    let result = match pattern.get(pattern_index).copied() {
-        None => value_index == value.len(),
-        Some(LikeToken::Literal(expected)) => {
-            value
-                .get(value_index)
-                .is_some_and(|actual| *actual == expected)
-                && like_matches_at(value, pattern, value_index + 1, pattern_index + 1, memo)
-        }
-        Some(LikeToken::AnyOne) => {
-            value_index < value.len()
-                && like_matches_at(value, pattern, value_index + 1, pattern_index + 1, memo)
-        }
-        Some(LikeToken::AnySequence) => {
-            like_matches_at(value, pattern, value_index, pattern_index + 1, memo)
-                || (value_index < value.len()
-                    && like_matches_at(value, pattern, value_index + 1, pattern_index, memo))
-        }
-    };
-    memo[value_index][pattern_index] = Some(result);
-    result
-}
-
-fn like_tokens(pattern: &str) -> Vec<LikeToken> {
-    let mut tokens = Vec::new();
-    let mut chars = pattern.chars();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '%' => tokens.push(LikeToken::AnySequence),
-            '_' => tokens.push(LikeToken::AnyOne),
-            '\\' => {
-                let literal = chars.next().unwrap_or('\\');
-                tokens.push(LikeToken::Literal(literal));
-            }
-            literal => tokens.push(LikeToken::Literal(literal)),
-        }
-    }
-    tokens
 }

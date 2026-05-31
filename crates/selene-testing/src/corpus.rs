@@ -144,7 +144,7 @@ fn parse_corpus_header(path: &Path, source: String) -> Result<CorpusCase, Corpus
         if trimmed.is_empty() {
             continue;
         }
-        let Some(rest) = trimmed.strip_prefix("--") else {
+        let Some(rest) = trimmed.strip_prefix("//") else {
             break;
         };
         let directive = rest.trim();
@@ -290,7 +290,7 @@ mod tests {
     #[test]
     fn parses_positive_header_with_also_covers() {
         let case = parse(
-            "-- corpus: positive\n-- feature: GP04\n-- also-covers: GQ03, GQ15\n-- expects: parse-ok\nRETURN 1",
+            "// corpus: positive\n// feature: GP04\n// also-covers: GQ03, GQ15\n// expects: parse-ok\nRETURN 1",
         );
         assert_eq!(case.kind, CorpusKind::Positive);
         assert_eq!(case.feature, Some(FeatureId::GP04));
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn parses_minimum_conformance_positive_header() {
-        let case = parse("-- corpus: positive\n-- feature: none\n-- expects: parse-ok\nRETURN 1");
+        let case = parse("// corpus: positive\n// feature: none\n// expects: parse-ok\nRETURN 1");
         assert_eq!(case.kind, CorpusKind::Positive);
         assert_eq!(case.feature, None);
         assert_eq!(case.declared_features().count(), 0);
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn parses_negative_feature_header() {
         let case = parse(
-            "-- corpus: negative\n-- feature: GQ09\n-- expects: parse-rejected(GQ09)\nRETURN 1 OTHERWISE RETURN 2",
+            "// corpus: negative\n// feature: GQ09\n// expects: parse-rejected(GQ09)\nRETURN 1 OTHERWISE RETURN 2",
         );
         assert_eq!(
             case.expectation,
@@ -324,7 +324,7 @@ mod tests {
     fn rejects_malformed_contract() {
         let error = parse_corpus_header(
             Path::new("bad.gql"),
-            "-- corpus: positive\n-- feature: GQ09\n-- expects: parse-rejected(GQ09)\nRETURN 1"
+            "// corpus: positive\n// feature: GQ09\n// expects: parse-rejected(GQ09)\nRETURN 1"
                 .to_owned(),
         )
         .expect_err("contract fails");

@@ -344,16 +344,19 @@ fn build_delete_op(
     pair: Pair<'_, Rule>,
     budget: &mut InternerBudget,
 ) -> Result<DeleteStatement, ParserError> {
-    let mode = if pair
-        .clone()
-        .into_inner()
-        .any(|child| child.as_rule() == Rule::nodetach_kw)
-    {
-        DeleteMode::NoDetach
-    } else {
-        DeleteMode::Bare
-    };
-    build_delete(pair, mode, budget)
+    let source_span = span(&pair);
+    // Single pass over the children: detect the `NODETACH` keyword and collect
+    // delete-target identifiers without cloning the pest pair.
+    let mut mode = DeleteMode::Bare;
+    let mut items = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::nodetach_kw => mode = DeleteMode::NoDetach,
+            Rule::ident => items.push(intern_pair(child, budget)?),
+            _ => {}
+        }
+    }
+    finish_delete(mode, items, source_span)
 }
 
 fn build_delete(
@@ -367,6 +370,14 @@ fn build_delete(
         .filter(|child| child.as_rule() == Rule::ident)
         .map(|child| intern_pair(child, budget))
         .collect::<Result<Vec<_>, _>>()?;
+    finish_delete(mode, items, source_span)
+}
+
+fn finish_delete(
+    mode: DeleteMode,
+    items: Vec<selene_core::IStr>,
+    source_span: crate::ast::SourceSpan,
+) -> Result<DeleteStatement, ParserError> {
     if items.is_empty() {
         return Err(ParserError::syntax(
             "DELETE is missing target",

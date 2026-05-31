@@ -23,6 +23,9 @@ mod immutable;
 #[path = "closed_graph_tests/one_of.rs"]
 mod one_of;
 
+#[path = "closed_graph_tests/truncate.rs"]
+mod truncate;
+
 fn istr(name: &str) -> selene_core::IStr {
     intern(name).unwrap()
 }
@@ -44,6 +47,8 @@ fn person_graph_type() -> GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
@@ -59,6 +64,8 @@ fn person_graph_type() -> GraphTypeDef {
                 required: false,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
@@ -163,6 +170,8 @@ fn create_node_fills_declared_default_property() {
                 required: false,
                 default: Some(PropertyDefaultValue::Boolean(true)),
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
@@ -203,6 +212,8 @@ fn typed_list_property_rejects_wrong_element_type() {
                 required: false,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
@@ -246,6 +257,8 @@ fn immutable_property_update_is_rejected_before_commit() {
                 required: true,
                 default: None,
                 immutable: true,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],

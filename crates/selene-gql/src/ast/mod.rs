@@ -15,16 +15,14 @@ pub mod util;
 
 pub use call::{InlineProcedureCall, ProcedureCall, YieldColumn, YieldItem};
 pub use ddl::{
-    DdlStatement, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef, ValidationMode,
+    DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
+    ValidationMode,
 };
 pub use eq::structurally_eq;
 pub use expr::{
     BinaryOp, IsCheckKind, Literal, NormalForm, TrimSpec, TruthValue, UnaryOp, ValueExpr,
 };
-pub use format::{
-    FormatError, format_mutate_statement, format_procedure_call, format_read_statement,
-    validate_formattable,
-};
+pub use format::{FormatError, format_procedure_call, format_read_statement};
 pub use mutation::{
     DeleteMode, DeleteStatement, InsertStatement, MutationPipeline, MutationStatement,
     MutationTerminator, RemoveItem, SetItem,
@@ -36,8 +34,8 @@ pub use pattern::{
 pub use span::SourceSpan;
 pub use statement::{
     LetBinding, LimitValue, NullsPolicy, OrderDirection, OrderTerm, PipelineStatement,
-    QueryPipeline, ReturnClause, ReturnItem, SetOp, Statement, TypedBinding, UnwindStatement,
-    WithClause,
+    QueryPipeline, ReturnClause, ReturnItem, SessionResetTarget, SetOp, Statement, TypedBinding,
+    UnwindStatement, WithClause,
 };
 pub use types::{GqlType, RecordType};
 pub use util::{EmptyVecError, NonEmpty, Vec2OrMore};

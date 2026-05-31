@@ -1,6 +1,0 @@
----
-source: crates/selene-pack/tests/pack_snapshot_corpus.rs
-expression: snapshot.to_string()
----
-manifest:
-- ERR variant=UnsupportedSchemaVersion gate=manifest_schema_version_supported found=99 supported=1

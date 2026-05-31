@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: IM_DROP_GRAPH
+// expects: parse-ok
+DROP GRAPH mygraph

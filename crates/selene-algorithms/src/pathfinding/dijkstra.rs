@@ -17,6 +17,13 @@ use crate::projection::GraphProjection;
 use crate::structural::RowIndex;
 
 /// A shortest-path result: sequence of visited `NodeId`s plus total cost.
+///
+/// This is an **output** value type. Fields added later land via a future
+/// builder/accessor pattern rather than via `#[non_exhaustive]`: as an output
+/// produced inside this crate, `#[non_exhaustive]` would only bar external
+/// construction and would not protect the in-crate literal construction sites,
+/// so it carries the same "literal now, evolve via API later" stance as
+/// `ProjectionConfig`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathResult {
     /// Nodes along the path in traversal order — source first, target last.
@@ -96,12 +103,12 @@ pub fn dijkstra_with_checker(
         }));
     }
 
-    let idx = RowIndex::new(proj);
+    let idx = proj.row_index();
     let from_dense = idx
-        .dense_of(node_sparse_row(from))
+        .dense_of_node(from)
         .expect("from is in projection: contains() checked");
     let to_dense = idx
-        .dense_of(node_sparse_row(to))
+        .dense_of_node(to)
         .expect("to is in projection: contains() checked");
 
     // Why: §E14 — state sized by live count, not max_row + 1.
@@ -134,7 +141,7 @@ pub fn dijkstra_with_checker(
 
         let source_node = idx.node_id_of(dense);
         for nb in proj.out_neighbors(source_node) {
-            let Some(next_dense) = idx.dense_of(node_sparse_row(nb.node_id)) else {
+            let Some(next_dense) = idx.dense_of_node(nb.node_id) else {
                 continue;
             };
             // Spec 16 §E15 lazy weight validation BEFORE heap insertion.
@@ -178,7 +185,7 @@ pub fn dijkstra_with_checker(
 
     if dist[to_dense as usize].is_finite() {
         let total = dist[to_dense as usize];
-        Ok(Some(reconstruct(from_dense, to_dense, &prev, &idx, total)))
+        Ok(Some(reconstruct(from_dense, to_dense, &prev, idx, total)))
     } else {
         Ok(None)
     }
@@ -203,10 +210,4 @@ fn reconstruct(
     }
     path.reverse();
     PathResult { nodes: path, cost }
-}
-
-/// Map a `NodeId` (1-based per selene-graph) to its sparse row index (0-based).
-#[inline]
-fn node_sparse_row(nid: NodeId) -> u32 {
-    (nid.get() - 1) as u32
 }

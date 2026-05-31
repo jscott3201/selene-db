@@ -1,25 +1,17 @@
 //! BRIEF-120 procedure metadata coverage.
 
-use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, IStr, Value, intern};
-use selene_gql::{BindingTable, ProcedureRegistry, Session, StatementOutput};
+use selene_gql::{
+    BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
+};
 use selene_graph::SharedGraph;
-use selene_pack::ProcedurePackRegistry;
-use selene_vector_pack::VectorPack;
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
 }
 
-fn full_registry() -> ProcedurePackRegistry {
-    let vector = VectorPack::new();
-    let algorithms = AlgorithmsPack::new();
-    ProcedurePackRegistry::builder()
-        .with_builtins()
-        .with_external_pack(vector.external_pack())
-        .with_external_pack(algorithms.external_pack())
-        .build()
-        .expect("full default registry builds")
+fn full_registry() -> BuiltinProcedureRegistry {
+    BuiltinProcedureRegistry::new()
 }
 
 fn rows(output: StatementOutput) -> BindingTable {
@@ -75,11 +67,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_36_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_24_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 36);
+    assert_eq!(procedures.len(), 24);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -113,7 +105,7 @@ fn default_registry_exposes_non_empty_metadata_for_all_36_procedures() {
 }
 
 #[test]
-fn show_procedures_exposes_seven_columns_and_zero_arg_description() {
+fn show_procedures_exposes_six_columns_and_zero_arg_description() {
     let graph = SharedGraph::new(GraphId::new(120_001));
     let registry = full_registry();
     let mut session = Session::new(&graph);
@@ -139,10 +131,9 @@ fn show_procedures_exposes_seven_columns_and_zero_arg_description() {
             "signature",
             "description",
             "since_version",
-            "capability_required",
         ]
     );
-    assert_eq!(table.row_count(), 36);
+    assert_eq!(table.row_count(), 24);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");

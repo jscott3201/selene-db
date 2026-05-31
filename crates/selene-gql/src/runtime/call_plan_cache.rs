@@ -249,22 +249,22 @@ impl CallPlanKey {
 fn canonical_call_source(statement: &Statement) -> Option<String> {
     match statement {
         Statement::Call(call) => format_procedure_call(call).ok(),
-        Statement::Query(pipeline) if is_call_rooted_pipeline(statement, pipeline) => {
+        // A CALL-rooted query pipeline canonicalizes through the read-side
+        // formatter. The structural test is allocation-free; the statement is
+        // formatted exactly once (here), with `.ok()` propagating a format
+        // failure as a cache miss.
+        Statement::Query(pipeline) if is_call_rooted_pipeline(pipeline) => {
             format_read_statement(statement).ok()
         }
         _ => None,
     }
 }
 
-fn is_call_rooted_pipeline(statement: &Statement, pipeline: &crate::QueryPipeline) -> bool {
-    let statements = pipeline.statements.as_slice();
-    match statements {
-        [PipelineStatement::Call(_)]
-        | [PipelineStatement::Call(_), PipelineStatement::Return(_)] => {
-            format_read_statement(statement).is_ok()
-        }
-        _ => false,
-    }
+fn is_call_rooted_pipeline(pipeline: &crate::QueryPipeline) -> bool {
+    matches!(
+        pipeline.statements.as_slice(),
+        [PipelineStatement::Call(_)] | [PipelineStatement::Call(_), PipelineStatement::Return(_)]
+    )
 }
 
 #[cfg(test)]

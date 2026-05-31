@@ -11,7 +11,9 @@ use std::sync::{
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 use selene_core::{Change, HlcTimestamp, Origin};
-use selene_persist::{RecoveryError, RecoveryProvider, RecoveryResult, WalWriter};
+use selene_persist::{
+    AuditLog, AuditRecord, RecoveryError, RecoveryProvider, RecoveryResult, WalWriter,
+};
 
 use crate::core_provider::recovery_state::RecoveryState;
 use crate::core_provider::sections::{
@@ -74,6 +76,7 @@ enum CoreInner {
 pub struct DurableState {
     writer: Mutex<WalWriter>,
     next_hlc: AtomicU64,
+    audit: Option<Mutex<AuditLog>>,
 }
 
 impl DurableState {
@@ -84,8 +87,67 @@ impl DurableState {
         Self {
             writer: Mutex::new(writer),
             next_hlc: AtomicU64::new(last_sequence),
+            audit: None,
         }
     }
+
+    /// Attach an audit log so engine-owned events committed through this
+    /// provider are mirrored to it (Item 7 / D24).
+    ///
+    /// Mirroring is **WAL-first, audit-after**: the WAL append is the source of
+    /// truth and gates the commit; the audit write runs only after it succeeds
+    /// and is best-effort (a failure is logged, never failing the commit). The
+    /// event also remains in the WAL, so a failed mirror degrades to the
+    /// pre-Item-7 WAL-only behavior rather than losing the event. Per the donor
+    /// lesson "audit lag is recoverable, fiction is not," the audit can only lag
+    /// the WAL, never lead it.
+    #[must_use]
+    pub fn with_audit_log(mut self, audit: AuditLog) -> Self {
+        self.audit = Some(Mutex::new(audit));
+        self
+    }
+
+    /// Append one engine-owned event to the attached audit log, if any.
+    ///
+    /// The D24 audit log is the durable "events" surface in the
+    /// snapshot=state / WAL=changes / audit=events split, with retention
+    /// independent of the WAL lineage. Appends are **best-effort and audit-after**:
+    /// the caller stamps the wall clock here, the record is serialized by the
+    /// caller into an opaque `kind`-tagged payload, and an append failure is
+    /// logged and skipped rather than propagated, so the audit can only lag a
+    /// committed change, never lead it (the donor lesson "audit lag is
+    /// recoverable, fiction is not"). Returns `false` when no audit log is
+    /// attached or the append failed.
+    ///
+    /// The pack-lifecycle producer that previously fed this surface was removed
+    /// in the extension teardown; the framework remains wired (persisted,
+    /// reattached on recovery) for future user-action audit events (D24).
+    pub fn append_audit_event(&self, kind: u16, payload: Vec<u8>) -> bool {
+        let Some(audit) = &self.audit else {
+            return false;
+        };
+        let record = AuditRecord {
+            recorded_at_unix_nanos: unix_nanos_now(),
+            kind,
+            payload,
+        };
+        let mut log = audit.lock();
+        match log.append(&record) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(%error, "audit: failed to append engine event");
+                false
+            }
+        }
+    }
+}
+
+/// Current wall-clock time as nanoseconds since the Unix epoch, saturating.
+fn unix_nanos_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
+        .unwrap_or(0)
 }
 
 impl CoreProvider {
@@ -158,23 +220,29 @@ impl CoreProvider {
     }
 
     fn write_section_inner(&self, sub_tag: SubTag) -> Result<Vec<u8>, ProviderError> {
-        let inner = self.inner.lock();
-        match &*inner {
-            CoreInner::Live { snapshot, .. } => {
-                let graph = snapshot.load_full();
-                match sub_tag.0 {
-                    CORE_GTYP_SUB => encode_graph_types(&graph),
-                    CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
-                    CORE_NODE_SUB => encode_nodes(&graph),
-                    CORE_EDGE_SUB => encode_edges(&graph),
-                    CORE_SCMA_SUB => encode_schemas(&graph),
-                    CORE_CPIX_SUB => encode_composite_schemas(&graph),
-                    _ => Err(invalid_sub_tag(sub_tag)),
+        // The snapshot is an `Arc<ArcSwap<SeleneGraph>>`: `load_full()` clones the
+        // Arc lock-free. Hold `inner` ONLY long enough to grab that Arc, then drop
+        // the guard so the (potentially ≤1 GiB) rkyv encode runs lock-free and
+        // never blocks the commit hot path that shares this Mutex.
+        let graph = {
+            let inner = self.inner.lock();
+            match &*inner {
+                CoreInner::Live { snapshot, .. } => snapshot.load_full(),
+                CoreInner::Recovery { .. } => {
+                    return Err(inconsistent(
+                        "write_section called on recovery-mode CoreProvider",
+                    ));
                 }
             }
-            CoreInner::Recovery { .. } => Err(inconsistent(
-                "write_section called on recovery-mode CoreProvider",
-            )),
+        };
+        match sub_tag.0 {
+            CORE_GTYP_SUB => encode_graph_types(&graph),
+            CORE_META_SUB => encode_meta(&graph.meta, graph.meta.generation),
+            CORE_NODE_SUB => encode_nodes(&graph),
+            CORE_EDGE_SUB => encode_edges(&graph),
+            CORE_SCMA_SUB => encode_schemas(&graph),
+            CORE_CPIX_SUB => encode_composite_schemas(&graph),
+            _ => Err(invalid_sub_tag(sub_tag)),
         }
     }
 
@@ -188,10 +256,6 @@ impl CoreProvider {
 }
 
 impl IndexProvider for CoreProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         ProviderTag(CORE_PROVIDER_TAG)
     }
@@ -239,7 +303,7 @@ impl DurableProvider for CoreProvider {
 
     fn write_commit(
         &self,
-        principal: Option<&[u8]>,
+        principal: Option<&Arc<[u8]>>,
         changes: &[Change],
         timestamp: HlcTimestamp,
     ) -> Result<u64, ProviderError> {
@@ -249,11 +313,17 @@ impl DurableProvider for CoreProvider {
                 durable: Some(durable),
                 ..
             } => {
-                let principal = principal.map(Arc::<[u8]>::from);
-                let mut writer = durable.writer.lock();
-                writer
-                    .append(timestamp, Origin::Local, principal, changes)
-                    .map_err(durable_error)
+                // Cheap refcount bump — the caller already owns the bytes as an
+                // `Arc<[u8]>`; no slice re-allocation or copy.
+                let principal = principal.cloned();
+                // WAL-first: the append gates the commit (its error fails it).
+                let sequence = {
+                    let mut writer = durable.writer.lock();
+                    writer
+                        .append(timestamp, Origin::Local, principal, changes)
+                        .map_err(durable_error)?
+                };
+                Ok(sequence)
             }
             CoreInner::Live { durable: None, .. } => Ok(0),
             CoreInner::Recovery { .. } => Err(inconsistent(
@@ -288,8 +358,14 @@ impl RecoveryProvider for CoreProvider {
             .map_err(box_provider_error)
     }
 
-    fn on_change(&self, change: &Change) -> RecoveryResult<()> {
-        self.on_change_inner(change).map_err(box_provider_error)
+    // `on_changes` is the sole entry point WAL replay invokes; the per-change
+    // `RecoveryProvider::on_change` default is unused for this provider, so it is
+    // deliberately not overridden.
+    fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
+        for change in changes {
+            self.on_change_inner(change).map_err(box_provider_error)?;
+        }
+        Ok(())
     }
 }
 

@@ -11,6 +11,8 @@
 
 mod binding_table;
 mod binding_table_registry;
+mod builtin_registry;
+mod builtins;
 mod call_plan_cache;
 mod context;
 mod context_tiers;
@@ -18,6 +20,7 @@ mod error;
 pub(crate) mod evaluator;
 mod expand;
 mod hash_join;
+mod native_algorithms;
 mod outer;
 mod parameter_type;
 mod path_mode;
@@ -37,11 +40,13 @@ mod statement;
 mod subplan;
 mod value_compare;
 mod value_key;
+mod value_type_match;
 mod visited_set;
 mod wco;
 
 pub use binding_table::{Binding, BindingTable};
 pub use binding_table_registry::BindingTableRegistry;
+pub use builtin_registry::BuiltinProcedureRegistry;
 pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
 pub use context_tiers::{GraphContext, MutationContext, ProcedureContext};

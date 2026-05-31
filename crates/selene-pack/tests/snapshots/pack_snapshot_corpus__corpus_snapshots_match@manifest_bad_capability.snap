@@ -1,6 +1,0 @@
----
-source: crates/selene-pack/tests/pack_snapshot_corpus.rs
-expression: snapshot.to_string()
----
-manifest:
-- ERR variant=ProcedureCapabilityMalformed gate=procedure_capability_format name="demo.cap" capability="bad cap!"

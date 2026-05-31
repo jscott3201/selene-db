@@ -139,8 +139,8 @@ The workspace uses four kinds of tests:
 - **Property tests** via `proptest` for invariants such as parser
   round-trips, codec symmetry, and persistent-collection equivalence.
 - **Snapshot tests** via `insta` for any output that must not drift
-  silently (planner, executor, procedure-pack metadata, algorithm
-  result shapes, vector-index section bytes, recovery results).
+  silently (planner, executor, built-in procedure signatures, algorithm
+  result shapes, recovery results).
 
 See [`architecture.md`](architecture.md#7-snapshot-harness-pattern-d21)
 for the snapshot-harness pattern (decision D21) and the pure-mirror
@@ -263,7 +263,7 @@ docs(architecture): document D21 snapshot harness mechanics
 
 Allowed types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`.
 
-The scope is the crate name (`selene-graph`, `selene-pack`, ...) or a
+The scope is the crate name (`selene-graph`, `selene-algorithms`, ...) or a
 component identifier (a brief id, an area like `ci` / `bench` /
 `scripts`). A subject line should fit on one line; longer rationale
 goes in the commit body.
@@ -305,7 +305,7 @@ for the full list. The most contribution-relevant decisions are:
 | :--- | :--- |
 | D1 | Library only; no server, transport, or auth. |
 | D2 | Strict ISO GQL parser; no Cypher / SQL / SPARQL. |
-| D5 | Non-graph capabilities live in extension crates, not in `selene-graph`. |
+| D5 | Non-graph capabilities live in separate dedicated projects, not in `selene-graph`. |
 | D7 | Concurrency primitives: `ArcSwap`, `parking_lot`, `imbl`, `RoaringBitmap`, `triomphe`. |
 | D8 | Multi-crate workspace, no umbrella facade. |
 | D9 | `#![forbid(unsafe_code)]` workspace-wide. |
@@ -324,9 +324,8 @@ conflict in your PR description before reshaping the workspace.
 ## 9. Snapshot harness pattern (D21)
 
 Every runtime surface that can drift silently is pinned by golden
-`.snap` files: planner output, executor output, procedure-pack
-signatures, algorithm result shapes, vector-index section bytes,
-recovery results. The pattern is:
+`.snap` files: planner output, executor output, built-in procedure
+signatures, algorithm result shapes, recovery results. The pattern is:
 
 1. **Pure-mirror DSL** in `selene-testing` expressing the producer's
    public output shape as serializable structs. The mirror crate's
@@ -376,37 +375,30 @@ Flagger must still admit it; do not pretend it is standard.
 
 ---
 
-## 11. Adding a procedure to selene-pack
+## 11. Adding a `CALL` procedure
 
-Procedure packs are JSON-manifest-validated, content-hashed bundles
-registered into a frozen `ProcedurePackRegistry` at construct time
-(D15, D16). External packs implement `ExternalProcedurePack` and
-supply `ExternalGraphProcedure` (read-tier) or
-`ExternalMutationProcedure` (write-tier) implementations.
+selene-db is a single native engine: there is no procedure-pack model.
+All `CALL`-able procedures are registered natively in the one frozen
+`selene_gql::runtime::builtin_registry::BuiltinProcedureRegistry` (D16) —
+the 5 platform built-ins (`selene.{health,feature_status,verify,
+create_index,drop_index}`) plus the 19 `algo.*` procedures.
 
 The high-level flow is:
 
 1. Decide the tier: read-tier procedures get a `GraphContext`,
    write-tier procedures get a `MutationContext`. The planner enforces
    tier compatibility at plan time (D17).
-2. Author the procedure body. Procedures are pure functions over their
-   `Context` plus row-shaped inputs that return row-shaped outputs.
-3. Author the manifest entry. The manifest is validated against the
-   JSON Schema 2020-12 schema in `selene-pack` with explicit gates
-   (`MANIFEST_LEVEL_GATES`, `PROCEDURE_LEVEL_GATES`,
-   `MANIFEST_VALIDATION_COVERAGE`, `FINAL_VALIDATION_COVERAGE`).
-4. Reserve a 4-byte uppercase ASCII `ProviderTag` if you also need an
-   `IndexProvider` (for instance, a new index family).
-5. Register the pack with `selene-pack` at registry construction.
+2. Author the procedure body as a native function over its `Context`
+   plus row-shaped inputs that returns row-shaped outputs. For an
+   algorithm, add the native free function to `selene-algorithms` first
+   (see [`graph-algorithms.md`](graph-algorithms.md) §11.1).
+3. Register the procedure in `BuiltinProcedureRegistry`, mirroring an
+   existing entry for the argument-coercion and YIELD-column contract.
+   The registry is frozen (`registry_version()` constant `0`); the set
+   is fixed at construction.
 
-[`extension-guide.md`](extension-guide.md) is the full walkthrough:
-manifest format, tier choice, the worked `hello.world` example, and
-the registration patterns. Cross-reference
-[`vector-search.md`](vector-search.md) and
-[`graph-algorithms.md`](graph-algorithms.md) for two production
-worked examples of pack-adapter crates (`selene-vector-pack` and
-`selene-algorithms-pack`) that expose extension capabilities through
-GQL `CALL`.
+Cross-reference [`graph-algorithms.md`](graph-algorithms.md) §11.2 for a
+worked example of exposing a new algorithm through GQL `CALL`.
 
 ---
 
@@ -490,11 +482,12 @@ Some changes are out of scope by decision:
   crate sees `&[Change]` going in and a `RecoveryResult` coming out.
   It must never grow a dependency on `selene-graph` or `selene-core`'s
   graph-shaped types.
-- **No vector or fulltext or timeseries types in `selene-graph`** (D5).
-  Extension capabilities plug in through the `IndexProvider` trait and
-  the procedure-pack registry. The graph crate ships pure graph
-  storage; an embedder who wants neither extension does not depend on
-  those crates.
+- **No non-graph types in `selene-graph`** (D5). The graph crate ships
+  pure graph storage. Index integration plugs in through the
+  `IndexProvider` trait; `CALL`-able procedures live one layer up in the
+  native `BuiltinProcedureRegistry` in `selene-gql` (D16), never in the
+  graph crate. Non-graph capabilities (vectors, time-series, RDF) are
+  separate dedicated projects, not in-tree.
 - **No `unsafe` Rust** anywhere in selene-db's own source (D9). The
   lint is `forbid`, not `deny`; you cannot override it locally. If a
   performance path seems to need `unsafe`, escalate the design in the
@@ -530,10 +523,6 @@ Some changes are out of scope by decision:
   and snapshot formats, recovery flow.
 - [`gql-reference.md`](gql-reference.md) — the ISO GQL surface
   selene-db supports.
-- [`extension-guide.md`](extension-guide.md) — writing procedure
-  packs and `IndexProvider` implementations.
-- [`graph-algorithms.md`](graph-algorithms.md) — algorithm surface
-  exposed through `algo.*` procedures.
-- [`vector-search.md`](vector-search.md) — vector index extension
-  surface exposed through `vector.*` procedures.
+- [`graph-algorithms.md`](graph-algorithms.md) — the native
+  `selene-algorithms` API and the `algo.*` `CALL` surface.
 - [`performance.md`](performance.md) — benchmarks and tuning knobs.

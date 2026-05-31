@@ -23,12 +23,11 @@ pub use ir::{
     OuterBindingRef, PathContributor, PathPlan, PatternPlan, PipelineOp, PipelineOpId, PlannedCall,
     PlannedSubquery, PlannedTableSubquery, PlannedTableSubqueryYield,
     PlannedTypePropertyConstraint, PlannedTypePropertyDef, PlannedYieldItem, ProjectExpr,
-    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SubqueryBody, SubqueryKind,
+    PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SessionOp, SubqueryBody, SubqueryKind,
     SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
 pub use lowering::plan;
 pub use optimize::{
-    CompositeIndexHandle, EdgeStatistics, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind,
-    IndexTarget, OptimizeContext, PropertyHistogram, Rule, Transformed, TypedIndexLookup,
-    WanderJoinSampler, optimize,
+    CompositeIndexHandle, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind, IndexTarget,
+    LiveIndexCatalog, OptimizeContext, Rule, Transformed, TypedIndexLookup, optimize,
 };

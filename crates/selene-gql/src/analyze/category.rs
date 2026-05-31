@@ -14,6 +14,8 @@ pub enum StatementCategory {
     CatalogModifying,
     /// Transaction-control statement.
     TransactionControl,
+    /// Session-control statement (ISO/IEC 39075:2024 section 7).
+    SessionControl,
 }
 
 pub(crate) fn classify(
@@ -34,6 +36,10 @@ pub(crate) fn classify(
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
         | Statement::Rollback { .. } => StatementCategory::TransactionControl,
+        Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => StatementCategory::SessionControl,
     }
 }
 
@@ -51,15 +57,19 @@ const fn classify_ddl(statement: &DdlStatement) -> StatementCategory {
         | DdlStatement::DropEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. } => StatementCategory::CatalogModifying,
+        // TRUNCATE removes data instances while keeping the catalog type intact,
+        // so it is DataModifying (BRIEF-150). Both categories route through the
+        // same write-transaction execution arm, so this only sharpens the
+        // semantic label.
+        DdlStatement::TruncateNodeType { .. } | DdlStatement::TruncateEdgeType { .. } => {
+            StatementCategory::DataModifying
+        }
     }
 }
 
 const fn classify_mutability(mutability: ProcedureMutability) -> StatementCategory {
     match mutability {
         ProcedureMutability::Read => StatementCategory::ReadOnly,
-        ProcedureMutability::GraphWrite => StatementCategory::DataModifying,
-        ProcedureMutability::SchemaWrite | ProcedureMutability::Admin => {
-            StatementCategory::CatalogModifying
-        }
+        ProcedureMutability::SchemaWrite => StatementCategory::CatalogModifying,
     }
 }

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use selene_core::{IStr, LabelSet, PropertyValueType};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
@@ -121,12 +123,15 @@ fn required_property_supplied(
     })
 }
 
-pub(super) fn find_set_value(
-    analyzed: &AnalyzedStatement,
-    value_span: SourceSpan,
-) -> Option<&ValueExpr> {
+/// Index every `SET` value expression in the statement by its source span.
+///
+/// Built once per `schema::validate` call so the per-`SetProperty`-entry value
+/// lookup is O(1) rather than re-scanning every `SET` item per write entry
+/// (which was O(W×S) — one rescan of all S set values per W write entries).
+pub(super) fn set_value_index(analyzed: &AnalyzedStatement) -> HashMap<SourceSpan, &ValueExpr> {
+    let mut index = HashMap::new();
     let AnalyzedStatementKind::Mutate(pipeline) = &analyzed.statement else {
-        return None;
+        return index;
     };
     for statement in &pipeline.statements {
         let MutationStatement::Set(items) = statement else {
@@ -134,22 +139,19 @@ pub(super) fn find_set_value(
         };
         for item in items {
             match item {
-                SetItem::Property { value, .. } if value.span() == value_span => {
-                    return Some(value);
+                SetItem::Property { value, .. } => {
+                    index.entry(value.span()).or_insert(value);
                 }
                 SetItem::PropertyMerge { properties, .. } => {
-                    if let Some((_, value)) = properties
-                        .iter()
-                        .find(|(_, value)| value.span() == value_span)
-                    {
-                        return Some(value);
+                    for (_, value) in properties {
+                        index.entry(value.span()).or_insert(value);
                     }
                 }
                 _ => {}
             }
         }
     }
-    None
+    index
 }
 
 pub(super) enum PropertyAgreement<'a> {
@@ -261,10 +263,18 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::Decimal, G::Decimal)
             | (P::String, G::String)
             | (P::Uuid, G::Uuid)
-            | (P::Bytes, G::Bytes | G::Binary | G::VarBinary)
+            | (P::Bytes, G::Bytes)
             | (P::List, G::List(_))
+            // Every record property declaration — open `RECORD` and closed `RECORD{..}`
+            // alike — lowers to `P::RecordTyped` (catalog/property.rs), while a `RECORD{..}`
+            // constructor always analyzes to the OPEN record type (bind/expr.rs). Accept the
+            // open literal at this coarse type-compat gate; closed-record field-name-set +
+            // per-field conformance is enforced at commit time by `RecordFieldTypes::matches`
+            // → G2000 (ISO 39075:2024 §4.15.4). Without the open arm, a record write into any
+            // RECORD-typed property in a GG02 graph is rejected at analysis even though the
+            // runtime accepts and structurally validates it.
             | (P::Record, G::Record(RecordType::Open))
-            | (P::RecordTyped, G::Record(RecordType::Closed(_)))
+            | (P::RecordTyped, G::Record(_))
             | (P::ZonedDateTime, G::ZonedDateTime)
             | (P::LocalDateTime, G::LocalDateTime)
             | (P::Date, G::Date)
@@ -341,14 +351,6 @@ mod tests {
             PropertyValueType::Bytes,
             &GqlType::Bytes
         ));
-        assert!(property_type_compatible(
-            PropertyValueType::Bytes,
-            &GqlType::Binary
-        ));
-        assert!(property_type_compatible(
-            PropertyValueType::Bytes,
-            &GqlType::VarBinary
-        ));
         assert!(!property_type_compatible(
             PropertyValueType::Bytes,
             &GqlType::String
@@ -365,6 +367,21 @@ mod tests {
         assert!(property_type_compatible(
             PropertyValueType::RecordTyped,
             &GqlType::Record(RecordType::Closed(Vec::new()))
+        ));
+        // A `RECORD{..}` constructor always analyzes to the OPEN record type, so a
+        // `RecordTyped`-declared property (the tag every record declaration lowers to)
+        // must accept the open literal at this coarse gate; closed-field conformance is
+        // deferred to the runtime (`RecordFieldTypes::matches` → G2000). Regression pin
+        // for the analyzer/runtime divergence that made typed-RECORD writes unexecutable.
+        assert!(property_type_compatible(
+            PropertyValueType::RecordTyped,
+            &GqlType::Record(RecordType::Open)
+        ));
+        // The gate stays closed for a genuine mismatch: a record literal does not satisfy
+        // a scalar declaration.
+        assert!(!property_type_compatible(
+            PropertyValueType::Int,
+            &GqlType::Record(RecordType::Open)
         ));
         assert!(property_type_compatible(
             PropertyValueType::Null,

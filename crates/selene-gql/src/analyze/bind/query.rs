@@ -47,12 +47,7 @@ pub(crate) fn bind_pipeline_statement(
         PipelineStatement::With(clause) => bind_with_clause(ctx, clause),
         PipelineStatement::Call(call) => {
             let metadata = call::lookup_metadata(ctx, call)?;
-            if matches!(
-                metadata.mutability,
-                ProcedureMutability::GraphWrite
-                    | ProcedureMutability::SchemaWrite
-                    | ProcedureMutability::Admin
-            ) {
+            if matches!(metadata.mutability, ProcedureMutability::SchemaWrite) {
                 return Err(AnalysisError::MutatingProcedureInReadPipeline {
                     procedure: call.name.clone().into_vec().into_boxed_slice(),
                     mutability: metadata.mutability,
@@ -275,7 +270,6 @@ fn group_binding_refs(
             if let ValueExpr::Variable { span, .. } = value {
                 bindings.extend(
                     binding_refs_in_span(ctx, *span)
-                        .into_iter()
                         .filter(|use_| use_.span == *span)
                         .map(|use_| use_.binding),
                 );
@@ -351,19 +345,6 @@ fn validate_percentile_independent_refs_in_expr(
                 stack.extend(list.iter());
                 stack.push(operand);
             }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push(pattern);
-                stack.push(operand);
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push(high);
-                stack.push(low);
-                stack.push(operand);
-            }
             ValueExpr::Case {
                 branches,
                 else_branch,
@@ -416,15 +397,13 @@ fn validate_percentile_independent_arg(
     Ok(())
 }
 
-fn binding_refs_in_span(
-    ctx: &BindContext<'_>,
+fn binding_refs_in_span<'ctx>(
+    ctx: &'ctx BindContext<'_>,
     span: SourceSpan,
-) -> Vec<crate::analyze::BindingUse> {
+) -> impl Iterator<Item = &'ctx crate::analyze::BindingUse> {
     ctx.references
         .iter()
-        .filter(|reference| span_contains(span, reference.span))
-        .cloned()
-        .collect()
+        .filter(move |reference| span_contains(span, reference.span))
 }
 
 fn binding_declared_outside_current_subquery(

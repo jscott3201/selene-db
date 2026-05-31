@@ -3,7 +3,7 @@
 mod numeric;
 
 use crate::{
-    BinaryOp, GqlType, IsCheckKind, Literal, SourceSpan, UnaryOp,
+    BinaryOp, GqlType, IsCheckKind, Literal, RecordType, SourceSpan, UnaryOp,
     analyze::{
         error::{AnalysisError, ConditionClause, ExpectedType, Side, TypeMismatchContext},
         types::AnalyzedType,
@@ -66,6 +66,9 @@ pub(crate) fn unary(
         UnaryOp::Negate => match operand {
             AnalyzedType::Dynamic => Ok(AnalyzedType::Dynamic),
             AnalyzedType::Resolved(ty) if is_numeric(ty) => Ok(operand.clone()),
+            // Per ISO/IEC 39075:2024 three-valued logic, `- NULL` yields NULL.
+            // The runtime returns `Value::Null`; the analyzer must not reject.
+            AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Null)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNegate,
                 ExpectedType::Numeric,
@@ -74,10 +77,13 @@ pub(crate) fn unary(
             )),
         },
         UnaryOp::Not => match operand {
-            AnalyzedType::Dynamic => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
-            AnalyzedType::Resolved(GqlType::Boolean) => {
+            AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => {
                 Ok(AnalyzedType::Resolved(GqlType::Boolean))
             }
+            // `NOT NULL` yields NULL (UNKNOWN) under three-valued logic; the
+            // runtime returns `Value::Null`. The static result type stays
+            // Boolean (the UNKNOWN truth value lives in the Boolean domain).
+            AnalyzedType::Resolved(GqlType::Null) => Ok(AnalyzedType::Resolved(GqlType::Boolean)),
             AnalyzedType::Resolved(found) => Err(type_mismatch(
                 TypeMismatchContext::UnaryNot,
                 ExpectedType::Boolean,
@@ -169,65 +175,6 @@ pub(crate) fn in_list(
             item_span.max(operand_span),
         ));
     }
-    Ok(AnalyzedType::Resolved(GqlType::Boolean))
-}
-
-/// Infer a `LIKE` predicate type.
-pub(crate) fn like(
-    operand: &AnalyzedType,
-    operand_span: SourceSpan,
-    pattern: &AnalyzedType,
-    pattern_span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    expect_string(
-        operand,
-        operand_span,
-        TypeMismatchContext::LikePredicate { side: Side::Lhs },
-    )?;
-    expect_string(
-        pattern,
-        pattern_span,
-        TypeMismatchContext::LikePredicate { side: Side::Rhs },
-    )?;
-    Ok(AnalyzedType::Resolved(GqlType::Boolean))
-}
-
-/// Infer a `BETWEEN` predicate type.
-pub(crate) fn between(
-    operand: &AnalyzedType,
-    operand_span: SourceSpan,
-    low: &AnalyzedType,
-    low_span: SourceSpan,
-    high: &AnalyzedType,
-    high_span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    expect_comparable(
-        operand,
-        operand_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Lhs },
-    )?;
-    expect_comparable(
-        low,
-        low_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    expect_comparable(
-        high,
-        high_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    ensure_same_comparable_family(
-        operand,
-        low,
-        low_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
-    ensure_same_comparable_family(
-        operand,
-        high,
-        high_span,
-        TypeMismatchContext::BetweenBounds { side: Side::Rhs },
-    )?;
     Ok(AnalyzedType::Resolved(GqlType::Boolean))
 }
 
@@ -487,7 +434,9 @@ fn expect_numeric(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic => Ok(()),
+        // A NULL operand is accepted: ISO three-valued logic makes the operator
+        // yield NULL rather than a type error (the runtime already does so).
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) if is_numeric(found) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
@@ -504,7 +453,11 @@ fn expect_boolean(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Boolean) => Ok(()),
+        // A NULL operand is accepted: under three-valued logic a boolean
+        // operator over NULL yields NULL, not a type error (runtime parity).
+        AnalyzedType::Dynamic
+        | AnalyzedType::Resolved(GqlType::Boolean)
+        | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
             ExpectedType::Boolean,
@@ -538,7 +491,9 @@ fn expect_comparable(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     match ty {
-        AnalyzedType::Dynamic => Ok(()),
+        // A NULL operand is accepted: an ordered comparison against NULL yields
+        // NULL under three-valued logic, not a type error (runtime parity).
+        AnalyzedType::Dynamic | AnalyzedType::Resolved(GqlType::Null) => Ok(()),
         AnalyzedType::Resolved(found) if comparable_family(found).is_some() => Ok(()),
         AnalyzedType::Resolved(found) => Err(type_mismatch(
             context,
@@ -574,6 +529,11 @@ fn ensure_same_comparable_family(
     context: TypeMismatchContext,
 ) -> Result<(), AnalysisError> {
     if let (AnalyzedType::Resolved(lhs_ty), AnalyzedType::Resolved(rhs_ty)) = (lhs, rhs)
+        // A NULL operand has no comparable family and never forms a mismatch:
+        // the comparison evaluates to NULL under three-valued logic regardless
+        // of the other side's family (e.g. `NULL < 5` is valid, yields NULL).
+        && !matches!(lhs_ty, GqlType::Null)
+        && !matches!(rhs_ty, GqlType::Null)
         && comparable_family(lhs_ty) != comparable_family(rhs_ty)
     {
         return Err(type_mismatch(
@@ -644,8 +604,6 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Float64
         | GqlType::Bytes
         | GqlType::Uuid
-        | GqlType::Binary
-        | GqlType::VarBinary
         | GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date
@@ -656,11 +614,14 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::Null
         | GqlType::Nothing => true,
         GqlType::List(inner) => is_supported_typed_target(inner),
-        GqlType::Record(_)
-        | GqlType::GraphRef
-        | GqlType::NodeRef
-        | GqlType::EdgeRef
-        | GqlType::TableRef => false,
+        // Why: per ISO 39075:2024 §18.9 <record type> + §19.6 <value type predicate>, a
+        // record type is an authorized typed-predicate target. Closed-record field types
+        // are validated recursively, mirroring the List(inner) arm above.
+        GqlType::Record(RecordType::Open) => true,
+        GqlType::Record(RecordType::Closed(fields)) => {
+            fields.iter().all(|(_, ty)| is_supported_typed_target(ty))
+        }
+        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => false,
     }
 }
 
@@ -678,7 +639,7 @@ fn comparable_family(ty: &GqlType) -> Option<ComparableFamily> {
     }
     Some(match ty {
         GqlType::String => ComparableFamily::String,
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => ComparableFamily::Bytes,
+        GqlType::Bytes => ComparableFamily::Bytes,
         GqlType::ZonedDateTime
         | GqlType::LocalDateTime
         | GqlType::Date
@@ -708,16 +669,6 @@ impl SpanMax for SourceSpan {
 /// §22; the analyzer does not pre-reject because (i) source types are often
 /// Dynamic, (ii) ISO §22 specifies a runtime error model (`22018`, `22003`,
 /// `42N01`) rather than a compile-time rejection model.
-///
-/// The `_source` and `_span` arguments are kept in the signature so future
-/// fold-time validation (e.g. CAST to `Null` as a static `42N01`) can plug in
-/// without changing call sites.
-pub(crate) fn cast(
-    target_type: &GqlType,
-    _source: &AnalyzedType,
-    _span: SourceSpan,
-) -> Result<AnalyzedType, AnalysisError> {
-    // TODO(BRIEF-135x): wire _source for source-type-aware cast diagnostics;
-    // _span for diagnostic span attribution.
+pub(crate) fn cast(target_type: &GqlType) -> Result<AnalyzedType, AnalysisError> {
     Ok(AnalyzedType::Resolved(target_type.clone()))
 }

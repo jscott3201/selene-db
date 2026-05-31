@@ -99,7 +99,7 @@ fn matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::Float | GqlType::Float64 => matches!(value, Value::Float(_)),
         GqlType::Float32 => matches!(value, Value::Float32(_)),
         GqlType::Decimal => matches!(value, Value::Decimal(_)),
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => matches!(value, Value::Bytes(_)),
+        GqlType::Bytes => matches!(value, Value::Bytes(_)),
         GqlType::ZonedDateTime => matches!(value, Value::ZonedDateTime(_)),
         GqlType::LocalDateTime => matches!(value, Value::LocalDateTime(_)),
         GqlType::Date => matches!(value, Value::Date(_)),

@@ -1,4 +1,4 @@
--- corpus: positive
--- feature: IM_UUID
--- expects: parse-ok
+// corpus: positive
+// feature: IM_UUID
+// expects: parse-ok
 RETURN CAST('018f1b6d-7b89-7cc0-9f40-2c6f8d4df101' AS UUID) AS id

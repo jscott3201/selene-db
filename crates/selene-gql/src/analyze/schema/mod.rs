@@ -13,14 +13,16 @@ use self::{
         static_label_set, unique_edge_type,
     },
     properties::{
-        PropertyAgreement, RequiredPropertyCheck, find_set_value, property_agreement,
+        PropertyAgreement, RequiredPropertyCheck, property_agreement, set_value_index,
         undeclared_property, validate_declared_property, validate_node_label_transition,
         validate_one_property_value, validate_property_values, validate_required_properties,
     },
 };
+use std::collections::HashMap;
+
 use crate::{
     EdgeDirection, EdgePattern, GraphPattern, LabelExpr, MutationPipeline, MutationStatement,
-    NodePattern, PatternElement, SourceSpan,
+    NodePattern, PatternElement, SourceSpan, ValueExpr,
     analyze::{
         ast::{AnalyzedStatement, AnalyzedStatementKind},
         binding::{BindingDecl, BindingDeclKind, BindingId},
@@ -38,12 +40,15 @@ pub(crate) fn validate(
     };
     validate_inserts(pipeline, analyzed, graph_type)?;
     if let Some(write_set) = analyzed.write_set.as_ref() {
+        // Index SET values by span once: each SetProperty entry resolves its
+        // value in O(1) instead of rescanning every SET item (was O(W×S)).
+        let set_values = set_value_index(analyzed);
         for entry in &write_set.entries {
             if !matches!(
                 entry.kind,
                 WriteKind::InsertNode { .. } | WriteKind::InsertEdge { .. }
             ) {
-                validate_non_insert_entry(entry, analyzed, graph_type)?;
+                validate_non_insert_entry(entry, analyzed, graph_type, &set_values)?;
             }
         }
     }
@@ -228,6 +233,7 @@ fn validate_non_insert_entry(
     entry: &WriteSetEntry,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
+    set_values: &HashMap<SourceSpan, &ValueExpr>,
 ) -> Result<(), AnalysisError> {
     match &entry.kind {
         WriteKind::SetProperty {
@@ -243,6 +249,7 @@ fn validate_non_insert_entry(
             entry.span,
             analyzed,
             graph_type,
+            set_values,
         ),
         WriteKind::SetLabel {
             target,
@@ -265,6 +272,7 @@ fn validate_non_insert_entry(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn validate_set_property(
     target: BindingId,
     element: ElementKind,
@@ -273,8 +281,9 @@ fn validate_set_property(
     span: SourceSpan,
     analyzed: &AnalyzedStatement,
     graph_type: &GraphTypeDef,
+    set_values: &HashMap<SourceSpan, &ValueExpr>,
 ) -> Result<(), AnalysisError> {
-    let Some(value) = find_set_value(analyzed, value_span) else {
+    let Some(value) = set_values.get(&value_span).copied() else {
         return Ok(());
     };
     match target_declaration(analyzed, target, element, graph_type)? {

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# selene-db pre-push gate — FAST lint/build guard only.
+#
+# The full nextest + doctest suite intentionally does NOT run here: it takes
+# minutes and is redundant with (a) the agent workflows, which run the full
+# gates before pushing, and (b) .github/workflows/release.yml, which runs the
+# complete suite on the development -> main release PR. Keeping pre-push to a
+# fast clippy lets per-Brief pushes to `development` stay quick.
+# Skip once:    git push --no-verify
+# Skip session: export SELENE_SKIP_HOOKS=1
+set -euo pipefail
+[ -n "${SELENE_SKIP_HOOKS:-}" ] && { echo "[pre-push] skipped (SELENE_SKIP_HOOKS)"; exit 0; }
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] cargo clippy --workspace -- -D warnings  (fast; full test suite runs in CI release gate + agent workflows)"
+cargo clippy --workspace --locked -- -D warnings
+
+echo "[pre-push] ok"

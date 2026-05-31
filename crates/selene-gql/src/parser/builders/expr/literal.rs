@@ -55,6 +55,15 @@ pub(super) fn parse_string_pair(
     Ok(value)
 }
 
+/// Decode a `string_lit` pair into its raw (unquoted, unescaped) text.
+///
+/// Used by surfaces that need the decoded string value rather than an interned
+/// literal — for example the `SESSION SET TIME ZONE '<region>'` time-zone
+/// string (ISO/IEC 39075:2024 section 7.1).
+pub(super) fn decode_string_text(pair: &Pair<'_, Rule>) -> Result<String, ParserError> {
+    parse_string_text(pair.as_str(), span(pair))
+}
+
 pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> ValueExpr {
     match value {
         ValueExpr::Literal(Literal::Integer(value, _)) => {
@@ -74,6 +83,11 @@ fn build_literal_child(
     let child_span = span(&child);
     match child.as_rule() {
         Rule::null_lit => Ok(Literal::Null(child_span)),
+        // Per ISO/IEC 39075:2024 §21.2 <boolean literal> ::= TRUE | FALSE |
+        // UNKNOWN. UNKNOWN is the boolean unknown truth value; the runtime
+        // represents it as `Value::Null` (validated three-valued logic), so the
+        // parser lowers it to the same `Literal::Null` node as `NULL`.
+        Rule::unknown_lit => Ok(Literal::Null(child_span)),
         Rule::bool_lit => Ok(Literal::Bool(
             child.as_str().eq_ignore_ascii_case("true"),
             child_span,

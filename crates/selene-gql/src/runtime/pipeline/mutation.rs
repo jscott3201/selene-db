@@ -52,7 +52,6 @@ pub(super) fn execute(
             subqueries,
         ),
         MutationOp::InsertEdge {
-            site_id,
             label_expr,
             left,
             right,
@@ -63,7 +62,6 @@ pub(super) fn execute(
             span,
             ..
         } => execute_insert_edge(
-            *site_id,
             label_expr.as_ref(),
             *left,
             *right,
@@ -180,7 +178,6 @@ fn execute_insert_node(
 
 #[allow(clippy::too_many_arguments)]
 fn execute_insert_edge(
-    site_id: crate::InsertSiteId,
     label_expr: Option<&LabelExpr>,
     left: InsertEndpointRef,
     right: InsertEndpointRef,
@@ -233,7 +230,6 @@ fn execute_insert_edge(
             values,
             row.insert_sites().iter().copied().collect(),
         ));
-        let _ = site_id;
     }
     Ok(BindingTable::new(schema, output))
 }
@@ -411,8 +407,10 @@ fn execute_delete_target(
                 }
             }
             ElementKind::Path => {
-                return Err(ExecutorError::ImplementationDefined {
-                    detail: "DELETE path target not implemented",
+                // DELETE of a path target is ISO-legal but not yet implemented in v1.1; 42N01.
+                return Err(ExecutorError::FeatureNotInV1_1 {
+                    feature: "DELETE path target",
+                    span,
                 });
             }
             ElementKind::Alias => {
@@ -462,40 +460,29 @@ fn node_labels(
     match label_expr {
         None => Ok(LabelSet::new()),
         Some(LabelExpr::Single(label)) => Ok(LabelSet::single(*label)),
-        Some(_) => Err(ExecutorError::ImplementationDefined {
-            detail: "INSERT label expression form not implemented",
+        // ISO-legal label-expression forms (conjunction/disjunction) are not yet
+        // implemented in the v1.1 mutation surface; 42N01, not an internal-invariant break.
+        Some(_) => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "INSERT label expression form",
+            span,
         }),
     }
-    .map_err(|mut error| {
-        if let ExecutorError::DataException {
-            span: error_span, ..
-        } = &mut error
-        {
-            *error_span = span;
-        }
-        error
-    })
 }
 
 fn edge_label(label_expr: Option<&LabelExpr>, span: SourceSpan) -> Result<IStr, ExecutorError> {
     match label_expr {
         Some(LabelExpr::Single(label)) => Ok(*label),
+        // An edge insert with no label is an internal-invariant break: the binder must
+        // have supplied exactly one edge label by this point.
         None => Err(ExecutorError::ImplementationDefined {
             detail: "INSERT edge label required",
         }),
-        Some(_) => Err(ExecutorError::ImplementationDefined {
-            detail: "INSERT edge label expression form not implemented",
+        // ISO-legal edge label-expression forms are not yet implemented in v1.1; 42N01.
+        Some(_) => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "INSERT edge label expression form",
+            span,
         }),
     }
-    .map_err(|mut error| {
-        if let ExecutorError::DataException {
-            span: error_span, ..
-        } = &mut error
-        {
-            *error_span = span;
-        }
-        error
-    })
 }
 
 fn endpoint_node(
@@ -521,13 +508,15 @@ fn edge_endpoints(
     left: NodeId,
     right: NodeId,
     direction: EdgeDirection,
-    _span: SourceSpan,
+    span: SourceSpan,
 ) -> Result<(NodeId, NodeId), ExecutorError> {
     match direction {
         EdgeDirection::Right => Ok((left, right)),
         EdgeDirection::Left => Ok((right, left)),
-        EdgeDirection::Undirected => Err(ExecutorError::ImplementationDefined {
-            detail: "INSERT undirected edge not implemented",
+        // INSERT of an undirected edge is ISO-legal but not yet implemented in v1.1; 42N01.
+        EdgeDirection::Undirected => Err(ExecutorError::FeatureNotInV1_1 {
+            feature: "INSERT undirected edge",
+            span,
         }),
     }
 }

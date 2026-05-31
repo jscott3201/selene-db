@@ -81,6 +81,17 @@ impl ExprTypeTable {
         &self.cells[id.0 as usize]
     }
 
+    /// Type cell for `id`, or `None` when `id` is out of range.
+    ///
+    /// Use this from cross-statement or external callers where the [`ExprId`]
+    /// may not have been produced by this table's allocator. The panicking
+    /// [`get`](Self::get) stays the hot-path accessor for ids known to be
+    /// in range. (Precedent: `SubqueryRegistry::get`.)
+    #[must_use]
+    pub fn try_get(&self, id: ExprId) -> Option<&AnalyzedType> {
+        self.cells.get(id.0 as usize)
+    }
+
     /// Number of allocated cells.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -103,6 +114,22 @@ impl ExprTypeTable {
 }
 
 /// Lookup table from expression shape to allocated [`ExprId`].
+///
+/// The shape key is a span + a structural fingerprint (content dedup: two
+/// `ValueExpr`s with identical structure but different spans get different
+/// keys, and the span disambiguates synthetic default-arg literals that reuse
+/// a call's span — see [`ExprKey`]).
+///
+/// Parent fingerprinting folds each child's fingerprint rather than re-hashing
+/// the child's raw bytes; a memo created fresh **per `insert` call** caches the
+/// nodes visited during that one call so a node's subtree is hashed once
+/// instead of once per ancestor (the table-build cost stays linear in the size
+/// of each inserted expression instead of O(depth × n)). The memo is a local
+/// scoped to a single fingerprinting walk and dropped when it returns: every
+/// node it keys by pointer identity is borrowed and fully alive for that whole
+/// walk, so address reuse cannot occur. The non-memoized `get` path uses the
+/// identical folding scheme, so a single-expression lookup produces a
+/// byte-identical key.
 #[derive(Clone, Debug, Default)]
 pub struct ExprIdLookup {
     ids: HashMap<ExprKey, ExprId>,
@@ -140,20 +167,47 @@ struct ExprKey {
 
 impl ExprKey {
     fn for_expr(expr: &ValueExpr) -> Self {
+        // Fresh, call-local memo: every node reached during this one walk is
+        // borrowed and alive, so pointer identity is stable and unique. The
+        // memo is dropped on return — it never outlives the borrow, so there is
+        // no cross-call address-reuse hazard by construction.
+        let mut memo = HashMap::new();
         Self {
             span: expr.span(),
-            fingerprint: fingerprint_expr(expr),
+            fingerprint: node_fingerprint(expr, &mut memo),
         }
     }
 }
 
-fn fingerprint_expr(expr: &ValueExpr) -> u64 {
+/// Structural fingerprint of one `ValueExpr` node.
+///
+/// Folds the node's discriminant + own scalar fields + each child node's
+/// fingerprint. `memo` (created fresh per top-level [`ExprKey::for_expr`] call)
+/// caches each node's result by pointer identity so a shared/repeated subtree
+/// within this one walk is hashed once; folding the cached child fingerprints
+/// keeps the walk linear in the expression size rather than O(depth × n). The
+/// folding is identical with or without a populated memo, so the key is stable
+/// across the `insert` and `get` paths.
+fn node_fingerprint(expr: &ValueExpr, memo: &mut HashMap<usize, u64>) -> u64 {
+    let key = std::ptr::from_ref(expr) as usize;
+    if let Some(cached) = memo.get(&key) {
+        return *cached;
+    }
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    hash_value_expr(expr, &mut hasher);
-    hasher.finish()
+    hash_value_expr(expr, &mut hasher, memo);
+    let fingerprint = hasher.finish();
+    memo.insert(key, fingerprint);
+    fingerprint
 }
 
-fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
+/// Hash one child `ValueExpr`'s fingerprint into `state` (folds the child's
+/// cached/computed `u64` fingerprint rather than its raw bytes, so the memo can
+/// short-circuit subtrees while keeping the byte stream stable across paths).
+fn hash_child<H: Hasher>(child: &ValueExpr, state: &mut H, memo: &mut HashMap<usize, u64>) {
+    node_fingerprint(child, memo).hash(state);
+}
+
+fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H, memo: &mut HashMap<usize, u64>) {
     match expr {
         ValueExpr::Literal(literal) => {
             0u8.hash(state);
@@ -182,7 +236,7 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
         }
         ValueExpr::PropertyAccess { target, key, span } => {
             3u8.hash(state);
-            hash_value_expr(target, state);
+            hash_child(target, state, memo);
             key.hash(state);
             span.hash(state);
         }
@@ -192,13 +246,13 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             span,
         } => {
             4u8.hash(state);
-            hash_value_expr(target, state);
-            hash_value_expr(index, state);
+            hash_child(target, state, memo);
+            hash_child(index, state, memo);
             span.hash(state);
         }
         ValueExpr::ListLiteral { items, span } => {
             5u8.hash(state);
-            hash_exprs(items, state);
+            hash_exprs(items, state, memo);
             span.hash(state);
         }
         ValueExpr::RecordLiteral { fields, span } => {
@@ -206,21 +260,21 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             fields.len().hash(state);
             for (key, value) in fields {
                 key.hash(state);
-                hash_value_expr(value, state);
+                hash_child(value, state, memo);
             }
             span.hash(state);
         }
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             7u8.hash(state);
             op.hash(state);
-            hash_value_expr(lhs, state);
-            hash_value_expr(rhs, state);
+            hash_child(lhs, state, memo);
+            hash_child(rhs, state, memo);
             span.hash(state);
         }
         ValueExpr::UnaryOp { op, operand, span } => {
             8u8.hash(state);
             op.hash(state);
-            hash_value_expr(operand, state);
+            hash_child(operand, state, memo);
             span.hash(state);
         }
         ValueExpr::FunctionCall {
@@ -232,14 +286,14 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
         } => {
             9u8.hash(state);
             name.hash(state);
-            hash_exprs(args, state);
+            hash_exprs(args, state, memo);
             star.hash(state);
             distinct.hash(state);
             span.hash(state);
         }
         ValueExpr::Normalize { source, form, span } => {
             22u8.hash(state);
-            hash_value_expr(source, state);
+            hash_child(source, state, memo);
             form.hash(state);
             span.hash(state);
         }
@@ -253,9 +307,9 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             spec.hash(state);
             character.is_some().hash(state);
             if let Some(character) = character {
-                hash_value_expr(character, state);
+                hash_child(character, state, memo);
             }
-            hash_value_expr(source, state);
+            hash_child(source, state, memo);
             span.hash(state);
         }
         ValueExpr::IsCheck {
@@ -265,8 +319,8 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             span,
         } => {
             10u8.hash(state);
-            hash_value_expr(operand, state);
-            hash_is_check(kind, state);
+            hash_child(operand, state, memo);
+            hash_is_check(kind, state, memo);
             negated.hash(state);
             span.hash(state);
         }
@@ -277,50 +331,24 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             span,
         } => {
             11u8.hash(state);
-            hash_value_expr(operand, state);
-            hash_exprs(list, state);
-            negated.hash(state);
-            span.hash(state);
-        }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            negated,
-            span,
-        } => {
-            12u8.hash(state);
-            hash_value_expr(operand, state);
-            hash_value_expr(pattern, state);
-            negated.hash(state);
-            span.hash(state);
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            negated,
-            span,
-        } => {
-            13u8.hash(state);
-            hash_value_expr(operand, state);
-            hash_value_expr(low, state);
-            hash_value_expr(high, state);
+            hash_child(operand, state, memo);
+            hash_exprs(list, state, memo);
             negated.hash(state);
             span.hash(state);
         }
         ValueExpr::AllDifferent { items, span } => {
             14u8.hash(state);
-            hash_exprs(items, state);
+            hash_exprs(items, state, memo);
             span.hash(state);
         }
         ValueExpr::Same { items, span } => {
             15u8.hash(state);
-            hash_exprs(items, state);
+            hash_exprs(items, state, memo);
             span.hash(state);
         }
         ValueExpr::PropertyExists { target, key, span } => {
             16u8.hash(state);
-            hash_value_expr(target, state);
+            hash_child(target, state, memo);
             key.hash(state);
             span.hash(state);
         }
@@ -332,12 +360,12 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             17u8.hash(state);
             branches.len().hash(state);
             for (condition, value) in branches {
-                hash_value_expr(condition, state);
-                hash_value_expr(value, state);
+                hash_child(condition, state, memo);
+                hash_child(value, state, memo);
             }
             if let Some(value) = else_branch {
                 true.hash(state);
-                hash_value_expr(value, state);
+                hash_child(value, state, memo);
             } else {
                 false.hash(state);
             }
@@ -349,13 +377,13 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             span,
         } => {
             18u8.hash(state);
-            hash_match_clause(pattern, state);
+            hash_match_clause(pattern, state, memo);
             negated.hash(state);
             span.hash(state);
         }
         ValueExpr::CountSubquery { pattern, span } => {
             19u8.hash(state);
-            hash_match_clause(pattern, state);
+            hash_match_clause(pattern, state, memo);
             span.hash(state);
         }
         ValueExpr::ValueSubquery { body, span } => {
@@ -373,17 +401,17 @@ fn hash_value_expr<H: Hasher>(expr: &ValueExpr, state: &mut H) {
             // CAST(x AS Integer) and CAST(x AS Float) get different dedup
             // keys. GqlType derives Hash per BRIEF-135a BF1 fold.
             21u8.hash(state);
-            hash_value_expr(value, state);
+            hash_child(value, state, memo);
             target_type.hash(state);
             span.hash(state);
         }
     }
 }
 
-fn hash_exprs<H: Hasher>(values: &[ValueExpr], state: &mut H) {
+fn hash_exprs<H: Hasher>(values: &[ValueExpr], state: &mut H, memo: &mut HashMap<usize, u64>) {
     values.len().hash(state);
     for value in values {
-        hash_value_expr(value, state);
+        hash_child(value, state, memo);
     }
 }
 
@@ -421,7 +449,7 @@ fn hash_literal<H: Hasher>(literal: &Literal, state: &mut H) {
     }
 }
 
-fn hash_is_check<H: Hasher>(kind: &IsCheckKind, state: &mut H) {
+fn hash_is_check<H: Hasher>(kind: &IsCheckKind, state: &mut H, memo: &mut HashMap<usize, u64>) {
     match kind {
         IsCheckKind::Null => 0u8.hash(state),
         IsCheckKind::Directed => 1u8.hash(state),
@@ -443,11 +471,11 @@ fn hash_is_check<H: Hasher>(kind: &IsCheckKind, state: &mut H) {
         }
         IsCheckKind::SourceOf(value) => {
             6u8.hash(state);
-            hash_value_expr(value, state);
+            hash_child(value, state, memo);
         }
         IsCheckKind::DestinationOf(value) => {
             7u8.hash(state);
-            hash_value_expr(value, state);
+            hash_child(value, state, memo);
         }
     }
 }
@@ -483,7 +511,11 @@ fn hash_label_exprs<H: Hasher>(values: &[LabelExpr], state: &mut H) {
     }
 }
 
-fn hash_match_clause<H: Hasher>(clause: &MatchClause, state: &mut H) {
+fn hash_match_clause<H: Hasher>(
+    clause: &MatchClause,
+    state: &mut H,
+    memo: &mut HashMap<usize, u64>,
+) {
     clause.optional.hash(state);
     clause.selector.hash(state);
     clause.match_mode.hash(state);
@@ -503,10 +535,10 @@ fn hash_match_clause<H: Hasher>(clause: &MatchClause, state: &mut H) {
                     node.properties.len().hash(state);
                     for (key, value) in &node.properties {
                         key.hash(state);
-                        hash_value_expr(value, state);
+                        hash_child(value, state, memo);
                     }
                     if let Some(expr) = &node.inline_where {
-                        hash_value_expr(expr, state);
+                        hash_child(expr, state, memo);
                     }
                     node.span.hash(state);
                 }
@@ -520,11 +552,11 @@ fn hash_match_clause<H: Hasher>(clause: &MatchClause, state: &mut H) {
                     edge.properties.len().hash(state);
                     for (key, value) in &edge.properties {
                         key.hash(state);
-                        hash_value_expr(value, state);
+                        hash_child(value, state, memo);
                     }
                     edge.quantifier.hash(state);
                     if let Some(expr) = &edge.inline_where {
-                        hash_value_expr(expr, state);
+                        hash_child(expr, state, memo);
                     }
                     edge.span.hash(state);
                 }
@@ -533,7 +565,7 @@ fn hash_match_clause<H: Hasher>(clause: &MatchClause, state: &mut H) {
         pattern.span.hash(state);
     }
     if let Some(expr) = &clause.where_clause {
-        hash_value_expr(expr, state);
+        hash_child(expr, state, memo);
     }
     clause.span.hash(state);
 }
@@ -560,8 +592,6 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Float32 => 17u8.hash(state),
         GqlType::Float64 => 18u8.hash(state),
         GqlType::Bytes => 19u8.hash(state),
-        GqlType::Binary => 20u8.hash(state),
-        GqlType::VarBinary => 21u8.hash(state),
         GqlType::ZonedDateTime => 22u8.hash(state),
         GqlType::LocalDateTime => 23u8.hash(state),
         GqlType::Date => 24u8.hash(state),

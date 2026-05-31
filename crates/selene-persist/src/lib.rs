@@ -10,14 +10,17 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod audit;
 mod compression;
 pub mod entry_header;
 pub mod error;
 pub mod file_header;
+pub mod manifest;
 mod payload;
 pub mod provider;
 mod reader;
 pub mod recovery;
+pub mod retention;
 pub mod section;
 pub mod snapshot_file_header;
 pub mod snapshot_path;
@@ -26,6 +29,10 @@ pub mod snapshot_writer;
 mod writer;
 mod writer_rotation;
 
+pub use crate::audit::{
+    AUDIT_FORMAT_VERSION, AUDIT_KIND_RESERVED_0, AUDIT_MAGIC, AuditLog, AuditPruneOutcome,
+    AuditRecord, AuditRetentionPolicy, DEFAULT_AUDIT_FILE_NAME, MAX_AUDIT_PAYLOAD_BYTES,
+};
 pub use crate::entry_header::{
     COMPRESS_THRESHOLD, FLAG_PAYLOAD_COMPRESSED, MAX_PRINCIPAL_BYTES, MAX_WAL_ENTRY_BYTES,
     WalEntryHeader,
@@ -34,9 +41,16 @@ pub use crate::error::{PersistError, PersistResult};
 pub use crate::file_header::{
     WAL_FILE_HEADER_LEN, WAL_MAGIC, WAL_VERSION_MAJOR, WAL_VERSION_MINOR, WalFileHeader,
 };
+pub use crate::manifest::{
+    MANIFEST_FILE_NAME, MANIFEST_FORMAT_VERSION, MANIFEST_MAGIC, MANIFEST_TMP_FILE_NAME, Manifest,
+    sync_dir,
+};
 pub use crate::provider::{ProviderRegistry, RecoveryError, RecoveryProvider, RecoveryResult};
 pub use crate::reader::{WalEntry, WalEntryStream, WalEntryView, WalReader};
 pub use crate::recovery::{RecoveryOutcome, recover};
+pub use crate::retention::{
+    DEFAULT_KEEP_SNAPSHOTS, DEFAULT_KEEP_WAL_ARCHIVES, PruneOutcome, RetentionPolicy, prune,
+};
 pub use crate::section::{
     MAX_SECTION_COUNT, MAX_SECTION_PAYLOAD_BYTES, SECTION_TABLE_ROW_LEN, SectionEntry,
 };
@@ -53,4 +67,6 @@ pub use crate::snapshot_writer::{
     SectionCompression, SnapshotBuilder, SnapshotConfig, SnapshotFinalizeOutcome,
 };
 pub use crate::writer::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
-pub use crate::writer_rotation::WalRotationOutcome;
+pub use crate::writer_rotation::{
+    WAL_ARCHIVE_PREFIX, WAL_ARCHIVE_SUFFIX, WalRotationOutcome, parse_wal_archive_filename,
+};

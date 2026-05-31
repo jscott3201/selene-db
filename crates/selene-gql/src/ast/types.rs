@@ -52,10 +52,6 @@ pub enum GqlType {
     Bytes,
     /// `UUID`.
     Uuid,
-    /// `BINARY`.
-    Binary,
-    /// `VARBINARY`.
-    VarBinary,
     /// `ZONED DATETIME`.
     ZonedDateTime,
     /// `LOCAL DATETIME`.

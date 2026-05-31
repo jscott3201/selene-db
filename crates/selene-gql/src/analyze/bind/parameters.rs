@@ -65,7 +65,11 @@ fn collect_statement_parameter_declarations(
         }
         Statement::StartTransaction { .. }
         | Statement::Commit { .. }
-        | Statement::Rollback { .. } => Ok(()),
+        | Statement::Rollback { .. }
+        | Statement::SessionSetValue { .. }
+        | Statement::SessionSetTimeZone { .. }
+        | Statement::SessionReset { .. }
+        | Statement::SessionClose { .. } => Ok(()),
     }
 }
 
@@ -180,6 +184,8 @@ fn collect_ddl_parameter_declarations(
         | DdlStatement::DropGraph { .. }
         | DdlStatement::DropNodeType { .. }
         | DdlStatement::DropEdgeType { .. }
+        | DdlStatement::TruncateNodeType { .. }
+        | DdlStatement::TruncateEdgeType { .. }
         | DdlStatement::CreateIndex { .. }
         | DdlStatement::DropIndex { .. }
         | DdlStatement::ShowNodeTypes(_)
@@ -339,19 +345,6 @@ fn collect_value_parameter_declarations(
             }
             ValueExpr::InList { operand, list, .. } => {
                 stack.extend(list.iter());
-                stack.push(operand);
-            }
-            ValueExpr::Like {
-                operand, pattern, ..
-            } => {
-                stack.push(pattern);
-                stack.push(operand);
-            }
-            ValueExpr::Between {
-                operand, low, high, ..
-            } => {
-                stack.push(high);
-                stack.push(low);
                 stack.push(operand);
             }
             ValueExpr::Case {

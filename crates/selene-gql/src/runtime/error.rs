@@ -29,6 +29,8 @@ pub enum DataExceptionSubclass {
     TrimError,
     /// Invalid character value for cast (`22018`).
     InvalidCharacterValueForCast,
+    /// Invalid time zone displacement value (`22009`).
+    InvalidTimeZone,
     /// Invalid value type (`22G03`).
     InvalidValueType,
     /// Values not comparable (`22G04`).
@@ -41,6 +43,8 @@ pub enum DataExceptionSubclass {
     NodePropertiesExceedSupportedMaximum,
     /// Number of edge properties exceeds supported maximum (`22G0T`).
     EdgePropertiesExceedSupportedMaximum,
+    /// Record fields do not match the target record type on CAST (`22G0U`).
+    RecordFieldsDoNotMatch,
     /// Record data field unassignable (`22G0X`).
     RecordDataFieldUnassignable,
 }
@@ -60,6 +64,7 @@ impl DataExceptionSubclass {
             Self::InvalidArgumentForPowerFunction => GqlStatus::INVALID_ARGUMENT_FOR_POWER_FUNCTION,
             Self::TrimError => GqlStatus::TRIM_ERROR,
             Self::InvalidCharacterValueForCast => GqlStatus::INVALID_CHARACTER_VALUE_FOR_CAST,
+            Self::InvalidTimeZone => GqlStatus::INVALID_TIME_ZONE,
             Self::InvalidValueType => GqlStatus::DATATYPE_MISMATCH,
             Self::ValuesNotComparable => GqlStatus::VALUES_NOT_COMPARABLE,
             Self::ListElementError => GqlStatus::LIST_ELEMENT_ERROR,
@@ -72,6 +77,7 @@ impl DataExceptionSubclass {
             Self::EdgePropertiesExceedSupportedMaximum => {
                 GqlStatus::EDGE_PROPERTIES_EXCEED_SUPPORTED_MAXIMUM
             }
+            Self::RecordFieldsDoNotMatch => GqlStatus::RECORD_FIELDS_DO_NOT_MATCH,
             Self::RecordDataFieldUnassignable => GqlStatus::RECORD_DATA_FIELD_UNASSIGNABLE,
         }
     }
@@ -315,6 +321,18 @@ pub enum ExecutorError {
         span: SourceSpan,
     },
 
+    /// A GQL-request was issued against a session closed by `SESSION CLOSE`.
+    ///
+    /// Maps to GQLSTATUS 2DN01, a selene-db implementation-defined subclass
+    /// under standard class 2D per ISO/IEC 39075:2024 section 23.1 (section 7.3).
+    #[error("session is closed")]
+    #[diagnostic(code(SLENE_X_2DN01))]
+    SessionClosed {
+        /// Source span for the rejected request.
+        #[label("session closed; open a new session")]
+        span: SourceSpan,
+    },
+
     /// Caller-requested cooperative cancellation interrupted the statement.
     #[error("statement cancelled")]
     #[diagnostic(code(SLENE_X_5GQL2))]
@@ -426,6 +444,7 @@ impl ExecutorError {
             Self::TransactionAlreadyActive { .. } => GqlStatus::ACTIVE_TRANSACTION,
             Self::NoActiveTransaction { .. } => GqlStatus::INVALID_TRANSACTION_TERMINATION,
             Self::InFailedTransaction { .. } => GqlStatus::IN_FAILED_TRANSACTION,
+            Self::SessionClosed { .. } => GqlStatus::SESSION_CLOSED,
             Self::Cancelled { .. } => GqlStatus::OPERATION_CANCELLED,
             Self::Timeout { .. } => GqlStatus::DEADLINE_EXCEEDED,
             Self::RowCapExceeded { .. } | Self::ProgramLimitExceeded { .. } => {

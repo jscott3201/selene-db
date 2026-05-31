@@ -4,7 +4,7 @@ use selene_core::feature_register::FeatureId;
 
 use crate::{
     DdlStatement,
-    ast::ddl::{TypePropertyConstraint, TypePropertyDef},
+    ast::ddl::{DropBehavior, TypePropertyConstraint, TypePropertyDef},
 };
 
 use super::{FeatureUse, expr, record_feature};
@@ -27,10 +27,14 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
         DdlStatement::DropGraph {
             if_exists, span, ..
         } => {
-            record_feature(uses, FeatureId::GC04, *span);
-            if *if_exists {
-                record_feature(uses, FeatureId::GC05, *span);
-            }
+            // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
+            // factory-reset extension (a supported selene-db vendor flag), NOT
+            // GC04. CREATE GRAPH stays on GC04 (unsupported) so it remains
+            // parse-rejected under D1 single-graph. IF EXISTS is informational
+            // under D1 (the session graph always exists), so it carries no extra
+            // flag — both DROP GRAPH and DROP GRAPH IF EXISTS flag IM_DROP_GRAPH.
+            let _ = if_exists;
+            record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
         }
         DdlStatement::CreateNodeType {
             extends,
@@ -69,18 +73,36 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             property_defs(properties, uses);
         }
         DdlStatement::DropNodeType {
-            if_exists, span, ..
+            if_exists,
+            behavior,
+            span,
+            ..
         }
         | DdlStatement::DropEdgeType {
-            if_exists, span, ..
+            if_exists,
+            behavior,
+            span,
+            ..
         } => {
             type_ddl(*span, uses);
             if *if_exists {
                 record_feature(uses, FeatureId::GC03, *span);
             }
+            // GQL Flagger (clause 24.6): CASCADE is a selene-db impl-defined
+            // addition, not ISO GQL, so it must flag on every use. RESTRICT and
+            // the default carry only the existing type-DDL flags.
+            if matches!(behavior, DropBehavior::Cascade) {
+                record_feature(uses, FeatureId::IM_DROP_CASCADE, *span);
+            }
         }
         DdlStatement::CreateIndex { span, .. } | DdlStatement::DropIndex { span, .. } => {
             record_feature(uses, FeatureId::IM_INDEX_DDL, *span);
+        }
+        // GQL Flagger (clause 24.6): TRUNCATE is a selene-db impl-defined
+        // addition, not ISO GQL, so it must flag on every use.
+        DdlStatement::TruncateNodeType { span, .. }
+        | DdlStatement::TruncateEdgeType { span, .. } => {
+            record_feature(uses, FeatureId::IM_TRUNCATE, *span);
         }
         DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
             type_ddl(*span, uses);
@@ -110,11 +132,6 @@ fn property_constraint(constraint: &TypePropertyConstraint, uses: &mut Vec<Featu
         TypePropertyConstraint::NotNull(_)
         | TypePropertyConstraint::Immutable(_)
         | TypePropertyConstraint::Unique(_)
-        | TypePropertyConstraint::Indexed { .. }
-        | TypePropertyConstraint::Searchable(_)
-        | TypePropertyConstraint::Dictionary(_)
-        | TypePropertyConstraint::Fill(_, _)
-        | TypePropertyConstraint::Interval(_, _)
-        | TypePropertyConstraint::Encoding(_, _) => {}
+        | TypePropertyConstraint::Indexed { .. } => {}
     }
 }

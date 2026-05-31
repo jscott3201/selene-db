@@ -192,7 +192,7 @@ fn call_subquery_rejects_write_inside_body() {
         vec![exec_common::istr("mutate")],
         Vec::new(),
         Vec::new(),
-        ProcedureMutability::GraphWrite,
+        ProcedureMutability::SchemaWrite,
     );
 
     assert_status_with_registry(

@@ -15,6 +15,8 @@ fn node_property_rejects_relabel_bypass_at_commit() {
                     required: true,
                     default: None,
                     immutable: true,
+
+                    record_field_types: None,
                 }],
                 validation_mode: ValidationMode::Strict,
             },
@@ -28,6 +30,8 @@ fn node_property_rejects_relabel_bypass_at_commit() {
                     required: true,
                     default: None,
                     immutable: false,
+
+                    record_field_types: None,
                 }],
                 validation_mode: ValidationMode::Strict,
             },
@@ -121,6 +125,8 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
                 required: true,
                 default: None,
                 immutable: true,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],

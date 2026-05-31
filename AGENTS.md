@@ -10,9 +10,9 @@ The drift-prone status surface (current milestone, last-merged BRIEF, in-flight 
 
 ## Mission
 
-`selene-db` is a strict ISO/IEC 39075:2024 GQL property graph engine, designed greenfield to keep the core small and high-performance and to move every non-graph capability (time-series, vectors, RDF, GraphRAG, etc.) into a clean extension/module system.
+`selene-db` is a strict ISO/IEC 39075:2024 GQL property graph engine, designed greenfield to be a **single native graph engine**: one cohesive, high-performance core with graph algorithms inlined as a first-class mandatory crate. There is **no extension/procedure-pack system**. Non-graph capabilities (time-series, vectors, RDF, GraphRAG, etc.) are externalized to **separate dedicated projects**, not in-tree extensions.
 
-This is a **marathon, not a sprint**. No shortcuts. Every decision optimizes for correctness, performance, and a stable extension contract — even when that means more work today.
+This is a **marathon, not a sprint**. No shortcuts. Every decision optimizes for correctness, performance, and a cohesive native engine — even when that means more work today.
 
 v1.0.0 shipped 2026-05-16 (tag `v1.0.0`). Post-1.0 work is tracked under explicit release-scope documents in `_design/`.
 
@@ -35,19 +35,20 @@ Error codes are GQLSTATUS (§23.1 Table 8), **never** SQLSTATE. Mutation/graph-t
 
 ## Hard rules
 
-1. **Strict ISO GQL compliance.** Anything not in the spec lives in extensions or impl-defined hooks. Never extend the GQL grammar itself.
+1. **Strict ISO GQL compliance.** Anything not in the spec lives in impl-defined hooks (e.g. `CALL` over native procedures per IW010). Never extend the GQL grammar itself.
 2. **No shortcuts.** No "phase X scaffold," no placeholder framing, no TODO-it-later code. Documents describe the layer the type ships, not the order of sprints.
 3. **`#![forbid(unsafe_code)]` workspace-wide.** Bounded RFC-specified surfaces may be exceptions, with justification in `// Why:` comments.
 4. **`missing_docs = "deny"` workspace-wide.** Every `pub` item carries a rustdoc with intent, invariants, or non-obvious behavior. Dead surfaces get demoted to `pub(crate)`, not stubbed.
 5. **File-size cap: 700 LOC.** Refactor or split before approaching the cap. Enforced by `.github/scripts/check-file-size.sh`. **This is the only LOC gate.**
-6. **Per-crate LOC guidance (NOT merge-gating):** rough budgets are `selene-core` ~3K; `selene-graph` ~8K; `selene-gql` ~35–45K; `selene-persist` ~5K; `selene-pack` ~10K; `selene-algorithms` ~5K; `selene-testing` ~2K. Structural hints for *when to split into a new module/extension crate*; not acceptance bars.
+6. **Per-crate LOC guidance (NOT merge-gating):** rough budgets are `selene-core` ~3K; `selene-graph` ~8K; `selene-gql` ~35–45K; `selene-persist` ~5K; `selene-algorithms` ~5K; `selene-testing` ~2K. Structural hints for *when to split into a new module*; not acceptance bars.
 7. **rustls-only TLS posture.** No native-tls, no openssl-sys. Enforced in `deny.toml`.
 8. **Dual MIT OR Apache-2.0 license.** Permissive transitive license allow-list per `deny.toml` (with one explicit `MPL-2.0` exception for `imbl`, see D7).
 9. **Latest stable Rust.** Pinned in `rust-toolchain.toml` (currently 1.95.0). Latest published deps with strong adoption signals.
 10. **Never hand-roll crypto / TLS / async runtime / serialization primitives.**
 11. **Every new I/O surface routes through a single mutation/auth funnel — enforced by types.** No "this new endpoint forgot to go through the funnel" class of bug.
-12. **GQL is the sole query and mutation interface.** No SQL/Cypher/SPARQL grammar in the engine; if needed, ship as extensions that translate to GQL or call procedures.
-13. **Attribution.** Donor codebases (SeleneDB, AetherDB, aether-db, rusty-bacnet) are the user's own work and need no per-line attribution. Third-party code (crates, blog posts, vendored snippets) does:
+12. **GQL is the sole query and mutation interface.** No SQL/Cypher/SPARQL grammar in the engine.
+13. **Single native engine — no extensions, no procedure-pack system.** Graph algorithms are inlined as the mandatory `selene-algorithms` crate and exposed both as a native Rust API and via the one frozen `BuiltinProcedureRegistry` (`CALL algo.*` / `CALL selene.*`). There is no loadable-pack apparatus, manifest validator, or activation lifecycle. Non-graph capabilities (vectors, time-series, RDF, GraphRAG) are externalized to separate dedicated projects, never in-tree extensions.
+14. **Attribution.** Donor codebases (SeleneDB, AetherDB, aether-db, rusty-bacnet) are the user's own work and need no per-line attribution. Third-party code (crates, blog posts, vendored snippets) does:
     - `NOTICE` — Apache-2.0-style notice naming third-party copyright holders for bundled/adapted code.
     - `THIRDPARTY.md` — auto-generated from `Cargo.lock` via `cargo-about`; CI-gated against drift. Regen on every version bump or dep change.
     - **Per-file attribution** for non-trivial adapted third-party code: `// Adapted from <upstream>@<version-or-commit> (<SPDX>) — <brief note>`.
@@ -55,87 +56,84 @@ Error codes are GQLSTATUS (§23.1 Table 8), **never** SQLSTATE. Mutation/graph-t
 
 ## Forward-looking principles (from donor archaeology)
 
-- **Make the extension boundary first-class on day one.** SeleneDB's `Procedure::execute(...hot_tier: Option<&HotTier>...)` was the most damaging coupling — every procedure carried a TS reference because the trait was designed when TS was first-class. The fix is **per-tier `Context` types + per-tier registries** (D17).
-- **Refuse to put auxiliary subsystems inside core.** HNSW lived inside `selene-graph` and that's why "core" grew to 19 KLOC. Vectors, time-series, RDF, GraphRAG all live as extensions (D5).
+- **Single native engine — no extensions, no procedure-pack system.** selene-db is one cohesive graph engine; graph algorithms are inlined as the mandatory `selene-algorithms` crate, and `CALL algo.*` binds directly over its native Rust API through the one frozen `BuiltinProcedureRegistry`. There is no loadable-pack apparatus, no manifest validation, no typestate activation lifecycle. Non-graph capabilities live in separate dedicated projects.
+- **Keep clean per-tier dispatch contexts.** SeleneDB's `Procedure::execute(...hot_tier: Option<&HotTier>...)` was the most damaging coupling — every procedure carried a TS reference because the trait was designed when TS was first-class. The fix is **per-tier `Context` types** (D17): even with a single native registry, the plan/execute seam keeps `GraphContext` / `MutationContext` / `ProcedureContext` distinct so a read-only built-in cannot re-enter the write funnel.
+- **Refuse to put auxiliary subsystems inside core.** HNSW lived inside `selene-graph` and that's why "core" grew to 19 KLOC. The algorithms ≠ storage boundary is preserved: `selene-algorithms` is its own crate (`selene-graph` stays storage-only). Vectors, time-series, RDF, GraphRAG are externalized to separate projects (D5).
 - **Two-stage validation with explicit coverage struct** (the aether-db pattern). Make "what we check today" vs "what the spec demands" a programmatic value, not a comment.
-- **Typestate-sealed registry transitions + atomic graph commit + post-commit audit.** Audit lag is recoverable; fictional audit is not.
+- **Atomic graph commit + post-commit audit.** Every write routes through the one `Mutator` funnel; audit lag is recoverable, fictional audit is not. The durable `audit.log` substrate (D24) stays for first-party engine events.
 
 ## Crate map
 
-v1.0 mandatory (every consumer pulls these), with dependency direction:
+All crates are mandatory — there are no opt-in extension crates. Dependency direction is linear (`core → graph → algorithms → gql`; `selene-algorithms` never imports `selene-gql`):
 
 | Crate | Depends on | Owns |
 |---|---|---|
-| `selene-core` | none | Foundation types: `Value` (4 mandatory ISO types + `Value::Extended` + `Value::ExternalString(Arc<str>)` per D20), `IStr`, `PropertyMap`, `LabelSet`, schema types, `Codec`, `Origin`, `Changeset` (includes `SchemaChange::ProcedurePackLifecycle { event: PackLifecycleEvent }` for D18 audit). |
-| `selene-graph` | core | In-memory property graph: ArcSwap+RwLock+imbl, RoaringBitmap label index, TypedIndex, `IndexProvider` trait, `Mutator` write funnel, `GraphTypeDef` runtime binding. |
-| `selene-persist` | core | WAL (`SLDB` magic) + snapshot (`SLSN` TLV-tagged sections) + recovery. **Never sees `Graph`** — takes `&[Change]`, returns `RecoveryResult`. |
-| `selene-gql` | core, graph | ISO GQL parser (pest), AST, semantic analyzer, planner, optimizer, executor, `ProcedureRegistry` trait. |
-| `selene-pack` | core, graph, gql, persist | Procedure-pack registry, manifest validator (JSON Schema 2020-12 gates), typestate-sealed activation state machine, atomic mutation-funnel audit (`GraphCommitSink`), canonical blake3 content_hash, 4 platform built-ins. |
-| `selene-algorithms` | core, graph | Graph algorithms: `GraphProjection` + `ProjectionCatalog` foundation + 15 public algorithm surfaces (structural / pathfinding / centrality / community) + D21 snapshot harness. Independent of GQL. |
-| `selene-testing` | core, graph | Test fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs (e.g., `pack_corpus` per D21). Consumed via `[dev-dependencies]` only. |
+| `selene-core` | none | Foundation types: `Value` (4 mandatory ISO types + `Value::Extended` + `Value::ExternalString(Arc<str>)` per D20), `IStr`, `PropertyMap`, `LabelSet`, schema types, `Codec`, `Origin`, `Changeset`. |
+| `selene-graph` | core | In-memory property graph: ArcSwap+RwLock+imbl, RoaringBitmap label index, TypedIndex, `IndexProvider`/`DurableProvider`/`RecoveryProvider` (CoreProvider), `Mutator` write funnel, `GraphTypeDef` runtime binding, `LiveIdSet`/`CompactionReport`/`compact_core` (CORE-internal densify compaction). |
+| `selene-persist` | core | WAL (`SLDB` magic) + snapshot (`SLSN` TLV-tagged sections) + recovery + `audit.log` (`SLAU`, D24). **Never sees `Graph`** — takes `&[Change]`, returns `RecoveryResult`. |
+| `selene-algorithms` | core, graph | Graph algorithms: `GraphProjection` + `ProjectionCatalog` foundation + 19 public algorithm surfaces (structural / pathfinding / centrality / community) + the **native Rust API** (free functions + the `GraphAlgorithms` Rust extension trait — a methods-on-graph convenience, not a loadable extension — with the 1024-thread `Parallelism` cap) + D21 snapshot harness. Independent of GQL. |
+| `selene-gql` | core, graph, algorithms | ISO GQL parser (pest), AST, semantic analyzer, planner, optimizer, executor, the `ProcedureRegistry` trait (D16), and its sole frozen production impl `BuiltinProcedureRegistry` — 5 platform built-ins (`selene.{health,feature_status,verify,create_index,drop_index}`) + 19 `algo.*` procedures binding `CALL algo.*` directly over the native algorithms API. |
+| `selene-testing` | core, graph (+ algorithms for fixtures) | Test fixtures, synthetic graph generators, pure-mirror snapshot-harness DSLs (per D21). Consumed via `[dev-dependencies]` only. |
 
-Opt-in extension crates:
-
-| Crate | Depends on | Owns |
-|---|---|---|
-| `selene-vector` | core, graph | HNSW vector index provider (`VECT` with sub-tags `GRPH` / `VECS` / `QUNT`), scalar distance kernels, HNSW insert + search + RoaringBitmap pre-filter, SQ8 + PQ + OPQ quantization (asymmetric ADC), IVF-PQ provider (`IVFP`). |
-| `selene-vector-pack` | core, graph, gql, pack, vector | Procedure-pack surface for HNSW (`vector.search` adapter, `vector_pack_corpus` mirror). Bridges selene-vector into GQL CALL via D17 per-tier contexts. |
-| `selene-algorithms-pack` | core, graph, gql, pack, algorithms | Procedure-pack surface for graph algorithms (`algo.projection_*`, `algo.pagerank`, `algo.wcc`, `algo.dijkstra`, `algo.louvain`, etc.). |
-
-Future opt-in extension crates: `selene-timeseries`, `selene-rdf`, `selene-graphrag`, `selene-text` / `selene-text-pack` (locked in for v1.2 — Tantivy-backed full-text). **No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`.
+**No umbrella crate.** Crate boundaries are enforced by code review and `cargo-deny`. Non-graph capabilities (vectors, time-series, RDF, GraphRAG) are separate dedicated projects, not in-tree crates.
 
 ## Decision log
 
-All v1.0 architecture is settled. D1–D19 are foundational; D20–D21 and D25 record load-bearing structural patterns established after the v1.0 foundation. Fields named in a row reflect the *current* shape after any amendments.
+All v1.0 architecture is settled. D1–D19 are foundational; D20–D26 record load-bearing structural patterns (and, post-pack-teardown, the withdrawal of D23/D25) established after the v1.0 foundation. Fields named in a row reflect the *current* shape after any amendments.
 
 | ID | Decision | Canonical home |
 |---|---|---|
 | D1 | v1.0 = embeddable library only (no server, no transport, no auth, no MCP) | `_spec/01` §4 |
 | D2 | Conformance: minimum + ~30–40 parser-reachable optional features | `_spec/01` §5 |
 | D3 | Schema: both GG01 (open) and GG02 (closed); per-graph choice | `_spec/02` §6 |
-| D4 | Procedure-pack extension model + feature-gated workspace modules | `_spec/05` §3, §5 |
-| D5 | Vector via `Value::Extended`; HNSW lives in `selene-vector` | `_spec/02` §3, `_spec/06` §3 |
+| D4 | ~~Procedure-pack extension model~~ → **superseded (pack teardown, 2026-05-30):** the loadable procedure-pack model (manifest validation, typestate activation lifecycle, `ProcedurePackRegistry`, external graph/mutation procedure traits) is **removed**. selene-db is a single native engine: graph algorithms are inlined as the mandatory `selene-algorithms` crate, and `CALL` binds over the one frozen native `BuiltinProcedureRegistry` (see D16). No third-party loadable extensions; non-graph capabilities live in separate dedicated projects. | `_spec/05` §3, §5 |
+| D5 | Vector via `Value::Extended`; externalized to a separate dedicated project in the 2026-05-30 consolidation | `_spec/02` §3, `_spec/06` §3 |
 | D6 | WAL+snapshot from day one in `selene-persist` | `_spec/04` |
 | D7 | Concurrency: `ArcSwap` + `parking_lot::RwLock` + `imbl` CoW; `imbl` MPL-2.0 exception accepted | `_spec/03` §4 |
 | D8 | Multi-crate, no umbrella; linear dep direction | this file (Crate map), `_spec/03` §8 |
 | D9 | Workspace dependency choices (imbl, rkyv, postcard, blake3, jiff, …) | `_spec/09` §3 |
 | D10 | Transaction isolation: single graph write-lock + lock-free reads (strict-serializable) | `_spec/03` §6 |
-| D11 | ID allocation: aborted-tx IDs become permanent holes | `_spec/02` §4, `_spec/03` §6 |
+| D11 | ID allocation: aborted-tx IDs become permanent holes. **Amended (BRIEF-Item-4a / D22):** *external* `NodeId`/`EdgeId` (monotonic `u64`) stay permanent & never-reused (an aborted-tx id is still a permanent hole); the *internal* `RowIndex(u32)` is decoupled from the id (reads resolve via id↔row maps, never `id == row+1`) so 4b/4c compaction can remap it. After recovery an aborted-tx hole id resolves `NotFound` (was `NotAlive`) — a live-vs-recovered consistency fix. | `_spec/02` §4, `_spec/03` §6; BRIEF-Item-4a |
 | D12 | Audit: opaque caller-supplied principal byte-slot in WAL header | `_spec/04` §3 |
 | D13 | Snapshot section tag: 8-byte composite (provider + sub-tag); 24-byte row | `_spec/04` §4 |
-| D14 | Snapshot serialization: `rkyv` archive over sorted-vec intermediates | `_spec/04` §4 |
-| D15 | Recovery: two-step (snapshot apply → WAL replay); `RecoveryProvider` lives in `selene-persist`, `IndexProvider` lives in `selene-graph`; both use `&self` receivers | `_spec/06` §3, §12 |
-| D16 | `ProcedureRegistry` trait owned by `selene-gql`; `lookup` takes `&[IStr]`; embedder injects `&dyn ProcedureRegistry` | `_spec/08` §7 |
+| D14 | Snapshot serialization: `rkyv` archive over per-section `Vec<(K, Row)>`. **Amended (BRIEF-Item-4a / STEP 9):** `CORE/NODE` & `CORE/EDGE` are now **positional** — each row stores its explicit external `NodeId`/`EdgeId` (`*Id::TOMBSTONE` for aborted-tx holes), recovery places rows by section position (not `id-1`), and id-uniqueness-excluding-tombstone replaces the sorted-by-id requirement; `CORE/SCMA`/`CORE/GTYP` stay sorted-unique. `SNAPSHOT_VERSION_MINOR` bumped 0→1 = clean break (pre-STEP-9 snapshots rejected with `UnsupportedVersion`; internal-id remap headers + dual decoder for pre-compaction snapshots deferred to 4c). **Amended (JSON/L1c-d):** `CORE/GTYP` collapsed to a single `GTYP_VERSION = 1` (clean greenfield break — legacy V1/V2/V3 magic decoders removed; pre-existing `0xB6`/`0xB7` GTYP snapshots rejected with `ProviderError`); `PropertyTypeDef` gains `record_field_types: Option<RecordFieldTypes>`. `SNAPSHOT_VERSION_MINOR` is **unchanged** — the GTYP version lives inside the `b"GTYP"` section payload, independent of the SLSN container version. | `_spec/04` §4; BRIEF-Item-4a; JSON/L1c-d |
+| D15 | Recovery: three-step (**MANIFEST read** → snapshot apply → WAL replay) — the `SLMF` epoch descriptor is authoritative (names the live snapshot + WAL floor); pre-MANIFEST directories fall back to the legacy two-step path. `RecoveryProvider` lives in `selene-persist`, `IndexProvider` lives in `selene-graph`; both use `&self` receivers | `_spec/06` §3, §12; BRIEF-148 |
+| D16 | `ProcedureRegistry` trait owned by `selene-gql`; `lookup` takes `&[IStr]`; it is the plan/execute seam (planner/executor + test registries dispatch through `&dyn ProcedureRegistry`). **Amended (pack teardown, 2026-05-30):** the trait is **kept** as load-bearing architecture but now has exactly **one frozen production impl** — the concrete native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), which registers the 5 platform built-ins + 19 `algo.*` procedures (calling the native `selene-algorithms` API directly, no `ExternalGraphProcedure` indirection). `registry_version()` is a constant `0` (frozen at construction) so the `CallPlanKey` cache stays stable. The injectable `&dyn` seam is preserved for the test harness, not for third-party packs. | `_spec/08` §7 |
 | D17 | Procedure tiers: per-tier concrete `Context` structs + per-tier dyn-compatible `Procedure` traits | `_spec/05` §3 |
-| D18 | Pack lifecycle audit: WAL-only via the same mutation funnel; no parallel ledger | `_spec/05` §5 |
-| D19 | GG02 catalog: per-graph immutable `bound_type: Option<Arc<GraphTypeDef>>` runtime binding, persisted via `CORE/GTYP` | `_spec/02` §6, `_spec/03` §3 |
+| D18 | ~~Pack lifecycle audit via the mutation funnel~~ → **superseded (pack teardown, 2026-05-30):** with the procedure-pack model removed (D4), pack-lifecycle audit no longer exists. `PackLifecycleEvent`, `SchemaChange::ProcedurePackLifecycle`, the 3 legacy `ProcedurePack{Activated,Deprecated,Disabled}` variants, `GraphCommitSink`, and the `pack_history` built-in are all **deleted** (greenfield postcard break — zero shipped consumers). The dedicated `audit.log` substrate (D24) **stays** as the durable channel for future first-party engine events. | `_spec/05` §5; `_design/deletion-reclamation-audit.md` Item 7 |
+| D19 | GG02 catalog: per-graph immutable `bound_type: Option<Arc<GraphTypeDef>>` runtime binding, persisted via `CORE/GTYP`. **Amended (JSON/L1c-d):** the catalog now persists closed/typed **and** open RECORD property types on **both** type-models — rkyv `RecordFieldTypes` in `CORE/GTYP` (authoritative) + serde `RecordFieldStructure` on the WAL `PropertyDef.record_fields`. `RecordFieldStructure` is `enum { Open, Closed(Vec<..>) }`; with the `Option` it encodes three durable states (`None` = not-record / `Some(Open)` = bare RECORD / `Some(Closed)` = typed). The open marker is **load-bearing** — without it WAL replay degrades a bare RECORD to `Null`. `ValueType.record` stays dormant (structural-inline, O4). GV46/47/48 are SUPPORTED; a closed-record `CAST` field-mismatch raises new GQLSTATUS **22G0U** (commit-time GG02 record violations use the existing G2000 class). | `_spec/02` §6, `_spec/03` §3; JSON/L1c-d |
 | D20 | `Value::ExternalString(Arc<str>)` is the canonical surface for engine-produced strings that must NOT enter the global `IStr` pool. `PartialEq` is variant-strict; cross-variant string equality lives at the executor layer (`selene-gql::runtime::value_compare`). | `_spec/15` E74 |
 | D21 | Snapshot harness pattern: pure-mirror DSL in `selene-testing` (zero production-crate imports), renderer + integration test + golden `.snap` files in the target crate, `test-harness` feature + `[[test]] required-features` gate, drift-detection tests deriving coverage from observed execution. Dep direction is `target -> selene-testing` as dev-dep. | `_spec/13`, `_spec/14`, `_spec/15` E81–E84 |
-| D25 | `ChangeSubscriber` trait: runtime and recovery fan-out of `Change` events to extension providers via per-provider `ChangeKindSet` filter. Vector providers use it to tombstone derived vector state when graph nodes are deleted. Forward-compatible with all extension providers. | `_design/deletion-reclamation-audit.md` Item 1 |
+| D25 | ~~`ChangeSubscriber` trait~~ → **removed (pack teardown, 2026-05-30):** the runtime + recovery `Change`-event fan-out (trait, `SharedGraph.subscribers`, `with_change_subscriber`, `notify_subscribers`, the recovery `RecoverableSubscriberGroup` fan-out + subscriber-tag validation) had **zero** production impls and became fully consumerless after vector + pack removal. Deleted as dead scaffolding (no-halfway). The `IndexProvider`/`DurableProvider`/`RecoveryProvider` providers (the real D8/D15 plumbing) are untouched. | `_design/deletion-reclamation-audit.md` Item 1 |
+| D26 | Snapshot + WAL-archive retention: typed `RetentionPolicy { keep_n_snapshots, keep_n_wal_archives, max_total_size_bytes: Option<u64>, time_based: Option<Duration> }` (embedder **config**, deliberately *not* persisted in the MANIFEST — avoids a divergent second source of truth) + `selene_persist::prune(dir, policy)` / `WalWriter::prune`. Prune is MANIFEST-atomic (rewrite-then-delete; the live snapshot + active WAL are never deletable regardless of policy) and reclaims superseded crash-orphans. The four constraints are conjunctive. Defaults: keep 2 snapshots / 4 archives, no size/time cap. | `_design/deletion-reclamation-audit.md` Item 5 |
+| D24 | Dedicated append-only `audit.log` (`SLAU`) for engine-owned events, with retention independent of the WAL/snapshot lineage. **Surgical scope (BRIEF-Item-7):** records are generic `kind`-tagged opaque payloads (selene-persist stays below lifecycle semantics + clock — the caller stamps `recorded_at_unix_nanos`). The D12 per-commit principal **stays in the WAL entry header** (no format break, no hot-path write-amplification) — full principal relocation was deliberately *not* taken. `AuditLog` (open/append/read_all/prune, torn-tail-truncating scan) + `AuditRetentionPolicy { keep_n_events, max_age }` (atomic read-filter-rewrite compaction; default unbounded). Mirrored through the graph funnel (`DurableState::with_audit_log`, `SharedGraphBuilder::with_audit_log`), WAL-first/audit-after; recovery reattaches by file presence. **Amended (pack teardown, 2026-05-30):** the original pack-lifecycle event payload (Seam D) is gone with the pack model (D18); the substrate is **retained** as the durable, load-bearing channel reserved for future first-party engine events. | `_design/deletion-reclamation-audit.md` Item 7 |
+| D22 | `NodeId`/`EdgeId` split into external stable **monotonic `NodeId(u64)`/`EdgeId(u64)`** (never-reused counter allocated under the D10 write lock; `*Id::TOMBSTONE == 0`, so id 0 is unallocatable and a safe hole sentinel) + internal **`RowIndex(u32)`** (dense row-column position, remappable by 4b/4c compaction). Reads resolve external↔row through `node_id_to_row`/`edge_id_to_row` maps + a `row_to_id` reverse column — never `id±1` arithmetic (enforced by `.github/scripts/check-no-rowid-arith.sh`, CI + pre-commit). PropertyMap/LabelSet columns are row-indexed. **Edges + adjacency still key endpoints by external `NodeId`** — the internal-`RowIndex` swap there is deferred to 4b. Snapshot persists explicit ids + positional recovery (see D14). | `_design/deletion-reclamation-audit.md` Item 4; BRIEF-Item-4a (PR #190) |
 
-## Forward decisions — v1.x reclamation cycle (planned, not yet shipped)
+## Forward decisions — v1.x reclamation cycle (shipped — historical record)
 
-Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclamation-audit.md` — five parallel research passes across in-memory graph / WAL / snapshot/recovery / vector / GQL), the project commits to a long-term-correctness reclamation cycle. Standing top priority going forward (see memory `project_deletion_reclamation_cycle`). The audit doc is the canonical reference; Stage 0 dispatches for any of the 14 brief-shaped items below MUST cite that doc + ground against current HEAD before drafting.
+Following the 2026-05-26 deletion + reclamation audit (`_design/deletion-reclamation-audit.md` — five parallel research passes across in-memory graph / WAL / snapshot/recovery / GQL), this drove a long-term-correctness reclamation cycle that has now **shipped** (13/14 brief items merged; 4d vector-compactor moot post-vector-removal; see memory `project_deletion_reclamation_cycle`). The audit doc is the canonical reference; Stage 0 dispatches for any of the 14 brief-shaped items below MUST cite that doc + ground against current HEAD before drafting.
 
 **D-record amendments planned** (land in the indicated brief; do not pre-update D1–D21 rows until shipped):
 
 | Existing D | Amendment | Lands in |
 |---|---|---|
-| **D11** (no ID reuse) | Relaxed: *external* `NodeId` (UUID-shaped, user-stable) remains permanent; *internal* row index `u32` becomes remappable across compaction epochs. | BRIEF-Item-4a |
-| **D14** (rkyv snapshot archive) | Archive format grows internal-id remap headers + dual decoder for pre-compaction snapshots. | BRIEF-Item-4a + 4c |
-| **D15** (two-step recovery) | Becomes three-step: **MANIFEST read** → snapshot apply → WAL replay. Per-step crash safety in MANIFEST. | BRIEF-Item-2 |
-| **D18** (pack lifecycle WAL-only) | Revised: lifecycle events written to a dedicated `audit.log` with independent retention; D12 principal slot also relocates from WAL header to audit-log event. WAL stays change-only. | BRIEF-Item-7 |
+| ~~**D11** (no ID reuse)~~ | ✅ **Shipped (BRIEF-Item-4a), foundation:** *external* `NodeId`/`EdgeId` remain permanent & never-reused; the *internal* `RowIndex(u32)` is now decoupled (reads via id↔row maps, no `id==row+1`) so 4b/4c compaction can remap it. Actual cross-epoch row remapping lands in 4b/4c. Decision-log D11 row amended above. | BRIEF-Item-4a |
+| 🟡 **D14** (rkyv snapshot archive) | **Partially shipped (BRIEF-Item-4a / STEP 9):** explicit-id positional `CORE/NODE`+`CORE/EDGE` encode + positional recovery + `SNAPSHOT_VERSION_MINOR` 0→1 clean break (pre-split snapshots rejected). **Remaining for 4c:** internal-id remap headers + dual decoder for pre-compaction snapshots. Decision-log D14 row amended above. | BRIEF-Item-4a + 4c |
+| ~~**D15** (two-step recovery)~~ | ✅ **Shipped (BRIEF-148):** three-step **MANIFEST read** → snapshot apply → WAL replay; the MANIFEST commit-point makes multi-phase rotate crash-safe + adds parent-dir fsync. Decision-log D15 row updated above. | BRIEF-Item-2 / BRIEF-148 |
+| ~~**D18** (pack lifecycle WAL-only)~~ | ✅ **Shipped (BRIEF-Item-7), surgical scope:** lifecycle events are mirrored to a dedicated `audit.log` with independent retention (Seam D fixed) *and remain in the WAL* (one funnel, WAL-first/audit-after). The D12 principal slot was **kept in the WAL entry header** — full principal relocation was deliberately not taken (no format break, no hot-path cost). Decision-log D18 row updated + D24 added above. | BRIEF-Item-7 |
 
 **New D-records planned** (do not add rows until shipped):
 
 | Planned ID | Decision | Lands in |
 |---|---|---|
-| **D22** | `NodeId` (and `EdgeId`) split into external stable `NodeId(Uuid)` + internal `RowIndex(u32)`; PropertyMap/LabelSet keyed by `RowIndex`; external `NodeId` is the persistence-stable surface. | BRIEF-Item-4a |
-| **D23** | `StorageCompactor` trait: every storage provider (selene-graph, selene-vector, future selene-timeseries / selene-rdf) implements `compact_for_snapshot(live_ids) -> CompactionResult`. Snapshot publication runs all compactors atomically under the MANIFEST epoch. Cross-storage, forward-compatible with all extensions. | BRIEF-Item-4b + 4d |
-| **D24** | Separate `audit.log` file for D12 principal + D18 lifecycle + future user-action audit. Same mutation funnel writes both WAL + audit log atomically; independent `RetentionPolicy`. | BRIEF-Item-7 |
-| **D26** | Snapshot+WAL+audit retention policy: typed `RetentionPolicy { keep_n_snapshots, keep_n_wal_archives, max_total_size_bytes, time_based }` with MANIFEST-atomic prune. Defaults: `keep_n_snapshots=2`, `keep_n_wal_archives=4`, no size/time limit. | BRIEF-Item-5 |
+| ~~**D22**~~ | ✅ **Shipped (BRIEF-Item-4a, PR #190):** external monotonic `NodeId(u64)`/`EdgeId(u64)` + internal `RowIndex(u32)`, `node_id_to_row`/`edge_id_to_row` maps + `row_to_id` column, all reads decoupled from `id±1` (grep gate), explicit-id positional snapshot encode + recovery. Edge/adjacency `RowIndex` swap deferred to 4b. Decision-log D22 row added above. | BRIEF-Item-4a |
+| ~~**D23**~~ | ⛔ **Withdrawn (pack teardown, 2026-05-30):** the `StorageCompactor` cross-storage fan-out trait was never wired (zero impls anywhere) and was consumerless after the extension model was removed. The trait + its never-wired downstream fan-out scaffolding are **deleted**. The CORE-internal densify compaction (`LiveIdSet`/`CompactionReport`/`compact_core`, shipped in 4c) is **kept** — it is the real, in-use compaction mechanism. | BRIEF-Item-4b (withdrawn) |
+| ~~**D24**~~ | ✅ **Shipped (BRIEF-Item-7):** separate append-only `audit.log` (`SLAU`) for engine-owned events (pack lifecycle now + framework for future user-action audit) with independent `AuditRetentionPolicy`; same funnel writes WAL + audit (WAL-first/audit-after). Scoped down from the original plan: the D12 principal stays in the WAL header (not relocated). Decision-log D24 row added above. | BRIEF-Item-7 |
+| ~~**D26**~~ | ✅ **Shipped (BRIEF-Item-5):** typed `RetentionPolicy` (config, not persisted) + MANIFEST-atomic `prune`; live snapshot + active WAL never deletable; conjunctive count/size/time constraints; reclaims crash-orphans. Decision-log D26 row added above. | BRIEF-Item-5 |
 
 Brief sequence (14 work items, 4 tiers) lives in `_design/deletion-reclamation-audit.md`. Release allocation is per `project_deletion_reclamation_cycle` memory.
+
+**Direction shift 2026-05-30 (executed; merged #196 / `34c59aa`):** selene-db has consolidated to a single native graph engine with **no extensions**. The vector store was externalized to a separate dedicated project and the planned full-text/BM25 was dropped entirely (PR `e0f7108`). The pack teardown then **shipped**: `selene-pack` + `selene-algorithms-pack` deleted; `selene-algorithms` promoted to a mandatory first-class crate with a native Rust API (free functions + the `GraphAlgorithms` trait); `selene-gql` gained the sole frozen native `BuiltinProcedureRegistry` (5 platform built-ins + 19 `algo.*` procedures) binding `CALL` over the native API; the consumerless `ChangeSubscriber`/`StorageCompactor` abstractions and the `PackLifecycleEvent`/`ProcedurePackLifecycle` machinery were removed (greenfield postcard break); the `jsonschema`/`schemars`/`papaya` deps were dropped. See the D4/D16/D18/D23/D24/D25 amendments above.
 
 ## Where state lives
 
@@ -181,10 +179,21 @@ scripts/run-benches.sh --profile quick --layer iai
 # cargo bench --workspace
 ```
 
+### CI topology & local hooks (2026-05-28)
+
+Three workflows + local git hooks split the gates by cost so Brief PRs iterate cheaply:
+
+- **`.github/workflows/ci.yml`** — fast gate on **PR → `development`**. *No Rust build*: `fmt`, file-size cap, no-secret scan, bench-invocation lint, and (deps-changed only) `cargo-deny` + THIRDPARTY currency.
+- **`.github/workflows/release.yml`** — full gate on **PR → `main`** (the `development` → `main` release PR): clippy + tests on ubuntu **and** macOS + doctests + `cargo-audit` + a 5-min parser fuzz, on top of the fast checks.
+- **`.github/workflows/nightly.yml`** — schedule + push-to-`main`: advisory-DB drift + 1h fuzz soak.
+- **Local hooks** (`scripts/install-hooks.sh` sets `core.hooksPath=.githooks`): `pre-commit` = fmt + file-size + secrets; `pre-push` = fast `clippy -D warnings` (lib/bin only). The full `nextest` + doctest suite intentionally does **not** run on every push — it runs inside agent workflows and at the `development` → `main` release gate (`release.yml`). Skip with `--no-verify` or `SELENE_SKIP_HOOKS=1`; run `install-hooks.sh` once per clone. rust-analyzer (LSP) is editor-side — enable clippy-on-save.
+
+The `cargo …` block above is the full local set; the pre-push hook runs a fast clippy lint so `development` stays compiling without per-PR CI build minutes, while the full nextest/doctest suite runs at the `development` → `main` release gate (and inside agent workflows before they push).
+
 ## Conventions
 
 - **Commits:** conventional commits (`feat(scope):`, `fix(scope):`, `refactor(scope):`, `chore(scope):`); scope = crate or component.
-- **Branches:** trunk + `feature/*` / `feat/*` / `chore/*` PRs against `main`.
+- **Branches:** `development` is the integration trunk. Brief work — `feature/*` / `feat/*` / `chore/*` → PR → **`development`** (fast checks-only gate). Releases batch `development` → PR → **`main`**, where the full suite runs; release tags cut from `main`. Don't PR Brief work straight to `main`.
 - **Tests with code:** every PR ships extensive tests — units, edge cases, error paths, concurrency for shared state, property tests for invariants. Bar is "would this catch the IStr admission race."
 - **Decisions over guesses:** when blocked, surface the question with discrete options and a recommendation. Don't pre-commit.
 
@@ -203,7 +212,7 @@ The following codebases are the user's, MIT/Apache-licensed, and are donors of d
 |---|---|---|
 | `/Users/justin/Development/SeleneDB/` | Original prototype (~141 KLOC, 13 crates) | Battle-tested core types, pest GQL grammar, ArcSwap+RwLock concurrency, WAL/snapshot shape, RoaringBitmap label indexes. **Cautionary tales:** server bloat, HNSW inside graph crate, GQL→TS coupling, 7 critical authz bugs. |
 | `/Users/justin/Development/AetherDB/` | First fork; cut RDF/TS/CLI/HTTP/MCP/federation/vault/OAuth | First scope-reduction attempt; still kept HNSW in core. |
-| `/Users/justin/Development/AgentAether/aether-db/` | Second, library-only fork (7 crates, ~61 KLOC) | **Most refined extension model in the lineage.** Procedure-pack: JSON manifest, typestate-sealed activation, atomic graph-commit + post-commit audit, native `fn(&Value) -> ProcedureExecutionResult` adapters with JSON Schema gates. |
+| `/Users/justin/Development/AgentAether/aether-db/` | Second, library-only fork (7 crates, ~61 KLOC) | Library-only scope reduction; atomic graph-commit + post-commit audit patterns. Its procedure-pack extension model (JSON manifest, typestate activation, JSON-Schema gates) is **no longer mined** — selene-db removed all extension/pack machinery in the 2026-05-30 consolidation. |
 | `/Users/justin/Development/rusty-bacnet/` | Codec/parser donor (same author, MIT) | Codec patterns; surveyed 2026-05-08. |
 
 Detailed research notes are in agent memory (`project_lessons_from_archaeology.md`, `project_donor_perf_audit.md`).

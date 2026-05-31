@@ -44,6 +44,16 @@ fn return_uuid_literals(count: usize) -> String {
     format!("RETURN {items}")
 }
 
+fn is_typed_record_with_fields(prefix: &str, count: usize) -> String {
+    let fields = (0..count)
+        .map(|index| format!("{prefix}_{index} :: INTEGER"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The operand is an unbound variable: parse-time admission does not resolve bindings,
+    // so each `<prefix>_<n>` RECORD field NAME is interned through the per-parse budget.
+    format!("RETURN x IS TYPED RECORD{{{fields}}}")
+}
+
 #[test]
 fn within_budget_parse_succeeds() {
     let source = return_identifiers(&unique_prefix("within"), LIMIT);
@@ -143,6 +153,34 @@ fn rejects_excessive_type_name_list_nesting() {
         ">".repeat(depth)
     );
     let error = parse(&source).expect_err("over-nested type name rejects");
+    assert!(matches!(
+        error,
+        ParserError::NestingLimitExceeded { limit: 64, .. }
+    ));
+}
+
+#[test]
+fn record_field_names_count_against_budget() {
+    // RECORD type field names are a user-controlled admission surface (the RECORD arm of
+    // build_type_name_with_depth interns each field name via the budget). LIMIT+1 globally
+    // unique field names must exhaust the per-parse budget like any other admission.
+    let source = is_typed_record_with_fields(&unique_prefix("recfield"), LIMIT + 1);
+    let error = parse(&source).expect_err("record field-name admissions count against budget");
+    assert!(matches!(
+        error,
+        ParserError::InternerBudgetExceeded { limit: 8192, .. }
+    ));
+}
+
+#[test]
+fn rejects_excessive_record_type_nesting() {
+    let depth = NESTING_LIMIT + 1;
+    let source = format!(
+        "CREATE NODE TYPE :DeepRecord (v :: {}INTEGER{})",
+        "RECORD{f :: ".repeat(depth),
+        "}".repeat(depth)
+    );
+    let error = parse(&source).expect_err("over-nested record type name rejects");
     assert!(matches!(
         error,
         ParserError::NestingLimitExceeded { limit: 64, .. }

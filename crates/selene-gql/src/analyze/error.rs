@@ -1,4 +1,24 @@
 //! Analyzer diagnostics.
+//!
+//! # `#[diagnostic(code(..))]` prefix taxonomy
+//!
+//! The `code(..)` attribute is the miette/`thiserror` *display* code only; the
+//! authoritative GQLSTATUS for every variant is [`AnalysisError::gqlstatus`]
+//! (ISO/IEC 39075:2024 §23.1 Table 8), which downstream surfaces use. Two
+//! prefixes coexist intentionally:
+//!
+//! - `SLENE_GQL_<status>` — embeds the GQLSTATUS code directly (e.g.
+//!   `SLENE_GQL_42N03` for `UNDEFINED_REFERENCE`). Used by every variant whose
+//!   GQLSTATUS is a single, stable, public code.
+//! - `SLENE_A_0NN` — opaque analyzer-local ordinals (`010`..`018`). Used by the
+//!   nine closed-graph (GG02) static-schema variants
+//!   ([`AnalysisError::SchemaUnknownNodeType`] through
+//!   [`AnalysisError::SchemaRequiredEdgeLabelRemoved`]). These all map to the
+//!   same `GqlStatus::GRAPH_TYPE_VIOLATION` (G2000) class, so embedding the
+//!   status in the display code would make all nine collide on one string; the
+//!   `SLENE_A_*` ordinals keep them distinguishable in diagnostics while
+//!   `gqlstatus()` reports the correct shared G2000 to callers. The ordinals
+//!   are display-only and are *not* a contract — do not parse them.
 
 use selene_core::{IStr, LabelSet, PropertyValueType};
 
@@ -415,11 +435,6 @@ pub enum TypeMismatchContext {
         /// Offending operand side.
         side: Side,
     },
-    /// LIKE predicate.
-    LikePredicate {
-        /// Offending operand side.
-        side: Side,
-    },
     /// Unary numeric negation.
     UnaryNegate,
     /// Unary boolean negation.
@@ -438,11 +453,6 @@ pub enum TypeMismatchContext {
     ListLiteralUnification,
     /// IN-list value unification failed.
     InListUnification,
-    /// BETWEEN operand or bound check failed.
-    BetweenBounds {
-        /// Offending operand side.
-        side: Side,
-    },
     /// Boolean condition clause check failed.
     Condition {
         /// Condition clause kind.
@@ -477,7 +487,6 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::BinaryStringPredicate { op, side } => {
                 write!(f, "{side} operand of string predicate {op:?}")
             }
-            Self::LikePredicate { side } => write!(f, "{side} operand of LIKE predicate"),
             Self::UnaryNegate => f.write_str("operand of unary negate"),
             Self::UnaryNot => f.write_str("operand of unary NOT"),
             Self::IsTypedTarget => f.write_str("IS TYPED target"),
@@ -487,7 +496,6 @@ impl std::fmt::Display for TypeMismatchContext {
             Self::CaseBranchUnification => f.write_str("CASE branch result"),
             Self::ListLiteralUnification => f.write_str("list literal element"),
             Self::InListUnification => f.write_str("IN-list value"),
-            Self::BetweenBounds { side } => write!(f, "{side} operand of BETWEEN"),
             Self::Condition { clause } => write!(f, "{clause} condition"),
             Self::ProcedureArgument {
                 procedure,

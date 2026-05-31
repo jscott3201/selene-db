@@ -9,7 +9,16 @@ use crate::Value;
 /// Closed-graph property value type tags.
 ///
 /// The variant order follows [`Value`]'s canonical durable order, excluding
-/// `Value::Extended`, which is not declarable in v1.0 graph types.
+/// `Value::Extended`, which is not declarable as a closed-graph property type.
+///
+/// The [`Self::List`] and [`Self::Record`] / [`Self::RecordTyped`] tags are
+/// deliberately **structure-blind**: they identify only the container kind, not
+/// the element type of a `LIST<T>` or the field types of a `RECORD{..}`. The
+/// closed-graph validator validates element and field types structurally via
+/// `list_element_type` / `record_field_types` on the graph-type definition (not
+/// through these flat tags), so a `LIST<INT>` column still rejects a
+/// `LIST<STRING>` value. These tags answer "is this a list?", not "is this a
+/// list of the right element type?".
 #[derive(
     Clone,
     Copy,
@@ -82,7 +91,7 @@ impl PropertyValueType {
     /// Return the closed-graph type tag for a value.
     ///
     /// `Value::Extended` returns `None` because extension-owned values are not
-    /// declarable in v1.0 graph types.
+    /// declarable as closed-graph property types.
     #[must_use]
     pub fn of(value: &Value) -> Option<Self> {
         match value {

@@ -5,13 +5,16 @@
 //! are postcard-encoded inside an `Arc<[u8]>` field on each archived row until
 //! every stored `Value` variant has rkyv archivability.
 //!
-//! Compatibility note: older in-tree snapshots wrote these same
-//! `CORE/META|NODE|EDGE|SCMA` sub-tags as postcard payloads. The snapshot
-//! envelope version stays `1` because selene-db has never shipped — see
-//! Spec 04 §4.6 ("never shipped") — and there are no real on-disk graph
-//! instances pre-dating this change. When v1.0 ships, any further format
-//! change to a CORE section bumps the envelope version so old snapshots fail
-//! with `PersistError::UnsupportedVersion` instead of garbled bytes.
+//! Compatibility note: per spec 04 §4.6, any format change to a CORE section
+//! bumps the snapshot envelope version so older snapshots fail with
+//! `PersistError::UnsupportedVersion` instead of being decoded as garbled
+//! bytes. BRIEF-Item-4a STEP 9 exercises this: `CORE/NODE` / `CORE/EDGE` now
+//! persist the explicit external `NodeId` / `EdgeId` per row (read from the
+//! `row_to_id` column) instead of synthesizing `row + 1`, so a future
+//! 4b-compacted snapshot whose ids != row+1 round-trips. That change bumped
+//! `SNAPSHOT_VERSION_MINOR` 0 -> 1 (selene-persist); pre-STEP-9 (minor 0)
+//! snapshots are cleanly rejected — a clean break, not a dual decoder
+//! (deferred to 4c per the D14 amendment).
 //!
 //! `CORE/SCMA` schema rows are stored in memory by [`IStr`] handle order via
 //! [`SchemaKey::Ord`]. Their wire order is canonical lexicographic order by
@@ -29,15 +32,24 @@ use rkyv::{
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
 use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
-use selene_persist::MAX_SECTION_PAYLOAD_BYTES;
 use serde::{Deserialize, Serialize};
 
-use crate::core_provider::{inconsistent, invalid_payload, serialization_failed};
+use crate::core_provider::{inconsistent, invalid_payload};
 use crate::graph::{GraphMeta, SeleneGraph};
 use crate::typed_index::TypedIndexKind;
 
+mod codec;
 mod gtyp;
 
+// Generic section codec plumbing. Sibling child modules (`gtyp`) reach these
+// through the `super::codec::` path directly; this `use` brings the names into
+// scope for the section encoders/decoders in this file.
+use codec::{
+    decode_properties_blob, decode_rkyv, encode_properties_blob, encode_rkyv, validate_ids_unique,
+    validate_sorted_unique,
+};
+// Re-exported to `core_provider` so the cap-boundary unit test can reach it.
+pub(super) use codec::ensure_section_within_cap;
 pub(super) use gtyp::{decode_graph_types, encode_graph_types};
 
 struct ArcBytes;
@@ -230,42 +242,13 @@ pub struct SchemaEntry {
     pub name: Option<IStr>,
 }
 
-/// Legacy v1 `CORE/SCMA` row with no stored index name.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    Serialize,
-)]
-pub(super) struct SchemaEntryV1 {
-    /// Indexable value kind declared at registration time.
-    pub kind: TypedIndexKind,
-}
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Deserialize,
-    Eq,
-    PartialEq,
-    rkyv::Archive,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    Serialize,
-)]
-struct SchemaEntryV2 {
-    kind: TypedIndexKind,
-    name: Option<IStr>,
-}
-
-const SCMA_V2_MAGIC: u8 = 0xA5;
+/// `CORE/SCMA` section format version byte.
+///
+/// Single version per the 2026-05-30 greenfield clean-break directive (no
+/// shipped consumers): the on-disk layout IS the contract. A missing or
+/// mismatched version byte is a hard decode error, never a silent legacy
+/// fall-through — mirrors the `CORE/GTYP` collapse.
+pub(super) const SCMA_VERSION: u8 = 2;
 
 /// Identity for an entry in the composite-property-index snapshot section.
 #[derive(
@@ -348,17 +331,34 @@ pub(super) fn encode_nodes(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             properties: properties.clone(),
             alive: graph.node_store.is_alive(row),
         };
-        rows.push((
-            NodeId::new(row as u64 + 1),
-            NodeArchiveRow::from_runtime(runtime, "CORE/NODE")?,
-        ));
+        // BRIEF-Item-4a STEP 9: persist the EXPLICIT external id from the
+        // row_to_id column rather than synthesizing `row + 1`. Committed rows
+        // (alive or deleted-but-kept under Option B) carry their real `NodeId`;
+        // never-committed aborted-tx hole rows carry `NodeId::TOMBSTONE`, which
+        // recovery skips (-> the id resolves NotFound, matching the live path).
+        // This is the format change the SLSN minor-version bump guards: a future
+        // 4b-compacted snapshot whose ids != row+1 round-trips because recovery
+        // places rows by their stored position, not by `id - 1` arithmetic.
+        let id = graph
+            .node_store
+            .row_to_id
+            .get(row_index)
+            .copied()
+            .ok_or_else(|| {
+                inconsistent(format!("node row_to_id column missing row {row_index}"))
+            })?;
+        rows.push((id, NodeArchiveRow::from_runtime(runtime, "CORE/NODE")?));
     }
     encode_rkyv(&rows, "CORE/NODE")
 }
 
 pub(super) fn decode_nodes(bytes: &[u8]) -> Result<Vec<(NodeId, NodeRow)>, crate::ProviderError> {
     let rows: Vec<(NodeId, NodeArchiveRow)> = decode_rkyv(bytes, "CORE/NODE")?;
-    validate_sorted_unique(&rows, "CORE/NODE")?;
+    // BRIEF-Item-4a STEP 9: rows are no longer guaranteed sorted-ascending by id
+    // (a 4b-compacted snapshot may store ids in any row order) and multiple
+    // aborted-tx hole rows legitimately share `NodeId::TOMBSTONE`. Validate that
+    // every *real* (non-tombstone) id is unique; row order is positional.
+    validate_ids_unique(&rows, NodeId::TOMBSTONE, "CORE/NODE")?;
     rows.into_iter()
         .map(|(id, row)| row.into_runtime("CORE/NODE").map(|row| (id, row)))
         .collect()
@@ -394,24 +394,32 @@ pub(super) fn encode_edges(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             properties: properties.clone(),
             alive: graph.edge_store.is_alive(row),
         };
-        rows.push((
-            EdgeId::new(row as u64 + 1),
-            EdgeArchiveRow::from_runtime(runtime, "CORE/EDGE")?,
-        ));
+        // BRIEF-Item-4a STEP 9: persist the explicit external id from the
+        // row_to_id column (real `EdgeId`, or `EdgeId::TOMBSTONE` for a
+        // never-committed hole row). See `encode_nodes` for the rationale.
+        let id = graph
+            .edge_store
+            .row_to_id
+            .get(row_index)
+            .copied()
+            .ok_or_else(|| {
+                inconsistent(format!("edge row_to_id column missing row {row_index}"))
+            })?;
+        rows.push((id, EdgeArchiveRow::from_runtime(runtime, "CORE/EDGE")?));
     }
     encode_rkyv(&rows, "CORE/EDGE")
 }
 
 pub(super) fn decode_edges(bytes: &[u8]) -> Result<Vec<(EdgeId, EdgeRow)>, crate::ProviderError> {
     let rows: Vec<(EdgeId, EdgeArchiveRow)> = decode_rkyv(bytes, "CORE/EDGE")?;
-    validate_sorted_unique(&rows, "CORE/EDGE")?;
+    validate_ids_unique(&rows, EdgeId::TOMBSTONE, "CORE/EDGE")?;
     rows.into_iter()
         .map(|(id, row)| row.into_runtime("CORE/EDGE").map(|row| (id, row)))
         .collect()
 }
 
 pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
-    let mut rows: Vec<(SchemaKey, SchemaEntryV2)> = graph
+    let mut rows: Vec<(SchemaKey, SchemaEntry)> = graph
         .property_index
         .iter()
         .map(|((label, property), entry)| {
@@ -420,7 +428,7 @@ pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Prov
                     label: *label,
                     property: *property,
                 },
-                SchemaEntryV2 {
+                SchemaEntry {
                     kind: entry.kind(),
                     name: entry.name,
                 },
@@ -429,7 +437,7 @@ pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Prov
         .collect();
     rows.sort_by(schema_wire_cmp);
     let mut payload = Vec::with_capacity(1);
-    payload.push(SCMA_V2_MAGIC);
+    payload.push(SCMA_VERSION);
     payload.extend(encode_rkyv(&rows, "CORE/SCMA")?);
     ensure_section_within_cap("CORE/SCMA", payload.len())?;
     Ok(payload)
@@ -438,46 +446,23 @@ pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Prov
 pub(super) fn decode_schemas(
     bytes: &[u8],
 ) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
-    let mut rows = if bytes.first() == Some(&SCMA_V2_MAGIC) {
-        decode_schema_v2(&bytes[1..]).or_else(|_| decode_schema_v1(bytes))?
-    } else {
-        decode_schema_v1(bytes)?
+    // Single-version clean break (greenfield, no shipped consumers): the leading
+    // version byte must match `SCMA_VERSION`. A missing or mismatched byte is a
+    // hard decode error — there is no legacy decoder to fall back to.
+    let Some((&version, rest)) = bytes.split_first() else {
+        return Err(invalid_payload(
+            "CORE/SCMA section is empty (missing version byte)".to_owned(),
+        ));
     };
+    if version != SCMA_VERSION {
+        return Err(invalid_payload(format!(
+            "CORE/SCMA section version {version} is unsupported (expected {SCMA_VERSION})"
+        )));
+    }
+    let mut rows: Vec<(SchemaKey, SchemaEntry)> = decode_rkyv(rest, "CORE/SCMA")?;
     rows.sort_unstable_by_key(|(key, _)| *key);
     validate_sorted_unique(&rows, "CORE/SCMA")?;
     Ok(rows)
-}
-
-fn decode_schema_v1(bytes: &[u8]) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
-    let rows: Vec<(SchemaKey, SchemaEntryV1)> = decode_rkyv(bytes, "CORE/SCMA")?;
-    Ok(rows
-        .into_iter()
-        .map(|(key, entry)| {
-            (
-                key,
-                SchemaEntry {
-                    kind: entry.kind,
-                    name: None,
-                },
-            )
-        })
-        .collect())
-}
-
-fn decode_schema_v2(bytes: &[u8]) -> Result<Vec<(SchemaKey, SchemaEntry)>, crate::ProviderError> {
-    let rows: Vec<(SchemaKey, SchemaEntryV2)> = decode_rkyv(bytes, "CORE/SCMA")?;
-    Ok(rows
-        .into_iter()
-        .map(|(key, entry)| {
-            (
-                key,
-                SchemaEntry {
-                    kind: entry.kind,
-                    name: entry.name,
-                },
-            )
-        })
-        .collect())
 }
 
 fn schema_wire_cmp<V>(lhs: &(SchemaKey, V), rhs: &(SchemaKey, V)) -> std::cmp::Ordering {
@@ -566,88 +551,6 @@ fn validate_composite_schema_rows(
             return Err(invalid_payload(format!(
                 "CORE/CPIX rows contain duplicate composite registration for label {}",
                 key.label
-            )));
-        }
-    }
-    Ok(())
-}
-
-pub(super) fn ensure_section_within_cap(
-    section: &'static str,
-    len: usize,
-) -> Result<(), crate::ProviderError> {
-    if len > MAX_SECTION_PAYLOAD_BYTES {
-        return Err(inconsistent(format!(
-            "{section} core section exceeds 1 GiB cap; multi-section split is a future v1.x hardening"
-        )));
-    }
-    Ok(())
-}
-
-fn encode_rkyv<T>(value: &T, section: &'static str) -> Result<Vec<u8>, crate::ProviderError>
-where
-    T: for<'a> rkyv::Serialize<
-            rkyv::api::high::HighSerializer<
-                rkyv::util::AlignedVec,
-                rkyv::ser::allocator::ArenaHandle<'a>,
-                rkyv::rancor::Error,
-            >,
-        >,
-{
-    let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(value)
-        .map_err(|error| serialization_failed(format!("{section} rkyv encode failed: {error}")))?
-        .into_vec();
-    ensure_section_within_cap(section, bytes.len())?;
-    Ok(bytes)
-}
-
-fn decode_rkyv<T>(bytes: &[u8], section: &'static str) -> Result<T, crate::ProviderError>
-where
-    T: rkyv::Archive,
-    T::Archived: for<'a> rkyv::bytecheck::CheckBytes<rkyv::api::high::HighValidator<'a, rkyv::rancor::Error>>
-        + rkyv::Deserialize<T, rkyv::api::high::HighDeserializer<rkyv::rancor::Error>>,
-{
-    ensure_section_within_cap(section, bytes.len())?;
-    rkyv::from_bytes::<T, rkyv::rancor::Error>(bytes).map_err(|error| {
-        invalid_payload(format!("{section} rkyv bytecheck/decode failed: {error}"))
-    })
-}
-
-fn encode_properties_blob(
-    properties: &PropertyMap,
-    section: &'static str,
-) -> Result<Arc<[u8]>, crate::ProviderError> {
-    let bytes = postcard::to_stdvec(properties).map_err(|error| {
-        serialization_failed(format!(
-            "{section} property postcard encode failed: {error}"
-        ))
-    })?;
-    Ok(Arc::from(bytes.into_boxed_slice()))
-}
-
-fn decode_properties_blob(
-    bytes: &[u8],
-    section: &'static str,
-) -> Result<PropertyMap, crate::ProviderError> {
-    postcard::from_bytes(bytes).map_err(|error| {
-        invalid_payload(format!(
-            "{section} property postcard decode failed: {error}"
-        ))
-    })
-}
-
-fn validate_sorted_unique<K, V>(
-    rows: &[(K, V)],
-    section: &'static str,
-) -> Result<(), crate::ProviderError>
-where
-    K: Ord + std::fmt::Debug,
-{
-    for pair in rows.windows(2) {
-        if pair[0].0 >= pair[1].0 {
-            return Err(invalid_payload(format!(
-                "{section} rows must be strictly sorted by key with no duplicates; observed {:?} then {:?}",
-                pair[0].0, pair[1].0
             )));
         }
     }

@@ -90,6 +90,12 @@ fn candidate_keys(
     new_labels: &LabelSet,
     new_props: &PropertyMap,
 ) -> BTreeSet<(IStr, IStr)> {
+    // Zero registered indexes is the common case for graphs that never declared
+    // a property index — skip the three BTreeSet allocations entirely (mirrors
+    // the composite-index sibling, which is already alloc-free on an empty map).
+    if indexes.is_empty() {
+        return BTreeSet::new();
+    }
     let mut labels: BTreeSet<IStr> = BTreeSet::new();
     labels.extend(old_labels.iter().copied());
     labels.extend(new_labels.iter().copied());

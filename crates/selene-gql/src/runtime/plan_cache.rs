@@ -1,4 +1,22 @@
 //! Session-scoped execution-plan cache.
+//!
+//! # Why the cache key is schema-epoch-only
+//!
+//! Cached plans are the *optimized* plans (`Session::execute_source` optimizes
+//! before insert). The cache freshness check compares the stored
+//! `schema_version_at_plan` against the graph's current `schema_version`, which
+//! bumps only on schema-changing commits (CREATE / DROP INDEX, type DDL). The
+//! snapshot `generation` counter — which bumps on *every* commit including
+//! data-only writes — is deliberately NOT part of the key: optimizer index
+//! *selection* depends only on the set of indexes (schema), never on row data,
+//! so a chosen access path (LabelIndex / TypedIndexRange / CompositeLookup)
+//! stays correct as rows mutate within an epoch. Adding `generation` would
+//! evict every cached plan on every data write for zero correctness benefit.
+//!
+//! FUTURE: wiring live cardinality statistics into the cost model would make
+//! plan choice data-dependent. At that point the key MUST also include
+//! `generation`; that is out of scope for the structural index-selection
+//! optimizer wired today.
 
 use std::{borrow::Borrow, num::NonZeroUsize, sync::Arc};
 

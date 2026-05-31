@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# selene-db fast pre-commit gate — mirrors the cheap PR->development CI.
+# Heavy checks (clippy, tests) run in .githooks/pre-push.
+# Skip once:    git commit --no-verify
+# Skip session: export SELENE_SKIP_HOOKS=1
+set -euo pipefail
+[ -n "${SELENE_SKIP_HOOKS:-}" ] && { echo "[pre-commit] skipped (SELENE_SKIP_HOOKS)"; exit 0; }
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-commit] cargo fmt --all --check"
+cargo fmt --all --check
+
+echo "[pre-commit] file-size cap (700 LOC)"
+bash .github/scripts/check-file-size.sh
+
+echo "[pre-commit] no-secret scan"
+bash .github/scripts/check-no-secrets.sh
+
+echo "[pre-commit] id<->row arithmetic gate (BRIEF-Item-4a)"
+bash .github/scripts/check-no-rowid-arith.sh
+
+echo "[pre-commit] ok"

@@ -27,6 +27,30 @@ use crate::{
 /// choices.
 pub const MAX_INTERNED_STRINGS: usize = 1_000_000;
 
+/// Maximum byte length of a single interned string.
+///
+/// Per ISO Annex B `IL013` (2^32 - 1 bytes per inline string). A string at or
+/// below this length may be interned; a longer one raises
+/// [`CoreError::StringTooLong`] (GQLSTATUS `22G03`), mirroring the `IL015`
+/// constructed-value cardinality enforcement in `PropertyMap`.
+pub const MAX_INTERNED_STRING_BYTES: usize = u32::MAX as usize;
+
+/// True when a string of `byte_len` bytes exceeds the `IL013` inline-string limit.
+const fn string_cap_exceeded(byte_len: usize) -> bool {
+    byte_len > MAX_INTERNED_STRING_BYTES
+}
+
+/// Reject strings whose byte length exceeds the `IL013` inline-string limit.
+fn ensure_within_string_cap(s: &str) -> CoreResult<()> {
+    if string_cap_exceeded(s.len()) {
+        return Err(CoreError::StringTooLong {
+            got: s.len(),
+            max: u32::MAX,
+        });
+    }
+    Ok(())
+}
+
 /// Policy for converting raw text into engine values at string-admission boundaries.
 ///
 /// The low-level [`intern`] and [`intern_with_admission`] APIs always preserve
@@ -83,7 +107,8 @@ const fn cap_exceeded(current_len: usize) -> bool {
 /// # Errors
 ///
 /// Returns [`CoreError::IStrCapExceeded`] if the interner is at cap and the
-/// string is not already present.
+/// string is not already present, or [`CoreError::StringTooLong`] if `s`
+/// exceeds [`MAX_INTERNED_STRING_BYTES`] (IL013).
 pub fn intern(s: &str) -> CoreResult<IStr> {
     intern_with_admission(s).map(|(value, _was_new)| value)
 }
@@ -133,8 +158,14 @@ fn intern_or_external_from_result(
 /// # Errors
 ///
 /// Returns [`CoreError::IStrCapExceeded`] if the interner is at cap and the
-/// string is not already present.
+/// string is not already present, or [`CoreError::StringTooLong`] if `s`
+/// exceeds [`MAX_INTERNED_STRING_BYTES`] (IL013).
 pub fn intern_with_admission(s: &str) -> CoreResult<(IStr, bool)> {
+    // IL013: reject over-length strings before touching the interner. The
+    // check is O(1) and an already-interned string is necessarily within cap,
+    // so this never rejects a string that is already admitted.
+    ensure_within_string_cap(s)?;
+
     let rodeo = interner();
 
     // Fast path: already-interned strings do not need admission.
@@ -224,13 +255,18 @@ impl std::error::Error for AdmissionError {
 ///
 /// # Errors
 ///
-/// - [`AdmissionError::Cap`] if the global pool is at capacity.
+/// - [`AdmissionError::Cap`] if the global pool is at capacity, or if `s`
+///   exceeds [`MAX_INTERNED_STRING_BYTES`] (IL013, surfaced as a
+///   [`CoreError::StringTooLong`] cap error).
 /// - [`AdmissionError::Rejected`] if the caller's predicate returned `Err`
 ///   for what would have been a new admission.
 pub fn intern_atomic_admit<F>(s: &str, on_new: F) -> Result<IStr, AdmissionError>
 where
     F: FnOnce() -> Result<(), ()>,
 {
+    // IL013: reject over-length strings before touching the interner.
+    ensure_within_string_cap(s).map_err(AdmissionError::Cap)?;
+
     let rodeo = interner();
 
     // Fast path: already-interned strings do not need admission.
@@ -422,6 +458,88 @@ mod tests {
         assert!(!cap_exceeded(MAX_INTERNED_STRINGS - 1));
         assert!(cap_exceeded(MAX_INTERNED_STRINGS));
         assert_eq!(MAX_INTERNED_STRINGS, 1_000_000);
+    }
+
+    #[test]
+    fn string_cap_boundary_is_il013_byte_limit() {
+        // CORE-12: IL013 enforces 2^32 - 1 bytes per inline string. A 4 GiB
+        // allocation is infeasible in a test, so exercise the length predicate
+        // at the exact boundary — same pattern as the cap-count boundary test.
+        assert_eq!(MAX_INTERNED_STRING_BYTES, u32::MAX as usize);
+        assert!(!string_cap_exceeded(MAX_INTERNED_STRING_BYTES));
+        assert!(!string_cap_exceeded(MAX_INTERNED_STRING_BYTES - 1));
+        assert!(string_cap_exceeded(MAX_INTERNED_STRING_BYTES + 1));
+    }
+
+    #[test]
+    fn over_length_string_raises_string_too_long_with_22g03() {
+        // CORE-12: the producer maps an over-length string to StringTooLong /
+        // GQLSTATUS 22G03, mirroring IL015's ConstructedValueTooLarge.
+        let err = ensure_within_string_cap_for_len(MAX_INTERNED_STRING_BYTES + 1)
+            .expect_err("over-length string is rejected");
+        assert!(matches!(
+            err,
+            CoreError::StringTooLong {
+                max,
+                ..
+            } if max == u32::MAX
+        ));
+        assert_eq!(err.gqlstatus(), "22G03");
+    }
+
+    #[test]
+    fn within_length_string_interns_normally() {
+        // CORE-12: a sub-cap string still interns and round-trips.
+        let key = format!("core-12-within-cap-{}", std::process::id());
+        let interned = intern(&key).expect("within-cap string interns");
+        assert_eq!(interned.as_str(), key);
+    }
+
+    #[test]
+    fn intern_or_external_reject_interns_unique_string_end_to_end() {
+        // CORE-13: the public wrapper's success path, end to end (no seam helper).
+        let unique = format!("core-13-uniq-{}", std::process::id());
+        let value = intern_or_external(&unique, IStrAdmissionPolicy::Reject)
+            .expect("unique string interns under Reject");
+        let direct = intern(&unique).expect("direct intern of the same string");
+        assert_eq!(value, Value::String(direct));
+    }
+
+    #[test]
+    fn istr_ord_is_handle_order_not_lexicographic() {
+        // CORE-14: the entire serde resort layer exists because IStr ordering is
+        // interner-handle order, not lexicographic order. Intern "zzz" before
+        // "aaa" so their handle order is the reverse of their lexical order.
+        let suffix = std::process::id();
+        let zzz = intern(&format!("zzz-core-14-{suffix}")).unwrap();
+        let aaa = intern(&format!("aaa-core-14-{suffix}")).unwrap();
+
+        // zzz was admitted first, so its handle sorts before aaa's handle.
+        assert!(zzz < aaa, "handle order must follow admission order");
+        // But lexicographically "zzz..." sorts AFTER "aaa...".
+        assert!(
+            zzz.as_str() > aaa.as_str(),
+            "lexical order must disagree with handle order"
+        );
+        // The two orderings must disagree — the invariant the wire codecs rely on.
+        assert_ne!(
+            zzz.cmp(&aaa),
+            zzz.as_str().cmp(aaa.as_str()),
+            "IStr Ord must not equal lexicographic Ord"
+        );
+    }
+
+    /// Test-only shim exercising the byte-cap producer at a synthetic length
+    /// without allocating the multi-gigabyte string the real boundary needs.
+    fn ensure_within_string_cap_for_len(byte_len: usize) -> CoreResult<()> {
+        if string_cap_exceeded(byte_len) {
+            Err(CoreError::StringTooLong {
+                got: byte_len,
+                max: u32::MAX,
+            })
+        } else {
+            Ok(())
+        }
     }
 
     #[test]

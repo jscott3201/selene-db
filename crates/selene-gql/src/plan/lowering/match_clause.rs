@@ -256,10 +256,11 @@ fn lower_graph_pattern(
         ctx.binding_ids,
         ctx.hidden,
     )?);
-    let source_binding = chain_tail_binding(&current).ok_or(PlannerError::NotImplemented {
-        feature: "path selector over bindingless source node",
-        span: first.span,
-    })?;
+    // Capture the source node's binding from the initial scan (before the loop
+    // reassigns `current`). The bindingless-source error is only meaningful for
+    // a path *selector*, so it is deferred to the `if let Some(selector)` block
+    // below — a non-selector pattern over a bindingless source is legal.
+    let source_binding = chain_tail_binding(&current);
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
             return Err(PlannerError::NotImplemented {
@@ -310,7 +311,6 @@ fn lower_graph_pattern(
                     min: *min,
                     max: *max,
                     path_mode: repeat_path_mode_under_filter(path_mode, *max),
-                    selector: None,
                 }
             }
             Some(Quantifier::Questioned) => {
@@ -347,6 +347,10 @@ fn lower_graph_pattern(
     }
     current = path_mode::wrap_in_path_mode_filter(current, ctx.path_mode, pattern.span)?;
     if let Some(selector) = ctx.selector {
+        let source_binding = source_binding.ok_or(PlannerError::NotImplemented {
+            feature: "path selector over bindingless source node",
+            span: first.span,
+        })?;
         current =
             path_search::wrap_in_path_search(current, selector, source_binding, pattern.span)?;
     }
@@ -609,6 +613,12 @@ fn binding_defs(
 }
 
 fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
+    // Why: unreachable-by-flagger defense. G002 (REPEATABLE ELEMENTS) and G003
+    // (DIFFERENT EDGES) are absent from `SUPPORTED_FEATURES`, so the GQL flagger
+    // (clause 24.6) rejects them at parse time, before the planner ever sees a
+    // populated `match_mode`. This guard is kept as defense-in-depth so that a
+    // future feature-register change (registering G002/G003 without wiring the
+    // runtime visited-set contract) cannot silently lower an unsupported mode.
     if clause.match_mode.is_some() {
         return Err(PlannerError::NotImplemented {
             feature: "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",

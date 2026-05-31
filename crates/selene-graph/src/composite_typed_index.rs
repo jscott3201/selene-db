@@ -101,14 +101,51 @@ impl CompositeTypedIndex {
     }
 
     /// Return total row cardinality across all composite keys.
+    ///
+    /// This is the sum of every bucket's row count, NOT the number of distinct
+    /// composite keys. For the distinct-key count use
+    /// [`CompositeTypedIndex::distinct_keys`].
     #[must_use]
     pub fn cardinality(&self) -> u64 {
         self.entries.values().map(RoaringBitmap::len).sum()
     }
 
+    /// Return the number of distinct composite keys (BTreeMap entry count).
+    ///
+    /// Unlike [`CompositeTypedIndex::cardinality`] (total rows), this counts the
+    /// distinct composite-key buckets. The optimizer cost model divides
+    /// `cardinality / distinct_keys` to estimate the expected rows returned by a
+    /// parameter-keyed composite probe whose values are unknown at plan time.
+    /// Returns `0` for an empty index.
+    #[must_use]
+    pub fn distinct_keys(&self) -> u64 {
+        self.entries.len() as u64
+    }
+
     /// Iterate composite-key buckets and their matching row bitmaps.
     pub fn entries(&self) -> impl Iterator<Item = (&CompositeKey, &RoaringBitmap)> {
         self.entries.iter()
+    }
+
+    /// Return true when this index holds exactly the same `(key -> rows)`
+    /// buckets as `reference`.
+    ///
+    /// Used by the debug-only structural consistency net
+    /// ([`crate::SeleneGraph::assert_indexes_consistent`]). Component kinds
+    /// and every composite-key bucket's row bitmap must match.
+    #[must_use]
+    pub(crate) fn buckets_eq(&self, reference: &Self) -> bool {
+        self.kinds == reference.kinds && self.entries == reference.entries
+    }
+
+    /// Return true when any composite key maps to an empty row bitmap.
+    ///
+    /// Maintenance prunes a bucket when its bitmap empties (see
+    /// [`Self::remove`]); a present-but-empty bucket is a leak the
+    /// debug-only consistency net flags.
+    #[must_use]
+    pub(crate) fn has_empty_bucket(&self) -> bool {
+        self.entries.values().any(RoaringBitmap::is_empty)
     }
 
     /// Insert `row` under the composite key formed from `values`.
@@ -527,6 +564,35 @@ mod tests {
 
         assert!(index.values_share_key(&lhs, &rhs));
         assert!(lookup(probe).is_none(), "diff must not admit");
+    }
+
+    #[test]
+    fn distinct_keys_counts_composite_buckets_not_rows() {
+        let mut index =
+            CompositeTypedIndex::new(smallvec![TypedIndexKind::I64, TypedIndexKind::String]);
+        assert_eq!(index.distinct_keys(), 0, "empty index");
+
+        let k1 = intern("k1").unwrap();
+        let v_k1 = Value::String(k1);
+        let one = Value::Int(1);
+        let two = Value::Int(2);
+
+        // (1, k1) on two rows, (2, k1) on one row: 3 rows, 2 distinct composite keys.
+        index.insert(&[&one, &v_k1], 0).unwrap();
+        index.insert(&[&one, &v_k1], 1).unwrap();
+        index.insert(&[&two, &v_k1], 2).unwrap();
+        assert_eq!(index.cardinality(), 3);
+        assert_eq!(index.distinct_keys(), 2);
+
+        // Remove one of the two rows on (1, k1): bucket stays alive.
+        index.remove(&[&one, &v_k1], 0).unwrap();
+        assert_eq!(index.cardinality(), 2);
+        assert_eq!(index.distinct_keys(), 2);
+
+        // Remove the last row on (1, k1): bucket pruned → distinct drops.
+        index.remove(&[&one, &v_k1], 1).unwrap();
+        assert_eq!(index.cardinality(), 1);
+        assert_eq!(index.distinct_keys(), 1);
     }
 
     #[test]

@@ -1,6 +1,6 @@
--- corpus: positive
--- feature: GF05
--- expects: parse-ok
+// corpus: positive
+// feature: GF05
+// expects: parse-ok
 RETURN btrim('  hello  ') AS both_default,
        ltrim('xyhello', 'xy') AS leading_custom,
        rtrim('helloxy', 'xy') AS trailing_custom,

@@ -94,7 +94,37 @@ fn hash_value_runtime_eq<H: Hasher>(value: &Value, state: &mut H) {
             "runtime-string".hash(state);
             value.as_ref().hash(state);
         }
+        // Records / lists must recurse through the runtime-eq regime so the
+        // field/element values (including cross-type numerics and permuted
+        // record fields) hash exactly as `equal_non_null` compares them
+        // (GQLRT-14 parity).
+        Value::Record(record) => hash_record_runtime_eq(record, state),
+        Value::List(values) => {
+            mem::discriminant(value).hash(state);
+            values.len().hash(state);
+            for value in values {
+                hash_value_runtime_eq(value, state);
+            }
+        }
         _ => hash_value_variant_strict(value, state),
+    }
+}
+
+/// Runtime-eq record hash: field-name-sorted (order-independent) with field
+/// values hashed under the runtime-eq regime, matching `record_key_equal`.
+fn hash_record_runtime_eq<H: Hasher>(record: &Record, state: &mut H) {
+    mem::discriminant(record).hash(state);
+    match record {
+        Record::Open(fields) => {
+            fields.len().hash(state);
+            let mut sorted: Vec<&(selene_core::IStr, Value)> = fields.iter().collect();
+            sorted.sort_by(|lhs, rhs| lhs.0.as_str().cmp(rhs.0.as_str()));
+            for (name, value) in sorted {
+                name.as_str().hash(state);
+                hash_value_runtime_eq(value, state);
+            }
+        }
+        _ => format!("{record:?}").hash(state),
     }
 }
 
@@ -170,6 +200,10 @@ fn hash_value_variant_strict<H: Hasher>(value: &Value, state: &mut H) {
 }
 
 fn hash_record<H: Hasher>(record: &Record, state: &mut H) {
+    // Variant-strict regime ([`DistinctRowKey`]): mirrors positional
+    // `Value::PartialEq`, so this stays positional. The order-independent,
+    // field-name-keyed record hash lives in [`hash_record_runtime_eq`], the
+    // parity partner of the runtime-eq `record_key_equal`.
     mem::discriminant(record).hash(state);
     match record {
         Record::Open(fields) => {
@@ -236,8 +270,65 @@ fn hash_runtime_numeric<H: Hasher>(value: &Value, state: &mut H) -> bool {
             hash_f32_runtime_numeric(*value, state);
             true
         }
+        Value::Int128(value) => {
+            "runtime-number".hash(state);
+            hash_binary_number(value.is_negative(), value.unsigned_abs(), 0, state);
+            true
+        }
+        Value::Uint128(value) => {
+            "runtime-number".hash(state);
+            hash_binary_number(false, *value, 0, state);
+            true
+        }
+        Value::Decimal(value) => {
+            "runtime-number".hash(state);
+            hash_decimal_runtime_numeric(value, state);
+            true
+        }
         _ => false,
     }
+}
+
+/// Hash a [`rust_decimal::Decimal`] under the runtime-numeric key regime.
+///
+/// A Decimal that is a *dyadic rational* (finite base-2 expansion) can be
+/// runtime-equal to a binary float or an integer, so it must route through the
+/// shared [`hash_binary_number`] canonical form. A non-dyadic Decimal (e.g.
+/// `0.1`) cannot equal any binary float or integer, so it hashes on a distinct
+/// decimal-only path keyed on its normalized base-10 mantissa/scale — keeping
+/// the parity invariant `runtime_values_equal ⟹ equal hash` intact in both
+/// directions.
+fn hash_decimal_runtime_numeric<H: Hasher>(value: &rust_decimal::Decimal, state: &mut H) {
+    let normalized = value.normalize();
+    if let Some((negative, significand, exponent)) = decimal_as_dyadic(&normalized) {
+        hash_binary_number(negative, significand, exponent, state);
+    } else {
+        // Non-dyadic: cannot collide with any integer or binary float. Key on
+        // the normalized decimal form so equal decimals still hash equal.
+        "decimal".hash(state);
+        normalized.is_sign_negative().hash(state);
+        normalized.mantissa().unsigned_abs().hash(state);
+        normalized.scale().hash(state);
+    }
+}
+
+/// Decompose a normalized Decimal into the base-2 `(negative, significand,
+/// exponent)` triple shared with integer/float hashing, or `None` if the value
+/// is not a dyadic rational.
+///
+/// A Decimal `m / 10^s = m / (2^s · 5^s)` is dyadic iff `m` is divisible by
+/// `5^s`; the quotient is then `significand / 2^s`, i.e. exponent `-s`.
+fn decimal_as_dyadic(value: &rust_decimal::Decimal) -> Option<(bool, u128, i32)> {
+    let negative = value.is_sign_negative();
+    let mut mag = value.mantissa().unsigned_abs();
+    let scale = value.scale();
+    for _ in 0..scale {
+        if !mag.is_multiple_of(5) {
+            return None;
+        }
+        mag /= 5;
+    }
+    Some((negative, mag, -(scale as i32)))
 }
 
 fn hash_f64_runtime_numeric<H: Hasher>(value: f64, state: &mut H) {
@@ -377,6 +468,83 @@ mod tests {
     }
 
     #[test]
+    fn runtime_eq_key_collapses_wide_and_decimal_numerics() {
+        // GQLRT-26: Int128 / Uint128 / Decimal that are runtime-equal to the
+        // 64-bit / float numerics must share the hash key, or DISTINCT / GROUP
+        // BY / set-ops silently keep equal values apart.
+        let int = RuntimeEqKey::from_row(vec![Value::Int(1)]);
+        let int128 = RuntimeEqKey::from_row(vec![Value::Int128(1)]);
+        let uint128 = RuntimeEqKey::from_row(vec![Value::Uint128(1)]);
+        let decimal_int = RuntimeEqKey::from_row(vec![Value::Decimal("1".parse().unwrap())]);
+
+        assert_eq!(int, int128);
+        assert_eq!(int, uint128);
+        assert_eq!(int, decimal_int);
+        assert_eq!(key_hash(&int), key_hash(&int128));
+        assert_eq!(key_hash(&int), key_hash(&uint128));
+        assert_eq!(key_hash(&int), key_hash(&decimal_int));
+
+        // A dyadic Decimal equals its binary-float twin and must hash with it.
+        let half_float = RuntimeEqKey::from_row(vec![Value::Float(0.5)]);
+        let half_decimal = RuntimeEqKey::from_row(vec![Value::Decimal("0.5".parse().unwrap())]);
+        assert_eq!(half_float, half_decimal);
+        assert_eq!(key_hash(&half_float), key_hash(&half_decimal));
+
+        // A non-dyadic Decimal (0.1) is not equal to any binary float, so the
+        // keys must stay distinct (no false collapse).
+        let tenth_decimal = RuntimeEqKey::from_row(vec![Value::Decimal("0.1".parse().unwrap())]);
+        let tenth_float = RuntimeEqKey::from_row(vec![Value::Float(0.1)]);
+        assert_ne!(tenth_decimal, tenth_float);
+    }
+
+    #[test]
+    fn runtime_eq_key_collapses_permuted_records() {
+        // GQLRT-14 parity: `{a:1,b:2}` and `{b:2,a:1}` are field-name-equal, so
+        // the RuntimeEqKey must treat them equal AND hash them identically, or
+        // DISTINCT / GROUP BY / set-ops keep them apart.
+        let a = intern_with_admission("a").expect("key interns").0;
+        let b = intern_with_admission("b").expect("key interns").0;
+        let lhs = Value::Record(Box::new(Record::Open(smallvec![
+            (a, Value::Int(1)),
+            (b, Value::Int(2)),
+        ])));
+        let rhs = Value::Record(Box::new(Record::Open(smallvec![
+            (b, Value::Int(2)),
+            (a, Value::Int(1)),
+        ])));
+
+        let lhs_key = RuntimeEqKey::from_row(vec![lhs.clone()]);
+        let rhs_key = RuntimeEqKey::from_row(vec![rhs.clone()]);
+        assert_eq!(lhs_key, rhs_key);
+        assert_eq!(key_hash(&lhs_key), key_hash(&rhs_key));
+
+        let mut map = HashMap::new();
+        map.insert(RuntimeEqKey::from_row(vec![lhs]), 1);
+        map.insert(RuntimeEqKey::from_row(vec![rhs]), 2);
+        assert_eq!(
+            map.len(),
+            1,
+            "permuted records collapse to one DISTINCT key"
+        );
+    }
+
+    #[test]
+    fn runtime_eq_key_record_cross_type_numeric_field_parity() {
+        // A record field comparing equal under runtime numeric collapse
+        // (`{a:1}` vs `{a:1.0}`) must also hash equal.
+        let a = intern_with_admission("a").expect("key interns").0;
+        let int_rec = RuntimeEqKey::from_row(vec![Value::Record(Box::new(Record::Open(
+            smallvec![(a, Value::Int(1))],
+        )))]);
+        let float_rec = RuntimeEqKey::from_row(vec![Value::Record(Box::new(Record::Open(
+            smallvec![(a, Value::Float(1.0))],
+        )))]);
+
+        assert_eq!(int_rec, float_rec);
+        assert_eq!(key_hash(&int_rec), key_hash(&float_rec));
+    }
+
+    #[test]
     fn runtime_eq_key_hashes_interned_and_external_strings_by_content() {
         let interned = RuntimeEqKey::from_row(vec![Value::String(
             intern_with_admission("same")
@@ -434,12 +602,39 @@ mod tests {
             (-1000_i16..1000).prop_map(|value| Value::Float32(value as f32)),
             Just(Value::Float32(-0.0)),
             Just(Value::Float32(f32::NAN)),
+            (-1000_i64..1000).prop_map(|value| Value::Int128(i128::from(value))),
+            (0_u64..1000).prop_map(|value| Value::Uint128(u128::from(value))),
+            (-1000_i64..1000)
+                .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::from(value)) }),
+            (-1000_i64..1000)
+                .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::new(value, 1)) }),
             prop::sample::select(vec!["a", "b", "same"]).prop_map(|value| {
                 Value::String(intern_with_admission(value).expect("test string interns").0)
             }),
             prop::sample::select(vec!["a", "b", "same"])
                 .prop_map(|value| { Value::ExternalString(Arc::from(value)) }),
+            permuted_record_strategy(),
         ]
         .boxed()
+    }
+
+    /// Two-field records over names {a,b} in either order with small values,
+    /// exercising the GQLRT-14 permutation/cross-type-field parity invariant.
+    fn permuted_record_strategy() -> impl Strategy<Value = Value> {
+        let field_value = prop_oneof![
+            (-3_i64..3).prop_map(Value::Int),
+            (-3_i64..3).prop_map(|value| Value::Float(value as f64)),
+            Just(Value::Null),
+        ];
+        (field_value.clone(), field_value, any::<bool>()).prop_map(|(a, b, reversed)| {
+            let a_key = intern_with_admission("a").expect("interns").0;
+            let b_key = intern_with_admission("b").expect("interns").0;
+            let fields = if reversed {
+                smallvec![(b_key, b), (a_key, a)]
+            } else {
+                smallvec![(a_key, a), (b_key, b)]
+            };
+            Value::Record(Box::new(Record::Open(fields)))
+        })
     }
 }

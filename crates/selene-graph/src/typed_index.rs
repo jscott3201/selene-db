@@ -170,6 +170,11 @@ impl TypedIndex {
     }
 
     /// Return total row cardinality across all indexed keys.
+    ///
+    /// This is the sum of every bucket's row count, NOT the number of distinct
+    /// keys. For the distinct-key count (e.g. to estimate an average bucket size
+    /// `cardinality / distinct_keys` for parameter-equality cost estimation) use
+    /// [`TypedIndex::distinct_keys`].
     #[must_use]
     pub fn cardinality(&self) -> u64 {
         match self {
@@ -179,6 +184,65 @@ impl TypedIndex {
             Self::Date(index) => cardinality(index),
             Self::LocalDateTime(index) => cardinality(index),
             Self::Uuid(index) => cardinality(index),
+        }
+    }
+
+    /// Return the number of distinct indexed keys (BTreeMap entry count).
+    ///
+    /// Unlike [`TypedIndex::cardinality`] (total rows), this is the number of
+    /// distinct values present in the index. The optimizer cost model divides
+    /// `cardinality / distinct_keys` to estimate the expected rows returned by a
+    /// parameter-equality probe whose value is unknown at plan time. Returns `0`
+    /// for an empty index.
+    #[must_use]
+    pub fn distinct_keys(&self) -> u64 {
+        match self {
+            Self::I64(index) => index.len() as u64,
+            Self::F64(index) => index.len() as u64,
+            Self::String(index) => index.len() as u64,
+            Self::Date(index) => index.len() as u64,
+            Self::LocalDateTime(index) => index.len() as u64,
+            Self::Uuid(index) => index.len() as u64,
+        }
+    }
+
+    /// Return true when this index holds exactly the same `(key -> rows)`
+    /// buckets as `reference`.
+    ///
+    /// Used by the debug-only structural consistency net
+    /// ([`crate::SeleneGraph::assert_indexes_consistent`]) to compare the
+    /// commit-path-maintained index against a freshly re-derived reference
+    /// built with the same lenient admission policy. Two indexes are equal
+    /// only when their kinds match and every bucket maps to an identical
+    /// row bitmap; a missing key, an extra key, or a differing bitmap all
+    /// fail the comparison.
+    #[must_use]
+    pub(crate) fn buckets_eq(&self, reference: &Self) -> bool {
+        match (self, reference) {
+            (Self::I64(lhs), Self::I64(rhs)) => lhs == rhs,
+            (Self::F64(lhs), Self::F64(rhs)) => lhs == rhs,
+            (Self::String(lhs), Self::String(rhs)) => lhs == rhs,
+            (Self::Date(lhs), Self::Date(rhs)) => lhs == rhs,
+            (Self::LocalDateTime(lhs), Self::LocalDateTime(rhs)) => lhs == rhs,
+            (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
+            _ => false,
+        }
+    }
+
+    /// Return true when any indexed key maps to an empty row bitmap.
+    ///
+    /// Commit-path maintenance prunes a bucket when its bitmap empties
+    /// (see `remove_row`), so a present-but-empty bucket is a maintenance
+    /// leak the debug-only consistency net flags.
+    #[must_use]
+    pub(crate) fn has_empty_bucket(&self) -> bool {
+        match self {
+            Self::I64(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::F64(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::String(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Date(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::LocalDateTime(index) => index.values().any(RoaringBitmap::is_empty),
+            Self::Uuid(index) => index.values().any(RoaringBitmap::is_empty),
         }
     }
 
@@ -385,7 +449,7 @@ impl TypedIndex {
                 let mut result = RoaringBitmap::new();
                 for (key, bitmap) in index {
                     if key.as_str().starts_with(prefix) {
-                        insert_all(&mut result, bitmap);
+                        result |= bitmap;
                     }
                 }
                 Some(result)
@@ -658,15 +722,11 @@ fn range_union<K: Ord>(
     };
     let mut result = RoaringBitmap::new();
     for (_key, bitmap) in index.range::<K, _>((start_bound, end_bound)) {
-        insert_all(&mut result, bitmap);
+        // RoaringBitmap bulk OR (`BitOrAssign<&RoaringBitmap>`) is the union
+        // primitive — far cheaper than a per-element scan-and-insert.
+        result |= bitmap;
     }
     result
-}
-
-fn insert_all(target: &mut RoaringBitmap, source: &RoaringBitmap) {
-    for row in source {
-        target.insert(row);
-    }
 }
 
 #[cfg(test)]

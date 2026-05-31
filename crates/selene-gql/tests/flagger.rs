@@ -2,8 +2,8 @@
 
 use selene_core::{GraphId, feature_register::FeatureId};
 use selene_gql::{
-    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ParserError, TxContext,
-    analyze, execute_pattern, execute_pipeline, feature_walk, parse, plan,
+    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, GqlStatus, ParserError,
+    TxContext, analyze, execute_pattern, execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -209,16 +209,38 @@ fn mutation_feature_is_supported() {
 }
 
 #[test]
-fn graph_management_features_are_rejected_before_planning() {
-    for source in [
-        "CREATE GRAPH demo",
-        "CREATE GRAPH IF NOT EXISTS demo",
-        "DROP GRAPH demo",
-        "DROP GRAPH IF EXISTS demo",
-    ] {
+fn create_graph_is_rejected_before_planning() {
+    // CREATE GRAPH stays GC04-rejected under D1 single-graph: the engine cannot
+    // create a second graph. DROP GRAPH is split out (now IM_DROP_GRAPH).
+    for source in ["CREATE GRAPH demo", "CREATE GRAPH IF NOT EXISTS demo"] {
         let error = parse(source).expect_err(source);
         assert_eq!(error.gqlstatus().as_str(), "42N01");
         assert_feature(error, FeatureId::GC04);
+    }
+}
+
+#[test]
+fn drop_graph_stamps_im_drop_graph_and_parses() {
+    // BRIEF-152 / audit Item 10: DROP GRAPH ships as the IM_DROP_GRAPH
+    // factory-reset extension (a supported vendor flag), so it parses through to
+    // the executor instead of dying in the flagger like CREATE GRAPH. IF EXISTS
+    // is informational under D1 and adds no extra flag.
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+    for source in ["DROP GRAPH demo", "DROP GRAPH IF EXISTS demo"] {
+        let observed = ids(source);
+        assert!(
+            observed.contains(&FeatureId::IM_DROP_GRAPH),
+            "{source} must flag IM_DROP_GRAPH"
+        );
+        assert!(
+            !observed.contains(&FeatureId::GC04),
+            "{source} must NOT flag GC04 (that stays CREATE GRAPH only)"
+        );
     }
 }
 
@@ -250,10 +272,146 @@ fn or_replace_catalog_ddl_is_not_implemented() {
 }
 
 #[test]
+fn deferred_grammar_surfaces_report_not_implemented_with_42n01() {
+    // PARSE-17: `RETURN NO BINDINGS` and `SELECT FROM <graph-name>` parse at the
+    // grammar level but their builders are deferred (builders::mod.rs). Sibling
+    // deferrals (MERGE/FOR) are pinned; these two had zero coverage. Pin the
+    // exact NotImplemented variant + the 42N01 (FEATURE_NOT_SUPPORTED) status.
+    for source in ["MATCH (n) RETURN NO BINDINGS", "SELECT * FROM my_graph"] {
+        let error = parse(source).expect_err(source);
+        assert!(
+            matches!(error, ParserError::NotImplemented { .. }),
+            "expected NotImplemented for {source:?}, got {error:?}"
+        );
+        assert_eq!(
+            error.gqlstatus(),
+            GqlStatus::FEATURE_NOT_SUPPORTED,
+            "{source:?} must report 42N01"
+        );
+        assert_eq!(error.gqlstatus().as_str(), "42N01", "{source:?}");
+    }
+}
+
+#[test]
 fn closed_type_ddl_features_are_supported() {
     parse("CREATE NODE TYPE IF NOT EXISTS :Person (name :: STRING)")
         .expect("GG02/GG20/GG21 are claimed");
     parse("DROP EDGE TYPE IF EXISTS :KNOWS").expect("type DROP is claimed");
+}
+
+#[test]
+fn list_subscript_stamps_im_list_subscript_but_bare_list_does_not() {
+    // `list[i]` is the selene-db vendor subscript (no ISO operator exists), so it
+    // must flag IM_LIST_SUBSCRIPT on every use; a bare list literal flags only
+    // GV50 and never the subscript.
+    let subscript = parse("RETURN [10, 20, 30][1] AS first").expect("subscript parses");
+    let bare_list = parse("RETURN [10, 20, 30] AS items").expect("bare list parses");
+
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let subscript_ids = ids(&subscript);
+    assert!(
+        subscript_ids.contains(&FeatureId::IM_LIST_SUBSCRIPT),
+        "list subscript must flag IM_LIST_SUBSCRIPT"
+    );
+    assert!(
+        subscript_ids.contains(&FeatureId::GV50),
+        "the subscripted list literal still flags GV50"
+    );
+    assert!(
+        !ids(&bare_list).contains(&FeatureId::IM_LIST_SUBSCRIPT),
+        "a bare list literal must NOT flag IM_LIST_SUBSCRIPT"
+    );
+}
+
+#[test]
+fn record_value_form_flags_gv45_while_type_spellings_flag_gv46_47_48() {
+    // The `RECORD{..}` VALUE constructor is GV45 (ISO §20.18 <record constructor>) and is
+    // distinct from the record TYPE spellings: open `RECORD` is GV47, closed `RECORD{..}`
+    // is GV46, nested is GV48. Pins that the record surface is actually flagged per clause
+    // 24.6 (not merely listed in SUPPORTED_FEATURES) and that the value form is GV45 — not
+    // GV47, which belongs to the open record *type*.
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let value = parse("RETURN RECORD {x: 1} AS r").expect("record value parses");
+    let value_ids = ids(&value);
+    assert!(
+        value_ids.contains(&FeatureId::GV45),
+        "a RECORD value constructor must flag GV45; observed {value_ids:?}"
+    );
+    assert!(
+        !value_ids.contains(&FeatureId::GV47),
+        "the value form must NOT flag GV47 (that is the open record TYPE); observed {value_ids:?}"
+    );
+
+    let open =
+        parse("RETURN RECORD {name: 'Ada'} IS TYPED RECORD AS t").expect("open record type parses");
+    let open_ids = ids(&open);
+    assert!(
+        open_ids.contains(&FeatureId::GV47),
+        "an open RECORD type must flag GV47; observed {open_ids:?}"
+    );
+
+    let nested = parse(
+        "RETURN RECORD {inner: RECORD {flag: true}} IS TYPED RECORD{inner :: RECORD{flag :: BOOL}} AS t",
+    )
+    .expect("nested closed record type parses");
+    let nested_ids = ids(&nested);
+    assert!(
+        nested_ids.contains(&FeatureId::GV46) && nested_ids.contains(&FeatureId::GV48),
+        "a nested closed RECORD type must flag GV46 + GV48; observed {nested_ids:?}"
+    );
+}
+
+#[test]
+fn drop_cascade_stamps_im_drop_cascade_but_restrict_and_default_do_not() {
+    // CASCADE is the IM_DROP_CASCADE vendor extension — it must flag on every
+    // use. RESTRICT and the default carry only the existing type-DDL flags.
+    let cascade_node = parse("DROP NODE TYPE :Sensor CASCADE").expect("CASCADE node parses");
+    let cascade_edge = parse("DROP EDGE TYPE :KNOWS CASCADE").expect("CASCADE edge parses");
+    let restrict = parse("DROP NODE TYPE :Sensor RESTRICT").expect("RESTRICT parses");
+    let default = parse("DROP NODE TYPE :Sensor").expect("default parses");
+
+    let ids = |statement| {
+        feature_walk(statement)
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        ids(&cascade_node).contains(&FeatureId::IM_DROP_CASCADE),
+        "CASCADE node drop must flag IM_DROP_CASCADE"
+    );
+    assert!(
+        ids(&cascade_edge).contains(&FeatureId::IM_DROP_CASCADE),
+        "CASCADE edge drop must flag IM_DROP_CASCADE"
+    );
+    assert!(
+        !ids(&restrict).contains(&FeatureId::IM_DROP_CASCADE),
+        "explicit RESTRICT must NOT flag IM_DROP_CASCADE"
+    );
+    assert!(
+        !ids(&default).contains(&FeatureId::IM_DROP_CASCADE),
+        "default drop must NOT flag IM_DROP_CASCADE"
+    );
+    // The existing type-DDL flags are unchanged on every path.
+    for statement in [&cascade_node, &restrict, &default] {
+        let observed = ids(statement);
+        assert!(observed.contains(&FeatureId::GG02));
+        assert!(observed.contains(&FeatureId::GG20));
+        assert!(observed.contains(&FeatureId::GG21));
+    }
 }
 
 #[test]

@@ -405,15 +405,7 @@ fn top_level_call_classification_follows_procedure_mutability() {
     for (mutability, category) in [
         (ProcedureMutability::Read, StatementCategory::ReadOnly),
         (
-            ProcedureMutability::GraphWrite,
-            StatementCategory::DataModifying,
-        ),
-        (
             ProcedureMutability::SchemaWrite,
-            StatementCategory::CatalogModifying,
-        ),
-        (
-            ProcedureMutability::Admin,
             StatementCategory::CatalogModifying,
         ),
     ] {
@@ -422,24 +414,6 @@ fn top_level_call_classification_follows_procedure_mutability() {
         assert_eq!(analyzed.category, category);
         assert!(analyzed.write_set.is_none());
     }
-}
-
-#[test]
-fn query_pipeline_calling_graph_write_procedure_errors() {
-    let registry = registry_with_mutability(ProcedureMutability::GraphWrite);
-    let err = analyze_with(
-        "MATCH (n) CALL pkg.proc() YIELD result RETURN result",
-        &registry,
-    )
-    .expect_err("mutating CALL in read pipeline errors");
-    assert!(matches!(
-        err,
-        AnalysisError::MutatingProcedureInReadPipeline {
-            mutability: ProcedureMutability::GraphWrite,
-            ..
-        }
-    ));
-    assert_eq!(err.gqlstatus().as_str(), "25G02");
 }
 
 #[test]
@@ -454,24 +428,6 @@ fn query_pipeline_calling_schema_write_procedure_errors() {
         err,
         AnalysisError::MutatingProcedureInReadPipeline {
             mutability: ProcedureMutability::SchemaWrite,
-            ..
-        }
-    ));
-    assert_eq!(err.gqlstatus().as_str(), "25G02");
-}
-
-#[test]
-fn query_pipeline_calling_admin_procedure_errors() {
-    let registry = registry_with_mutability(ProcedureMutability::Admin);
-    let err = analyze_with(
-        "MATCH (n) CALL pkg.proc() YIELD result RETURN result",
-        &registry,
-    )
-    .expect_err("mutating CALL in read pipeline errors");
-    assert!(matches!(
-        err,
-        AnalysisError::MutatingProcedureInReadPipeline {
-            mutability: ProcedureMutability::Admin,
             ..
         }
     ));

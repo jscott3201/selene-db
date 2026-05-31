@@ -9,8 +9,10 @@ use selene_core::{
 use smallvec::SmallVec;
 
 use crate::{
-    EdgeEndpointDef, EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator, NodeTypeDef,
-    PropertyElementType, PropertyTypeDef, ValidationMode, graph_types::MAX_LIST_TYPE_NESTING,
+    DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphError, GraphResult, GraphTypeDef, Mutator,
+    NodeTypeDef, PropertyElementType, PropertyTypeDef, RecordFieldType, RecordFieldTypes,
+    ValidationMode,
+    graph_types::{MAX_LIST_TYPE_NESTING, MAX_RECORD_TYPE_NESTING},
 };
 
 const OPEN_GRAPH_CATALOG_DDL: &str =
@@ -112,12 +114,27 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     /// Drop a node type from the transaction-local closed graph type.
     ///
+    /// `behavior` selects the surviving-instance / inbound-dependency policy
+    /// (deletion-reclamation audit Item 3, Seam B):
+    ///
+    /// * [`DropBehavior::Restrict`] (the default) rejects the drop with
+    ///   [`GraphError::Inconsistent`] when any instance still carries `name` as
+    ///   its key label, or when an edge type still references the node type
+    ///   (dangling-endpoint guard). Nothing is removed — no `Change` is recorded
+    ///   and the bound graph type is left intact (no partial state).
+    /// * [`DropBehavior::Cascade`] (`IM_DROP_CASCADE`) truncates every instance
+    ///   first via [`Mutator::truncate_node_type`] (which also removes incident
+    ///   edges, so no dangling endpoints remain), then drops the type. Both the
+    ///   truncate change(s) and the [`SchemaChange::NodeTypeDropped`] land in the
+    ///   same transaction, so commit and WAL replay are atomic.
+    ///
     /// # Errors
     ///
     /// Returns [`GraphError::Inconsistent`] when the graph is open, the type
-    /// does not exist, or any edge endpoint would reference the dropped type or
-    /// require positional endpoint reindexing.
-    pub fn drop_node_type(&mut self, name: IStr) -> GraphResult<()> {
+    /// does not exist, `Restrict` finds surviving instances or an inbound edge
+    /// dependency, or any edge endpoint would require positional endpoint
+    /// reindexing.
+    pub fn drop_node_type(&mut self, name: IStr, behavior: DropBehavior) -> GraphResult<()> {
         let graph_type = self.current_graph_type()?;
         let removed_index =
             graph_type
@@ -125,6 +142,51 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 .ok_or_else(|| GraphError::Inconsistent {
                     reason: format!("node type {name} does not exist"),
                 })?;
+        match behavior {
+            DropBehavior::Restrict => {
+                // Seam-B fix: a surviving instance whose declared type is being
+                // dropped would become an orphan on commit. Reject early with a
+                // message that blames the drop, not the instance.
+                let live = self
+                    .txn
+                    .read()
+                    .nodes_with_label(&name)
+                    .map_or(0, roaring::RoaringBitmap::len);
+                if live > 0 {
+                    return Err(GraphError::Inconsistent {
+                        reason: format!(
+                            "cannot drop node type {name}: {live} instance(s) still exist; use CASCADE to remove them"
+                        ),
+                    });
+                }
+                // Type-dependency: an edge type that directly references this
+                // node type would be left with a dangling endpoint. Recursive
+                // type cascade is out of scope (Item 3 is instance cascade only).
+                for edge_type in &graph_type.edge_types {
+                    if endpoint_references_node(&edge_type.source_node_type, removed_index)
+                        || endpoint_references_node(&edge_type.target_node_type, removed_index)
+                    {
+                        return Err(GraphError::Inconsistent {
+                            reason: format!(
+                                "cannot drop node type {name}: edge type {} still references it",
+                                edge_type.name
+                            ),
+                        });
+                    }
+                }
+            }
+            DropBehavior::Cascade => {
+                // Truncate instances FIRST (reuses the BRIEF-150 funnel); this
+                // also removes incident edges, so no dangling endpoint remains.
+                self.truncate_node_type(name)?;
+            }
+        }
+        // Shared schema-drop step. The positional-reindexing guard still applies
+        // to BOTH paths: if a surviving edge type references a node-type index
+        // at or after the removed slot, the drop must reject (recursive type
+        // cascade is out of scope). After a CASCADE truncate of `name`'s own
+        // instances, an edge type that referenced `name` directly is structurally
+        // empty but still declared, so this guard governs the type relationship.
         for edge_type in &graph_type.edge_types {
             if endpoint_depends_on_shifted_node(&edge_type.source_node_type, removed_index)
                 || endpoint_depends_on_shifted_node(&edge_type.target_node_type, removed_index)
@@ -155,17 +217,51 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 
     /// Drop an edge type from the transaction-local closed graph type.
     ///
+    /// `behavior` selects the surviving-instance policy (deletion-reclamation
+    /// audit Item 3, Seam B). Edge types have no inbound type dependency, so
+    /// only the instance check applies:
+    ///
+    /// * [`DropBehavior::Restrict`] (the default) rejects with
+    ///   [`GraphError::Inconsistent`] when any edge still carries `name`; nothing
+    ///   is removed and no `Change` is recorded.
+    /// * [`DropBehavior::Cascade`] (`IM_DROP_CASCADE`) truncates every edge of
+    ///   the type first via [`Mutator::truncate_edge_type`], then drops the type,
+    ///   atomically in one transaction.
+    ///
     /// # Errors
     ///
     /// Returns [`GraphError::Inconsistent`] when the graph is open, the type
-    /// does not exist, or the resulting graph type is structurally invalid.
-    pub fn drop_edge_type(&mut self, name: IStr) -> GraphResult<()> {
+    /// does not exist, `Restrict` finds surviving instances, or the resulting
+    /// graph type is structurally invalid.
+    pub fn drop_edge_type(&mut self, name: IStr, behavior: DropBehavior) -> GraphResult<()> {
         let graph_type = self.current_graph_type()?;
+        if graph_type.edge_type_index_for(name).is_none() {
+            return Err(GraphError::Inconsistent {
+                reason: format!("edge type {name} does not exist"),
+            });
+        }
+        match behavior {
+            DropBehavior::Restrict => {
+                let live = self
+                    .txn
+                    .read()
+                    .edges_with_label(&name)
+                    .map_or(0, roaring::RoaringBitmap::len);
+                if live > 0 {
+                    return Err(GraphError::Inconsistent {
+                        reason: format!(
+                            "cannot drop edge type {name}: {live} instance(s) still exist; use CASCADE to remove them"
+                        ),
+                    });
+                }
+            }
+            DropBehavior::Cascade => {
+                self.truncate_edge_type(name)?;
+            }
+        }
         let next = graph_type
             .without_edge_type(name)
-            .ok_or_else(|| GraphError::Inconsistent {
-                reason: format!("edge type {name} does not exist"),
-            })?;
+            .expect("edge type existed above");
         next.validate_ref()?;
         let graph_id = self.txn.read().graph_id();
         self.txn.guard_mut().meta.bound_type = Some(Arc::new(next));
@@ -198,6 +294,20 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 /// graph-type allocator and preserve the ID across WAL replay.
 fn implicit_graph_type_id() -> GraphTypeId {
     GraphTypeId::new(1).expect("implicit graph type id")
+}
+
+/// Whether `endpoint` directly references the node-type at `removed_index`.
+///
+/// Distinct from [`endpoint_depends_on_shifted_node`], which is the broader
+/// positional-reindexing guard (>= removed_index). This narrower check powers
+/// the clear RESTRICT message "edge type E still references it" for the direct
+/// dangling-endpoint case.
+fn endpoint_references_node(endpoint: &EdgeEndpointDef, removed_index: u32) -> bool {
+    match endpoint {
+        EdgeEndpointDef::Any => false,
+        EdgeEndpointDef::NodeType(index) => *index == removed_index,
+        EdgeEndpointDef::OneOf(indices) => indices.contains(&removed_index),
+    }
 }
 
 fn endpoint_depends_on_shifted_node(endpoint: &EdgeEndpointDef, removed_index: u32) -> bool {
@@ -287,6 +397,10 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
             nullable: !property.required,
             default: property.default.as_ref().map(|default| default.to_value()),
             immutable: property.immutable,
+            record_fields: core_record_fields(
+                property.value_type,
+                property.record_field_types.as_ref(),
+            )?,
         });
     }
     Ok(out)
@@ -305,6 +419,10 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
             nullable: !property.required,
             default: property.default.as_ref().map(|default| default.to_value()),
             immutable: property.immutable,
+            record_fields: core_record_fields(
+                property.value_type,
+                property.record_field_types.as_ref(),
+            )?,
         });
     }
     Ok(out)
@@ -389,6 +507,69 @@ fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
         not_null: false,
         cardinality: selene_core::ValueTypeCardinality::ExactlyOne,
     }
+}
+
+/// Convert the rkyv-side typed-`RECORD` descriptor into the serde/WAL counterpart carried
+/// on [`PropertyDef::record_fields`]. Returns `None` for every non-record property,
+/// `Some(Open)` for an open/bare `RECORD` (no declared fields), and `Some(Closed(..))`
+/// for a closed/typed `RECORD{..}`.
+// Why: a RECORD property's record-ness must survive WAL replay; it rides
+// `PropertyDef.record_fields` (structural-inline), not `ValueType.record`. The open/bare
+// form carries no field list, so it persists as `Some(Open)` — without that marker WAL
+// recovery cannot tell an open record from a scalar `Null` and degrades it to `Null`.
+fn core_record_fields(
+    value_type: PropertyValueType,
+    fields: Option<&RecordFieldTypes>,
+) -> GraphResult<Option<Box<selene_core::RecordFieldStructure>>> {
+    match (value_type, fields) {
+        (PropertyValueType::RecordTyped, Some(fields)) => {
+            Ok(Some(Box::new(core_record_field_structure(fields, 1)?)))
+        }
+        (PropertyValueType::RecordTyped, None) => {
+            Ok(Some(Box::new(selene_core::RecordFieldStructure::Open)))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn core_record_field_structure(
+    fields: &RecordFieldTypes,
+    depth: u32,
+) -> GraphResult<selene_core::RecordFieldStructure> {
+    if depth > MAX_RECORD_TYPE_NESTING {
+        return Err(GraphError::Inconsistent {
+            reason: "RECORD property definition exceeds nesting limit".to_owned(),
+        });
+    }
+    let defs = fields
+        .0
+        .iter()
+        .map(|field| {
+            Ok(selene_core::RecordFieldStructureDef {
+                name: field.name,
+                field_type: core_record_field_structure_type(&field.field_type, depth)?,
+                required: field.required,
+            })
+        })
+        .collect::<GraphResult<Vec<_>>>()?;
+    Ok(selene_core::RecordFieldStructure::Closed(defs))
+}
+
+fn core_record_field_structure_type(
+    field_type: &RecordFieldType,
+    depth: u32,
+) -> GraphResult<selene_core::RecordFieldStructureType> {
+    Ok(match field_type {
+        RecordFieldType::Scalar(value_type) => {
+            selene_core::RecordFieldStructureType::Scalar(*value_type)
+        }
+        RecordFieldType::List(inner) => selene_core::RecordFieldStructureType::List(Box::new(
+            core_record_field_structure_type(inner, depth + 1)?,
+        )),
+        RecordFieldType::Record(inner) => selene_core::RecordFieldStructureType::Record(Box::new(
+            core_record_field_structure(inner, depth + 1)?,
+        )),
+    })
 }
 
 #[cfg(test)]

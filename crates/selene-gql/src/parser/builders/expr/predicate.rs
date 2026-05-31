@@ -4,13 +4,17 @@ use pest::iterators::Pair;
 use selene_core::feature_register::FeatureId;
 
 use crate::{
-    ast::{BinaryOp, GqlType, IsCheckKind, NormalForm, SourceSpan, TruthValue, ValueExpr},
+    ast::{
+        BinaryOp, GqlType, IsCheckKind, NormalForm, RecordType, SourceSpan, TruthValue, ValueExpr,
+    },
     error::ParserError,
     parser::{MAX_NESTING_DEPTH, budget::InternerBudget},
 };
 
 use super::{Rule, build_value_expr, literal};
-use crate::parser::builders::{not_implemented, pattern, span};
+use crate::parser::builders::{
+    intern_pair, keyword_starts_with, keyword_tokens_eq, not_implemented, pattern, span,
+};
 
 pub(super) fn apply_is_suffix(
     operand: ValueExpr,
@@ -46,49 +50,6 @@ fn dispatch_is_suffix(
         return Ok(ValueExpr::InList {
             operand: Box::new(operand),
             list: literal::build_list_items(list_pair, budget)?,
-            negated,
-            span: source_span,
-        });
-    }
-
-    if children
-        .iter()
-        .any(|child| child.as_rule() == Rule::like_kw)
-    {
-        let pattern_pair = find_child(
-            children,
-            Rule::addition,
-            "LIKE predicate is missing pattern",
-        )?;
-        return Ok(ValueExpr::Like {
-            operand: Box::new(operand),
-            pattern: Box::new(build_value_expr(pattern_pair, budget)?),
-            negated,
-            span: source_span,
-        });
-    }
-
-    if children
-        .iter()
-        .any(|child| child.as_rule() == Rule::between_kw)
-    {
-        let bounds = children
-            .iter()
-            .filter(|child| child.as_rule() == Rule::addition)
-            .cloned()
-            .map(|child| build_value_expr(child, budget))
-            .collect::<Result<Vec<_>, _>>()?;
-        if bounds.len() != 2 {
-            return Err(ParserError::syntax(
-                "BETWEEN predicate requires two bounds",
-                source_span,
-                None,
-            ));
-        }
-        return Ok(ValueExpr::Between {
-            operand: Box::new(operand),
-            low: Box::new(bounds[0].clone()),
-            high: Box::new(bounds[1].clone()),
             negated,
             span: source_span,
         });
@@ -218,7 +179,7 @@ fn build_is_kind(
         .any(|child| child.as_rule() == Rule::typed_kw)
     {
         let type_pair = find_child(children, Rule::type_name, "IS TYPED is missing type")?;
-        return Ok(IsCheckKind::Typed(build_type_name(type_pair)?));
+        return Ok(IsCheckKind::Typed(build_type_name(type_pair, budget)?));
     }
     Err(ParserError::syntax(
         "unsupported IS predicate",
@@ -239,11 +200,18 @@ fn find_child<'a>(
         .ok_or_else(|| ParserError::syntax(missing, SourceSpan::default(), None))
 }
 
-pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
-    build_type_name_with_depth(pair, 0)
+pub(super) fn build_type_name(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<GqlType, ParserError> {
+    build_type_name_with_depth(pair, 0, budget)
 }
 
-fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
+fn build_type_name_with_depth(
+    pair: Pair<'_, Rule>,
+    depth: u32,
+    budget: &mut InternerBudget,
+) -> Result<GqlType, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::type_name);
     let source_span = span(&pair);
     if depth > MAX_NESTING_DEPTH {
@@ -252,9 +220,11 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             span: source_span,
         });
     }
-    let text = pair.as_str().to_ascii_uppercase();
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact == "REAL" {
+    // Match the raw token sequence case- and whitespace-insensitively rather
+    // than building an upper-cased, whitespace-normalized `String`: the type
+    // name (and every nested LIST/RECORD level) is compared allocation-free.
+    let text = pair.as_str();
+    if keyword_tokens_eq(text, &["REAL"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV20,
             display_name: "Approximate value type: REAL",
@@ -262,7 +232,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "REAL type spelling is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
         });
     }
-    if compact == "FLOAT16" {
+    if keyword_tokens_eq(text, &["FLOAT16"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV20,
             display_name: "16 bit floating point numbers",
@@ -270,7 +240,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "FLOAT16 is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
         });
     }
-    if compact == "DOUBLE" || compact == "DOUBLE PRECISION" {
+    if keyword_tokens_eq(text, &["DOUBLE"]) || keyword_tokens_eq(text, &["DOUBLE", "PRECISION"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV23,
             display_name: "Floating point type name synonyms",
@@ -278,7 +248,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "DOUBLE spelling is outside the selene-db v1.0 claim list; use FLOAT64",
         });
     }
-    if compact == "UINT256" {
+    if keyword_tokens_eq(text, &["UINT256"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV15,
             display_name: "256 bit unsigned integer numbers",
@@ -286,7 +256,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "UINT256 is outside the selene-db v1.0 claim list",
         });
     }
-    if compact == "INT256" {
+    if keyword_tokens_eq(text, &["INT256"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV16,
             display_name: "256 bit signed integer numbers",
@@ -294,7 +264,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "INT256 is outside the selene-db v1.0 claim list",
         });
     }
-    if compact == "FLOAT128" {
+    if keyword_tokens_eq(text, &["FLOAT128"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV25,
             display_name: "128 bit floating point numbers",
@@ -302,7 +272,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "FLOAT128 is outside the selene-db v1.0 claim list",
         });
     }
-    if compact == "FLOAT256" {
+    if keyword_tokens_eq(text, &["FLOAT256"]) {
         return Err(ParserError::UnsupportedFeature {
             feature_id: FeatureId::GV26,
             display_name: "256 bit floating point numbers",
@@ -310,7 +280,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
             hint: "FLOAT256 is outside the selene-db v1.0 claim list",
         });
     }
-    if compact.starts_with("LIST") {
+    if keyword_starts_with(text, "LIST") {
         let inner = pair
             .into_inner()
             .find(|child| child.as_rule() == Rule::type_name)
@@ -320,43 +290,89 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         return Ok(GqlType::List(Box::new(build_type_name_with_depth(
             inner,
             depth + 1,
+            budget,
         )?)));
     }
 
-    match compact.as_str() {
-        "BOOLEAN" | "BOOL" => Ok(GqlType::Boolean),
-        "SIGNED INTEGER" | "INTEGER" | "INT" => Ok(GqlType::Integer),
-        "INT8" => Ok(GqlType::Int8),
-        "INT16" => Ok(GqlType::Int16),
-        "INT32" => Ok(GqlType::Int32),
-        "INT64" => Ok(GqlType::Int64),
-        "INT128" => Ok(GqlType::Int128),
-        "SMALLINT" => Ok(GqlType::SmallInt),
-        "BIGINT" => Ok(GqlType::BigInt),
-        "UINT" | "UINT64" => Ok(GqlType::Uint64),
-        "UINT8" => Ok(GqlType::Uint8),
-        "UINT16" => Ok(GqlType::Uint16),
-        "UINT32" => Ok(GqlType::Uint32),
-        "UINT128" => Ok(GqlType::Uint128),
-        "FLOAT" => Ok(GqlType::Float),
-        "DECIMAL" | "DEC" => Ok(GqlType::Decimal),
-        "FLOAT32" => Ok(GqlType::Float32),
-        "FLOAT64" => Ok(GqlType::Float64),
-        "STRING" | "VARCHAR" => Ok(GqlType::String),
-        "UUID" => Ok(GqlType::Uuid),
-        "BYTES" | "BYTEA" => Ok(GqlType::Bytes),
-        "ZONED DATETIME" => Ok(GqlType::ZonedDateTime),
-        "LOCAL DATETIME" => Ok(GqlType::LocalDateTime),
-        "ZONED TIME" => Ok(GqlType::ZonedTime),
-        "LOCAL TIME" => Ok(GqlType::LocalTime),
-        "DATE" => Ok(GqlType::Date),
-        "DURATION" => Ok(GqlType::Duration),
-        "PATH" => Ok(GqlType::Path),
-        "NULL" => Ok(GqlType::Null),
-        "NOTHING" => Ok(GqlType::Nothing),
-        _ => Err(not_implemented(
-            &pair,
-            "this GQL type constructor is not yet supported in v1.0",
-        )),
+    if keyword_starts_with(text, "RECORD") {
+        // Per ISO 39075:2024 section18.9 <record type> / <field types specification> +
+        // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
+        // type; bare `RECORD` (no fields) is the open record type. Field names are
+        // user-controlled and charge the per-parse interner budget (DoS bound).
+        let fields = pair
+            .into_inner()
+            .filter(|child| child.as_rule() == Rule::record_field_type)
+            .map(|field| {
+                let field_span = span(&field);
+                let mut children = field.into_inner();
+                let name_pair = children.next().ok_or_else(|| {
+                    ParserError::syntax("record field type is missing name", field_span, None)
+                })?;
+                let type_pair = children.next().ok_or_else(|| {
+                    ParserError::syntax("record field type is missing type", field_span, None)
+                })?;
+                Ok((
+                    intern_pair(name_pair, budget)?,
+                    build_type_name_with_depth(type_pair, depth + 1, budget)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, ParserError>>()?;
+        return Ok(if fields.is_empty() {
+            GqlType::Record(RecordType::Open)
+        } else {
+            GqlType::Record(RecordType::Closed(fields))
+        });
     }
+
+    // Scalar / reference type names, matched token-wise (case- and
+    // whitespace-insensitive) against their canonical spelling. The two-token
+    // temporal spellings (`ZONED DATETIME`, …) keep their multi-token match.
+    const SCALAR_TYPES: &[(&[&str], GqlType)] = &[
+        (&["BOOLEAN"], GqlType::Boolean),
+        (&["BOOL"], GqlType::Boolean),
+        (&["SIGNED", "INTEGER"], GqlType::Integer),
+        (&["INTEGER"], GqlType::Integer),
+        (&["INT"], GqlType::Integer),
+        (&["INT8"], GqlType::Int8),
+        (&["INT16"], GqlType::Int16),
+        (&["INT32"], GqlType::Int32),
+        (&["INT64"], GqlType::Int64),
+        (&["INT128"], GqlType::Int128),
+        (&["SMALLINT"], GqlType::SmallInt),
+        (&["BIGINT"], GqlType::BigInt),
+        (&["UINT"], GqlType::Uint64),
+        (&["UINT64"], GqlType::Uint64),
+        (&["UINT8"], GqlType::Uint8),
+        (&["UINT16"], GqlType::Uint16),
+        (&["UINT32"], GqlType::Uint32),
+        (&["UINT128"], GqlType::Uint128),
+        (&["FLOAT"], GqlType::Float),
+        (&["DECIMAL"], GqlType::Decimal),
+        (&["DEC"], GqlType::Decimal),
+        (&["FLOAT32"], GqlType::Float32),
+        (&["FLOAT64"], GqlType::Float64),
+        (&["STRING"], GqlType::String),
+        (&["VARCHAR"], GqlType::String),
+        (&["UUID"], GqlType::Uuid),
+        (&["BYTES"], GqlType::Bytes),
+        (&["BYTEA"], GqlType::Bytes),
+        (&["ZONED", "DATETIME"], GqlType::ZonedDateTime),
+        (&["LOCAL", "DATETIME"], GqlType::LocalDateTime),
+        (&["ZONED", "TIME"], GqlType::ZonedTime),
+        (&["LOCAL", "TIME"], GqlType::LocalTime),
+        (&["DATE"], GqlType::Date),
+        (&["DURATION"], GqlType::Duration),
+        (&["PATH"], GqlType::Path),
+        (&["NULL"], GqlType::Null),
+        (&["NOTHING"], GqlType::Nothing),
+    ];
+    for (tokens, ty) in SCALAR_TYPES {
+        if keyword_tokens_eq(text, tokens) {
+            return Ok(ty.clone());
+        }
+    }
+    Err(not_implemented(
+        &pair,
+        "this GQL type constructor is not yet supported in v1.0",
+    ))
 }

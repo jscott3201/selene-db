@@ -3,19 +3,22 @@
 //! The graph crate owns node/edge storage, label sets, property maps, directed
 //! adjacency, built-in label/property indexes, typed mutation validation, and
 //! the CORE persistence provider. `SharedGraph` serializes writes through a
-//! transaction boundary while readers observe immutable snapshots. Higher
-//! layers own GQL binding/planning, procedure-pack entry points, and extension
-//! provider semantics; edge property indexes remain outside the v1.0 storage
-//! contract. See Spec 03 and Spec 06.
+//! transaction boundary while readers observe immutable snapshots. selene-db is
+//! a single native engine: the higher `selene-gql` layer owns GQL
+//! binding/planning and the one frozen native procedure registry. Edge property
+//! indexes remain outside the v1.0 storage contract.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod adjacency;
-pub mod change_subscriber;
 pub mod chunked_vec;
+pub(crate) mod committer;
+pub(crate) mod committer_batch;
+pub mod compaction;
 pub(crate) mod composite_property_index;
 pub mod composite_typed_index;
+mod consistency;
 pub mod core_provider;
 pub mod durable_provider;
 pub mod error;
@@ -35,8 +38,9 @@ pub mod typed_index;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
-pub use change_subscriber::ChangeSubscriber;
 pub use chunked_vec::ChunkedVec;
+pub use committer_batch::CommitBatching;
+pub use compaction::{CompactedCore, CompactionReport, compact_core};
 pub use composite_typed_index::{
     CompositeIndexValueError, CompositeKey, CompositeKeyComponent, CompositeTypedIndex,
 };
@@ -48,15 +52,16 @@ pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
 pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph};
 pub use graph_types::{
-    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyDefaultValue,
-    PropertyElementType, PropertyTypeDef, ValidationMode,
+    DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,
+    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
+    RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 pub use id_allocator::IdAllocator;
 pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 pub use mutator::Mutator;
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 pub use shared::{SharedGraph, SharedGraphBuilder};
-pub use store::{EdgeStore, NodeStore};
+pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};

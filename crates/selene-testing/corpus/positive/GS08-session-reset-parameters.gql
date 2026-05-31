@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GS08
+// expects: parse-ok
+SESSION RESET PARAMETERS

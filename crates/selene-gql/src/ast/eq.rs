@@ -45,6 +45,13 @@ fn scrub_statement(statement: &mut Statement) {
         Statement::StartTransaction { span }
         | Statement::Commit { span }
         | Statement::Rollback { span } => *span = SourceSpan::default(),
+        Statement::SessionSetValue { value, span, .. } => {
+            *span = SourceSpan::default();
+            scrub_value(value);
+        }
+        Statement::SessionSetTimeZone { span, .. }
+        | Statement::SessionReset { span, .. }
+        | Statement::SessionClose { span } => *span = SourceSpan::default(),
     }
 }
 
@@ -253,28 +260,6 @@ fn scrub_value(value: &mut ValueExpr) {
                 scrub_value(item);
             }
         }
-        ValueExpr::Like {
-            operand,
-            pattern,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-            scrub_value(pattern);
-        }
-        ValueExpr::Between {
-            operand,
-            low,
-            high,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-            scrub_value(low);
-            scrub_value(high);
-        }
         ValueExpr::AllDifferent { items, span } | ValueExpr::Same { items, span } => {
             *span = SourceSpan::default();
             for item in items {
@@ -382,6 +367,8 @@ fn scrub_ddl(statement: &mut DdlStatement) {
         | DdlStatement::DropGraph { span, .. }
         | DdlStatement::DropNodeType { span, .. }
         | DdlStatement::DropEdgeType { span, .. }
+        | DdlStatement::TruncateNodeType { span, .. }
+        | DdlStatement::TruncateEdgeType { span, .. }
         | DdlStatement::CreateIndex { span, .. }
         | DdlStatement::DropIndex { span, .. } => *span = SourceSpan::default(),
         DdlStatement::CreateNodeType {
@@ -410,12 +397,7 @@ fn scrub_property_def(property: &mut TypePropertyDef) {
         match constraint {
             TypePropertyConstraint::NotNull(span)
             | TypePropertyConstraint::Immutable(span)
-            | TypePropertyConstraint::Unique(span)
-            | TypePropertyConstraint::Searchable(span)
-            | TypePropertyConstraint::Dictionary(span)
-            | TypePropertyConstraint::Fill(_, span)
-            | TypePropertyConstraint::Interval(_, span)
-            | TypePropertyConstraint::Encoding(_, span) => *span = SourceSpan::default(),
+            | TypePropertyConstraint::Unique(span) => *span = SourceSpan::default(),
             TypePropertyConstraint::Indexed { span, .. } => *span = SourceSpan::default(),
             TypePropertyConstraint::Default(value, span) => {
                 *span = SourceSpan::default();

@@ -26,6 +26,8 @@ fn gtyp_v3_preserves_type_model_fields() {
                 required: false,
                 default: None,
                 immutable: true,
+
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Warn,
         }],
@@ -64,6 +66,8 @@ fn finish_recovery_rejects_gtyp_without_meta() {
                 required: false,
                 default: None,
                 immutable: false,
+
+                record_field_types: None,
             }],
             validation_mode: crate::ValidationMode::Strict,
         }],

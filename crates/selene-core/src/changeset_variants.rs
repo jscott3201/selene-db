@@ -1,11 +1,9 @@
-use std::sync::Arc;
-
 use smallvec::SmallVec;
 
 use crate::{
     Change, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, IStr, LabelDiff,
-    LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PackLifecycleEvent, PropertyDiff,
-    PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PropertyDiff, PropertyMap,
+    RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
 };
 
 impl Change {
@@ -43,10 +41,6 @@ impl Change {
                 id: GraphId::new(2),
             },
         },
-        || Self::IndexExtensionEvent {
-            provider: changeset_variant_istr("change.all.provider"),
-            payload: Arc::from([0_u8]),
-        },
         || Self::NodePropertyRemoved {
             id: NodeId::new(1),
             property: changeset_variant_istr("change.all.node_property_removed"),
@@ -59,6 +53,13 @@ impl Change {
             id: NodeId::new(1),
             label: changeset_variant_istr("change.all.node_label_removed"),
         },
+        || Self::NodesOfTypeTruncated {
+            label: changeset_variant_istr("change.all.nodes_of_type_truncated"),
+        },
+        || Self::EdgesOfTypeTruncated {
+            label: changeset_variant_istr("change.all.edges_of_type_truncated"),
+        },
+        || Self::GraphReset {},
     ];
 
     /// Number of known [`Change`] variants in this build.
@@ -75,10 +76,12 @@ impl Change {
             Self::EdgeUpdated { .. } => "EdgeUpdated",
             Self::EdgeDeleted { .. } => "EdgeDeleted",
             Self::SchemaChanged { .. } => "SchemaChanged",
-            Self::IndexExtensionEvent { .. } => "IndexExtensionEvent",
             Self::NodePropertyRemoved { .. } => "NodePropertyRemoved",
             Self::EdgePropertyRemoved { .. } => "EdgePropertyRemoved",
             Self::NodeLabelRemoved { .. } => "NodeLabelRemoved",
+            Self::NodesOfTypeTruncated { .. } => "NodesOfTypeTruncated",
+            Self::EdgesOfTypeTruncated { .. } => "EdgesOfTypeTruncated",
+            Self::GraphReset {} => "GraphReset",
         }
     }
 }
@@ -133,20 +136,6 @@ impl SchemaChange {
                 fields: SmallVec::new(),
             },
         },
-        || Self::ProcedurePackActivated {
-            pack_name: changeset_variant_istr("schema.all.pack"),
-            version: changeset_variant_istr("schema.all.version"),
-        },
-        || Self::ProcedurePackDeprecated {
-            pack_name: changeset_variant_istr("schema.all.pack"),
-            version: changeset_variant_istr("schema.all.version"),
-            reason: changeset_variant_istr("schema.all.reason"),
-        },
-        || Self::ProcedurePackDisabled {
-            pack_name: changeset_variant_istr("schema.all.pack"),
-            version: changeset_variant_istr("schema.all.version"),
-            reason: changeset_variant_istr("schema.all.reason"),
-        },
         || Self::PropertyIndexCreated {
             label: changeset_variant_istr("schema.all.node"),
             property: changeset_variant_istr("schema.all.property"),
@@ -155,14 +144,6 @@ impl SchemaChange {
         || Self::PropertyIndexDropped {
             label: changeset_variant_istr("schema.all.node"),
             property: changeset_variant_istr("schema.all.property"),
-        },
-        || Self::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::ValidationFailed {
-                pack_name: Some(changeset_variant_istr("schema.all.pack")),
-                principal: changeset_variant_istr("schema.all.principal"),
-                error: "schema.all.error".to_owned(),
-                at: changeset_timestamp(1),
-            },
         },
         || Self::PropertyIndexCreatedNamed {
             label: changeset_variant_istr("schema.all.node"),
@@ -223,12 +204,8 @@ impl SchemaChange {
             Self::NodeTypeDropped { .. } => "NodeTypeDropped",
             Self::EdgeTypeDropped { .. } => "EdgeTypeDropped",
             Self::RecordTypeAdded { .. } => "RecordTypeAdded",
-            Self::ProcedurePackActivated { .. } => "ProcedurePackActivated",
-            Self::ProcedurePackDeprecated { .. } => "ProcedurePackDeprecated",
-            Self::ProcedurePackDisabled { .. } => "ProcedurePackDisabled",
             Self::PropertyIndexCreated { .. } => "PropertyIndexCreated",
             Self::PropertyIndexDropped { .. } => "PropertyIndexDropped",
-            Self::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
             Self::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
             Self::NodeTypeAddedV2 { .. } => "NodeTypeAddedV2",
             Self::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
@@ -251,8 +228,4 @@ fn changeset_graph_type() -> GraphType {
         changeset_graph_type_id(),
         changeset_variant_istr("schema.all.graph_type"),
     )
-}
-
-fn changeset_timestamp(second: i64) -> jiff::Timestamp {
-    jiff::Timestamp::new(second, 0).expect("Change::ALL timestamp fixture is in range")
 }

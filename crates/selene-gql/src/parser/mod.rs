@@ -175,6 +175,23 @@ mod tests {
     }
 
     #[test]
+    fn parse_return_unknown() {
+        // ISO/IEC 39075:2024 §21.2 <boolean literal> ::= TRUE | FALSE | UNKNOWN.
+        // UNKNOWN is the mandatory-conformance boolean unknown truth value; the
+        // runtime models it as `Value::Null` (validated 3VL), so the parser
+        // lowers the `unknown_lit` token to `Literal::Null`.
+        assert_eq!(
+            only_item("RETURN UNKNOWN").expr,
+            ValueExpr::Literal(Literal::Null(SourceSpan::new(7, 7)))
+        );
+        // Case-insensitive per the `^"UNKNOWN"` grammar rule.
+        assert_eq!(
+            only_item("RETURN unknown").expr,
+            ValueExpr::Literal(Literal::Null(SourceSpan::new(7, 7)))
+        );
+    }
+
+    #[test]
     fn parse_return_alias() {
         let item = only_item("RETURN 1 AS one");
         assert_eq!(optional_name(item.alias), Some("one"));
@@ -285,12 +302,28 @@ mod tests {
     }
 
     #[test]
-    fn non_decimal_literal_reports_not_implemented() {
-        // Hex/oct/bin/uint/temporal literals parse at the grammar level but
-        // their builders land later. Surface them as NotImplemented (42N01),
-        // not SyntaxError, so callers can distinguish capability gaps from
-        // typos.
-        let err = parse("RETURN 0x10").expect_err("hex literal should report not implemented");
+    fn non_decimal_numeric_literals_are_syntax_errors() {
+        // ISO/IEC 39075:2024 §21.2 has no hexadecimal/octal/binary integer
+        // literal and no `u` unsigned suffix. These spellings are not part of
+        // the grammar, so they fail at tokenization with a SyntaxError (42001)
+        // rather than parsing into an unimplemented-literal node.
+        for source in ["RETURN 0x10", "RETURN 0o17", "RETURN 0b101", "RETURN 42u"] {
+            let err = parse(source).expect_err("non-decimal numeric literal should be rejected");
+            assert!(
+                matches!(err, ParserError::SyntaxError { .. }),
+                "expected SyntaxError for {source:?}, got {err:?}"
+            );
+            assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR);
+        }
+    }
+
+    #[test]
+    fn temporal_literal_reports_not_implemented() {
+        // Temporal keyword literals still parse at the grammar level but their
+        // builders land in a later brief; surface them as NotImplemented
+        // (42N01) so callers can distinguish a capability gap from a typo.
+        let err = parse("RETURN DATE '2020-01-01'")
+            .expect_err("temporal literal should report not implemented");
         assert!(matches!(err, ParserError::NotImplemented { .. }));
         assert_eq!(err.gqlstatus(), GqlStatus::FEATURE_NOT_SUPPORTED);
     }
@@ -441,10 +474,6 @@ mod tests {
             ValueExpr::IsCheck { negated: true, .. }
         ));
         assert!(matches!(
-            only_item("RETURN n.age BETWEEN 1 AND 3").expr,
-            ValueExpr::Between { negated: false, .. }
-        ));
-        assert!(matches!(
             only_item("RETURN n.name STARTS WITH 'A'").expr,
             ValueExpr::BinaryOp {
                 op: BinaryOp::StartsWith,
@@ -455,6 +484,44 @@ mod tests {
             only_item("RETURN PROPERTY_EXISTS(n, 'name')").expr,
             ValueExpr::PropertyExists { .. }
         ));
+    }
+
+    #[test]
+    fn non_iso_sql_drift_predicates_are_syntax_errors() {
+        // `LIKE` and `BETWEEN` are SQL drift with native ISO replacements
+        // (STARTS WITH / ENDS WITH / CONTAINS and `x >= lo AND x <= hi`); the
+        // grammar must reject them outright rather than accept-then-flag.
+        for source in [
+            "RETURN n.name LIKE 'a%'",
+            "RETURN n.name NOT LIKE 'a%'",
+            "RETURN n.age BETWEEN 1 AND 3",
+            "RETURN n.age NOT BETWEEN 1 AND 3",
+        ] {
+            let err = parse(source).expect_err(source);
+            assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+        }
+    }
+
+    #[test]
+    fn non_iso_modulo_and_temporal_and_sql_comment_are_syntax_errors() {
+        // `%` infix modulo (use ISO `MOD(x, y)`), `.prop AT TIME ...` temporal
+        // access, and the SQL `--` line comment are all non-ISO and removed.
+        for source in [
+            "RETURN 5 % 2",
+            "RETURN n.created AT TIME 'UTC'",
+            "RETURN 1 -- trailing comment",
+        ] {
+            let err = parse(source).expect_err(source);
+            assert_eq!(err.gqlstatus(), GqlStatus::SYNTAX_ERROR, "{source}");
+        }
+
+        // The ISO replacements and remaining comment forms still parse.
+        assert!(matches!(
+            only_item("RETURN MOD(5, 2) AS m").expr,
+            ValueExpr::FunctionCall { .. }
+        ));
+        parse("RETURN 1 // trailing comment").expect("// line comment still parses");
+        parse("RETURN 1 /* block comment */ AS x").expect("/* */ block comment still parses");
     }
 
     #[test]

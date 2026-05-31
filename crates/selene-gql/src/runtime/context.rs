@@ -61,6 +61,7 @@ pub struct TxContext<'a, 'g> {
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
+    session_time_zone: jiff::tz::TimeZone,
 }
 
 /// Expression-evaluation context for one planned execution point.
@@ -143,6 +144,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -191,6 +193,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -239,6 +242,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -268,6 +272,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -298,6 +303,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            session_time_zone: jiff::tz::TimeZone::UTC,
         }
     }
 
@@ -330,6 +336,25 @@ impl<'a, 'g> TxContext<'a, 'g> {
     ) -> Self {
         self.warning_sink = warning_sink;
         self
+    }
+
+    /// Attach the session time-zone displacement visible to temporal functions.
+    ///
+    /// The section 20.27 current-datetime functions read this through
+    /// [`Self::session_time_zone`]. Defaults to UTC (ID048) when not set.
+    #[must_use]
+    pub fn with_session_time_zone(mut self, zone: jiff::tz::TimeZone) -> Self {
+        self.session_time_zone = zone;
+        self
+    }
+
+    /// Borrow the session time-zone displacement for temporal evaluation.
+    ///
+    /// Per ISO/IEC 39075:2024 section 4.5.2.1 the current-datetime functions
+    /// evaluate against the session time zone; the default is UTC (ID048).
+    #[must_use]
+    pub fn session_time_zone(&self) -> &jiff::tz::TimeZone {
+        &self.session_time_zone
     }
 
     /// Emit one runtime warning if the session opted into warning collection.
@@ -389,7 +414,8 @@ impl<'a, 'g> TxContext<'a, 'g> {
         Ok(())
     }
 
-    /// Build a checker that can cross into procedure packs and algorithm crates.
+    /// Build a checker that can cross into the native algorithms crate and
+    /// built-in procedures.
     #[must_use]
     pub(crate) const fn cancellation_checker(&self) -> CancellationChecker<'a> {
         CancellationChecker::new(self.cancellation, self.deadline)
@@ -578,5 +604,79 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use selene_core::GraphId;
+
+    use crate::{EmptyProcedureRegistry, ImplDefinedCaps};
+
+    use super::*;
+
+    fn read_only_ctx<'a>(
+        graph: &'a Arc<SeleneGraph>,
+        caps: &'a ImplDefinedCaps,
+        registry: &'a EmptyProcedureRegistry,
+    ) -> TxContext<'a, 'a> {
+        TxContext::read_only(graph.clone(), caps, registry, &[])
+    }
+
+    #[test]
+    fn stride_accumulates_then_resets_and_only_checks_at_boundary() {
+        // GQLRT-29: the in-loop stride accumulator must NOT call the (cancelled)
+        // token until the accumulated row count reaches CANCEL_CHECK_STRIDE. A
+        // cancelled token is attached up front, so any premature check would
+        // error immediately.
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(8_801)));
+        let caps = ImplDefinedCaps::default();
+        let registry = EmptyProcedureRegistry;
+        let token = CancellationToken::new();
+        token.cancel();
+        let ctx =
+            read_only_ctx(&graph, &caps, &registry).with_resource_limits(Some(&token), None, None);
+
+        let mut rows_since_check = 0usize;
+        // Accumulate one short of the stride: no boundary crossed, no check.
+        for _ in 0..(CANCEL_CHECK_STRIDE - 1) {
+            ctx.check_cancellation_stride(&mut rows_since_check, 1)
+                .expect("below the stride boundary the cancelled token is never consulted");
+        }
+        assert_eq!(rows_since_check, CANCEL_CHECK_STRIDE - 1);
+
+        // The row that crosses the boundary triggers the check, which observes
+        // the cancelled token and surfaces 5GQL2.
+        let err = ctx
+            .check_cancellation_stride(&mut rows_since_check, 1)
+            .expect_err("crossing the stride boundary consults the cancelled token");
+        assert!(matches!(err, ExecutorError::Cancelled { .. }));
+        assert_eq!(err.gqlstatus().as_str(), "5GQL2");
+    }
+
+    #[test]
+    fn stride_resets_counter_after_an_uncancelled_boundary_check() {
+        // With no cancellation attached, crossing the boundary still resets the
+        // accumulator to 0 so the next stride window starts fresh (the
+        // accumulate-then-reset contract).
+        let graph = Arc::new(SeleneGraph::new(GraphId::new(8_802)));
+        let caps = ImplDefinedCaps::default();
+        let registry = EmptyProcedureRegistry;
+        let ctx = read_only_ctx(&graph, &caps, &registry);
+
+        let mut rows_since_check = 0usize;
+        // A single batch large enough to cross the boundary resets to 0.
+        ctx.check_cancellation_stride(&mut rows_since_check, CANCEL_CHECK_STRIDE + 5)
+            .expect("no cancellation token attached");
+        assert_eq!(
+            rows_since_check, 0,
+            "the accumulator must reset to 0 once a boundary check fires"
+        );
+
+        // A sub-stride batch after the reset does not trigger another check and
+        // accumulates from 0.
+        ctx.check_cancellation_stride(&mut rows_since_check, 3)
+            .expect("below boundary");
+        assert_eq!(rows_since_check, 3);
     }
 }

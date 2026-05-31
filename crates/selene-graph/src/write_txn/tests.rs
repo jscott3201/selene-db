@@ -1,15 +1,13 @@
-use std::sync::Arc;
-use std::thread;
+use std::{sync::Arc, thread};
 
 use parking_lot::Mutex;
 use selene_core::{
-    Change, ChangeKind, ChangeKindSet, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType,
-    Value, intern,
+    Change, GraphId, LabelSet, NodeId, PropertyMap, PropertyValueType, Value, intern,
 };
 
 use crate::{
-    ChangeSubscriber, GraphTypeDef, IndexProvider, NodeTypeDef, PropertyTypeDef, ProviderError,
-    ProviderTag, SharedGraph, SubTag, ValidationMode,
+    GraphTypeDef, IndexProvider, NodeTypeDef, PropertyTypeDef, ProviderError, ProviderTag,
+    SharedGraph, SubTag, ValidationMode,
 };
 
 fn istr(value: &str) -> selene_core::IStr {
@@ -33,6 +31,7 @@ fn person_graph_type() -> GraphTypeDef {
                 required: true,
                 default: None,
                 immutable: false,
+                record_field_types: None,
             }],
             validation_mode: ValidationMode::Strict,
         }],
@@ -70,38 +69,6 @@ struct PanicOnSecondChangeProvider {
     calls: Mutex<usize>,
 }
 
-struct RecordingSubscriber {
-    tag: ProviderTag,
-    kinds: ChangeKindSet,
-    seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>,
-}
-
-impl RecordingSubscriber {
-    fn new(
-        tag: ProviderTag,
-        kinds: ChangeKindSet,
-        seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>,
-    ) -> Self {
-        Self { tag, kinds, seen }
-    }
-}
-
-struct PanickingSubscriber {
-    tag: ProviderTag,
-    kinds: ChangeKindSet,
-    seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>,
-}
-
-impl PanickingSubscriber {
-    fn new(
-        tag: ProviderTag,
-        kinds: ChangeKindSet,
-        seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>,
-    ) -> Self {
-        Self { tag, kinds, seen }
-    }
-}
-
 impl PanicOnSecondChangeProvider {
     fn new(tag: ProviderTag, seen: Arc<Mutex<Vec<(ProviderTag, Change)>>>) -> Self {
         Self {
@@ -113,10 +80,6 @@ impl PanicOnSecondChangeProvider {
 }
 
 impl IndexProvider for PanicOnSecondChangeProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -143,10 +106,6 @@ impl IndexProvider for PanicOnSecondChangeProvider {
 }
 
 impl IndexProvider for RecordingProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
     fn provider_tag(&self) -> ProviderTag {
         self.tag
     }
@@ -172,36 +131,6 @@ impl IndexProvider for RecordingProvider {
 
     fn declared_sub_tags(&self) -> &[SubTag] {
         &[]
-    }
-}
-
-impl ChangeSubscriber for RecordingSubscriber {
-    fn subscriber_tag(&self) -> ProviderTag {
-        self.tag
-    }
-
-    fn change_kinds(&self) -> ChangeKindSet {
-        self.kinds
-    }
-
-    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        self.seen.lock().push((self.tag, change.clone()));
-        Ok(())
-    }
-}
-
-impl ChangeSubscriber for PanickingSubscriber {
-    fn subscriber_tag(&self) -> ProviderTag {
-        self.tag
-    }
-
-    fn change_kinds(&self) -> ChangeKindSet {
-        self.kinds
-    }
-
-    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        self.seen.lock().push((self.tag, change.clone()));
-        panic!("synthetic subscriber panic");
     }
 }
 
@@ -610,35 +539,6 @@ fn multi_provider_commit_ordering() {
 }
 
 #[test]
-fn subscriber_receives_declared_kinds_only() {
-    let provider_seen = Arc::new(Mutex::new(Vec::new()));
-    let subscriber_seen = Arc::new(Mutex::new(Vec::new()));
-    let tag = ProviderTag(*b"SUB1");
-    let shared = SharedGraph::builder(GraphId::new(1))
-        .with_provider(Arc::new(RecordingProvider::new(tag, provider_seen)))
-        .with_change_subscriber(Arc::new(RecordingSubscriber::new(
-            tag,
-            ChangeKindSet::EMPTY.with(ChangeKind::NodeDeleted),
-            Arc::clone(&subscriber_seen),
-        )))
-        .build()
-        .unwrap();
-    let mut txn = shared.begin_write();
-    {
-        let mut mutator = txn.mutator();
-        let id = mutator
-            .create_node(LabelSet::new(), PropertyMap::new())
-            .expect("create_node ok");
-        mutator.delete_node(id).expect("delete_node ok");
-    }
-    txn.commit().unwrap();
-
-    let seen = subscriber_seen.lock();
-    assert_eq!(seen.len(), 1);
-    assert!(matches!(seen[0].1, Change::NodeDeleted { .. }));
-}
-
-#[test]
 fn provider_panic_isolation() {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let shared = SharedGraph::builder(GraphId::new(1))
@@ -679,39 +579,6 @@ fn provider_panic_isolation() {
         .count();
     assert_eq!(panicking_count, 3);
     assert_eq!(other_count, 3);
-}
-
-#[test]
-fn subscriber_panic_isolation() {
-    let provider_seen = Arc::new(Mutex::new(Vec::new()));
-    let subscriber_seen = Arc::new(Mutex::new(Vec::new()));
-    let tag = ProviderTag(*b"SUBP");
-    let shared = SharedGraph::builder(GraphId::new(1))
-        .with_provider(Arc::new(RecordingProvider::new(tag, provider_seen)))
-        .with_change_subscriber(Arc::new(PanickingSubscriber::new(
-            tag,
-            ChangeKindSet::EMPTY.with(ChangeKind::NodeDeleted),
-            Arc::clone(&subscriber_seen),
-        )))
-        .build()
-        .unwrap();
-    let mut txn = shared.begin_write();
-    {
-        let mut mutator = txn.mutator();
-        let id = mutator
-            .create_node(LabelSet::new(), PropertyMap::new())
-            .expect("create_node ok");
-        mutator.delete_node(id).expect("delete_node ok");
-    }
-    let outcome = txn.commit().unwrap();
-    assert_eq!(outcome.changes.len(), 2);
-    assert_eq!(subscriber_seen.lock().len(), 1);
-
-    let mut txn = shared.begin_write();
-    txn.mutator()
-        .create_node(LabelSet::new(), PropertyMap::new())
-        .expect("follow-up create succeeds");
-    txn.commit().unwrap();
 }
 
 #[test]

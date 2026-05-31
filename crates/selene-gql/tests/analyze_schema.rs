@@ -7,7 +7,8 @@ use selene_gql::{
     NodePattern, NonEmpty, PatternElement, SourceSpan, Statement, ValueExpr, analyze, parse,
 };
 use selene_graph::{
-    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, ValidationMode,
+    EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef, RecordFieldType,
+    RecordFieldTypeDef, RecordFieldTypes, ValidationMode,
 };
 use selene_testing::{
     mentions_one_of_graph_type, person_company_graph_type, person_only_graph_type,
@@ -29,7 +30,45 @@ fn property(name: &str, value_type: PropertyValueType, required: bool) -> Proper
         required,
         default: None,
         immutable: false,
+        record_field_types: None,
     }
+}
+
+/// Closed graph type with `:Host` carrying a closed typed RECORD property
+/// `config :: RECORD{host :: STRING, port :: INT}`.
+fn host_record_graph_type() -> GraphTypeDef {
+    let config = PropertyTypeDef {
+        name: istr("config"),
+        value_type: PropertyValueType::RecordTyped,
+        list_element_type: None,
+        required: false,
+        default: None,
+        immutable: false,
+        record_field_types: Some(RecordFieldTypes(vec![
+            RecordFieldTypeDef {
+                name: istr("host"),
+                field_type: RecordFieldType::Scalar(PropertyValueType::String),
+                required: true,
+            },
+            RecordFieldTypeDef {
+                name: istr("port"),
+                field_type: RecordFieldType::Scalar(PropertyValueType::Int),
+                required: true,
+            },
+        ])),
+    };
+    GraphTypeDef {
+        name: istr("fixture.host_record"),
+        node_types: vec![NodeTypeDef {
+            name: istr("Host"),
+            key_labels: LabelSet::single(istr("Host")),
+            properties: vec![config],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    }
+    .validate()
+    .expect("host record fixture graph type is valid")
 }
 
 fn analyze_source(
@@ -321,6 +360,41 @@ fn rejects_property_type_mismatch_on_insert_and_set() {
     let set_error = schema_error("MATCH (n:Person) SET n.name = 42", &graph_type);
     assert!(matches!(
         set_error,
+        AnalysisError::SchemaPropertyTypeMismatch { .. }
+    ));
+}
+
+#[test]
+fn accepts_record_literal_write_into_record_property() {
+    // Regression pin (analyzer/runtime divergence): L1c-a binds a record literal to the
+    // OPEN record type, and L1c-d lowers every RECORD property declaration to the
+    // `RecordTyped` tag — so a record write into a typed RECORD property must pass the
+    // coarse static schema gate (closed-field conformance is enforced at commit time →
+    // G2000). Before the `property_type_compatible` fix, the analyzer rejected the only
+    // value form the `RECORD{..}` constructor can produce, making typed-RECORD properties
+    // impossible to populate through GQL.
+    let graph_type = host_record_graph_type();
+
+    analyze_with_schema(
+        "INSERT (n:Host {config: RECORD{host: 'h', port: 1}})",
+        &graph_type,
+    )
+    .expect("record literal INSERT into a RECORD property analyzes");
+
+    analyze_with_schema(
+        "MATCH (n:Host) SET n.config = RECORD{host: 'h', port: 1}",
+        &graph_type,
+    )
+    .expect("record literal SET into a RECORD property analyzes");
+
+    // The gate is not broken open: a record literal written to a scalar (`String`)
+    // property is still a static type mismatch.
+    let mismatch = schema_error(
+        "INSERT (n:Person {name: RECORD{x: 1}})",
+        &person_company_graph_type(),
+    );
+    assert!(matches!(
+        mismatch,
         AnalysisError::SchemaPropertyTypeMismatch { .. }
     ));
 }

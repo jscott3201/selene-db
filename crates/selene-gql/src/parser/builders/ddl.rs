@@ -4,14 +4,17 @@ use pest::iterators::Pair;
 
 use crate::{
     ast::{
-        DdlStatement, EdgeEndpointSpec, SourceSpan, TypePropertyConstraint, TypePropertyDef,
+        DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
         ValidationMode,
     },
     error::ParserError,
     parser::budget::InternerBudget,
 };
 
-use super::{Rule, expr, first_child, intern_pair, not_implemented, span, unexpected_pair};
+use super::{
+    Rule, expr, first_child, intern_pair, keyword_starts_with, keyword_tokens_eq, span,
+    unexpected_pair,
+};
 
 pub(super) fn build_ddl_statement(
     pair: Pair<'_, Rule>,
@@ -26,32 +29,14 @@ pub(super) fn build_ddl_statement(
         Rule::create_edge_type => build_create_edge_type(inner, budget),
         Rule::drop_node_type => build_drop_node_type(inner, budget),
         Rule::drop_edge_type => build_drop_edge_type(inner, budget),
+        Rule::truncate_node_type => build_truncate_node_type(inner, budget),
+        Rule::truncate_edge_type => build_truncate_edge_type(inner, budget),
         Rule::show_node_types => Ok(DdlStatement::ShowNodeTypes(span(&inner))),
         Rule::show_edge_types => Ok(DdlStatement::ShowEdgeTypes(span(&inner))),
         Rule::show_indexes => Ok(DdlStatement::ShowIndexes(span(&inner))),
         Rule::show_procedures => Ok(DdlStatement::ShowProcedures(span(&inner))),
-        Rule::create_trigger | Rule::drop_trigger | Rule::show_triggers => Err(not_implemented(
-            &inner,
-            "triggers are out of v1.0 scope per spec 03 §7",
-        )),
-        Rule::create_materialized_view
-        | Rule::drop_materialized_view
-        | Rule::show_materialized_views => Err(not_implemented(
-            &inner,
-            "materialized views are not in the v1.0 claim list",
-        )),
-        Rule::create_procedure | Rule::drop_procedure => Err(not_implemented(
-            &inner,
-            "procedures are registered through selene-pack, not via DDL",
-        )),
         Rule::create_index => build_create_index(inner, budget),
         Rule::drop_index => build_drop_index(inner, budget),
-        Rule::create_user
-        | Rule::drop_user
-        | Rule::create_role
-        | Rule::drop_role
-        | Rule::grant_role
-        | Rule::revoke_role => Err(not_implemented(&inner, "auth is an embedder concern (D1)")),
         _ => Err(unexpected_pair(inner, "expected DDL statement")),
     }
 }
@@ -254,11 +239,12 @@ fn build_drop_node_type(
     budget: &mut InternerBudget,
 ) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let (label, if_exists) =
+    let (label, if_exists, behavior) =
         build_drop_type_parts(pair, "DROP NODE TYPE is missing label", budget)?;
     Ok(DdlStatement::DropNodeType {
         label,
         if_exists,
+        behavior,
         span: source_span,
     })
 }
@@ -268,34 +254,91 @@ fn build_drop_edge_type(
     budget: &mut InternerBudget,
 ) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let (label, if_exists) =
+    let (label, if_exists, behavior) =
         build_drop_type_parts(pair, "DROP EDGE TYPE is missing label", budget)?;
     Ok(DdlStatement::DropEdgeType {
         label,
         if_exists,
+        behavior,
         span: source_span,
     })
+}
+
+fn build_truncate_node_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let label = build_truncate_label(pair, "TRUNCATE NODE TYPE is missing label", budget)?;
+    Ok(DdlStatement::TruncateNodeType {
+        label,
+        span: source_span,
+    })
+}
+
+fn build_truncate_edge_type(
+    pair: Pair<'_, Rule>,
+    budget: &mut InternerBudget,
+) -> Result<DdlStatement, ParserError> {
+    let source_span = span(&pair);
+    let label = build_truncate_label(pair, "TRUNCATE EDGE TYPE is missing label", budget)?;
+    Ok(DdlStatement::TruncateEdgeType {
+        label,
+        span: source_span,
+    })
+}
+
+fn build_truncate_label(
+    pair: Pair<'_, Rule>,
+    missing: &'static str,
+    budget: &mut InternerBudget,
+) -> Result<selene_core::IStr, ParserError> {
+    let source_span = span(&pair);
+    let mut label = None;
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::ident => label = Some(intern_pair(child, budget)?),
+            _ => return Err(unexpected_pair(child, "unexpected TRUNCATE TYPE child")),
+        }
+    }
+    label.ok_or_else(|| ParserError::syntax(missing, source_span, None))
 }
 
 fn build_drop_type_parts(
     pair: Pair<'_, Rule>,
     missing: &'static str,
     budget: &mut InternerBudget,
-) -> Result<(selene_core::IStr, bool), ParserError> {
+) -> Result<(selene_core::IStr, bool, DropBehavior), ParserError> {
     let source_span = span(&pair);
     let mut label = None;
     let mut if_exists = false;
+    // Default behavior when the optional `RESTRICT | CASCADE` tail is absent.
+    let mut behavior = DropBehavior::Restrict;
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_exists => if_exists = true,
             Rule::ident => label = Some(intern_pair(child, budget)?),
+            Rule::drop_behavior => behavior = build_drop_behavior(&child)?,
             _ => return Err(unexpected_pair(child, "unexpected DROP TYPE child")),
         }
     }
     Ok((
         label.ok_or_else(|| ParserError::syntax(missing, source_span, None))?,
         if_exists,
+        behavior,
     ))
+}
+
+fn build_drop_behavior(pair: &Pair<'_, Rule>) -> Result<DropBehavior, ParserError> {
+    match pair.as_str().to_ascii_uppercase().as_str() {
+        "RESTRICT" => Ok(DropBehavior::Restrict),
+        "CASCADE" => Ok(DropBehavior::Cascade),
+        _ => Err(ParserError::syntax(
+            "unknown drop behavior",
+            span(pair),
+            None,
+        )),
+    }
 }
 
 fn build_type_prop_def_list(
@@ -320,7 +363,7 @@ fn build_type_prop_def(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::ident => name = Some(intern_pair(child, budget)?),
-            Rule::type_name => gql_type = Some(expr::build_type_name(child)?),
+            Rule::type_name => gql_type = Some(expr::build_type_name(child, budget)?),
             Rule::type_prop_constraint => {
                 constraints.push(build_type_prop_constraint(child, budget)?);
             }
@@ -345,17 +388,16 @@ fn build_type_prop_constraint(
     budget: &mut InternerBudget,
 ) -> Result<TypePropertyConstraint, ParserError> {
     let source_span = span(&pair);
-    let text = pair
-        .as_str()
-        .to_ascii_uppercase()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
+    // Match the constraint keyword(s) token-wise (case- and whitespace-
+    // insensitive) without allocating a normalized `String`. `NOT NULL` keeps
+    // its two-token match; `DEFAULT`/`INDEXED` are leading-keyword prefixes
+    // (the literal / index name are read from the pest children).
+    let text = pair.as_str();
 
-    if text == "NOT NULL" {
+    if keyword_tokens_eq(text, &["NOT", "NULL"]) {
         return Ok(TypePropertyConstraint::NotNull(source_span));
     }
-    if text.starts_with("DEFAULT") {
+    if keyword_starts_with(text, "DEFAULT") {
         let literal = pair
             .into_inner()
             .find(|child| child.as_rule() == Rule::literal)
@@ -367,13 +409,13 @@ fn build_type_prop_constraint(
             source_span,
         ));
     }
-    if text == "IMMUTABLE" {
+    if keyword_tokens_eq(text, &["IMMUTABLE"]) {
         return Ok(TypePropertyConstraint::Immutable(source_span));
     }
-    if text == "UNIQUE" {
+    if keyword_tokens_eq(text, &["UNIQUE"]) {
         return Ok(TypePropertyConstraint::Unique(source_span));
     }
-    if text.starts_with("INDEXED") {
+    if keyword_starts_with(text, "INDEXED") {
         let name = pair
             .into_inner()
             .find(|child| child.as_rule() == Rule::ident)
@@ -384,48 +426,12 @@ fn build_type_prop_constraint(
             span: source_span,
         });
     }
-    if text == "SEARCHABLE" {
-        return Ok(TypePropertyConstraint::Searchable(source_span));
-    }
-    if text == "DICTIONARY" {
-        return Ok(TypePropertyConstraint::Dictionary(source_span));
-    }
 
-    let mut children = pair.into_inner();
-    match text.split_whitespace().next() {
-        Some("FILL") => {
-            let value = child_interned(
-                &mut children,
-                source_span,
-                "FILL is missing strategy",
-                budget,
-            )?;
-            Ok(TypePropertyConstraint::Fill(value, source_span))
-        }
-        Some("INTERVAL") => {
-            let value = children
-                .find(|child| child.as_rule() == Rule::string_lit)
-                .ok_or_else(|| {
-                    ParserError::syntax("INTERVAL is missing duration", source_span, None)
-                })
-                .and_then(|pair| expr::intern_string_literal(pair, budget))?;
-            Ok(TypePropertyConstraint::Interval(value, source_span))
-        }
-        Some("ENCODING") => {
-            let value = child_interned(
-                &mut children,
-                source_span,
-                "ENCODING is missing name",
-                budget,
-            )?;
-            Ok(TypePropertyConstraint::Encoding(value, source_span))
-        }
-        _ => Err(ParserError::syntax(
-            "unknown type property constraint",
-            source_span,
-            None,
-        )),
-    }
+    Err(ParserError::syntax(
+        "unknown type property constraint",
+        source_span,
+        None,
+    ))
 }
 
 fn build_edge_endpoint(
@@ -476,16 +482,4 @@ fn build_validation_mode(pair: &Pair<'_, Rule>) -> Result<ValidationMode, Parser
             None,
         )),
     }
-}
-
-fn child_interned(
-    children: &mut pest::iterators::Pairs<'_, Rule>,
-    source_span: SourceSpan,
-    missing: &'static str,
-    budget: &mut InternerBudget,
-) -> Result<selene_core::IStr, ParserError> {
-    children
-        .find(|child| child.as_rule() == Rule::ident)
-        .ok_or_else(|| ParserError::syntax(missing, source_span, None))
-        .and_then(|pair| intern_pair(pair, budget))
 }

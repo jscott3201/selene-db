@@ -6,9 +6,10 @@ use std::{
 };
 
 use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, intern};
-use selene_gql::{OptimizeContext, Session, analyze, optimize, parse, plan};
+use selene_gql::{
+    BuiltinProcedureRegistry, OptimizeContext, Session, analyze, optimize, parse, plan,
+};
 use selene_graph::SharedGraph;
-use selene_pack::ProcedurePackRegistry;
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, ProviderRegistry, SectionCompression, SnapshotBuilder, SnapshotConfig,
     SyncPolicy, WalConfig, WalWriter, recover,
@@ -41,11 +42,21 @@ fn tracing_spans_emit_for_write_and_call() {
     let subscriber = Registry::default().with(CollectingLayer {
         observed: observed.clone(),
     });
-    let registry = ProcedurePackRegistry::with_builtins()
-        .expect("platform built-ins register cleanly in tests");
+    let registry = BuiltinProcedureRegistry::new();
     let graph = SharedGraph::new(GraphId::new(121_001));
 
-    tracing::subscriber::with_default(subscriber, || {
+    // v1.2 (BRIEF 1): the commit publish tail — including the
+    // `selene.graph.notify_providers` span — now runs on the per-graph
+    // committer thread, not the calling thread. A thread-local subscriber would
+    // not observe the committer thread's spans, so this test installs a
+    // process-global subscriber (this is the only subscriber installed in this
+    // test binary, so the set-once contract holds). The `selene.graph.commit`
+    // span still emits on the calling thread (it wraps seal + submit on the
+    // session thread). `commit()` blocks until the committer acks, so by the
+    // time `execute_source` returns the committer's spans have closed.
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("global subscriber set once in this test binary");
+    {
         let mut session = Session::new(&graph);
         session
             .execute_source("INSERT (:TraceProbe)", &registry)
@@ -90,7 +101,11 @@ fn tracing_spans_emit_for_write_and_call() {
         })
         .finalize()
         .expect("snapshot finalizes");
-    });
+    }
+
+    // Drop the graph so its committer thread is joined; its spans have already
+    // closed (commit() blocks until the committer acks) before we read the set.
+    drop(graph);
 
     let closed = observed.closed();
     for expected in EXPECTED_SPANS {

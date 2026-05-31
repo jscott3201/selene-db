@@ -1,5 +1,0 @@
----
-source: crates/selene-vector-pack/tests/vector_pack_snapshot_corpus.rs
-expression: entry.render()
----
-create_index_hnsw [CreateIndex] CALL vector.create_index('episodes_hnsw', 'hnsw', {dim: 4, metric: 'cosine'})

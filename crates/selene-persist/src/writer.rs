@@ -11,10 +11,11 @@ use crate::entry_header::{
     encode_entry_header, ensure_payload_len, read_entry_header, validate_principal,
 };
 use crate::file_header::{WAL_FILE_HEADER_LEN, WalFileHeader};
+use crate::manifest::Manifest;
 use crate::payload::{encode_changes, verify_checksum};
-use crate::writer_rotation::{
-    WalRotationOutcome, archive_current_wal, reset_active_wal_file, wal_archive_path,
-};
+use crate::retention::{PruneOutcome, RetentionPolicy};
+use crate::snapshot_writer::SnapshotBuilder;
+use crate::writer_rotation::{RotationInputs, WalRotationOutcome, rotate_with_manifest};
 use crate::{PersistError, PersistResult, WalEntryHeader};
 
 /// Conventional v1.0 single-file WAL name used by embedders.
@@ -34,6 +35,19 @@ pub enum SyncPolicy {
     ///
     /// This is an explicit opt-in for benchmark parity and offline paths where
     /// durability is provided elsewhere. It is not the production default.
+    ///
+    /// # selene-graph forces this for the committer WAL (v1.2 BRIEF 2)
+    ///
+    /// When a [`WalWriter`] is owned by selene-graph's single committer thread
+    /// (via `SharedGraphBuilder::with_wal` / `SharedGraph::from_graph_with_wal` /
+    /// recovery), the committer is the **sole fsync caller**: it appends a
+    /// contiguous run of commits with fsync deferred, then issues exactly one
+    /// [`WalWriter::flush`] per run as the fsync-before-publish barrier. To make
+    /// that the only fsync path, selene-graph **overrides `WalConfig::sync_policy`
+    /// to `OnFlushOnly`** before opening such a WAL, discarding any caller policy
+    /// (the fsync cadence is instead set by `selene_graph::CommitBatching`). A
+    /// `WalWriter` opened directly (outside selene-graph) still honors whatever
+    /// policy the caller passes — the override lives in selene-graph, not here.
     OnFlushOnly,
 }
 
@@ -287,58 +301,97 @@ impl WalWriter {
         self.entries_since_fsync
     }
 
-    /// Rotate this WAL after a durable snapshot has been finalized.
+    /// Crash-safe rotate: finalize `builder`, commit a MANIFEST, then reset.
     ///
-    /// The current WAL is fsynced, copied to an archive file in the same
-    /// directory as `wal.{last_sequence}.archive`, and then truncated in place
-    /// to a fresh standard WAL header seeded with `new_snapshot_seq`.
+    /// This is the v1.x replacement for the embedder's two-call
+    /// finalize-then-[`Self::rotate`] sequence. It runs the 4-phase rotation
+    /// whose MANIFEST write is the single linearization / commit point, so a
+    /// crash at any point either leaves the previous epoch fully recoverable or
+    /// the new epoch fully committed — never the [`PersistError::WalSnapshotMismatch`]
+    /// (Seam F) hard-fail the split calls could produce.
+    ///
+    /// `builder` must target the same sequence as this writer's current
+    /// high-water mark (`builder.sequence() == self.last_sequence()`); the
+    /// builder is finalized as Phase 1, so the caller adds every section before
+    /// calling. The MANIFEST's `archived_wal_seqs` extends the set already named
+    /// by any live MANIFEST in this writer's directory, so retention (Item-5)
+    /// has the full archive history.
     ///
     /// A second mutable borrow cannot overlap the rotation:
     ///
     /// ```compile_fail
-    /// # use selene_persist::WalWriter;
-    /// fn cannot_overlap(writer: &mut WalWriter) {
+    /// # use selene_persist::{SnapshotBuilder, SnapshotConfig, WalWriter};
+    /// fn cannot_overlap(writer: &mut WalWriter, builder: SnapshotBuilder) {
     ///     let active = writer;
-    ///     let _ = writer.rotate(1);
+    ///     let _ = writer.rotate_with_manifest(builder);
     ///     let _ = active.last_sequence();
     /// }
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns a typed snapshot-sequence error when the supplied snapshot does
-    /// not exactly cover the current WAL, I/O errors from fsync/archive/header
-    /// writes, a typed archive-exists error when the archive path is already
-    /// occupied, or a typed rotation-incomplete error if the archive commit
-    /// happened but the active WAL could not be rewritten.
-    pub fn rotate(&mut self, new_snapshot_seq: u64) -> PersistResult<WalRotationOutcome> {
-        if new_snapshot_seq != self.last_sequence {
+    /// Returns [`PersistError::WalRotationSequenceMismatch`] when the builder
+    /// sequence does not match the writer high-water mark, I/O / format errors
+    /// from snapshot finalize, archive, MANIFEST commit, or WAL reset, or
+    /// [`PersistError::WalRotationIncomplete`] if the MANIFEST committed but the
+    /// active WAL could not be reset (recovery still converges on the new
+    /// epoch). On error before the MANIFEST commit the previous epoch is intact.
+    pub fn rotate_with_manifest(
+        &mut self,
+        builder: SnapshotBuilder,
+    ) -> PersistResult<WalRotationOutcome> {
+        if builder.sequence() != self.last_sequence {
             return Err(PersistError::WalRotationSequenceMismatch {
-                snapshot_seq: new_snapshot_seq,
+                snapshot_seq: builder.sequence(),
                 last_sequence: self.last_sequence,
             });
         }
         self.flush()?;
-        let archived_last_sequence = self.last_sequence;
-        let archived_path = wal_archive_path(&self.path, archived_last_sequence);
-        archive_current_wal(&mut self.file, &archived_path, self.committed_offset)?;
-
-        if reset_active_wal_file(&mut self.file, new_snapshot_seq).is_err() {
-            return Err(PersistError::WalRotationIncomplete {
-                archived_path,
-                new_path: self.path.clone(),
-            });
-        }
-
-        self.last_sequence = new_snapshot_seq;
-        self.snapshot_seq = new_snapshot_seq;
-        self.committed_offset = WAL_FILE_HEADER_LEN as u64;
+        let dir = self
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let prior_archived_seqs = Manifest::read(&dir)?
+            .map(|manifest| manifest.archived_wal_seqs)
+            .unwrap_or_default();
+        let inputs = RotationInputs {
+            file: &mut self.file,
+            wal_path: &self.path,
+            committed_offset: self.committed_offset,
+            last_sequence: self.last_sequence,
+            prior_archived_seqs,
+        };
+        let (outcome, state) = rotate_with_manifest(inputs, builder, &dir)?;
+        self.last_sequence = state.last_sequence;
+        self.snapshot_seq = state.snapshot_seq;
+        self.committed_offset = state.committed_offset;
         self.entries_since_fsync = 0;
-        Ok(WalRotationOutcome {
-            archived_path,
-            new_path: self.path.clone(),
-            archived_last_sequence,
-        })
+        Ok(outcome)
+    }
+
+    /// Prune superseded snapshots + WAL archives in this writer's directory per
+    /// `policy`, committing through the MANIFEST.
+    ///
+    /// Thin ergonomic wrapper over [`crate::retention::prune`] bound to this
+    /// writer's directory. Pending appends are flushed first so the on-disk
+    /// state the prune reasons about is current, and the `&mut self` receiver
+    /// serializes the prune against [`Self::rotate_with_manifest`] — the two
+    /// must never interleave their MANIFEST rewrites. The prune never touches
+    /// the active WAL this writer owns; it only reclaims snapshot/archive files
+    /// the live epoch no longer needs.
+    ///
+    /// # Errors
+    ///
+    /// Returns flush errors, or any error from [`crate::retention::prune`]
+    /// (directory scan, MANIFEST decode/commit). Post-commit file deletion is
+    /// best-effort and never fails the prune.
+    pub fn prune(&mut self, policy: &RetentionPolicy) -> PersistResult<PruneOutcome> {
+        self.flush()?;
+        let dir = self
+            .path
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        crate::retention::prune(&dir, policy)
     }
 
     /// Best-effort rollback to the last committed offset on append failure.
@@ -790,6 +843,61 @@ mod tests {
         .unwrap();
         assert_eq!(writer.last_sequence(), 101);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn concurrent_open_admits_exactly_one_writer() {
+        // The exclusive OS lock is the single-writer invariant. Race N threads to
+        // open the same WAL: exactly one must win (Ok), every other must observe
+        // WriterLockHeld — never a second writer corrupting the log. Every winning
+        // writer is parked in a shared vec and NOT dropped until all threads have
+        // finished their open attempt, so a winner's lock cannot be released and
+        // re-acquired mid-race. That makes the count deterministically exactly one.
+        use std::sync::{Arc as StdArc, Barrier, Mutex};
+
+        let path = temp_path("concurrent-lock");
+        // Ensure the file exists first so every thread races the lock, not create.
+        drop(WalWriter::open(&path, WalConfig::default()).unwrap());
+
+        const THREADS: usize = 8;
+        let start = StdArc::new(Barrier::new(THREADS));
+        // Winners deposit their live writer here; the lock stays held until the
+        // vec is dropped after every join.
+        let winners: StdArc<Mutex<Vec<WalWriter>>> = StdArc::new(Mutex::new(Vec::new()));
+        let path = StdArc::new(path);
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let start = StdArc::clone(&start);
+                let winners = StdArc::clone(&winners);
+                let path = StdArc::clone(&path);
+                std::thread::spawn(move || {
+                    start.wait();
+                    match WalWriter::open(&path, WalConfig::default()) {
+                        Ok(writer) => {
+                            winners.lock().unwrap().push(writer);
+                            true
+                        }
+                        Err(PersistError::WriterLockHeld) => false,
+                        Err(other) => panic!("unexpected open error: {other:?}"),
+                    }
+                })
+            })
+            .collect();
+
+        let mut wins = 0_usize;
+        for handle in handles {
+            if handle.join().unwrap() {
+                wins += 1;
+            }
+        }
+        assert_eq!(
+            wins, 1,
+            "exactly one concurrent writer may hold the exclusive lock"
+        );
+        assert_eq!(winners.lock().unwrap().len(), 1);
+        // Drop the single winning writer (releasing the OS lock) before cleanup.
+        winners.lock().unwrap().clear();
+        let _ = fs::remove_file(path.as_path());
     }
 
     #[test]

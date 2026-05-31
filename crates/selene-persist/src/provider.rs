@@ -31,16 +31,28 @@ pub trait RecoveryProvider: Send + Sync {
 
     /// Deliver one committed mutation from WAL replay.
     ///
+    /// This is a per-change convenience over the batch entry point. WAL replay
+    /// itself only ever calls [`Self::on_changes`]; this method exists for
+    /// providers (and tests) that prefer to apply changes one at a time. The
+    /// default delegates to [`Self::on_changes`] with a single-element batch, so
+    /// a provider that overrides only `on_changes` need not implement it.
+    ///
     /// # Errors
     ///
     /// Returns provider-owned errors when the change cannot be applied.
-    fn on_change(&self, change: &Change) -> RecoveryResult<()>;
+    fn on_change(&self, change: &Change) -> RecoveryResult<()> {
+        self.on_changes(std::slice::from_ref(change))
+    }
 
-    /// Deliver one committed WAL entry as a batch.
+    /// Deliver one committed WAL entry as a batch. This is the sole entry point
+    /// WAL replay invokes, and the only required method of the trait.
     ///
     /// The default implementation preserves the historical per-change contract
-    /// by calling [`Self::on_change`] for every change in entry order.
-    /// Providers that need commit-level ordering can override this method.
+    /// by calling [`Self::on_change`] for every change in entry order. A provider
+    /// must override exactly one of `on_change` / `on_changes`: override
+    /// `on_changes` for commit-level ordering, or `on_change` for the per-change
+    /// shape (the common case). Overriding neither is a logic error — the two
+    /// defaults would recurse.
     ///
     /// # Errors
     ///
@@ -165,13 +177,13 @@ mod tests {
     #[test]
     fn iter_yields_in_provider_tag_order() {
         let mut registry = ProviderRegistry::new();
-        registry.register(provider(*b"VECT")).unwrap();
+        registry.register(provider(*b"DEMO")).unwrap();
         registry.register(provider(*b"CORE")).unwrap();
         registry.register(provider(*b"META")).unwrap();
         let tags: Vec<_> = registry
             .iter()
             .map(|provider| provider.provider_tag())
             .collect();
-        assert_eq!(tags, vec![*b"CORE", *b"META", *b"VECT"]);
+        assert_eq!(tags, vec![*b"CORE", *b"DEMO", *b"META"]);
     }
 }

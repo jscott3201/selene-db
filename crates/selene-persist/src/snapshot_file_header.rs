@@ -10,7 +10,15 @@ pub const SNAPSHOT_MAGIC: [u8; 4] = *b"SLSN";
 /// Snapshot major format version.
 pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// Snapshot minor format version.
-pub const SNAPSHOT_VERSION_MINOR: u16 = 0;
+///
+/// Bumped `0 -> 1` by BRIEF-Item-4a STEP 9: the `CORE/NODE` / `CORE/EDGE`
+/// sections now persist the explicit external `NodeId` / `EdgeId` per row
+/// instead of synthesizing `row + 1`, and recovery places rows positionally so
+/// a future 4b-compacted snapshot (ids != row+1) round-trips. The version gate
+/// ([`SnapshotFileHeader::read_from`]) rejects any mismatch, so pre-STEP-9
+/// (minor 0) snapshots are cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
+/// — a clean break, not a dual decoder (deferred to 4c per the D14 amendment).
+pub const SNAPSHOT_VERSION_MINOR: u16 = 1;
 /// Fixed snapshot file-header length.
 pub const SNAPSHOT_FILE_HEADER_LEN: usize = 32;
 /// Whole-body compression flag, reserved in v1.0.
@@ -180,9 +188,30 @@ mod tests {
             .write_to(&mut bytes)
             .unwrap();
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
+        // `new()` writes the current minor (1 after the STEP 9 bump); patching
+        // only the major byte leaves minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 1 })
+        ));
+    }
+
+    #[test]
+    fn pre_step9_minor_zero_is_rejected() {
+        // BRIEF-Item-4a STEP 9 clean break: a snapshot written at the previous
+        // minor version (0) must fail the gate, since the CORE/NODE & CORE/EDGE
+        // section semantics changed. Patch a freshly written (minor 1) header's
+        // minor bytes [6..8] back to 0 and confirm a clean UnsupportedVersion
+        // rather than a silent mis-decode of the body.
+        let mut bytes = Vec::new();
+        SnapshotFileHeader::new(0, 0, [0; 16])
+            .unwrap()
+            .write_to(&mut bytes)
+            .unwrap();
+        bytes[6..8].copy_from_slice(&0_u16.to_le_bytes());
+        assert!(matches!(
+            SnapshotFileHeader::read_from(&mut bytes.as_slice()),
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
         ));
     }
 

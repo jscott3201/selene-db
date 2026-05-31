@@ -20,7 +20,6 @@ When the feature is disabled, the same call sites compile to no-ops.
 | `selene.recoveries.total` | counter | none | Successful recovery passes. |
 | `selene.recovery.duration_seconds` | histogram | none | Recovery pass latency. |
 | `selene.cancellations.total` | counter | none | Cooperative cancellation or timeout events surfaced by the executor. |
-| `selene.vector.searches.total` | counter | none | Successful vector search procedure calls. |
 | `selene.algorithm.runs.total` | counter | none | Successful algorithm procedure calls. |
 | `selene.graph.nodes` | gauge | none | Live node count after a successful commit. |
 | `selene.graph.edges` | gauge | none | Live edge count after a successful commit. |
@@ -37,7 +36,7 @@ executing statements:
 
 ```toml
 [dependencies]
-selene-gql = { version = "1.0.0", features = ["metrics"] }
+selene-gql = { version = "1.1.0", features = ["metrics"] }
 ```
 
 ```rust

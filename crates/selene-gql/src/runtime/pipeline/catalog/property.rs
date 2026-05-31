@@ -1,11 +1,14 @@
 //! Property-definition helpers for catalog DDL.
 
 use selene_core::PropertyValueType;
-use selene_graph::{PropertyDefaultValue, PropertyElementType, PropertyTypeDef};
+use selene_graph::{
+    PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
+    RecordFieldTypeDef, RecordFieldTypes,
+};
 
 use crate::{
     DataExceptionSubclass, ExecutorError, GqlType, Literal, PlannedTypePropertyConstraint,
-    PlannedTypePropertyDef, ProjectExpr, ValueExpr, parser::MAX_NESTING_DEPTH,
+    PlannedTypePropertyDef, ProjectExpr, RecordType, ValueExpr, parser::MAX_NESTING_DEPTH,
 };
 
 pub(super) fn property_defs(
@@ -34,14 +37,14 @@ fn property_def(
                 default_span = *span;
             }
             PlannedTypePropertyConstraint::Immutable(_) => immutable = true,
-            PlannedTypePropertyConstraint::Unique(_)
-            | PlannedTypePropertyConstraint::Searchable(_)
-            | PlannedTypePropertyConstraint::Dictionary(_)
-            | PlannedTypePropertyConstraint::Fill(_, _)
-            | PlannedTypePropertyConstraint::Interval(_, _)
-            | PlannedTypePropertyConstraint::Encoding(_, _) => {
-                return Err(ExecutorError::ImplementationDefined {
-                    detail: "type property constraint not implemented",
+            // UNIQUE is an ISO-relevant property constraint (ISO/IEC 39075:2024
+            // §18) but enforcement of property uniqueness is not yet implemented;
+            // surface it as an honest capability-gap deferral (42N01) rather than
+            // a generic internal error, mirroring the inline-INDEXED-on-edge path.
+            PlannedTypePropertyConstraint::Unique(span) => {
+                return Err(ExecutorError::FeatureNotInV1_1 {
+                    feature: "UNIQUE property constraint",
+                    span: *span,
                 });
             }
             PlannedTypePropertyConstraint::Indexed { span, .. } if !allow_inline_indexed => {
@@ -53,7 +56,8 @@ fn property_def(
             PlannedTypePropertyConstraint::Indexed { .. } => {}
         }
     }
-    let (value_type, list_element_type) = gql_type_to_property_value_type(&property.gql_type)?;
+    let (value_type, list_element_type, record_field_types) =
+        gql_type_to_property_value_type(&property.gql_type)?;
     if let Some(default) = &default {
         validate_default_value(property.name, value_type, required, default, default_span)?;
     }
@@ -64,6 +68,7 @@ fn property_def(
         required,
         default,
         immutable,
+        record_field_types,
     })
 }
 
@@ -141,14 +146,91 @@ fn default_type_error(
     )
 }
 
+type LoweredPropertyType = (
+    PropertyValueType,
+    Option<PropertyElementType>,
+    Option<RecordFieldTypes>,
+);
+
 fn gql_type_to_property_value_type(
     gql_type: &GqlType,
-) -> Result<(PropertyValueType, Option<PropertyElementType>), ExecutorError> {
-    if let GqlType::List(inner) = gql_type {
-        let element_type = gql_type_to_property_element_type(inner, 1)?;
-        return Ok((PropertyValueType::List, Some(element_type)));
+) -> Result<LoweredPropertyType, ExecutorError> {
+    match gql_type {
+        GqlType::List(inner) => {
+            let element_type = gql_type_to_property_element_type(inner, 1)?;
+            Ok((PropertyValueType::List, Some(element_type), None))
+        }
+        // A top-level `RECORD` declaration lowers to the RecordTyped tag. A closed
+        // `RECORD { .. }` carries its field-type descriptor; an open/bare `RECORD` carries
+        // `None` (permissive, accepts any record value).
+        GqlType::Record(record_type) => {
+            let record_field_types = gql_record_to_record_field_types(record_type, 1)?;
+            Ok((PropertyValueType::RecordTyped, None, record_field_types))
+        }
+        _ => gql_type_to_scalar_property_value_type(gql_type)
+            .map(|value_type| (value_type, None, None)),
     }
-    gql_type_to_scalar_property_value_type(gql_type).map(|value_type| (value_type, None))
+}
+
+/// Lower a record TYPE into the catalog descriptor. `RecordType::Open` (bare `RECORD`)
+/// yields `None` (permissive); `RecordType::Closed` yields the field-type list.
+///
+/// The grammar does not (yet) capture a per-field `<not null>`, so every declared field is
+/// required-present per ISO 39075:2024 §4.15.4 (a closed record value has the same
+/// field-name set as the descriptor). The descriptor's optional-field capability is latent
+/// for a future `NOT NULL` field-type extension.
+fn gql_record_to_record_field_types(
+    record_type: &RecordType,
+    depth: u32,
+) -> Result<Option<RecordFieldTypes>, ExecutorError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "nested RECORD property type exceeds parser nesting limit",
+        });
+    }
+    match record_type {
+        RecordType::Open => Ok(None),
+        RecordType::Closed(fields) => {
+            let defs = fields
+                .iter()
+                .map(|(name, gql_type)| {
+                    Ok(RecordFieldTypeDef {
+                        name: *name,
+                        field_type: gql_type_to_record_field_type(gql_type, depth)?,
+                        required: true,
+                    })
+                })
+                .collect::<Result<Vec<_>, ExecutorError>>()?;
+            Ok(Some(RecordFieldTypes(defs)))
+        }
+    }
+}
+
+fn gql_type_to_record_field_type(
+    gql_type: &GqlType,
+    depth: u32,
+) -> Result<RecordFieldType, ExecutorError> {
+    if depth > MAX_NESTING_DEPTH {
+        return Err(ExecutorError::ImplementationDefined {
+            detail: "nested RECORD field type exceeds parser nesting limit",
+        });
+    }
+    match gql_type {
+        GqlType::List(inner) => Ok(RecordFieldType::List(Box::new(
+            gql_type_to_record_field_type(inner, depth + 1)?,
+        ))),
+        GqlType::Record(record_type) => {
+            match gql_record_to_record_field_types(record_type, depth + 1)? {
+                Some(fields) => Ok(RecordFieldType::Record(Box::new(fields))),
+                // An open/bare nested `RECORD` field has no closed structure to persist; defer
+                // it (consistent with deferring top-level `LIST<RECORD>`). Declare its fields.
+                None => Err(ExecutorError::ImplementationDefined {
+                    detail: "open/bare RECORD is not supported as a nested record field type; declare its fields",
+                }),
+            }
+        }
+        _ => gql_type_to_scalar_property_value_type(gql_type).map(RecordFieldType::Scalar),
+    }
 }
 
 fn gql_type_to_property_element_type(
@@ -189,7 +271,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::Float | GqlType::Float64 => PropertyValueType::Float,
         GqlType::Float32 => PropertyValueType::Float32,
         GqlType::Decimal => PropertyValueType::Decimal,
-        GqlType::Bytes | GqlType::Binary | GqlType::VarBinary => PropertyValueType::Bytes,
+        GqlType::Bytes => PropertyValueType::Bytes,
         GqlType::Uuid => PropertyValueType::Uuid,
         GqlType::ZonedDateTime => PropertyValueType::ZonedDateTime,
         GqlType::LocalDateTime => PropertyValueType::LocalDateTime,
@@ -214,13 +296,50 @@ fn gql_type_to_scalar_property_value_type(
 pub(super) fn render_property_value_type(
     value_type: PropertyValueType,
     list_element_type: Option<&PropertyElementType>,
+    record_field_types: Option<&RecordFieldTypes>,
 ) -> String {
     if value_type == PropertyValueType::List
         && let Some(element_type) = list_element_type
     {
         return format!("LIST<{}>", render_property_element_type(element_type));
     }
+    // A closed RECORD carries its field-type descriptor; render the structure
+    // so SHOW round-trips `RECORD { name :: TYPE, ... }` rather than a bare
+    // `RECORD` that loses the open-vs-closed distinction. An open/bare RECORD
+    // (no descriptor) stays `RECORD`.
+    if value_type == PropertyValueType::RecordTyped
+        && let Some(fields) = record_field_types
+    {
+        return render_record_field_types(fields);
+    }
     scalar_property_value_type_name(value_type).to_owned()
+}
+
+fn render_record_field_types(fields: &RecordFieldTypes) -> String {
+    let rendered = fields
+        .0
+        .iter()
+        .map(|field| {
+            format!(
+                "{} :: {}",
+                field.name,
+                render_record_field_type(&field.field_type)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("RECORD {{ {rendered} }}")
+}
+
+fn render_record_field_type(field_type: &RecordFieldType) -> String {
+    match field_type {
+        RecordFieldType::Scalar(value_type) => {
+            scalar_property_value_type_name(*value_type).to_owned()
+        }
+        RecordFieldType::List(inner) => format!("LIST<{}>", render_record_field_type(inner)),
+        RecordFieldType::Record(inner) => render_record_field_types(inner),
+        _ => "<unsupported-record-field>".to_owned(),
+    }
 }
 
 fn render_property_element_type(element_type: &PropertyElementType) -> String {

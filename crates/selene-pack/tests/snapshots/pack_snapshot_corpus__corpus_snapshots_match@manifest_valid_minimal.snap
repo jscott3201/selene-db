@@ -1,6 +1,0 @@
----
-source: crates/selene-pack/tests/pack_snapshot_corpus.rs
-expression: snapshot.to_string()
----
-manifest:
-- OK pack_name="snap" pack_version="1.0.0" content_hash="blake3:8e4fcca9cf5990c58ed3b84343fd21b21b83d0e6f4e25d3e0f72a74c75c74f65" procedure_count=1 procedure_names=["snap.echo"]

@@ -6,12 +6,131 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-05-31
+
+### Removed
+
+- **Vector index extension externalized.** The `selene-vector` and
+  `selene-vector-pack` crates — the HNSW and IVF `IndexProvider`
+  implementations (with SQ8 / PQ / OPQ quantization) and their `vector.*`
+  procedure-pack adapters — were removed from the workspace and moved to a
+  separate dedicated project. **BREAKING** change to the public crate
+  surface: embedders depending on either crate must repoint to the
+  externalized project. The core `selene-graph` query and mutation surfaces
+  are unchanged, and the `IndexProvider` boundary is unaffected. (The
+  procedure-pack apparatus referenced here was subsequently removed entirely
+  — see "Procedure-pack system removed" below.)
+- **Planned full-text / BM25 extension dropped.** The previously planned
+  `selene-text` / `selene-text-pack` (Tantivy-backed) full-text extension is
+  dropped entirely and is no longer a roadmap item. The reserved
+  `SELENE_FULLTEXT` extension type id is removed.
+- **Procedure-pack system removed — `selene-pack` and `selene-algorithms-pack`
+  deleted.** **BREAKING.** selene-db is now a single native graph engine with
+  no extension/procedure-pack model. The entire loadable-pack apparatus —
+  manifest validation (JSON Schema 2020-12), the typestate-sealed activation
+  lifecycle, `ProcedurePackRegistry`, the `ExternalGraphProcedure` /
+  `ExternalMutationProcedure` adapter traits, `content_hash`, and the
+  `algo.*` pack adapters — was removed. `CALL algo.*` and `CALL selene.*` are
+  unchanged at the GQL surface (ISO IW010 external procedures; the grammar is
+  not touched) — only the implementation behind them changed (see below).
+- **Pack-lifecycle audit removed (greenfield `postcard` break).** **BREAKING.**
+  `selene_core::pack_lifecycle::PackLifecycleEvent`,
+  `SchemaChange::ProcedurePackLifecycle`, the three legacy
+  `SchemaChange::ProcedurePack{Activated,Deprecated,Disabled}` variants, the
+  `GraphCommitSink` pack→funnel audit adapter, and the `pack_history` built-in
+  are deleted. This changes `Change`/`SchemaChange` postcard discriminants;
+  acceptable because there are no shipped consumers (no compatibility shim).
+  The dedicated `selene-persist` `audit.log` (`AuditLog` / `AuditRecord` /
+  `AuditRetentionPolicy`, D24) and its `with_audit_log` wiring are **retained**
+  as the durable substrate for future first-party engine events.
+- **Consumerless storage abstractions removed.** **BREAKING** (to the
+  `selene-graph` public surface). The `ChangeSubscriber` trait (with
+  `SharedGraph::with_change_subscriber`, the runtime `notify_subscribers`
+  fan-out, and the recovery subscriber fan-out + subscriber-tag validation)
+  and the `StorageCompactor` trait (never wired; zero impls) are deleted —
+  both became fully consumerless after the vector and pack removals. The
+  in-use CORE-internal densify compaction (`LiveIdSet` / `CompactionReport` /
+  `compact_core`) and the `IndexProvider` / `DurableProvider` /
+  `RecoveryProvider` plumbing are kept untouched.
+- **Workspace dependencies dropped:** `jsonschema`, `schemars`, and `papaya`
+  were used only by the deleted pack crates / registry and are removed from
+  `Cargo.toml`. `THIRDPARTY.md` regen is deferred to the version bump.
+
+#### Pre-1.1.0 deep-review residue teardown (greenfield; no shipped consumers)
+
+- **`selene-core`:** the dead `codec` module (`Codec` / `CodecError`, ~223 LOC),
+  the inert `value_adapter` registry and its `ExtensionTypeId{Conflict,
+  Unregistered}` errors (`Value::Extended` + `ExtensionTypeId` kept), the unused
+  `ChangeKindSet`, and the `PropertyMap::with_capacity` DoS shape are removed.
+  (CORE-02/03/04/10)
+- **`Change::IndexExtensionEvent` + `Mutator::extension_event` deleted.**
+  `ChangeKind::IndexExtensionEvent` (= 7) is removed and trailing discriminants
+  renumber (greenfield `postcard` re-tag; no production WAL/snapshot). The
+  durable first-party engine-event channel is the separate `audit.log` (D24).
+  (CORE-05/19)
+- **Dead `Origin` write-funnel plumbing removed** — the always-`Local` `origin`
+  parameter and `_origin` field drop off `Mutator`; `Origin::Replicated` is
+  retained (reworded as reserved-for-replication, no format break). (CORE-17/
+  GRAPH-27)
+- **Dead public/internal surfaces demoted or deleted** across `selene-graph`
+  (`as_any`, withdrawn-D23 `LiveIdSet` residue, unconstructed `ProviderError`
+  variants, `IdAllocator::from_meta`, `EdgeEndpointDef::node_type_indices`),
+  `selene-algorithms` (10 `*_checked` runner helpers collapsed onto
+  `*_with_checker(disabled())`), and `selene-gql` (`format_mutate_statement`
+  stub, `GqlType::Binary`/`VarBinary`, dead `label_expression` walker, and
+  several planner dead-code paths). (GRAPH-24..30, ALGO-17/18, PARSE-02/03/04,
+  PLAN-*)
+- **Crash-unsafe legacy `WalWriter::rotate` removed** (the pre-MANIFEST rotate
+  with a Seam-F crash window; zero callers). The SCMA snapshot section collapses
+  its dual V1/V2 decoder to a single hard-reject version, mirroring the GTYP
+  clean break. (PERSIST-02, GRAPH-23)
+
 ### Chore
 
 - Local test invocation aligned with CI (nextest + line-tables-only debug +
   `.config/nextest.toml`). See CLAUDE.md Build & test.
+- **Pre-1.1.0 deep-review test hardening (+~150 tests, 2503 → 2655 workspace).**
+  New coverage spans WAL/snapshot/recovery codec round-trips and crash-safety,
+  deep-graph algorithm exercises (100K-node line-graph SCC/articulation/bridges
+  in a bounded worker stack, concurrent `ensure_fresh` rebuild races),
+  mid-execution cancellation past the 1024-row stride, the conformance corpus
+  exact-feature-multiset (catching §24.6 over-stamping the `⊆` check missed),
+  write-side `FormatError` variant pinning, and per-numeric-variant negate /
+  RECORD-equality / set-op conformance. Findings cataloged in the review ledger;
+  the deferred large features and bench-gated perf are tracked as grounded
+  briefs for v1.2+.
 
 ### Changed
+
+#### Pre-1.1.0 deep-review ISO error-class + surface pass
+
+- **Set-operation arms must be column-name-equal.** `UNION` / `INTERSECT` /
+  `EXCEPT` arms with mismatched output names are now rejected at lowering with
+  `PlannerError::SetOpArmsNotCombinable` (`42001`) per ISO §14.2 SR v, instead
+  of silently relabelling to the left arm's names. Both-arms-unnamed stays
+  legal. **Behavior-breaking** for queries that previously relied on the
+  silent relabel. (GQLRT-31)
+- **Removed-construct error classes are now honest.** Dead/donor grammar that
+  is no longer offered (`CAST(x AS VECTOR)`, the full-text/time-series DDL
+  constraints, hex/octal/binary numeric literals, unsigned-integer suffixes)
+  now produces a clean `42001` syntax error rather than a silent `42N01` /
+  `5GQL0`; `vector` is again a usable bare identifier. `UNIQUE` constraints
+  surface an honest `42N01` deferral (was a silent `5GQL0`). (PARSE-05/06/07/08)
+- **`5GQL0` is now reserved for internal-invariant breaks.** ISO-legal but
+  unimplemented mutation constructs map to `42N01`; a property access on a
+  non-node/edge value maps to `22G03` (span threaded); `5 IS TRUE` (non-boolean
+  operand) maps to `22G03`. (GQLRT-13/20/21)
+- **`GraphError::IdOverflow` → `RowSpaceExhausted { rows, max_rows }`** — the
+  error now names the exhausted row space rather than blaming the id. (GRAPH-14)
+- **SHOW rendering fidelity.** Closed RECORD types now render recursively as
+  `RECORD { name :: TYPE, ... }`; `render_default_value` hard-errors on an
+  unrenderable default instead of emitting `<unsupported-default>`.
+  (GQLRT-23/17)
+- **`ProcedureRegistry` seam narrowed** to `{Graph, Mutation} × {Read,
+  SchemaWrite}` — the pack-era `Persist` / `GraphWrite` / `Admin` / `Capability`
+  tiers are deleted. The D16 `&dyn` injection seam and the frozen
+  `registry_version() == 0` are untouched. **Breaking** to the `selene-gql`
+  registry surface (greenfield; no shipped consumers). (GQLRT-32)
 
 - `selene-gql` planner: `MATCH (n:A|B|C) WHERE ...` flat-disjunctive-label
   patterns now expand to per-label sub-plans wrapped in a new
@@ -89,18 +208,265 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   consent for this carve-out from variant-strict storage; cap exhaustion
   now surfaces as a hard `IndexAdmissionExhausted` error instead of a
   silent skip. (BRIEF-153)
+- ISO GQL error-code conformance: remapped `GqlStatus` constants and
+  `miette` diagnostic tags to GQLSTATUS values per ISO/IEC 39075:2024
+  section 23.1 Table 8. Public-facing `as_str()` output changes for 9
+  status constants (for example, `42601 -> 42001`, `42883 -> 22G03`,
+  `0A000 -> 42N01`). Added `GqlStatus::IN_FAILED_TRANSACTION` (`25N02`)
+  and `GqlStatus::class()`. No source changes are required for downstream
+  consumers using `GqlStatus::SYNTAX_ERROR` and related constants by name;
+  consumers comparing raw 5-character codes must update strings.
+- Program-limit errors from `IStrCapExceeded`, `PayloadTooLarge`,
+  `TooManySections`, and `SectionTooLarge` now report GQLSTATUS `5GQL1`
+  instead of the SQLSTATE-shaped `54000`.
+- Removed phantom Pattern alpha support claims for path selectors
+  (`G015`-`G018`) and graph management (`GC04`/`GC05`); these surfaces now
+  reject with GQLSTATUS `42N01` before execution instead of reaching planner
+  or runtime implementation-defined failures.
+- Collapsed residual implementation-defined `XX500`/`XX501`/`XX502` status
+  emissions to single GQLSTATUS `5GQL0`, with diagnostic-detail tags for graph
+  mutation, durability flush, and generic implementation-defined failures.
+  Residual `22023` emissions in core, graph, and persist now report `22G03`.
+- GQL record equality now propagates NULL and NaN through nested record fields
+  in the runtime `=` comparator while preserving `Value::PartialEq` and
+  runtime row-key structural equality for deduplication.
+- Runtime data exceptions now carry a `DataExceptionSubclass` selected at the
+  emission site. Arithmetic overflow reports `22003`, division by zero
+  reports `22012`, invalid power arguments report `2201F`, invalid value-type
+  paths report `22G03`, incomparable ordering reports `22G04`, and record /
+  graph-property subclasses use `22G0X`, `22G0M`, `22G0S`, and `22G0T` where
+  live paths exist. GQLSTATUS is read from `gqlstatus()`; the stable miette
+  diagnostic tag remains broad for the parent data-exception variant.
+- Transaction and graph-type surfaces now emit live ISO Table 8 classes:
+  nested `START TRANSACTION` returns `25G01`, write attempts in read-only
+  transaction contexts return `25G03`, invalid transaction termination returns
+  `2D000`, bare node delete with incident edges returns `G1001`, and closed
+  graph schema/type violations return `G2000`.
 
 ### Added
 
+- **Single per-graph committer thread + `WriteTxn::seal()` (v1.2 multi-writer,
+  BRIEF 1).** Commit now splits into a session-thread `seal()` (generation/meta
+  bump + GG02 validation under the write lock, then **lock release**) and a
+  durable+publish tail that runs on one dedicated committer thread per graph —
+  the **sole writer** of the published-snapshot `ArcSwap` cell. The public
+  `commit()` contract is unchanged ("returns ⇒ durable + visible"); only the
+  internal threading model differs. Every snapshot publisher (autocommit,
+  explicit-txn terminal COMMIT, index DDL, and compaction) routes through the
+  committer. Publish order is kept equal to seal order — and thus to
+  lock-acquisition order — by stamping each publishable unit with a
+  strictly-monotonic `seal_seq` under the write lock and publishing strictly in
+  `seal_seq` order via a reorder buffer; this is a new, load-bearing,
+  **not** type-enforced D10 invariant (a second committer or second `ArcSwap`
+  writer would silently break strict-serializability). Compaction builds its
+  dense graph on the caller thread under the lock (seal-and-handover) so the
+  committer never holds the write lock. A post-seal durable failure or a
+  committer-body panic **poisons** the engine (reopen-required; the durable WAL
+  never received the failed entry, so recovery heals it) rather than leaving the
+  live in-memory graph diverged from the published snapshot. The BRIEF-117
+  cancellation cut-line is sampled inside `seal()` under the lock, so a cancel
+  rolls back via `Drop` exactly like an aborted transaction (no trace, no
+  poison). Durability-neutral: the WAL stays in `SyncPolicy::EveryN(1)` (WAL
+  group commit lands in BRIEF 2).
+- **WAL group commit — R1 fsync-before-publish barrier + `CommitBatching`
+  (v1.2 multi-writer, BRIEF 2).** The committer's per-commit durable+publish
+  tail is split into Stage 1 **append** (`write_commit` with fsync deferred),
+  Stage 2 **flush** (one `flush_durables` per drained run — the single group
+  fsync), and Stage 3+4 **publish** (`publish_appended`, now **infallible** —
+  returns `CommitOutcome`, not `Result`, structurally foreclosing the
+  "returns-`Err`-but-already-published" inversion). The committer forms a
+  contiguous-`seal_seq` run of appended commits, fsyncs the whole run **once**,
+  then publishes + acks each member in `seal_seq` order, so neither the
+  published snapshot nor the acked `durable_at` is observable before fsync
+  (durable-before-visible holds for the whole batch). New embedder knob
+  `SharedGraphBuilder::with_commit_batching(CommitBatching)`:
+  `CommitBatching::Off` (the default) caps each run at one commit — one append +
+  one fsync + one publish + one ack, behaviorally **identical** to BRIEF 1's
+  `EveryN(1)`; `CommitBatching::On { max_commits, max_bytes }` (and the
+  conventional `CommitBatching::DEFAULT_ON` = 64 commits / 8 MiB) coalesces a
+  contiguous run into one group fsync for higher write throughput and lower tail
+  latency under concurrent fan-in. A `CALL`-issued compaction stays a hard flush
+  boundary (never co-batched — its dense snapshot already embeds every
+  lower-`seal_seq` commit's mutation, so the pending run is flushed + published
+  before the dense store), and a flush failure / partial-append failure /
+  publish panic poisons the engine and error-acks every in-flight run member
+  (no silently-dropped reply channel, no `recv()` hang). **Behavioral note:**
+  because the committer is now the sole fsync caller for the committer-managed
+  WAL, `SharedGraphBuilder::with_wal` / `SharedGraph::from_graph_with_wal` /
+  recovery **force the WAL into `SyncPolicy::OnFlushOnly`**, discarding any
+  caller `WalConfig::sync_policy`; fsync cadence is set by `CommitBatching`
+  instead. A `WalWriter` opened directly (outside `selene-graph`) still honors
+  the caller's policy. D10 strict-serializability is preserved (single committer,
+  sole `ArcSwap` writer, `seal_seq`-ordered publishing).
+- **`selene-algorithms` is now a mandatory first-class crate with a native
+  Rust API.** **BREAKING** (promotes a previously opt-in crate; `selene-gql`
+  now build-depends on it). Every algorithm is callable directly from Rust
+  with no registry/`CALL` machinery: free functions (e.g. `pagerank_on(...)`,
+  with `*_with_checker` variants for cancellation) plus a `GraphAlgorithms`
+  Rust extension trait for an ergonomic methods-on-graph surface. The
+  1024-thread `Parallelism` cap moved into `selene-algorithms` (was
+  adapter-side). No algorithm bodies changed.
+- **Native `BuiltinProcedureRegistry` in `selene-gql`.** The sole frozen
+  production `ProcedureRegistry` impl: it registers the 19 `algo.*` procedures
+  (binding `CALL algo.*` directly over the native algorithms API) and the
+  5 platform built-ins relocated native from the deleted pack crate —
+  `selene.health`, `selene.feature_status`, `selene.verify`,
+  `selene.create_index`, `selene.drop_index` (the index DDL still routes
+  through the `Mutator` funnel). Argument coercion (Int→f64, NULL→default,
+  arity-from-trailing-nullable) is ported verbatim. `registry_version()` is a
+  constant `0` (frozen at construction) so the CALL plan cache key stays
+  stable. The `ProcedureRegistry` trait is kept as the plan/execute seam.
+- **Dedicated `audit.log` for engine-owned events**, with retention independent
+  of the WAL + snapshot lineage (BRIEF-Item-7, deletion+reclamation audit Item 7
+  / Seam D, D24). An append-only `audit.log` (`SLAU`) that retention prunes
+  separately from the WAL/snapshot lineage, so an engine event survives even when
+  an embedder prunes WAL archives ([D26](#)). New selene-persist API: `AuditLog`
+  (`open` / `append` / `read_all` / `prune`, with a torn-tail-truncating
+  scan-on-open mirroring the WAL's crash recovery), `AuditRecord`,
+  `AuditRetentionPolicy { keep_n_events, max_age }` (conjunctive; default
+  unbounded — events are sparse; prune is an atomic read-filter-rewrite).
+  Records are generic `kind`-tagged opaque payloads with a caller-supplied
+  wall-clock stamp, so `selene-persist` stays below lifecycle semantics and the
+  system clock. Wire it up via `SharedGraphBuilder::with_audit_log` (requires
+  `with_wal`); engine events are mirrored **WAL-first, audit-after**
+  (the WAL append gates the commit; the audit write is best-effort and the event
+  also stays in the WAL, so a failed mirror degrades to WAL-only rather than
+  losing data — "audit lag is recoverable, fiction is not"). Recovery reattaches
+  the audit log when the file is present, so post-recovery commits keep
+  mirroring. **Scoped surgically:** the D12 per-commit principal stays in the WAL
+  entry header (no WAL-format break, no hot-path write-amplification); only
+  engine-owned events move to `audit.log`. The substrate is retained as the
+  durable channel reserved for future first-party engine events.
+  `selene_persist::prune` (D26) never touches `audit.log`.
+- **Snapshot + WAL-archive retention** via a typed `RetentionPolicy` and a
+  MANIFEST-atomic `prune` (BRIEF-Item-5, deletion+reclamation audit Item 5 /
+  D26). `selene_persist::prune(dir, &policy)` (and the `WalWriter::prune`
+  wrapper) reclaim superseded `snapshot.{seq}.snap` + `wal.{seq}.archive` files
+  that a v1.0 directory accumulated without bound. `RetentionPolicy { keep_n_snapshots,
+  keep_n_wal_archives, max_total_size_bytes: Option<u64>, time_based: Option<Duration> }`
+  is **embedder configuration** (deliberately *not* persisted in the MANIFEST —
+  a stored policy would be a divergent second source of truth); the four
+  constraints are conjunctive; defaults keep 2 snapshots / 4 archives with no
+  size or time cap. The load-bearing safety floor: the live snapshot
+  (`live_snapshot_seq`) and the active WAL are **never** deletable regardless of
+  policy — even `keep_n_snapshots = 0` retains the live snapshot. Prune is
+  crash-safe by the MANIFEST commit-point invariant — it rewrites the MANIFEST
+  (shrinking `archived_wal_seqs`, the linearization point) *before* deleting any
+  file, so a crash mid-prune leaves orphans that recovery already ignores and
+  the next prune reclaims; the committed MANIFEST is never observed referencing
+  a deleted archive. Archive selection is MANIFEST-authoritative (the rewritten
+  list only ever shrinks, never adopting a crash-orphan), while superseded
+  orphan archives (`seq < live`) and orphan snapshots (`seq > live`) are
+  reclaimed. New public API: `RetentionPolicy`, `PruneOutcome`, `prune`,
+  `WalWriter::prune`, `parse_wal_archive_filename`, `WAL_ARCHIVE_PREFIX` /
+  `WAL_ARCHIVE_SUFFIX`, `DEFAULT_KEEP_SNAPSHOTS` / `DEFAULT_KEEP_WAL_ARCHIVES`.
+  No format change (the MANIFEST `retention_present` byte stays reserved).
+- `DROP GRAPH` is now executable as a **factory-reset** of the single (D1)
+  session graph, replacing the v1.0 `ImplementationDefined` stub (BRIEF-152,
+  deletion+reclamation audit Item 10). It wipes **every** node and edge —
+  including untyped / arbitrary-label rows (enumerated from the live-row
+  bitmaps via `SeleneGraph::live_nodes`/`live_edges`, so a per-type truncate
+  cannot miss them) — and resets the schema to open (`bound_type → None`),
+  turning a previously closed (GG02) graph back into an open (GG01) one.
+  Recorded as exactly **one** declarative `Change::GraphReset` regardless of
+  instance count (O(1) WAL), while per-row `NodeDeleted`/`EdgeDeleted`
+  tombstones are still produced on both the runtime and the recovery-replay
+  paths so index providers stay consistent. Recovery re-derives the wiped rows from the recovered
+  store and forces the graph open — a `recover_closed(bound_type)` after a
+  reset reconstructs the identical empty+open state. The MANIFEST epoch and WAL
+  archive lineage are untouched (this is one committed WAL entry, not a
+  file-level wipe); `DROP GRAPH` is idempotent. Flagged as the `IM_DROP_GRAPH`
+  vendor extension; the parsed graph name is informational under D1 and
+  `IF EXISTS` is trivially satisfied. `CREATE GRAPH` remains rejected (D1
+  cannot create a second graph). New `Change::GraphReset` variant +
+  `ChangeKind` discriminant (postcard tags appended; pre-existing tags stable).
+- `DROP NODE TYPE` / `DROP EDGE TYPE` now take an optional `RESTRICT | CASCADE`
+  behavior tail (BRIEF-151, deletion+reclamation audit Item 3, Seam B).
+  `RESTRICT` is the default when no keyword is written and is the Seam-B fix:
+  dropping a type whose instances still exist (or, for a node type, whose
+  instances are still referenced by an edge type's endpoint) is now rejected
+  EARLY at the drop op with `G2000` `GRAPH_TYPE_VIOLATION` and drops NOTHING —
+  no orphan instances, no dangling edges, the bound graph type left fully
+  intact. Previously the drop emitted `SchemaChange::NodeTypeDropped` without
+  scanning instances and only failed late at commit with a mislabelled
+  `UnknownNodeLabel`. `CASCADE` is the `IM_DROP_CASCADE` vendor extension: it
+  truncates the type's instances first (reusing the BRIEF-150
+  `Mutator::truncate_node_type` / `truncate_edge_type` funnel, so incident edges
+  are removed and there is one O(1) declarative truncate `Change`), then drops
+  the type — both the truncate `Change` and the `SchemaChange` land in the same
+  committed transaction, so commit and WAL replay are atomic (a failure rolls
+  back both). Node-CASCADE of a type still index-referenced by a surviving edge
+  type is rejected (recursive type cascade is out of scope). `CASCADE` flags
+  `IM_DROP_CASCADE` at parse time (GQL Flagger clause 24.6); `RESTRICT` and the
+  default carry only the existing `GG02`/`GG20`/`GG21` type-DDL flags.
+  `selene-graph::DropBehavior` parameterizes the single write funnel so no I/O
+  surface can bypass the policy; `selene-gql::DropBehavior` is its AST mirror.
+- `IM_TRUNCATE` vendor extension: `TRUNCATE NODE TYPE :L` and
+  `TRUNCATE EDGE TYPE :L` declarative bulk delete (BRIEF-150, deletion+
+  reclamation audit Item 11). A truncate is observationally identical to
+  `MATCH (n:L) DETACH DELETE n` — same final graph state, incident edges of
+  every type cascaded, no dangling edges, and the same per-row tombstones so
+  index providers stay consistent. The crucial difference is the WAL: exactly ONE
+  declarative `Change::NodesOfTypeTruncated { label }` /
+  `Change::EdgesOfTypeTruncated { label }` is written regardless of the number
+  of instances removed (O(1) WAL). Recovery re-derives the affected rows by
+  walking the recovered store and expands them to the same per-row tombstones,
+  so tombstoning is byte-identical on the runtime and recovery
+  paths. New `Mutator::truncate_node_type` / `truncate_edge_type` route through
+  the single write funnel (reusable by future `DROP NODE TYPE CASCADE` /
+  `DROP GRAPH`). Two new `ChangeKind` discriminants (`NodesOfTypeTruncated`=11,
+  `EdgesOfTypeTruncated`=12). The GQL
+  Flagger stamps `FeatureId::IM_TRUNCATE` on every truncate statement
+  (clause 24.6); `IM_TRUNCATE` is registered in `SUPPORTED_FEATURES`. TRUNCATE
+  is valid on both open (GG01) and closed (GG02) graphs — it removes instances
+  and keeps the bound type. An absent label is a clean no-op; double-truncate
+  is idempotent. (Pre-v1.x postcard tag append — audit line 329 sanctions the
+  format break; no snapshot archive bump.)
+- `selene-persist` MANIFEST epoch descriptor + crash-safe multi-phase rotate +
+  three-step recovery (BRIEF-148, deletion+reclamation audit Item 2 / Seam F).
+  A small fixed-layout `MANIFEST` file (`SLMF` magic, format_version 1, LE
+  fields, trailing blake3-low-128 body hash; `Manifest::{encode,decode,
+  write_atomic,read}` + `sync_dir`) names the single live persistence epoch and
+  is rewritten atomically each rotation. `WalWriter::rotate_with_manifest`
+  replaces the embedder's two-call snapshot-finalize-then-`rotate` sequence with
+  a four-phase rotation whose MANIFEST rename is the single linearization /
+  commit point: Phase 1 publishes the snapshot, Phase 2 archives the WAL (both
+  non-destructive, with parent-directory fsync after each publish), Phase 3
+  commits the MANIFEST, and Phase 4 resets the active WAL — strictly after the
+  commit, so a crash never produces the "MANIFEST names N-1 but wal.log already
+  reset to N" data-loss state. `recover()` now reads the MANIFEST first
+  (`RecoveryOutcome::manifest_present`): when present it is authoritative
+  (snapshot opened by `live_snapshot_seq` directly, orphan snapshots ignored,
+  the Seam-F `WalSnapshotMismatch` cross-check relaxed), and when absent it
+  falls back to the legacy `find_latest_snapshot` path with the cross-check
+  intact so pre-MANIFEST directories recover identically and migrate forward on
+  the next rotate. The exact crash-race that previously hard-failed
+  (`WalSnapshotMismatch`) now auto-reconciles. Parent-directory fsync (D6
+  durability ordering, previously deferred) is folded in across all three
+  publish points. D15 (two-step recovery) becomes three-step.
+- ISO/IEC 39075:2024 §7 session management (the D1-meaningful subset) in
+  `selene-gql`: `SESSION SET VALUE [IF NOT EXISTS] $p = <value-spec>` (GS03),
+  `SESSION SET TIME ZONE '<zone>'` (GS15), `SESSION RESET [ALL]
+  [CHARACTERISTICS|PARAMETERS]` / `RESET PARAMETER $p` / `RESET TIME ZONE`
+  (GS04/GS07/GS08/GS16), and `SESSION CLOSE` (§7.3). `SET TIME ZONE` threads
+  the zone into a new §20.27 current-datetime family
+  (`current_timestamp`/`now`/`localtimestamp`/`current_date`/`current_time`/
+  `localtime`); the default is UTC (ID048) and `RESET` restores it. `SESSION
+  CLOSE` sets a termination flag (rolling back any active transaction) that is
+  enforced at the single statement funnel — both `Session::execute_source`
+  and the cached-plan `execute_statement` entry reject post-close requests
+  with GQLSTATUS `2DN01`. Invalid time zones raise `22009`. Default session
+  parameters are the empty set (ID049). Catalog-dependent forms (SET
+  GRAPH/SCHEMA/BINDING TABLE — GS01/GS02 — and GS10–GS14) are deferred under
+  D1 (single-graph embeddable): they are absent from `SUPPORTED_FEATURES`,
+  parse-fail cleanly, and each carries a `NOT_SUPPORTED_RATIONALE` entry. The
+  Flagger stamps the GS feature family, co-stamping GS08+GS16 for `RESET
+  PARAMETER <name>` per §7.2 CR6/CR7. (BRIEF-136)
 - Dedicated `Change::NodePropertyRemoved`, `Change::EdgePropertyRemoved`, and
   `Change::NodeLabelRemoved` variants. GQL `REMOVE` now emits these variants
   instead of drop-only `NodeUpdated`/`EdgeUpdated` diffs, while direct mutator
-  update APIs retain their existing diff contract. This widens `ChangeKindSet`
-  to `u16` and preserves postcard tag stability by appending the variants.
-- `ChangeSubscriber` and `ChangeKindSet` for runtime and recovery fan-out in
-  `selene-graph`. Vector providers now tombstone derived vector state on
-  `Change::NodeDeleted`, closing Seam A from the 2026-05-26 deletion +
-  reclamation audit and planting D25.
+  update APIs retain their existing diff contract. This preserves postcard tag
+  stability by appending the variants.
 - Vendor `IM_TYPED_PARAMS` inline typed parameter declarations in
   `selene-gql`: `$id :: TYPE` is now parsed at expression and LIMIT/OFFSET
   parameter sites, typed by the analyzer, validated against bound session
@@ -111,11 +477,11 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `LimitValue::Parameter` changed from tuple to struct shape and
   `#[non_exhaustive]` was added to both `LimitValue` and `LimitAmount`.
 - Composite-property node indexes across `selene-graph`, `selene-core`,
-  `selene-persist`, `selene-gql`, and `selene-pack`: `CREATE INDEX <name> ON
+  `selene-persist`, and `selene-gql`: `CREATE INDEX <name> ON
   :Label(a, b, c)` now registers durable tuple indexes, maintains them across
   node create/update/delete commits, recovers them from WAL plus CORE/CPIX
-  snapshots, wires optimizer composite lookups to storage-backed execution, and
-  includes pack verification coverage. Query-planner composite lookup substrate
+  snapshots, and wires optimizer composite lookups to storage-backed execution.
+  Query-planner composite lookup substrate
   was already present; edge-property and SHOW INDEX aggregation remain split
   into BRIEF-140c/140d.
 - Implementation-defined named index DDL in `selene-gql`: `CREATE INDEX <name>
@@ -159,6 +525,38 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RADIANS`); and GF03 logarithmic functions (`LN`, `LOG`, `LOG10`, `EXP`,
   plus `POWER` feature claiming). `LN(<=0)` now emits GQLSTATUS `2201E`
   invalid-argument-for-natural-logarithm.
+- Native ISO RECORD types end-to-end (JSON/L1c + L1c-d), per ISO/IEC
+  39075:2024 §18.9 `<record type>` / §18.10 `<field type>`. Closed/typed
+  `RECORD { a :: INT, b :: STRING }`, open/bare `RECORD` / `ANY RECORD`, and
+  nested record types parse, flag, and persist; features `GV45` (record
+  types), `GV46` (closed), `GV47` (open), and `GV48` (nested) are registered
+  supported and fire through the §24.6 Flagger on every record type position.
+  The catalog persists record field-type structure on **both** type-models
+  (D14 / D19): the rkyv `RecordFieldTypes` descriptor in `CORE/GTYP`
+  (authoritative; `CORE/GTYP` collapsed to a single `GTYP_VERSION = 1`), and
+  the serde `RecordFieldStructure` on the WAL `PropertyDef.record_fields`
+  (recovery reconstructs the closed-record catalog faithfully). Commit-time
+  closed-graph (GG02) record-property validation enforces ISO §4.15.4
+  field-name-set equality (no extra, no missing-required) and raises `G2000`
+  on violation. In expression context: `x IS TYPED RECORD{…}` performs
+  name-keyed §4.15.4 conformance (two-valued — `NULL IS TYPED <T>` is `false`,
+  not unknown), and `CAST(x AS RECORD{…})` performs per-field recursive
+  coercion with §20.8 SR12 subset projection (extra source fields dropped),
+  raising the new GQLSTATUS `22G0U` (record-fields-do-not-match) when a target
+  field is absent and `22G03` (datatype-mismatch) for a non-record source or a
+  record→scalar cast. Record field names are charged against the per-parse
+  interner budget. **Known limitation (deliberately deferred):** name-keyed
+  `IS TYPED` / `CAST` for a *catalog-bound* `Value::RecordTyped` operand is
+  fail-closed (`IS TYPED` → `false`; `CAST` → `42N01`). `RecordTyped` carries a
+  `type_id` plus positional slots with no inline field names, so ISO-mandated
+  name-keyed conformance requires resolving `type_id` through a named-record-
+  type catalog (`GraphTypeDef.record_types`) that is not yet built — and no
+  production read path materializes `Value::RecordTyped` today (records surface
+  as `Record::Open`, handled name-keyed above), so the fail-closed arms are
+  unreachable by any user query. Positional matching is intentionally **not**
+  done (it would be silent non-conformance). Name-keyed `RecordTyped` is
+  deferred to a future named-record-type catalog + `RecordTyped` read-path
+  producer brief.
 - Explicit `CAST(<expr> AS <type>)` expressions in `selene-gql` per ISO/IEC
   39075:2024 §22. New `ValueExpr::Cast { value, target_type, span }` AST
   variant; feature `GE08` (CAST operator) is registered as supported. The
@@ -169,7 +567,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (invalid-character-value-for-cast — new in the Table 8 map), `22003`
   (numeric overflow), `22000` (boolean domain), or `42N01` for
   intentionally unsupported source/target combinations (NODE / EDGE / PATH
-  / RECORD sources; `NULL` / `NOTHING` targets). The analyzer's
+  sources, and catalog-bound `RecordTyped` record sources; `NULL` /
+  `NOTHING` targets — open-record `CAST(… AS RECORD{…})` is supported, see
+  the native-record-types entry). The analyzer's
   `bind_value_expr` recursive walker now grows the stack via
   `stacker::maybe_grow(64K, 1MB)` so future `ValueExpr` variant additions
   cannot reach into the 2 MB default macOS pthread stack at the depth-256
@@ -212,14 +612,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CALL` statements across short-lived sessions, with graph-id and
   schema-version keyed invalidation plus a cache-hit metric.
 - Feature-gated `metrics` facade with query, commit, persistence, recovery,
-  cancellation, vector search, algorithm, and graph-size metrics.
+  cancellation, algorithm, and graph-size metrics.
 - `EXCEPT`, `EXCEPT ALL`, `INTERSECT`, `INTERSECT ALL`, and `OTHERWISE`
   set-operation runtime support per ISO GQL §14, including `RuntimeEqKey`
   grouping semantics and a configurable implementation-defined set-op key cap.
-- Named vector indexes for `selene-vector-pack`, including
-  `vector.create_index`, `vector.drop_index`, and `vector.list_indexes`.
-  The default HNSW and IVF indexes remain compatibility anchors for v1.0
-  WAL payloads and snapshot sections.
 - `StatementOutput::Written` write metadata for committed GQL catalog and
   data mutations, including optional rows for write statements with `RETURN`.
 - `Session::flush()` and `DurableProvider::flush()` for explicit durability
@@ -269,17 +665,15 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Cooperative cancellation and per-statement resource limits:
   `CancellationToken`, `Session::with_cancellation_token(...)`,
   `Session::with_deadline(Instant)`, and `Session::with_row_cap(usize)`.
-  Cancellation is cooperative across executor pipeline checkpoints,
-  procedure-pack adapters, algorithm hot loops, and bulk vector payload
-  construction. Row caps apply only to outermost statement output rows.
+  Cancellation is cooperative across executor pipeline checkpoints and
+  algorithm hot loops. Row caps apply only to outermost statement output rows.
   New `ExecutorError::{Cancelled, Timeout, RowCapExceeded}` map to
   implementation-defined GQLSTATUS codes `5GQL2`, `5GQL3`, and reused
   `5GQL1`, respectively.
-- GQL surface completeness: `SHOW INDEXES` now lists built-in property indexes
-  only (vector indexes remain available through `CALL vector.list_indexes()`),
+- GQL surface completeness: `SHOW INDEXES` now lists built-in property indexes,
   `SHOW PROCEDURES` lists registered procedures, `EXPLAIN <statement>` returns
   an indented plan dump without executing the inner statement, and
-  `selene.feature_status` is registered in selene-pack. The analyzer now
+  `selene.feature_status` is a registered platform built-in. The analyzer now
   bounds value-expression recursion at depth 256 with
   `AnalysisError::RecursionLimitExceeded` (GQLSTATUS `5GQL1`). Named
   `CREATE INDEX` / `DROP INDEX` DDL lowering remains deferred pending
@@ -288,13 +682,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `STRICT` / `WARN` validation modes. CORE/GTYP snapshots and schema WAL
   changes use additive v2 encodings while preserving legacy recovery; relaxed
   writes emit implementation-defined warning GQLSTATUS `01N01`.
-- `vector.search` and `vector.ivf_search` now accept an optional nullable
-  `metric` argument (`cosine`, `l2`, or `dot`) that overrides query-time
-  scoring. HNSW overrides score against the existing build-time topology; IVF
-  supports every override except Cosine on non-Cosine-built indexes, where
-  reconstructed-norm side data is absent and the call returns GQLSTATUS
-  `22G03`. IVF top-k search now uses a bounded heap and reusable per-thread
-  scratch buffers.
 - `IStrAdmissionPolicy` and `Session::with_istr_admission_policy(...)` let
   embedders opt into graceful interner-cap fallback at runtime string-admission
   boundaries. The default remains `Reject`; `FallbackToExternal` carries
@@ -314,6 +701,41 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   aggregate expression per statement; sessions without a sink silently discard
   warnings.
 
+### Performance
+
+#### Pre-1.1.0 deep-review hot-path pass (no behavior change)
+
+- **Commit path (`selene-graph`):** label-index inserts in place
+  (`entry().or_default().insert()`, no whole-`RoaringBitmap` clone per label per
+  node); typed-index union via bulk `|= &bitmap` (no per-element `insert_all`);
+  closed-graph validation borrows `LabelSet`/`PropertyMap` (clones only on
+  error); `candidate_keys` empty-index fast path. The provider encodes its rkyv
+  section lock-free (the mutex is held only for `load_full`) and no longer
+  re-allocates the principal slice per commit. (GRAPH-01/02/03/04/07/08)
+- **Core (`selene-core`):** `PropertyMap::iter`/`keys`/`values` return concrete
+  iterators instead of a per-call `Box<dyn Iterator>` on the commit/validate hot
+  path (sorted present-only order preserved). (CORE-07)
+- **Persistence (`selene-persist`):** `decode_changes` reads from the borrow (no
+  `to_vec`); `SnapshotReader.sections` is an `Arc<[SectionEntry]>` (no double Vec
+  clone). (PERSIST-03/07)
+- **Query runtime (`selene-gql`):** GROUP BY keys into an insertion-ordered Vec
+  (O(n) vs O(n_rows × n_groups)) with a `group_by_key_cap`; UNION consumes the
+  owned right-hand side (no per-row clone); `IS NORMALIZED` is allocation-free;
+  `NULLIF` borrows for the equality test. The parser borrows bare identifiers
+  via `Cow`, builds DELETE ops single-pass, and canonicalizes keywords
+  allocation-free; the planner precomputes selectivity outside the comparator
+  and drains instead of `remove(0)`-looping. (GQLRT-02/03/04/06, PARSE-22/23/24/
+  25, PLAN-10/11/12)
+- **Algorithms (`selene-algorithms`):** release builds skip WCC's redundant
+  in-neighbor union (debug retains the transpose cross-check); `triangle_count`
+  and the API runners collapse their duplicated checked/unchecked
+  implementations onto a single checker-threaded path. (ALGO-11/17/18)
+- **Robustness:** the analyzer's `ExprId` fingerprint memo is now scoped to the
+  single `for_expr` recursive walk (where all nodes are provably live) rather
+  than persisted on the table with a subquery-boundary `clear()`, eliminating a
+  pointer-reuse → stale-fingerprint → false-dedup hazard by construction.
+  (ANALYZE-06)
+
 ### Fixed
 
 - Align `POWER` overflow GQLSTATUS handling with ISO/IEC 39075:2024 §20.22 GR11:
@@ -321,42 +743,44 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   invalid-argument-for-power-function is reserved for the zero-base negative
   exponent and negative-base non-integral exponent cases.
 
-### Changed
+#### Pre-1.1.0 deep-review correctness pass
 
-- ISO GQL error-code conformance: remapped `GqlStatus` constants and
-  `miette` diagnostic tags to GQLSTATUS values per ISO/IEC 39075:2024
-  section 23.1 Table 8. Public-facing `as_str()` output changes for 9
-  status constants (for example, `42601 -> 42001`, `42883 -> 22G03`,
-  `0A000 -> 42N01`). Added `GqlStatus::IN_FAILED_TRANSACTION` (`25N02`)
-  and `GqlStatus::class()`. No source changes are required for downstream
-  consumers using `GqlStatus::SYNTAX_ERROR` and related constants by name;
-  consumers comparing raw 5-character codes must update strings.
-- Program-limit errors from `IStrCapExceeded`, `PayloadTooLarge`,
-  `TooManySections`, and `SectionTooLarge` now report GQLSTATUS `5GQL1`
-  instead of the SQLSTATE-shaped `54000`.
-- Removed phantom Pattern alpha support claims for path selectors
-  (`G015`-`G018`) and graph management (`GC04`/`GC05`); these surfaces now
-  reject with GQLSTATUS `42N01` before execution instead of reaching planner
-  or runtime implementation-defined failures.
-- Collapsed residual implementation-defined `XX500`/`XX501`/`XX502` status
-  emissions to single GQLSTATUS `5GQL0`, with diagnostic-detail tags for graph
-  mutation, durability flush, and generic implementation-defined failures.
-  Residual `22023` emissions in core, graph, and persist now report `22G03`.
-- GQL record equality now propagates NULL and NaN through nested record fields
-  in the runtime `=` comparator while preserving `Value::PartialEq` and
-  runtime row-key structural equality for deduplication.
-- Runtime data exceptions now carry a `DataExceptionSubclass` selected at the
-  emission site. Arithmetic overflow reports `22003`, division by zero
-  reports `22012`, invalid power arguments report `2201F`, invalid value-type
-  paths report `22G03`, incomparable ordering reports `22G04`, and record /
-  graph-property subclasses use `22G0X`, `22G0M`, `22G0S`, and `22G0T` where
-  live paths exist. GQLSTATUS is read from `gqlstatus()`; the stable miette
-  diagnostic tag remains broad for the parent data-exception variant.
-- Transaction and graph-type surfaces now emit live ISO Table 8 classes:
-  nested `START TRANSACTION` returns `25G01`, write attempts in read-only
-  transaction contexts return `25G03`, invalid transaction termination returns
-  `2D000`, bare node delete with incident edges returns `G1001`, and closed
-  graph schema/type violations return `G2000`.
+- **`RETURN UNKNOWN` is now accepted.** Per ISO §21.2 `<boolean literal> ::=
+  TRUE | FALSE | UNKNOWN` and BOOLEAN is mandatory; `UNKNOWN` lowers to the Null
+  truth value (was rejected `42N01`). (PARSE-01)
+- **Three-valued-logic analyzer parity.** The analyzer no longer statically
+  rejects `NULL < 5`, `NULL + 1`, `-NULL`, `NULL AND TRUE`, or `NOT NULL` — the
+  runtime already evaluated these to NULL/UNKNOWN correctly, so the static
+  rejection was a false negative (ISO §19.3 / §20.21 / §6.4). (ANALYZE-01)
+- **Unary negate covers every numeric type.** `-x` now handles `Uint` /
+  `Int128` / `Uint128` / `Float32` / `Decimal` (was `Int`/`Float` only);
+  unsigned operands promote to the signed width and report `22003` when the
+  magnitude cannot fit. (GQLRT-01)
+- **Cross-type numeric comparison and equality are now exact and complete.**
+  `numeric_equal` / `numeric_compare` / the runtime hash key cover
+  `Int128` / `Uint128` / `Decimal` cross-type by exact representability —
+  e.g. `$i128 = 1` is now `TRUE` (previously `FALSE`, even though `<= 1 AND
+  >= 1` was `TRUE`). `SUM`/`AVG` widen `Int → Int128 → Decimal → Float`
+  (SUM past `i64` → `i128`; overflow → `22003`), and `eval_arithmetic` gains
+  the Decimal / `Uint128 + Uint128` / `Int128 ↔ Uint128` arms. The GV13/GV14/
+  GV17 128-bit/Decimal feature claims are now honest end-to-end (no flagger
+  change). The parity invariant holds throughout: equality, the hash/group
+  key, and ordering all route through one canonical form, so DISTINCT /
+  GROUP BY / set-ops agree with `=`. (GQLRT-26/27/30)
+- **RECORD equality is field-name-keyed** (ISO §4.15). `{a: 1, b: 2} =
+  {b: 2, a: 1}` is now `TRUE` (was a positional-zip `FALSE`); permuted records
+  collapse correctly under DISTINCT / GROUP BY, with NULL/NaN → Unknown 3VL
+  preserved. Only the reachable `Value::Record(Open)` path is affected; the
+  deferred `Value::RecordTyped` arms (node-791) and Rust's derived
+  `PartialEq`/`Hash` (HashMap keys / §16 identity) are untouched. (GQLRT-14)
+- **The optimizer binding-ref collector walks `IS SOURCE/DESTINATION OF`
+  operands.** `n IS SOURCE OF e` now contributes `{n, e}` (was `{n}`), so
+  `expand_filter_pushdown` no longer pushes a predicate onto `n`'s scan before
+  `e` is bound. (PLAN-01)
+- **Recovery no longer double-rebuilds and double-validates indexes.**
+  `into_graph` is registration-only; recovered closed-graph violations now
+  surface as `TypeViolation`, matching the documented `recover_closed`
+  contract. (GRAPH-06)
 
 ## [1.0.0] — 2026-05-16
 
@@ -547,4 +971,6 @@ The following items are intentionally deferred and tracked for future
 - OPQ rotation inner-allocation tightening.
 - Fresh extension crates beyond `selene-vector` and `selene-algorithms`.
 
+[Unreleased]: https://github.com/jscott3201/selene-db/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.1.0
 [1.0.0]: https://github.com/jscott3201/selene-db/releases/tag/v1.0.0

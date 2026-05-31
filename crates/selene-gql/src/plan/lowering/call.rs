@@ -285,10 +285,7 @@ fn span_inside(inner: crate::SourceSpan, outer: crate::SourceSpan) -> bool {
 const fn classify_mutability(mutability: ProcedureMutability) -> StatementCategory {
     match mutability {
         ProcedureMutability::Read => StatementCategory::ReadOnly,
-        ProcedureMutability::GraphWrite => StatementCategory::DataModifying,
-        ProcedureMutability::SchemaWrite | ProcedureMutability::Admin => {
-            StatementCategory::CatalogModifying
-        }
+        ProcedureMutability::SchemaWrite => StatementCategory::CatalogModifying,
     }
 }
 
@@ -374,7 +371,6 @@ mod defensive_tests {
                 ProcedureOutputSchema { columns },
                 ProcedureTier::Graph,
                 mutability,
-                None,
             ),
         }
     }
@@ -461,7 +457,7 @@ mod defensive_tests {
         let source = "CALL pkg.work()";
         let original = registry(Vec::new(), Vec::new(), ProcedureMutability::Read);
         let analyzed = analyzed_with(source, &original);
-        let changed = registry(Vec::new(), Vec::new(), ProcedureMutability::GraphWrite);
+        let changed = registry(Vec::new(), Vec::new(), ProcedureMutability::SchemaWrite);
 
         let err = crate::plan::plan(&analyzed, &changed).expect_err("mutability drift is rejected");
         assert_metadata_detail(err, "mutability classification changed");

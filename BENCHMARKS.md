@@ -76,16 +76,36 @@ Rows added by BRIEF-111 are compile-registered but not measured yet. They isolat
 | `bound_type_validation/bound_commit_rich` | rich type graph | TBD | Wider type graph validation delta. |
 | `bound_type_validation/bound_schema_change` | schema change | TBD | Full graph state validation path. |
 
+Thread fan-in arms sweep `[1, 2, 4, 8, 16, 32]`. Two axes:
+
+- **In-memory** (`threads{N}`, `threads{N}_with_readers8`) — no WAL; measures pure
+  single-committer queueing + lock-free reads under contention. Group commit
+  has nothing to coalesce here (no `fsync`), so it is *not* run on this axis.
+- **WAL-backed** (`wal_threads{N}_batchOFF` vs `wal_threads{N}_batchON`) — a real
+  on-disk WAL (tempdir per iteration; the committer is the sole `fsync` caller,
+  driven in `SyncPolicy::OnFlushOnly`). This is the only axis where group commit
+  can win, because the win is coalesced `fsync` syscalls. `batchOFF` =
+  `CommitBatching::Off` (one `fsync` per commit, the BRIEF-1 baseline);
+  `batchON` = `CommitBatching::DEFAULT_ON` (coalesce up to 64 commits / 8 MiB
+  into one `fsync`). At 16/32-thread fan-in `batchON` shows higher
+  `Throughput::Elements` and lower p99/p999 than `batchOFF`; at 1 thread there is
+  no contiguous run to coalesce, so `batchON ≈ batchOFF` (and the 1-thread
+  `batchOFF` median is the BRIEF-2 parity check against the pre-BRIEF-2
+  per-commit-fsync baseline).
+
+On the `full` / `stress` profiles each WAL-backed arm also emits an **untimed**
+`[concurrent_writers percentiles] wal_threads{N}_{batch}: n=… p50=…us p99=…us
+p999=…us` line to stderr — per-commit wall-clock latency collected outside the
+Criterion measured closure (so it never pollutes the throughput sample). Read
+p99/p999 for the tail-latency story Criterion's mean cannot show; the headline
+`thrpt` row is the aggregate throughput.
+
 | Bench | Threads | Median | Notes |
 |---|---:|---:|---|
-| `concurrent_writers/threads1` | 1 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads2` | 2 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads4` | 4 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads8` | 8 | TBD | 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads1_with_readers8` | 1 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/threads2_with_readers8` | 2 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/threads4_with_readers8` | 4 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/threads8_with_readers8` | 8 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/threads{1,2,4,8,16,32}` | 1–32 | TBD | In-memory; 1000 total commits, 10 property updates per commit. |
+| `concurrent_writers/threads{1,2,4,8,16,32}_with_readers8` | 1–32 | TBD | Same writer load with 8 snapshot readers. |
+| `concurrent_writers/wal_threads{1,2,4,8,16,32}_batchOFF` | 1–32 | TBD | Real WAL, one `fsync` per commit (BRIEF-1 baseline). |
+| `concurrent_writers/wal_threads{1,2,4,8,16,32}_batchON` | 1–32 | TBD | Real WAL, group commit (≤64 commits / 8 MiB per `fsync`); the fan-in win. |
 
 ## §2 selene-persist
 
@@ -173,99 +193,6 @@ Registered token: `selene-algorithms:algo_bench:criterion`. Fixture: `BenchFixtu
 | `louvain` | 100k | **55.43 ms** | n/a | — | No `LOUVAIN_SCALES` downgrade needed at this fixture. |
 
 **Notable**: pagerank/Auto is **slower** than pagerank/Sequential at every scale on this fixture. The bench graph is sparse (~3 edges/node), so per-iteration work (3·N FP multiplications + accumulator) doesn't outweigh rayon's thread-coordination cost on an M5. Auto remains the right choice on denser graphs where per-vertex work amortizes the overhead — the API exposes both modes deliberately.
-
-## §5 selene-algorithms-pack (adapter overhead)
-
-Registered token: `selene-algorithms-pack:algo_pack:criterion`. Fixtures stay crate-local to measure adapter overhead independently of algorithm scaling.
-
-| Bench | Fixture | Median | Notes |
-|---|---|---:|---|
-| `algo_pack/projection_build_default` | 1k deterministic directed graph | 235.2 µs | Includes parse + plan + execute. |
-| `algo_pack/algo_pagerank_default` | 256-node prebuilt projection | 138.1 µs | |
-| `algo_pack/algo_dijkstra_single_pair` | 256-node prebuilt projection | 38.08 µs | |
-| `algo_pack/algo_apsp_default` | 96-node prebuilt projection | 1.47 ms | Small-N APSP. |
-| `algo_pack/algo_betweenness_default` | 256-node prebuilt projection | 299.4 µs | |
-| `algo_pack/algo_louvain_default` | 256-node prebuilt projection | 129.7 µs | |
-| `algo_pack/algo_triangle_count_default` | 256-node prebuilt projection | 119.7 µs | |
-| `algo_pack/algo_label_propagation_default` | 256-node prebuilt projection | 75.78 µs | |
-
-Adapter cost is dominated by GQL `CALL` parsing + planning, not the underlying algorithm.
-
-## §6 selene-vector-pack (GQL CALL adapter overhead)
-
-Registered token: `selene-vector-pack:vector_pack:criterion`.
-
-| Bench | Vector count | Dim | k | Median | Notes |
-|---|---:|---:|---:|---:|---|
-| `vector_pack/search_default` | 1k | 256 | 10 | **17.19 µs** | HNSW. |
-| `vector_pack/upsert_default` | 1 | 256 | n/a | 2.42 µs | HNSW single insert. |
-| `vector_pack/bulk_upsert_default` | 100 | 256 | n/a | 4.22 ms | HNSW bulk mutation. |
-| `vector_pack/ivf_search_default` | 256 | 256 | 10 | **1.79 µs** | Trained IVF; bounded heap + scratch reuse. |
-| `vector_pack/ivf_search_high_probe` | 256 | 256 | 10 | **2.30 µs** | Trained IVF; n_probe=8 sweep. |
-| `vector_pack/ivf_bulk_upsert_default` | 100 | 256 | n/a | 57.37 µs | IVF bulk mutation. |
-| `vector_pack/ivf_stats_default` | n/a | n/a | n/a | 358.9 ns | Stats read. |
-
-## §7 selene-vector (HNSW + IVF recall + replay)
-
-Registered tokens: `selene-vector:build:criterion`,
-`selene-vector:recall:criterion`, `selene-vector:quant_recall:criterion`,
-`selene-vector:ivfpq_recall:criterion`, `selene-vector:composition_replay:criterion`.
-
-### §7a `vector_recall_at_10` (HNSW baseline; ext_select toggle)
-
-| Variant | k=10 | k=25 | k=50 | k=100 |
-|---|---:|---:|---:|---:|
-| extend_off | 718.3 µs (0.881) | 1.25 ms (0.991) | 2.20 ms (1.000) | 4.63 ms (1.000) |
-| extend_on | 717.8 µs (0.881) | 1.24 ms (0.991) | 2.20 ms (1.000) | 4.62 ms (1.000) |
-
-(latency / recall@10; extend_on yields ~4% latency reduction at small k.)
-
-### §7b `quant_recall_at_10` (PQ/SQ/OPQ quantization recall vs f32)
-
-| Variant | k=10 | k=25 | k=50 | k=100 |
-|---|---:|---:|---:|---:|
-| **f32** (baseline) | 705.6 µs / 0.881 | 1.24 ms / 0.991 | 2.18 ms / 1.000 | 4.60 ms / 1.000 |
-| sq8 | 756.9 µs / 0.884 | 1.28 ms / 0.987 | 2.23 ms / 0.994 | 4.68 ms / 0.994 |
-| sq8 + rescore | 749.3 µs / 0.884 | 1.28 ms / 0.991 | 2.23 ms / 1.000 | 4.81 ms / 1.000 |
-| pq | 743.9 µs / 0.503 | 1.27 ms / 0.506 | 2.31 ms / 0.491 | 4.92 ms / 0.491 |
-| pq + rescore | 746.0 µs / 0.503 | 1.26 ms / 0.778 | 2.30 ms / 0.931 | 4.92 ms / **0.984** |
-| opq | 731.7 µs / 0.500 | 1.25 ms / 0.472 | 2.33 ms / 0.459 | 4.91 ms / 0.456 |
-| opq + rescore | 733.3 µs / 0.500 | 1.26 ms / 0.781 | 2.31 ms / 0.925 | 4.95 ms / **0.994** |
-
-(latency / recall@10. **SQ8** is essentially free. **PQ/OPQ alone** collapse recall to ~50%; pairing with a **rescore** tier recovers recall to 0.98–0.99 at the same wall-clock as f32.)
-
-### §7c `vector_ivfpq_recall_at_10` (IVF-PQ n_probe sweep)
-
-| n_probe | Latency |
-|---:|---:|
-| 1 | **699.7 ns** |
-| 4 | 2.68 µs |
-| 8 | 4.97 µs |
-
-Linear in `n_probe`; sub-µs cold-cache lookup at `n_probe=1`.
-
-### §7d `composition_replay` (selene-vector IVF-PQ + snapshot/publish)
-
-| Variant | insert_snapshot_query | insert_publish_query |
-|---|---:|---:|
-| plain_pq | 24.98 ms | 24.51 ms |
-| **opq_polysemous** | **1.17 s** | **1.17 s** |
-
-OPQ rotation on insert is ~48× slower than plain PQ. Significant for insert-heavy workloads — favor `plain_pq` unless polysemous OPQ is needed for the workload's recall target.
-
-### §7e `vector_hnsw_build` (cold direct HNSW construction)
-
-BRIEF-103 remeasured this row on 2026-05-16 with
-`scripts/run-benches.sh --profile full --layer criterion --filter vector_hnsw_build`;
-other benchmark sections are unchanged from the header run.
-
-| Bench | n=100 | n=1000 | n=5000 | Notes |
-|---|---:|---:|---:|---|
-| `vector_hnsw_build` | 2.791 ms | **53.25 ms** | 340.09 ms | Direct `insert_node` build; dim=16, M=8, ef_construction=64, L2; deterministic `BUILD_SEED = 0x9100_0001`; BRIEF-103 BinaryHeap beam + diversity cache. |
-
-Directional donor note: `_design/perf-baselines.md:92` reports 1.31 s @ n=1k under unspecified dim/M; nearby text suggests dim=384, M=16. This bench is dim=16, M=8, so 53.25 ms @ n=1k is a non-parity signal (~24.6× lower wall-clock), not an apples-to-apples claim.
-BRIEF-103 improves the local n=5000 baseline from 578.2 ms to 340.09 ms
-(~41% lower wall-clock); 5× rows from 1k to 5k now costs ~6.4×.
 
 ## §iai-callgrind (deferred; instruction-count baselines pending)
 

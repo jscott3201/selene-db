@@ -224,9 +224,14 @@ mod tests {
             state ^= state << 5;
             payload.push((state >> 24) as u8);
         }
-        vec![Change::IndexExtensionEvent {
-            provider: intern("reader.boundary").unwrap(),
-            payload: Arc::from(payload),
+        vec![Change::NodeCreated {
+            id: NodeId::new(1),
+            labels: LabelSet::single(intern("reader.boundary").unwrap()),
+            properties: PropertyMap::from_pairs([(
+                intern("reader.payload").unwrap(),
+                Value::Bytes(Arc::from(payload)),
+            )])
+            .unwrap(),
         }]
     }
 

@@ -1,6 +1,8 @@
 //! GQL type-name rendering for the read-side formatter.
 
 use crate::GqlType;
+use crate::ast::RecordType;
+use crate::ast::format_ident::fmt_ident;
 
 pub(super) fn fmt_type(ty: &GqlType) -> String {
     match ty {
@@ -25,8 +27,6 @@ pub(super) fn fmt_type(ty: &GqlType) -> String {
         GqlType::Float64 => "FLOAT64".to_owned(),
         GqlType::Bytes => "BYTES".to_owned(),
         GqlType::Uuid => "UUID".to_owned(),
-        GqlType::Binary => "BYTES".to_owned(),
-        GqlType::VarBinary => "BYTES".to_owned(),
         GqlType::ZonedDateTime => "ZONED DATETIME".to_owned(),
         GqlType::LocalDateTime => "LOCAL DATETIME".to_owned(),
         GqlType::Date => "DATE".to_owned(),
@@ -39,13 +39,26 @@ pub(super) fn fmt_type(ty: &GqlType) -> String {
         GqlType::Path => "PATH".to_owned(),
         GqlType::Null => "NULL".to_owned(),
         GqlType::Nothing => "NOTHING".to_owned(),
-        // validate_formattable rejects these AST-only variants before the
-        // formatter starts. This arm remains a defensive fallback for callers
-        // that bypass the public formatting entry point inside this module.
-        GqlType::Record(_)
-        | GqlType::GraphRef
-        | GqlType::NodeRef
-        | GqlType::EdgeRef
-        | GqlType::TableRef => "STRING".to_owned(),
+        // Bare `RECORD` (GV47) carries no field structure; the closed form
+        // (GV46/GV48) renders each `<field name> :: <value type>` pair so a
+        // typed predicate (`IS TYPED RECORD{...}`) or `CAST(x AS RECORD{...})`
+        // round-trips through parse-format-parse. `::` is the field separator
+        // the grammar's `record_field_type` rule accepts (Per ISO 39075:2024
+        // §18.10 <field types specification>).
+        GqlType::Record(RecordType::Open) => "RECORD".to_owned(),
+        GqlType::Record(RecordType::Closed(fields)) => {
+            let body = fields
+                .iter()
+                .map(|(name, field_ty)| format!("{} :: {}", fmt_ident(*name), fmt_type(field_ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("RECORD{{{body}}}")
+        }
+        // validate_formattable rejects these AST-only reference variants before
+        // the formatter starts. This arm remains a defensive fallback for
+        // callers that bypass the public formatting entry point in this module.
+        GqlType::GraphRef | GqlType::NodeRef | GqlType::EdgeRef | GqlType::TableRef => {
+            "STRING".to_owned()
+        }
     }
 }

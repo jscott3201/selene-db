@@ -25,7 +25,6 @@
 
 mod articulation;
 mod components;
-mod row_index;
 mod topo;
 
 pub use articulation::{
@@ -37,7 +36,7 @@ pub use components::{
 };
 pub use topo::{TopoSortError, topological_sort, topological_sort_with_checker};
 
-pub(crate) use row_index::RowIndex;
+pub(crate) use crate::projection::RowIndex;
 
 /// Sentinel value used by DFS state arrays to mark unvisited dense indices.
 ///
