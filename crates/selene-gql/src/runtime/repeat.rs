@@ -6,14 +6,13 @@ use selene_core::{EdgeId, NodeId, Value};
 use selene_graph::adjacency::AdjacencyEdge;
 
 use crate::{
-    EdgeDirection, JoinTree, PathMode, PathSelector, PatternPlan,
+    EdgeDirection, JoinTree, PathMode, PatternPlan,
     plan::RepeatEdgeMatch,
     runtime::{Binding, BindingTableSchema, EvalCtx, ExecutorError},
 };
 
 use super::{pattern, scan, visited_set};
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
     child: &JoinTree,
     edge: &RepeatEdgeMatch,
@@ -21,7 +20,6 @@ pub(crate) fn execute(
     min: u32,
     max: Option<u32>,
     path_mode: PathMode,
-    selector: Option<PathSelector>,
     env: pattern::WalkContext<'_, '_, '_, '_, '_, '_>,
 ) -> Result<Vec<Binding>, ExecutorError> {
     if path_mode != PathMode::Walk && max.is_some() {
@@ -30,7 +28,6 @@ pub(crate) fn execute(
             span: edge.span,
         });
     }
-    let _ = selector;
 
     let child_rows = pattern::walk_join_tree(child, env)?;
     let mut state = RepeatState {

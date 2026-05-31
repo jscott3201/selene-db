@@ -15,10 +15,6 @@ use crate::{
 /// (BRIEF-154 §B.2). The `declared_type` borrow lets call sites run plan-time
 /// typed-incompatibility checks without cloning [`GqlType`].
 #[derive(Clone, Copy, Debug)]
-// Commit 1 lands the helper surface; Commit 2 wires the first caller
-// (`compatible_value` in `range_index_scan`). Until then the struct is
-// dead-code from the compiler's perspective.
-#[allow(dead_code)]
 pub(crate) struct ParameterRef<'a> {
     /// Parameter name without the leading `$`.
     pub name: IStr,
@@ -75,11 +71,16 @@ pub(crate) fn collect_binding_refs(
             }
         }
         // Subquery patterns can reference outer bindings via pattern element
-        // names (e.g., `EXISTS ((n)-[:r]->(b))` references outer `n`) without
-        // emitting an explicit `Variable` expression. Trigger the unresolved
-        // fallback so callers preserve the parent's annotated `binding_refs`
-        // instead of silently dropping the subquery's outer references.
-        ValueExpr::Exists { .. } | ValueExpr::CountSubquery { .. } => {
+        // names (e.g., `EXISTS ((n)-[:r]->(b))` references outer `n`) or via a
+        // body expression, without emitting an explicit `Variable` expression
+        // at this level (the walker treats subquery bodies as opaque). Trigger
+        // the unresolved fallback so callers preserve the parent's annotated
+        // `binding_refs` instead of silently dropping the subquery's outer
+        // references — a sibling rewrite must not strip a ValueSubquery's
+        // correlated refs.
+        ValueExpr::Exists { .. }
+        | ValueExpr::CountSubquery { .. }
+        | ValueExpr::ValueSubquery { .. } => {
             unresolved = true;
         }
         _ => {}
@@ -144,9 +145,6 @@ pub(crate) fn literal(expr: &ValueExpr) -> Option<&Literal> {
 /// declarations: untyped slots (the BRIEF-115 baseline) and typed slots
 /// (BRIEF-137 `$id :: TYPE`) are both returned. Plan-time and execute-time
 /// validation lives in the optimizer rules and runtime resolver respectively.
-// Commit 1 lands the helper; Commit 2 wires the first caller. Allow the
-// `dead_code` warning until then so `-D warnings` clippy stays green.
-#[allow(dead_code)]
 pub(crate) fn parameter(expr: &ValueExpr) -> Option<ParameterRef<'_>> {
     let ValueExpr::Parameter {
         name,

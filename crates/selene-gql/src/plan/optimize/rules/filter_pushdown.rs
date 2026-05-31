@@ -38,22 +38,30 @@ fn push_leading_filters(plan: &mut ExecutionPlan) -> bool {
         return false;
     };
     let pattern_bindings = binding_set(&pattern.bindings);
-    let mut changed = false;
-    while let Some(PipelineOp::Filter(pred)) = plan.pipeline.first() {
-        if !pred
-            .binding_refs
-            .iter()
-            .all(|binding| pattern_bindings.contains(binding))
-        {
-            break;
-        }
-        let PipelineOp::Filter(pred) = plan.pipeline.remove(0) else {
-            unreachable!("first op was already checked as Filter");
+    // Count the maximal leading run of pushable `Filter` ops (each a `Filter`
+    // whose binding-refs are all satisfied by the pattern), then move the whole
+    // prefix in one `drain` — avoiding the per-iteration `remove(0)` O(n²) shift.
+    let count = plan
+        .pipeline
+        .iter()
+        .take_while(|op| match op {
+            PipelineOp::Filter(pred) => pred
+                .binding_refs
+                .iter()
+                .all(|binding| pattern_bindings.contains(binding)),
+            _ => false,
+        })
+        .count();
+    if count == 0 {
+        return false;
+    }
+    for op in plan.pipeline.drain(0..count) {
+        let PipelineOp::Filter(pred) = op else {
+            unreachable!("prefix ops were already checked as pushable Filters");
         };
         pattern.filters.push(pred);
-        changed = true;
     }
-    changed
+    true
 }
 
 fn binding_set(bindings: &[BindingDef]) -> BTreeSet<BindingId> {

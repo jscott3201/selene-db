@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use selene_core::{IStr, LabelSet, PropertyValueType};
 use selene_graph::{EdgeTypeDef, GraphTypeDef, NodeTypeDef, PropertyTypeDef};
 
@@ -121,12 +123,15 @@ fn required_property_supplied(
     })
 }
 
-pub(super) fn find_set_value(
-    analyzed: &AnalyzedStatement,
-    value_span: SourceSpan,
-) -> Option<&ValueExpr> {
+/// Index every `SET` value expression in the statement by its source span.
+///
+/// Built once per `schema::validate` call so the per-`SetProperty`-entry value
+/// lookup is O(1) rather than re-scanning every `SET` item per write entry
+/// (which was O(W×S) — one rescan of all S set values per W write entries).
+pub(super) fn set_value_index(analyzed: &AnalyzedStatement) -> HashMap<SourceSpan, &ValueExpr> {
+    let mut index = HashMap::new();
     let AnalyzedStatementKind::Mutate(pipeline) = &analyzed.statement else {
-        return None;
+        return index;
     };
     for statement in &pipeline.statements {
         let MutationStatement::Set(items) = statement else {
@@ -134,22 +139,19 @@ pub(super) fn find_set_value(
         };
         for item in items {
             match item {
-                SetItem::Property { value, .. } if value.span() == value_span => {
-                    return Some(value);
+                SetItem::Property { value, .. } => {
+                    index.entry(value.span()).or_insert(value);
                 }
                 SetItem::PropertyMerge { properties, .. } => {
-                    if let Some((_, value)) = properties
-                        .iter()
-                        .find(|(_, value)| value.span() == value_span)
-                    {
-                        return Some(value);
+                    for (_, value) in properties {
+                        index.entry(value.span()).or_insert(value);
                     }
                 }
                 _ => {}
             }
         }
     }
-    None
+    index
 }
 
 pub(super) enum PropertyAgreement<'a> {

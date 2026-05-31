@@ -171,12 +171,10 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
             }
             ValueExpr::ValueSubquery { body, span } => bind_value_subquery(ctx, body, *span)?,
             ValueExpr::Cast {
-                value,
-                target_type,
-                span,
+                value, target_type, ..
             } => {
-                let value_id = bind_value_expr(ctx, value)?;
-                infer::cast(target_type, ctx.expr_type(value_id), *span)?
+                bind_value_expr(ctx, value)?;
+                infer::cast(target_type)?
             }
         };
         Ok(ctx.allocate_expr(expr, ty))

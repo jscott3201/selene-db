@@ -1,4 +1,24 @@
 //! Analyzer diagnostics.
+//!
+//! # `#[diagnostic(code(..))]` prefix taxonomy
+//!
+//! The `code(..)` attribute is the miette/`thiserror` *display* code only; the
+//! authoritative GQLSTATUS for every variant is [`AnalysisError::gqlstatus`]
+//! (ISO/IEC 39075:2024 §23.1 Table 8), which downstream surfaces use. Two
+//! prefixes coexist intentionally:
+//!
+//! - `SLENE_GQL_<status>` — embeds the GQLSTATUS code directly (e.g.
+//!   `SLENE_GQL_42N03` for `UNDEFINED_REFERENCE`). Used by every variant whose
+//!   GQLSTATUS is a single, stable, public code.
+//! - `SLENE_A_0NN` — opaque analyzer-local ordinals (`010`..`018`). Used by the
+//!   nine closed-graph (GG02) static-schema variants
+//!   ([`AnalysisError::SchemaUnknownNodeType`] through
+//!   [`AnalysisError::SchemaRequiredEdgeLabelRemoved`]). These all map to the
+//!   same `GqlStatus::GRAPH_TYPE_VIOLATION` (G2000) class, so embedding the
+//!   status in the display code would make all nine collide on one string; the
+//!   `SLENE_A_*` ordinals keep them distinguishable in diagnostics while
+//!   `gqlstatus()` reports the correct shared G2000 to callers. The ordinals
+//!   are display-only and are *not* a contract — do not parse them.
 
 use selene_core::{IStr, LabelSet, PropertyValueType};
 

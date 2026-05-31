@@ -79,14 +79,6 @@ impl ExecutionPlan {
         id
     }
 
-    /// Allocate a fresh pipeline op ID for future adaptive execution hooks.
-    #[allow(dead_code)]
-    pub(crate) fn alloc_pipeline_op_id(&mut self) -> PipelineOpId {
-        let id = self.next_pipeline_op_id;
-        self.next_pipeline_op_id = PipelineOpId::new(id.get().saturating_add(1));
-        id
-    }
-
     /// Recompute the pipeline-op ID high-water mark after lowering or rewrite.
     pub(crate) fn refresh_pipeline_op_high_water(&mut self) {
         if let Some(pattern) = &mut self.pattern_plan {
@@ -173,8 +165,6 @@ pub enum BindingElement {
     Edge,
     /// Path binding.
     Path,
-    /// Value alias binding.
-    Alias,
 }
 
 /// Binding endpoint used by path-level operators.
@@ -316,8 +306,6 @@ pub enum JoinTree {
         max: Option<u32>,
         /// Path mode in scope for this repeat.
         path_mode: PathMode,
-        /// Path selector in scope for this repeat.
-        selector: Option<PathSelector>,
     },
     /// Selector wrapper over one complete path pattern.
     ///
@@ -378,7 +366,16 @@ pub enum JoinTree {
         /// Node-id orderings used to break symmetric WCO traversals.
         node_id_ordering: Vec<NodeIdOrdering>,
     },
-    /// Nested subplan placeholder.
+    /// A fully nested [`ExecutionPlan`] executed as a single join-tree node.
+    ///
+    /// Reserved for correlated-`CALL` subquery lowering: a `CALL { ... }` whose
+    /// body imports outer bindings will lower to this variant so the inner
+    /// pipeline runs per outer row. No production lowering rule constructs it
+    /// yet (correlated-`CALL` is not lowered at HEAD; only tests build it), but
+    /// the runtime path is complete — the sole executor is
+    /// [`crate::runtime::subplan::execute`], reached from the
+    /// `JoinTree::Subplan` arm of pattern walking. It is kept (not removed) as
+    /// the working substrate for that near-term direction.
     Subplan(Box<ExecutionPlan>),
     /// Per-label sub-scans wrapping a flat-disjunctive-label pattern.
     ///
@@ -723,7 +720,6 @@ mod tests {
             min: 0,
             max: Some(2),
             path_mode: PathMode::Walk,
-            selector: None,
         };
 
         let JoinTree::Repeat { edge, min, max, .. } = tree else {

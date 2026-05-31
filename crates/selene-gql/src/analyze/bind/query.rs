@@ -275,7 +275,6 @@ fn group_binding_refs(
             if let ValueExpr::Variable { span, .. } = value {
                 bindings.extend(
                     binding_refs_in_span(ctx, *span)
-                        .into_iter()
                         .filter(|use_| use_.span == *span)
                         .map(|use_| use_.binding),
                 );
@@ -403,15 +402,13 @@ fn validate_percentile_independent_arg(
     Ok(())
 }
 
-fn binding_refs_in_span(
-    ctx: &BindContext<'_>,
+fn binding_refs_in_span<'ctx>(
+    ctx: &'ctx BindContext<'_>,
     span: SourceSpan,
-) -> Vec<crate::analyze::BindingUse> {
+) -> impl Iterator<Item = &'ctx crate::analyze::BindingUse> {
     ctx.references
         .iter()
-        .filter(|reference| span_contains(span, reference.span))
-        .cloned()
-        .collect()
+        .filter(move |reference| span_contains(span, reference.span))
 }
 
 fn binding_declared_outside_current_subquery(

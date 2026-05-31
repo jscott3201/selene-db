@@ -153,8 +153,13 @@ where
 
 /// Visit `Expand` edges that are safe targets for filter pushdown.
 ///
-/// Excludes WCO and `Subplan` boundaries (rules don't reach across those),
-/// and the optional-side subtree of any `JoinTree::Outer`.
+/// Recurses only into `Expand` children, both `HashJoin` sides, and the
+/// preserved (`left`) side of `Outer`. Every other join-tree node terminates
+/// the walk: `Scan` and `DisjunctiveScan` (leaf scans with no `Expand`
+/// underneath), `Repeat` / `Questioned` / `PathSearch` / `PathModeFilter`
+/// (path-shaped wrappers whose edges are not plain pushdown targets), and the
+/// `WorstCaseOptimal` / `Subplan` boundaries (rules don't reach across those).
+/// The optional (`right`) side of `Outer` is likewise skipped.
 ///
 /// Why: pushing a single-binding predicate into an `Expand` edge under
 /// `JoinTree::Outer.right` evaluates it before null-extension, dropping
