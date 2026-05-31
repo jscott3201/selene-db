@@ -68,7 +68,11 @@ pub struct GraphType {
     pub edge_types: BTreeMap<IStr, EdgeTypeDef>,
     /// Record types keyed by record type ID.
     pub record_types: BTreeMap<RecordTypeId, RecordTypeDef>,
-    /// Policy for overlap between key label sets.
+    /// Reserved policy for relationships between key label sets. **Not yet
+    /// consulted:** closed-graph element binding uses exact key-label-set
+    /// equality, and every type's key label set is currently a singleton
+    /// (cardinality 1), so no overlap/containment relationship can arise to
+    /// apply a policy to. See [`KeyLabelSetPolicy`].
     pub key_label_set_policy: KeyLabelSetPolicy,
 }
 
@@ -556,13 +560,26 @@ pub struct RecordTypeDef {
     pub fields: SmallVec<[PropertyDef; 4]>,
 }
 
-/// Policy for relationships between key label sets.
+/// Reserved policy for relationships between the key label sets of a closed
+/// graph type's element types.
+///
+/// **Currently inert.** This value is persisted on [`GraphType`] but is not yet
+/// consulted by any binding or validation path: closed-graph element binding
+/// uses exact key-label-set equality, and the catalog DDL only produces
+/// singleton key label sets (one label per type — see
+/// `selene-gql`'s `create_node_type` lowering), so no two key label sets can
+/// stand in an overlap/containment relationship. The variants reserve the two
+/// ISO postures that become meaningful once multi-label key label sets are
+/// supported (a v1.2+ feature; see the deep-review deferred-briefs catalog).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub enum KeyLabelSetPolicy {
-    /// Key label sets may not overlap.
+    /// Reserved: key label sets must be pairwise disjoint.
     NoOverlap,
-    /// Key label sets may be contained by one another. This is the v1.0
-    /// default from spec 02 section 6.1.
+    /// Reserved: key label sets may contain one another, enabling ISO/IEC
+    /// 39075:2024 §4.13.2.7 *key label set implication consistency* — a type
+    /// whose key label set is a subset of another type's label set "implies"
+    /// that super-type. The current default; activated when multi-label key
+    /// label sets ship.
     #[default]
     Containment,
 }
