@@ -532,8 +532,8 @@ pub struct RepeatEdgeMatch {
 /// Pipeline operation over binding tables.
 ///
 /// `#[non_exhaustive]` so future planner work (e.g., MERGE lowering, CALL
-/// subquery form, INDEX DDL via selene-pack) can add variants without
-/// breaking downstream pattern matches.
+/// subquery form, INDEX DDL) can add variants without breaking downstream
+/// pattern matches.
 #[derive(Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
 #[non_exhaustive]

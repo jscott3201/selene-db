@@ -1,7 +1,7 @@
 //! Integrity-check bodies for the `selene.verify` native built-in.
 //!
-//! Ported verbatim from `selene-pack/src/builtin/verify.rs`. Each `check_*`
-//! function walks one class of graph invariant and returns a [`CheckResult`]
+//! Ported verbatim from the historical procedure-pack `verify` built-in. Each
+//! `check_*` function walks one class of graph invariant and returns a [`CheckResult`]
 //! summarizing the inconsistencies it found; the orchestration and row shaping
 //! live in the parent [`super`] module.
 

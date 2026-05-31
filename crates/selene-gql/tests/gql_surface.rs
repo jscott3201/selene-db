@@ -5,16 +5,14 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, IStr, Value, intern};
 use selene_gql::{
-    BindingTable, CatalogOp, EmptyProcedureRegistry, PipelineOp, ProcedureContext, ProcedureError,
-    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputSchema,
-    ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier, Session,
-    StatementOutput, analyze, parse, plan,
+    BindingTable, BuiltinProcedureRegistry, CatalogOp, EmptyProcedureRegistry, PipelineOp,
+    ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
+    ProcedureOutputSchema, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
+    Session, StatementOutput, analyze, parse, plan,
 };
 use selene_graph::SharedGraph;
-use selene_pack::ProcedurePackRegistry;
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
@@ -59,19 +57,14 @@ fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
         .collect()
 }
 
-fn full_registry() -> ProcedurePackRegistry {
-    let algorithms = AlgorithmsPack::new();
-    ProcedurePackRegistry::builder()
-        .with_builtins()
-        .with_external_pack(algorithms.external_pack())
-        .build()
-        .expect("full default registry builds")
+fn full_registry() -> BuiltinProcedureRegistry {
+    BuiltinProcedureRegistry::new()
 }
 
 #[test]
 fn show_indexes_lists_property_indexes_only() {
     let graph = graph(118_001);
-    let registry = ProcedurePackRegistry::with_builtins().expect("built-ins register");
+    let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
     session
@@ -92,7 +85,7 @@ fn show_indexes_lists_property_indexes_only() {
 }
 
 #[test]
-fn show_procedures_lists_default_pack_registry() {
+fn show_procedures_lists_default_registry() {
     let graph = graph(118_003);
     let registry = full_registry();
     let mut session = Session::new(&graph);
@@ -152,7 +145,7 @@ fn explain_rejects_transaction_control_and_nested_explain() {
 #[test]
 fn feature_status_procedure_returns_supported_rows() {
     let graph = graph(118_006);
-    let registry = ProcedurePackRegistry::with_builtins().expect("built-ins register");
+    let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     let table = execute_rows(
         &mut session,

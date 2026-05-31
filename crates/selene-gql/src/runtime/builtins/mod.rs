@@ -1,7 +1,7 @@
 //! Native platform built-in procedures (`selene.*`).
 //!
-//! These five procedures are relocated verbatim from `selene-pack/src/builtin/`
-//! into `selene-gql` and registered directly in the native
+//! These five procedures are relocated verbatim from the historical
+//! procedure-pack built-ins into `selene-gql` and registered directly in the native
 //! [`BuiltinProcedureRegistry`](crate::BuiltinProcedureRegistry) (STEP 3). The
 //! historical `BuiltInMetadata` / `GraphProcedureBuiltIn` /
 //! `MutationProcedureBuiltIn` trait indirection and the
@@ -14,7 +14,7 @@
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify` are read-only
 //!   graph-tier ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they
-//!   never install a `ChangeSubscriber` and never re-enter `begin_write`.
+//!   never mutate and never re-enter `begin_write`.
 //! - `selene.create_index`, `selene.drop_index` are mutation-tier
 //!   ([`ProcedureTier::Mutation`] + [`ProcedureMutability::SchemaWrite`]); they
 //!   route every write through [`MutationContext::mutator`] — emitting
@@ -22,8 +22,8 @@
 //!   single mutation funnel (Hard Rule 11). They never bypass the funnel and
 //!   never re-enter `begin_write`.
 //!
-//! `pack_history` is **not** relocated: it reads the pack-lifecycle audit, which
-//! is removed in a later teardown stage. It stays in `selene-pack` for now.
+//! `pack_history` is **not** relocated: it read the pack-lifecycle audit, which
+//! is removed in the teardown.
 
 mod create_index;
 mod drop_index;
@@ -68,8 +68,8 @@ pub(super) struct BuiltinSpec {
 }
 
 /// The five surviving platform built-ins, in the historical pack registration
-/// order (`selene-pack` registered `health`, `feature_status`, `verify`,
-/// `create_index`, `drop_index`; `pack_history` is not relocated).
+/// order (`health`, `feature_status`, `verify`, `create_index`, `drop_index`;
+/// the former `pack_history` built-in is not relocated).
 pub(super) const BUILTIN_SPECS: [BuiltinSpec; 5] = [
     BuiltinSpec {
         name: &["selene", "health"],

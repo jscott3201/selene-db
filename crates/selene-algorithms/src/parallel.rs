@@ -11,10 +11,10 @@ use std::num::NonZeroUsize;
 /// spins up a dedicated Rayon pool of `n` OS threads (the crate-internal
 /// `ParallelRunner`), so an unbounded `n` sized by an untrusted GQL argument
 /// would let a single `CALL` exhaust the host's thread budget (see
-/// `feedback_mem_forget_leak_dos`). `1024` matches the historical
-/// adapter-side cap that previously lived in `selene-algorithms-pack`; it is
-/// large enough to never constrain a legitimate request yet bounds the worst
-/// case. The cap is enforced by [`Parallelism::from_thread_count`].
+/// `feedback_mem_forget_leak_dos`). `1024` is the adapter-side cap applied by
+/// the GQL procedure registry; it is large enough to never constrain a
+/// legitimate request yet bounds the worst case. The cap is enforced by
+/// [`Parallelism::from_thread_count`].
 pub const MAX_PARALLELISM_THREADS: usize = 1024;
 
 /// Error returned by [`Parallelism::from_thread_count`] for an out-of-range
@@ -57,9 +57,9 @@ impl Parallelism {
     /// - `1..=MAX_PARALLELISM_THREADS` → [`Parallelism::Threads`].
     /// - `> MAX_PARALLELISM_THREADS` → [`ParallelismCapError::ExceedsCap`].
     ///
-    /// This is the single home for the thread-count cap policy that previously
-    /// lived in the `selene-algorithms-pack` adapter; the GQL procedure
-    /// registry calls it so the cap is identical across every algorithm.
+    /// This is the single home for the thread-count cap policy applied by the
+    /// GQL procedure registry, which calls it so the cap is identical across
+    /// every algorithm.
     pub fn from_thread_count(threads: usize) -> Result<Self, ParallelismCapError> {
         if threads == 0 {
             return Ok(Self::Sequential);

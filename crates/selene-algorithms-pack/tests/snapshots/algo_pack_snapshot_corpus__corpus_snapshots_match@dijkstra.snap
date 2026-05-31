@@ -1,5 +1,0 @@
----
-source: crates/selene-algorithms-pack/tests/algo_pack_snapshot_corpus.rs
-expression: entry.render()
----
-dijkstra [Algorithm] MATCH (source), (target) CALL algo.dijkstra('p', source, target) YIELD cost, path, length

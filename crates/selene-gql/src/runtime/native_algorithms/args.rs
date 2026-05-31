@@ -1,7 +1,7 @@
 //! Small explicit argument parsers for the native `algo.*` procedures.
 //!
-//! Ported verbatim from the historical `selene-algorithms-pack/src/args.rs`
-//! adapter. These parsers **define** the procedure signatures: their coercion
+//! Ported verbatim from the historical procedure-pack argument adapter.
+//! These parsers **define** the procedure signatures: their coercion
 //! and arity rules (Int→f64, NULL→default, `nullable_*`, trailing-nullable
 //! arity, negative-int rejection, overflow checks) are the user-visible
 //! contract. Any drift here silently changes a procedure's accepted arguments,

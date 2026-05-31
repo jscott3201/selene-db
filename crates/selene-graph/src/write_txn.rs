@@ -10,7 +10,6 @@ use arc_swap::ArcSwap;
 use parking_lot::{MutexGuard, RwLockWriteGuard};
 use selene_core::{Change, HlcTimestamp, Origin, metrics};
 
-use crate::change_subscriber::ChangeSubscriber;
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
@@ -53,7 +52,6 @@ pub struct WriteTxn<'g> {
     pub(crate) pre_txn: Option<Arc<SeleneGraph>>,
     pub(crate) allocator: MutexGuard<'g, IdAllocator>,
     pub(crate) providers: Vec<Arc<dyn IndexProvider>>,
-    pub(crate) subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     pub(crate) durable_providers: Vec<Arc<dyn DurableProvider>>,
     pub(crate) changes: Vec<Change>,
     /// Per-truncate per-row tombstone expansions, keyed by the index of the
@@ -61,7 +59,7 @@ pub struct WriteTxn<'g> {
     ///
     /// BRIEF-150 / deletion-reclamation audit Item 11. The WAL/changeset carries
     /// only the O(1) declarative `NodesOfTypeTruncated`/`EdgesOfTypeTruncated`
-    /// change, but provider/subscriber fan-out must observe the same per-row
+    /// change, but index-provider fan-out must observe the same per-row
     /// `NodeDeleted`/`EdgeDeleted` multiset a `MATCH (n:L) DETACH DELETE n` would
     /// emit (so derived state is reclaimed without leaks). The mutator
     /// snapshots the matched ids while it still holds the store and stages their
@@ -78,7 +76,6 @@ impl<'g> WriteTxn<'g> {
         schema_version: Arc<AtomicU64>,
         allocator: MutexGuard<'g, IdAllocator>,
         providers: Vec<Arc<dyn IndexProvider>>,
-        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
     ) -> Self {
         let pre_txn = Some(Arc::clone(&*guard));
@@ -89,7 +86,6 @@ impl<'g> WriteTxn<'g> {
             pre_txn,
             allocator,
             providers,
-            subscribers,
             durable_providers,
             changes: Vec::new(),
             truncate_expansions: Vec::new(),
@@ -120,7 +116,7 @@ impl<'g> WriteTxn<'g> {
 
     /// Commit with optional caller-owned principal bytes for D12 audit replay.
     ///
-    /// Registered index providers and change subscribers are notified after the
+    /// Registered index providers are notified after the
     /// new graph snapshot is published, **with the write lock and allocator
     /// mutex still held**, so that two concurrent commits cannot interleave
     /// their `on_change` callbacks (the per-graph serialization contract from
@@ -129,8 +125,8 @@ impl<'g> WriteTxn<'g> {
     /// provider calls into `SharedGraph::begin_write()` are detected via a
     /// thread-local fanout counter and panic with a clear message; the
     /// outer fan-out boundary catches those panics (along with callback-internal
-    /// panics and returned errors) so a single misbehaving provider or
-    /// subscriber can never abort the writer thread.
+    /// panics and returned errors) so a single misbehaving provider
+    /// can never abort the writer thread.
     /// Cross-thread re-entry (a provider waiting on a spawned worker that
     /// calls `begin_write`) is documented misuse — see `reentry.rs` and
     /// the `IndexProvider` rustdoc.
@@ -229,7 +225,7 @@ impl<'g> WriteTxn<'g> {
         let warnings = std::mem::take(&mut self.warnings);
 
         // BRIEF-150 / audit Item 11: the persisted `changes` carry O(1)
-        // declarative truncate variants, but providers and subscribers must see
+        // declarative truncate variants, but index providers must see
         // the same per-row `NodeDeleted`/`EdgeDeleted` multiset that
         // `MATCH (n:L) DETACH DELETE n` produces. Build a fan-out-only view that
         // substitutes each truncate change with the staged per-row expansion
@@ -247,9 +243,6 @@ impl<'g> WriteTxn<'g> {
         {
             let _fanout_guard = crate::reentry::FanoutGuard::enter();
             notify_providers(&self.providers, fanout_changes);
-            if !self.subscribers.is_empty() {
-                notify_subscribers(&self.subscribers, fanout_changes);
-            }
         }
 
         metrics::counter_inc(metrics::COMMITS_TOTAL);
@@ -376,62 +369,6 @@ fn notify_providers(providers: &[Arc<dyn IndexProvider>], changes: &[Change]) {
     }
 }
 
-/// Fan out committed changes to subscribers after filtering by declared kind.
-#[tracing::instrument(
-    name = "selene.graph.notify_subscribers",
-    skip(subscribers, changes),
-    fields(subscriber_count = subscribers.len(), change_count = changes.len())
-)]
-fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Change]) {
-    for subscriber in subscribers {
-        let (tag, kinds) = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            (subscriber.subscriber_tag(), subscriber.change_kinds())
-        })) {
-            Ok(parts) => parts,
-            Err(payload) => {
-                let payload = crate::panic_payload::describe(&payload);
-                tracing::error!(
-                    subscriber_tag = %SENTINEL_PROVIDER_TAG,
-                    payload = %payload,
-                    "change subscriber tag/filter lookup panicked after graph commit; \
-                     skipping subscriber",
-                );
-                continue;
-            }
-        };
-
-        for change in changes {
-            if !kinds.contains(change.kind()) {
-                continue;
-            }
-
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                subscriber.on_change(change)
-            }));
-            match outcome {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    tracing::error!(
-                        subscriber_tag = %tag,
-                        error = %error,
-                        ?change,
-                        "change subscriber on_change failed after graph commit; continuing",
-                    );
-                }
-                Err(panic_payload) => {
-                    let payload = crate::panic_payload::describe(&panic_payload);
-                    tracing::error!(
-                        subscriber_tag = %tag,
-                        ?change,
-                        payload = %payload,
-                        "change subscriber on_change panicked after graph commit; continuing",
-                    );
-                }
-            }
-        }
-    }
-}
-
 /// Build a fan-out-only change list that substitutes each declarative truncate
 /// change with the per-row tombstones the mutator staged for it.
 ///
@@ -440,7 +377,7 @@ fn notify_subscribers(subscribers: &[Arc<dyn ChangeSubscriber>], changes: &[Chan
 /// with zero allocation. When expansions are present, every truncate change at
 /// a staged index is replaced by its expansion (in order), and a truncate
 /// change with no staged expansion (an empty-label no-op) is simply dropped
-/// from fan-out — subscribers see no tombstones because no rows were removed.
+/// from fan-out — index providers see no tombstones because no rows were removed.
 fn expand_truncates_for_fanout(
     changes: &[Change],
     expansions: &[(usize, Vec<Change>)],
@@ -453,7 +390,7 @@ fn expand_truncates_for_fanout(
         match change {
             // BRIEF-152: GraphReset is fanned out as its staged per-row
             // tombstones too, alongside the BRIEF-150 truncate variants, so
-            // subscribers reclaim derived state for every wiped node/edge and
+            // index providers reclaim derived state for every wiped node/edge and
             // never see the bare declarative reset they could not expand.
             Change::NodesOfTypeTruncated { .. }
             | Change::EdgesOfTypeTruncated { .. }

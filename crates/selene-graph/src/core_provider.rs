@@ -10,10 +10,9 @@ use std::sync::{
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
-use selene_core::{Change, HlcTimestamp, Origin, SchemaChange};
+use selene_core::{Change, HlcTimestamp, Origin};
 use selene_persist::{
-    AUDIT_KIND_PACK_LIFECYCLE, AuditLog, AuditRecord, RecoveryError, RecoveryProvider,
-    RecoveryResult, WalWriter,
+    AuditLog, AuditRecord, RecoveryError, RecoveryProvider, RecoveryResult, WalWriter,
 };
 
 use crate::core_provider::recovery_state::RecoveryState;
@@ -107,6 +106,40 @@ impl DurableState {
         self.audit = Some(Mutex::new(audit));
         self
     }
+
+    /// Append one engine-owned event to the attached audit log, if any.
+    ///
+    /// The D24 audit log is the durable "events" surface in the
+    /// snapshot=state / WAL=changes / audit=events split, with retention
+    /// independent of the WAL lineage. Appends are **best-effort and audit-after**:
+    /// the caller stamps the wall clock here, the record is serialized by the
+    /// caller into an opaque `kind`-tagged payload, and an append failure is
+    /// logged and skipped rather than propagated, so the audit can only lag a
+    /// committed change, never lead it (the donor lesson "audit lag is
+    /// recoverable, fiction is not"). Returns `false` when no audit log is
+    /// attached or the append failed.
+    ///
+    /// The pack-lifecycle producer that previously fed this surface was removed
+    /// in the extension teardown; the framework remains wired (persisted,
+    /// reattached on recovery) for future user-action audit events (D24).
+    pub fn append_audit_event(&self, kind: u16, payload: Vec<u8>) -> bool {
+        let Some(audit) = &self.audit else {
+            return false;
+        };
+        let record = AuditRecord {
+            recorded_at_unix_nanos: unix_nanos_now(),
+            kind,
+            payload,
+        };
+        let mut log = audit.lock();
+        match log.append(&record) {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::error!(%error, "audit: failed to append engine event");
+                false
+            }
+        }
+    }
 }
 
 /// Current wall-clock time as nanoseconds since the Unix epoch, saturating.
@@ -115,41 +148,6 @@ fn unix_nanos_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|elapsed| u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX))
         .unwrap_or(0)
-}
-
-/// Mirror every pack-lifecycle event in `changes` to the audit log.
-///
-/// Best-effort: a serialization or append failure is logged and skipped, never
-/// propagated, because the WAL already holds the authoritative copy (see
-/// [`DurableState::with_audit_log`]). All events from one commit share a single
-/// wall-clock stamp.
-fn mirror_lifecycle_to_audit(audit: &Mutex<AuditLog>, changes: &[Change]) {
-    let recorded_at_unix_nanos = unix_nanos_now();
-    let mut log = audit.lock();
-    for change in changes {
-        let Change::SchemaChanged {
-            change: SchemaChange::ProcedurePackLifecycle { event },
-            ..
-        } = change
-        else {
-            continue;
-        };
-        match postcard::to_allocvec(event) {
-            Ok(payload) => {
-                let record = AuditRecord {
-                    recorded_at_unix_nanos,
-                    kind: AUDIT_KIND_PACK_LIFECYCLE,
-                    payload,
-                };
-                if let Err(error) = log.append(&record) {
-                    tracing::error!(%error, "audit: failed to mirror pack lifecycle event");
-                }
-            }
-            Err(error) => {
-                tracing::error!(%error, "audit: failed to encode pack lifecycle event");
-            }
-        }
-    }
 }
 
 impl CoreProvider {
@@ -249,31 +247,6 @@ impl CoreProvider {
             CoreInner::Recovery { state } => state.apply_change(change),
         }
     }
-
-    /// Shared per-WAL-entry truncate-expansion buffer for recovery fan-out.
-    ///
-    /// Recovery subscriber wrappers clone this handle so they can read the
-    /// per-row `NodeDeleted`/`EdgeDeleted` tombstones CORE stages while
-    /// re-deriving truncated rows from the recovered store (BRIEF-150 / audit
-    /// Item 11). Returns `None` for a live-mode provider, which never truncates
-    /// through recovery.
-    #[must_use]
-    pub(crate) fn truncate_expansion_handle(&self) -> Option<Arc<Mutex<Vec<Change>>>> {
-        let inner = self.inner.lock();
-        match &*inner {
-            CoreInner::Live { .. } => None,
-            CoreInner::Recovery { state } => Some(state.truncate_expansion_handle()),
-        }
-    }
-
-    /// Clear the per-entry truncate-expansion buffer before applying a WAL
-    /// entry's changes, so staged tombstones reflect only that entry.
-    fn reset_truncate_expansion(&self) {
-        let inner = self.inner.lock();
-        if let CoreInner::Recovery { state } = &*inner {
-            state.reset_truncate_expansion();
-        }
-    }
 }
 
 impl IndexProvider for CoreProvider {
@@ -346,11 +319,6 @@ impl DurableProvider for CoreProvider {
                         .append(timestamp, Origin::Local, principal, changes)
                         .map_err(durable_error)?
                 };
-                // Audit-after: best-effort mirror of pack-lifecycle events, only
-                // reached once the WAL append committed.
-                if let Some(audit) = &durable.audit {
-                    mirror_lifecycle_to_audit(audit, changes);
-                }
                 Ok(sequence)
             }
             CoreInner::Live { durable: None, .. } => Ok(0),
@@ -391,12 +359,6 @@ impl RecoveryProvider for CoreProvider {
     }
 
     fn on_changes(&self, changes: &[Change]) -> RecoveryResult<()> {
-        // Reset the truncate-expansion buffer once per WAL entry so the
-        // per-row tombstones downstream extension providers read reflect only this
-        // entry's truncations (BRIEF-150 / audit Item 11). CORE runs first in
-        // the tag-sorted registry, so this clear happens before any wrapper
-        // reads the buffer.
-        self.reset_truncate_expansion();
         for change in changes {
             self.on_change_inner(change).map_err(box_provider_error)?;
         }

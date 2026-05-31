@@ -1,22 +1,17 @@
 //! BRIEF-120 procedure metadata coverage.
 
-use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, IStr, Value, intern};
-use selene_gql::{BindingTable, ProcedureRegistry, Session, StatementOutput};
+use selene_gql::{
+    BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
+};
 use selene_graph::SharedGraph;
-use selene_pack::ProcedurePackRegistry;
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
 }
 
-fn full_registry() -> ProcedurePackRegistry {
-    let algorithms = AlgorithmsPack::new();
-    ProcedurePackRegistry::builder()
-        .with_builtins()
-        .with_external_pack(algorithms.external_pack())
-        .build()
-        .expect("full default registry builds")
+fn full_registry() -> BuiltinProcedureRegistry {
+    BuiltinProcedureRegistry::new()
 }
 
 fn rows(output: StatementOutput) -> BindingTable {

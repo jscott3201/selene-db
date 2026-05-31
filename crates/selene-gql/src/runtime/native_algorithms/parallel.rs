@@ -1,7 +1,7 @@
 //! Value-level parser for the nullable `parallelism` argument.
 //!
-//! Ported verbatim from the historical `selene-algorithms-pack/src/parallel.rs`
-//! adapter. The thread-count *cap policy* now lives in `selene-algorithms`
+//! Ported verbatim from the historical procedure-pack parallelism adapter.
+//! The thread-count *cap policy* now lives in `selene-algorithms`
 //! ([`selene_algorithms::Parallelism::from_thread_count`] /
 //! [`selene_algorithms::MAX_PARALLELISM_THREADS`]); this module keeps the
 //! `Value`-level coercion (NULL→Auto, Int(0)/Uint(0)→Sequential, positive→thread

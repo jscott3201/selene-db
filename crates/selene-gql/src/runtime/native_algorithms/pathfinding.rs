@@ -1,8 +1,8 @@
 //! Native pathfinding procedures (`algo.dijkstra`, `algo.sssp`, `algo.apsp`).
 //!
-//! Ported from `selene-algorithms-pack/src/pathfinding.rs`. Argument parsing,
-//! output columns, the empty-result-on-no-path behavior for `dijkstra`, and the
-//! per-procedure pathfinding error messages are preserved verbatim.
+//! Ported from the historical procedure-pack pathfinding adapter. Argument
+//! parsing, output columns, the empty-result-on-no-path behavior for `dijkstra`,
+//! and the per-procedure pathfinding error messages are preserved verbatim.
 
 use selene_algorithms::{ApspConfig, apsp_with_checker, dijkstra_with_checker, sssp_with_checker};
 use selene_core::{CancellationChecker, NodeId, Value};

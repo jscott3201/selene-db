@@ -1,7 +1,7 @@
 //! `selene.health` native built-in.
 //!
 //! Read-only graph-tier procedure reporting basic graph health counters. Ported
-//! verbatim from `selene-pack/src/builtin/health.rs`; the only change is that
+//! verbatim from the historical procedure-pack `health` built-in; the only change is that
 //! metadata is produced through the shared `Static*` → planner-metadata helpers
 //! and execution takes a [`GraphContext`] directly.
 

@@ -1,21 +1,26 @@
-//! End-to-end audit-log integration tests for BRIEF-Item-7 (separate audit.log,
-//! audit Item 7 / Seam D, D24).
+//! Audit-log framework integration tests (D24 / BRIEF-Item-7 — separate
+//! `audit.log`, audit Item 7 / Seam D).
 //!
-//! These drive real commits through [`SharedGraph`] and assert that pack
-//! lifecycle events are mirrored to a dedicated `audit.log` — durable across
-//! restart and reattached on recovery — so pack history survives the WAL-archive
-//! pruning (Item 5) that used to lose it (Seam D). The complementary proof that
-//! `selene_persist::prune` never touches `audit.log` lives in
-//! `selene-persist/src/retention/tests.rs`.
+//! The D24 audit log is the durable "events" surface in the
+//! snapshot=state / WAL=changes / audit=events split, with retention
+//! independent of the WAL lineage. The procedure-pack lifecycle producer that
+//! originally fed it was removed in the extension teardown; the framework
+//! remains wired (persisted, torn-tail safe, reattached on recovery) for future
+//! user-action audit events. These tests drive the surviving framework: the
+//! `SharedGraph::with_audit_log` wiring (accept/reject), durable append +
+//! torn-tail truncation at the persist layer, and recovery reattach that never
+//! clobbers prior records. The complementary proof that `selene_persist::prune`
+//! never touches `audit.log` lives in `selene-persist/src/retention/tests.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use selene_core::{GraphId, LabelSet, PackLifecycleEvent, PropertyMap, SchemaChange, intern};
+use selene_core::GraphId;
 use selene_graph::{GraphError, SharedGraph};
 use selene_persist::{
-    AUDIT_KIND_PACK_LIFECYCLE, AuditLog, DEFAULT_AUDIT_FILE_NAME, DEFAULT_WAL_FILE_NAME, WalConfig,
+    AUDIT_KIND_PACK_LIFECYCLE, AuditLog, AuditRecord, DEFAULT_AUDIT_FILE_NAME,
+    DEFAULT_WAL_FILE_NAME, WalConfig,
 };
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -36,10 +41,13 @@ fn audit_path(dir: &Path) -> PathBuf {
     dir.join(DEFAULT_AUDIT_FILE_NAME)
 }
 
-/// A deterministic sample lifecycle event (the first `PackLifecycleEvent::ALL`
-/// fixture).
-fn sample_event() -> PackLifecycleEvent {
-    PackLifecycleEvent::ALL[0]()
+/// A deterministic opaque engine-event record.
+fn sample_record(seq: u64) -> AuditRecord {
+    AuditRecord {
+        recorded_at_unix_nanos: 1_000 + seq,
+        kind: AUDIT_KIND_PACK_LIFECYCLE,
+        payload: vec![seq as u8, 0xAB, 0xCD],
+    }
 }
 
 fn build_with_audit(dir: &Path, graph_id: GraphId) -> SharedGraph {
@@ -52,49 +60,19 @@ fn build_with_audit(dir: &Path, graph_id: GraphId) -> SharedGraph {
         .unwrap()
 }
 
-fn commit_lifecycle(shared: &SharedGraph, graph_id: GraphId, event: PackLifecycleEvent) {
-    let mut txn = shared.begin_write();
-    txn.mutator()
-        .schema_change(graph_id, SchemaChange::ProcedurePackLifecycle { event });
-    txn.commit().unwrap();
-}
-
 #[test]
-fn lifecycle_commit_mirrors_to_audit_log() {
-    let dir = temp_dir("mirror");
-    let graph_id = GraphId::new(200);
-    let event = sample_event();
-    let expected_payload = postcard::to_allocvec(&event).unwrap();
-
+fn audit_log_appends_are_durable() {
+    let dir = temp_dir("durable");
+    let path = audit_path(&dir);
     {
-        let shared = build_with_audit(&dir, graph_id);
-        commit_lifecycle(&shared, graph_id, event);
+        let mut log = AuditLog::open(&path).unwrap();
+        log.append(&sample_record(1)).unwrap();
+        log.append(&sample_record(2)).unwrap();
     }
-
-    let records = AuditLog::read_all(&audit_path(&dir)).unwrap();
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].kind, AUDIT_KIND_PACK_LIFECYCLE);
-    assert_eq!(records[0].payload, expected_payload);
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn non_lifecycle_commit_writes_no_audit_record() {
-    let dir = temp_dir("no-mirror");
-    let graph_id = GraphId::new(201);
-    {
-        let shared = build_with_audit(&dir, graph_id);
-        let mut txn = shared.begin_write();
-        txn.mutator()
-            .create_node(
-                LabelSet::single(intern("audit.node").unwrap()),
-                PropertyMap::new(),
-            )
-            .unwrap();
-        txn.commit().unwrap();
-    }
-    // A plain node create is a graph change, not an engine event — no audit row.
-    assert!(AuditLog::read_all(&audit_path(&dir)).unwrap().is_empty());
+    let records = AuditLog::read_all(&path).unwrap();
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0], sample_record(1));
+    assert_eq!(records[1], sample_record(2));
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -103,41 +81,35 @@ fn audit_log_survives_restart_and_recovery_reattaches() {
     let dir = temp_dir("survive-recover");
     let graph_id = GraphId::new(202);
 
-    // Live: commit one lifecycle event, then drop (releasing the WAL lock).
+    // Build a graph with an audit log attached, write one event through the
+    // persist API, then drop (releasing the WAL lock).
     {
-        let shared = build_with_audit(&dir, graph_id);
-        commit_lifecycle(&shared, graph_id, sample_event());
+        let _shared = build_with_audit(&dir, graph_id);
+        let mut log = AuditLog::open(&audit_path(&dir)).unwrap();
+        log.append(&sample_record(1)).unwrap();
     }
     assert_eq!(AuditLog::read_all(&audit_path(&dir)).unwrap().len(), 1);
 
     // Recover: the historical event persists, and recovery reattaches the
-    // audit log (the file is present) so post-recovery commits keep mirroring.
-    let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    // audit log (the file is present) so the framework stays wired post-recovery.
+    let _recovered = SharedGraph::recover(&dir, graph_id).unwrap();
     assert_eq!(
         AuditLog::read_all(&audit_path(&dir)).unwrap().len(),
         1,
         "recovery must not clobber or re-derive the audit log"
     );
-
-    commit_lifecycle(&recovered, graph_id, sample_event());
-    drop(recovered);
-    assert_eq!(
-        AuditLog::read_all(&audit_path(&dir)).unwrap().len(),
-        2,
-        "post-recovery lifecycle commit appends to the same audit log"
-    );
     let _ = fs::remove_dir_all(dir);
 }
 
 #[test]
-fn recovery_truncates_torn_audit_tail_and_keeps_appending() {
+fn recovery_truncates_torn_audit_tail() {
     let dir = temp_dir("torn-recover");
     let graph_id = GraphId::new(205);
 
-    // Commit one lifecycle event, then drop (clean release).
     {
-        let shared = build_with_audit(&dir, graph_id);
-        commit_lifecycle(&shared, graph_id, sample_event());
+        let _shared = build_with_audit(&dir, graph_id);
+        let mut log = AuditLog::open(&audit_path(&dir)).unwrap();
+        log.append(&sample_record(1)).unwrap();
     }
     // Simulate a crash mid-append: garbage shorter than a record header on the
     // end of audit.log.
@@ -151,18 +123,15 @@ fn recovery_truncates_torn_audit_tail_and_keeps_appending() {
     }
 
     // Recovery opens the audit log, which truncates the torn tail; the good
-    // event survives and post-recovery commits append cleanly after it.
-    let recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    // event survives.
+    let _recovered = SharedGraph::recover(&dir, graph_id).unwrap();
+    let records = AuditLog::read_all(&audit_path(&dir)).unwrap();
     assert_eq!(
-        AuditLog::read_all(&audit_path(&dir)).unwrap().len(),
+        records.len(),
         1,
         "torn tail truncated, the durable event survives"
     );
-    commit_lifecycle(&recovered, graph_id, sample_event());
-    drop(recovered);
-    let records = AuditLog::read_all(&audit_path(&dir)).unwrap();
-    assert_eq!(records.len(), 2, "post-recovery append is contiguous");
-    assert!(records.iter().all(|r| r.kind == AUDIT_KIND_PACK_LIFECYCLE));
+    assert_eq!(records[0], sample_record(1));
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -177,40 +146,5 @@ fn audit_log_without_wal_is_rejected() {
         matches!(result, Err(GraphError::Inconsistent { .. })),
         "audit without a WAL must be rejected"
     );
-    let _ = fs::remove_dir_all(dir);
-}
-
-#[test]
-fn multiple_lifecycle_events_in_one_commit_all_mirror() {
-    let dir = temp_dir("multi");
-    let graph_id = GraphId::new(204);
-    {
-        let shared = build_with_audit(&dir, graph_id);
-        let mut txn = shared.begin_write();
-        // Two lifecycle events plus an unrelated node create in one transaction.
-        txn.mutator().schema_change(
-            graph_id,
-            SchemaChange::ProcedurePackLifecycle {
-                event: PackLifecycleEvent::ALL[0](),
-            },
-        );
-        txn.mutator()
-            .create_node(
-                LabelSet::single(intern("audit.mixed").unwrap()),
-                PropertyMap::new(),
-            )
-            .unwrap();
-        txn.mutator().schema_change(
-            graph_id,
-            SchemaChange::ProcedurePackLifecycle {
-                event: PackLifecycleEvent::ALL[1](),
-            },
-        );
-        txn.commit().unwrap();
-    }
-    // Exactly the two lifecycle events mirror; the node create does not.
-    let records = AuditLog::read_all(&audit_path(&dir)).unwrap();
-    assert_eq!(records.len(), 2);
-    assert!(records.iter().all(|r| r.kind == AUDIT_KIND_PACK_LIFECYCLE));
     let _ = fs::remove_dir_all(dir);
 }

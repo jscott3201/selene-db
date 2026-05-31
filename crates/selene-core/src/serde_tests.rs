@@ -297,23 +297,6 @@ fn schema_change_postcard_round_trip() {
                 fields: smallvec![property_def("serde.schema.field")],
             },
         },
-        // Reserved discriminants: kept for postcard ABI stability so future
-        // additions never re-number `PropertyIndex*` or
-        // `ProcedurePackLifecycle`.
-        SchemaChange::ProcedurePackActivated {
-            pack_name: istr("serde.pack"),
-            version: istr("0.0.0"),
-        },
-        SchemaChange::ProcedurePackDeprecated {
-            pack_name: istr("serde.pack"),
-            version: istr("0.0.0"),
-            reason: istr("serde.reason"),
-        },
-        SchemaChange::ProcedurePackDisabled {
-            pack_name: istr("serde.pack"),
-            version: istr("0.0.0"),
-            reason: istr("serde.reason"),
-        },
         SchemaChange::PropertyIndexCreated {
             label: node_label,
             property: istr("serde.schema.indexed"),
@@ -322,45 +305,6 @@ fn schema_change_postcard_round_trip() {
         SchemaChange::PropertyIndexDropped {
             label: node_label,
             property: istr("serde.schema.indexed"),
-        },
-        SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::ValidationFailed {
-                pack_name: Some(istr("serde.pack")),
-                principal: istr("serde.principal"),
-                error: "serde.error".to_owned(),
-                at: jiff::Timestamp::new(1, 0).unwrap(),
-            },
-        },
-        SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Staged {
-                pack_name: istr("serde.pack"),
-                content_hash: [1_u8; 32],
-                principal: istr("serde.principal"),
-                at: jiff::Timestamp::new(2, 0).unwrap(),
-            },
-        },
-        SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Activated {
-                pack_name: istr("serde.pack"),
-                content_hash: [2_u8; 32],
-                principal: istr("serde.principal"),
-                at: jiff::Timestamp::new(3, 0).unwrap(),
-            },
-        },
-        SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Deprecated {
-                pack_name: istr("serde.pack"),
-                reason: istr("serde.reason"),
-                principal: istr("serde.principal"),
-                at: jiff::Timestamp::new(4, 0).unwrap(),
-            },
-        },
-        SchemaChange::ProcedurePackLifecycle {
-            event: PackLifecycleEvent::Disabled {
-                pack_name: istr("serde.pack"),
-                principal: istr("serde.principal"),
-                at: jiff::Timestamp::new(5, 0).unwrap(),
-            },
         },
         SchemaChange::PropertyIndexCreatedNamed {
             label: node_label,

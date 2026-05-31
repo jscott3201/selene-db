@@ -49,26 +49,6 @@ impl IndexProvider for TestProvider {
     }
 }
 
-struct TestSubscriber {
-    tag: ProviderTag,
-}
-
-impl TestSubscriber {
-    const fn new(tag: ProviderTag) -> Self {
-        Self { tag }
-    }
-}
-
-impl ChangeSubscriber for TestSubscriber {
-    fn subscriber_tag(&self) -> ProviderTag {
-        self.tag
-    }
-
-    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-        Ok(())
-    }
-}
-
 struct FailingDurableProvider;
 
 impl DurableProvider for FailingDurableProvider {
@@ -231,7 +211,6 @@ fn failed_commit_does_not_bump_schema_version() {
     let shared = SharedGraph::from_graph_with_core_and_durables(
         SeleneGraph::new(GraphId::new(108)),
         Vec::new(),
-        Vec::new(),
         vec![durable],
         None,
         None,
@@ -262,56 +241,6 @@ fn builder_constructs_empty_graph() {
         shared.providers[0].provider_tag(),
         ProviderTag(CORE_PROVIDER_TAG)
     );
-    assert!(shared.change_subscribers().is_empty());
-}
-
-#[test]
-fn builder_accepts_subscriber_before_matching_provider() {
-    let tag = ProviderTag(*b"SUB1");
-    let shared = SharedGraph::builder(GraphId::new(2))
-        .with_change_subscriber(Arc::new(TestSubscriber::new(tag)))
-        .with_provider(Arc::new(TestProvider::new(tag)))
-        .build()
-        .unwrap();
-
-    assert_eq!(shared.change_subscribers().len(), 1);
-}
-
-#[test]
-fn builder_rejects_unmatched_subscriber_tag() {
-    let err = match SharedGraph::builder(GraphId::new(3))
-        .with_change_subscriber(Arc::new(TestSubscriber::new(ProviderTag(*b"MISS"))))
-        .build()
-    {
-        Ok(_) => panic!("unmatched subscriber tag should fail"),
-        Err(error) => error,
-    };
-
-    assert!(matches!(
-        err,
-        GraphError::Provider(ProviderError::Inconsistent { reason })
-            if reason.contains("change subscriber tag MISS has no matching provider")
-    ));
-}
-
-#[test]
-fn builder_rejects_duplicate_subscriber_tags() {
-    let tag = ProviderTag(*b"DUP1");
-    let err = match SharedGraph::builder(GraphId::new(4))
-        .with_provider(Arc::new(TestProvider::new(tag)))
-        .with_change_subscriber(Arc::new(TestSubscriber::new(tag)))
-        .with_change_subscriber(Arc::new(TestSubscriber::new(tag)))
-        .build()
-    {
-        Ok(_) => panic!("duplicate subscriber tags should fail"),
-        Err(error) => error,
-    };
-
-    assert!(matches!(
-        err,
-        GraphError::Provider(ProviderError::Inconsistent { reason })
-            if reason.contains("duplicate change subscriber tag DUP1")
-    ));
 }
 
 #[test]
@@ -319,7 +248,6 @@ fn durable_write_failure_rolls_back_in_memory_state() {
     let durable: Arc<dyn DurableProvider> = Arc::new(FailingDurableProvider);
     let shared = SharedGraph::from_graph_with_core_and_durables(
         SeleneGraph::new(GraphId::new(1)),
-        Vec::new(),
         Vec::new(),
         vec![durable],
         None,

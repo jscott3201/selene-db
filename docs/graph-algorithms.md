@@ -1,6 +1,6 @@
 # Graph Algorithms
 
-This guide is for engineers running graph algorithms over a selene-db property graph: who own a `SharedGraph` (built per [`docs/embedding-guide.md`](embedding-guide.md)) and want to call PageRank, betweenness, Louvain, Dijkstra, or any of the structural primitives, either through the `selene-algorithms` Rust API or through the GQL `CALL algo.*` procedures registered by `selene-algorithms-pack`.
+This guide is for engineers running graph algorithms over a selene-db property graph: who own a `SharedGraph` (built per [`docs/embedding-guide.md`](embedding-guide.md)) and want to call PageRank, betweenness, Louvain, Dijkstra, or any of the structural primitives, either through the `selene-algorithms` Rust API or through the GQL `CALL algo.*` procedures registered by the native `BuiltinProcedureRegistry` in `selene-gql`.
 
 The grammar for `CALL` is documented in [`docs/gql-reference.md`](gql-reference.md) §8. This document covers what each procedure does, what it expects as input, what it returns, and how the underlying algorithm is parameterized.
 
@@ -17,7 +17,7 @@ The [`selene-algorithms`](../crates/selene-algorithms) crate ships **15 algorith
 
 Every algorithm is a pure function of a frozen `GraphProjection` — no internal mutation, no hidden state, no async, no globals. The crate depends only on `selene-core` and `selene-graph`; it never touches the parser, the planner, the executor, or persistence.
 
-The companion crate [`selene-algorithms-pack`](../crates/selene-algorithms-pack) re-exports the same algorithms as **19 `algo.*` procedures** (15 algorithms + 4 projection-management procedures) consumable through GQL `CALL`. The procedure name table is in §7 of this document.
+The sole frozen native [`BuiltinProcedureRegistry`](../crates/selene-gql/src/runtime/builtin_registry.rs) in `selene-gql` binds the same algorithms as **19 `algo.*` procedures** (15 algorithms + 4 projection-management procedures) directly over the native algorithms API, consumable through GQL `CALL`. selene-db is a single native engine — there is no loadable procedure-pack apparatus. The procedure name table is in §7 of this document.
 
 ## 2. The projection model
 
@@ -101,7 +101,7 @@ let result = selene_algorithms::pagerank(
 
 `ProjectionRef` holds a read guard for its lifetime. Drop the ref before calling `project`, `drop_projection`, or a rebuilding `ensure_fresh` on the same catalog — otherwise the writer blocks on your read lock.
 
-`ProjectionCatalog` is `Send + Sync`. Per-graph catalogs (`AlgorithmsPackState` keeps one catalog per `GraphId` internally for the procedure-pack surface) keep tenants from sharing projection names.
+`ProjectionCatalog` is `Send + Sync`. Per-graph catalogs (the native registry's engine-internal `AlgorithmCatalogs` keeps one `ProjectionCatalog` per `GraphId`) keep tenants from sharing projection names.
 
 ### 2.4 Equivalent GQL
 
@@ -468,7 +468,7 @@ Complexity: `O(V · d²)` worst case where `d` is the max undirected degree. Sui
 | `algo.louvain`             | `(projection_name: STRING, max_iter: INTEGER?)`                                                          | `node_id, community, level`                          |
 | `algo.triangle_count`      | `(projection_name: STRING, parallelism: INTEGER?)`                                                       | `node_id, triangle_count`                            |
 
-The constant `selene_algorithms_pack::ALGO_PROCEDURE_NAMES` is the canonical Rust-side enumeration of all 19 names.
+The table above is the canonical list of all 19 `algo.*` names; the live registry enumerates them (alongside the 5 `selene.*` platform built-ins, 24 total) through `BuiltinProcedureRegistry::iter_handles`, which backs `SHOW PROCEDURES`.
 
 ### 7.1 Nullable arguments and defaults
 
@@ -476,9 +476,9 @@ Arguments marked `?` accept `NULL` and resolve to documented defaults:
 
 | Algorithm         | Argument          | Default on `NULL`                                                  |
 | :---------------- | :---------------- | :----------------------------------------------------------------- |
-| `algo.pagerank`   | `damping`         | `0.85` (`selene_algorithms_pack::DEFAULT_DAMPING`)                 |
-| `algo.pagerank`   | `max_iterations`  | `100` (`selene_algorithms_pack::DEFAULT_MAX_ITERATIONS`)           |
-| `algo.pagerank`   | `tolerance`       | `1e-6` (`selene_algorithms_pack::DEFAULT_TOLERANCE`)               |
+| `algo.pagerank`   | `damping`         | `0.85` (`native_algorithms::centrality::DEFAULT_DAMPING`)          |
+| `algo.pagerank`   | `max_iterations`  | `100` (`native_algorithms::centrality::DEFAULT_MAX_ITERATIONS`)    |
+| `algo.pagerank`   | `tolerance`       | `1e-6` (`native_algorithms::centrality::DEFAULT_TOLERANCE`)        |
 | `algo.label_propagation` | `max_iter` | `50`                                                               |
 | `algo.louvain`    | `max_iter`        | `50`                                                               |
 | `algo.betweenness`| `sample_size`     | `None` (exact computation; every node is a source)                 |
@@ -598,7 +598,7 @@ You generally do **not** need to call `drop_projection` manually. `ensure_fresh`
 | `GraphProjection::build`               | O(V + E) over the filtered subgraph; one bitmap intersection + two CSR builds. |
 | `projection.out_neighbors(node)`       | O(1) slice lookup once the row index is known.                |
 
-For the procedure-pack surface, the cache lives inside `AlgorithmsPackState`. One `ProjectionCatalog` is keyed per `GraphId`, so per-tenant graph isolation extends to projections automatically.
+For the `CALL algo.*` surface, the cache lives inside the native registry's engine-internal `AlgorithmCatalogs`. One `ProjectionCatalog` is keyed per `GraphId`, so per-tenant graph isolation extends to projections automatically.
 
 ## 10. Performance
 
@@ -645,21 +645,18 @@ For algorithms that fit the projection-based model (read-only over a frozen view
 
 For parallelism, follow the pattern in `centrality::pagerank` or `pathfinding::apsp`: dispatch on `Parallelism`, install a `ParallelRunner`, then use `rayon::prelude` inside the closure.
 
-### 11.2 Register a new procedure pack
+### 11.2 Expose a new algorithm via `CALL`
 
-For algorithms exposed through GQL `CALL`, build an `ExternalProcedurePack` and register it with `selene_pack::ProcedurePackRegistry`:
+selene-db is a single native engine — there is no procedure-pack apparatus. To surface a new algorithm through GQL `CALL`, wire it directly into the one native registry:
 
-1. Mirror the pattern in `selene-algorithms-pack/src/registry.rs`. The pack is `Clone + Default`; the per-graph state lives behind `Arc<YourPackState>`.
-2. Implement `ExternalGraphProcedure` (signature + output columns + execute) for each procedure.
-3. Pass the bundle through `ProcedurePackRegistry::builder().with_external_pack(pack.external_pack()).build()`.
-
-See [`docs/extension-guide.md`](extension-guide.md) for the full procedure-pack contract, manifest validation, and lifecycle audit.
+1. Add a native free function for the algorithm in `selene-algorithms` (and, if useful, a `GraphAlgorithms` trait method) per §11.1.
+2. Register an `algo.<name>` procedure in `selene_gql::runtime::builtin_registry::BuiltinProcedureRegistry`, calling the native API directly (no external-procedure indirection). Mirror an existing `algo.*` procedure for the argument-coercion and YIELD-column contract.
+3. The registry is frozen (`registry_version()` constant `0`); the procedure set is fixed at construction.
 
 ## See also
 
-- [`docs/embedding-guide.md`](embedding-guide.md) — registering `AlgorithmsPack` with a `ProcedurePackRegistry`.
+- [`docs/embedding-guide.md`](embedding-guide.md) — embedder workflow and registry wiring.
 - [`docs/gql-reference.md`](gql-reference.md) §8 — `CALL ... YIELD` grammar.
-- [`docs/extension-guide.md`](extension-guide.md) — writing procedure packs and index providers.
 - [`BENCHMARKS.md`](../BENCHMARKS.md) §4 and §5 — algorithm and adapter benchmarks.
-- [`crates/selene-algorithms`](../crates/selene-algorithms) — algorithm sources.
-- [`crates/selene-algorithms-pack`](../crates/selene-algorithms-pack) — procedure-pack adapters.
+- [`crates/selene-algorithms`](../crates/selene-algorithms) — algorithm sources + the native Rust API.
+- [`crates/selene-gql/src/runtime/builtin_registry.rs`](../crates/selene-gql/src/runtime/builtin_registry.rs) — the sole frozen native `BuiltinProcedureRegistry` binding `CALL algo.*`.

@@ -1,6 +1,0 @@
----
-source: crates/selene-pack/tests/pack_snapshot_corpus.rs
-expression: snapshot.to_string()
----
-history:
-- [0] kind="staged" pack_name="real_pack" content_hash="blake3:0303030303030303030303030303030303030303030303030303030303030303" principal="history.principal" reason=NULL error=NULL at=1970-01-01T00:00:09Z

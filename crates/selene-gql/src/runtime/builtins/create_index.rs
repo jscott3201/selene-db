@@ -1,7 +1,7 @@
 //! `selene.create_index` native built-in.
 //!
 //! Mutation-tier procedure creating a property index. Ported verbatim from
-//! `selene-pack/src/builtin/create_index.rs`. Every write routes through
+//! the historical procedure-pack `create_index` built-in. Every write routes through
 //! [`MutationContext::mutator`] → `Mutator::create_property_index`, which emits
 //! `SchemaChange::PropertyIndexCreated` through the single mutation funnel (Hard
 //! Rule 11). It never bypasses the funnel and never re-enters `begin_write`.

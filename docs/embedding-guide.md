@@ -2,7 +2,7 @@
 
 This guide is for engineers integrating `selene-db` into a Rust application. It assumes you have already read `docs/getting-started.md` (or the README quickstart) and now want the full embedder workflow: workspace dependencies, the transaction model, the GQL pipeline, persistence, authorization, multi-tenancy, error handling, and embedding patterns.
 
-For the extension story (writing new index types, registering procedure packs), see [`docs/extension-guide.md`](extension-guide.md).
+selene-db is a single native graph engine — there is no extension/procedure-pack model. Graph algorithms are inlined in the mandatory `selene-algorithms` crate and exposed both as a native Rust API and via `CALL algo.*`; see [`docs/graph-algorithms.md`](graph-algorithms.md).
 
 ## 1. What "embedding" means here
 
@@ -41,8 +41,8 @@ The crate set is layered so transitive footprint stays small:
 | Core graph | Open a `SharedGraph`, mutate via `Mutator`, read snapshots | `selene-core`, `selene-graph` |
 | Core graph + GQL | Run ISO GQL statements (no `CALL`, no persistence) | + `selene-gql` |
 | Core graph + persistence | Direct mutation with WAL + snapshot recovery | + `selene-persist` |
-| Procedure packs | Wire `CALL <namespace>.<procedure>` and the platform built-ins | + `selene-pack` |
-| Graph algorithms | `CALL algo.*` over projection catalogs | + `selene-algorithms`, `selene-algorithms-pack` |
+| Graph algorithms (native API) | `selene-algorithms` free functions + the `GraphAlgorithms` trait, off the GQL path | + `selene-algorithms` |
+| GQL `CALL` (platform built-ins + `algo.*`) | Wire `CALL selene.*` / `CALL algo.*` via the frozen native `BuiltinProcedureRegistry` | + `selene-gql`, `selene-algorithms` |
 
 ### 2.1 Plain core graph
 
@@ -77,37 +77,41 @@ selene-persist = { path = "path/to/selene-db/crates/selene-persist" }
 
 Adds the WAL writer (`SLDB` magic), the snapshot writer (`SLSN` magic), and the two-step recovery driver. `selene-persist` is graph-blind: it takes `&[Change]` slices and routes them by provider tag.
 
-### 2.4 With procedure packs
+### 2.4 With `CALL` (platform built-ins + graph algorithms)
 
 ```toml
 [dependencies]
-selene-core    = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph   = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql     = { path = "path/to/selene-db/crates/selene-gql" }
-selene-persist = { path = "path/to/selene-db/crates/selene-persist" }
-selene-pack    = { path = "path/to/selene-db/crates/selene-pack" }
+selene-core       = { path = "path/to/selene-db/crates/selene-core" }
+selene-graph      = { path = "path/to/selene-db/crates/selene-graph" }
+selene-gql        = { path = "path/to/selene-db/crates/selene-gql" }
+selene-persist    = { path = "path/to/selene-db/crates/selene-persist" }
+selene-algorithms = { path = "path/to/selene-db/crates/selene-algorithms" }
 ```
 
-`selene-pack` ships:
+selene-db is a single native engine — there is no extension/procedure-pack model and nothing to load at runtime. `CALL` is served by the one frozen native `BuiltinProcedureRegistry` (`selene-gql/src/runtime/builtin_registry.rs`), constructed with `BuiltinProcedureRegistry::new()`. It registers exactly 24 procedures, fixed at construction:
 
-- the concrete `ProcedurePackRegistry` (implements `selene_gql::ProcedureRegistry`),
-- platform built-ins: `selene.health`, `selene.create_index`, `selene.drop_index`, and (when wired to a WAL) `selene.pack.history`,
-- the JSON Schema 2020-12 manifest validator,
-- the external procedure-pack registration surface for plugging in algorithms / your own packs.
+- 5 platform built-ins: `selene.health`, `selene.feature_status`, `selene.verify`, `selene.create_index`, `selene.drop_index`;
+- 19 `algo.*` procedures (projection lifecycle, PageRank, betweenness, label propagation, Louvain, triangle count, WCC, SCC, topological sort, articulation points, bridges, Dijkstra, SSSP, APSP), binding `CALL algo.*` directly over the `selene-algorithms` native API.
 
-### 2.5 With graph algorithms
+`BuiltinProcedureRegistry` implements `selene_gql::ProcedureRegistry`; pass `&registry` everywhere the pipeline asks for `&dyn ProcedureRegistry` (see §6). The `CALL` grammar is plain ISO `CALL` (IW010), unchanged. `SHOW PROCEDURES` enumerates all 24:
 
-```toml
-[dependencies]
-selene-core             = { path = "path/to/selene-db/crates/selene-core" }
-selene-graph            = { path = "path/to/selene-db/crates/selene-graph" }
-selene-gql              = { path = "path/to/selene-db/crates/selene-gql" }
-selene-pack             = { path = "path/to/selene-db/crates/selene-pack" }
-selene-algorithms       = { path = "path/to/selene-db/crates/selene-algorithms" }
-selene-algorithms-pack  = { path = "path/to/selene-db/crates/selene-algorithms-pack" }
+```rust
+use selene_gql::{BuiltinProcedureRegistry, Session};
+use selene_graph::SharedGraph;
+use selene_core::GraphId;
+
+let graph = SharedGraph::new(GraphId::new(1));
+let registry = BuiltinProcedureRegistry::new();
+let mut session = Session::new(&graph);
+
+// Run a graph algorithm over an ephemeral projection.
+session.execute_source("CALL algo.projection_build('p', NULL, NULL, NULL)", &registry)?;
+session.execute_source("CALL algo.pagerank('p', NULL, NULL, NULL, NULL) YIELD node_id, score", &registry)?;
+// Platform health built-in.
+session.execute_source("CALL selene.health() YIELD node_count, edge_count", &registry)?;
 ```
 
-`selene-algorithms-pack` exposes nineteen `algo.*` procedures (projection lifecycle, PageRank, betweenness, label propagation, Louvain, triangle count, WCC, SCC, topological sort, articulation points, bridges, Dijkstra, SSSP, APSP) by registering an `ExternalProcedurePack` with `selene-pack`.
+The native algorithms are also callable directly off the GQL path — `selene-algorithms` free functions plus the `GraphAlgorithms` trait — when you don't need the `CALL` surface. See [`docs/graph-algorithms.md`](graph-algorithms.md).
 
 ## 3. Opening a graph
 
@@ -332,7 +336,7 @@ tx.commit()?;
 
 Appends `Change::SchemaChanged` to the WAL stream. Catalog graph mutation and closed-graph validation are run at commit time when a `bound_type` is present.
 
-### 5.8 Extension event
+### 5.8 Index-provider event
 
 ```rust
 use std::sync::Arc;
@@ -344,7 +348,7 @@ tx.mutator().extension_event(intern("my-provider")?, payload);
 tx.commit()?;
 ```
 
-`extension_event` is how extension crates inject their own change records into the WAL. Replay is owned by the registered `IndexProvider` whose `provider_tag` matches the event's logical owner. Application code rarely calls this directly — procedure packs do.
+`extension_event` emits a `Change::IndexExtensionEvent` — how an embedder's own `IndexProvider` injects provider-specific change records into the WAL. Replay is owned by the registered `IndexProvider` whose `provider_tag` matches the event's logical owner. Application code rarely calls this directly; it is the escape hatch for a custom index provider that maintains derived state across recovery.
 
 ## 6. Running GQL
 
@@ -689,17 +693,18 @@ selene-db has no built-in tenant model. Two patterns are common.
 
 ### 9.1 Per-tenant `SharedGraph`
 
-Each tenant gets its own `Arc<SharedGraph>`, its own WAL directory, and its own procedure-pack registry. This is the cleanest model: strict-serializable isolation is per-graph, so two tenants cannot block each other on the write lock.
+Each tenant gets its own `Arc<SharedGraph>` and its own WAL directory. This is the cleanest model: strict-serializable isolation is per-graph, so two tenants cannot block each other on the write lock.
 
 ```rust
 struct TenantRuntime {
     graph: Arc<SharedGraph>,
-    registry: Arc<ProcedurePackRegistry>,
     wal_dir: PathBuf,
 }
 
 let tenants: HashMap<TenantId, TenantRuntime> = HashMap::new();
 ```
+
+The native `BuiltinProcedureRegistry` is stateless across graphs (it carries only ephemeral per-`GraphId` projection catalogs), so a single shared `BuiltinProcedureRegistry::new()` serves every tenant — pass `&registry` into each tenant's pipeline. Call `registry.forget_graph(graph_id)` when a tenant graph is dropped to reclaim its projection catalog.
 
 Trade-offs:
 
@@ -721,17 +726,7 @@ Trade-offs:
 
 Use only when tenants are administratively trusted (e.g. departments inside one org) and graphs are tiny.
 
-### 9.3 Per-tenant procedure-pack registry
-
-`ProcedurePackRegistry` is `Clone` (the storage is `Arc`-shared internally). If every tenant should see the same procedures, share one registry. If tenants need different procedure surfaces (free tier vs. paid tier, graph algorithms disabled per plan, &c.), build per-tenant registries:
-
-```rust
-let free_registry = ProcedurePackRegistry::with_builtins()?;
-let paid_registry = ProcedurePackRegistryBuilder::new()
-    .with_builtins()
-    .with_external_pack(AlgorithmsPack::new().external_pack())
-    .build()?;
-```
+The procedure surface is the same for every tenant: the frozen native `BuiltinProcedureRegistry` registers a fixed set of 24 procedures (5 platform built-ins + 19 `algo.*`) at construction. There is no per-tenant procedure surface to configure — selene-db is a single native engine with no loadable extensions. If a tenant must not be allowed to `CALL` a given procedure, gate it in the embedder's authorization wrapper (§8), not by handing out a different registry.
 
 ## 10. Error handling
 
@@ -741,9 +736,8 @@ selene-db errors are layered by crate. Each layer maps to a `GQLSTATUS` code for
 |:---|:---|:---|
 | `selene-core` | `CoreError` | Interner, codec, schema |
 | `selene-graph` | `GraphError` | Storage, mutation, providers |
-| `selene-gql` | `ParserError`, `AnalysisError`, `PlannerError`, `ExecutorError` | Each respective pipeline stage |
+| `selene-gql` | `ParserError`, `AnalysisError`, `PlannerError`, `ExecutorError`, `ProcedureError` | Each respective pipeline stage; `ProcedureError` covers native `CALL` dispatch (unknown procedure, tier mismatch, bad argument) |
 | `selene-persist` | `PersistError` | WAL, snapshot, recovery |
-| `selene-pack` | `RegistryError`, `ManifestError`, `ActivationError`, `ProcedureError` | Pack registration, manifest validation, runtime dispatch |
 
 ### 10.1 Recovering from parse / analyze / plan errors
 
@@ -832,10 +826,10 @@ Do **not** call selene-db from inside an async context without `spawn_blocking`:
 For static-build edge deployments (single-binary services, BACnet bridges, sensor aggregators), enable only the crates you need:
 
 - `selene-core + selene-graph + selene-persist`: WAL-durable property graph with no parser or `CALL`.
-- Add `selene-gql` if the device runs ad-hoc queries.
-- Skip `selene-pack` entirely if you do not expose `CALL`; embedder-side function dispatch is fine.
+- Add `selene-gql` if the device runs ad-hoc queries. `CALL selene.*` / `CALL algo.*` is served by the in-tree `BuiltinProcedureRegistry`; if the device never issues `CALL`, run the pipeline with `EmptyProcedureRegistry` and skip the projection-catalog state entirely.
+- Add `selene-algorithms` only when you need graph algorithms (whether through `CALL algo.*` or the native Rust API).
 
-The workspace is `#![forbid(unsafe_code)]` and has no async runtime dependency at any layer below `selene-pack`. `rustls`-only TLS is enforced by `cargo-deny`. There is no hand-rolled crypto, TLS, async runtime, or serialization primitive in the engine.
+The workspace is `#![forbid(unsafe_code)]` and pulls in no async runtime at any layer. `rustls`-only TLS is enforced by `cargo-deny`. There is no hand-rolled crypto, TLS, async runtime, or serialization primitive in the engine.
 
 ## 12. What the embedder NEVER does
 
@@ -854,7 +848,7 @@ The workspace is `#![forbid(unsafe_code)]` and has no async runtime dependency a
 
 ## See also
 
-- [`docs/architecture.md`](architecture.md) — D1–D21 decisions and crate layout.
-- [`docs/extension-guide.md`](extension-guide.md) — writing index providers and procedure packs.
+- [`docs/architecture.md`](architecture.md) — decision log and crate layout.
+- [`docs/graph-algorithms.md`](graph-algorithms.md) — the native `selene-algorithms` API and `CALL algo.*`.
 - [`docs/gql-reference.md`](gql-reference.md) — supported ISO GQL surface.
 - `README.md` — capability matrix, CI gates, license posture.

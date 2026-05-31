@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use arc_swap::ArcSwap;
 use selene_core::{
     Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    PropertyValueType, SchemaChange, Value, intern,
+    PropertyValueType, Value, intern,
 };
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
@@ -660,21 +660,6 @@ fn recovery_mode_on_change_applies_each_change_variant() {
         &Change::EdgeUpdated {
             id: EdgeId::new(1),
             properties_diff: PropertyDiff::new([(prop_key, Value::Int(7))], []).unwrap(),
-        },
-    )
-    .unwrap();
-    IndexProvider::on_change(
-        provider.as_ref(),
-        &Change::SchemaChanged {
-            graph: GraphId::new(1),
-            change: SchemaChange::ProcedurePackLifecycle {
-                event: selene_core::PackLifecycleEvent::Activated {
-                    pack_name: intern("core.pack").unwrap(),
-                    content_hash: [0_u8; 32],
-                    principal: intern("core.principal").unwrap(),
-                    at: jiff::Timestamp::new(1, 0).unwrap(),
-                },
-            },
         },
     )
     .unwrap();

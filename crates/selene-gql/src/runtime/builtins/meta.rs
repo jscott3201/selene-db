@@ -1,8 +1,8 @@
 //! Static metadata builders for the native platform built-ins.
 //!
-//! Ported verbatim from `selene-pack/src/builtin/mod.rs` (`StaticParameter`,
-//! `StaticOutputColumn`) plus the pack registry's `parameter` / `output_column`
-//! conversion (`selene-pack/src/registry/storage.rs`). Keeping the
+//! Ported verbatim from the historical procedure-pack built-in module
+//! (`StaticParameter`, `StaticOutputColumn`) plus the pack registry's
+//! `parameter` / `output_column` storage conversion. Keeping the
 //! `with_description` / `with_default_doc` / `with_default` shape identical means
 //! the relocated built-ins expose byte-identical `SHOW PROCEDURES` metadata.
 

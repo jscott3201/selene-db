@@ -2,8 +2,8 @@
 //! `algo.scc_count`, `algo.topological_sort`, `algo.articulation_points`,
 //! `algo.bridges`).
 //!
-//! Ported from `selene-algorithms-pack/src/structural.rs`. Each procedure takes
-//! a single `projection_name` argument; output columns and row shapes are
+//! Ported from the historical procedure-pack structural adapter. Each procedure
+//! takes a single `projection_name` argument; output columns and row shapes are
 //! preserved verbatim.
 
 use selene_algorithms::{

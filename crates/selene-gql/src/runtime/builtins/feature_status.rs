@@ -2,7 +2,7 @@
 //!
 //! Walks `SUPPORTED_FEATURES` and `REFERENCED_FEATURES` from
 //! `selene_core::feature_register` and emits one row per known feature. Ported
-//! verbatim from `selene-pack/src/builtin/feature_status.rs`.
+//! verbatim from the historical procedure-pack `feature_status` built-in.
 
 use std::collections::BTreeMap;
 

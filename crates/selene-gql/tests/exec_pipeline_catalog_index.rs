@@ -13,12 +13,11 @@ use selene_core::{
     feature_register::{FeatureId, SUPPORTED_FEATURES},
 };
 use selene_gql::{
-    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, ExecutionPlan,
-    ExecutorError, Session, StatementOutput, TxContext, analyze, execute_pipeline, feature_walk,
-    parse, plan,
+    Binding, BindingTable, BindingTableSchema, BuiltinProcedureRegistry, EmptyProcedureRegistry,
+    ExecutionPlan, ExecutorError, Session, StatementOutput, TxContext, analyze, execute_pipeline,
+    feature_walk, parse, plan,
 };
 use selene_graph::{CommitOutcome, GraphTypeDef, SharedGraph, TypedIndexKind};
-use selene_pack::ProcedurePackRegistry;
 use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig, WalWriter};
 
 use exec_common::istr;
@@ -323,7 +322,7 @@ fn flagger_records_im_index_ddl_and_feature_is_supported() {
 #[test]
 fn procedure_indexes_and_ddl_indexes_share_catalog_names() {
     let graph = empty_closed_graph(14_005);
-    let registry = ProcedurePackRegistry::with_builtins().expect("built-ins register");
+    let registry = BuiltinProcedureRegistry::new();
     run_ddl(
         &graph,
         "CREATE NODE TYPE :Sensor (ts :: LOCAL DATETIME, value :: STRING)",

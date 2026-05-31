@@ -1,8 +1,8 @@
 //! Error-mapping helpers for the native `algo.*` procedures.
 //!
-//! Ported verbatim from the historical `selene-algorithms-pack/src/error.rs`
-//! adapter so the user-visible `ProcedureError` detail strings (and their
-//! GQLSTATUS mapping) are byte-identical to the pack era. The native runners
+//! Ported verbatim from the historical procedure-pack error adapter so the
+//! user-visible `ProcedureError` detail strings (and their GQLSTATUS mapping)
+//! are byte-identical to the pack era. The native runners
 //! call the underlying `selene_algorithms` `*_with_checker` functions directly,
 //! so these mappers receive the raw algorithm error types and render the same
 //! procedure-qualified messages.

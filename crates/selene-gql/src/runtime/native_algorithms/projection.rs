@@ -1,9 +1,9 @@
 //! Native projection-catalog procedures (`algo.projection_*`).
 //!
-//! Ported from `selene-algorithms-pack/src/projection.rs`. Row shapes, output
-//! columns, and arity are preserved verbatim; the only change is that catalog
-//! state is resolved from the registry-owned per-`GraphId`
-//! [`AlgorithmCatalogs`] instead of an `AlgorithmsPackState`.
+//! Ported from the historical procedure-pack projection adapter. Row shapes,
+//! output columns, and arity are preserved verbatim; the only change is that
+//! catalog state is resolved from the registry-owned per-`GraphId`
+//! [`AlgorithmCatalogs`] instead of the pack's per-instance catalog state.
 
 use std::sync::Arc;
 

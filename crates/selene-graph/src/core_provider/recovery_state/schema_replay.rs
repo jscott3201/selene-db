@@ -99,12 +99,6 @@ fn apply_schema_change(
                 ))
             })?;
         }
-        SchemaChange::ProcedurePackActivated { .. }
-        | SchemaChange::ProcedurePackDeprecated { .. }
-        | SchemaChange::ProcedurePackDisabled { .. } => {
-            // Why: legacy, never emitted; postcard discriminant pinned for ABI
-            // stability.
-        }
         SchemaChange::PropertyIndexCreated { .. }
         | SchemaChange::PropertyIndexDropped { .. }
         | SchemaChange::PropertyIndexCreatedNamed { .. }
@@ -112,10 +106,6 @@ fn apply_schema_change(
         | SchemaChange::CompositePropertyIndexDropped { .. } => {
             // Why: property-index intent is queued by apply_change and replayed
             // after primary node/edge rows materialize.
-        }
-        SchemaChange::ProcedurePackLifecycle { .. } => {
-            // Why: lifecycle events are audit history consumed from the WAL by
-            // selene-pack; CORE graph recovery has no materialized state.
         }
     }
     Ok(())
@@ -413,12 +403,8 @@ pub(super) fn schema_change_variant(change: &SchemaChange) -> &'static str {
         SchemaChange::NodeTypeDropped { .. } => "NodeTypeDropped",
         SchemaChange::EdgeTypeDropped { .. } => "EdgeTypeDropped",
         SchemaChange::RecordTypeAdded { .. } => "RecordTypeAdded",
-        SchemaChange::ProcedurePackActivated { .. } => "ProcedurePackActivated",
-        SchemaChange::ProcedurePackDeprecated { .. } => "ProcedurePackDeprecated",
-        SchemaChange::ProcedurePackDisabled { .. } => "ProcedurePackDisabled",
         SchemaChange::PropertyIndexCreated { .. } => "PropertyIndexCreated",
         SchemaChange::PropertyIndexDropped { .. } => "PropertyIndexDropped",
-        SchemaChange::ProcedurePackLifecycle { .. } => "ProcedurePackLifecycle",
         SchemaChange::PropertyIndexCreatedNamed { .. } => "PropertyIndexCreatedNamed",
         SchemaChange::CompositePropertyIndexCreated { .. } => "CompositePropertyIndexCreated",
         SchemaChange::CompositePropertyIndexDropped { .. } => "CompositePropertyIndexDropped",

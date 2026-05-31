@@ -1,6 +1,6 @@
 //! Native `algo.*` procedure definitions and dispatch.
 //!
-//! This module replaces the `selene-algorithms-pack` external-adapter path with
+//! This module replaces the historical procedure-pack external-adapter path with
 //! a concrete, in-crate binding: the 19 `algo.*` procedures call the
 //! `selene-algorithms` native API (the `*_with_checker` algorithm functions plus
 //! the projection catalog) directly, with **no** `ExternalGraphProcedure`
@@ -69,8 +69,7 @@ pub(super) struct AlgoSpec {
     pub(super) kind: AlgoKind,
 }
 
-/// The 19 native `algo.*` procedures, in the historical pack registration order
-/// (`selene-algorithms-pack::ALGO_PROCEDURE_NAMES`).
+/// The 19 native `algo.*` procedures, in the historical pack registration order.
 pub(super) const ALGO_SPECS: [AlgoSpec; 19] = [
     AlgoSpec {
         name: &["algo", "projection_build"],

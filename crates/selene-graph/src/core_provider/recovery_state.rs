@@ -3,8 +3,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use parking_lot::Mutex;
-
 use selene_core::{Change, EdgeId, GraphId, IStr, NodeId, PropertyDiff, PropertyMap, SchemaChange};
 use smallvec::SmallVec;
 
@@ -48,18 +46,6 @@ pub(crate) struct RecoveryState {
     schemas: BTreeMap<SchemaKey, SchemaEntry>,
     composite_schemas: Vec<(CompositeSchemaKey, CompositeSchemaEntry)>,
     sequence: u64,
-    /// Per-WAL-entry staging of the per-row tombstones a declarative truncate
-    /// expands to, for recovery subscriber fan-out.
-    ///
-    /// BRIEF-150 / audit Item 11. CORE replays first (tag-sorted), re-deriving
-    /// truncated rows from the recovered store it is building, and stages the
-    /// resulting `NodeDeleted`/`EdgeDeleted` tombstones here. Downstream recovery
-    /// wrappers (which run after CORE for the same entry, hold no
-    /// store, and could not expand a label) read this buffer to drive subscriber
-    /// fan-out, so recovery tombstoning is byte-identical to the runtime path.
-    /// Cleared at the start of every WAL entry so the membership reflects the
-    /// pre-truncate store, not a post-truncate re-query.
-    truncate_expansion: Arc<Mutex<Vec<Change>>>,
     /// Set once a [`Change::GraphReset`] (BRIEF-152, audit Item 10) is replayed.
     ///
     /// A factory-reset moots all schema/index intents seen so far in the WAL, so
@@ -107,23 +93,6 @@ impl RecoveryState {
     #[must_use]
     pub(crate) fn new() -> Self {
         Self::default()
-    }
-
-    /// Shared handle to the per-entry truncate-expansion buffer.
-    ///
-    /// The recovery subscriber wrappers hold a clone so they can read the
-    /// per-row tombstones CORE staged for the current WAL entry.
-    #[must_use]
-    pub(crate) fn truncate_expansion_handle(&self) -> Arc<Mutex<Vec<Change>>> {
-        Arc::clone(&self.truncate_expansion)
-    }
-
-    /// Reset the per-entry truncate-expansion buffer.
-    ///
-    /// Called by CORE at the start of each WAL entry batch so the staged
-    /// tombstones reflect only that entry's truncations.
-    pub(crate) fn reset_truncate_expansion(&self) {
-        self.truncate_expansion.lock().clear();
     }
 
     pub(crate) fn read_section(
@@ -288,58 +257,41 @@ impl RecoveryState {
                 // Re-derive the truncated rows from the recovered store: every
                 // alive node carrying the label, plus every alive edge incident
                 // to such a node (any edge type). This reconstructs the exact
-                // post-`delete_node`-cascade state without persisting any ids,
-                // and stages the per-row tombstones for subscriber fan-out.
+                // post-`delete_node`-cascade state without persisting any ids.
                 let mut truncated_nodes = std::collections::BTreeSet::new();
-                let mut tombstones = Vec::new();
                 for (id, row) in self.nodes.iter_mut() {
                     if row.alive && row.labels.contains(label) {
                         row.alive = false;
                         truncated_nodes.insert(*id);
-                        tombstones.push(Change::NodeDeleted { id: *id });
                     }
                 }
-                for (id, row) in self.edges.iter_mut() {
+                for row in self.edges.values_mut() {
                     if row.alive
                         && (truncated_nodes.contains(&row.source)
                             || truncated_nodes.contains(&row.target))
                     {
                         row.alive = false;
-                        tombstones.push(Change::EdgeDeleted { id: *id });
                     }
                 }
-                self.truncate_expansion.lock().extend(tombstones);
             }
             Change::EdgesOfTypeTruncated { label } => {
-                let mut tombstones = Vec::new();
-                for (id, row) in self.edges.iter_mut() {
+                for row in self.edges.values_mut() {
                     if row.alive && row.label == *label {
                         row.alive = false;
-                        tombstones.push(Change::EdgeDeleted { id: *id });
                     }
                 }
-                self.truncate_expansion.lock().extend(tombstones);
             }
             Change::GraphReset {} => {
                 // Re-derive every live row from the recovered store at this WAL
-                // position and mark it dead, staging per-row tombstones for
-                // subscriber fan-out — identical to the runtime mutator, which
-                // carries no ids in the declarative change ("replay walks the
-                // store"). Wipes ALL nodes/edges incl untyped ones.
-                let mut tombstones = Vec::new();
-                for (id, row) in self.nodes.iter_mut() {
-                    if row.alive {
-                        row.alive = false;
-                        tombstones.push(Change::NodeDeleted { id: *id });
-                    }
+                // position and mark it dead — identical to the runtime mutator,
+                // which carries no ids in the declarative change ("replay walks
+                // the store"). Wipes ALL nodes/edges incl untyped ones.
+                for row in self.nodes.values_mut() {
+                    row.alive = false;
                 }
-                for (id, row) in self.edges.iter_mut() {
-                    if row.alive {
-                        row.alive = false;
-                        tombstones.push(Change::EdgeDeleted { id: *id });
-                    }
+                for row in self.edges.values_mut() {
+                    row.alive = false;
                 }
-                self.truncate_expansion.lock().extend(tombstones);
                 // A reset moots every prior schema/index intent in the WAL up to
                 // this point, and forces the recovered graph open.
                 self.schema_reset_to_open = true;
@@ -347,50 +299,36 @@ impl RecoveryState {
                 self.pending_property_index_changes.clear();
                 self.pending_composite_property_index_changes.clear();
             }
-            Change::SchemaChanged { change, .. } => {
-                match change {
-                    SchemaChange::NodeTypeAdded { .. }
-                    | SchemaChange::EdgeTypeAdded { .. }
-                    | SchemaChange::NodeTypeAddedV2 { .. }
-                    | SchemaChange::EdgeTypeAddedV2 { .. }
-                    | SchemaChange::NodeTypeDropped { .. }
-                    | SchemaChange::EdgeTypeDropped { .. } => {
-                        self.pending_schema_changes.push(change.clone());
-                    }
-                    SchemaChange::PropertyIndexCreated { .. }
-                    | SchemaChange::PropertyIndexCreatedNamed { .. }
-                    | SchemaChange::PropertyIndexDropped { .. } => {
-                        let pending = pending_property_index_change(change)
-                            .expect("property-index variants map to pending recovery intent");
-                        self.pending_property_index_changes.push(pending);
-                    }
-                    SchemaChange::CompositePropertyIndexCreated { .. }
-                    | SchemaChange::CompositePropertyIndexDropped { .. } => {
-                        let pending = pending_composite_property_index_change(change).expect(
-                            "composite property-index variants map to pending recovery intent",
-                        );
-                        self.pending_composite_property_index_changes.push(pending);
-                    }
-                    SchemaChange::ProcedurePackLifecycle { .. } => {
-                        // Procedure-pack lifecycle changes are pure audit history.
-                        // Pack-history readers consume them from the WAL directly;
-                        // graph-state recovery has no materialized state to update.
-                    }
-                    SchemaChange::ProcedurePackActivated { .. }
-                    | SchemaChange::ProcedurePackDeprecated { .. }
-                    | SchemaChange::ProcedurePackDisabled { .. } => {
-                        // Why: legacy, never emitted; postcard discriminant
-                        // pinned for ABI stability.
-                    }
-                    SchemaChange::GraphCreated { .. }
-                    | SchemaChange::GraphDropped { .. }
-                    | SchemaChange::GraphTypeCreated { .. }
-                    | SchemaChange::GraphTypeDropped { .. }
-                    | SchemaChange::RecordTypeAdded { .. } => {
-                        return Err(schema_replay::unsupported_schema_recovery(change));
-                    }
+            Change::SchemaChanged { change, .. } => match change {
+                SchemaChange::NodeTypeAdded { .. }
+                | SchemaChange::EdgeTypeAdded { .. }
+                | SchemaChange::NodeTypeAddedV2 { .. }
+                | SchemaChange::EdgeTypeAddedV2 { .. }
+                | SchemaChange::NodeTypeDropped { .. }
+                | SchemaChange::EdgeTypeDropped { .. } => {
+                    self.pending_schema_changes.push(change.clone());
                 }
-            }
+                SchemaChange::PropertyIndexCreated { .. }
+                | SchemaChange::PropertyIndexCreatedNamed { .. }
+                | SchemaChange::PropertyIndexDropped { .. } => {
+                    let pending = pending_property_index_change(change)
+                        .expect("property-index variants map to pending recovery intent");
+                    self.pending_property_index_changes.push(pending);
+                }
+                SchemaChange::CompositePropertyIndexCreated { .. }
+                | SchemaChange::CompositePropertyIndexDropped { .. } => {
+                    let pending = pending_composite_property_index_change(change)
+                        .expect("composite property-index variants map to pending recovery intent");
+                    self.pending_composite_property_index_changes.push(pending);
+                }
+                SchemaChange::GraphCreated { .. }
+                | SchemaChange::GraphDropped { .. }
+                | SchemaChange::GraphTypeCreated { .. }
+                | SchemaChange::GraphTypeDropped { .. }
+                | SchemaChange::RecordTypeAdded { .. } => {
+                    return Err(schema_replay::unsupported_schema_recovery(change));
+                }
+            },
             Change::IndexExtensionEvent { .. } => {}
         }
         Ok(())

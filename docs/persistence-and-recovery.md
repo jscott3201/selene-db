@@ -70,14 +70,22 @@ implementations. During recovery the orchestrator:
   affects its state.
 
 This boundary is load-bearing. It means the persistence layer does not have
-to be re-released when graph types evolve. It also means that **extensions
-with persistent state** (a custom index family, a procedure pack with audit
-storage) plug in by registering their own `RecoveryProvider` implementation.
-See [Recovery semantics for extensions](#recovery-semantics-for-extensions).
+to be re-released when graph types evolve — the producer that owns each
+snapshot section family registers a `RecoveryProvider` keyed by a stable
+four-byte tag, and the orchestrator routes bytes and changes to it by tag.
+See [Recovery semantics for a provider](#recovery-semantics-for-a-provider).
 
-The core graph state participates exactly the same way: `selene-graph` ships
-the `CoreProvider` (provider tag `CORE`) that reconstructs the in-memory
-graph from `CORE/*` snapshot sections and post-snapshot `Change`s.
+`selene-db` is a single native engine with no extension or procedure-pack
+system, so the production registry has exactly one provider: `selene-graph`
+ships the `CoreProvider` (provider tag `CORE`) that reconstructs the
+in-memory graph from `CORE/*` snapshot sections and post-snapshot `Change`s.
+The registry's multi-provider, tag-keyed shape is what keeps `selene-persist`
+graph-blind, not a plugin surface for third-party state.
+
+Engine-owned audit events do **not** ride this provider path. They live in a
+separate, dedicated append-only `audit.log` (`SLAU` magic, D24) with its own
+retention policy, independent of the snapshot/WAL lineage — see
+[The audit log](#the-audit-log).
 
 ## Writing — the WAL
 
@@ -203,13 +211,12 @@ tags shipped by the workspace:
 | `CORE`   | `EDGE`  | `selene-graph` edge columns.              |
 | `CORE`   | `SCMA`  | `selene-graph` schema catalog.            |
 
-Extension providers register their own provider tag and contribute their own
-sections alongside the `CORE` sections.
-
-Extension authors pick a four-byte ASCII `provider` tag and a `sub` tag per
-section family they need. Tags are advisory but must be globally unique
-within a registry — duplicate registration fails with
-`PersistError::DuplicateProviderTag`.
+Each producer picks a four-byte ASCII `provider` tag and a `sub` tag per
+section family it owns. Tags must be globally unique within a registry —
+duplicate registration fails with `PersistError::DuplicateProviderTag`. In
+the single native engine the only registered producer is `selene-graph`'s
+`CoreProvider`; the tag-keyed shape is the section-routing mechanism, not an
+extension surface.
 
 ### When to snapshot
 
@@ -241,7 +248,6 @@ use selene_persist::{ProviderRegistry, recover};
 
 let mut registry = ProviderRegistry::new();
 registry.register(core_provider.clone())?;
-registry.register(extension_provider.clone())?;
 
 let outcome = recover(data_dir, &registry)?;
 ```
@@ -266,8 +272,8 @@ The orchestrator:
    WAL sequence, the set of providers invoked, and counters for changes
    applied versus replicated changes deduplicated.
 
-For applications that bundle the graph plus extension providers, the
-convenience wrapper in `selene-graph` does the registration:
+For the common case the convenience wrapper in `selene-graph` does the
+registration:
 
 ```rust
 use selene_graph::SharedGraph;
@@ -284,30 +290,67 @@ A truncated WAL tail (torn write at the end of the log) is **not** an error
 during recovery: the iterator stops at the last fully-checksummed entry,
 matching the on-open scan that `WalWriter` runs.
 
-## Recovery semantics for extensions
+## Recovery semantics for a provider
 
-Extensions with persistent state participate via their `RecoveryProvider`
-implementation. The contract has two surfaces:
+A `RecoveryProvider` (in the production engine, `CoreProvider`) reconstructs
+its in-memory state through two surfaces:
 
 - `read_section(sub, bytes)`: called once per snapshot section that matches
   this provider's tag, in the section table's declared order. The provider
   decodes the bytes back into its in-memory state.
 - `on_change(change)`: called for every WAL `Change` past the snapshot
-  sequence. The provider decides whether the change is relevant to it (most
-  ignore most changes).
+  sequence. The provider decides whether the change is relevant to it.
 
 The recovery boundary has a sharp edge: **WAL replay only covers events
-after the snapshot's last sequence**. Any provider that maintains
-pre-training or staging state must persist that state in the snapshot
-itself, not rely on WAL replay to rebuild it. A staged provider that emits
-an empty snapshot section and assumes the WAL will reconstruct the staging
-buffer will silently lose that buffer on recovery, because the pre-snapshot
-WAL entries have already been pruned.
+after the snapshot's last sequence**. Any state that is not derivable from
+post-snapshot `Change`s alone must be persisted in the snapshot itself, not
+left to WAL replay to rebuild — the pre-snapshot WAL entries may already
+have been pruned. A section that is emitted empty on the assumption the WAL
+will reconstruct it will silently lose that state on recovery.
 
-The discipline is: if your provider can be in a state that affects future
-behavior but is not derivable from post-snapshot `Change`s alone, capture
-that state in a snapshot section. This applies to any "computed once, used
-many times" artifact a provider builds at construction or training time.
+The discipline is: if a provider holds state that affects future behavior
+but is not reproducible from post-snapshot `Change`s, capture it in a
+snapshot section. The `CoreProvider` follows exactly this rule — the full
+node/edge/schema columns are materialized into `CORE/*` sections at
+snapshot time so recovery never depends on replaying the entire WAL history.
+
+## The audit log
+
+Engine-owned audit events are kept in a dedicated append-only file,
+`audit.log` (magic `SLAU`), that is deliberately separate from the
+snapshot/WAL lineage. It is **not** a `RecoveryProvider` and does not
+participate in snapshot/WAL recovery — it has its own open/append/read/prune
+lifecycle and its own retention policy.
+
+The substrate is intentionally below lifecycle semantics: each record is a
+generic `kind`-tagged opaque payload plus a caller-supplied
+`recorded_at_unix_nanos` wall-clock stamp (`selene-persist` does not own a
+clock). The graph funnel writes WAL-first, audit-after.
+
+```rust
+use selene_persist::{AuditLog, AuditRecord, AuditRetentionPolicy};
+
+let mut log = AuditLog::open(&dir.join("audit.log"))?;
+log.append(&AuditRecord {
+    recorded_at_unix_nanos: now_unix_nanos,
+    kind: 1,
+    payload: payload_bytes,
+})?;
+
+// Independent retention: keep the newest N events and/or drop events older
+// than `max_age`. Both constraints default to unbounded and are conjunctive.
+let policy = AuditRetentionPolicy {
+    keep_n_events: Some(100_000),
+    max_age: None,
+};
+let _outcome = log.prune(&policy, now_unix_nanos)?;
+```
+
+`open` performs a torn-tail-truncating scan (a partial trailing record is
+dropped, not an error), mirroring the WAL's on-open posture. Recovery
+reattaches the audit log purely by file presence. Retention here is
+independent of the snapshot/WAL `RetentionPolicy` (see [Backups](#backups)),
+so trimming audit history never affects graph recovery and vice versa.
 
 ## Snapshot versioning
 
@@ -330,9 +373,10 @@ forward-compatibility hacks visible.
 Per-section payload format is owned by each section's producer. The
 `provider`/`sub` tag pair identifies which decoder runs; the producer is
 responsible for tagging its own byte layouts with versions if it needs to
-evolve them. Extension providers typically do this through subsection
-version bytes inside their rkyv-archived bodies; first-party CORE sections
-do the same.
+evolve them. The first-party `CORE` sections do this through subsection
+version bytes inside their rkyv-archived bodies — for example the `CORE/GTYP`
+section carries its own `GTYP_VERSION` independent of the `SLSN` container
+version.
 
 ## Backups
 

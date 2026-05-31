@@ -6,9 +6,10 @@ use std::{
 };
 
 use selene_core::{Change, GraphId, HlcTimestamp, LabelSet, NodeId, Origin, PropertyMap, intern};
-use selene_gql::{OptimizeContext, Session, analyze, optimize, parse, plan};
+use selene_gql::{
+    BuiltinProcedureRegistry, OptimizeContext, Session, analyze, optimize, parse, plan,
+};
 use selene_graph::SharedGraph;
-use selene_pack::ProcedurePackRegistry;
 use selene_persist::{
     DEFAULT_WAL_FILE_NAME, ProviderRegistry, SectionCompression, SnapshotBuilder, SnapshotConfig,
     SyncPolicy, WalConfig, WalWriter, recover,
@@ -41,8 +42,7 @@ fn tracing_spans_emit_for_write_and_call() {
     let subscriber = Registry::default().with(CollectingLayer {
         observed: observed.clone(),
     });
-    let registry = ProcedurePackRegistry::with_builtins()
-        .expect("platform built-ins register cleanly in tests");
+    let registry = BuiltinProcedureRegistry::new();
     let graph = SharedGraph::new(GraphId::new(121_001));
 
     tracing::subscriber::with_default(subscriber, || {

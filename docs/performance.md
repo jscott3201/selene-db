@@ -137,17 +137,6 @@ rather than one `commit` per `Change`) is the biggest single win.
 See [persistence-and-recovery.md](persistence-and-recovery.md) for the full
 `SyncPolicy` semantics.
 
-### Procedure-pack registry: lazy vs eager activation
-
-The procedure-pack registry (`selene-pack::ProcedureRegistry`) activates
-packs lazily by default — the first `CALL` against a pack triggers manifest
-validation and typestate transition. Eager activation (activating every
-pack at startup) trades startup latency for steady-state predictability.
-
-For workloads with a small fixed set of `CALL`s on the hot path, eager
-activation removes the once-per-pack cold path. For workloads that touch
-many packs sparsely, lazy activation keeps startup fast.
-
 ### Parallelization gating
 
 Graph algorithm parallelization is controlled by the

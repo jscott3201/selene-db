@@ -1,8 +1,8 @@
 //! Native community procedures (`algo.label_propagation`, `algo.louvain`,
 //! `algo.triangle_count`).
 //!
-//! Ported from `selene-algorithms-pack/src/community.rs`. Defaults, argument
-//! parsing, output columns, and row shapes are preserved verbatim.
+//! Ported from the historical procedure-pack community adapter. Defaults,
+//! argument parsing, output columns, and row shapes are preserved verbatim.
 
 use selene_algorithms::{
     TriangleCountConfig, label_propagation_with_checker, louvain_with_checker,

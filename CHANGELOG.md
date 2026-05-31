@@ -15,25 +15,47 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   separate dedicated project. **BREAKING** change to the public crate
   surface: embedders depending on either crate must repoint to the
   externalized project. The core `selene-graph` query and mutation surfaces
-  are unchanged, and the generic extension boundary (`IndexProvider`,
-  procedure packs) is unaffected.
+  are unchanged, and the `IndexProvider` boundary is unaffected. (The
+  procedure-pack apparatus referenced here was subsequently removed entirely
+  — see "Procedure-pack system removed" below.)
 - **Planned full-text / BM25 extension dropped.** The previously planned
   `selene-text` / `selene-text-pack` (Tantivy-backed) full-text extension is
   dropped entirely and is no longer a roadmap item. The reserved
   `SELENE_FULLTEXT` extension type id is removed.
+- **Procedure-pack system removed — `selene-pack` and `selene-algorithms-pack`
+  deleted.** **BREAKING.** selene-db is now a single native graph engine with
+  no extension/procedure-pack model. The entire loadable-pack apparatus —
+  manifest validation (JSON Schema 2020-12), the typestate-sealed activation
+  lifecycle, `ProcedurePackRegistry`, the `ExternalGraphProcedure` /
+  `ExternalMutationProcedure` adapter traits, `content_hash`, and the
+  `algo.*` pack adapters — was removed. `CALL algo.*` and `CALL selene.*` are
+  unchanged at the GQL surface (ISO IW010 external procedures; the grammar is
+  not touched) — only the implementation behind them changed (see below).
+- **Pack-lifecycle audit removed (greenfield `postcard` break).** **BREAKING.**
+  `selene_core::pack_lifecycle::PackLifecycleEvent`,
+  `SchemaChange::ProcedurePackLifecycle`, the three legacy
+  `SchemaChange::ProcedurePack{Activated,Deprecated,Disabled}` variants, the
+  `GraphCommitSink` pack→funnel audit adapter, and the `pack_history` built-in
+  are deleted. This changes `Change`/`SchemaChange` postcard discriminants;
+  acceptable because there are no shipped consumers (no compatibility shim).
+  The dedicated `selene-persist` `audit.log` (`AuditLog` / `AuditRecord` /
+  `AuditRetentionPolicy`, D24) and its `with_audit_log` wiring are **retained**
+  as the durable substrate for future first-party engine events.
+- **Consumerless storage abstractions removed.** **BREAKING** (to the
+  `selene-graph` public surface). The `ChangeSubscriber` trait (with
+  `SharedGraph::with_change_subscriber`, the runtime `notify_subscribers`
+  fan-out, and the recovery subscriber fan-out + subscriber-tag validation)
+  and the `StorageCompactor` trait (never wired; zero impls) are deleted —
+  both became fully consumerless after the vector and pack removals. The
+  in-use CORE-internal densify compaction (`LiveIdSet` / `CompactionReport` /
+  `compact_core`) and the `IndexProvider` / `DurableProvider` /
+  `RecoveryProvider` plumbing are kept untouched.
+- **Workspace dependencies dropped:** `jsonschema`, `schemars`, and `papaya`
+  were used only by the deleted pack crates / registry and are removed from
+  `Cargo.toml`. `THIRDPARTY.md` regen is deferred to the version bump.
 
 ### Chore
 
-- Codified the **procedure-pack "procedure-only" contract** (BRIEF-149,
-  deletion+reclamation audit Item 8): a manifest may declare only `procedures`
-  and cannot declare ownership of graph data. Already enforced structurally by
-  `#[serde(deny_unknown_fields)]` (JSON Schema `additionalProperties: false`);
-  this makes it an explicit, regression-pinned contract via expanded
-  `ProcedurePackManifest` rustdoc and a `pack_manifest_rejects_owned_data_declaration`
-  test (an `owned_label_prefix`-style field is a schema violation). Consequence:
-  disabling/uninstalling a pack never needs to cascade-delete user data —
-  packs own only engine-internal state on their own lifecycle. No behavior or
-  API change.
 - Local test invocation aligned with CI (nextest + line-tables-only debug +
   `.config/nextest.toml`). See CLAUDE.md Build & test.
 
@@ -115,9 +137,61 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   consent for this carve-out from variant-strict storage; cap exhaustion
   now surfaces as a hard `IndexAdmissionExhausted` error instead of a
   silent skip. (BRIEF-153)
+- ISO GQL error-code conformance: remapped `GqlStatus` constants and
+  `miette` diagnostic tags to GQLSTATUS values per ISO/IEC 39075:2024
+  section 23.1 Table 8. Public-facing `as_str()` output changes for 9
+  status constants (for example, `42601 -> 42001`, `42883 -> 22G03`,
+  `0A000 -> 42N01`). Added `GqlStatus::IN_FAILED_TRANSACTION` (`25N02`)
+  and `GqlStatus::class()`. No source changes are required for downstream
+  consumers using `GqlStatus::SYNTAX_ERROR` and related constants by name;
+  consumers comparing raw 5-character codes must update strings.
+- Program-limit errors from `IStrCapExceeded`, `PayloadTooLarge`,
+  `TooManySections`, and `SectionTooLarge` now report GQLSTATUS `5GQL1`
+  instead of the SQLSTATE-shaped `54000`.
+- Removed phantom Pattern alpha support claims for path selectors
+  (`G015`-`G018`) and graph management (`GC04`/`GC05`); these surfaces now
+  reject with GQLSTATUS `42N01` before execution instead of reaching planner
+  or runtime implementation-defined failures.
+- Collapsed residual implementation-defined `XX500`/`XX501`/`XX502` status
+  emissions to single GQLSTATUS `5GQL0`, with diagnostic-detail tags for graph
+  mutation, durability flush, and generic implementation-defined failures.
+  Residual `22023` emissions in core, graph, and persist now report `22G03`.
+- GQL record equality now propagates NULL and NaN through nested record fields
+  in the runtime `=` comparator while preserving `Value::PartialEq` and
+  runtime row-key structural equality for deduplication.
+- Runtime data exceptions now carry a `DataExceptionSubclass` selected at the
+  emission site. Arithmetic overflow reports `22003`, division by zero
+  reports `22012`, invalid power arguments report `2201F`, invalid value-type
+  paths report `22G03`, incomparable ordering reports `22G04`, and record /
+  graph-property subclasses use `22G0X`, `22G0M`, `22G0S`, and `22G0T` where
+  live paths exist. GQLSTATUS is read from `gqlstatus()`; the stable miette
+  diagnostic tag remains broad for the parent data-exception variant.
+- Transaction and graph-type surfaces now emit live ISO Table 8 classes:
+  nested `START TRANSACTION` returns `25G01`, write attempts in read-only
+  transaction contexts return `25G03`, invalid transaction termination returns
+  `2D000`, bare node delete with incident edges returns `G1001`, and closed
+  graph schema/type violations return `G2000`.
 
 ### Added
 
+- **`selene-algorithms` is now a mandatory first-class crate with a native
+  Rust API.** **BREAKING** (promotes a previously opt-in crate; `selene-gql`
+  now build-depends on it). Every algorithm is callable directly from Rust
+  with no registry/`CALL` machinery: free functions (e.g. `pagerank_on(...)`,
+  with `*_with_checker` variants for cancellation) plus a `GraphAlgorithms`
+  Rust extension trait for an ergonomic methods-on-graph surface. The
+  1024-thread `Parallelism` cap moved into `selene-algorithms` (was
+  adapter-side). No algorithm bodies changed.
+- **Native `BuiltinProcedureRegistry` in `selene-gql`.** The sole frozen
+  production `ProcedureRegistry` impl: it registers the 19 `algo.*` procedures
+  (binding `CALL algo.*` directly over the native algorithms API) and the
+  5 platform built-ins relocated native from the deleted pack crate —
+  `selene.health`, `selene.feature_status`, `selene.verify`,
+  `selene.create_index`, `selene.drop_index` (the index DDL still routes
+  through the `Mutator` funnel). Argument coercion (Int→f64, NULL→default,
+  arity-from-trailing-nullable) is ported verbatim. `registry_version()` is a
+  constant `0` (frozen at construction) so the CALL plan cache key stays
+  stable. The `ProcedureRegistry` trait is kept as the plan/execute seam.
 - **Dedicated `audit.log` for engine-owned events**, with retention independent
   of the WAL + snapshot lineage (BRIEF-Item-7, deletion+reclamation audit Item 7
   / Seam D, D24). Fixes the bug where pack-lifecycle audit events — written to
@@ -497,43 +571,6 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   overflow now maps to `22003` numeric-value-out-of-range, while `2201F`
   invalid-argument-for-power-function is reserved for the zero-base negative
   exponent and negative-base non-integral exponent cases.
-
-### Changed
-
-- ISO GQL error-code conformance: remapped `GqlStatus` constants and
-  `miette` diagnostic tags to GQLSTATUS values per ISO/IEC 39075:2024
-  section 23.1 Table 8. Public-facing `as_str()` output changes for 9
-  status constants (for example, `42601 -> 42001`, `42883 -> 22G03`,
-  `0A000 -> 42N01`). Added `GqlStatus::IN_FAILED_TRANSACTION` (`25N02`)
-  and `GqlStatus::class()`. No source changes are required for downstream
-  consumers using `GqlStatus::SYNTAX_ERROR` and related constants by name;
-  consumers comparing raw 5-character codes must update strings.
-- Program-limit errors from `IStrCapExceeded`, `PayloadTooLarge`,
-  `TooManySections`, and `SectionTooLarge` now report GQLSTATUS `5GQL1`
-  instead of the SQLSTATE-shaped `54000`.
-- Removed phantom Pattern alpha support claims for path selectors
-  (`G015`-`G018`) and graph management (`GC04`/`GC05`); these surfaces now
-  reject with GQLSTATUS `42N01` before execution instead of reaching planner
-  or runtime implementation-defined failures.
-- Collapsed residual implementation-defined `XX500`/`XX501`/`XX502` status
-  emissions to single GQLSTATUS `5GQL0`, with diagnostic-detail tags for graph
-  mutation, durability flush, and generic implementation-defined failures.
-  Residual `22023` emissions in core, graph, and persist now report `22G03`.
-- GQL record equality now propagates NULL and NaN through nested record fields
-  in the runtime `=` comparator while preserving `Value::PartialEq` and
-  runtime row-key structural equality for deduplication.
-- Runtime data exceptions now carry a `DataExceptionSubclass` selected at the
-  emission site. Arithmetic overflow reports `22003`, division by zero
-  reports `22012`, invalid power arguments report `2201F`, invalid value-type
-  paths report `22G03`, incomparable ordering reports `22G04`, and record /
-  graph-property subclasses use `22G0X`, `22G0M`, `22G0S`, and `22G0T` where
-  live paths exist. GQLSTATUS is read from `gqlstatus()`; the stable miette
-  diagnostic tag remains broad for the parent data-exception variant.
-- Transaction and graph-type surfaces now emit live ISO Table 8 classes:
-  nested `START TRANSACTION` returns `25G01`, write attempts in read-only
-  transaction contexts return `25G03`, invalid transaction termination returns
-  `2D000`, bare node delete with incident edges returns `G1001`, and closed
-  graph schema/type violations return `G2000`.
 
 ## [1.0.0] — 2026-05-16
 

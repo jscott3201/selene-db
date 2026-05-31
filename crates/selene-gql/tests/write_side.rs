@@ -340,8 +340,8 @@ fn deferred_surfaces_return_not_implemented() {
 #[test]
 fn removed_non_iso_grammar_is_syntax_error() {
     // Triggers, materialized views, procedure DDL, and auth (users/roles/grants)
-    // are out of spec entirely (auth = embedder concern D1; procedures live in
-    // selene-pack; triggers/views are not in the v1.0 claim list). They have no
+    // are out of spec entirely (auth = embedder concern D1; procedures are native
+    // built-ins; triggers/views are not in the v1.0 claim list). They have no
     // ISO equivalent and were removed from the grammar, so they now fail to
     // parse with SYNTAX_ERROR (42601) rather than FEATURE_NOT_SUPPORTED.
     for source in [

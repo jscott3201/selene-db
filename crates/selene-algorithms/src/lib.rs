@@ -17,10 +17,10 @@
 //! # Dependency boundary
 //!
 //! Per Spec 16 §E01, this crate depends on [`selene_core`] and
-//! [`selene_graph`] only — never on `selene-gql`, `selene-pack`, or
-//! `selene-persist`. A future `selene-algorithms-pack` (out-of-tree v1.x)
-//! adapts these algorithms to procedure-pack tiers; the algorithms crate
-//! itself stays independent of the GQL surface.
+//! [`selene_graph`] only — never on `selene-gql` or `selene-persist`. The
+//! native `selene-gql` procedure registry binds these algorithms to the
+//! `CALL algo.*` surface; the algorithms crate itself stays independent of
+//! the GQL surface.
 
 pub mod api;
 pub mod catalog;

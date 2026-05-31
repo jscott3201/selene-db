@@ -47,12 +47,11 @@ selene-graph = { path = "../selene-db/crates/selene-graph" }
 selene-gql   = { path = "../selene-db/crates/selene-gql" }
 ```
 
-The persistence and pack crates are additional opt-ins:
+For on-disk persistence, add `selene-persist`. For graph algorithms — PageRank, betweenness, Louvain, and the rest, reachable both as a native Rust API and via `CALL algo.*` — add `selene-algorithms`:
 
 ```toml
-selene-persist          = { path = "../selene-db/crates/selene-persist" }
-selene-pack             = { path = "../selene-db/crates/selene-pack" }
-selene-algorithms-pack  = { path = "../selene-db/crates/selene-algorithms-pack" }
+selene-persist    = { path = "../selene-db/crates/selene-persist" }
+selene-algorithms = { path = "../selene-db/crates/selene-algorithms" }
 ```
 
 Run `cargo build` once to confirm the dependency graph resolves before moving on.
@@ -341,7 +340,7 @@ That demonstrates **read-your-writes** across transactions on a single graph han
 
 - **Write side**: every `tx.commit()` emits a `Vec<Change>`; the embedder pipes those into `selene_persist::WalWriter::open(path, WalConfig::default())` (WAL file, `SLDB` magic).
 - **Snapshot side**: periodically, the embedder dumps the current graph to a `SnapshotBuilder` (snapshot file, `SLSN` magic) and truncates the WAL.
-- **Recovery on restart**: `selene_persist::recover(dir, &registry)` reads the latest snapshot, replays the WAL tail, and routes both into the providers you register (the graph's `CoreProvider` plus any extension providers you register).
+- **Recovery on restart**: `selene_persist::recover(dir, &registry)` reads the latest snapshot, replays the WAL tail, and routes both into the graph's `CoreProvider` (the engine's `IndexProvider`/`DurableProvider`/`RecoveryProvider` plumbing).
 
 This wiring is intentionally explicit so embedders can choose their own commit-to-disk policy (sync every commit, batch, flush on idle, etc.) and own their snapshot cadence. The full worked example, including `ProviderRegistry` setup and a process-restart test, lives in [docs/persistence-and-recovery.md](persistence-and-recovery.md).
 
@@ -362,7 +361,6 @@ This wiring is intentionally explicit so embedders can choose their own commit-t
 - [Embedding guide](embedding-guide.md) — long-running embedders, parameter binding, error handling, session reuse.
 - [GQL reference](gql-reference.md) — the ISO GQL surface selene-db supports, including which optional features are claimed.
 - [Architecture](architecture.md) — crate boundaries, threading model, snapshot semantics.
-- [Extension guide](extension-guide.md) — writing procedure packs and `IndexProvider` implementations.
-- [Graph algorithms](graph-algorithms.md) — `CALL algo.*` for PageRank, betweenness, Louvain, and the rest.
+- [Graph algorithms](graph-algorithms.md) — the native `selene-algorithms` API and `CALL algo.*` for PageRank, betweenness, Louvain, and the rest.
 - [Persistence and recovery](persistence-and-recovery.md) — WAL, snapshots, and the recovery flow.
 - [Performance](performance.md) — benchmarks, tuning knobs, and what numbers to expect.

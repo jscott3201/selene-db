@@ -1,7 +1,7 @@
 //! Engine-internal per-`GraphId` projection-catalog state.
 //!
-//! Ported from the historical `selene-algorithms-pack/src/state.rs`
-//! `AlgorithmsPackState`. The catalog is **engine-internal, ephemeral, and
+//! Ported from the historical procedure-pack per-instance catalog state.
+//! The catalog is **engine-internal, ephemeral, and
 //! per-`GraphId`**: projections are derived state, never persisted and never
 //! part of snapshot/recovery. The map is keyed by [`GraphId`] so concurrent
 //! algorithm runs against distinct graphs never serialize on each other; a

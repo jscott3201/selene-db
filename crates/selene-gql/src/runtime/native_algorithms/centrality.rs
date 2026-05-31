@@ -1,8 +1,8 @@
 //! Native centrality procedures (`algo.pagerank`, `algo.betweenness`).
 //!
-//! Ported from `selene-algorithms-pack/src/{pagerank,betweenness}.rs`. Argument
-//! parsing, the damping/tolerance validation, output columns, and row shapes
-//! are preserved verbatim. The runners call `selene_algorithms`'
+//! Ported from the historical procedure-pack pagerank/betweenness adapters.
+//! Argument parsing, the damping/tolerance validation, output columns, and row
+//! shapes are preserved verbatim. The runners call `selene_algorithms`'
 //! `*_with_checker` algorithm functions directly (through
 //! [`super::state::with_projection`]) so error rendering matches the pack era.
 

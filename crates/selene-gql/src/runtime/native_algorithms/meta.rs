@@ -1,10 +1,10 @@
 //! Metadata builders shared by the native `algo.*` procedure definitions.
 //!
-//! These mirror the historical pack's `parameter` / `output` helpers plus
-//! `selene-pack`'s `external_parameter` / `external_output_column` conversion:
-//! a nullable parameter carries the `"NULL (use procedure default)"` default-doc
-//! and every parameter / column carries the same boilerplate description the
-//! pack emitted, so `SHOW PROCEDURES` introspection is byte-identical.
+//! These mirror the historical pack's `parameter` / `output` helpers plus its
+//! `external_parameter` / `external_output_column` conversion: a nullable
+//! parameter carries the `"NULL (use procedure default)"` default-doc and every
+//! parameter / column carries the same boilerplate description the pack emitted,
+//! so `SHOW PROCEDURES` introspection is byte-identical.
 
 use selene_core::intern_with_admission;
 

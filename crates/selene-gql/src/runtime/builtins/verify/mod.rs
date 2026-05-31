@@ -1,8 +1,8 @@
 //! `selene.verify` native built-in.
 //!
 //! Read-only graph-tier integrity check against graph invariants. Ported
-//! verbatim from `selene-pack/src/builtin/verify.rs`; the check logic is
-//! identical (only relocated). To stay clear of the 700-LOC file cap the
+//! verbatim from the historical procedure-pack `verify` built-in; the check
+//! logic is identical (only relocated). To stay clear of the 700-LOC file cap the
 //! procedure is split: this module owns metadata, argument parsing, the
 //! `verify_snapshot` orchestration, and the row/`CheckResult` shaping; the
 //! individual integrity checks live in [`checks`].

@@ -5,22 +5,11 @@
 //!   reconstructs the IDENTICAL alive-node/alive-edge state as recovering a WAL
 //!   containing the equivalent N `NodeDeleted` + incident `EdgeDeleted`
 //!   ("replay walks the store").
-//! - A mock derived-state `ChangeSubscriber` receives the SAME per-row
-//!   `NodeDeleted`/`EdgeDeleted` multiset during replay of the declarative
-//!   variant as it would for the expanded form — the recovery anti-leak
-//!   guarantee. The subscriber must never see the declarative variant.
 
-use std::sync::{Arc, Mutex};
-
-use selene_core::{
-    Change, ChangeKind, ChangeKindSet, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern,
-};
+use selene_core::{Change, EdgeId, GraphId, LabelSet, NodeId, PropertyMap, intern};
 
 use super::{append_wal, temp_dir};
-use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
-use crate::{ChangeSubscriber, SeleneGraph, SharedGraph};
-
-const TAG: ProviderTag = ProviderTag(*b"MOCK");
+use crate::{SeleneGraph, SharedGraph};
 
 fn node_created(id: u64, label: &str) -> Change {
     Change::NodeCreated {
@@ -137,117 +126,4 @@ fn recovery_of_edge_type_truncate_matches_expanded_form() {
     assert!(g.edges_with_label(&intern("trec.E1").unwrap()).is_none());
     let _ = std::fs::remove_dir_all(dir_a);
     let _ = std::fs::remove_dir_all(dir_b);
-}
-
-// --- Recovery anti-leak: subscriber must receive per-row tombstones ---
-
-struct NoopProvider;
-
-impl IndexProvider for NoopProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn provider_tag(&self) -> ProviderTag {
-        TAG
-    }
-    fn read_section(&self, _sub: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-        Ok(())
-    }
-    fn write_section(&self, _sub: SubTag) -> Result<Vec<u8>, ProviderError> {
-        Ok(Vec::new())
-    }
-    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-        Ok(())
-    }
-    fn declared_sub_tags(&self) -> &[SubTag] {
-        &[]
-    }
-}
-
-struct TombstoneSubscriber {
-    seen: Arc<Mutex<Vec<Change>>>,
-}
-
-impl ChangeSubscriber for TombstoneSubscriber {
-    fn subscriber_tag(&self) -> ProviderTag {
-        TAG
-    }
-    fn change_kinds(&self) -> ChangeKindSet {
-        ChangeKindSet::EMPTY
-            .with(ChangeKind::NodeDeleted)
-            .with(ChangeKind::EdgeDeleted)
-    }
-    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        self.seen.lock().unwrap().push(change.clone());
-        Ok(())
-    }
-}
-
-#[test]
-fn recovery_truncate_fans_out_per_row_tombstones_to_subscriber() {
-    let dir = temp_dir("trec-subscriber-antileak");
-    let mut changes = base_creates();
-    changes.push(Change::NodesOfTypeTruncated {
-        label: intern("trec.L").unwrap(),
-    });
-    append_wal(&dir, 0, &changes);
-
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let provider: Arc<dyn IndexProvider> = Arc::new(NoopProvider);
-    let subscriber: Arc<dyn ChangeSubscriber> = Arc::new(TombstoneSubscriber {
-        seen: Arc::clone(&seen),
-    });
-
-    let _recovered = SharedGraph::recover_with_providers(
-        &dir,
-        GraphId::new(7),
-        vec![provider],
-        vec![subscriber],
-    )
-    .unwrap();
-
-    let seen = seen.lock().unwrap();
-    let deleted_nodes: std::collections::BTreeSet<NodeId> = seen
-        .iter()
-        .filter_map(|c| match c {
-            Change::NodeDeleted { id } => Some(*id),
-            _ => None,
-        })
-        .collect();
-    let deleted_edges: std::collections::BTreeSet<EdgeId> = seen
-        .iter()
-        .filter_map(|c| match c {
-            Change::EdgeDeleted { id } => Some(*id),
-            _ => None,
-        })
-        .collect();
-    // Every truncated :L node (1,2,3) and incident edge (1,2,3,4) must be
-    // tombstoned at the subscriber during recovery — the anti-leak guarantee.
-    assert_eq!(
-        deleted_nodes,
-        [NodeId::new(1), NodeId::new(2), NodeId::new(3)]
-            .into_iter()
-            .collect::<std::collections::BTreeSet<_>>(),
-        "recovery subscriber missed a truncated node tombstone (derived-state leak)"
-    );
-    assert_eq!(
-        deleted_edges,
-        [
-            EdgeId::new(1),
-            EdgeId::new(2),
-            EdgeId::new(3),
-            EdgeId::new(4)
-        ]
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>(),
-        "recovery subscriber missed an incident-edge tombstone (derived-state leak)"
-    );
-    assert!(
-        !seen
-            .iter()
-            .any(|c| matches!(c, Change::NodesOfTypeTruncated { .. })),
-        "recovery subscriber must never receive the declarative truncate variant"
-    );
-    drop(seen);
-    let _ = std::fs::remove_dir_all(dir);
 }

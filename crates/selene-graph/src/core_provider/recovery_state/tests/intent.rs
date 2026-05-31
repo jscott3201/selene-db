@@ -1,6 +1,6 @@
 use selene_core::{
-    Change, EdgeTypeDefV1, GraphId, GraphType, LabelSet, NodeTypeDefV1, NodeTypeRef,
-    PackLifecycleEvent, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind, intern,
+    Change, EdgeTypeDefV1, GraphId, GraphType, LabelSet, NodeTypeDefV1, NodeTypeRef, RecordTypeDef,
+    RecordTypeId, SchemaChange, SchemaPropertyIndexKind, intern,
 };
 use smallvec::smallvec;
 
@@ -9,22 +9,16 @@ use super::test_graph_type_id;
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Intent {
     Apply,
-    NoopWithReason(&'static str),
     Reject(&'static str),
 }
 
 type SchemaChangeIntent = (fn() -> SchemaChange, Intent);
 
-const LEGACY_PACK_NOOP: &str = "legacy; emitted pre-v1.0";
-const PACK_LIFECYCLE_NOOP: &str = "audit history consumed by selene-pack";
 const UNSUPPORTED_CORE_RECOVERY: &str = "unsupported by CORE graph recovery";
 
 macro_rules! schema_intent {
     (apply $factory:ident) => {
         ($factory, Intent::Apply)
-    };
-    (noop $factory:ident, $reason:ident) => {
-        ($factory, Intent::NoopWithReason($reason))
     };
     (reject $factory:ident, $reason:ident) => {
         ($factory, Intent::Reject($reason))
@@ -41,12 +35,8 @@ const SCHEMA_CHANGE_INTENT: &[SchemaChangeIntent] = &[
     schema_intent!(apply intent_node_type_dropped),
     schema_intent!(apply intent_edge_type_dropped),
     schema_intent!(reject intent_record_type_added, UNSUPPORTED_CORE_RECOVERY),
-    schema_intent!(noop intent_pack_activated, LEGACY_PACK_NOOP),
-    schema_intent!(noop intent_pack_deprecated, LEGACY_PACK_NOOP),
-    schema_intent!(noop intent_pack_disabled, LEGACY_PACK_NOOP),
     schema_intent!(apply intent_property_index_created),
     schema_intent!(apply intent_property_index_dropped),
-    schema_intent!(noop intent_pack_lifecycle, PACK_LIFECYCLE_NOOP),
     schema_intent!(apply intent_property_index_created_named),
     schema_intent!(apply intent_composite_property_index_created),
     schema_intent!(apply intent_composite_property_index_dropped),
@@ -127,29 +117,6 @@ fn intent_record_type_added() -> SchemaChange {
     }
 }
 
-fn intent_pack_activated() -> SchemaChange {
-    SchemaChange::ProcedurePackActivated {
-        pack_name: intern("intent_pack").unwrap(),
-        version: intern("1.0.0").unwrap(),
-    }
-}
-
-fn intent_pack_deprecated() -> SchemaChange {
-    SchemaChange::ProcedurePackDeprecated {
-        pack_name: intern("intent_pack").unwrap(),
-        version: intern("1.0.0").unwrap(),
-        reason: intern("intent reason").unwrap(),
-    }
-}
-
-fn intent_pack_disabled() -> SchemaChange {
-    SchemaChange::ProcedurePackDisabled {
-        pack_name: intern("intent_pack").unwrap(),
-        version: intern("1.0.0").unwrap(),
-        reason: intern("intent reason").unwrap(),
-    }
-}
-
 fn intent_property_index_created() -> SchemaChange {
     SchemaChange::PropertyIndexCreated {
         label: intern("IntentIndexedNode").unwrap(),
@@ -199,17 +166,6 @@ fn intent_composite_property_index_dropped() -> SchemaChange {
     }
 }
 
-fn intent_pack_lifecycle() -> SchemaChange {
-    SchemaChange::ProcedurePackLifecycle {
-        event: PackLifecycleEvent::Activated {
-            pack_name: intern("intent_pack").unwrap(),
-            content_hash: [1_u8; 32],
-            principal: intern("intent.principal").unwrap(),
-            at: jiff::Timestamp::new(10, 0).unwrap(),
-        },
-    }
-}
-
 fn drive_handler_and_observe(change: SchemaChange) -> Intent {
     let mut state = super::super::RecoveryState::new();
     let result = state.apply_change(&Change::SchemaChanged {
@@ -225,44 +181,20 @@ fn drive_handler_and_observe(change: SchemaChange) -> Intent {
         {
             Intent::Apply
         }
-        Ok(()) => noop_intent(&change),
-    }
-}
-
-fn noop_intent(change: &SchemaChange) -> Intent {
-    match change {
-        SchemaChange::ProcedurePackActivated { .. }
-        | SchemaChange::ProcedurePackDeprecated { .. }
-        | SchemaChange::ProcedurePackDisabled { .. } => Intent::NoopWithReason(LEGACY_PACK_NOOP),
-        SchemaChange::ProcedurePackLifecycle { .. } => Intent::NoopWithReason(PACK_LIFECYCLE_NOOP),
-        SchemaChange::GraphCreated { .. }
-        | SchemaChange::GraphDropped { .. }
-        | SchemaChange::GraphTypeCreated { .. }
-        | SchemaChange::GraphTypeDropped { .. }
-        | SchemaChange::NodeTypeAdded { .. }
-        | SchemaChange::NodeTypeAddedV2 { .. }
-        | SchemaChange::EdgeTypeAdded { .. }
-        | SchemaChange::EdgeTypeAddedV2 { .. }
-        | SchemaChange::NodeTypeDropped { .. }
-        | SchemaChange::EdgeTypeDropped { .. }
-        | SchemaChange::RecordTypeAdded { .. }
-        | SchemaChange::PropertyIndexCreated { .. }
-        | SchemaChange::PropertyIndexDropped { .. }
-        | SchemaChange::PropertyIndexCreatedNamed { .. }
-        | SchemaChange::CompositePropertyIndexCreated { .. }
-        | SchemaChange::CompositePropertyIndexDropped { .. } => {
-            panic!(
-                "{} is not a no-op schema-change intent",
-                super::super::schema_replay::schema_change_variant(change)
-            )
-        }
+        // Every recoverable schema change either queues pending state (Apply) or
+        // is rejected. No variant is a silent no-op after the procedure-pack
+        // teardown, so an `Ok(())` with nothing queued is a recovery bug.
+        Ok(()) => panic!(
+            "{} produced no recovery intent (neither applied nor rejected)",
+            super::super::schema_replay::schema_change_variant(&change)
+        ),
     }
 }
 
 #[test]
 fn recovery_intent_table_covers_every_schema_change_variant() {
     let mut seen = std::collections::BTreeSet::new();
-    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 18);
+    assert_eq!(SCHEMA_CHANGE_INTENT.len(), 14);
 
     for (factory, expected_intent) in SCHEMA_CHANGE_INTENT {
         let change = factory();
