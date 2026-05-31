@@ -52,24 +52,16 @@ impl fmt::Display for ExtensionTypeId {
     }
 }
 
-/// Numeric ID reserved for the vector value type owned by `selene-vector`.
-pub const SELENE_VECTOR: ExtensionTypeId = ExtensionTypeId(0x00000100);
-
 /// Numeric ID reserved for a future time-series value type, if needed.
 pub const SELENE_TIMESERIES: ExtensionTypeId = ExtensionTypeId(0x00000101);
 
 /// Numeric ID reserved for a future RDF value type, if needed.
 pub const SELENE_RDF: ExtensionTypeId = ExtensionTypeId(0x00000102);
 
-/// Numeric ID reserved for a future full-text value type, if needed.
-pub const SELENE_FULLTEXT: ExtensionTypeId = ExtensionTypeId(0x00000103);
-
 /// First-party reservations by stable name.
 pub const FIRST_PARTY_EXTENSION_TYPE_IDS: &[(&str, ExtensionTypeId)] = &[
-    ("selene-vector.vector", SELENE_VECTOR),
     ("selene-timeseries.reserved", SELENE_TIMESERIES),
     ("selene-rdf.reserved", SELENE_RDF),
-    ("selene-fulltext.reserved", SELENE_FULLTEXT),
 ];
 
 #[cfg(test)]
@@ -87,11 +79,6 @@ mod tests {
     #[test]
     fn extension_type_id_is_u32_sized() {
         assert_eq!(std::mem::size_of::<ExtensionTypeId>(), 4);
-    }
-
-    #[test]
-    fn display_known_id_uses_symbolic_name() {
-        assert_eq!(SELENE_VECTOR.to_string(), "selene-vector.vector");
     }
 
     #[test]

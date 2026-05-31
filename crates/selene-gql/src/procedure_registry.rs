@@ -5,9 +5,9 @@
 //!
 //! D16 places the single `ProcedureRegistry` trait in `selene-gql` because the
 //! planner and executor are the upstream consumers of procedure metadata and
-//! dispatch. `selene-pack` implements this trait for its concrete registry, and
-//! the embedder injects `&dyn ProcedureRegistry` into plan and execute calls.
-//! See Spec 08 §7.
+//! dispatch. The native [`BuiltinProcedureRegistry`](crate::BuiltinProcedureRegistry)
+//! is the sole production implementor, and the embedder injects
+//! `&dyn ProcedureRegistry` into plan and execute calls. See Spec 08 §7.
 
 pub use selene_core::Value;
 
@@ -56,7 +56,7 @@ pub trait ProcedureRegistry: Send + Sync {
 /// Planner-visible metadata for a registered procedure.
 ///
 /// Owned by `selene-gql` so the planner can consume procedure metadata without
-/// importing `selene-pack`.
+/// reaching outside the gql crate.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct ProcedureMetadata {
@@ -108,8 +108,8 @@ impl ProcedureMetadata {
 
 /// Opaque procedure handle.
 ///
-/// The planner treats this as an uninterpreted token. `selene-pack` defines the
-/// internal handle encoding.
+/// The planner treats this as an uninterpreted token. The implementing registry
+/// defines the internal handle encoding.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ProcedureHandle(u64);
 

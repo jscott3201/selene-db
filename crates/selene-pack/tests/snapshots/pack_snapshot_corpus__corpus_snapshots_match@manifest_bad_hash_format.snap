@@ -1,6 +1,0 @@
----
-source: crates/selene-pack/tests/pack_snapshot_corpus.rs
-expression: snapshot.to_string()
----
-manifest:
-- ERR variant=InvalidContentHashFormat gate=content_hash_canonical content_hash="sha256:0000000000000000000000000000000000000000000000000000000000000000"

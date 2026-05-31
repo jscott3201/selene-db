@@ -13,7 +13,6 @@ use selene_core::{Change, GraphId, IStr, SchemaChange, SchemaPropertyIndexKind};
 use selene_persist::{AuditLog, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
-use crate::change_subscriber::ChangeSubscriber;
 use crate::core_provider::{CoreProvider, DurableState};
 use crate::durable_provider::DurableProvider;
 use crate::error::{GraphError, GraphResult};
@@ -32,7 +31,6 @@ pub struct SharedGraph {
     schema_version: Arc<AtomicU64>,
     allocator: Arc<Mutex<IdAllocator>>,
     providers: Vec<Arc<dyn IndexProvider>>,
-    subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     durable_providers: Vec<Arc<dyn DurableProvider>>,
 }
 
@@ -40,7 +38,6 @@ pub struct SharedGraph {
 pub struct SharedGraphBuilder {
     graph: SeleneGraph,
     providers: Vec<Arc<dyn IndexProvider>>,
-    subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     wal_writer: Option<WalWriter>,
     audit_log: Option<AuditLog>,
 }
@@ -58,7 +55,6 @@ impl SharedGraph {
         SharedGraphBuilder {
             graph: SeleneGraph::new(graph_id),
             providers: Vec::new(),
-            subscribers: Vec::new(),
             wal_writer: None,
             audit_log: None,
         }
@@ -86,7 +82,7 @@ impl SharedGraph {
     /// [`GraphError::Inconsistent`] when the graph's stores exceed the
     /// `u32` row capacity.
     pub fn try_from_graph(graph: SeleneGraph) -> GraphResult<Self> {
-        Self::from_graph_with_core(graph, Vec::new(), Vec::new())
+        Self::from_graph_with_core(graph, Vec::new())
     }
 
     /// Construct shared state from a graph snapshot and fixed provider list.
@@ -100,7 +96,7 @@ impl SharedGraph {
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
     ) -> GraphResult<Self> {
-        Self::from_graph_with_core(graph, providers, Vec::new())
+        Self::from_graph_with_core(graph, providers)
     }
 
     /// Construct shared state from a graph snapshot and commit-critical WAL file.
@@ -115,41 +111,23 @@ impl SharedGraph {
         config: WalConfig,
     ) -> GraphResult<Self> {
         let writer = WalWriter::open(path.as_ref(), config)?;
-        Self::from_graph_with_core_and_durables(
-            graph,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Some(writer),
-            None,
-        )
+        Self::from_graph_with_core_and_durables(graph, Vec::new(), Vec::new(), Some(writer), None)
     }
 
     fn from_graph_with_core(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
-        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
     ) -> GraphResult<Self> {
-        Self::from_graph_with_core_and_durables(
-            graph,
-            providers,
-            subscribers,
-            Vec::new(),
-            None,
-            None,
-        )
+        Self::from_graph_with_core_and_durables(graph, providers, Vec::new(), None, None)
     }
 
     pub(crate) fn from_graph_with_core_and_durables(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
-        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
         mut durable_providers: Vec<Arc<dyn DurableProvider>>,
         wal_writer: Option<WalWriter>,
         audit_log: Option<AuditLog>,
     ) -> GraphResult<Self> {
-        validate_unique_subscriber_tags(&subscribers)?;
-        validate_subscriber_tags_match_providers(&providers, &subscribers)?;
         if audit_log.is_some() && wal_writer.is_none() {
             return Err(GraphError::Inconsistent {
                 reason: "audit log configured without a WAL; audit mirroring requires durable WAL \
@@ -173,25 +151,16 @@ impl SharedGraph {
             durable_providers.push(core as Arc<dyn DurableProvider>);
         }
         validate_unique_provider_tags(&all_providers)?;
-        Self::from_graph_parts_and_snapshot(
-            graph,
-            all_providers,
-            subscribers,
-            durable_providers,
-            snapshot,
-        )
+        Self::from_graph_parts_and_snapshot(graph, all_providers, durable_providers, snapshot)
     }
 
     pub(crate) fn from_graph_parts_and_snapshot(
         graph: SeleneGraph,
         providers: Vec<Arc<dyn IndexProvider>>,
-        subscribers: Vec<Arc<dyn ChangeSubscriber>>,
         durable_providers: Vec<Arc<dyn DurableProvider>>,
         snapshot: Arc<ArcSwap<SeleneGraph>>,
     ) -> GraphResult<Self> {
         validate_unique_provider_tags(&providers)?;
-        validate_unique_subscriber_tags(&subscribers)?;
-        validate_subscriber_tags_match_providers(&providers, &subscribers)?;
         let mut graph = graph;
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
@@ -229,7 +198,6 @@ impl SharedGraph {
             schema_version: Arc::new(AtomicU64::new(0)),
             allocator: Arc::new(Mutex::new(allocator)),
             providers,
-            subscribers,
             durable_providers,
         })
     }
@@ -269,10 +237,8 @@ impl SharedGraph {
     pub fn compact(&self) -> GraphResult<crate::CompactionReport> {
         let mut guard = self.shared.write();
         let compacted = crate::compaction::compact_core(&guard)?;
-        // `compacted.live` is the cross-storage LiveIdSet; downstream
-        // `StorageCompactor` fan-out lands with the first downstream compactor
-        // (BRIEF-Item-4d, deferred — vectors are out of scope this cycle). CORE-only
-        // compaction has no downstream consumer yet.
+        // `compacted.live` is the CORE liveness set, available to callers that
+        // want it; CORE-internal densify has no further consumer.
         let dense = Arc::new(compacted.graph);
         *guard = Arc::clone(&dense);
         self.snapshot.store(dense);
@@ -314,12 +280,6 @@ impl SharedGraph {
     #[must_use]
     pub fn index_providers(&self) -> &[Arc<dyn IndexProvider>] {
         &self.providers
-    }
-
-    /// Borrow the fixed change-subscriber registry.
-    #[must_use]
-    pub fn change_subscribers(&self) -> &[Arc<dyn ChangeSubscriber>] {
-        &self.subscribers
     }
 
     /// Borrow the fixed commit-critical durable provider registry.
@@ -437,7 +397,6 @@ impl SharedGraph {
             Arc::clone(&self.schema_version),
             self.allocator.lock(),
             self.providers.clone(),
-            self.subscribers.clone(),
             self.durable_providers.clone(),
         )
     }
@@ -460,17 +419,6 @@ impl SharedGraphBuilder {
         self
     }
 
-    /// Register a change subscriber.
-    ///
-    /// Subscribers are retained in registration order. Validation runs at
-    /// [`Self::build`] so callers may add a subscriber before its matching
-    /// provider.
-    #[must_use]
-    pub fn with_change_subscriber(mut self, subscriber: Arc<dyn ChangeSubscriber>) -> Self {
-        self.subscribers.push(subscriber);
-        self
-    }
-
     /// Open a WAL file and route commits through the CORE durable provider.
     ///
     /// The path is the WAL file path, not a directory. Callers using the
@@ -488,8 +436,8 @@ impl SharedGraphBuilder {
     /// Attach a durable audit log at `path` (conventionally
     /// `dir.join(selene_persist::DEFAULT_AUDIT_FILE_NAME)`).
     ///
-    /// Pack-lifecycle events committed through this graph are mirrored to the
-    /// audit log so they survive WAL-archive pruning (Item 7 / Seam D, D24).
+    /// Engine-owned audit events committed through this graph are mirrored to
+    /// the audit log so they survive WAL-archive pruning (Item 7 / Seam D, D24).
     /// Requires [`Self::with_wal`]: audit mirroring is part of the durable
     /// commit path, so [`Self::build`] errors if an audit log is configured
     /// without a WAL.
@@ -522,13 +470,11 @@ impl SharedGraphBuilder {
     ///
     /// # Errors
     ///
-    /// Returns [`GraphError::Provider`] when provider tags are duplicated,
-    /// subscriber tags are duplicated, or a subscriber has no matching provider.
+    /// Returns [`GraphError::Provider`] when provider tags are duplicated.
     pub fn build(self) -> GraphResult<SharedGraph> {
         SharedGraph::from_graph_with_core_and_durables(
             self.graph,
             self.providers,
-            self.subscribers,
             Vec::new(),
             self.wal_writer,
             self.audit_log,
@@ -770,56 +716,6 @@ pub(crate) fn validate_unique_provider_tags(
         }
     }
     Ok(())
-}
-
-pub(crate) fn validate_unique_subscriber_tags(
-    subscribers: &[Arc<dyn ChangeSubscriber>],
-) -> GraphResult<()> {
-    let mut seen = std::collections::BTreeSet::new();
-    for subscriber in subscribers {
-        let tag = subscriber_tag_checked(subscriber, "change subscriber validation")?;
-        if !seen.insert(tag) {
-            return Err(GraphError::Provider(ProviderError::Inconsistent {
-                reason: format!("duplicate change subscriber tag {tag}"),
-            }));
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_subscriber_tags_match_providers(
-    providers: &[Arc<dyn IndexProvider>],
-    subscribers: &[Arc<dyn ChangeSubscriber>],
-) -> GraphResult<()> {
-    let provider_tags = providers
-        .iter()
-        .map(|provider| provider.provider_tag())
-        .collect::<std::collections::BTreeSet<_>>();
-    for subscriber in subscribers {
-        let tag = subscriber_tag_checked(subscriber, "change subscriber validation")?;
-        if !provider_tags.contains(&tag) {
-            return Err(GraphError::Provider(ProviderError::Inconsistent {
-                reason: format!("change subscriber tag {tag} has no matching provider"),
-            }));
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn subscriber_tag_checked(
-    subscriber: &Arc<dyn ChangeSubscriber>,
-    context: &'static str,
-) -> GraphResult<ProviderTag> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| subscriber.subscriber_tag())).map_err(
-        |payload| {
-            GraphError::Provider(ProviderError::Inconsistent {
-                reason: format!(
-                    "{context}: change subscriber tag lookup panicked: {}",
-                    crate::panic_payload::describe(&payload)
-                ),
-            })
-        },
-    )
 }
 
 #[cfg(test)]

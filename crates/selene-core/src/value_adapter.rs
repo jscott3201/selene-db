@@ -22,7 +22,7 @@ use crate::extension_type_ids::ExtensionTypeId;
 
 /// Behavior contract for an extension-owned value type.
 pub trait ValueTypeAdapter: Send + Sync + 'static {
-    /// Stable human-readable name, such as `selene-vector.vector`.
+    /// Stable human-readable name, such as `selene-timeseries.reading`.
     fn name(&self) -> &'static str;
 
     /// Encode an extension-owned in-memory representation to payload bytes.

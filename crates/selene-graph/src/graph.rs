@@ -394,9 +394,9 @@ impl SeleneGraph {
 
     /// Iterate built-in property indexes as owned `(label, property, kind)` tuples.
     ///
-    /// This covers only SeleneGraph's built-in property indexes. Vector indexes
-    /// are extension-provider state and remain available through
-    /// `CALL vector.list_indexes()`.
+    /// This covers only SeleneGraph's built-in property indexes.
+    /// Extension-provider index state is surfaced through that provider's own
+    /// procedures.
     pub fn iter_property_indexes(&self) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind)> + '_ {
         self.property_index
             .iter()

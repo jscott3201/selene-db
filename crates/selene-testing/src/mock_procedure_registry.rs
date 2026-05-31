@@ -184,7 +184,7 @@ const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
 ///
 /// Corpus cases are parse-oriented, so these signatures are intentionally
 /// minimal. They let analyzer existence checks run over the corpus without
-/// making selene-testing depend on selene-pack.
+/// making selene-testing depend on selene-gql.
 #[must_use]
 pub fn default_corpus_registry() -> MockProcedureRegistry {
     MockProcedureRegistry::new().with_procedure(

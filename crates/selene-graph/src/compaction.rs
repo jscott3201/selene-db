@@ -42,16 +42,56 @@ use selene_core::{EdgeId, NodeId};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
-use crate::storage_compactor::{CompactionReport, LiveIdSet};
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::TypedIndex;
+
+/// The external ids that survive a compaction — the CORE liveness set.
+///
+/// Membership is by *external* id (stable across compaction, D22), never by
+/// internal `RowIndex`. [`compact_core`] produces this set; it is the single
+/// source of truth for which `NodeId`/`EdgeId` the dense graph retains.
+#[derive(Clone, Debug, Default)]
+pub struct LiveIdSet {
+    /// Surviving (alive) external node ids.
+    pub nodes: HashSet<NodeId>,
+    /// Surviving (alive) external edge ids.
+    pub edges: HashSet<EdgeId>,
+}
+
+impl LiveIdSet {
+    /// Construct an empty live set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Whether `id` survives the compaction.
+    #[must_use]
+    pub fn contains_node(&self, id: NodeId) -> bool {
+        self.nodes.contains(&id)
+    }
+
+    /// Whether `id` survives the compaction.
+    #[must_use]
+    pub fn contains_edge(&self, id: EdgeId) -> bool {
+        self.edges.contains(&id)
+    }
+}
+
+/// What CORE reclaimed during a compaction pass.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CompactionReport {
+    /// Node rows (dead + hole) dropped.
+    pub reclaimed_nodes: u64,
+    /// Edge rows (dead + hole) dropped.
+    pub reclaimed_edges: u64,
+}
 
 /// The product of compacting the CORE store.
 pub struct CompactedCore {
     /// The dense, fully-rebuilt compacted graph (no dead/hole rows).
     pub graph: SeleneGraph,
-    /// The surviving external ids — the cross-storage liveness set the snapshot
-    /// publisher (4c) hands to downstream [`crate::StorageCompactor`]s.
+    /// The surviving external ids the dense graph retains.
     pub live: LiveIdSet,
     /// What CORE reclaimed.
     pub report: CompactionReport,

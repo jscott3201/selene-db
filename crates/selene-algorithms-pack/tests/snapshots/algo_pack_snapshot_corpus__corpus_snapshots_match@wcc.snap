@@ -1,5 +1,0 @@
----
-source: crates/selene-algorithms-pack/tests/algo_pack_snapshot_corpus.rs
-expression: entry.render()
----
-wcc [Algorithm] CALL algo.wcc('p')

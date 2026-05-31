@@ -1,15 +1,14 @@
 //! Append-only audit log (`audit.log`, `SLAU`): durable engine-event record
 //! with retention independent of the WAL + snapshot lineage.
 //!
-//! Per the 2026-05-26 deletion+reclamation audit (Item 7 / Seam D), pack
-//! lifecycle audit events were written to the WAL as
-//! `SchemaChange::ProcedurePackLifecycle` changes. `WalWriter::rotate` then
-//! moved those entries into `wal.{N}.archive` files, which nothing reads — so an
-//! embedder that pruned archives (Item 5) silently lost pack history. The audit
+//! Per the 2026-05-26 deletion+reclamation audit (Item 7 / Seam D), engine
+//! events that were written into the WAL change stream got moved by
+//! `WalWriter::rotate` into `wal.{N}.archive` files, which nothing reads — so an
+//! embedder that pruned archives (Item 5) silently lost that history. The audit
 //! log fixes this by recording engine-owned events in a dedicated file with its
 //! own [`AuditRetentionPolicy`], decoupled from WAL-archive pruning. It is the
 //! durable "events" surface in the snapshot=state / WAL=changes / audit=events
-//! split.
+//! split, available as a forward framework for user-action audit events.
 //!
 //! # Layering: clock- and semantics-agnostic
 //!
@@ -64,9 +63,11 @@ pub const AUDIT_FORMAT_VERSION: u16 = 1;
 pub const DEFAULT_AUDIT_FILE_NAME: &str = "audit.log";
 /// Maximum opaque payload bytes per audit record (1 MiB).
 pub const MAX_AUDIT_PAYLOAD_BYTES: usize = 1 << 20;
-/// Reserved `kind` tag for pack-lifecycle events (payload = encoded
-/// `selene_core::PackLifecycleEvent`). The payload meaning lives in the layer
-/// that writes it; `audit.rs` only stores the tag.
+/// Reserved `kind` tag (value `1`), historically used for procedure-pack
+/// lifecycle events. The pack producer was removed in the extension teardown;
+/// the tag stays reserved so the `kind` space stays stable for the forward
+/// user-action audit framework. The payload meaning lives in the layer that
+/// writes it; `audit.rs` only stores the tag.
 pub const AUDIT_KIND_PACK_LIFECYCLE: u16 = 1;
 
 const AUDIT_FILE_HEADER_LEN: usize = 8;

@@ -30,9 +30,9 @@ pub mod istr;
 pub mod label_set;
 pub mod metrics;
 pub mod origin;
-pub mod pack_lifecycle;
 pub mod property_map;
 pub mod property_value_type;
+pub mod reserved;
 pub mod schema;
 pub mod value;
 pub mod value_adapter;
@@ -43,8 +43,7 @@ pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropert
 pub use codec::{Codec, CodecError};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
-    ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_FULLTEXT, SELENE_RDF,
-    SELENE_TIMESERIES, SELENE_VECTOR,
+    ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,
 };
 pub use gqlstatus::{ALL_GQLSTATUS_NAMES, gqlstatus_name};
 pub use hlc::HlcTimestamp;
@@ -55,9 +54,9 @@ pub use istr::{
 };
 pub use label_set::LabelSet;
 pub use origin::Origin;
-pub use pack_lifecycle::PackLifecycleEvent;
 pub use property_map::PropertyMap;
 pub use property_value_type::PropertyValueType;
+pub use reserved::RESERVED_LABEL_PREFIX;
 pub use schema::{
     EdgeEndpointDef, EdgeTypeDef, EdgeTypeDefV1, GraphType, GraphTypeId, KeyLabelSetPolicy,
     NodeKey, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PredefinedValueType, PropertyDef,

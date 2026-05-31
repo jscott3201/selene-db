@@ -13,12 +13,8 @@ members = [
     "crates/selene-graph",
     "crates/selene-persist",
     "crates/selene-gql",
-    "crates/selene-pack",
     "crates/selene-algorithms",
-    "crates/selene-algorithms-pack",
-    "crates/selene-vector-pack",
     "crates/selene-testing",
-    "crates/selene-vector",
 ]
 exclude = ["_spec", "crates/selene-gql/fuzz"]
 
@@ -79,9 +75,6 @@ lru = "0.16"
 blake3 = "1.8"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = "0.13"
-papaya = "0.2"
-schemars = "1.2"
-jsonschema = { version = "0.46", default-features = false }
 semver = "1"
 serde_json = "1"
 # Runtime stack-growth shim. Used by the GQL analyzer to bound recursive

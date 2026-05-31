@@ -251,7 +251,7 @@ mod tests {
     #[case(GraphError::Core(CoreError::ZeroIdentifier), "0G003")]
     #[case(GraphError::Durable { reason: "wal unavailable".to_owned() }, "5GQL0")]
     #[case(
-        GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag VECT".to_owned() }),
+        GraphError::Provider(ProviderError::Inconsistent { reason: "duplicate provider tag DEMO".to_owned() }),
         "5GQL0"
     )]
     #[case(GraphError::Persist(PersistError::MalformedSnapshotFilename), "5GQL0")]

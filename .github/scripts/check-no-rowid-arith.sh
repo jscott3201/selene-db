@@ -19,7 +19,7 @@
 # row_to_id) are annotated with a trailing `// rowid-arith-ok: <reason>` and
 # excluded here.
 #
-# Scope: production source of the four split-affected crates. Test/bench fixtures
+# Scope: production source of the split-affected crates. Test/bench fixtures
 # (which legitimately build identity-mapped data) and other crates (e.g.
 # selene-vector's own slot<->id mapping) are out of scope.
 set -uo pipefail
@@ -37,7 +37,6 @@ matches=$(
     ':(glob)crates/selene-graph/src/**/*.rs' \
     ':(glob)crates/selene-gql/src/**/*.rs' \
     ':(glob)crates/selene-algorithms/src/**/*.rs' \
-    ':(glob)crates/selene-pack/src/**/*.rs' \
     ':(glob,exclude)**/*tests*.rs' \
     ':(glob,exclude)**/tests.rs' 2>/dev/null \
     | grep -v 'rowid-arith-ok' \

@@ -71,11 +71,11 @@ pub use crate::procedure_registry::{
     Value,
 };
 pub use crate::runtime::{
-    AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, CallPlanCache,
-    CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError, ExecutorWarning,
-    GraphContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext, RollbackOutcome,
-    Session, SessionParameterValue, StatementOutput, TransactionOutcome, TxContext, WarningSink,
-    WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
+    AdaptiveOptimizer, Binding, BindingTable, BindingTableRegistry, BuiltinProcedureRegistry,
+    CallPlanCache, CallPlanCacheStats, CallPlanKey, DataExceptionSubclass, ExecutorError,
+    ExecutorWarning, GraphContext, MutationContext, PlanCache, PlanCacheStats, ProcedureContext,
+    RollbackOutcome, Session, SessionParameterValue, StatementOutput, TransactionOutcome,
+    TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
 pub use selene_core::{
     CancellationCause, CancellationChecker, CancellationToken, IStrAdmissionPolicy,

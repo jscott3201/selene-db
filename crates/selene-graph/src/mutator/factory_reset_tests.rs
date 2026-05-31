@@ -7,20 +7,12 @@
 //! - The schema resets to open (bound_type -> None): a previously closed GG02
 //!   graph becomes open and accepts a previously-invalid insert.
 //! - Exactly ONE `Change::GraphReset` is written regardless of N (O(1) WAL).
-//! - A vector-like `ChangeSubscriber` receives per-row NodeDeleted/EdgeDeleted
-//!   tombstones for every removed row — the anti-leak guarantee — and never the
-//!   declarative GraphReset variant.
 //! - Idempotent: a second DROP GRAPH on an empty + open graph is a clean no-op.
 
-use std::sync::{Arc, Mutex};
-
-use selene_core::{Change, ChangeKind, ChangeKindSet, GraphId, NodeId, PropertyMap, Value, intern};
+use selene_core::{Change, GraphId, NodeId, PropertyMap, Value, intern};
 
 use super::*;
-use crate::index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
-use crate::{ChangeSubscriber, SharedGraph};
-
-const TAG: ProviderTag = ProviderTag(*b"MOCK");
+use crate::SharedGraph;
 
 fn prop(key: &str, value: Value) -> PropertyMap {
     PropertyMap::from_pairs([(intern(key).unwrap(), value)]).unwrap()
@@ -185,125 +177,6 @@ fn factory_reset_on_empty_open_graph_is_clean_noop() {
     txn.mutator().factory_reset().unwrap();
     txn.commit().expect("double DROP GRAPH is idempotent");
 }
-
-// --- Anti-leak: a vector-like subscriber must receive per-row tombstones ---
-
-struct RecordingProvider;
-
-impl IndexProvider for RecordingProvider {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-    fn provider_tag(&self) -> ProviderTag {
-        TAG
-    }
-    fn read_section(&self, _sub: SubTag, _bytes: &[u8]) -> Result<(), ProviderError> {
-        Ok(())
-    }
-    fn write_section(&self, _sub: SubTag) -> Result<Vec<u8>, ProviderError> {
-        Ok(Vec::new())
-    }
-    fn on_change(&self, _change: &Change) -> Result<(), ProviderError> {
-        Ok(())
-    }
-    fn declared_sub_tags(&self) -> &[SubTag] {
-        &[]
-    }
-}
-
-struct TombstoneSubscriber {
-    seen: Arc<Mutex<Vec<Change>>>,
-}
-
-impl ChangeSubscriber for TombstoneSubscriber {
-    fn subscriber_tag(&self) -> ProviderTag {
-        TAG
-    }
-    fn change_kinds(&self) -> ChangeKindSet {
-        ChangeKindSet::EMPTY
-            .with(ChangeKind::NodeDeleted)
-            .with(ChangeKind::EdgeDeleted)
-    }
-    fn on_change(&self, change: &Change) -> Result<(), ProviderError> {
-        self.seen.lock().unwrap().push(change.clone());
-        Ok(())
-    }
-}
-
-#[test]
-fn factory_reset_fans_out_per_row_tombstones_to_subscriber() {
-    let seen = Arc::new(Mutex::new(Vec::new()));
-    let provider: Arc<dyn IndexProvider> = Arc::new(RecordingProvider);
-    let subscriber: Arc<dyn ChangeSubscriber> = Arc::new(TombstoneSubscriber {
-        seen: Arc::clone(&seen),
-    });
-
-    let shared = SharedGraph::builder(GraphId::new(4))
-        .with_provider(provider)
-        .with_change_subscriber(subscriber)
-        .build()
-        .unwrap();
-
-    let (expected_nodes, expected_edges) = {
-        let mut txn = shared.begin_write();
-        let (n, e) = {
-            let mut m = txn.mutator();
-            let labelled = intern("fr.sub.L").unwrap();
-            let a = m
-                .create_node(LabelSet::single(labelled), PropertyMap::new())
-                .unwrap();
-            let b = m
-                .create_node(LabelSet::single(labelled), PropertyMap::new())
-                .unwrap();
-            let untyped = m.create_node(LabelSet::new(), PropertyMap::new()).unwrap();
-            let edge = intern("fr.sub.E").unwrap();
-            let e0 = m.create_edge(edge, a, b, PropertyMap::new()).unwrap();
-            let e1 = m.create_edge(edge, b, untyped, PropertyMap::new()).unwrap();
-            (vec![a, b, untyped], vec![e0, e1])
-        };
-        txn.commit().unwrap();
-        (
-            n.into_iter().collect::<std::collections::BTreeSet<_>>(),
-            e.into_iter().collect::<std::collections::BTreeSet<_>>(),
-        )
-    };
-
-    seen.lock().unwrap().clear();
-    {
-        let mut txn = shared.begin_write();
-        txn.mutator().factory_reset().unwrap();
-        txn.commit().unwrap();
-    }
-
-    let seen = seen.lock().unwrap();
-    let deleted_nodes: std::collections::BTreeSet<NodeId> = seen
-        .iter()
-        .filter_map(|c| match c {
-            Change::NodeDeleted { id } => Some(*id),
-            _ => None,
-        })
-        .collect();
-    let deleted_edges: std::collections::BTreeSet<_> = seen
-        .iter()
-        .filter_map(|c| match c {
-            Change::EdgeDeleted { id } => Some(*id),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        deleted_nodes, expected_nodes,
-        "subscriber missed a node tombstone (vector leak), incl untyped"
-    );
-    assert_eq!(
-        deleted_edges, expected_edges,
-        "subscriber missed an edge tombstone (vector leak)"
-    );
-    assert!(
-        !seen.iter().any(|c| matches!(c, Change::GraphReset {})),
-        "subscriber must never receive the declarative GraphReset variant"
-    );
-}
-
 #[test]
 fn factory_reset_matches_detach_delete_plus_schema_drop_observable_state() {
     // factory_reset must leave the SAME alive bitmaps + indexes as manually

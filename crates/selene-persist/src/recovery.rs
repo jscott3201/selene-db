@@ -467,15 +467,15 @@ mod tests {
             12,
             &[
                 (*b"CORE", *b"META", b"meta".to_vec()),
-                (*b"VECT", *b"HNSW", b"hnsw".to_vec()),
+                (*b"DEMO", *b"SUBT", b"demo".to_vec()),
             ],
         );
         let core = RecordingProvider::new(*b"CORE");
-        let vector = RecordingProvider::new(*b"VECT");
-        let outcome = recover(&dir, &registry(&[core.clone(), vector.clone()])).unwrap();
+        let demo = RecordingProvider::new(*b"DEMO");
+        let outcome = recover(&dir, &registry(&[core.clone(), demo.clone()])).unwrap();
         assert_eq!(outcome.applied_snapshot_seq, 12);
         assert_eq!(outcome.last_wal_seq, 12);
-        assert_eq!(outcome.providers_invoked, vec![*b"CORE", *b"VECT"]);
+        assert_eq!(outcome.providers_invoked, vec![*b"CORE", *b"DEMO"]);
         assert_eq!(
             core.events(),
             vec![Event::Section {
@@ -484,10 +484,10 @@ mod tests {
             }]
         );
         assert_eq!(
-            vector.events(),
+            demo.events(),
             vec![Event::Section {
-                sub: *b"HNSW",
-                bytes: b"hnsw".to_vec()
+                sub: *b"SUBT",
+                bytes: b"demo".to_vec()
             }]
         );
         let _ = fs::remove_dir_all(dir);

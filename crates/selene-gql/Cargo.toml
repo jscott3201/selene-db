@@ -12,8 +12,10 @@ autobenches = false
 [dependencies]
 selene-core = { path = "../selene-core", version = "1.0.0" }
 selene-graph = { path = "../selene-graph", version = "1.0.0" }
+selene-algorithms = { path = "../selene-algorithms", version = "1.0.0" }
 jiff.workspace = true
 miette.workspace = true
+parking_lot.workspace = true
 pest.workspace = true
 pest_derive.workspace = true
 serde.workspace = true
@@ -41,10 +43,6 @@ parking_lot.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 selene-persist = { path = "../selene-persist", version = "1.0.0" }
-selene-pack = { path = "../selene-pack", version = "1.0.0" }
-selene-vector = { path = "../selene-vector", version = "1.0.0" }
-selene-vector-pack = { path = "../selene-vector-pack", version = "1.0.0" }
-selene-algorithms-pack = { path = "../selene-algorithms-pack", version = "1.0.0" }
 selene-testing = { path = "../selene-testing", version = "1.0.0" }
 serde_json.workspace = true
 tempfile.workspace = true

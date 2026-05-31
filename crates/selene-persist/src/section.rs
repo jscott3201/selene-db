@@ -137,8 +137,8 @@ mod tests {
                 payload_len: 7,
             },
             SectionEntry {
-                provider: *b"VECT",
-                sub: *b"HNSW",
+                provider: *b"DEMO",
+                sub: *b"SUBT",
                 payload_offset: 87,
                 payload_len: 11,
             },

@@ -1,5 +1,0 @@
----
-source: crates/selene-algorithms-pack/tests/algo_pack_snapshot_corpus.rs
-expression: entry.render()
----
-label_propagation_defaults [Algorithm] CALL algo.label_propagation('p', NULL)

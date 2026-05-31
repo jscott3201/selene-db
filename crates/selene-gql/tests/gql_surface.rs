@@ -5,18 +5,14 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-use selene_algorithms_pack::AlgorithmsPack;
 use selene_core::{GraphId, IStr, Value, intern};
 use selene_gql::{
-    BindingTable, CatalogOp, EmptyProcedureRegistry, PipelineOp, ProcedureContext, ProcedureError,
-    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputSchema,
-    ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier, Session,
-    StatementOutput, analyze, parse, plan,
+    BindingTable, BuiltinProcedureRegistry, CatalogOp, EmptyProcedureRegistry, PipelineOp,
+    ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata, ProcedureMutability,
+    ProcedureOutputSchema, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
+    Session, StatementOutput, analyze, parse, plan,
 };
-use selene_graph::{IndexProvider, SharedGraph};
-use selene_pack::ProcedurePackRegistry;
-use selene_vector::{HnswConfig, HnswIndexRegistry, IvfConfig, IvfIndexRegistry};
-use selene_vector_pack::VectorPack;
+use selene_graph::SharedGraph;
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
@@ -24,22 +20,6 @@ fn istr(value: &str) -> IStr {
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))
-}
-
-fn graph_with_vector_providers(id: u64) -> SharedGraph {
-    let hnsw = Arc::new(
-        HnswIndexRegistry::new(HnswConfig::new(2).expect("HNSW config builds"))
-            .expect("HNSW provider builds"),
-    );
-    let ivf = Arc::new(
-        IvfIndexRegistry::new(IvfConfig::new(2).expect("IVF config builds"))
-            .expect("IVF provider builds"),
-    );
-    SharedGraph::builder(GraphId::new(id))
-        .with_provider(hnsw as Arc<dyn IndexProvider>)
-        .with_provider(ivf as Arc<dyn IndexProvider>)
-        .build()
-        .expect("graph with vector providers builds")
 }
 
 fn rows(output: StatementOutput) -> BindingTable {
@@ -77,21 +57,14 @@ fn column_strings(table: &BindingTable, name: &str) -> Vec<String> {
         .collect()
 }
 
-fn full_registry() -> ProcedurePackRegistry {
-    let vector = VectorPack::new();
-    let algorithms = AlgorithmsPack::new();
-    ProcedurePackRegistry::builder()
-        .with_builtins()
-        .with_external_pack(vector.external_pack())
-        .with_external_pack(algorithms.external_pack())
-        .build()
-        .expect("full default registry builds")
+fn full_registry() -> BuiltinProcedureRegistry {
+    BuiltinProcedureRegistry::new()
 }
 
 #[test]
 fn show_indexes_lists_property_indexes_only() {
     let graph = graph(118_001);
-    let registry = ProcedurePackRegistry::with_builtins().expect("built-ins register");
+    let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
 
     session
@@ -112,41 +85,16 @@ fn show_indexes_lists_property_indexes_only() {
 }
 
 #[test]
-fn show_indexes_does_not_report_vector_indexes() {
-    let graph = graph_with_vector_providers(118_002);
-    let registry = full_registry();
-    let mut session = Session::new(&graph);
-
-    session
-        .execute_source(
-            "CALL vector.create_index('episodes', 'hnsw', {dim: 2})",
-            &registry,
-        )
-        .expect("vector index creation executes");
-    let vector_table = execute_rows(
-        &mut session,
-        "CALL vector.list_indexes() YIELD name, kind, dim",
-        &registry,
-    );
-    assert!(column_strings(&vector_table, "name").contains(&"episodes".to_owned()));
-
-    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
-
-    assert!(table.rows().is_empty());
-}
-
-#[test]
-fn show_procedures_lists_default_pack_registry() {
+fn show_procedures_lists_default_registry() {
     let graph = graph(118_003);
     let registry = full_registry();
     let mut session = Session::new(&graph);
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 36);
+    assert_eq!(table.row_count(), 24);
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
-    assert!(names.contains(&"vector.list_indexes".to_owned()));
     assert!(names.contains(&"algo.pagerank".to_owned()));
 }
 
@@ -197,7 +145,7 @@ fn explain_rejects_transaction_control_and_nested_explain() {
 #[test]
 fn feature_status_procedure_returns_supported_rows() {
     let graph = graph(118_006);
-    let registry = ProcedurePackRegistry::with_builtins().expect("built-ins register");
+    let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
     let table = execute_rows(
         &mut session,

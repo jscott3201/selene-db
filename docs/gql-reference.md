@@ -11,9 +11,9 @@ register are rejected at parse time by the GQL Flagger (ISO GQL Clause 24.6).
 
 For the engine architecture see [`architecture.md`](architecture.md). For
 durability and recovery see
-[`persistence-and-recovery.md`](persistence-and-recovery.md). For procedure
-packs see [`graph-algorithms.md`](graph-algorithms.md) and
-[`vector-search.md`](vector-search.md).
+[`persistence-and-recovery.md`](persistence-and-recovery.md). For the native
+graph algorithms exposed via `CALL algo.*` see
+[`graph-algorithms.md`](graph-algorithms.md).
 
 The Rust API used in every example below is:
 
@@ -611,11 +611,13 @@ emitted from the CALL or the DDL form.
 
 ---
 
-## 8. `CALL` and procedure packs
+## 8. `CALL` and procedures
 
-Procedure calls invoke named functions registered in the procedure-pack
+Procedure calls invoke named functions registered in the native procedure
 registry. A `CALL` accepts positional arguments and yields a tabular
-result via `YIELD`.
+result via `YIELD`. The `CALL` grammar is unchanged ISO GQL (external
+procedures per ISO `IW010`); there is no procedure-pack or loadable-extension
+machinery behind it.
 
 ```gql
 CALL algo.pagerank('person_graph', 0.85, 30)
@@ -641,17 +643,19 @@ output before it joins the surrounding pipeline.
 | Procedure | Tier | Purpose |
 |---|---|---|
 | `selene.health` | Graph | Liveness/readiness probe. Returns engine version, snapshot count, WAL state. |
+| `selene.feature_status` | Graph | Surfaces the claimed ISO feature register at runtime. |
+| `selene.verify('deep')` | Graph | Integrity check over the live graph. The optional `deep` flag defaults to `false`. |
 | `selene.create_index('name', ':Label', 'prop')` | Mutation | Create a secondary index. Audits through the mutation funnel. |
 | `selene.drop_index('name')` | Mutation | Drop a secondary index. Audits through the mutation funnel. |
-| `selene.pack.history()` | Graph | Replay the procedure-pack activation log from the WAL. |
 
-The platform built-ins are documented in the rustdoc of
-`selene-pack::builtin`.
+The 5 platform built-ins are registered by the native
+`selene-gql` `BuiltinProcedureRegistry` (the sole frozen production
+`ProcedureRegistry` impl) and documented in its rustdoc.
 
-### Algorithm pack (`algo.*`)
+### Algorithm procedures (`algo.*`)
 
-Registered by `selene-algorithms-pack`. The 19 procedure names are listed
-in `ALGO_PROCEDURE_NAMES`:
+Bound natively over the mandatory `selene-algorithms` crate by the same
+`BuiltinProcedureRegistry`. The 19 procedure names are:
 
 ```text
 algo.projection_build, algo.projection_get, algo.projection_drop, algo.projection_list,
@@ -664,29 +668,14 @@ algo.dijkstra, algo.sssp, algo.apsp
 See [`graph-algorithms.md`](graph-algorithms.md) for argument shapes and
 result columns.
 
-### Vector pack (`vector.*`)
-
-Registered by `selene-vector-pack`. The 12 procedure names are listed in
-`VECTOR_PROCEDURE_NAMES`:
-
-```text
-vector.search, vector.upsert, vector.delete,
-vector.bulk_upsert, vector.bulk_delete,
-vector.ivf_search, vector.ivf_bulk_upsert, vector.ivf_bulk_delete,
-vector.ivf_stats,
-vector.create_index, vector.drop_index, vector.list_indexes
-```
-
-See [`vector-search.md`](vector-search.md) for argument shapes and
-result columns.
-
 ### Registry construction
 
 `EmptyProcedureRegistry` is the no-op registry used by the README example.
-A real embedder builds a `selene_pack::ProcedurePackRegistry` via its
-builder, registering external packs (`AlgorithmsPack`, `VectorPack`) at
-construction time. After build, the registry is frozen (D16) and can be
-shared across threads via `Arc`.
+A real embedder constructs the native `BuiltinProcedureRegistry`, which is
+frozen at construction (D16): it allocates a fixed set of handles for the 5
+platform built-ins + 19 `algo.*` procedures and never changes thereafter
+(`registry_version()` is a constant `0`). It can be shared across threads
+via `Arc`. There are no loadable third-party packs to register.
 
 ---
 
@@ -794,7 +783,7 @@ explicitly absent. The canonical rationale is
 | SPARQL grammar | Not supported. |
 | `EXCEPT`, `INTERSECT`, `OTHERWISE` set operators | Parses; analyzer rejects (features `GQ04`-`GQ09`). |
 | Counted shortest path (`G019`, `G020`) | Not claimed. Use `ANY SHORTEST` or `ALL SHORTEST`. |
-| Inline procedure definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP01`-`GP03`, `GP05`-`GP15`). Named procedures via packs only (`GP04`). |
+| Inline procedure definitions (`CREATE PROCEDURE { ... }`) | Not claimed (features `GP01`-`GP03`, `GP05`-`GP15`). Named procedures (`GP04`) are served only by the native built-in registry. |
 | Procedure-local variables | Not claimed (features `GP05`-`GP15`). |
 | Mixed catalog/data transactions | Not claimed (feature `GP18`). |
 | Multi-graph transactions | Not claimed (feature `GT03`). |
@@ -803,7 +792,6 @@ explicitly absent. The canonical rationale is
 | Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
 | `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL` synonym | Not claimed. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
-| Full-text search syntax | Out of scope. Future first-party extension allocation `FULL`. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |
 | Recursive CTEs (`WITH RECURSIVE`) | Not in ISO GQL; not supported. |

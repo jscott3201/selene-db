@@ -1,6 +1,0 @@
----
-source: crates/selene-pack/tests/pack_snapshot_corpus.rs
-expression: snapshot.to_string()
----
-manifest:
-- ERR variant=InvalidProcedureName gate=procedure_name_lexical name="demo"
