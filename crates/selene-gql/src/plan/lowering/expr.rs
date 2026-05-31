@@ -1,7 +1,7 @@
 //! Expression lowering helpers.
 
 use crate::{
-    IsCheckKind, ProcedureRegistry, SourceSpan, ValueExpr,
+    ProcedureRegistry, SourceSpan, ValueExpr,
     analyze::{AnalyzedStatement, BindingId, ExprId},
     plan::{
         AggregateArg, CatalogOp, ExecutionPlan, FilterPredicate, FilterPredicateKind, JoinTree,
@@ -374,78 +374,9 @@ fn collect_subqueries_in_expr(
     entries: &mut Vec<(ExprId, PlannedSubquery)>,
 ) -> Result<(), PlannerError> {
     match expr {
-        ValueExpr::Literal(_) | ValueExpr::Variable { .. } | ValueExpr::Parameter { .. } => {}
-        ValueExpr::PropertyAccess { target, .. } => {
-            collect_subqueries_in_expr(target, analyzed, registry, entries)?;
-        }
-        ValueExpr::ListAccess { target, index, .. } => {
-            collect_subqueries_in_expr(target, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(index, analyzed, registry, entries)?;
-        }
-        ValueExpr::ListLiteral { items, .. } => {
-            for item in items {
-                collect_subqueries_in_expr(item, analyzed, registry, entries)?;
-            }
-        }
-        ValueExpr::RecordLiteral { fields, .. } => {
-            for (_, value) in fields {
-                collect_subqueries_in_expr(value, analyzed, registry, entries)?;
-            }
-        }
-        ValueExpr::BinaryOp { lhs, rhs, .. } => {
-            collect_subqueries_in_expr(lhs, analyzed, registry, entries)?;
-            collect_subqueries_in_expr(rhs, analyzed, registry, entries)?;
-        }
-        ValueExpr::UnaryOp { operand, .. } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-        }
-        ValueExpr::FunctionCall { args, .. } => {
-            for arg in args {
-                collect_subqueries_in_expr(arg, analyzed, registry, entries)?;
-            }
-        }
-        ValueExpr::Normalize { source, .. } => {
-            collect_subqueries_in_expr(source, analyzed, registry, entries)?;
-        }
-        ValueExpr::Trim {
-            character, source, ..
-        } => {
-            if let Some(character) = character {
-                collect_subqueries_in_expr(character, analyzed, registry, entries)?;
-            }
-            collect_subqueries_in_expr(source, analyzed, registry, entries)?;
-        }
-        ValueExpr::IsCheck { operand, kind, .. } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-            collect_subqueries_in_is_check(kind, analyzed, registry, entries)?;
-        }
-        ValueExpr::InList { operand, list, .. } => {
-            collect_subqueries_in_expr(operand, analyzed, registry, entries)?;
-            for item in list {
-                collect_subqueries_in_expr(item, analyzed, registry, entries)?;
-            }
-        }
-        ValueExpr::AllDifferent { items, .. } | ValueExpr::Same { items, .. } => {
-            for item in items {
-                collect_subqueries_in_expr(item, analyzed, registry, entries)?;
-            }
-        }
-        ValueExpr::PropertyExists { target, .. } => {
-            collect_subqueries_in_expr(target, analyzed, registry, entries)?;
-        }
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            ..
-        } => {
-            for (condition, value) in branches {
-                collect_subqueries_in_expr(condition, analyzed, registry, entries)?;
-                collect_subqueries_in_expr(value, analyzed, registry, entries)?;
-            }
-            if let Some(value) = else_branch {
-                collect_subqueries_in_expr(value, analyzed, registry, entries)?;
-            }
-        }
+        // Subquery bodies are `MatchClause` / `QueryPipeline`, not `ValueExpr`
+        // children: register the planned subquery (which recurses into its own
+        // body) rather than walking through `for_each_child`.
         ValueExpr::Exists {
             pattern,
             negated,
@@ -475,29 +406,17 @@ fn collect_subqueries_in_expr(
         ValueExpr::ValueSubquery { body, span } => {
             collect_value_subquery(expr, body, *span, analyzed, registry, entries)?;
         }
-        ValueExpr::Cast { value, .. } => {
-            collect_subqueries_in_expr(value, analyzed, registry, entries)?;
+        // Every other variant only recurses into its direct `ValueExpr`
+        // children (including the `IS [SOURCE|DESTINATION] OF` operand).
+        _ => {
+            let mut result = Ok(());
+            expr.for_each_child(&mut |child| {
+                if result.is_ok() {
+                    result = collect_subqueries_in_expr(child, analyzed, registry, entries);
+                }
+            });
+            result?;
         }
-    }
-    Ok(())
-}
-
-fn collect_subqueries_in_is_check(
-    kind: &IsCheckKind,
-    analyzed: &AnalyzedStatement,
-    registry: &dyn ProcedureRegistry,
-    entries: &mut Vec<(ExprId, PlannedSubquery)>,
-) -> Result<(), PlannerError> {
-    match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => {
-            collect_subqueries_in_expr(value, analyzed, registry, entries)?;
-        }
-        IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
-        | IsCheckKind::Typed(_)
-        | IsCheckKind::Normalized(_) => {}
     }
     Ok(())
 }

@@ -1,10 +1,10 @@
 //! Span-erasing AST equality helpers.
 
 use crate::ast::{
-    DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, IsCheckKind, MatchClause,
-    MutationPipeline, MutationStatement, MutationTerminator, NodePattern, PatternElement,
-    ProcedureCall, QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement,
-    TypePropertyConstraint, TypePropertyDef, ValueExpr, WithClause,
+    DdlStatement, EdgePattern, GraphPattern, InlineProcedureCall, MatchClause, MutationPipeline,
+    MutationStatement, MutationTerminator, NodePattern, PatternElement, ProcedureCall,
+    QueryPipeline, ReturnClause, ReturnItem, SetItem, Statement, TypePropertyConstraint,
+    TypePropertyDef, ValueExpr, WithClause,
 };
 
 use super::SourceSpan;
@@ -170,144 +170,18 @@ fn scrub_edge_pattern(pattern: &mut EdgePattern) {
 }
 
 fn scrub_value(value: &mut ValueExpr) {
+    // Erase this node's own span, then recurse into direct `ValueExpr` children
+    // (which includes `IS [SOURCE|DESTINATION] OF` operands). Subquery bodies
+    // are `MatchClause` / `QueryPipeline`, not `ValueExpr` children, so they are
+    // descended explicitly below.
+    value.for_each_span_mut(&mut |span| *span = SourceSpan::default());
+    value.for_each_child_mut(&mut scrub_value);
     match value {
-        ValueExpr::Literal(literal) => match literal {
-            crate::Literal::Bool(_, span)
-            | crate::Literal::Integer(_, span)
-            | crate::Literal::Float(_, span)
-            | crate::Literal::String(_, span)
-            | crate::Literal::Uuid(_, span)
-            | crate::Literal::Null(span) => *span = SourceSpan::default(),
-        },
-        ValueExpr::Variable { span, .. } | ValueExpr::Parameter { span, .. } => {
-            *span = SourceSpan::default();
-        }
-        ValueExpr::PropertyAccess { target, span, .. } => {
-            *span = SourceSpan::default();
-            scrub_value(target);
-        }
-        ValueExpr::ListAccess {
-            target,
-            index,
-            span,
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(target);
-            scrub_value(index);
-        }
-        ValueExpr::ListLiteral { items, span } => {
-            *span = SourceSpan::default();
-            for item in items {
-                scrub_value(item);
-            }
-        }
-        ValueExpr::RecordLiteral { fields, span } => {
-            *span = SourceSpan::default();
-            for (_, value) in fields {
-                scrub_value(value);
-            }
-        }
-        ValueExpr::BinaryOp { lhs, rhs, span, .. } => {
-            *span = SourceSpan::default();
-            scrub_value(lhs);
-            scrub_value(rhs);
-        }
-        ValueExpr::UnaryOp { operand, span, .. } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-        }
-        ValueExpr::FunctionCall { args, span, .. } => {
-            *span = SourceSpan::default();
-            for arg in args {
-                scrub_value(arg);
-            }
-        }
-        ValueExpr::Normalize { source, span, .. } => {
-            *span = SourceSpan::default();
-            scrub_value(source);
-        }
-        ValueExpr::Trim {
-            character,
-            source,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            if let Some(character) = character {
-                scrub_value(character);
-            }
-            scrub_value(source);
-        }
-        ValueExpr::IsCheck {
-            operand,
-            kind,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-            scrub_is_check(kind);
-        }
-        ValueExpr::InList {
-            operand,
-            list,
-            span,
-            ..
-        } => {
-            *span = SourceSpan::default();
-            scrub_value(operand);
-            for item in list {
-                scrub_value(item);
-            }
-        }
-        ValueExpr::AllDifferent { items, span } | ValueExpr::Same { items, span } => {
-            *span = SourceSpan::default();
-            for item in items {
-                scrub_value(item);
-            }
-        }
-        ValueExpr::PropertyExists { target, span, .. } => {
-            *span = SourceSpan::default();
-            scrub_value(target);
-        }
-        ValueExpr::Case {
-            branches,
-            else_branch,
-            span,
-        } => {
-            *span = SourceSpan::default();
-            for (condition, result) in branches {
-                scrub_value(condition);
-                scrub_value(result);
-            }
-            if let Some(value) = else_branch {
-                scrub_value(value);
-            }
-        }
-        ValueExpr::Exists { pattern, span, .. } | ValueExpr::CountSubquery { pattern, span } => {
-            *span = SourceSpan::default();
+        ValueExpr::Exists { pattern, .. } | ValueExpr::CountSubquery { pattern, .. } => {
             scrub_match(pattern);
         }
-        ValueExpr::ValueSubquery { body, span } => {
-            *span = SourceSpan::default();
-            scrub_query_pipeline(body);
-        }
-        ValueExpr::Cast { value, span, .. } => {
-            *span = SourceSpan::default();
-            scrub_value(value);
-        }
-    }
-}
-
-fn scrub_is_check(kind: &mut IsCheckKind) {
-    match kind {
-        IsCheckKind::SourceOf(value) | IsCheckKind::DestinationOf(value) => scrub_value(value),
-        IsCheckKind::Null
-        | IsCheckKind::Directed
-        | IsCheckKind::Labeled(_)
-        | IsCheckKind::TruthValue(_)
-        | IsCheckKind::Typed(_)
-        | IsCheckKind::Normalized(_) => {}
+        ValueExpr::ValueSubquery { body, .. } => scrub_query_pipeline(body),
+        _ => {}
     }
 }
 
