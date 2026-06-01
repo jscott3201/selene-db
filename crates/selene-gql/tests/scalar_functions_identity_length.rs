@@ -138,7 +138,7 @@ fn two_edge_path_value() -> Value {
 }
 
 #[test]
-fn element_id_returns_external_string_for_nodes_and_edges() {
+fn element_id_returns_string_for_nodes_and_edges() {
     assert_external_id(
         single_value("MATCH (n:Person) RETURN element_id(n) AS id LIMIT 1", "id"),
         "NodeId(",

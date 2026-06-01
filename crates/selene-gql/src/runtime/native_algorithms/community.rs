@@ -171,8 +171,6 @@ mod tests {
 
     use super::*;
 
-    // `intern` (not bare `intern`) keeps the runtime-path DoS
-    // guard `tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql` green.
     fn projection_name() -> Value {
         Value::String(intern("p").expect("test string interns"))
     }

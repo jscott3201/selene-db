@@ -581,7 +581,7 @@ pub(super) fn build_typed_param_ref(
 /// Bare (unquoted) identifiers — the common case — are returned borrowed
 /// (`Cow::Borrowed`) with zero allocation; only delimited identifiers that
 /// must strip delimiters or unescape `""` allocate. Callers pass the result
-/// straight into the budget-routed interner, which only needs `&str`.
+/// straight into `intern`, which only needs `&str`.
 pub(super) fn decode_ident_like(text: &str) -> Cow<'_, str> {
     if let Some(inner) = text.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
         Cow::Owned(inner.replace("\"\"", "\""))

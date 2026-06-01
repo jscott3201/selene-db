@@ -208,7 +208,4 @@ fn any_branch_has_applicable_index(
 }
 
 // Helper unit tests (`flat_disjunction_singles` shape coverage) live in
-// `tests/optimize_disjunctive_label_expansion.rs` rather than inline here,
-// because the `dos_guard::no_unbudgeted_intern_call_in_selene_gql` test
-// scans for direct interner calls (a textual grep) anywhere under
-// `crates/selene-gql/src/`, including `#[cfg(test)]` blocks.
+// `tests/optimize_disjunctive_label_expansion.rs` rather than inline here.

@@ -354,7 +354,7 @@ fn schema_change_postcard_round_trip() {
 }
 
 #[test]
-fn istr_postcard_round_trips_through_intern_pool() {
+fn istr_postcard_round_trips() {
     let value = istr("serde.istr.canonical");
     let bytes = postcard::to_allocvec(&value).unwrap();
     let decoded: IStr = postcard::from_bytes(&bytes).unwrap();
@@ -362,7 +362,7 @@ fn istr_postcard_round_trips_through_intern_pool() {
 }
 
 #[test]
-fn istr_deserialize_admits_to_interner() {
+fn istr_deserialize_from_str_preserves_content() {
     let bytes = postcard::to_allocvec("serde.istr.fresh").unwrap();
     let decoded: IStr = postcard::from_bytes(&bytes).unwrap();
     assert_eq!(decoded.as_str(), "serde.istr.fresh");
@@ -462,12 +462,6 @@ fn extended_value_payload_postcard_round_trip() {
         payload: Arc::from([1_u8, 2, 3, 4]),
     };
     rt(&value);
-}
-
-#[test]
-#[ignore = "requires a resettable or reduced-cap test interner; production interner is process-global"]
-fn istr_deserialize_respects_cap() {
-    let _ = postcard::to_allocvec("would-exceed-cap").unwrap();
 }
 
 proptest! {

@@ -8,7 +8,7 @@
 //!   this test exercises the no-multi-label case where the two forms agree.
 //! - Composition with BRIEF-154 parameterized index selection (acceptance
 //!   bar #7).
-//! - Composition with BRIEF-153 STRING-index ExternalString carve-out.
+//! - Composition with STRING-index equality probes.
 //! - Downstream LIMIT / ORDER BY / GROUP BY — the union happens at
 //!   JoinTree level, so the pipeline operates on the unioned binding
 //!   table, not per branch.

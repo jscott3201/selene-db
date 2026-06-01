@@ -282,7 +282,7 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
         // Per ISO 39075:2024 section18.9 <record type> / <field types specification> +
         // section18.10 <field type>: a braced `RECORD { a :: INT }` is a closed record
         // type; bare `RECORD` (no fields) is the open record type. Field names are
-        // user-controlled and charge the per-parse interner budget (DoS bound).
+        // user-controlled; interning them applies the per-string byte cap (IL013).
         let fields = pair
             .into_inner()
             .filter(|child| child.as_rule() == Rule::record_field_type)

@@ -1,10 +1,6 @@
 //! `selene.verify` integrity-check unit tests.
 //!
-//! Ported verbatim from the historical procedure-pack `verify` tests. The only
-//! change is the interner helper: the runtime-path DoS guard
-//! (`tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql`) forbids the
-//! bare interner-admission shorthand in any `src/` file, so the helper uses the
-//! budget-aware `intern` instead.
+//! Ported verbatim from the historical procedure-pack `verify` tests.
 
 use std::sync::Arc;
 

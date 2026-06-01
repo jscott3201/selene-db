@@ -156,7 +156,8 @@ fn default_expr(
         ProcedureDefaultValue::Integer(value) => Literal::Integer(value, span),
         ProcedureDefaultValue::String(value) => {
             let interned = intern(value).map_err(|_| AnalysisError::NotImplemented {
-                message: "procedure default string exhausted the interner budget".to_owned(),
+                message: "procedure default string exceeds the maximum interned string length"
+                    .to_owned(),
                 span,
                 hint: None,
             })?;

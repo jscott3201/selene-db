@@ -260,8 +260,6 @@ mod tests {
     use crate::analyze::types::AnalyzedType;
     use crate::plan::BindingElement;
 
-    // `intern` (not the budget-bypassing `intern`) keeps this
-    // test module clear of the `no_unbudgeted_intern_call_in_selene_gql` guard.
     fn name_of(name: &str) -> selene_core::IStr {
         selene_core::intern(name).unwrap()
     }

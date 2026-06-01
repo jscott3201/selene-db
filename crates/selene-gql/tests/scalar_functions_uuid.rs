@@ -46,7 +46,7 @@ fn assert_feature_recorded(source: &str) {
     );
 }
 
-fn external_string(value: Value) -> String {
+fn string_value(value: Value) -> String {
     let Value::String(value) = value else {
         panic!("expected String, got {value:?}");
     };
@@ -179,7 +179,7 @@ fn cast_string_as_uuid_returns_uuid_value() {
 }
 
 #[test]
-fn cast_external_string_as_uuid_returns_uuid_value() {
+fn cast_computed_string_as_uuid_returns_uuid_value() {
     assert_eq!(
         uuid_value(&format!(
             "RETURN CAST(upper('{UUID_TEXT}') AS UUID) AS value"
@@ -189,9 +189,9 @@ fn cast_external_string_as_uuid_returns_uuid_value() {
 }
 
 #[test]
-fn cast_uuid_as_string_returns_external_string() {
+fn cast_uuid_as_string_returns_string() {
     assert_eq!(
-        external_string(single_value(
+        string_value(single_value(
             "RETURN CAST(UUID '018f1b6d-7b89-7cc0-9f40-2c6f8d4df101' AS STRING) AS value",
             "value",
         )),
