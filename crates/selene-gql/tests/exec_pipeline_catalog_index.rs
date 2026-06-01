@@ -389,7 +389,12 @@ fn drop_index_refuses_ambiguous_rendered_name_matches() {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
-            .create_property_index_named(sensor, ts, TypedIndexKind::I64, Some(collision))
+            .create_property_index_named(
+                sensor,
+                ts.clone(),
+                TypedIndexKind::I64,
+                Some(collision.clone()),
+            )
             .unwrap();
         mutator
             .create_property_index_named(meter, ts, TypedIndexKind::I64, Some(collision))

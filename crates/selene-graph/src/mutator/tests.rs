@@ -38,7 +38,10 @@ fn create_node_with_two_labels_indexes_both() {
         let a = intern("node.index.a").unwrap();
         let b = intern("node.index.b").unwrap();
         let id = mutator
-            .create_node(LabelSet::from_iter([a, b]), PropertyMap::new())
+            .create_node(
+                LabelSet::from_iter([a.clone(), b.clone()]),
+                PropertyMap::new(),
+            )
             .expect("create_node ok");
         assert!(mutator.read().nodes_with_label(&a).unwrap().contains(0));
         assert!(mutator.read().nodes_with_label(&b).unwrap().contains(0));
@@ -60,12 +63,12 @@ fn update_node_label_diff_updates_indexes_atomically() {
         let old = intern("node.index.old").unwrap();
         let new = intern("node.index.new").unwrap();
         let id = mutator
-            .create_node(LabelSet::single(old), PropertyMap::new())
+            .create_node(LabelSet::single(old.clone()), PropertyMap::new())
             .expect("create_node ok");
         mutator
             .update_node(
                 id,
-                LabelDiff::new([new], [old]).unwrap(),
+                LabelDiff::new([new.clone()], [old.clone()]).unwrap(),
                 PropertyDiff::new([], []).unwrap(),
             )
             .unwrap();
@@ -89,7 +92,10 @@ fn delete_node_removes_from_all_label_indexes() {
         let a = intern("node.index.delete.a").unwrap();
         let b = intern("node.index.delete.b").unwrap();
         let id = mutator
-            .create_node(LabelSet::from_iter([a, b]), PropertyMap::new())
+            .create_node(
+                LabelSet::from_iter([a.clone(), b.clone()]),
+                PropertyMap::new(),
+            )
             .expect("create_node ok");
         mutator.delete_node(id).unwrap();
         assert!(mutator.read().nodes_with_label(&a).is_none());
@@ -182,7 +188,7 @@ fn delete_node_cascade_clears_edge_label_index() {
         let a = empty_node(&mut mutator);
         let b = empty_node(&mut mutator);
         mutator
-            .create_edge(label, a, b, PropertyMap::new())
+            .create_edge(label.clone(), a, b, PropertyMap::new())
             .expect("create_edge ok");
         assert!(mutator.read().edges_with_label(&label).unwrap().contains(0));
         mutator.delete_node(a).unwrap();
@@ -221,7 +227,7 @@ fn index_entry_dropped_when_bitmap_empties() {
     {
         let mut mutator = txn.mutator();
         let id = mutator
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .expect("create_node ok");
         assert_eq!(mutator.read().label_count(), 1);
         mutator.delete_node(id).unwrap();
@@ -272,7 +278,7 @@ fn read_within_tx_sees_label_index_updates() {
     let label = intern("node.index.tx-read").unwrap();
     let mut mutator = txn.mutator();
     let id = mutator
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .expect("create_node ok");
     let row = mutator
         .read()
@@ -343,7 +349,7 @@ fn update_edge_updates_properties() {
         mutator
             .update_edge(
                 edge,
-                PropertyDiff::new([(prop, Value::String(prop))], []).unwrap(),
+                PropertyDiff::new([(prop.clone(), Value::String(prop.clone()))], []).unwrap(),
             )
             .unwrap();
         (edge, prop)
@@ -365,10 +371,10 @@ fn remove_node_property_removes_value_and_emits_change() {
         let id = mutator
             .create_node(
                 LabelSet::new(),
-                PropertyMap::from_pairs([(prop, Value::Int(7))]).unwrap(),
+                PropertyMap::from_pairs([(prop.clone(), Value::Int(7))]).unwrap(),
             )
             .unwrap();
-        mutator.remove_node_property(id, prop).unwrap();
+        mutator.remove_node_property(id, prop.clone()).unwrap();
         assert!(
             mutator
                 .read()
@@ -382,7 +388,10 @@ fn remove_node_property_removes_value_and_emits_change() {
     let outcome = txn.commit().unwrap();
     assert_eq!(
         outcome.changes[1],
-        Change::NodePropertyRemoved { id, property: prop }
+        Change::NodePropertyRemoved {
+            id,
+            property: prop.clone()
+        }
     );
     assert!(
         shared
@@ -420,14 +429,20 @@ fn remove_node_label_updates_index_and_emits_change() {
         let mut mutator = txn.mutator();
         let label = intern("node.remove.label").unwrap();
         let id = mutator
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
-        mutator.remove_node_label(id, label).unwrap();
+        mutator.remove_node_label(id, label.clone()).unwrap();
         assert!(mutator.read().nodes_with_label(&label).is_none());
         (id, label)
     };
     let outcome = txn.commit().unwrap();
-    assert_eq!(outcome.changes[1], Change::NodeLabelRemoved { id, label });
+    assert_eq!(
+        outcome.changes[1],
+        Change::NodeLabelRemoved {
+            id,
+            label: label.clone()
+        }
+    );
     assert!(shared.read().nodes_with_label(&label).is_none());
 }
 
@@ -445,10 +460,10 @@ fn remove_edge_property_removes_value_and_emits_change() {
                 intern("edge.remove").unwrap(),
                 left,
                 right,
-                PropertyMap::from_pairs([(prop, Value::Int(9))]).unwrap(),
+                PropertyMap::from_pairs([(prop.clone(), Value::Int(9))]).unwrap(),
             )
             .unwrap();
-        mutator.remove_edge_property(edge, prop).unwrap();
+        mutator.remove_edge_property(edge, prop.clone()).unwrap();
         assert!(
             mutator
                 .read()
@@ -464,7 +479,7 @@ fn remove_edge_property_removes_value_and_emits_change() {
         outcome.changes.last(),
         Some(&Change::EdgePropertyRemoved {
             id: edge,
-            property: prop,
+            property: prop.clone(),
         })
     );
     assert!(
@@ -484,10 +499,10 @@ fn remove_node_property_rejects_immutable_property() {
     let graph_type = GraphTypeDef {
         name: intern("node.remove.immutable.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
-            key_labels: LabelSet::single(person),
+            name: person.clone(),
+            key_labels: LabelSet::single(person.clone()),
             properties: vec![PropertyTypeDef {
-                name: serial,
+                name: serial.clone(),
                 value_type: PropertyValueType::String,
                 list_element_type: None,
                 required: false,
@@ -510,7 +525,7 @@ fn remove_node_property_rejects_immutable_property() {
         .mutator()
         .create_node(
             LabelSet::single(person),
-            PropertyMap::from_pairs([(serial, Value::String(serial))]).unwrap(),
+            PropertyMap::from_pairs([(serial.clone(), Value::String(serial.clone()))]).unwrap(),
         )
         .unwrap();
     txn.commit().unwrap();
@@ -518,7 +533,7 @@ fn remove_node_property_rejects_immutable_property() {
     let mut txn = shared.begin_write();
     let err = txn
         .mutator()
-        .remove_node_property(id, serial)
+        .remove_node_property(id, serial.clone())
         .expect_err("immutable property removal is rejected");
     assert!(matches!(
         err,
@@ -586,22 +601,22 @@ proptest! {
             for (op, label_index, node_index) in ops {
                 match op {
                     0 => {
-                        let label = labels[label_index % labels.len()];
+                        let label = labels[label_index % labels.len()].clone();
                         let id = mutator
-                            .create_node(LabelSet::single(label), PropertyMap::new())
+                            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                             .expect("create_node ok");
                         created.push(id);
                         alive.insert(id, BTreeSet::from([label]));
                     }
                     1 if !alive.is_empty() => {
                         let id = *alive.keys().nth(node_index % alive.len()).unwrap();
-                        let label = labels[label_index % labels.len()];
+                        let label = labels[label_index % labels.len()].clone();
                         let current = alive.get_mut(&id).unwrap();
                         let (added, removed) = if current.contains(&label) {
                             current.remove(&label);
                             (Vec::new(), vec![label])
                         } else {
-                            current.insert(label);
+                            current.insert(label.clone());
                             (vec![label], Vec::new())
                         };
                         mutator
@@ -628,7 +643,7 @@ proptest! {
                 // through the authoritative map rather than `id - 1` arithmetic.
                 let row = mutator.read().row_for_node_id(*id).unwrap().get();
                 for label in node_labels {
-                    expected.entry(*label).or_default().insert(row);
+                    expected.entry(label.clone()).or_default().insert(row);
                 }
             }
             for label in labels {

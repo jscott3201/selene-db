@@ -79,7 +79,10 @@ pub(crate) fn materialize_parameter_values<'a>(
     let mut materialized = scalar_parameters.clone();
     for (name, value) in parameters {
         if let SessionParameterValue::Table(table) = value {
-            materialized.insert(*name, Value::TableRef(registry.register(Arc::clone(table))));
+            materialized.insert(
+                name.clone(),
+                Value::TableRef(registry.register(Arc::clone(table))),
+            );
         }
     }
     Cow::Owned(materialized)
@@ -261,7 +264,7 @@ impl<'g> Session<'g> {
     /// `None` is returned. Use [`Self::bind_table_parameter`] when callers need
     /// table-aware replacement information.
     pub fn bind_parameter(&mut self, name: IStr, value: Value) -> Option<Value> {
-        self.scalar_parameters.insert(name, value.clone());
+        self.scalar_parameters.insert(name.clone(), value.clone());
         match self
             .parameters
             .insert(name, SessionParameterValue::Scalar(value))

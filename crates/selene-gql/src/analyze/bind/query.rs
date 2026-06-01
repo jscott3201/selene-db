@@ -146,28 +146,28 @@ fn declare_inline_call_yields(
         return Ok(());
     }
     for item in &call.yield_items {
-        match item.column {
+        match &item.column {
             YieldColumn::Star => {
                 for output in outputs {
                     ctx.declare_strict_typed(
                         BindingDeclKind::YieldColumn,
-                        output.name,
+                        output.name.clone(),
                         item.span,
                         output.ty.clone(),
                     )?;
                 }
             }
             YieldColumn::Named(column) => {
-                let Some(output) = outputs.iter().find(|output| output.name == column) else {
+                let Some(output) = outputs.iter().find(|output| output.name == *column) else {
                     return Err(AnalysisError::UnknownYieldColumn {
                         procedure: Box::new([]),
-                        column,
+                        column: column.clone(),
                         span: item.span,
                     });
                 };
                 ctx.declare_strict_typed(
                     BindingDeclKind::YieldColumn,
-                    item.alias.unwrap_or(column),
+                    item.alias.clone().unwrap_or_else(|| column.clone()),
                     output.span,
                     output.ty.clone(),
                 )?;
@@ -178,9 +178,9 @@ fn declare_inline_call_yields(
 }
 
 fn projection_name(item: &ReturnItem) -> Option<selene_core::IStr> {
-    item.alias.or({
+    item.alias.clone().or({
         if let ValueExpr::Variable { name, .. } = &item.expr {
-            Some(*name)
+            Some(name.clone())
         } else {
             None
         }
@@ -466,10 +466,15 @@ fn declare_projection_items(
 ) -> Result<(), AnalysisError> {
     for item in items {
         let ty = projection_item_type(ctx, item);
-        if let Some(alias) = item.alias {
-            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, alias, item.span, ty)?;
+        if let Some(alias) = &item.alias {
+            ctx.declare_strict_typed(
+                BindingDeclKind::ProjectionAlias,
+                alias.clone(),
+                item.span,
+                ty,
+            )?;
         } else if let ValueExpr::Variable { name, span } = &item.expr {
-            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, *name, *span, ty)?;
+            ctx.declare_strict_typed(BindingDeclKind::ProjectionAlias, name.clone(), *span, ty)?;
         }
     }
     Ok(())
@@ -479,7 +484,12 @@ fn bind_let(ctx: &mut BindContext, bindings: &[LetBinding]) -> Result<(), Analys
     for binding in bindings {
         let id = expr::bind_value_expr(ctx, &binding.value)?;
         let ty = ctx.expr_type(id).clone();
-        ctx.declare_strict_typed(BindingDeclKind::LetAlias, binding.alias, binding.span, ty)?;
+        ctx.declare_strict_typed(
+            BindingDeclKind::LetAlias,
+            binding.alias.clone(),
+            binding.span,
+            ty,
+        )?;
     }
     Ok(())
 }
@@ -492,7 +502,12 @@ fn bind_unwind(ctx: &mut BindContext, unwind: &UnwindStatement) -> Result<(), An
         }
         _ => AnalyzedType::Dynamic,
     };
-    ctx.declare_strict_typed(BindingDeclKind::UnwindAlias, unwind.alias, unwind.span, ty)?;
+    ctx.declare_strict_typed(
+        BindingDeclKind::UnwindAlias,
+        unwind.alias.clone(),
+        unwind.span,
+        ty,
+    )?;
     Ok(())
 }
 

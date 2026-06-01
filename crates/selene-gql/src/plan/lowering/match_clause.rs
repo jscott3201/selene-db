@@ -226,9 +226,9 @@ fn lower_graph_pattern(
     pattern: &GraphPattern,
     ctx: &mut GraphLoweringContext<'_, '_>,
 ) -> Result<(JoinTree, BTreeSet<IStr>), PlannerError> {
-    if let Some(name) = pattern.path_binding {
+    if let Some(name) = &pattern.path_binding {
         let binding = binding_for_decl(
-            name,
+            name.clone(),
             pattern.span,
             BindingDeclKind::PathBinding,
             ctx.analyzed,
@@ -370,7 +370,7 @@ pub(super) fn right_node_predicates(
     let property_predicates = node
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, key.clone(), value, analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &node.inline_where {
         // Why: inline WHERE on an expanded right node may reference bindings
@@ -399,7 +399,7 @@ fn node_scan(
     let property_predicates = node
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, key.clone(), value, analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &node.inline_where {
         filters.push(expr::filter_predicate(where_clause, analyzed)?);
@@ -426,7 +426,7 @@ fn edge_match(
     let property_predicates = edge
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(binding, *key, value, ctx.analyzed))
+        .map(|(key, value)| expr::property_predicate(binding, key.clone(), value, ctx.analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     if let Some(where_clause) = &edge.inline_where {
         ctx.filters
@@ -455,8 +455,9 @@ fn node_binding(
     binding_ids: &mut BTreeSet<BindingId>,
 ) -> Result<Option<BindingId>, PlannerError> {
     node.binding
+        .clone()
         .map(|name| {
-            names.insert(name);
+            names.insert(name.clone());
             let binding =
                 binding_for_pattern(name, node.span, BindingDeclKind::NodePattern, analyzed)?;
             binding_ids.insert(binding);
@@ -472,8 +473,9 @@ pub(super) fn edge_binding(
     binding_ids: &mut BTreeSet<BindingId>,
 ) -> Result<Option<BindingId>, PlannerError> {
     edge.binding
+        .clone()
         .map(|name| {
-            names.insert(name);
+            names.insert(name.clone());
             let binding =
                 binding_for_pattern(name, edge.span, BindingDeclKind::EdgePattern, analyzed)?;
             binding_ids.insert(binding);
@@ -655,7 +657,7 @@ fn repeat_path_mode_under_filter(path_mode: PathMode, max: Option<u32>) -> PathM
 }
 
 fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
-    left.intersection(right).copied().collect()
+    left.intersection(right).cloned().collect()
 }
 
 /// Return the binding of the most-recently expanded chain tail, propagating

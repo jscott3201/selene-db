@@ -33,13 +33,13 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<Node
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -164,24 +164,28 @@ fn louvain_weighted_projection_biases_partition() {
     for _ in 0..3 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(nlabel), PropertyMap::new())
+                .create_node(LabelSet::single(nlabel.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     // Heavy edge n0 <-> n1
     let mut heavy = PropertyMap::new();
-    heavy.set(weight_key, selene_core::Value::Int(100)).unwrap();
-    txn.mutator()
-        .create_edge(rel, nodes[0], nodes[1], heavy.clone())
+    heavy
+        .set(weight_key.clone(), selene_core::Value::Int(100))
         .unwrap();
     txn.mutator()
-        .create_edge(rel, nodes[1], nodes[0], heavy)
+        .create_edge(rel.clone(), nodes[0], nodes[1], heavy.clone())
+        .unwrap();
+    txn.mutator()
+        .create_edge(rel.clone(), nodes[1], nodes[0], heavy)
         .unwrap();
     // Light edge n1 <-> n2
     let mut light = PropertyMap::new();
-    light.set(weight_key, selene_core::Value::Int(1)).unwrap();
+    light
+        .set(weight_key.clone(), selene_core::Value::Int(1))
+        .unwrap();
     txn.mutator()
-        .create_edge(rel, nodes[1], nodes[2], light.clone())
+        .create_edge(rel.clone(), nodes[1], nodes[2], light.clone())
         .unwrap();
     txn.mutator()
         .create_edge(rel, nodes[2], nodes[1], light)
@@ -220,24 +224,28 @@ fn louvain_weighted_degree_invariant_and_heavy_edge_assignment() {
     for _ in 0..3 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(nlabel), PropertyMap::new())
+                .create_node(LabelSet::single(nlabel.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
 
     let mut light = PropertyMap::new();
-    light.set(weight_key, selene_core::Value::Int(1)).unwrap();
-    txn.mutator()
-        .create_edge(rel, nodes[0], nodes[1], light.clone())
+    light
+        .set(weight_key.clone(), selene_core::Value::Int(1))
         .unwrap();
     txn.mutator()
-        .create_edge(rel, nodes[1], nodes[0], light)
+        .create_edge(rel.clone(), nodes[0], nodes[1], light.clone())
+        .unwrap();
+    txn.mutator()
+        .create_edge(rel.clone(), nodes[1], nodes[0], light)
         .unwrap();
 
     let mut heavy = PropertyMap::new();
-    heavy.set(weight_key, selene_core::Value::Int(100)).unwrap();
+    heavy
+        .set(weight_key.clone(), selene_core::Value::Int(100))
+        .unwrap();
     txn.mutator()
-        .create_edge(rel, nodes[1], nodes[2], heavy.clone())
+        .create_edge(rel.clone(), nodes[1], nodes[2], heavy.clone())
         .unwrap();
     txn.mutator()
         .create_edge(rel, nodes[2], nodes[1], heavy)
@@ -297,7 +305,7 @@ fn louvain_handles_sparse_row_projection() {
     for _ in 0..100 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
@@ -305,7 +313,7 @@ fn louvain_handles_sparse_row_projection() {
     // triangle.
     for &(s, t) in &[(10, 50), (50, 10), (50, 90), (90, 50), (10, 90), (90, 10)] {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();

@@ -259,7 +259,7 @@ impl<'ctx> BindContext<'ctx> {
         let (binding, reused) = self.scopes.declare_or_reuse_with_labels_typed(
             self.current,
             kind,
-            name,
+            name.clone(),
             span,
             ty,
             labels,
@@ -281,7 +281,7 @@ impl<'ctx> BindContext<'ctx> {
         span: SourceSpan,
         kind: BindingUseKind,
     ) -> Result<BindingId, AnalysisError> {
-        let Some(binding) = self.scopes.resolve(self.current, name) else {
+        let Some(binding) = self.scopes.resolve(self.current, name.clone()) else {
             return Err(AnalysisError::undefined_reference(name, span));
         };
         self.references.push(BindingUse {

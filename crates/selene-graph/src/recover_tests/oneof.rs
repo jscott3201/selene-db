@@ -70,7 +70,7 @@ fn wal_replay_oneof_edge_type() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_edge_type(
-                rel,
+                rel.clone(),
                 rel,
                 EdgeEndpointDef::NodeType(0),
                 EdgeEndpointDef::one_of([1, 2]),
@@ -121,7 +121,7 @@ fn wal_replay_oneof_singleton_canonicalizes() {
             graph: graph_id,
             change: SchemaChange::EdgeTypeAddedV2 {
                 graph_type: GraphTypeId::new(1).unwrap(),
-                label: rel,
+                label: rel.clone(),
                 def: selene_core::EdgeTypeDef {
                     label: rel,
                     source_node_type: CoreEdgeEndpointDef::NodeType(NodeTypeRef(person)),
@@ -188,7 +188,7 @@ fn wal_replay_edge_type_with_reordered_node_types_resolves_oneof_indices() {
             graph: graph_id,
             change: SchemaChange::EdgeTypeAddedV2 {
                 graph_type: GraphTypeId::new(1).unwrap(),
-                label: rel,
+                label: rel.clone(),
                 def: selene_core::EdgeTypeDef {
                     label: rel,
                     source_node_type: CoreEdgeEndpointDef::NodeType(NodeTypeRef(person)),
@@ -237,7 +237,7 @@ fn legacy_edge_type_def_v1_recovery_unchanged() {
             graph: graph_id,
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: GraphTypeId::new(1).unwrap(),
-                label: rel,
+                label: rel.clone(),
                 def: selene_core::EdgeTypeDefV1 {
                     label: rel,
                     source_node_type: NodeTypeRef(person),

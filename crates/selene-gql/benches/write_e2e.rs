@@ -106,12 +106,16 @@ fn bench_gql_insert_single_node_cached_with_schema_churn(
                     if index_exists {
                         state
                             .graph
-                            .drop_property_index(label, property)
+                            .drop_property_index(label.clone(), property.clone())
                             .expect("churn index drops");
                     } else {
                         state
                             .graph
-                            .create_property_index(label, property, TypedIndexKind::I64)
+                            .create_property_index(
+                                label.clone(),
+                                property.clone(),
+                                TypedIndexKind::I64,
+                            )
                             .expect("churn index creates");
                     }
                     index_exists = !index_exists;

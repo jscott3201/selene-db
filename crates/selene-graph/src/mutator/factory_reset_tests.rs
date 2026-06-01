@@ -29,7 +29,7 @@ fn open_fixture() -> SharedGraph {
         let labelled = intern("fr.Labelled").unwrap();
         let other = intern("fr.Other").unwrap();
         let a = m
-            .create_node(LabelSet::single(labelled), prop("k", Value::Int(0)))
+            .create_node(LabelSet::single(labelled.clone()), prop("k", Value::Int(0)))
             .unwrap();
         let b = m
             .create_node(
@@ -42,9 +42,10 @@ fn open_fixture() -> SharedGraph {
             .create_node(LabelSet::new(), prop("k", Value::Int(2)))
             .unwrap();
         let e = intern("fr.E").unwrap();
-        m.create_edge(e, a, b, PropertyMap::new()).unwrap();
+        m.create_edge(e.clone(), a, b, PropertyMap::new()).unwrap();
         // Edge touching the untyped node — must still be wiped.
-        m.create_edge(e, b, untyped, PropertyMap::new()).unwrap();
+        m.create_edge(e.clone(), b, untyped, PropertyMap::new())
+            .unwrap();
         m.create_edge(e, untyped, a, PropertyMap::new()).unwrap();
     }
     txn.commit().unwrap();

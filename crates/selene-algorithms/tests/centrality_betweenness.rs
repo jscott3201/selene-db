@@ -36,13 +36,13 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<Node
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();
@@ -245,15 +245,15 @@ fn betweenness_handles_sparse_row_projection() {
     for _ in 0..100 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     txn.mutator()
-        .create_edge(rel, nodes[0], nodes[50], PropertyMap::new())
+        .create_edge(rel.clone(), nodes[0], nodes[50], PropertyMap::new())
         .unwrap();
     txn.mutator()
-        .create_edge(rel, nodes[50], nodes[99], PropertyMap::new())
+        .create_edge(rel.clone(), nodes[50], nodes[99], PropertyMap::new())
         .unwrap();
     txn.commit().unwrap();
 

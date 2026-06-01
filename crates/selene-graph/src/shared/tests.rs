@@ -119,7 +119,7 @@ fn schema_changed_commit_bumps_version() {
     let mut txn = shared.begin_write();
     txn.mutator()
         .create_node_type(
-            label,
+            label.clone(),
             LabelSet::single(label),
             Vec::new(),
             crate::ValidationMode::Strict,
@@ -167,7 +167,7 @@ fn direct_drop_property_index_bumps_schema_version_when_present() {
     let label = intern("Person").unwrap();
     let property = intern("age").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .expect("create index succeeds");
 
     shared
@@ -208,7 +208,7 @@ fn schema_version_bump_implies_snapshot_already_reflects_change() {
     );
 
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .expect("index create");
 
     // The schema epoch advanced AND the snapshot that caused it is the published
@@ -259,7 +259,7 @@ fn concurrent_reader_never_sees_bumped_epoch_without_the_change() {
         for i in 0..CREATES {
             shared
                 .create_property_index(
-                    label,
+                    label.clone(),
                     intern(format!("prop.{i}").as_str()).unwrap(),
                     TypedIndexKind::I64,
                 )
@@ -531,19 +531,22 @@ fn from_graph_rebuilds_label_indexes_from_stores() {
     let mut graph = SeleneGraph::new(GraphId::new(1));
     // Row 0: alive, labels {a, b}.
     let mut labels0 = LabelSet::new();
-    labels0.insert(label_a);
-    labels0.insert(label_b);
+    labels0.insert(label_a.clone());
+    labels0.insert(label_b.clone());
     graph.node_store.labels.push(labels0);
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.alive.insert(0);
     // Row 1: dead, label {a} — must NOT appear in the rebuilt index.
-    graph.node_store.labels.push(LabelSet::single(label_a));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(label_a.clone()));
     graph.node_store.properties.push(PropertyMap::new());
     // alive bit deliberately not set on row 1.
 
     // Edge row 0: alive, label.
     let edge_label = intern("idx.edge").unwrap();
-    graph.edge_store.label.push(edge_label);
+    graph.edge_store.label.push(edge_label.clone());
     graph.edge_store.source.push(CoreNodeId::new(1));
     graph.edge_store.target.push(CoreNodeId::new(1));
     graph.edge_store.properties.push(PropertyMap::new());
@@ -581,7 +584,7 @@ fn from_graph_rebuilds_adjacency_from_edge_store() {
     }
     graph.node_store.alive.insert(0);
     graph.node_store.alive.insert(1);
-    graph.edge_store.label.push(edge_label);
+    graph.edge_store.label.push(edge_label.clone());
     graph.edge_store.source.push(CoreNodeId::new(1));
     graph.edge_store.target.push(CoreNodeId::new(2));
     graph.edge_store.properties.push(PropertyMap::new());
@@ -608,7 +611,10 @@ fn try_from_graph_returns_ok_for_well_formed_input() {
 
     let label = intern("idx.ok").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(1));
-    graph.node_store.labels.push(LabelSet::single(label));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(label.clone()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.alive.insert(0);
 
@@ -626,14 +632,19 @@ fn from_graph_discards_caller_supplied_index_drift() {
     let phantom_label = intern("idx.phantom").unwrap();
 
     let mut graph = SeleneGraph::new(GraphId::new(1));
-    graph.node_store.labels.push(LabelSet::single(real_label));
+    graph
+        .node_store
+        .labels
+        .push(LabelSet::single(real_label.clone()));
     graph.node_store.properties.push(PropertyMap::new());
     graph.node_store.alive.insert(0);
 
     // Caller injects a phantom index entry that doesn't match storage.
     let mut phantom_bitmap = roaring::RoaringBitmap::new();
     phantom_bitmap.insert(99);
-    graph.idx_label.insert(phantom_label, phantom_bitmap);
+    graph
+        .idx_label
+        .insert(phantom_label.clone(), phantom_bitmap);
 
     let shared = SharedGraph::from_graph(graph);
     let snapshot = shared.read();

@@ -324,26 +324,26 @@ fn adjacent_edges(
             .tx
             .snapshot()
             .outgoing_edges(node)
-            .map(|entry| entry.iter().copied().collect())
+            .map(|entry| entry.iter().cloned().collect())
             .unwrap_or_default(),
         EdgeDirection::Left => ctx
             .tx
             .snapshot()
             .incoming_edges(node)
-            .map(|entry| entry.iter().copied().collect())
+            .map(|entry| entry.iter().cloned().collect())
             .unwrap_or_default(),
         EdgeDirection::Undirected => {
             let mut seen = BTreeSet::new();
             let mut edges = Vec::new();
             if let Some(entry) = ctx.tx.snapshot().outgoing_edges(node) {
-                for adjacent in entry.iter().copied() {
+                for adjacent in entry.iter().cloned() {
                     if seen.insert(adjacent.edge_id) {
                         edges.push(adjacent);
                     }
                 }
             }
             if let Some(entry) = ctx.tx.snapshot().incoming_edges(node) {
-                for adjacent in entry.iter().copied() {
+                for adjacent in entry.iter().cloned() {
                     if seen.insert(adjacent.edge_id) {
                         edges.push(adjacent);
                     }
@@ -365,7 +365,7 @@ fn edge_label_matches(
     ctx.tx
         .snapshot()
         .edge_label(edge_id)
-        .is_some_and(|label| scan::label_matches_edge(label_expr, *label))
+        .is_some_and(|label| scan::label_matches_edge(label_expr, label.clone()))
 }
 
 fn final_node_label_matches(

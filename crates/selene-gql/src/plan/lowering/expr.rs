@@ -529,7 +529,7 @@ pub(super) fn outer_binding_uses_in_span(
             },
         )?;
         if !span_contains(local_span, declaration.span()) {
-            refs.push((reference.binding, reference.name, reference.span));
+            refs.push((reference.binding, reference.name.clone(), reference.span));
         }
     }
     refs.sort_by_key(|(binding, _, _)| *binding);
@@ -579,7 +579,7 @@ pub(crate) fn aggregate_name(expr: &ValueExpr) -> Option<(selene_core::IStr, boo
     if name.len() != 1 {
         return None;
     }
-    let segment = name[0];
+    let segment = name[0].clone();
     AGGREGATE_NAMES
         .iter()
         .any(|candidate| segment.as_str() == *candidate)

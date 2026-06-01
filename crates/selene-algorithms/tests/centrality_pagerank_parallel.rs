@@ -53,13 +53,18 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> SharedGraph {
     for _ in 0..count {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for &(source, target) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[source], nodes[target], PropertyMap::new())
+            .create_edge(
+                rel.clone(),
+                nodes[source],
+                nodes[target],
+                PropertyMap::new(),
+            )
             .unwrap();
     }
     txn.commit().unwrap();
@@ -77,12 +82,12 @@ fn build_label_filtered_asymmetric_graph() -> (SharedGraph, IStr) {
     for _ in 0..4 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     txn.mutator()
-        .create_edge(knows, nodes[0], nodes[1], PropertyMap::new())
+        .create_edge(knows.clone(), nodes[0], nodes[1], PropertyMap::new())
         .unwrap();
     txn.mutator()
         .create_edge(owns, nodes[2], nodes[3], PropertyMap::new())

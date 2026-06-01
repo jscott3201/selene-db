@@ -23,10 +23,10 @@ pub(super) fn project_yield_row(
     }
 
     for item in &call.yield_cols {
-        let YieldKind::Named(name) = item.column else {
+        let YieldKind::Named(ref name) = item.column else {
             continue;
         };
-        let Some(index) = output_column_index(call, name) else {
+        let Some(index) = output_column_index(call, name.clone()) else {
             return Err(procedure_error(
                 ProcedureError::Internal {
                     detail: "planned yield column not in procedure output schema".to_owned(),

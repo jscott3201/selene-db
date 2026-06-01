@@ -47,15 +47,15 @@ impl BenchFixture {
             let mut mutator = txn.mutator();
             for idx in 0..scale {
                 let label = match idx % 3 {
-                    0 => person_label,
-                    1 => sensor_label,
-                    _ => device_label,
+                    0 => person_label.clone(),
+                    1 => sensor_label.clone(),
+                    _ => device_label.clone(),
                 };
                 let props = PropertyMap::from_pairs([
-                    (age_key, Value::Int(sample_age(idx))),
-                    (bench_id_key, Value::Int(idx as i64)),
-                    (name_key, Value::String(sample_name(idx))),
-                    (score_key, Value::Int((idx % 1_024) as i64)),
+                    (age_key.clone(), Value::Int(sample_age(idx))),
+                    (bench_id_key.clone(), Value::Int(idx as i64)),
+                    (name_key.clone(), Value::String(sample_name(idx))),
+                    (score_key.clone(), Value::Int((idx % 1_024) as i64)),
                 ])
                 .expect("fixture properties fit core caps");
                 mutator
@@ -67,20 +67,28 @@ impl BenchFixture {
                 for offset in [1_usize, 7, 31] {
                     let target = NodeId::new(((idx + offset) % scale) as u64 + 1);
                     mutator
-                        .create_edge(edge_label, source, target, PropertyMap::new())
+                        .create_edge(edge_label.clone(), source, target, PropertyMap::new())
                         .expect("fixture edge insert succeeds");
                 }
             }
             txn.commit().expect("fixture commit succeeds");
         }
         shared
-            .create_property_index(person_label, age_key, TypedIndexKind::I64)
+            .create_property_index(person_label.clone(), age_key.clone(), TypedIndexKind::I64)
             .expect("age index builds");
         shared
-            .create_property_index(person_label, name_key, TypedIndexKind::String)
+            .create_property_index(
+                person_label.clone(),
+                name_key.clone(),
+                TypedIndexKind::String,
+            )
             .expect("name index builds");
         shared
-            .create_property_index(person_label, bench_id_key, TypedIndexKind::I64)
+            .create_property_index(
+                person_label.clone(),
+                bench_id_key.clone(),
+                TypedIndexKind::I64,
+            )
             .expect("bench_id index builds");
         let graph = shared.read().as_ref().clone();
         Self {
@@ -119,44 +127,44 @@ impl BenchFixture {
 
     /// Return the primary node label used by index benchmarks.
     #[must_use]
-    pub const fn person_label(&self) -> IStr {
-        self.person_label
+    pub fn person_label(&self) -> IStr {
+        self.person_label.clone()
     }
 
     /// Return the secondary node label used by label-scan benchmarks.
     #[must_use]
-    pub const fn sensor_label(&self) -> IStr {
-        self.sensor_label
+    pub fn sensor_label(&self) -> IStr {
+        self.sensor_label.clone()
     }
 
     /// Return the canonical edge label.
     #[must_use]
-    pub const fn edge_label(&self) -> IStr {
-        self.edge_label
+    pub fn edge_label(&self) -> IStr {
+        self.edge_label.clone()
     }
 
     /// Return the indexed integer property key.
     #[must_use]
-    pub const fn age_key(&self) -> IStr {
-        self.age_key
+    pub fn age_key(&self) -> IStr {
+        self.age_key.clone()
     }
 
     /// Return the unique integer lookup key used by write benchmarks.
     #[must_use]
-    pub const fn bench_id_key(&self) -> IStr {
-        self.bench_id_key
+    pub fn bench_id_key(&self) -> IStr {
+        self.bench_id_key.clone()
     }
 
     /// Return the indexed string property key.
     #[must_use]
-    pub const fn name_key(&self) -> IStr {
-        self.name_key
+    pub fn name_key(&self) -> IStr {
+        self.name_key.clone()
     }
 
     /// Return a non-indexed integer property key.
     #[must_use]
-    pub const fn score_key(&self) -> IStr {
-        self.score_key
+    pub fn score_key(&self) -> IStr {
+        self.score_key.clone()
     }
 
     /// Return an age value known to be present for [`Self::person_label`].
@@ -167,14 +175,14 @@ impl BenchFixture {
 
     /// Return a name value known to be present for [`Self::person_label`].
     #[must_use]
-    pub const fn sample_name_value(&self) -> IStr {
-        self.sample_name
+    pub fn sample_name_value(&self) -> IStr {
+        self.sample_name.clone()
     }
 
     /// Return one registered `(label, property)` pair for index lookup.
     #[must_use]
-    pub const fn sample_label_property(&self) -> (IStr, IStr) {
-        (self.person_label, self.age_key)
+    pub fn sample_label_property(&self) -> (IStr, IStr) {
+        (self.person_label.clone(), self.age_key.clone())
     }
 }
 

@@ -38,13 +38,13 @@ fn build_graph(node_count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec
         for _ in 0..node_count {
             nodes.push(
                 txn.mutator()
-                    .create_node(LabelSet::single(label), PropertyMap::new())
+                    .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                     .unwrap(),
             );
         }
         for &(a, b) in edges {
             txn.mutator()
-                .create_edge(link, nodes[a], nodes[b], PropertyMap::new())
+                .create_edge(link.clone(), nodes[a], nodes[b], PropertyMap::new())
                 .unwrap();
         }
         txn.commit().unwrap();

@@ -258,12 +258,12 @@ fn function_call_with_let_shadow_does_not_misread_column() {
     let schema = BindingTableSchema {
         columns: vec![
             BindingTableColumn {
-                name: Some(sum),
+                name: Some(sum.clone()),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
             },
             BindingTableColumn {
-                name: Some(x),
+                name: Some(x.clone()),
                 hidden: None,
                 ty: AnalyzedType::DYNAMIC,
             },

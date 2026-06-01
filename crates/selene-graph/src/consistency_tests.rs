@@ -32,7 +32,7 @@ fn consistent_graph() -> SeleneGraph {
             let mut mutator = txn.mutator();
             a = mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     PropertyMap::from_pairs([(age, Value::Int(30))]).unwrap(),
                 )
                 .unwrap();
@@ -104,14 +104,15 @@ fn drifted_property_index_is_caught() {
     // Register a property index consistent with the data, then corrupt it.
     let index = crate::property_index::build_property_index_lenient(
         &graph,
-        person,
-        age,
+        person.clone(),
+        age.clone(),
         TypedIndexKind::I64,
     )
     .unwrap();
-    graph
-        .property_index
-        .insert((person, age), PropertyIndexEntry::new(index, None));
+    graph.property_index.insert(
+        (person.clone(), age.clone()),
+        PropertyIndexEntry::new(index, None),
+    );
     assert!(graph.assert_indexes_consistent().is_ok());
 
     // Now corrupt: add a stray row to the maintained index.
@@ -160,14 +161,14 @@ fn drifted_composite_index_is_caught() {
     // No node carries both age AND name, so the consistent index is empty.
     let index = crate::composite_property_index::build_composite_property_index_lenient(
         &graph,
-        person,
+        person.clone(),
         props.clone(),
         kinds.clone(),
     )
     .unwrap();
     let key = crate::graph::composite_property_key(&props);
     graph.composite_property_index.insert(
-        (person, key.clone()),
+        (person.clone(), key.clone()),
         CompositePropertyIndexEntry::new(index, props.clone(), None),
     );
     assert!(graph.assert_indexes_consistent().is_ok());

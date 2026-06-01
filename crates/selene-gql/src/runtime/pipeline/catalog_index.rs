@@ -41,9 +41,9 @@ pub(super) fn inline_index_specs(
         for constraint in &property.constraints {
             if let PlannedTypePropertyConstraint::Indexed { name, span } = constraint {
                 indexes.push(InlineIndexSpec {
-                    property: property.name,
+                    property: property.name.clone(),
                     kind: gql_type_to_index_kind(&property.gql_type, *span)?,
-                    name: *name,
+                    name: name.clone(),
                     span: *span,
                 });
             }
@@ -69,9 +69,9 @@ pub(super) fn validate_index_name_collisions(
             }),
     );
     for index in indexes {
-        let rendered = render_index_name(label, index.property, index.name);
+        let rendered = render_index_name(label.clone(), index.property.clone(), index.name.clone());
         if used.iter().any(|name| name == &rendered) {
-            let name = index.name.unwrap_or(intern_runtime(&rendered)?);
+            let name = index.name.clone().unwrap_or(intern_runtime(&rendered)?);
             return Err(ExecutorError::DuplicateObject {
                 kind: "index",
                 name,
@@ -92,11 +92,13 @@ pub(super) fn lookup_index_entries(
     let mut same_pair_name = None;
     let mut other_name_matches = Vec::new();
     for (entry_label, entry_property, _, entry_name) in graph.iter_property_index_entries() {
-        if entry_label == label && properties == [entry_property] {
+        if entry_label == label && properties == [entry_property.clone()] {
             same_pair_name = Some(render_index_name(entry_label, entry_property, entry_name));
             continue;
         }
-        if render_index_name(entry_label, entry_property, entry_name) == ident.as_str() {
+        if render_index_name(entry_label.clone(), entry_property.clone(), entry_name)
+            == ident.as_str()
+        {
             other_name_matches.push(DropTarget::Single {
                 label: entry_label,
                 property: entry_property,
@@ -114,7 +116,8 @@ pub(super) fn lookup_index_entries(
             ));
             continue;
         }
-        if render_composite_index_name(entry_label, &entry_properties, entry_name) == ident.as_str()
+        if render_composite_index_name(entry_label.clone(), &entry_properties, entry_name)
+            == ident.as_str()
         {
             other_name_matches.push(DropTarget::Composite {
                 label: entry_label,
@@ -135,13 +138,13 @@ pub(super) fn resolve_drop_index_matches(
     let mut matches = graph
         .iter_property_index_entries()
         .filter_map(|(label, property, _, name)| {
-            (render_index_name(label, property, name) == ident.as_str())
+            (render_index_name(label.clone(), property.clone(), name) == ident.as_str())
                 .then_some(DropTarget::Single { label, property })
         })
         .collect::<Vec<_>>();
     matches.extend(graph.iter_composite_property_index_entries().filter_map(
         |(label, properties, _, name)| {
-            (render_composite_index_name(label, &properties, name) == ident.as_str())
+            (render_composite_index_name(label.clone(), &properties, name) == ident.as_str())
                 .then_some(DropTarget::Composite { label, properties })
         },
     ));

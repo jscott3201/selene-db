@@ -411,13 +411,23 @@ impl SharedGraph {
         name: Option<IStr>,
     ) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        if txn.read().property_index.contains_key(&(label, property)) {
+        if txn
+            .read()
+            .property_index
+            .contains_key(&(label.clone(), property.clone()))
+        {
             return Err(GraphError::PropertyIndexAlreadyExists { label, property });
         }
-        let index = crate::property_index::build_property_index(txn.read(), label, property, kind)?;
-        txn.guard_mut()
-            .property_index
-            .insert((label, property), PropertyIndexEntry::new(index, name));
+        let index = crate::property_index::build_property_index(
+            txn.read(),
+            label.clone(),
+            property.clone(),
+            kind,
+        )?;
+        txn.guard_mut().property_index.insert(
+            (label.clone(), property.clone()),
+            PropertyIndexEntry::new(index, name.clone()),
+        );
         let graph = txn.read().graph_id();
         txn.changes.push(Change::SchemaChanged {
             graph,
@@ -438,10 +448,16 @@ impl SharedGraph {
     /// publishing a new snapshot.
     pub fn drop_property_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        if !txn.read().property_index.contains_key(&(label, property)) {
+        if !txn
+            .read()
+            .property_index
+            .contains_key(&(label.clone(), property.clone()))
+        {
             return Ok(());
         }
-        txn.guard_mut().property_index.remove(&(label, property));
+        txn.guard_mut()
+            .property_index
+            .remove(&(label.clone(), property.clone()));
         let graph = txn.read().graph_id();
         txn.changes.push(Change::SchemaChanged {
             graph,
@@ -668,7 +684,11 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
         }
         if let Some(labels) = graph.node_store.labels.get(row_index) {
             for label in labels.iter() {
-                graph.idx_label.entry(*label).or_default().insert(row);
+                graph
+                    .idx_label
+                    .entry(label.clone())
+                    .or_default()
+                    .insert(row);
             }
         }
     }
@@ -685,7 +705,11 @@ pub(crate) fn rebuild_derived_state(graph: &mut SeleneGraph) -> GraphResult<()> 
             continue;
         }
         if let Some(label) = graph.edge_store.label.get(row_index) {
-            graph.idx_edge_label.entry(*label).or_default().insert(row);
+            graph
+                .idx_edge_label
+                .entry(label.clone())
+                .or_default()
+                .insert(row);
         }
     }
     // BRIEF-Item-4a: bind external ids to rows BEFORE rebuild_adjacency, which
@@ -817,7 +841,7 @@ fn rebuild_adjacency(graph: &mut SeleneGraph) -> GraphResult<()> {
             .entry(source)
             .or_default()
             .add(AdjacencyEdge {
-                label,
+                label: label.clone(),
                 neighbor: target,
                 edge_id,
             });
@@ -838,9 +862,10 @@ fn edge_row_parts(
     store: &EdgeStore,
     row_index: usize,
 ) -> GraphResult<(IStr, selene_core::NodeId, selene_core::NodeId)> {
-    let label = *store
+    let label = store
         .label
         .get(row_index)
+        .cloned()
         .ok_or_else(|| GraphError::Inconsistent {
             reason: format!("edge label column missing row {row_index}"),
         })?;

@@ -119,7 +119,7 @@ impl ProcedureRegistry for TestRegistry {
                 };
                 mutation
                     .mutator()
-                    .create_node(LabelSet::single(*label), PropertyMap::new())
+                    .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                     .map_err(|source| ProcedureError::Internal {
                         detail: source.to_string(),
                     })?;
@@ -206,7 +206,12 @@ fn column_values(table: &BindingTable, target: &str) -> Vec<Value> {
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|name| name.as_str() == target))
+        .position(|column| {
+            column
+                .name
+                .clone()
+                .is_some_and(|name| name.as_str() == target)
+        })
         .expect("column exists");
     table
         .rows()
@@ -278,7 +283,10 @@ fn procedure_returning_zero_rows_drops_input_row() {
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).unwrap();
 
     assert_eq!(table.row_count(), 0);
-    assert_eq!(table.schema().columns[0].name.unwrap().as_str(), "out");
+    assert_eq!(
+        table.schema().columns[0].name.clone().unwrap().as_str(),
+        "out"
+    );
 }
 
 #[test]
@@ -371,7 +379,7 @@ fn read_tier_procedure_yield_named_selects_columns_by_name() {
         .schema()
         .columns
         .iter()
-        .map(|column| column.name.unwrap().as_str())
+        .map(|column| column.name.as_ref().unwrap().as_str())
         .collect::<Vec<_>>();
     assert_eq!(names, ["c", "a"]);
 }

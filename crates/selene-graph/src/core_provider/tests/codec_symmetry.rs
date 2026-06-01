@@ -57,7 +57,7 @@ fn decode_edges_rejects_duplicate_committed_id() {
     let mut graph = SeleneGraph::new(GraphId::new(2_001));
     let label = intern("dup.edge").unwrap();
     for _ in 0..2 {
-        graph.edge_store.label.push(label);
+        graph.edge_store.label.push(label.clone());
         graph.edge_store.source.push(NodeId::new(1));
         graph.edge_store.target.push(NodeId::new(2));
         graph.edge_store.properties.push(PropertyMap::new());
@@ -161,7 +161,7 @@ fn bytecheck_rejects_corrupted_gtyp_rkyv_body() {
     let graph_type = GraphTypeDef {
         name: intern("corrupt.gtyp.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: vec![PropertyTypeDef {
                 name: intern("serial").unwrap(),

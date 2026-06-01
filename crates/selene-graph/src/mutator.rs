@@ -107,7 +107,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     ) -> GraphResult<EdgeId> {
         self.require_live_node(source)?;
         self.require_live_node(target)?;
-        fill_edge_defaults(self.txn.read(), label, source, target, &mut props)?;
+        fill_edge_defaults(self.txn.read(), label.clone(), source, target, &mut props)?;
         let id = self.txn.allocator.allocate_edge();
         {
             let graph = self.txn.guard_mut();
@@ -120,7 +120,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                     rows: graph.edge_store.len() as u64,
                     max_rows: u32::MAX as u64,
                 })?;
-            graph.edge_store.label.push(label);
+            graph.edge_store.label.push(label.clone());
             graph.edge_store.source.push(source);
             graph.edge_store.target.push(target);
             graph.edge_store.properties.push(props.clone());
@@ -128,14 +128,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             graph.edge_store.alive.insert(row);
             // BRIEF-Item-4a: bind the external edge id to its row (live path).
             graph.edge_id_to_row.insert(id, RowIndex::new(row));
-            insert_index_row(&mut graph.idx_edge_label, label, row);
+            insert_index_row(&mut graph.idx_edge_label, label.clone(), row);
 
             graph
                 .adjacency_out
                 .entry(source)
                 .or_default()
                 .add(AdjacencyEdge {
-                    label,
+                    label: label.clone(),
                     neighbor: target,
                     edge_id: id,
                 });
@@ -144,7 +144,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 .entry(target)
                 .or_default()
                 .add(AdjacencyEdge {
-                    label,
+                    label: label.clone(),
                     neighbor: source,
                     edge_id: id,
                 });
@@ -178,7 +178,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .cloned()
             .unwrap_or_default();
         let mut labels = old_labels.clone();
-        for label in labels_diff.added.iter().copied() {
+        for label in labels_diff.added.iter().cloned() {
             labels.insert(label);
         }
         for label in labels_diff.removed.iter() {
@@ -226,7 +226,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             )?;
             graph.node_store.labels.set(row, labels);
             graph.node_store.properties.set(row, props);
-            for label in labels_diff.added.iter().copied() {
+            for label in labels_diff.added.iter().cloned() {
                 insert_index_row(&mut graph.idx_label, label, row as u32);
             }
             for label in labels_diff.removed.iter() {
@@ -500,10 +500,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// paths; callers own changeset accounting.
     fn remove_edge_row(&mut self, id: EdgeId, row: usize) -> GraphResult<()> {
         let graph = self.txn.read();
-        let label = *graph
+        let label = graph
             .edge_store
             .label
             .get(row)
+            .cloned()
             .ok_or(GraphError::EdgeNotFound { id })?;
         let source = *graph
             .edge_store
@@ -565,7 +566,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 }
 
 fn insert_node_labels(index: &mut imbl::HashMap<IStr, RoaringBitmap>, row: u32, labels: &LabelSet) {
-    for label in labels.iter().copied() {
+    for label in labels.iter().cloned() {
         insert_index_row(index, label, row);
     }
 }
@@ -590,7 +591,7 @@ fn remove_index_row(index: &mut imbl::HashMap<IStr, RoaringBitmap>, label: &IStr
         if bitmap.is_empty() {
             index.remove(label);
         } else {
-            index.insert(*label, bitmap);
+            index.insert(label.clone(), bitmap);
         }
     }
 }
@@ -640,7 +641,7 @@ fn fill_property_defaults(
             continue;
         }
         if let Some(default) = &declaration.default {
-            props.set(declaration.name, default.to_value())?;
+            props.set(declaration.name.clone(), default.to_value())?;
         }
     }
     Ok(())
@@ -660,7 +661,7 @@ fn reject_immutable_node_update(
     };
     reject_immutable_property_update(
         EntityId::Node(id),
-        node_type.name,
+        node_type.name.clone(),
         &node_type.properties,
         diff,
     )
@@ -674,7 +675,7 @@ fn reject_immutable_edge_update(
     let Some(graph_type) = graph.meta.bound_type.as_deref() else {
         return Ok(());
     };
-    let Some(label) = graph.edge_label(id).copied() else {
+    let Some(label) = graph.edge_label(id).cloned() else {
         return Ok(());
     };
     let Some((source, target)) = graph.edge_endpoints(id) else {
@@ -691,7 +692,7 @@ fn reject_immutable_edge_update(
     };
     reject_immutable_property_update(
         EntityId::Edge(id),
-        edge_type.name,
+        edge_type.name.clone(),
         &edge_type.properties,
         diff,
     )
@@ -713,10 +714,10 @@ fn reject_immutable_property_update(
     diff: &PropertyDiff,
 ) -> GraphResult<()> {
     for (key, _) in &diff.set {
-        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+        reject_if_immutable(entity_id, declared_in.clone(), declarations, key.clone())?;
     }
     for key in &diff.removed {
-        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+        reject_if_immutable(entity_id, declared_in.clone(), declarations, key.clone())?;
     }
     Ok(())
 }
@@ -744,7 +745,7 @@ fn reject_if_immutable(
 
 fn apply_property_diff(map: &mut PropertyMap, diff: &PropertyDiff) -> GraphResult<()> {
     for (key, value) in diff.set.iter() {
-        map.set(*key, value.clone())?;
+        map.set(key.clone(), value.clone())?;
     }
     for key in diff.removed.iter() {
         map.remove(key);

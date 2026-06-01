@@ -22,12 +22,12 @@ pub(crate) fn apply_node_create(
     props: &PropertyMap,
     row: u32,
 ) -> GraphResult<()> {
-    for label in labels.iter().copied() {
+    for label in labels.iter() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            insert_commit(indexes, label, *property, value, row)?;
+            insert_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
     }
     Ok(())
@@ -39,12 +39,12 @@ pub(crate) fn apply_node_delete(
     props: &PropertyMap,
     row: u32,
 ) -> GraphResult<()> {
-    for label in labels.iter().copied() {
+    for label in labels.iter() {
         for (property, value) in props.iter() {
             if is_null(value) {
                 continue;
             }
-            remove_commit(indexes, label, *property, value, row)?;
+            remove_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
     }
     Ok(())
@@ -67,14 +67,20 @@ pub(crate) fn apply_node_update(
     for (label, property) in candidates {
         let old_value = indexable_value(old_labels, old_props, &label, &property);
         let new_value = indexable_value(new_labels, new_props, &label, &property);
-        if values_share_key(indexes, label, property, old_value, new_value) {
+        if values_share_key(
+            indexes,
+            label.clone(),
+            property.clone(),
+            old_value,
+            new_value,
+        ) {
             continue;
         }
         if let Some(value) = old_value {
-            remove_commit(indexes, label, property, value, row)?;
+            remove_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
         if let Some(value) = new_value {
-            insert_commit(indexes, label, property, value, row)?;
+            insert_commit(indexes, label.clone(), property.clone(), value, row)?;
         }
     }
     Ok(())
@@ -97,17 +103,17 @@ fn candidate_keys(
         return BTreeSet::new();
     }
     let mut labels: BTreeSet<IStr> = BTreeSet::new();
-    labels.extend(old_labels.iter().copied());
-    labels.extend(new_labels.iter().copied());
+    labels.extend(old_labels.iter().cloned());
+    labels.extend(new_labels.iter().cloned());
 
     let mut properties: BTreeSet<IStr> = BTreeSet::new();
-    properties.extend(old_props.keys().copied());
-    properties.extend(new_props.keys().copied());
+    properties.extend(old_props.keys().cloned());
+    properties.extend(new_props.keys().cloned());
 
     let mut candidates = BTreeSet::new();
     for label in &labels {
         for property in &properties {
-            let key = (*label, *property);
+            let key = (label.clone(), property.clone());
             if indexes.contains_key(&key) {
                 candidates.insert(key);
             }
@@ -187,10 +193,10 @@ fn build_property_index_inner(
             Ok(()) => {}
             Err(err) => match (&err, policy) {
                 (TypedIndexValueError::AdmissionFailed { .. }, _) | (_, BuildPolicy::Strict) => {
-                    return Err(index_rejection(label, property, err));
+                    return Err(index_rejection(label.clone(), property.clone(), err));
                 }
                 (_, BuildPolicy::Lenient) => {
-                    warn_rejected("rebuild", label, property, row, &err);
+                    warn_rejected("rebuild", label.clone(), property.clone(), row, &err);
                 }
             },
         }
@@ -206,11 +212,11 @@ pub(crate) fn rebuild_property_indexes(graph: &mut crate::SeleneGraph) -> GraphR
     let registrations: Vec<((IStr, IStr), TypedIndexKind, Option<IStr>)> = graph
         .property_index
         .iter()
-        .map(|(key, entry)| (*key, entry.kind(), entry.name))
+        .map(|(key, entry)| (key.clone(), entry.kind(), entry.name.clone()))
         .collect();
     graph.property_index.clear();
     for ((label, property), kind, name) in registrations {
-        let index = build_property_index_lenient(graph, label, property, kind)?;
+        let index = build_property_index_lenient(graph, label.clone(), property.clone(), kind)?;
         graph
             .property_index
             .insert((label, property), PropertyIndexEntry::new(index, name));
@@ -228,7 +234,7 @@ fn values_share_key(
     match (old_value, new_value) {
         (None, None) => true,
         (Some(old_value), Some(new_value)) => indexes
-            .get(&(label, property))
+            .get(&(label.clone(), property.clone()))
             .is_some_and(|entry| entry.index.values_share_key(old_value, new_value)),
         _ => false,
     }
@@ -253,7 +259,7 @@ fn insert_commit(
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
-    if let Some(index) = indexes.get_mut(&(label, property))
+    if let Some(index) = indexes.get_mut(&(label.clone(), property.clone()))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).insert(value, row)
     {
         return demote_or_promote(label, property, row, "insert", err);
@@ -268,7 +274,7 @@ fn remove_commit(
     value: &Value,
     row: u32,
 ) -> GraphResult<()> {
-    if let Some(index) = indexes.get_mut(&(label, property))
+    if let Some(index) = indexes.get_mut(&(label.clone(), property.clone()))
         && let Err(err) = std::sync::Arc::make_mut(&mut index.index).remove(value, row)
     {
         return demote_or_promote(label, property, row, "remove", err);

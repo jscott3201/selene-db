@@ -288,7 +288,7 @@ fn collect_limit_parameter_declarations(
         span,
     } = value
     {
-        record_parameter_declaration(declarations, *name, declared_type, *span)?;
+        record_parameter_declaration(declarations, name.clone(), declared_type, *span)?;
     }
     Ok(())
 }
@@ -305,7 +305,7 @@ fn collect_value_parameter_declarations(
                 declared_type: Some(declared_type),
                 span,
             } => {
-                record_parameter_declaration(declarations, *name, declared_type, *span)?;
+                record_parameter_declaration(declarations, name.clone(), declared_type, *span)?;
             }
             ValueExpr::PropertyAccess { target, .. }
             | ValueExpr::UnaryOp {

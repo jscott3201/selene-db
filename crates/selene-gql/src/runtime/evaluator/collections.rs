@@ -66,14 +66,14 @@ pub(super) fn eval_record_literal(
     let mut seen = BTreeSet::new();
     let mut values = SmallVec::<[(IStr, Value); 4]>::new();
     for (key, expr) in fields {
-        if !seen.insert(*key) {
+        if !seen.insert(key.clone()) {
             return data_exception_with(
                 DataExceptionSubclass::RecordDataFieldUnassignable,
                 format!("duplicate record field: {}", key.as_str()),
                 span,
             );
         }
-        values.push((*key, evaluate(expr, binding, schema, ctx)?));
+        values.push((key.clone(), evaluate(expr, binding, schema, ctx)?));
     }
     Ok(Value::Record(Box::new(Record::Open(values))))
 }

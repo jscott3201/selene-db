@@ -59,7 +59,7 @@ fn hash_join_handles_multiple_matches_per_key() {
                 exec_common::istr("KNOWS"),
                 NodeId::new(1),
                 NodeId::new(3),
-                props([(fixture.score, Value::Int(7))]),
+                props([(fixture.score.clone(), Value::Int(7))]),
             )
             .expect("second edge inserts");
         txn.commit().expect("fixture update commits");

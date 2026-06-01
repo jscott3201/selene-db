@@ -230,7 +230,12 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
             issues += 1;
             continue;
         };
-        if !adjacency_entry_contains(snapshot.outgoing_edges(source), target, edge_id, label) {
+        if !adjacency_entry_contains(
+            snapshot.outgoing_edges(source),
+            target,
+            edge_id,
+            label.clone(),
+        ) {
             issues += 1;
         }
         if !adjacency_entry_contains(snapshot.incoming_edges(target), source, edge_id, label) {
@@ -254,7 +259,7 @@ pub(super) fn check_adjacency_symmetry(snapshot: &SeleneGraph) -> CheckResult {
 
 fn expected_edge(snapshot: &SeleneGraph, edge_id: EdgeId) -> Option<(NodeId, NodeId, IStr)> {
     let (source, target) = snapshot.edge_endpoints(edge_id)?;
-    let label = *snapshot.edge_label(edge_id)?;
+    let label = snapshot.edge_label(edge_id)?.clone();
     Some((source, target, label))
 }
 
@@ -303,7 +308,8 @@ pub(super) fn check_typed_index_value_range(snapshot: &SeleneGraph) -> CheckResu
     for ((label, property), entry) in &snapshot.property_index {
         for (bucket, row) in typed_index_entries(&entry.index) {
             checked += 1;
-            if !indexed_property_row_matches(snapshot, *label, *property, row, bucket) {
+            if !indexed_property_row_matches(snapshot, label.clone(), property.clone(), row, bucket)
+            {
                 issues += 1;
             }
         }
@@ -313,7 +319,7 @@ pub(super) fn check_typed_index_value_range(snapshot: &SeleneGraph) -> CheckResu
             checked += 1;
             if !indexed_composite_row_matches(
                 snapshot,
-                *label,
+                label.clone(),
                 &entry.declared_properties,
                 row,
                 &bucket,
@@ -385,7 +391,11 @@ fn typed_index_entries(index: &TypedIndex) -> Vec<(IndexedValue, u32)> {
         }
         TypedIndex::String(index) => {
             for (key, bitmap) in index {
-                push_index_entries(&mut entries, IndexedValue::String(*key), bitmap.iter());
+                push_index_entries(
+                    &mut entries,
+                    IndexedValue::String(key.clone()),
+                    bitmap.iter(),
+                );
             }
         }
         TypedIndex::Date(index) => {

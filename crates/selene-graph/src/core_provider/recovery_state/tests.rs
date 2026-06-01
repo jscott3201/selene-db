@@ -35,7 +35,7 @@ fn person_runtime_graph_type() -> GraphTypeDef {
     GraphTypeDef {
         name: intern("core.recovery.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -48,7 +48,7 @@ fn person_knows_runtime_graph_type() -> GraphTypeDef {
     let knows = intern("KNOWS").unwrap();
     let mut graph_type = person_runtime_graph_type();
     graph_type.edge_types.push(EdgeTypeDef {
-        name: knows,
+        name: knows.clone(),
         label: knows,
         source_node_type: EdgeEndpointDef::NodeType(0),
         target_node_type: EdgeEndpointDef::NodeType(0),
@@ -118,9 +118,9 @@ fn wal_replay_applies_node_type_added_to_graph_type() {
             graph: GraphId::new(1),
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label: sensor,
+                label: sensor.clone(),
                 def: NodeTypeDefV1 {
-                    labels: LabelSet::single(sensor),
+                    labels: LabelSet::single(sensor.clone()),
                     properties: smallvec![core_string_property("serial", true)],
                     key: None,
                 },
@@ -156,9 +156,9 @@ fn wal_replay_applies_edge_type_added() {
             graph: GraphId::new(1),
             change: SchemaChange::EdgeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label: knows,
+                label: knows.clone(),
                 def: EdgeTypeDefV1 {
-                    label: knows,
+                    label: knows.clone(),
                     source_node_type: NodeTypeRef(intern("Person").unwrap()),
                     target_node_type: NodeTypeRef(intern("Person").unwrap()),
                     properties: smallvec![since],
@@ -281,8 +281,8 @@ fn wal_replay_restores_property_index_created_after_node_state() {
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(label),
-            properties: props([(property, Value::Int(42))]),
+            labels: LabelSet::single(label.clone()),
+            properties: props([(property.clone(), Value::Int(42))]),
         },
     )
     .unwrap();
@@ -291,8 +291,8 @@ fn wal_replay_restores_property_index_created_after_node_state() {
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreated {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::I64,
             },
         },
@@ -324,10 +324,10 @@ fn wal_replay_restores_named_property_index_metadata() {
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreatedNamed {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::String,
-                name: Some(name),
+                name: Some(name.clone()),
             },
         },
     )
@@ -347,7 +347,7 @@ fn wal_replay_drops_property_index_registered_in_snapshot_scma() {
     let label = intern("SnapshotPerson").unwrap();
     let property = intern("age").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     let snapshot = shared.read();
     let provider = CoreProvider::new_for_recovery();
@@ -361,7 +361,10 @@ fn wal_replay_drops_property_index_registered_in_snapshot_scma() {
         provider.as_ref(),
         &Change::SchemaChanged {
             graph: GraphId::new(1),
-            change: SchemaChange::PropertyIndexDropped { label, property },
+            change: SchemaChange::PropertyIndexDropped {
+                label: label.clone(),
+                property: property.clone(),
+            },
         },
     )
     .unwrap();
@@ -378,14 +381,17 @@ fn wal_replay_property_index_create_drop_create_sequence_uses_last_event() {
     let property = intern("age").unwrap();
     for change in [
         SchemaChange::PropertyIndexCreated {
-            label,
-            property,
+            label: label.clone(),
+            property: property.clone(),
             kind: SchemaPropertyIndexKind::I64,
         },
-        SchemaChange::PropertyIndexDropped { label, property },
+        SchemaChange::PropertyIndexDropped {
+            label: label.clone(),
+            property: property.clone(),
+        },
         SchemaChange::PropertyIndexCreated {
-            label,
-            property,
+            label: label.clone(),
+            property: property.clone(),
             kind: SchemaPropertyIndexKind::I64,
         },
     ] {
@@ -418,8 +424,8 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
             graph: GraphId::new(1),
             change: SchemaChange::NodeTypeAdded {
                 graph_type: test_graph_type_id(),
-                label,
-                def: NodeTypeDefV1::new(LabelSet::single(label)),
+                label: label.clone(),
+                def: NodeTypeDefV1::new(LabelSet::single(label.clone())),
             },
         },
     )
@@ -429,8 +435,8 @@ fn wal_replay_applies_catalog_ddl_before_property_index_queue() {
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreated {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::I64,
             },
         },
@@ -457,8 +463,8 @@ fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
         &Change::SchemaChanged {
             graph: GraphId::new(1),
             change: SchemaChange::PropertyIndexCreated {
-                label,
-                property,
+                label: label.clone(),
+                property: property.clone(),
                 kind: SchemaPropertyIndexKind::I64,
             },
         },
@@ -468,8 +474,11 @@ fn wal_replay_property_index_create_is_lenient_for_later_kind_drift() {
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(label),
-            properties: props([(property, Value::String(intern("not-an-int").unwrap()))]),
+            labels: LabelSet::single(label.clone()),
+            properties: props([(
+                property.clone(),
+                Value::String(intern("not-an-int").unwrap()),
+            )]),
         },
     )
     .unwrap();

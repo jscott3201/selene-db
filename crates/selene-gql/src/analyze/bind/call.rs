@@ -77,7 +77,7 @@ pub(crate) fn bind_procedure_call_with_metadata(
             return Err(AnalysisError::TypeMismatch {
                 context: TypeMismatchContext::ProcedureArgument {
                     procedure: procedure_name(call),
-                    parameter: parameter.name,
+                    parameter: parameter.name.clone(),
                     position,
                 },
                 expected: ExpectedType::Specific(parameter.ty.clone()),
@@ -97,25 +97,25 @@ pub(crate) fn bind_procedure_call_with_metadata(
         .map(|item| item.span)
     {
         for column in &metadata.output_schema.columns {
-            declare_output(ctx, column, column.name, star_span)?;
+            declare_output(ctx, column, column.name.clone(), star_span)?;
         }
     }
 
     for item in &call.yield_items {
-        if let YieldColumn::Named(column) = item.column {
+        if let YieldColumn::Named(column) = &item.column {
             let Some(output) = metadata
                 .output_schema
                 .columns
                 .iter()
-                .find(|candidate| candidate.name == column)
+                .find(|candidate| candidate.name == *column)
             else {
                 return Err(AnalysisError::UnknownYieldColumn {
                     procedure: procedure_name(call),
-                    column,
+                    column: column.clone(),
                     span: item.span,
                 });
             };
-            let name = item.alias.unwrap_or(column);
+            let name = item.alias.clone().unwrap_or_else(|| column.clone());
             declare_output(ctx, output, name, item.span)?;
         }
     }

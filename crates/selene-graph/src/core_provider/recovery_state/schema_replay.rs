@@ -65,35 +65,35 @@ fn apply_schema_change(
             let def = selene_core::NodeTypeDef::from(def.clone());
             graph_type
                 .node_types
-                .push(runtime_node_type_def(*label, &def)?);
+                .push(runtime_node_type_def(label.clone(), &def)?);
         }
         SchemaChange::NodeTypeAddedV2 { label, def, .. } => {
             // See the legacy NodeTypeAdded arm above for the recovery-index
             // mapping. V2 carries live type-model fields directly.
             graph_type
                 .node_types
-                .push(runtime_node_type_def(*label, def)?);
+                .push(runtime_node_type_def(label.clone(), def)?);
         }
         SchemaChange::EdgeTypeAdded { label, def, .. } => {
             let def = selene_core::EdgeTypeDef::from(def.clone());
             graph_type
                 .edge_types
-                .push(runtime_edge_type_def(graph_type, *label, &def)?);
+                .push(runtime_edge_type_def(graph_type, label.clone(), &def)?);
         }
         SchemaChange::EdgeTypeAddedV2 { label, def, .. } => {
             graph_type
                 .edge_types
-                .push(runtime_edge_type_def(graph_type, *label, def)?);
+                .push(runtime_edge_type_def(graph_type, label.clone(), def)?);
         }
         SchemaChange::NodeTypeDropped { name, .. } => {
-            *graph_type = graph_type.without_node_type(*name).ok_or_else(|| {
+            *graph_type = graph_type.without_node_type(name.clone()).ok_or_else(|| {
                 inconsistent(format!(
                     "WAL NodeTypeDropped references unknown type {name}"
                 ))
             })?;
         }
         SchemaChange::EdgeTypeDropped { name, .. } => {
-            *graph_type = graph_type.without_edge_type(*name).ok_or_else(|| {
+            *graph_type = graph_type.without_edge_type(name.clone()).ok_or_else(|| {
                 inconsistent(format!(
                     "WAL EdgeTypeDropped references unknown type {name}"
                 ))
@@ -130,7 +130,7 @@ fn runtime_edge_type_def(
 ) -> Result<EdgeTypeDef, crate::ProviderError> {
     Ok(EdgeTypeDef {
         name: label,
-        label: def.label,
+        label: def.label.clone(),
         source_node_type: runtime_edge_endpoint_def(graph_type, &def.source_node_type, "source")?,
         target_node_type: runtime_edge_endpoint_def(graph_type, &def.target_node_type, "target")?,
         properties: runtime_properties(&def.properties)?,
@@ -146,7 +146,7 @@ fn runtime_edge_endpoint_def(
     match endpoint {
         CoreEdgeEndpointDef::Any => Ok(EdgeEndpointDef::Any),
         CoreEdgeEndpointDef::NodeType(node_type) => Ok(EdgeEndpointDef::NodeType(
-            resolve_node_type_ref(graph_type, *node_type, role)?,
+            resolve_node_type_ref(graph_type, node_type.clone(), role)?,
         )),
         CoreEdgeEndpointDef::OneOf(node_types) => {
             // Resolve each WAL NodeTypeRef to a storage index via the same
@@ -157,7 +157,7 @@ fn runtime_edge_endpoint_def(
             // different order from the original snapshot.
             let mut indices: Vec<u32> = Vec::with_capacity(node_types.len());
             for node_type in node_types {
-                indices.push(resolve_node_type_ref(graph_type, *node_type, role)?);
+                indices.push(resolve_node_type_ref(graph_type, node_type.clone(), role)?);
             }
             Ok(EdgeEndpointDef::one_of(indices))
         }
@@ -170,8 +170,8 @@ fn resolve_node_type_ref(
     role: &str,
 ) -> Result<u32, crate::ProviderError> {
     graph_type
-        .find_node_type_index(&LabelSet::single(node_type.0))
-        .or_else(|| graph_type.node_type_index_for(node_type.0))
+        .find_node_type_index(&LabelSet::single(node_type.0.clone()))
+        .or_else(|| graph_type.node_type_index_for(node_type.0.clone()))
         .ok_or_else(|| {
             inconsistent(format!(
                 "WAL EdgeTypeAdded references unknown {role} node type {}",
@@ -212,7 +212,7 @@ fn runtime_properties(
                     }
                 };
             Ok(PropertyTypeDef {
-                name: property.name,
+                name: property.name.clone(),
                 value_type,
                 list_element_type,
                 required: !property.nullable || property.value_type.not_null,
@@ -237,7 +237,7 @@ fn runtime_record_field_types(
         .iter()
         .map(|field| {
             Ok(RecordFieldTypeDef {
-                name: field.name,
+                name: field.name.clone(),
                 field_type: runtime_record_field_type(&field.field_type, depth)?,
                 required: field.required,
             })

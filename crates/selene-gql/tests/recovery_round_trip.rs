@@ -96,7 +96,7 @@ fn node_ref(table: &BindingTable, column: &str) -> NodeId {
         .schema()
         .columns
         .iter()
-        .position(|col| col.name.is_some_and(|name| name.as_str() == column))
+        .position(|col| col.name.clone().is_some_and(|name| name.as_str() == column))
         .expect("column exists");
     match table.rows()[0].get(index).expect("row value exists") {
         Value::NodeRef(id) => *id,
@@ -133,7 +133,10 @@ fn recover_from_wal_only_via_runtime_mutation_pipeline() {
     ));
     assert_eq!(snapshot.node_count(), 2);
     assert_eq!(snapshot.edge_count(), 1);
-    assert_eq!(snapshot.node_labels(alice), Some(&LabelSet::single(person)));
+    assert_eq!(
+        snapshot.node_labels(alice),
+        Some(&LabelSet::single(person.clone()))
+    );
     assert_eq!(snapshot.node_labels(bob), Some(&LabelSet::single(person)));
     assert_eq!(
         snapshot

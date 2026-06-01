@@ -43,13 +43,18 @@ fn build_graph_with_nodes(count: usize, edges: &[(usize, usize)]) -> (SharedGrap
     for _ in 0..count {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for &(source, target) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[source], nodes[target], PropertyMap::new())
+            .create_edge(
+                rel.clone(),
+                nodes[source],
+                nodes[target],
+                PropertyMap::new(),
+            )
             .unwrap();
     }
     txn.commit().unwrap();

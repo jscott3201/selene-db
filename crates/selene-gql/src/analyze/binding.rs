@@ -261,7 +261,7 @@ impl BindingDecl {
 
     /// Return this declaration's interned name.
     #[must_use]
-    pub const fn name(&self) -> IStr {
+    pub fn name(&self) -> IStr {
         match self {
             Self::NodePattern { name, .. }
             | Self::EdgePattern { name, .. }
@@ -271,7 +271,7 @@ impl BindingDecl {
             | Self::YieldColumn { name, .. }
             | Self::InsertNode { name, .. }
             | Self::InsertEdge { name, .. }
-            | Self::PathBinding { name, .. } => *name,
+            | Self::PathBinding { name, .. } => name.clone(),
         }
     }
 

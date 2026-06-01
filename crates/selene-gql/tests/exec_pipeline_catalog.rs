@@ -52,7 +52,7 @@ fn person_graph(id: u64) -> SharedGraph {
         .bound_to(GraphTypeDef {
             name: istr("catalog.person.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -305,9 +305,12 @@ fn show_node_types_on_open_graph_returns_empty_schemaful_table() {
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
     assert_eq!(table.row_count(), 0);
-    assert_eq!(table.schema().columns[0].name.unwrap().as_str(), "label");
     assert_eq!(
-        table.schema().columns[1].name.unwrap().as_str(),
+        table.schema().columns[0].name.as_ref().unwrap().as_str(),
+        "label"
+    );
+    assert_eq!(
+        table.schema().columns[1].name.as_ref().unwrap().as_str(),
         "definition"
     );
 }
@@ -394,7 +397,7 @@ fn show_edge_types_renders_round_trippable_definition() {
     let (table, outcome) = run_write(&graph, &plan).expect("catalog executes");
     outcome.expect("commit succeeds");
 
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     assert_eq!(
@@ -420,7 +423,7 @@ fn show_edge_types_renders_label_not_internal_name() {
             }],
             edge_types: vec![EdgeTypeDef {
                 name: istr("types.knows"),
-                label: knows,
+                label: knows.clone(),
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::NodeType(0),
                 properties: Vec::new(),
@@ -438,7 +441,7 @@ fn show_edge_types_renders_label_not_internal_name() {
 
     let table = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx).expect("show executes");
 
-    assert_eq!(table.rows()[0].values()[0], Value::String(knows));
+    assert_eq!(table.rows()[0].values()[0], Value::String(knows.clone()));
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(istr("CREATE EDGE TYPE :KNOWS (FROM :Person TO :Person)"))
@@ -464,7 +467,7 @@ fn show_edge_types_renders_any_endpoints_as_endpoint_less() {
         EdgeEndpointDef::Any
     );
 
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     assert_eq!(definition.as_str(), "CREATE EDGE TYPE :KNOWS ()");
@@ -508,10 +511,10 @@ fn show_edge_types_renders_multi_label_endpoint_labels() {
     assert_eq!(
         table.rows()[0].values()[1],
         Value::String(istr(
-            "CREATE EDGE TYPE :KNOWS (FROM :Person,:Active TO :Person,:Active)"
+            "CREATE EDGE TYPE :KNOWS (FROM :Active,:Person TO :Active,:Person)"
         ))
     );
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     parse(definition.as_str()).expect("multi-label endpoint definition round-trips");

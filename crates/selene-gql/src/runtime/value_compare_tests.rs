@@ -39,7 +39,7 @@ fn equal_non_null_list_nan_returns_true() {
 fn equal_non_null_record_nan_returns_true() {
     let key = intern_with_admission("x").unwrap().0;
     let lhs = Value::Record(Box::new(Record::Open(smallvec![(
-        key,
+        key.clone(),
         Value::Float(f64::NAN)
     )])));
     let rhs = Value::Record(Box::new(Record::Open(smallvec![(
@@ -61,7 +61,10 @@ fn numeric_equal_top_level_float_nan_returns_null() {
 #[test]
 fn gql_equal_record_null_field_returns_null() {
     let key = intern_with_admission("x").unwrap().0;
-    let lhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+    let lhs = Value::Record(Box::new(Record::Open(smallvec![(
+        key.clone(),
+        Value::Null
+    )])));
     let rhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
 
     assert!(equal_non_null(&lhs, &rhs));
@@ -86,7 +89,10 @@ fn gql_equal_typed_record_null_slot_returns_null() {
 #[test]
 fn compare_record_with_null_field_returns_null() {
     let key = intern_with_admission("x").unwrap().0;
-    let lhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
+    let lhs = Value::Record(Box::new(Record::Open(smallvec![(
+        key.clone(),
+        Value::Null
+    )])));
     let rhs = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Int(1))])));
 
     assert_eq!(compare_non_null(&lhs, &rhs), None);

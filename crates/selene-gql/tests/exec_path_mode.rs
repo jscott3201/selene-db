@@ -25,14 +25,14 @@ impl PathModeFixture {
             let mut mutator = txn.mutator();
             let a = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("A")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("A")))]),
                 )
                 .expect("A inserts");
             let b = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("B")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("B")))]),
                 )
                 .expect("B inserts");
             let c = mutator
@@ -41,9 +41,15 @@ impl PathModeFixture {
                     props([(name, Value::String(istr("C")))]),
                 )
                 .expect("C inserts");
-            mutator.create_edge(edge, a, a, props([])).expect("A loop");
-            mutator.create_edge(edge, a, b, props([])).expect("A to B");
-            mutator.create_edge(edge, b, a, props([])).expect("B to A");
+            mutator
+                .create_edge(edge.clone(), a, a, props([]))
+                .expect("A loop");
+            mutator
+                .create_edge(edge.clone(), a, b, props([]))
+                .expect("A to B");
+            mutator
+                .create_edge(edge.clone(), b, a, props([]))
+                .expect("B to A");
             mutator.create_edge(edge, a, c, props([])).expect("A to C");
             txn.commit().expect("fixture commits");
         }

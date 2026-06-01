@@ -47,13 +47,13 @@ fn yield_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
         .clone()
 }
 
-fn yield_names(analyzed: &AnalyzedStatement) -> Vec<&'static str> {
+fn yield_names(analyzed: &AnalyzedStatement) -> Vec<String> {
     analyzed
         .scopes
         .declarations()
         .iter()
         .filter(|decl| decl.kind() == BindingDeclKind::YieldColumn)
-        .map(|decl| decl.name().as_str())
+        .map(|decl| decl.name().as_str().to_owned())
         .collect()
 }
 

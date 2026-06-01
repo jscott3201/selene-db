@@ -25,7 +25,14 @@ fn project_replaces_schema_with_named_aliases() {
         .schema()
         .columns
         .iter()
-        .map(|column| column.name.expect("named column").as_str().to_owned())
+        .map(|column| {
+            column
+                .name
+                .clone()
+                .expect("named column")
+                .as_str()
+                .to_owned()
+        })
         .collect::<Vec<_>>();
     assert_eq!(names, ["one", "two"]);
 }

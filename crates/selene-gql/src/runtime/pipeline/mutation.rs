@@ -85,7 +85,7 @@ pub(super) fn execute(
         } => execute_set_property(
             *element,
             *target_column_index,
-            *key,
+            key.clone(),
             value,
             *span,
             table,
@@ -99,21 +99,42 @@ pub(super) fn execute(
             label,
             span,
             ..
-        } => execute_set_label(*element, *target_column_index, *label, *span, table, ctx),
+        } => execute_set_label(
+            *element,
+            *target_column_index,
+            label.clone(),
+            *span,
+            table,
+            ctx,
+        ),
         MutationOp::RemoveProperty {
             element,
             target_column_index,
             key,
             span,
             ..
-        } => execute_remove_property(*element, *target_column_index, *key, *span, table, ctx),
+        } => execute_remove_property(
+            *element,
+            *target_column_index,
+            key.clone(),
+            *span,
+            table,
+            ctx,
+        ),
         MutationOp::RemoveLabel {
             element,
             target_column_index,
             label,
             span,
             ..
-        } => execute_remove_label(*element, *target_column_index, *label, *span, table, ctx),
+        } => execute_remove_label(
+            *element,
+            *target_column_index,
+            label.clone(),
+            *span,
+            table,
+            ctx,
+        ),
         MutationOp::DeleteTarget {
             element,
             target_column_index,
@@ -219,7 +240,7 @@ fn execute_insert_edge(
         let edge_id = {
             let mut mutator = ctx.mutator()?;
             mutator
-                .create_edge(label, source, target, props)
+                .create_edge(label.clone(), source, target, props)
                 .map_err(|source| graph_mutation(source, span))?
         };
         let mut values = row.values().to_vec();
@@ -258,7 +279,7 @@ fn execute_set_property(
             };
             evaluator::evaluate(&value.expr, row, &schema, &eval_ctx)?
         };
-        let diff = property_diff([(key, value)], [], span)?;
+        let diff = property_diff([(key.clone(), value)], [], span)?;
         match element {
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
@@ -325,14 +346,14 @@ fn execute_remove_property(
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
                     ctx.mutator()?
-                        .remove_node_property(id, key)
+                        .remove_node_property(id, key.clone())
                         .map_err(|source| graph_mutation(source, span))?;
                 }
             }
             ElementKind::Edge => {
                 if let Some(id) = target_edge(row, target_column_index, span)? {
                     ctx.mutator()?
-                        .remove_edge_property(id, key)
+                        .remove_edge_property(id, key.clone())
                         .map_err(|source| graph_mutation(source, span))?;
                 }
             }
@@ -359,7 +380,7 @@ fn execute_remove_label(
             ElementKind::Node => {
                 if let Some(id) = target_node(row, target_column_index, span)? {
                     ctx.mutator()?
-                        .remove_node_label(id, label)
+                        .remove_node_label(id, label.clone())
                         .map_err(|source| graph_mutation(source, span))?;
                 }
             }
@@ -433,7 +454,7 @@ fn property_map(
     for init in property_inits {
         ctx.tx.check_cancellation_stride(&mut rows_since_check, 1)?;
         pairs.push((
-            init.key,
+            init.key.clone(),
             evaluator::evaluate(&init.value.expr, row, schema, ctx)?,
         ));
     }
@@ -459,7 +480,7 @@ fn node_labels(
 ) -> Result<LabelSet, ExecutorError> {
     match label_expr {
         None => Ok(LabelSet::new()),
-        Some(LabelExpr::Single(label)) => Ok(LabelSet::single(*label)),
+        Some(LabelExpr::Single(label)) => Ok(LabelSet::single(label.clone())),
         // ISO-legal label-expression forms (conjunction/disjunction) are not yet
         // implemented in the mutation surface; 42N01, not an internal-invariant break.
         Some(_) => Err(ExecutorError::FeatureNotSupportedYet {
@@ -471,7 +492,7 @@ fn node_labels(
 
 fn edge_label(label_expr: Option<&LabelExpr>, span: SourceSpan) -> Result<IStr, ExecutorError> {
     match label_expr {
-        Some(LabelExpr::Single(label)) => Ok(*label),
+        Some(LabelExpr::Single(label)) => Ok(label.clone()),
         // An edge insert with no label is an internal-invariant break: the binder must
         // have supplied exactly one edge label by this point.
         None => Err(ExecutorError::ImplementationDefined {

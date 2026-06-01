@@ -1,10 +1,11 @@
 //! WAL change payloads per spec 02 section 9.
 //!
 //! The principal/audit actor lives in the WAL entry header per D12; these
-//! payloads carry only the graph mutation itself. Diff payloads keep
-//! [`IStr`]-handle sorted storage in memory, but serialize key lists in
-//! canonical lexicographic order by [`IStr::as_str`] and re-sort into the
-//! receiver's local handle order after decode.
+//! payloads carry only the graph mutation itself. Diff payloads keep key lists
+//! in canonical lexicographic order by [`IStr::as_str`] both in memory and on
+//! the wire (the derived [`IStr`] `Ord` is lexicographic through the inner
+//! string), and re-sort defensively into that canonical order after decode so
+//! a hand-built or out-of-order wire payload is canonicalized on receipt.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
@@ -203,8 +204,8 @@ impl<'de> Deserialize<'de> for LabelDiff {
         D: Deserializer<'de>,
     {
         let mut wire = LabelDiffWire::deserialize(deserializer)?;
-        wire.added.sort_unstable_by_key(|key| *key);
-        wire.removed.sort_unstable_by_key(|key| *key);
+        wire.added.sort_unstable();
+        wire.removed.sort_unstable();
         validate_sorted_unique(&wire.added, "LabelDiff.added")?;
         validate_sorted_unique(&wire.removed, "LabelDiff.removed")?;
         validate_disjoint(&wire.added, &wire.removed, "label")?;
@@ -237,7 +238,7 @@ impl PropertyDiff {
         removed: impl IntoIterator<Item = IStr>,
     ) -> CoreResult<Self> {
         let mut set: Vec<_> = set.into_iter().collect();
-        set.sort_by_key(|(key, _)| *key);
+        set.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
         set.dedup_by(|(lhs_key, lhs_value), (rhs_key, rhs_value)| {
             if lhs_key == rhs_key {
                 *lhs_value = rhs_value.clone();
@@ -252,7 +253,7 @@ impl PropertyDiff {
             if removed.binary_search(key).is_ok() {
                 return Err(CoreError::OverlappingDiff {
                     kind: "property",
-                    key: *key,
+                    key: key.clone(),
                 });
             }
         }
@@ -291,8 +292,8 @@ impl<'de> Deserialize<'de> for PropertyDiff {
         D: Deserializer<'de>,
     {
         let mut wire = PropertyDiffWire::deserialize(deserializer)?;
-        wire.set.sort_unstable_by_key(|(key, _)| *key);
-        wire.removed.sort_unstable_by_key(|key| *key);
+        wire.set.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+        wire.removed.sort_unstable();
         for window in wire.set.windows(2) {
             if window[0].0 >= window[1].0 {
                 return Err(serde::de::Error::custom(
@@ -499,7 +500,10 @@ fn ensure_disjoint(
 ) -> CoreResult<()> {
     for label in added.iter() {
         if removed.binary_search(label).is_ok() {
-            return Err(CoreError::OverlappingDiff { kind, key: *label });
+            return Err(CoreError::OverlappingDiff {
+                kind,
+                key: label.clone(),
+            });
         }
     }
     Ok(())
@@ -626,7 +630,7 @@ mod tests {
     fn label_diff_added_and_removed_independent() {
         let added = istr("change.label.added");
         let removed = istr("change.label.removed");
-        let diff = LabelDiff::new([added], [removed]).unwrap();
+        let diff = LabelDiff::new([added.clone()], [removed.clone()]).unwrap();
         assert_eq!(diff.added.as_slice(), &[added]);
         assert_eq!(diff.removed.as_slice(), &[removed]);
     }
@@ -634,14 +638,14 @@ mod tests {
     #[test]
     fn property_diff_set_includes_null_value() {
         let property = istr("change.null");
-        let diff = PropertyDiff::new([(property, Value::Null)], []).unwrap();
+        let diff = PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap();
         assert_eq!(diff.set.as_slice(), &[(property, Value::Null)]);
     }
 
     #[test]
     fn label_diff_rejects_overlapping_label() {
         let label = istr("change.overlap.label");
-        let err = LabelDiff::new([label], [label]).unwrap_err();
+        let err = LabelDiff::new([label.clone()], [label]).unwrap_err();
         assert!(matches!(
             err,
             CoreError::OverlappingDiff { kind: "label", .. }
@@ -651,7 +655,7 @@ mod tests {
     #[test]
     fn property_diff_rejects_overlapping_key() {
         let key = istr("change.overlap.prop");
-        let err = PropertyDiff::new([(key, Value::Int(1))], [key]).unwrap_err();
+        let err = PropertyDiff::new([(key.clone(), Value::Int(1))], [key]).unwrap_err();
         assert!(matches!(
             err,
             CoreError::OverlappingDiff {
@@ -672,23 +676,30 @@ mod tests {
     }
 
     #[test]
-    fn label_diff_deserialize_resorts_by_receiver_handle() {
-        let b = istr("change.deser.label.zebra");
-        let a = istr("change.deser.label.apple");
+    fn label_diff_deserialize_resorts_lexicographically() {
+        // Hand-build a wire payload whose key list is *not* in canonical
+        // lexicographic order; the decoder must canonicalize it. `IStr` Ord is
+        // lexicographic through the inner string, so "apple" sorts before
+        // "zebra" regardless of intern order.
+        let zebra = istr("change.deser.label.zebra");
+        let apple = istr("change.deser.label.apple");
         let bad = LabelDiffWireSer {
-            added: smallvec![a, b],
+            added: smallvec![zebra.clone(), apple.clone()],
             removed: SmallVec::new(),
         };
         let bytes = postcard::to_allocvec(&bad).unwrap();
         let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
-        assert_eq!(round.added, SmallVec::<[IStr; 2]>::from_vec(vec![b, a]));
+        assert_eq!(
+            round.added,
+            SmallVec::<[IStr; 2]>::from_vec(vec![apple, zebra])
+        );
     }
 
     #[test]
     fn label_diff_deserialize_rejects_duplicate_added() {
         let label = istr("change.deser.label.dup");
         let bad = LabelDiffWireSer {
-            added: smallvec![label, label],
+            added: smallvec![label.clone(), label],
             removed: SmallVec::new(),
         };
         let bytes = postcard::to_allocvec(&bad).unwrap();
@@ -700,7 +711,7 @@ mod tests {
     fn label_diff_deserialize_rejects_overlap() {
         let label = istr("change.deser.bad");
         let mut added = SmallVec::<[IStr; 2]>::new();
-        added.push(label);
+        added.push(label.clone());
         let mut removed = SmallVec::<[IStr; 2]>::new();
         removed.push(label);
         let bad = LabelDiffWireSer { added, removed };
@@ -710,18 +721,26 @@ mod tests {
     }
 
     #[test]
-    fn property_diff_deserialize_resorts_by_receiver_handle() {
-        let b = istr("change.deser.prop.zebra");
-        let a = istr("change.deser.prop.apple");
+    fn property_diff_deserialize_resorts_lexicographically() {
+        // As above for the property-set key list: an out-of-order wire payload
+        // is canonicalized to lexicographic key order on decode.
+        let zebra = istr("change.deser.prop.zebra");
+        let apple = istr("change.deser.prop.apple");
         let bad = PropertyDiffWireSer {
-            set: smallvec![(a, Value::Int(1)), (b, Value::Int(2))],
+            set: smallvec![
+                (zebra.clone(), Value::Int(2)),
+                (apple.clone(), Value::Int(1))
+            ],
             removed: SmallVec::new(),
         };
         let bytes = postcard::to_allocvec(&bad).unwrap();
         let round: PropertyDiff = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(
             round.set,
-            SmallVec::<[(IStr, Value); 4]>::from_vec(vec![(b, Value::Int(2)), (a, Value::Int(1)),])
+            SmallVec::<[(IStr, Value); 4]>::from_vec(vec![
+                (apple, Value::Int(1)),
+                (zebra, Value::Int(2)),
+            ])
         );
     }
 
@@ -729,7 +748,7 @@ mod tests {
     fn property_diff_deserialize_rejects_duplicate_set_key() {
         let key = istr("change.deser.prop.dup");
         let bad = PropertyDiffWireSer {
-            set: smallvec![(key, Value::Int(1)), (key, Value::Int(2))],
+            set: smallvec![(key.clone(), Value::Int(1)), (key, Value::Int(2))],
             removed: SmallVec::new(),
         };
         let bytes = postcard::to_allocvec(&bad).unwrap();
@@ -741,7 +760,7 @@ mod tests {
     fn property_diff_deserialize_rejects_overlap() {
         let key = istr("change.deser.prop");
         let mut set = SmallVec::<[(IStr, Value); 4]>::new();
-        set.push((key, Value::Int(1)));
+        set.push((key.clone(), Value::Int(1)));
         let mut removed = SmallVec::<[IStr; 2]>::new();
         removed.push(key);
         let bad = PropertyDiffWireSer { set, removed };

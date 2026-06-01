@@ -31,17 +31,17 @@ fn graph_with_indexed_deletion() -> (SharedGraph, IStr, IStr) {
     let la = intern("cmp.idx").unwrap();
     let name = intern("name").unwrap();
     shared
-        .create_property_index(la, name, TypedIndexKind::I64)
+        .create_property_index(la.clone(), name.clone(), TypedIndexKind::I64)
         .unwrap();
     let mut txn = shared.begin_write();
     let n2 = {
         let mut m = txn.mutator();
-        m.create_node(LabelSet::single(la), prop("name", Value::Int(11)))
+        m.create_node(LabelSet::single(la.clone()), prop("name", Value::Int(11)))
             .unwrap();
         let n2 = m
-            .create_node(LabelSet::single(la), prop("name", Value::Int(22)))
+            .create_node(LabelSet::single(la.clone()), prop("name", Value::Int(22)))
             .unwrap();
-        m.create_node(LabelSet::single(la), prop("name", Value::Int(33)))
+        m.create_node(LabelSet::single(la.clone()), prop("name", Value::Int(33)))
             .unwrap();
         m.delete_node(n2).unwrap();
         n2
@@ -100,11 +100,11 @@ fn graph_with_composite_indexed_deletion() -> (SharedGraph, IStr, SmallVec<[IStr
     let la = intern("cmp.cidx").unwrap();
     let zone = intern("zone").unwrap();
     let rank = intern("rank").unwrap();
-    let props: SmallVec<[IStr; 4]> = smallvec![zone, rank];
+    let props: SmallVec<[IStr; 4]> = smallvec![zone.clone(), rank.clone()];
     let mk = |z: &str, r: i64| {
         PropertyMap::from_pairs([
-            (zone, Value::String(intern(z).unwrap())),
-            (rank, Value::Int(r)),
+            (zone.clone(), Value::String(intern(z).unwrap())),
+            (rank.clone(), Value::Int(r)),
         ])
         .unwrap()
     };
@@ -112,15 +112,19 @@ fn graph_with_composite_indexed_deletion() -> (SharedGraph, IStr, SmallVec<[IStr
     let n2 = {
         let mut m = txn.mutator();
         m.create_composite_property_index_named(
-            la,
+            la.clone(),
             props.clone(),
             smallvec![TypedIndexKind::String, TypedIndexKind::I64],
             None,
         )
         .unwrap();
-        m.create_node(LabelSet::single(la), mk("north", 1)).unwrap(); // id 1
-        let n2 = m.create_node(LabelSet::single(la), mk("south", 2)).unwrap(); // id 2
-        m.create_node(LabelSet::single(la), mk("north", 3)).unwrap(); // id 3
+        m.create_node(LabelSet::single(la.clone()), mk("north", 1))
+            .unwrap(); // id 1
+        let n2 = m
+            .create_node(LabelSet::single(la.clone()), mk("south", 2))
+            .unwrap(); // id 2
+        m.create_node(LabelSet::single(la.clone()), mk("north", 3))
+            .unwrap(); // id 3
         m.delete_node(n2).unwrap();
         n2
     };
@@ -218,16 +222,24 @@ fn compaction_preserves_closed_graph_binding_and_revalidates() {
     let person = intern("Person").unwrap();
     let knows = intern("KNOWS").unwrap();
     let name = intern("name").unwrap();
-    let mk =
-        |n: &str| PropertyMap::from_pairs([(name, Value::String(intern(n).unwrap()))]).unwrap();
+    let mk = |n: &str| {
+        PropertyMap::from_pairs([(name.clone(), Value::String(intern(n).unwrap()))]).unwrap()
+    };
 
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
-        let p1 = m.create_node(LabelSet::single(person), mk("ann")).unwrap();
-        let p2 = m.create_node(LabelSet::single(person), mk("bob")).unwrap();
-        let p3 = m.create_node(LabelSet::single(person), mk("cy")).unwrap();
-        m.create_edge(knows, p1, p3, PropertyMap::new()).unwrap(); // survives
+        let p1 = m
+            .create_node(LabelSet::single(person.clone()), mk("ann"))
+            .unwrap();
+        let p2 = m
+            .create_node(LabelSet::single(person.clone()), mk("bob"))
+            .unwrap();
+        let p3 = m
+            .create_node(LabelSet::single(person.clone()), mk("cy"))
+            .unwrap();
+        m.create_edge(knows.clone(), p1, p3, PropertyMap::new())
+            .unwrap(); // survives
         m.create_edge(knows, p1, p2, PropertyMap::new()).unwrap(); // cascade-deleted
         m.delete_node(p2).unwrap();
         assert_eq!(
@@ -243,8 +255,13 @@ fn compaction_preserves_closed_graph_binding_and_revalidates() {
     // Structural: the GG02 binding carries through compaction unchanged.
     assert!(compacted.graph.meta.bound_type.is_some());
     assert_eq!(
-        compacted.graph.meta.bound_type.as_ref().map(|t| t.name),
-        before.meta.bound_type.as_ref().map(|t| t.name),
+        compacted
+            .graph
+            .meta
+            .bound_type
+            .as_ref()
+            .map(|t| t.name.clone()),
+        before.meta.bound_type.as_ref().map(|t| t.name.clone()),
     );
 
     // Functional: after republication the bound type still validates writes.
@@ -253,7 +270,8 @@ fn compaction_preserves_closed_graph_binding_and_revalidates() {
         let mut txn = republished.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(person), mk("dot")).unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("dot"))
+                .unwrap();
         }
         txn.commit().expect("a conforming insert must still commit");
     }

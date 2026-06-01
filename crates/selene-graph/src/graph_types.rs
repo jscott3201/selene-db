@@ -153,11 +153,15 @@ impl GraphTypeDef {
     pub fn validate_ref(&self) -> GraphResult<()> {
         ensure_unique_names(
             "node type",
-            self.node_types.iter().map(|node_type| node_type.name),
+            self.node_types
+                .iter()
+                .map(|node_type| node_type.name.clone()),
         )?;
         ensure_unique_names(
             "edge type",
-            self.edge_types.iter().map(|edge_type| edge_type.name),
+            self.edge_types
+                .iter()
+                .map(|edge_type| edge_type.name.clone()),
         )?;
 
         let mut seen_label_sets = BTreeSet::new();
@@ -172,7 +176,7 @@ impl GraphTypeDef {
             // unreachable AND cause edge / property validation to dispatch
             // against the wrong type. Reject ambiguity at type-construction
             // time rather than letting it manifest as silent mis-typing.
-            let label_key: Vec<IStr> = node_type.key_labels.iter().copied().collect();
+            let label_key: Vec<IStr> = node_type.key_labels.iter().cloned().collect();
             if !seen_label_sets.insert(label_key) {
                 return Err(GraphError::Inconsistent {
                     reason: format!(
@@ -183,20 +187,34 @@ impl GraphTypeDef {
             }
             ensure_unique_names(
                 "node property",
-                node_type.properties.iter().map(|property| property.name),
+                node_type
+                    .properties
+                    .iter()
+                    .map(|property| property.name.clone()),
             )?;
-            validate_property_element_types(node_type.name, &node_type.properties)?;
+            validate_property_element_types(node_type.name.clone(), &node_type.properties)?;
         }
 
         let node_type_count = self.node_types.len();
         for (index, edge_type) in self.edge_types.iter().enumerate() {
-            ensure_endpoint_index(node_type_count, &edge_type.source_node_type, edge_type.name)?;
-            ensure_endpoint_index(node_type_count, &edge_type.target_node_type, edge_type.name)?;
+            ensure_endpoint_index(
+                node_type_count,
+                &edge_type.source_node_type,
+                edge_type.name.clone(),
+            )?;
+            ensure_endpoint_index(
+                node_type_count,
+                &edge_type.target_node_type,
+                edge_type.name.clone(),
+            )?;
             ensure_unique_names(
                 "edge property",
-                edge_type.properties.iter().map(|property| property.name),
+                edge_type
+                    .properties
+                    .iter()
+                    .map(|property| property.name.clone()),
             )?;
-            validate_property_element_types(edge_type.name, &edge_type.properties)?;
+            validate_property_element_types(edge_type.name.clone(), &edge_type.properties)?;
             if self.edge_types[..index].iter().any(|previous| {
                 previous.label == edge_type.label
                     && previous
@@ -231,12 +249,17 @@ fn validate_property_element_types(
                 // catalog DDL always fills the descriptor.
                 continue;
             };
-            validate_property_element_type(type_name, property.name, element_type, 1)?;
+            validate_property_element_type(
+                type_name.clone(),
+                property.name.clone(),
+                element_type,
+                1,
+            )?;
         } else if property.value_type == PropertyValueType::RecordTyped {
             // Bare RecordTyped is permissive (mirrors legacy untyped LIST): with no
             // declared field structure there is nothing to validate.
             if let Some(fields) = property.record_field_types.as_ref() {
-                validate_record_field_types(type_name, property.name, fields, 1)?;
+                validate_record_field_types(type_name.clone(), property.name.clone(), fields, 1)?;
             }
         } else if property.list_element_type.is_some() {
             return Err(GraphError::Inconsistent {
@@ -578,23 +601,23 @@ pub enum PropertyDefaultValue {
 impl PropertyDefaultValue {
     /// Materialize this descriptor as a runtime value.
     #[must_use]
-    pub const fn to_value(&self) -> Value {
+    pub fn to_value(&self) -> Value {
         match self {
             Self::Null => Value::Null,
             Self::Boolean(value) => Value::Bool(*value),
             Self::Integer(value) => Value::Int(*value),
-            Self::String(value) => Value::String(*value),
+            Self::String(value) => Value::String(value.clone()),
         }
     }
 
     /// Convert a runtime value into a persistable default descriptor.
     #[must_use]
-    pub const fn from_value(value: &Value) -> Option<Self> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         match value {
             Value::Null => Some(Self::Null),
             Value::Bool(value) => Some(Self::Boolean(*value)),
             Value::Int(value) => Some(Self::Integer(*value)),
-            Value::String(value) => Some(Self::String(*value)),
+            Value::String(value) => Some(Self::String(value.clone())),
             _ => None,
         }
     }
@@ -648,7 +671,7 @@ pub enum DropBehavior {
 fn ensure_unique_names(kind: &'static str, names: impl Iterator<Item = IStr>) -> GraphResult<()> {
     let mut seen = BTreeSet::new();
     for name in names {
-        if !seen.insert(name) {
+        if !seen.insert(name.clone()) {
             return Err(GraphError::Inconsistent {
                 reason: format!("duplicate {kind} name {name}"),
             });
@@ -700,7 +723,7 @@ fn ensure_endpoint_index(
                 }
             }
             for index in indices {
-                ensure_node_type_index(count, *index, edge_name)?;
+                ensure_node_type_index(count, *index, edge_name.clone())?;
             }
             Ok(())
         }

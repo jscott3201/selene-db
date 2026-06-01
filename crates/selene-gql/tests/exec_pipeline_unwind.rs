@@ -76,5 +76,8 @@ fn unwind_extends_schema_with_alias_column() {
 
     let table = execute_pipeline(&plan.pipeline[..1], input(), &mut ctx).expect("unwind executes");
 
-    assert_eq!(table.schema().columns[0].name.unwrap().as_str(), "x");
+    assert_eq!(
+        table.schema().columns[0].name.clone().unwrap().as_str(),
+        "x"
+    );
 }

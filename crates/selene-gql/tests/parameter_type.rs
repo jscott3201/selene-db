@@ -47,14 +47,14 @@ fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
             star: false,
             items: vec![ReturnItem {
                 expr: ValueExpr::Parameter {
-                    name,
+                    name: name.clone(),
                     declared_type: Some(GqlType::Record(RecordType::Closed(vec![(
-                        field,
+                        field.clone(),
                         GqlType::Integer,
                     )]))),
                     span,
                 },
-                alias: Some(name),
+                alias: Some(name.clone()),
                 span,
             }],
             group_by: None,
@@ -69,7 +69,7 @@ fn typed_parameter_runtime_rejects_mismatched_closed_record_fields() {
     let mut session = Session::new(&graph);
 
     session.bind_parameter(
-        name,
+        name.clone(),
         Value::Record(Box::new(Record::Open(smallvec![(
             field,
             Value::String(istr("three")),
@@ -99,14 +99,14 @@ fn typed_parameter_runtime_accepts_matching_closed_record_fields() {
             star: false,
             items: vec![ReturnItem {
                 expr: ValueExpr::Parameter {
-                    name,
+                    name: name.clone(),
                     declared_type: Some(GqlType::Record(RecordType::Closed(vec![(
-                        field,
+                        field.clone(),
                         GqlType::Integer,
                     )]))),
                     span,
                 },
-                alias: Some(name),
+                alias: Some(name.clone()),
                 span,
             }],
             group_by: None,

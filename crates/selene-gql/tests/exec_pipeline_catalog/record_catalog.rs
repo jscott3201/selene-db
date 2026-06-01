@@ -24,7 +24,7 @@ fn show_node_types_renders_closed_record_field_structure() {
     let (table, outcome) = run_write(&graph, &planned("SHOW NODE TYPES")).expect("show executes");
     outcome.expect("show commits");
 
-    let Value::String(definition) = table.rows()[0].values()[1] else {
+    let Value::String(definition) = &table.rows()[0].values()[1] else {
         panic!("definition is a string");
     };
     assert_eq!(

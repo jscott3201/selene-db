@@ -132,7 +132,7 @@ pub(super) fn resolve_index_key(
                     .get(name)
                     .cloned()
                     .ok_or(ExecutorError::UnboundParameter {
-                        name: *name,
+                        name: name.clone(),
                         span: *span,
                     })?;
             if matches!(raw, Value::Null) {
@@ -162,9 +162,9 @@ pub(super) fn resolve_index_key(
                 });
             }
             if let Some(declared) = declared_type {
-                parameter_type::validate_declared_type(*name, &raw, declared, *span)?;
+                parameter_type::validate_declared_type(name.clone(), &raw, declared, *span)?;
             }
-            check_value_index_kind(&raw, expected_kind, *name, *span)?;
+            check_value_index_kind(&raw, expected_kind, name.clone(), *span)?;
             Ok(IndexKeyOutcome::Value(raw))
         }
     }
@@ -246,7 +246,7 @@ pub(super) fn literal_to_value(literal: &Literal) -> Value {
         Literal::Bool(value, _) => Value::Bool(*value),
         Literal::Integer(value, _) => Value::Int(*value),
         Literal::Float(value, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(*value),
+        Literal::String(value, _) => Value::String(value.clone()),
         Literal::Uuid(value, _) => Value::Uuid(*value),
         Literal::Null(_) => Value::Null,
     }

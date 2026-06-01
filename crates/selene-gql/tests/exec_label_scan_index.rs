@@ -68,19 +68,28 @@ fn build_graph() -> (SharedGraph, Vec<NodeId>) {
         {
             let mut m = txn.mutator();
             persons.push(
-                m.create_node(LabelSet::single(person), props([(age, Value::Int(30))]))
-                    .unwrap(),
+                m.create_node(
+                    LabelSet::single(person.clone()),
+                    props([(age.clone(), Value::Int(30))]),
+                )
+                .unwrap(),
             );
             // A Person that also carries Employee — proves the post-filter +
             // bitmap agree for multi-label nodes.
-            let mut both = LabelSet::single(person);
+            let mut both = LabelSet::single(person.clone());
             both.insert(employee);
-            persons.push(m.create_node(both, props([(age, Value::Int(40))])).unwrap());
             persons.push(
-                m.create_node(LabelSet::single(person), props([(age, Value::Int(50))]))
+                m.create_node(both, props([(age.clone(), Value::Int(40))]))
                     .unwrap(),
             );
-            m.create_node(LabelSet::single(robot), PropertyMap::new())
+            persons.push(
+                m.create_node(
+                    LabelSet::single(person.clone()),
+                    props([(age.clone(), Value::Int(50))]),
+                )
+                .unwrap(),
+            );
+            m.create_node(LabelSet::single(robot.clone()), PropertyMap::new())
                 .unwrap();
             m.create_node(LabelSet::single(robot), PropertyMap::new())
                 .unwrap();
@@ -241,8 +250,11 @@ fn create_index_invalidates_cached_plan_and_re_optimizes() {
         {
             let mut m = txn.mutator();
             for value in [7, 11, 13, 17, 19] {
-                m.create_node(LabelSet::single(person), props([(age, Value::Int(value))]))
-                    .unwrap();
+                m.create_node(
+                    LabelSet::single(person.clone()),
+                    props([(age.clone(), Value::Int(value))]),
+                )
+                .unwrap();
             }
         }
         txn.commit().unwrap();

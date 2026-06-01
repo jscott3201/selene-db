@@ -324,26 +324,26 @@ mod tests {
                 reason: "x".to_owned(),
             },
             GraphError::PropertyIndexAlreadyExists {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
             },
             GraphError::PropertyIndexNotFound {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
             },
             GraphError::IndexValueRejected {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
                 expected_kind: TypedIndexKind::I64,
                 observed: "String",
             },
             GraphError::IndexAdmissionExhausted {
-                label: lbl,
-                property: prop,
+                label: lbl.clone(),
+                property: prop.clone(),
                 source: CoreError::IStrCapExceeded { count: 2, max: 1 },
             },
             GraphError::CompositePropertyIndexAlreadyExists {
-                label: lbl,
+                label: lbl.clone(),
                 properties: Default::default(),
             },
             GraphError::Durable {
@@ -359,11 +359,11 @@ mod tests {
             },
             TypeViolation::UnknownEdgeLabel {
                 id: EdgeId::new(1),
-                label: lbl,
+                label: lbl.clone(),
             },
             TypeViolation::EdgeEndpointTypeMismatch {
                 id: EdgeId::new(1),
-                label: lbl,
+                label: lbl.clone(),
                 expected_source_type: EdgeEndpointDef::Any,
                 observed_source_type: 0,
                 expected_target_type: EdgeEndpointDef::Any,
@@ -371,22 +371,22 @@ mod tests {
             },
             TypeViolation::MissingRequiredProperty {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
-                declared_in: lbl,
+                property: prop.clone(),
+                declared_in: lbl.clone(),
             },
             TypeViolation::PropertyTypeMismatch {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
+                property: prop.clone(),
                 expected: PropertyValueType::Int,
                 observed: "String",
             },
             TypeViolation::ExtensionValueRejected {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
+                property: prop.clone(),
             },
             TypeViolation::UndeclaredProperty {
                 entity_id: EntityId::Node(NodeId::new(1)),
-                property: prop,
+                property: prop.clone(),
             },
             TypeViolation::ImmutablePropertyUpdate {
                 entity_id: EntityId::Node(NodeId::new(1)),

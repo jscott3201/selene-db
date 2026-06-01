@@ -59,10 +59,16 @@ fn property_def(
     let (value_type, list_element_type, record_field_types) =
         gql_type_to_property_value_type(&property.gql_type)?;
     if let Some(default) = &default {
-        validate_default_value(property.name, value_type, required, default, default_span)?;
+        validate_default_value(
+            property.name.clone(),
+            value_type,
+            required,
+            default,
+            default_span,
+        )?;
     }
     Ok(PropertyTypeDef {
-        name: property.name,
+        name: property.name.clone(),
         value_type,
         list_element_type,
         required,
@@ -85,7 +91,7 @@ fn property_default_value(
         Literal::Null(_) => Ok(PropertyDefaultValue::Null),
         Literal::Bool(value, _) => Ok(PropertyDefaultValue::Boolean(*value)),
         Literal::Integer(value, _) => Ok(PropertyDefaultValue::Integer(*value)),
-        Literal::String(value, _) => Ok(PropertyDefaultValue::String(*value)),
+        Literal::String(value, _) => Ok(PropertyDefaultValue::String(value.clone())),
         Literal::Float(_, _) => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "floating-point DEFAULT literals",
             span,
@@ -195,7 +201,7 @@ fn gql_record_to_record_field_types(
                 .iter()
                 .map(|(name, gql_type)| {
                     Ok(RecordFieldTypeDef {
-                        name: *name,
+                        name: name.clone(),
                         field_type: gql_type_to_record_field_type(gql_type, depth)?,
                         required: true,
                     })

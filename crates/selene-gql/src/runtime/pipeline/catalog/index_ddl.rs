@@ -45,8 +45,8 @@ pub(super) fn create_index_plan(
                     .to_owned(),
             span,
         })?;
-    let node_type = index_node_type(graph_type, label, span)?;
-    let path = dispatch_index_properties(node_type, label, properties, span)?;
+    let node_type = index_node_type(graph_type, label.clone(), span)?;
+    let path = dispatch_index_properties(node_type, label.clone(), properties, span)?;
     match path {
         IndexPath::Single { property, kind } => {
             create_single_index_plan(graph, name, label, property, kind, if_not_exists, span)
@@ -66,7 +66,7 @@ fn create_single_index_plan(
     if_not_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<IndexPath>, ExecutorError> {
-    let report = lookup_index_entries(graph, name, label, &[property]);
+    let report = lookup_index_entries(graph, name.clone(), label, std::slice::from_ref(&property));
     if !report.other_name_matches.is_empty() {
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
@@ -99,13 +99,15 @@ fn dispatch_index_properties(
             span,
         }),
         [property] => Ok(IndexPath::Single {
-            property: *property,
-            kind: index_kind_for_property(node_type, label, *property, span)?,
+            property: property.clone(),
+            kind: index_kind_for_property(node_type, label, property.clone(), span)?,
         }),
         _ => {
             let kinds = properties
                 .iter()
-                .map(|property| index_kind_for_property(node_type, label, *property, span))
+                .map(|property| {
+                    index_kind_for_property(node_type, label.clone(), property.clone(), span)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(IndexPath::Composite {
                 properties: properties.to_vec(),
@@ -138,7 +140,7 @@ fn create_composite_index_plan(
             span,
         });
     }
-    let report = lookup_index_entries(graph, name, label, &properties);
+    let report = lookup_index_entries(graph, name.clone(), label, &properties);
     if !report.other_name_matches.is_empty() {
         return Err(ExecutorError::DuplicateObject {
             kind: "index",
@@ -164,10 +166,10 @@ fn index_node_type(
     label: IStr,
     span: SourceSpan,
 ) -> Result<&NodeTypeDef, ExecutorError> {
-    if let Some(index) = graph_type.node_type_index_for(label) {
+    if let Some(index) = graph_type.node_type_index_for(label.clone()) {
         return Ok(&graph_type.node_types[index as usize]);
     }
-    if graph_type.edge_type_index_for(label).is_some() {
+    if graph_type.edge_type_index_for(label.clone()).is_some() {
         return Err(ExecutorError::GraphTypeViolation {
             message: format!(
                 "CREATE INDEX on edge label ':{}' -- edge-property indexes ship in BRIEF-140c",
@@ -223,7 +225,7 @@ pub(super) fn resolve_drop_index(
     if_exists: bool,
     span: SourceSpan,
 ) -> Result<Option<DropTarget>, ExecutorError> {
-    let matches = resolve_drop_index_matches(graph, name);
+    let matches = resolve_drop_index_matches(graph, name.clone());
     match matches.as_slice() {
         [] if if_exists => Ok(None),
         [] => Err(ExecutorError::GraphTypeViolation {
@@ -255,8 +257,8 @@ fn duplicate_properties(properties: &[IStr]) -> Vec<IStr> {
     let mut seen = BTreeSet::new();
     let mut duplicates = Vec::new();
     for property in properties {
-        if !seen.insert(*property) && !duplicates.contains(property) {
-            duplicates.push(*property);
+        if !seen.insert(property.clone()) && !duplicates.contains(property) {
+            duplicates.push(property.clone());
         }
     }
     duplicates

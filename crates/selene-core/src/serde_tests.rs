@@ -167,34 +167,35 @@ fn change_postcard_round_trip() {
     let changes = vec![
         Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(label),
-            properties: PropertyMap::from_pairs([(property, Value::Int(1))]).unwrap(),
+            labels: LabelSet::single(label.clone()),
+            properties: PropertyMap::from_pairs([(property.clone(), Value::Int(1))]).unwrap(),
         },
         Change::NodeUpdated {
             id: NodeId::new(1),
             labels_diff: LabelDiff::new([istr("serde.change.add")], [istr("serde.change.remove")])
                 .unwrap(),
-            properties_diff: PropertyDiff::new([(property, Value::Null)], []).unwrap(),
+            properties_diff: PropertyDiff::new([(property.clone(), Value::Null)], []).unwrap(),
         },
         Change::NodeDeleted { id: NodeId::new(1) },
         Change::NodePropertyRemoved {
             id: NodeId::new(1),
-            property,
+            property: property.clone(),
         },
         Change::NodeLabelRemoved {
             id: NodeId::new(1),
-            label,
+            label: label.clone(),
         },
         Change::EdgeCreated {
             id: EdgeId::new(1),
-            label,
+            label: label.clone(),
             source: NodeId::new(1),
             target: NodeId::new(2),
             properties: PropertyMap::new(),
         },
         Change::EdgeUpdated {
             id: EdgeId::new(1),
-            properties_diff: PropertyDiff::new([(property, Value::Bool(true))], []).unwrap(),
+            properties_diff: PropertyDiff::new([(property.clone(), Value::Bool(true))], [])
+                .unwrap(),
         },
         Change::EdgeDeleted { id: EdgeId::new(1) },
         Change::EdgePropertyRemoved {
@@ -207,7 +208,9 @@ fn change_postcard_round_trip() {
                 graph_type: graph_type(),
             },
         },
-        Change::NodesOfTypeTruncated { label },
+        Change::NodesOfTypeTruncated {
+            label: label.clone(),
+        },
         Change::EdgesOfTypeTruncated { label },
         Change::GraphReset {},
     ];
@@ -269,17 +272,21 @@ fn schema_change_postcard_round_trip() {
         SchemaChange::GraphTypeDropped { id: graph_type_id },
         SchemaChange::NodeTypeAdded {
             graph_type: graph_type_id,
-            label: node_label,
-            def: NodeTypeDefV1::new(LabelSet::single(node_label)),
+            label: node_label.clone(),
+            def: NodeTypeDefV1::new(LabelSet::single(node_label.clone())),
         },
         SchemaChange::EdgeTypeAdded {
             graph_type: graph_type_id,
-            label: edge_label,
-            def: EdgeTypeDefV1::new(edge_label, NodeTypeRef(node_label), NodeTypeRef(node_label)),
+            label: edge_label.clone(),
+            def: EdgeTypeDefV1::new(
+                edge_label.clone(),
+                NodeTypeRef(node_label.clone()),
+                NodeTypeRef(node_label.clone()),
+            ),
         },
         SchemaChange::NodeTypeDropped {
             graph_type: graph_type_id,
-            name: node_label,
+            name: node_label.clone(),
         },
         SchemaChange::EdgeTypeDropped {
             graph_type: graph_type_id,
@@ -294,22 +301,22 @@ fn schema_change_postcard_round_trip() {
             },
         },
         SchemaChange::PropertyIndexCreated {
-            label: node_label,
+            label: node_label.clone(),
             property: istr("serde.schema.indexed"),
             kind: SchemaPropertyIndexKind::I64,
         },
         SchemaChange::PropertyIndexDropped {
-            label: node_label,
+            label: node_label.clone(),
             property: istr("serde.schema.indexed"),
         },
         SchemaChange::PropertyIndexCreatedNamed {
-            label: node_label,
+            label: node_label.clone(),
             property: istr("serde.schema.indexed"),
             kind: SchemaPropertyIndexKind::I64,
             name: Some(istr("serde.schema.index.name")),
         },
         SchemaChange::CompositePropertyIndexCreated {
-            label: node_label,
+            label: node_label.clone(),
             properties: smallvec![
                 istr("serde.schema.indexed.a"),
                 istr("serde.schema.indexed.b")
@@ -321,7 +328,7 @@ fn schema_change_postcard_round_trip() {
             name: Some(istr("serde.schema.composite.index.name")),
         },
         SchemaChange::CompositePropertyIndexDropped {
-            label: node_label,
+            label: node_label.clone(),
             properties: smallvec![
                 istr("serde.schema.indexed.a"),
                 istr("serde.schema.indexed.b")
@@ -337,7 +344,7 @@ fn schema_change_postcard_round_trip() {
             label: istr("serde.schema.edge.v2"),
             def: EdgeTypeDef::new(
                 istr("serde.schema.edge.v2"),
-                NodeTypeRef(node_label),
+                NodeTypeRef(node_label.clone()),
                 NodeTypeRef(node_label),
             ),
         },

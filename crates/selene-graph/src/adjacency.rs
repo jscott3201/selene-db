@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use selene_core::{EdgeId, IStr, NodeId};
 
 /// One edge recorded in a node's incoming or outgoing adjacency list.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct AdjacencyEdge {
     /// Edge label.
     pub label: IStr,
@@ -79,7 +79,7 @@ impl Default for AdjacencyEntry {
 }
 
 fn adjacency_key(edge: &AdjacencyEdge) -> (IStr, NodeId, EdgeId) {
-    (edge.label, edge.neighbor, edge.edge_id)
+    (edge.label.clone(), edge.neighbor, edge.edge_id)
 }
 
 #[cfg(test)]
@@ -105,10 +105,10 @@ mod tests {
         let a = edge("adj.a", 2, 2);
         let b = edge("adj.a", 2, 1);
         let c = edge("adj.b", 1, 3);
-        entry.add(c);
-        entry.add(a);
-        entry.add(b);
-        assert_eq!(entry.iter().copied().collect::<Vec<_>>(), vec![b, a, c]);
+        entry.add(c.clone());
+        entry.add(a.clone());
+        entry.add(b.clone());
+        assert_eq!(entry.iter().cloned().collect::<Vec<_>>(), vec![b, a, c]);
     }
 
     #[test]
@@ -134,7 +134,7 @@ mod tests {
     fn remove_returns_removed_edge() {
         let mut entry = AdjacencyEntry::new();
         let e = edge("adj.remove", 2, 1);
-        entry.add(e);
+        entry.add(e.clone());
         assert_eq!(entry.remove(EdgeId::new(1)), Some(e));
         assert!(entry.is_empty());
     }
@@ -150,10 +150,10 @@ mod tests {
         let mut entry = AdjacencyEntry::new();
         let first = edge("adj.parallel", 2, 1);
         let second = edge("adj.parallel", 2, 2);
-        entry.add(second);
-        entry.add(first);
+        entry.add(second.clone());
+        entry.add(first.clone());
         assert_eq!(
-            entry.iter().copied().collect::<Vec<_>>(),
+            entry.iter().cloned().collect::<Vec<_>>(),
             vec![first, second]
         );
     }

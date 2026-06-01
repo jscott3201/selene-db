@@ -216,7 +216,7 @@ pub(crate) fn schema_for_pattern(pattern: &PatternPlan) -> BindingTableSchema {
             )
         })
         .map(|binding| BindingTableColumn {
-            name: Some(binding.name),
+            name: Some(binding.name.clone()),
             hidden: None,
             ty: binding.ty.clone(),
         })
@@ -315,14 +315,14 @@ pub(crate) fn binding_index(
         .bindings
         .iter()
         .find(|candidate| candidate.binding == binding_id)?;
-    column_index(schema, binding.name)
+    column_index(schema, binding.name.clone())
 }
 
 pub(crate) fn column_index(schema: &BindingTableSchema, name: IStr) -> Option<usize> {
     schema
         .columns
         .iter()
-        .position(|column| column.name == Some(name))
+        .position(|column| column.name == Some(name.clone()))
 }
 
 pub(crate) fn hidden_index(schema: &BindingTableSchema, hidden: HiddenBindingId) -> Option<usize> {
@@ -400,7 +400,7 @@ pub(crate) fn key_values(
 ) -> Result<Option<Vec<Value>>, ExecutorError> {
     let mut values = Vec::with_capacity(key.len());
     for name in key {
-        let Some(index) = column_index(schema, *name) else {
+        let Some(index) = column_index(schema, name.clone()) else {
             return Err(ExecutorError::ImplementationDefined {
                 detail: "join key column missing from pattern schema",
             });
@@ -448,10 +448,10 @@ pub(crate) fn project_row_to_schema(
         .unwrap_or_else(|| vec![Value::Null; target_schema.columns.len()]);
     values.resize(target_schema.columns.len(), Value::Null);
     for (target_index, target_column) in target_schema.columns.iter().enumerate() {
-        let Some(name) = target_column.name else {
+        let Some(ref name) = target_column.name else {
             continue;
         };
-        let Some(source_index) = column_index(source_schema, name) else {
+        let Some(source_index) = column_index(source_schema, name.clone()) else {
             continue;
         };
         values[target_index] = row.get(source_index).cloned().unwrap_or(Value::Null);

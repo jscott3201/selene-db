@@ -28,7 +28,7 @@ fn let_extends_schema_preserving_existing_columns() {
         .schema()
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_owned()))
+        .filter_map(|column| column.name.clone().map(|name| name.as_str().to_owned()))
         .collect::<Vec<_>>();
     assert!(names.contains(&"n".to_owned()));
     assert!(names.contains(&"doubled".to_owned()));

@@ -135,6 +135,7 @@ fn union_with_matching_arm_column_names_succeeds() {
     assert_eq!(
         table.schema().columns[0]
             .name
+            .clone()
             .expect("shared name")
             .as_str(),
         "shared"
@@ -207,8 +208,11 @@ fn union_rhs_sees_same_snapshot_as_lhs() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(fixture.person),
-                props([(fixture.name, Value::String(exec_common::istr("Dina")))]),
+                LabelSet::single(fixture.person.clone()),
+                props([(
+                    fixture.name.clone(),
+                    Value::String(exec_common::istr("Dina")),
+                )]),
             )
             .expect("late node inserts");
         txn.commit().expect("late write commits");
@@ -236,6 +240,7 @@ fn pattern_union_with_matching_alias_composes() {
     assert_eq!(
         table.schema().columns[0]
             .name
+            .clone()
             .expect("shared binding")
             .as_str(),
         "node"

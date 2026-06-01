@@ -47,7 +47,7 @@ pub(super) fn execute_drop_node_type(
 ) -> Result<BindingTable, ExecutorError> {
     ctx.ensure_write_txn("catalog op invoked without write transaction", span)?;
     let graph_type = closed_graph_type(ctx.snapshot(), span)?;
-    if !node_type_exists(Some(&graph_type), label) && if_exists {
+    if !node_type_exists(Some(&graph_type), label.clone()) && if_exists {
         return Ok(table);
     }
     ctx.mutator_with_span("catalog op invoked without write transaction", span)?
@@ -70,7 +70,7 @@ pub(super) fn execute_drop_edge_type(
 ) -> Result<BindingTable, ExecutorError> {
     ctx.ensure_write_txn("catalog op invoked without write transaction", span)?;
     let graph_type = closed_graph_type(ctx.snapshot(), span)?;
-    if !edge_type_exists(Some(&graph_type), label) && if_exists {
+    if !edge_type_exists(Some(&graph_type), label.clone()) && if_exists {
         return Ok(table);
     }
     ctx.mutator_with_span("catalog op invoked without write transaction", span)?

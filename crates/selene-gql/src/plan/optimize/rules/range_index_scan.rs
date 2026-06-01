@@ -79,7 +79,8 @@ fn rewrite_scan(
     let Some(label) = single_label(&scan.label_predicate) else {
         return false;
     };
-    let Some(candidate) = best_candidate(&scan.property_predicates, bindings, catalog, label)
+    let Some(candidate) =
+        best_candidate(&scan.property_predicates, bindings, catalog, label.clone())
     else {
         return false;
     };
@@ -94,8 +95,8 @@ fn rewrite_scan(
         cost::typed_index_cost(
             catalog,
             IndexTarget::Node,
-            label,
-            candidate.property,
+            label.clone(),
+            candidate.property.clone(),
             &candidate.bounds,
         ),
         cost::linear_baseline(catalog, IndexTarget::Node, label),
@@ -134,12 +135,18 @@ fn best_candidate(
         if !binding_is_node(bindings, matched.binding) {
             continue;
         }
-        let Some(lookup) = catalog.typed_index(crate::IndexTarget::Node, label, matched.key) else {
+        let Some(lookup) =
+            catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
+        else {
             continue;
         };
-        let Some((bounds, mut consumed_indices)) =
-            bounds_for_property(matched.key, predicates, bindings, index, lookup.kind)
-        else {
+        let Some((bounds, mut consumed_indices)) = bounds_for_property(
+            matched.key.clone(),
+            predicates,
+            bindings,
+            index,
+            lookup.kind,
+        ) else {
             continue;
         };
         consumed_indices.sort_unstable();

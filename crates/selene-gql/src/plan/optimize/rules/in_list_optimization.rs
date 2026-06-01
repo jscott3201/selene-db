@@ -91,7 +91,9 @@ fn rewrite_scan(
         if items.is_empty() || items.len() > SMALL_IN_LIST_LIMIT {
             continue;
         }
-        let Some(lookup) = catalog.typed_index(crate::IndexTarget::Node, label, matched.key) else {
+        let Some(lookup) =
+            catalog.typed_index(crate::IndexTarget::Node, label.clone(), matched.key.clone())
+        else {
             continue;
         };
         let property = matched.key;
@@ -123,8 +125,14 @@ fn rewrite_scan(
         // same rows the residual `IN`-list filter would, so results are
         // identical regardless of path.
         if let (Some(index_cost), Some(baseline)) = (
-            cost::in_list_cost(catalog, IndexTarget::Node, label, property, &keys),
-            cost::linear_baseline(catalog, IndexTarget::Node, label),
+            cost::in_list_cost(
+                catalog,
+                IndexTarget::Node,
+                label.clone(),
+                property.clone(),
+                &keys,
+            ),
+            cost::linear_baseline(catalog, IndexTarget::Node, label.clone()),
         ) && cost::should_decline_index(index_cost, baseline)
         {
             continue;

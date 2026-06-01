@@ -25,7 +25,7 @@ fn prop(key: &str, value: Value) -> PropertyMap {
 fn adjacency_summary(entry: &AdjacencyEntry) -> Vec<(NodeId, EdgeId, IStr)> {
     let mut edges: Vec<(NodeId, EdgeId, IStr)> = entry
         .iter()
-        .map(|edge| (edge.neighbor, edge.edge_id, edge.label))
+        .map(|edge| (edge.neighbor, edge.edge_id, edge.label.clone()))
         .collect();
     edges.sort_by_key(|(neighbor, edge_id, _)| (*neighbor, *edge_id));
     edges
@@ -42,13 +42,13 @@ fn graph_with_a_deletion() -> SharedGraph {
     {
         let mut m = txn.mutator();
         let n1 = m
-            .create_node(LabelSet::single(la), prop("name", Value::Int(1)))
+            .create_node(LabelSet::single(la.clone()), prop("name", Value::Int(1)))
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(lb), prop("name", Value::Int(2)))
             .unwrap();
         let n3 = m
-            .create_node(LabelSet::single(la), prop("name", Value::Int(3)))
+            .create_node(LabelSet::single(la.clone()), prop("name", Value::Int(3)))
             .unwrap();
         let n4 = m
             .create_node(LabelSet::single(la), prop("name", Value::Int(4)))
@@ -62,9 +62,10 @@ fn graph_with_a_deletion() -> SharedGraph {
                 NodeId::new(4)
             )
         );
-        m.create_edge(el, n1, n3, prop("w", Value::Int(10)))
+        m.create_edge(el.clone(), n1, n3, prop("w", Value::Int(10)))
             .unwrap(); // id 1 — survives
-        m.create_edge(el, n1, n2, PropertyMap::new()).unwrap(); // id 2 — cascade-deleted
+        m.create_edge(el.clone(), n1, n2, PropertyMap::new())
+            .unwrap(); // id 2 — cascade-deleted
         m.create_edge(el, n3, n4, PropertyMap::new()).unwrap(); // id 3 — survives
         m.delete_node(n2).unwrap();
     }
@@ -223,7 +224,7 @@ fn compacting_a_dense_graph_is_idempotent() {
     let mut txn = shared.begin_write();
     {
         let mut m = txn.mutator();
-        m.create_node(LabelSet::single(la), PropertyMap::new())
+        m.create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         m.create_node(LabelSet::single(la), PropertyMap::new())
             .unwrap();
@@ -278,7 +279,7 @@ fn compaction_of_an_all_deleted_graph_reclaims_everything() {
     {
         let mut m = txn.mutator();
         let n1 = m
-            .create_node(LabelSet::single(la), PropertyMap::new())
+            .create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(la), PropertyMap::new())
@@ -326,7 +327,7 @@ fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
     {
         let mut m = txn.mutator();
         let n1 = m
-            .create_node(LabelSet::single(la), PropertyMap::new())
+            .create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         assert_eq!(n1, NodeId::new(1));
     }
@@ -337,7 +338,7 @@ fn aborted_tx_leaves_no_hole_so_store_stays_dense() {
         let mut txn = shared.begin_write();
         let mut m = txn.mutator();
         let n2 = m
-            .create_node(LabelSet::single(la), PropertyMap::new())
+            .create_node(LabelSet::single(la.clone()), PropertyMap::new())
             .unwrap();
         assert_eq!(n2, NodeId::new(2));
         // txn dropped here, uncommitted.

@@ -15,7 +15,7 @@ use crate::typed_index::TypedIndex;
 use crate::typed_index::TypedIndexKind;
 
 /// A distilled, replayable property-index intent from the WAL.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum PendingIndex {
     /// Register an index for `(label, property)` of the declared `kind`.
     Create {
@@ -69,8 +69,8 @@ pub(super) fn pending_property_index_change(change: &SchemaChange) -> Option<Pen
             property,
             kind,
         } => Some(PendingIndex::Create {
-            label: *label,
-            property: *property,
+            label: label.clone(),
+            property: property.clone(),
             kind: typed_kind_from(*kind),
             name: None,
         }),
@@ -80,14 +80,14 @@ pub(super) fn pending_property_index_change(change: &SchemaChange) -> Option<Pen
             kind,
             name,
         } => Some(PendingIndex::Create {
-            label: *label,
-            property: *property,
+            label: label.clone(),
+            property: property.clone(),
             kind: typed_kind_from(*kind),
-            name: *name,
+            name: name.clone(),
         }),
         SchemaChange::PropertyIndexDropped { label, property } => Some(PendingIndex::Drop {
-            label: *label,
-            property: *property,
+            label: label.clone(),
+            property: property.clone(),
         }),
         _ => None,
     }
@@ -105,7 +105,7 @@ pub(super) fn replay_property_index_changes(
     changes: &[PendingIndex],
 ) -> crate::GraphResult<()> {
     for change in changes {
-        match *change {
+        match change {
             PendingIndex::Create {
                 label,
                 property,
@@ -113,12 +113,14 @@ pub(super) fn replay_property_index_changes(
                 name,
             } => {
                 graph.property_index.insert(
-                    (label, property),
-                    PropertyIndexEntry::new(TypedIndex::new(kind), name),
+                    (label.clone(), property.clone()),
+                    PropertyIndexEntry::new(TypedIndex::new(*kind), name.clone()),
                 );
             }
             PendingIndex::Drop { label, property } => {
-                graph.property_index.remove(&(label, property));
+                graph
+                    .property_index
+                    .remove(&(label.clone(), property.clone()));
             }
         }
     }
@@ -137,14 +139,14 @@ pub(super) fn pending_composite_property_index_change(
             kinds,
             name,
         } => Some(PendingCompositeIndex::Create {
-            label: *label,
+            label: label.clone(),
             properties: properties.clone(),
             kinds: kinds.iter().copied().map(typed_kind_from).collect(),
-            name: *name,
+            name: name.clone(),
         }),
         SchemaChange::CompositePropertyIndexDropped { label, properties } => {
             Some(PendingCompositeIndex::Drop {
-                label: *label,
+                label: label.clone(),
                 properties: properties.clone(),
             })
         }
@@ -169,17 +171,17 @@ pub(super) fn replay_composite_property_index_changes(
             } => {
                 let key = crate::graph::composite_property_key(properties);
                 graph.composite_property_index.insert(
-                    (*label, key),
+                    (label.clone(), key),
                     CompositePropertyIndexEntry::new(
                         crate::CompositeTypedIndex::new(kinds.clone()),
                         properties.clone(),
-                        *name,
+                        name.clone(),
                     ),
                 );
             }
             PendingCompositeIndex::Drop { label, properties } => {
                 let key = crate::graph::composite_property_key(properties);
-                graph.composite_property_index.remove(&(*label, key));
+                graph.composite_property_index.remove(&(label.clone(), key));
             }
         }
     }

@@ -27,17 +27,19 @@ fn id_row_maps_round_trip_for_all_alive() {
     {
         let mut m = txn.mutator();
         let n0 = m
-            .create_node(LabelSet::single(a), PropertyMap::new())
+            .create_node(LabelSet::single(a.clone()), PropertyMap::new())
             .unwrap();
         let n1 = m
-            .create_node(LabelSet::single(a), PropertyMap::new())
+            .create_node(LabelSet::single(a.clone()), PropertyMap::new())
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(b), PropertyMap::new())
             .unwrap();
         // e0/e1 are incident to n1 (cascade-deleted); e2 (n0->n2) survives.
-        m.create_edge(a, n0, n1, PropertyMap::new()).unwrap();
-        m.create_edge(a, n1, n2, PropertyMap::new()).unwrap();
+        m.create_edge(a.clone(), n0, n1, PropertyMap::new())
+            .unwrap();
+        m.create_edge(a.clone(), n1, n2, PropertyMap::new())
+            .unwrap();
         m.create_edge(a, n0, n2, PropertyMap::new()).unwrap();
         m.delete_node(n1).unwrap();
     }
@@ -136,16 +138,22 @@ fn non_identity_map_read_paths_resolve_by_map() {
 
     let mut built = SeleneGraph::new(GraphId::new(1));
     // Row 0 -> NodeId(5); Row 1 -> NodeId(8).
-    built.node_store.labels.push(LabelSet::single(label));
+    built
+        .node_store
+        .labels
+        .push(LabelSet::single(label.clone()));
     built.node_store.properties.push(PropertyMap::new());
     built.node_store.row_to_id.push(NodeId::new(5));
-    built.node_store.labels.push(LabelSet::single(label));
+    built
+        .node_store
+        .labels
+        .push(LabelSet::single(label.clone()));
     built.node_store.properties.push(PropertyMap::new());
     built.node_store.row_to_id.push(NodeId::new(8));
     built.node_store.alive.insert(0);
     built.node_store.alive.insert(1);
     // Row 0 -> EdgeId(3): NodeId(5) -> NodeId(8).
-    built.edge_store.label.push(elabel);
+    built.edge_store.label.push(elabel.clone());
     built.edge_store.source.push(NodeId::new(5));
     built.edge_store.target.push(NodeId::new(8));
     built.edge_store.properties.push(PropertyMap::new());
@@ -176,9 +184,9 @@ fn non_identity_map_read_paths_resolve_by_map() {
         g.node_labels(NodeId::new(5))
             .unwrap()
             .iter()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>(),
-        vec![label]
+        vec![label.clone()]
     );
     // The label index is row-keyed: rows 0 and 1 carry the label.
     let labelled = g.nodes_with_label(&label).unwrap();
@@ -193,7 +201,7 @@ fn non_identity_map_read_paths_resolve_by_map() {
         g.edge_endpoints(EdgeId::new(3)),
         Some((NodeId::new(5), NodeId::new(8)))
     );
-    assert_eq!(*g.edge_label(EdgeId::new(3)).unwrap(), elabel);
+    assert_eq!(g.edge_label(EdgeId::new(3)).unwrap(), &elabel);
     assert!(
         g.outgoing_edges(NodeId::new(5))
             .unwrap()

@@ -67,10 +67,10 @@ fn recover_closed_wal_only_preserves_closed_record_property() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
+                sensor.clone(),
                 LabelSet::single(sensor),
                 vec![PropertyTypeDef {
-                    name: config,
+                    name: config.clone(),
                     value_type: PropertyValueType::RecordTyped,
                     list_element_type: None,
                     required: false,
@@ -116,10 +116,10 @@ fn recover_closed_wal_only_preserves_open_record_property() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
+                sensor.clone(),
                 LabelSet::single(sensor),
                 vec![PropertyTypeDef {
-                    name: payload,
+                    name: payload.clone(),
                     value_type: PropertyValueType::RecordTyped,
                     list_element_type: None,
                     required: false,
@@ -180,7 +180,7 @@ fn recover_closed_rejects_overdeep_record_property() {
             graph: graph_id,
             change: SchemaChange::NodeTypeAddedV2 {
                 graph_type,
-                label: sensor,
+                label: sensor.clone(),
                 def: selene_core::NodeTypeDef {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![selene_core::PropertyDef {

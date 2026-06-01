@@ -207,7 +207,7 @@ impl CompositeIndexHandle {
     /// Return the property keys in declaration order, dropping the kind column.
     #[must_use]
     pub fn property_keys(&self) -> Vec<IStr> {
-        self.properties.iter().map(|(key, _)| *key).collect()
+        self.properties.iter().map(|(key, _)| key.clone()).collect()
     }
 }
 

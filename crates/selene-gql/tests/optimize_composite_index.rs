@@ -62,7 +62,7 @@ fn property_access_key(expr: &ValueExpr) -> Option<IStr> {
     let ValueExpr::PropertyAccess { key, .. } = expr else {
         return None;
     };
-    Some(*key)
+    Some(key.clone())
 }
 
 fn expression_property_integer(predicate: &FilterPredicate, expected_key: IStr) -> Option<i64> {
@@ -75,7 +75,7 @@ fn expression_property_integer(predicate: &FilterPredicate, expected_key: IStr) 
     else {
         return None;
     };
-    if property_access_key(lhs.as_ref()) == Some(expected_key) {
+    if property_access_key(lhs.as_ref()) == Some(expected_key.clone()) {
         return integer_literal(rhs.as_ref());
     }
     if property_access_key(rhs.as_ref()) == Some(expected_key) {
@@ -97,7 +97,7 @@ fn property_integer(predicate: &FilterPredicate, expected_key: IStr) -> Option<i
 fn residual_integers(scan: &NodeOrEdgeScan, key: IStr) -> Vec<i64> {
     scan.property_predicates
         .iter()
-        .filter_map(|predicate| property_integer(predicate, key))
+        .filter_map(|predicate| property_integer(predicate, key.clone()))
         .collect()
 }
 

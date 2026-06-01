@@ -48,7 +48,11 @@ fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
             _ => None,
         })
         .flatten()
-        .find(|item| item.alias.is_some_and(|alias| alias.as_str() == name))
+        .find(|item| {
+            item.alias
+                .clone()
+                .is_some_and(|alias| alias.as_str() == name)
+        })
         .unwrap_or_else(|| panic!("projection {name} exists"));
     let id = analyzed
         .expr_ids
@@ -96,21 +100,24 @@ fn graph_with_sensors(id: u64) -> SharedGraph {
         for index in 0_i64..5 {
             mutator
                 .create_node(
-                    LabelSet::single(sensor),
+                    LabelSet::single(sensor.clone()),
                     props([
-                        (id_key, Value::Int(index)),
-                        (value_key, Value::Int(index * 10)),
-                        (name_key, Value::String(istr(&format!("sensor-{index}")))),
+                        (id_key.clone(), Value::Int(index)),
+                        (value_key.clone(), Value::Int(index * 10)),
+                        (
+                            name_key.clone(),
+                            Value::String(istr(&format!("sensor-{index}"))),
+                        ),
                     ]),
                 )
                 .expect("sensor inserts");
         }
         mutator
             .create_node(
-                LabelSet::single(sensor),
+                LabelSet::single(sensor.clone()),
                 props([
-                    (id_key, Value::String(istr("string-id"))),
-                    (value_key, Value::Int(60)),
+                    (id_key.clone(), Value::String(istr("string-id"))),
+                    (value_key.clone(), Value::Int(60)),
                 ]),
             )
             .expect("string-id sensor inserts");
@@ -221,7 +228,7 @@ fn typed_parameter_conflicts_are_analyzer_errors() {
     assert!(matches!(
         err,
         AnalysisError::ConflictingParameterTypes {
-            name,
+            ref name,
             ref declarations,
         } if name.as_str() == "x"
             && declarations.len() == 2
@@ -394,7 +401,7 @@ fn bind_parameter_per_value_variant() {
     for (index, make_value) in Value::ALL.iter().enumerate() {
         let name = istr(&format!("p{index}"));
         let value = make_value();
-        session.bind_parameter(name, value.clone());
+        session.bind_parameter(name.clone(), value.clone());
 
         let returned = single_value(&mut session, &format!("RETURN ${name} AS value"));
 
@@ -485,7 +492,7 @@ fn property_match_parameter_polymorphic() {
         Value::String(istr("string-id")),
         uuid_value.clone(),
     ] {
-        session.bind_parameter(id, value);
+        session.bind_parameter(id.clone(), value);
         let table = rows(
             execute(&mut session, "MATCH (n {id: $id}) RETURN n")
                 .expect("parameterized property match succeeds"),
@@ -579,7 +586,7 @@ fn rebinding_is_upsert() {
     let mut session = Session::new(&graph);
     let id = istr("id");
 
-    assert_eq!(session.bind_parameter(id, Value::Int(1)), None);
+    assert_eq!(session.bind_parameter(id.clone(), Value::Int(1)), None);
     assert_eq!(
         single_value(&mut session, "RETURN $id AS id"),
         Value::Int(1)
@@ -601,7 +608,7 @@ fn clear_parameter_apis_remove_bindings() {
     let id = istr("id");
     let name = istr("name");
 
-    session.bind_parameter(id, Value::Int(1));
+    session.bind_parameter(id.clone(), Value::Int(1));
     session.bind_parameter(name, Value::String(istr("sensor")));
     assert_eq!(session.clear_parameter(&id), Some(Value::Int(1)));
     assert!(matches!(
@@ -685,7 +692,7 @@ fn plan_cache_hits_across_param_value_changes() {
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
     let id = istr("id");
     let source = "MATCH (n {id: $id}) RETURN n";
-    session.bind_parameter(id, Value::Int(1));
+    session.bind_parameter(id.clone(), Value::Int(1));
     assert_eq!(rows(execute(&mut session, source).unwrap()).row_count(), 1);
 
     session.bind_parameter(id, Value::Int(2));
@@ -702,7 +709,7 @@ fn plan_cache_runtime_type_check_with_dynamic() {
     let mut session = Session::new(&graph).with_plan_cache(NonZeroUsize::new(8).unwrap());
     let id = istr("id");
     let source = "MATCH (n {id: $id}) RETURN n";
-    session.bind_parameter(id, Value::Int(1));
+    session.bind_parameter(id.clone(), Value::Int(1));
     assert_eq!(rows(execute(&mut session, source).unwrap()).row_count(), 1);
 
     session.bind_parameter(id, Value::String(istr("not-present")));

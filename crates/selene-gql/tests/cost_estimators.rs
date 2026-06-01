@@ -145,7 +145,7 @@ fn linear_baseline_prefers_label_then_total() {
         total: Some(1000),
         ..Default::default()
     }
-    .label(person, 42);
+    .label(person.clone(), 42);
     assert_eq!(
         linear_baseline(&cat, IndexTarget::Node, person),
         Some(42),
@@ -172,7 +172,7 @@ fn linear_baseline_none_without_any_stat() {
 #[test]
 fn equality_literal_is_exact() {
     let (person, age) = (istr("PersonEq"), istr("age"));
-    let cat = StatCatalog::default().eq(person, age, Value::Int(30), 7);
+    let cat = StatCatalog::default().eq(person.clone(), age.clone(), Value::Int(30), 7);
     let bounds = TypedIndexBounds::Equality(int_lit(30));
     assert_eq!(
         typed_index_cost(&cat, IndexTarget::Node, person, age, &bounds),
@@ -183,7 +183,7 @@ fn equality_literal_is_exact() {
 #[test]
 fn equality_parameter_uses_avg_bucket() {
     let (person, age) = (istr("PersonParam"), istr("ageP"));
-    let cat = StatCatalog::default().avg(person, age, 5);
+    let cat = StatCatalog::default().avg(person.clone(), age.clone(), 5);
     let bounds = TypedIndexBounds::Equality(param("p"));
     assert_eq!(
         typed_index_cost(&cat, IndexTarget::Node, person, age, &bounds),
@@ -205,10 +205,9 @@ fn none_propagates_when_stat_absent() {
 #[test]
 fn in_list_sums_literal_equalities() {
     let (person, age) = (istr("PersonIn"), istr("ageIn"));
-    let cat =
-        StatCatalog::default()
-            .eq(person, age, Value::Int(1), 2)
-            .eq(person, age, Value::Int(2), 3);
+    let cat = StatCatalog::default()
+        .eq(person.clone(), age.clone(), Value::Int(1), 2)
+        .eq(person.clone(), age.clone(), Value::Int(2), 3);
     let keys = vec![int_lit(1), int_lit(2)];
     assert_eq!(
         in_list_cost(&cat, IndexTarget::Node, person, age, &keys),
@@ -220,7 +219,7 @@ fn in_list_sums_literal_equalities() {
 fn in_list_declines_when_one_element_missing() {
     let (person, age) = (istr("PersonIn2"), istr("ageIn2"));
     // Value::Int(2) has no stat → None propagates.
-    let cat = StatCatalog::default().eq(person, age, Value::Int(1), 2);
+    let cat = StatCatalog::default().eq(person.clone(), age.clone(), Value::Int(1), 2);
     let keys = vec![int_lit(1), int_lit(2)];
     assert_eq!(
         in_list_cost(&cat, IndexTarget::Node, person, age, &keys),
@@ -231,7 +230,8 @@ fn in_list_declines_when_one_element_missing() {
 #[test]
 fn composite_literal_is_exact() {
     let (person, a, b) = (istr("PersonComp"), istr("a"), istr("b"));
-    let cat = StatCatalog::default().composite(person, vec![Value::Int(1), Value::Int(2)], 9);
+    let cat =
+        StatCatalog::default().composite(person.clone(), vec![Value::Int(1), Value::Int(2)], 9);
     let keys = vec![int_lit(1), int_lit(2)];
     assert_eq!(
         composite_cost(&cat, IndexTarget::Node, person, &[a, b], &keys),
@@ -242,7 +242,7 @@ fn composite_literal_is_exact() {
 #[test]
 fn composite_parameter_uses_avg_bucket() {
     let (person, a, b) = (istr("PersonComp2"), istr("a2"), istr("b2"));
-    let cat = StatCatalog::default().composite_avg(person, 4);
+    let cat = StatCatalog::default().composite_avg(person.clone(), 4);
     let keys = vec![int_lit(1), param("p")];
     assert_eq!(
         composite_cost(&cat, IndexTarget::Node, person, &[a, b], &keys),
@@ -253,7 +253,9 @@ fn composite_parameter_uses_avg_bucket() {
 #[test]
 fn disjunctive_sums_branch_cardinalities() {
     let (a, b) = (istr("LabelA"), istr("LabelB"));
-    let cat = StatCatalog::default().label(a, 10).label(b, 20);
+    let cat = StatCatalog::default()
+        .label(a.clone(), 10)
+        .label(b.clone(), 20);
     assert_eq!(disjunctive_cost(&cat, IndexTarget::Node, &[a, b]), Some(30));
 }
 
@@ -261,6 +263,6 @@ fn disjunctive_sums_branch_cardinalities() {
 fn disjunctive_declines_when_a_branch_lacks_a_stat() {
     let (a, b) = (istr("LabelDA"), istr("LabelDB"));
     // Only `a` has a label cardinality; `b` is absent → None propagates.
-    let cat = StatCatalog::default().label(a, 10);
+    let cat = StatCatalog::default().label(a.clone(), 10);
     assert_eq!(disjunctive_cost(&cat, IndexTarget::Node, &[a, b]), None);
 }

@@ -431,8 +431,8 @@ fn string_range_returns_none_for_runtime_fallback() {
     let alpha = intern("typed-index.range.alpha").unwrap();
     let charlie = intern("typed-index.range.charlie").unwrap();
     let mut index = TypedIndex::new(TypedIndexKind::String);
-    index.insert(&Value::String(alpha), 0).unwrap();
-    index.insert(&Value::String(charlie), 1).unwrap();
+    index.insert(&Value::String(alpha.clone()), 0).unwrap();
+    index.insert(&Value::String(charlie.clone()), 1).unwrap();
 
     assert!(
         index

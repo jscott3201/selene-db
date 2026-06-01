@@ -72,12 +72,14 @@ fn mixed_yield_star_and_alias_matches_analyzer_order() {
         panic!("expected call op");
     };
     assert!(matches!(call.yield_cols[0].column, YieldKind::Star));
-    assert!(matches!(call.yield_cols[1].column, YieldKind::Named(name) if name.as_str() == "outA"));
+    assert!(
+        matches!(&call.yield_cols[1].column, YieldKind::Named(name) if name.as_str() == "outA")
+    );
     let names = plan
         .output_schema
         .columns
         .iter()
-        .map(|column| column.name.expect("name").as_str())
+        .map(|column| column.name.as_ref().expect("name").as_str())
         .collect::<Vec<_>>();
     assert_eq!(names, ["outA", "outB", "first"]);
     assert_eq!(
@@ -94,7 +96,7 @@ fn in_pipeline_call_extends_visible_columns() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str()))
         .collect::<Vec<_>>();
     assert_eq!(names, ["n", "outA"]);
     assert!(
@@ -148,7 +150,13 @@ fn sentinel_call_plan_shape_snapshot() {
         .output_schema
         .columns
         .iter()
-        .map(|column| format!("{}:{:?}", column.name.expect("name").as_str(), column.ty))
+        .map(|column| {
+            format!(
+                "{}:{:?}",
+                column.name.clone().expect("name").as_str(),
+                column.ty
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     insta::assert_snapshot!(summary, @r###"

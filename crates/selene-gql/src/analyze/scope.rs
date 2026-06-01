@@ -144,7 +144,7 @@ impl BindingScopeTree {
         span: SourceSpan,
         ty: AnalyzedType,
     ) -> Result<BindingId, AnalysisError> {
-        if let Some(prior) = self.resolve_local(scope, name) {
+        if let Some(prior) = self.resolve_local(scope, name.clone()) {
             let prior_span = self
                 .declaration(prior)
                 .map(BindingDecl::span)
@@ -167,7 +167,7 @@ impl BindingScopeTree {
         ty: AnalyzedType,
         labels: Option<crate::LabelExpr>,
     ) -> Result<(BindingId, bool), AnalysisError> {
-        if let Some((existing, existing_scope)) = self.resolve_with_scope(scope, name) {
+        if let Some((existing, existing_scope)) = self.resolve_with_scope(scope, name.clone()) {
             // Cross-element-kind reuse is a semantic error: a node variable
             // cannot be silently rebound as an edge/path variable, and vice
             // versa. Same-element-kind reuse (NodePattern <-> InsertNode,
@@ -182,7 +182,7 @@ impl BindingScopeTree {
                 && is_alias_decl_kind(prior_decl.kind())
             {
                 return Err(AnalysisError::AliasReusedAsPatternBinding {
-                    name,
+                    name: name.clone(),
                     prior_kind: prior_decl.kind(),
                     new_kind,
                     span,
@@ -192,7 +192,7 @@ impl BindingScopeTree {
                 && new_kind != prior_kind
             {
                 return Err(AnalysisError::PatternKindMismatch {
-                    name,
+                    name: name.clone(),
                     prior: prior_kind,
                     current: new_kind,
                     span,
@@ -235,7 +235,7 @@ impl BindingScopeTree {
         let mut cursor = Some(scope);
         while let Some(scope_id) = cursor {
             let scope = self.scope(scope_id)?;
-            if let Some(id) = self.resolve_local(scope_id, name) {
+            if let Some(id) = self.resolve_local(scope_id, name.clone()) {
                 return Some((id, scope_id));
             }
             if scope.boundary {
@@ -280,7 +280,7 @@ impl BindingScopeTree {
     }
 
     fn resolve_local(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {
-        self.scope(scope)?.locals.iter().copied().find(|id| {
+        self.scope(scope)?.locals.iter().cloned().find(|id| {
             self.declaration(*id)
                 .is_some_and(|decl| decl.name() == name)
         })

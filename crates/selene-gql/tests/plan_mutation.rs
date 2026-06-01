@@ -25,10 +25,10 @@ fn mutation_ops(plan: &ExecutionPlan) -> Vec<&MutationOp> {
         .collect()
 }
 
-fn column_names(columns: &[BindingTableColumn]) -> Vec<&'static str> {
+fn column_names(columns: &[BindingTableColumn]) -> Vec<&str> {
     columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str()))
         .collect()
 }
 

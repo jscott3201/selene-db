@@ -23,10 +23,13 @@ fn create_property_index_updates_working_graph_and_emits_schema_change() {
         {
             let mut mutator = txn.mutator();
             mutator
-                .create_node(LabelSet::single(label), props([(property, Value::Int(42))]))
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    props([(property.clone(), Value::Int(42))]),
+                )
                 .unwrap();
             mutator
-                .create_property_index(label, property, TypedIndexKind::I64)
+                .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
                 .unwrap();
             let rows = mutator
                 .read()
@@ -67,11 +70,11 @@ fn create_property_index_rejects_duplicate_in_working_graph() {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
     mutator
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
 
     let err = mutator
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap_err();
 
     assert!(matches!(
@@ -92,13 +95,13 @@ fn create_property_index_rejects_kind_mismatch_on_existing_node() {
     let mut mutator = txn.mutator();
     mutator
         .create_node(
-            LabelSet::single(label),
-            props([(property, Value::String(istr("not-an-int")))]),
+            LabelSet::single(label.clone()),
+            props([(property.clone(), Value::String(istr("not-an-int")))]),
         )
         .unwrap();
 
     let err = mutator
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap_err();
 
     assert!(matches!(
@@ -124,11 +127,13 @@ fn drop_property_index_removes_from_working_graph_and_emits_schema_change() {
     let label = istr("mutator.index.drop");
     let property = istr("mutator.index.prop");
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     let outcome = {
         let mut txn = shared.begin_write();
-        txn.mutator().drop_property_index(label, property).unwrap();
+        txn.mutator()
+            .drop_property_index(label.clone(), property.clone())
+            .unwrap();
         txn.commit().unwrap()
     };
 
@@ -177,9 +182,11 @@ fn create_then_drop_in_same_transaction_leaves_no_index() {
         {
             let mut mutator = txn.mutator();
             mutator
-                .create_property_index(label, property, TypedIndexKind::I64)
+                .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
                 .unwrap();
-            mutator.drop_property_index(label, property).unwrap();
+            mutator
+                .drop_property_index(label.clone(), property.clone())
+                .unwrap();
             assert!(
                 mutator
                     .read()
@@ -206,7 +213,7 @@ fn rollback_discards_created_property_index() {
     let property = istr("mutator.index.prop");
     let mut txn = shared.begin_write();
     txn.mutator()
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     txn.rollback();
 

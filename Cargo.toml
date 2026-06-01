@@ -38,6 +38,14 @@ todo = "deny"
 dbg_macro = "deny"
 print_stderr = "warn"
 print_stdout = "warn"
+# Why: the istr-removal Stage A swap of `IStr` from a 4-byte interner handle to
+# an owned 24-byte `CompactString` inflates the graph/GQL error enums
+# (`GraphError`/`ExecutorError`/`PlannerError` carry labels, property keys, and
+# `SmallVec<[IStr; 4]>` payloads) past clippy's `result_large_err` byte
+# threshold. Boxing the variants is a cross-cutting error-API reshape deferred
+# to the Stage B/C error-surface collapse; allow the lint workspace-wide
+# (lib + integration-test binaries) until then.
+result_large_err = "allow"
 
 # Workspace-level dependency versions go here as crates are added. Keeping
 # them centralized means a single line bumps the version everywhere.
@@ -47,6 +55,7 @@ miette = { version = "7.6", features = ["derive"] }
 pest = "2.8"
 pest_derive = "2.8"
 lasso = { version = "0.7", features = ["multi-threaded"] }
+compact_str = { version = "0.9", features = ["serde"] }
 jiff = { version = "0.2", features = ["serde"] }
 rust_decimal = { version = "1.42", default-features = false, features = ["std", "serde"] }
 uuid = { version = "1.23", features = ["v4", "v7", "serde"] }

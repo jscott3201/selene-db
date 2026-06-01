@@ -24,7 +24,7 @@ fn person_type() -> GraphTypeDef {
     GraphTypeDef {
         name: intern("catalog.person.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
@@ -41,20 +41,20 @@ fn person_company_type() -> GraphTypeDef {
         name: intern("catalog.company.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: company,
+                name: company.clone(),
                 key_labels: LabelSet::single(company),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![EdgeTypeDef {
-            name: works_at,
+            name: works_at.clone(),
             label: works_at,
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(1),
@@ -75,8 +75,8 @@ fn create_node_type_updates_bound_type_and_emits_schema_change() {
             let mut mutator = txn.mutator();
             mutator
                 .create_node_type(
-                    person,
-                    LabelSet::single(person),
+                    person.clone(),
+                    LabelSet::single(person.clone()),
                     vec![PropertyTypeDef {
                         name,
                         value_type: PropertyValueType::String,
@@ -128,8 +128,8 @@ fn create_edge_type_resolves_closed_type_and_emits_schema_change() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_edge_type(
-                knows,
-                knows,
+                knows.clone(),
+                knows.clone(),
                 EdgeEndpointDef::NodeType(0),
                 EdgeEndpointDef::NodeType(0),
                 Vec::new(),
@@ -184,7 +184,7 @@ fn drop_edge_type_removes_type_and_emits_schema_change() {
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .drop_edge_type(works_at, DropBehavior::Restrict)
+            .drop_edge_type(works_at.clone(), DropBehavior::Restrict)
             .unwrap();
         txn.commit().unwrap()
     };
@@ -207,7 +207,7 @@ fn catalog_type_ddl_on_open_graph_is_rejected() {
     let err = txn
         .mutator()
         .create_node_type(
-            person,
+            person.clone(),
             LabelSet::single(person),
             Vec::new(),
             ValidationMode::Strict,
@@ -281,7 +281,7 @@ fn drop_node_type_cascade_truncates_then_drops_in_one_txn() {
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .drop_node_type(person, DropBehavior::Cascade)
+            .drop_node_type(person.clone(), DropBehavior::Cascade)
             .expect("CASCADE drops a type with surviving instances");
         txn.commit().unwrap()
     };
@@ -315,14 +315,14 @@ fn drop_edge_type_restrict_rejects_early_with_surviving_instances() {
         let mut txn = shared.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
             .create_node(LabelSet::single(person), PropertyMap::new())
             .unwrap();
         txn.mutator()
-            .create_edge(knows, a, b, PropertyMap::new())
+            .create_edge(knows.clone(), a, b, PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }
@@ -355,14 +355,14 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
         let mut txn = shared.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
             .create_node(LabelSet::single(person), PropertyMap::new())
             .unwrap();
         txn.mutator()
-            .create_edge(knows, a, b, PropertyMap::new())
+            .create_edge(knows.clone(), a, b, PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }
@@ -370,7 +370,7 @@ fn drop_edge_type_cascade_truncates_then_drops_in_one_txn() {
     let outcome = {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .drop_edge_type(knows, DropBehavior::Cascade)
+            .drop_edge_type(knows.clone(), DropBehavior::Cascade)
             .expect("CASCADE drops an edge type with surviving edges");
         txn.commit().unwrap()
     };
@@ -397,13 +397,13 @@ fn person_self_knows_type() -> GraphTypeDef {
     GraphTypeDef {
         name: intern("catalog.person.knows.graph").unwrap(),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,
         }],
         edge_types: vec![EdgeTypeDef {
-            name: knows,
+            name: knows.clone(),
             label: knows,
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(0),
@@ -422,26 +422,26 @@ fn person_company_school_with_oneof_edge_type() -> GraphTypeDef {
         name: intern("catalog.oneof.graph").unwrap(),
         node_types: vec![
             NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: company,
+                name: company.clone(),
                 key_labels: LabelSet::single(company),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
-                name: school,
+                name: school.clone(),
                 key_labels: LabelSet::single(school),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![EdgeTypeDef {
-            name: affiliated_with,
+            name: affiliated_with.clone(),
             label: affiliated_with,
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::one_of([1, 2]),

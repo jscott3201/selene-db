@@ -100,7 +100,7 @@ fn rewrite_scan(
     // collection order is the tie-break for equal-cost matches, so plans stay
     // stable. Without stats, the first match in collection order wins —
     // byte-identical to the pre-OPT-5 largest-subset-first heuristic.
-    let matches = find_composite_matches(&candidates, label, catalog);
+    let matches = find_composite_matches(&candidates, label.clone(), catalog);
     let mut best: Option<SelectedComposite> = None;
     for (composite, consumed_indices) in matches {
         // BRIEF-154 §B.2 F7: resolve each component value against its per-column
@@ -120,7 +120,7 @@ fn rewrite_scan(
                 admissible = false;
                 break;
             };
-            keys.push((*property, index_key));
+            keys.push((property.clone(), index_key));
         }
         if !admissible {
             continue;
@@ -128,11 +128,15 @@ fn rewrite_scan(
         // OPT-5 cost estimate (None when stats absent → ranks last so the
         // deterministic collection order is preserved).
         let probe_keys: Vec<IndexKey> = keys.iter().map(|(_, k)| k.clone()).collect();
-        let property_keys: Vec<IStr> = composite.properties.iter().map(|(p, _)| *p).collect();
+        let property_keys: Vec<IStr> = composite
+            .properties
+            .iter()
+            .map(|(p, _)| p.clone())
+            .collect();
         let estimated = cost::composite_cost(
             catalog,
             IndexTarget::Node,
-            label,
+            label.clone(),
             &property_keys,
             &probe_keys,
         );
@@ -224,10 +228,10 @@ fn find_composite_matches(
         while mask < (1u64 << n) {
             let subset_keys: Vec<IStr> = (0..n)
                 .filter(|i| (mask >> i) & 1 == 1)
-                .map(|i| candidates[i].key)
+                .map(|i| candidates[i].key.clone())
                 .collect();
             if let Some(composite) =
-                catalog.composite_index(crate::IndexTarget::Node, label, &subset_keys)
+                catalog.composite_index(crate::IndexTarget::Node, label.clone(), &subset_keys)
             {
                 let consumed: Vec<usize> = composite
                     .properties

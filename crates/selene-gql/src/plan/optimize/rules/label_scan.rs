@@ -107,7 +107,7 @@ fn rewrite_scan(scan: &mut crate::NodeOrEdgeScan, catalog: &dyn crate::IndexCata
         ScanKind::Node => IndexTarget::Node,
         ScanKind::Edge => IndexTarget::Edge,
     };
-    let Some(handle) = catalog.label_index(target, label) else {
+    let Some(handle) = catalog.label_index(target, label.clone()) else {
         return false;
     };
     // OPT-5 cost gate: promote to LabelIndex only when the label bitmap is

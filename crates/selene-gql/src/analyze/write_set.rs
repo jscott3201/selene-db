@@ -134,7 +134,7 @@ impl ElementKind {
 pub(crate) fn property_keys(properties: &[(IStr, ValueExpr)]) -> Box<[IStr]> {
     properties
         .iter()
-        .map(|(key, _)| *key)
+        .map(|(key, _)| key.clone())
         .collect::<Vec<_>>()
         .into_boxed_slice()
 }

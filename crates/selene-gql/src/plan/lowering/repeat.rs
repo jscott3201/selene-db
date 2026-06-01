@@ -36,7 +36,7 @@ pub(super) fn edge_match(
     let property_predicates = edge
         .properties
         .iter()
-        .map(|(key, value)| expr::property_predicate(None, *key, value, ctx.analyzed))
+        .map(|(key, value)| expr::property_predicate(None, key.clone(), value, ctx.analyzed))
         .collect::<Result<Vec<_>, _>>()?;
     let inline_predicates = edge
         .inline_where

@@ -43,7 +43,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             });
         }
         let node_type = NodeTypeDef {
-            name,
+            name: name.clone(),
             key_labels,
             properties,
             validation_mode,
@@ -91,7 +91,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         }
         let edge_type = EdgeTypeDef {
             name,
-            label,
+            label: label.clone(),
             source_node_type,
             target_node_type,
             properties,
@@ -136,12 +136,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// reindexing.
     pub fn drop_node_type(&mut self, name: IStr, behavior: DropBehavior) -> GraphResult<()> {
         let graph_type = self.current_graph_type()?;
-        let removed_index =
-            graph_type
-                .node_type_index_for(name)
-                .ok_or_else(|| GraphError::Inconsistent {
-                    reason: format!("node type {name} does not exist"),
-                })?;
+        let removed_index = graph_type
+            .node_type_index_for(name.clone())
+            .ok_or_else(|| GraphError::Inconsistent {
+                reason: format!("node type {name} does not exist"),
+            })?;
         match behavior {
             DropBehavior::Restrict => {
                 // Seam-B fix: a surviving instance whose declared type is being
@@ -178,7 +177,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             DropBehavior::Cascade => {
                 // Truncate instances FIRST (reuses the BRIEF-150 funnel); this
                 // also removes incident edges, so no dangling endpoint remains.
-                self.truncate_node_type(name)?;
+                self.truncate_node_type(name.clone())?;
             }
         }
         // Shared schema-drop step. The positional-reindexing guard still applies
@@ -200,7 +199,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             }
         }
         let next = graph_type
-            .without_node_type(name)
+            .without_node_type(name.clone())
             .expect("node type existed above");
         next.validate_ref()?;
         let graph_id = self.txn.read().graph_id();
@@ -235,7 +234,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
     /// graph type is structurally invalid.
     pub fn drop_edge_type(&mut self, name: IStr, behavior: DropBehavior) -> GraphResult<()> {
         let graph_type = self.current_graph_type()?;
-        if graph_type.edge_type_index_for(name).is_none() {
+        if graph_type.edge_type_index_for(name.clone()).is_none() {
             return Err(GraphError::Inconsistent {
                 reason: format!("edge type {name} does not exist"),
             });
@@ -256,11 +255,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 }
             }
             DropBehavior::Cascade => {
-                self.truncate_edge_type(name)?;
+                self.truncate_edge_type(name.clone())?;
             }
         }
         let next = graph_type
-            .without_edge_type(name)
+            .without_edge_type(name.clone())
             .expect("edge type existed above");
         next.validate_ref()?;
         let graph_id = self.txn.read().graph_id();
@@ -335,15 +334,15 @@ fn core_edge_type_def(
     edge_type: &EdgeTypeDef,
 ) -> GraphResult<selene_core::EdgeTypeDef> {
     Ok(selene_core::EdgeTypeDef {
-        label: edge_type.label,
+        label: edge_type.label.clone(),
         source_node_type: core_edge_endpoint_def(
             graph_type,
-            edge_type.name,
+            edge_type.name.clone(),
             &edge_type.source_node_type,
         )?,
         target_node_type: core_edge_endpoint_def(
             graph_type,
-            edge_type.name,
+            edge_type.name.clone(),
             &edge_type.target_node_type,
         )?,
         properties: core_edge_properties(&edge_type.properties)?,
@@ -362,7 +361,7 @@ fn core_edge_endpoint_def(
             .node_types
             .get(*index as usize)
             .map(|node_type| {
-                CoreEdgeEndpointDef::NodeType(selene_core::NodeTypeRef(node_type.name))
+                CoreEdgeEndpointDef::NodeType(selene_core::NodeTypeRef(node_type.name.clone()))
             })
             .ok_or_else(|| GraphError::Inconsistent {
                 reason: format!("edge type {edge_name} references invalid node type {index}"),
@@ -377,7 +376,7 @@ fn core_edge_endpoint_def(
                         ),
                     }
                 })?;
-                refs.push(selene_core::NodeTypeRef(node_type.name));
+                refs.push(selene_core::NodeTypeRef(node_type.name.clone()));
             }
             Ok(CoreEdgeEndpointDef::OneOf(refs))
         }
@@ -388,7 +387,7 @@ fn core_node_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
     let mut out = SmallVec::new();
     for property in properties {
         out.push(PropertyDef {
-            name: property.name,
+            name: property.name.clone(),
             value_type: core_value_type(
                 property.value_type,
                 property.list_element_type.as_ref(),
@@ -410,7 +409,7 @@ fn core_edge_properties(properties: &[PropertyTypeDef]) -> GraphResult<SmallVec<
     let mut out = SmallVec::new();
     for property in properties {
         out.push(PropertyDef {
-            name: property.name,
+            name: property.name.clone(),
             value_type: core_value_type(
                 property.value_type,
                 property.list_element_type.as_ref(),
@@ -546,7 +545,7 @@ fn core_record_field_structure(
         .iter()
         .map(|field| {
             Ok(selene_core::RecordFieldStructureDef {
-                name: field.name,
+                name: field.name.clone(),
                 field_type: core_record_field_structure_type(&field.field_type, depth)?,
                 required: field.required,
             })

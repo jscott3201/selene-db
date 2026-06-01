@@ -27,7 +27,7 @@ fn churned_graph() -> SharedGraph {
     {
         let mut m = txn.mutator();
         for i in 1..=5 {
-            m.create_node(LabelSet::single(la), prop("n", Value::Int(i)))
+            m.create_node(LabelSet::single(la.clone()), prop("n", Value::Int(i)))
                 .unwrap();
         }
         m.delete_node(NodeId::new(2)).unwrap();
@@ -124,7 +124,7 @@ fn compact_on_a_dense_graph_is_a_noop() {
         let mut txn = shared.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(la), PropertyMap::new())
+            m.create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             m.create_node(LabelSet::single(la), PropertyMap::new())
                 .unwrap();
@@ -153,19 +153,21 @@ fn compact_preserves_edges_and_adjacency() {
         let ids = {
             let mut m = txn.mutator();
             let n1 = m
-                .create_node(LabelSet::single(la), PropertyMap::new())
+                .create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             let n2 = m
-                .create_node(LabelSet::single(la), PropertyMap::new())
+                .create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             let n3 = m
-                .create_node(LabelSet::single(la), PropertyMap::new())
+                .create_node(LabelSet::single(la.clone()), PropertyMap::new())
                 .unwrap();
             let n4 = m
                 .create_node(LabelSet::single(la), PropertyMap::new())
                 .unwrap();
-            m.create_edge(el, n1, n2, PropertyMap::new()).unwrap(); // id 1 — cascade-deleted
-            m.create_edge(el, n3, n4, PropertyMap::new()).unwrap(); // id 2 — survives
+            m.create_edge(el.clone(), n1, n2, PropertyMap::new())
+                .unwrap(); // id 1 — cascade-deleted
+            m.create_edge(el.clone(), n3, n4, PropertyMap::new())
+                .unwrap(); // id 2 — survives
             m.create_edge(el, n1, n4, PropertyMap::new()).unwrap(); // id 3 — survives
             m.delete_node(n2).unwrap(); // cascades edge id 1
             (n1, n3, n4)
@@ -236,15 +238,20 @@ fn compact_preserves_closed_graph_binding_on_the_live_path() {
         .unwrap();
     let person = intern("Person").unwrap();
     let name = intern("name").unwrap();
-    let mk =
-        |n: &str| PropertyMap::from_pairs([(name, Value::String(intern(n).unwrap()))]).unwrap();
+    let mk = |n: &str| {
+        PropertyMap::from_pairs([(name.clone(), Value::String(intern(n).unwrap()))]).unwrap()
+    };
     {
         let mut txn = shared.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(person), mk("ann")).unwrap();
-            let bob = m.create_node(LabelSet::single(person), mk("bob")).unwrap();
-            m.create_node(LabelSet::single(person), mk("cy")).unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("ann"))
+                .unwrap();
+            let bob = m
+                .create_node(LabelSet::single(person.clone()), mk("bob"))
+                .unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("cy"))
+                .unwrap();
             m.delete_node(bob).unwrap();
         }
         txn.commit().unwrap();
@@ -263,7 +270,8 @@ fn compact_preserves_closed_graph_binding_on_the_live_path() {
         let mut txn = shared.begin_write();
         {
             let mut m = txn.mutator();
-            m.create_node(LabelSet::single(person), mk("dot")).unwrap();
+            m.create_node(LabelSet::single(person.clone()), mk("dot"))
+                .unwrap();
         }
         txn.commit()
             .expect("conforming insert commits post-compact");

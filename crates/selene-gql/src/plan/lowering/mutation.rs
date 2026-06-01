@@ -337,7 +337,7 @@ fn lower_set_items(
                     target,
                     element,
                     target_column_index,
-                    key: *key,
+                    key: key.clone(),
                     value: expr::project_expr(value, None, analyzed)?,
                     span: entry.span,
                 }));
@@ -365,7 +365,7 @@ fn lower_set_items(
                         target,
                         element,
                         target_column_index,
-                        key: *key,
+                        key: key.clone(),
                         value: expr::project_expr(value, None, analyzed)?,
                         span: entry.span,
                     }));
@@ -390,7 +390,7 @@ fn lower_set_items(
                     target,
                     element,
                     target_column_index,
-                    label: *label,
+                    label: label.clone(),
                     span: entry.span,
                 }));
             }
@@ -428,7 +428,7 @@ fn lower_remove_items(
                     target,
                     element,
                     target_column_index,
-                    key: *key,
+                    key: key.clone(),
                     span: entry.span,
                 }));
             }
@@ -451,7 +451,7 @@ fn lower_remove_items(
                     target,
                     element,
                     target_column_index,
-                    label: *label,
+                    label: label.clone(),
                     span: entry.span,
                 }));
             }
@@ -468,7 +468,7 @@ fn property_inits(
         .iter()
         .map(|(key, value)| {
             Ok(PropertyInit {
-                key: *key,
+                key: key.clone(),
                 value: expr::project_expr(value, None, analyzed)?,
                 span: value.span(),
             })
@@ -481,13 +481,17 @@ fn classify_insert_element(
     analyzed: &AnalyzedStatement,
 ) -> Result<InsertSiteEmission, PlannerError> {
     let (name, span, expected) = match element {
-        PatternElement::Node(node) => (node.binding, node.span, BindingDeclKind::InsertNode),
-        PatternElement::Edge(edge) => (edge.binding, edge.span, BindingDeclKind::InsertEdge),
+        PatternElement::Node(node) => {
+            (node.binding.clone(), node.span, BindingDeclKind::InsertNode)
+        }
+        PatternElement::Edge(edge) => {
+            (edge.binding.clone(), edge.span, BindingDeclKind::InsertEdge)
+        }
     };
     let Some(name) = name else {
         return Ok(InsertSiteEmission::Emitted);
     };
-    if fresh_insert_binding(name, span, expected, analyzed).is_some() {
+    if fresh_insert_binding(name.clone(), span, expected, analyzed).is_some() {
         return Ok(InsertSiteEmission::Emitted);
     }
     if pattern_reuse_binding(name, span, analyzed).is_some() {
@@ -524,15 +528,18 @@ fn named_node_endpoint(
     node: &NodePattern,
     analyzed: &AnalyzedStatement,
 ) -> Result<Option<BindingId>, PlannerError> {
-    let Some(name) = node.binding else {
+    let Some(ref name) = node.binding else {
         return Ok(None);
     };
-    if let Some(binding) = pattern_reuse_binding(name, node.span, analyzed) {
+    if let Some(binding) = pattern_reuse_binding(name.clone(), node.span, analyzed) {
         return Ok(Some(binding));
     }
-    if let Some(binding) =
-        fresh_insert_binding(name, node.span, BindingDeclKind::InsertNode, analyzed)
-    {
+    if let Some(binding) = fresh_insert_binding(
+        name.clone(),
+        node.span,
+        BindingDeclKind::InsertNode,
+        analyzed,
+    ) {
         return Ok(Some(binding));
     }
     Err(mismatch(node.span))

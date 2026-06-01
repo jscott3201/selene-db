@@ -47,7 +47,7 @@ fn durable_round_trip_recovery() {
             mutator
                 .create_node(
                     LabelSet::single(label),
-                    prop("durable.name", Value::String(value)),
+                    prop("durable.name", Value::String(value.clone())),
                 )
                 .unwrap()
         };
@@ -83,7 +83,7 @@ fn post_recovery_commits_remain_durable() {
             .unwrap();
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         let outcome = txn.commit().unwrap();
         assert_eq!(outcome.durable_at, Some(1));

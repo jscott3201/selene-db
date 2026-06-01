@@ -25,26 +25,26 @@ impl PathSelectorFixture {
             let mut mutator = txn.mutator();
             let a = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("A")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("A")))]),
                 )
                 .expect("A inserts");
             let b1 = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("B1")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("B1")))]),
                 )
                 .expect("B1 inserts");
             let b2 = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("B2")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("B2")))]),
                 )
                 .expect("B2 inserts");
             let c = mutator
                 .create_node(
-                    LabelSet::single(node),
-                    props([(name, Value::String(istr("C")))]),
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("C")))]),
                 )
                 .expect("C inserts");
             let d = mutator
@@ -54,13 +54,27 @@ impl PathSelectorFixture {
                 )
                 .expect("D inserts");
 
-            mutator.create_edge(edge, a, c, props([])).expect("edge 1");
-            mutator.create_edge(edge, a, c, props([])).expect("edge 2");
-            mutator.create_edge(edge, a, b1, props([])).expect("edge 3");
-            mutator.create_edge(edge, b1, c, props([])).expect("edge 4");
-            mutator.create_edge(edge, a, b2, props([])).expect("edge 5");
-            mutator.create_edge(edge, b2, c, props([])).expect("edge 6");
-            mutator.create_edge(edge, b1, d, props([])).expect("edge 7");
+            mutator
+                .create_edge(edge.clone(), a, c, props([]))
+                .expect("edge 1");
+            mutator
+                .create_edge(edge.clone(), a, c, props([]))
+                .expect("edge 2");
+            mutator
+                .create_edge(edge.clone(), a, b1, props([]))
+                .expect("edge 3");
+            mutator
+                .create_edge(edge.clone(), b1, c, props([]))
+                .expect("edge 4");
+            mutator
+                .create_edge(edge.clone(), a, b2, props([]))
+                .expect("edge 5");
+            mutator
+                .create_edge(edge.clone(), b2, c, props([]))
+                .expect("edge 6");
+            mutator
+                .create_edge(edge.clone(), b1, d, props([]))
+                .expect("edge 7");
             mutator.create_edge(edge, d, c, props([])).expect("edge 8");
             txn.commit().expect("fixture commits");
         }
@@ -298,7 +312,7 @@ fn path_selector_checks_cancellation_while_filtering_rows() {
         let mut mutator = txn.mutator();
         for _ in 0..1100 {
             mutator
-                .create_node(LabelSet::single(root), props([]))
+                .create_node(LabelSet::single(root.clone()), props([]))
                 .expect("root inserts");
         }
         txn.commit().expect("fixture commits");

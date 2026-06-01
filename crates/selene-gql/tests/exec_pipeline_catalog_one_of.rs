@@ -237,7 +237,7 @@ fn show_edge_types_round_trips_oneof_endpoint() {
 
     let (table_a, outcome_a) = run_write(&graph_a, &plan_a).expect("catalog A executes");
     outcome_a.expect("commit A succeeds");
-    let Value::String(definition) = table_a.rows()[0].values()[1] else {
+    let Value::String(ref definition) = table_a.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     let rendered = definition.as_str();
@@ -284,7 +284,7 @@ fn show_edge_types_round_trips_oneof_on_both_endpoints() {
 
     let (table_a, outcome_a) = run_write(&graph_a, &plan_a).expect("catalog A executes");
     outcome_a.expect("commit A succeeds");
-    let Value::String(definition) = table_a.rows()[0].values()[1] else {
+    let Value::String(ref definition) = table_a.rows()[0].values()[1] else {
         panic!("definition is string");
     };
     let rendered = definition.as_str();

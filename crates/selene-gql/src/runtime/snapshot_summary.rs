@@ -81,6 +81,7 @@ pub fn executor_summary(input: &ExecutorSummaryInput<'_>) -> ExecutorSnapshot {
         .map(|(index, column)| SnapshotColumn {
             name: column
                 .name
+                .clone()
                 .map(|name| name.as_str().to_owned())
                 .or_else(|| {
                     column

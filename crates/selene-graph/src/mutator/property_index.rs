@@ -34,17 +34,21 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .txn
             .read()
             .property_index
-            .contains_key(&(label, property))
+            .contains_key(&(label.clone(), property.clone()))
         {
             return Err(GraphError::PropertyIndexAlreadyExists { label, property });
         }
-        let index =
-            crate::property_index::build_property_index(self.txn.read(), label, property, kind)?;
+        let index = crate::property_index::build_property_index(
+            self.txn.read(),
+            label.clone(),
+            property.clone(),
+            kind,
+        )?;
         let graph_id = self.txn.read().graph_id();
-        self.txn
-            .guard_mut()
-            .property_index
-            .insert((label, property), PropertyIndexEntry::new(index, name));
+        self.txn.guard_mut().property_index.insert(
+            (label.clone(), property.clone()),
+            PropertyIndexEntry::new(index, name.clone()),
+        );
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
             change: SchemaChange::PropertyIndexCreatedNamed {
@@ -66,7 +70,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .txn
             .read()
             .property_index
-            .contains_key(&(label, property))
+            .contains_key(&(label.clone(), property.clone()))
         {
             return Ok(());
         }
@@ -74,7 +78,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         self.txn
             .guard_mut()
             .property_index
-            .remove(&(label, property));
+            .remove(&(label.clone(), property.clone()));
         self.txn.changes.push(Change::SchemaChanged {
             graph: graph_id,
             change: SchemaChange::PropertyIndexDropped { label, property },

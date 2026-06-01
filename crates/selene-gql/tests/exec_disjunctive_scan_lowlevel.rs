@@ -34,7 +34,7 @@ fn rewrite_to_disjunctive(tree: &mut JoinTree, labels: &[IStr]) {
         .iter()
         .map(|label| {
             let mut clone = original.clone();
-            clone.label_predicate = Some(LabelExpr::Single(*label));
+            clone.label_predicate = Some(LabelExpr::Single(label.clone()));
             clone
         })
         .collect();
@@ -76,8 +76,8 @@ fn disjunctive_scan_executor_concatenates_branches() {
     // C1) is a no-op here because no fixture node carries BOTH Person and
     // Sensor labels — branches yield disjoint NodeId sets.
     let fixture = ExecFixture::build();
-    let person = fixture.person;
-    let sensor = fixture.sensor;
+    let person = fixture.person.clone();
+    let sensor = fixture.sensor.clone();
 
     let table = execute_with_branches(&fixture, "MATCH (n:Person) RETURN n", &[person, sensor]);
     assert_eq!(
@@ -93,9 +93,9 @@ fn disjunctive_scan_executor_per_branch_label_filter() {
     // The fixture's Counter nodes are NOT labelled Person or Sensor, so a
     // `(n:Person)|(n:Sensor)` expansion must NOT yield Counter rows.
     let fixture = ExecFixture::build();
-    let person = fixture.person;
-    let sensor = fixture.sensor;
-    let counter = fixture.counter;
+    let person = fixture.person.clone();
+    let sensor = fixture.sensor.clone();
+    let counter = fixture.counter.clone();
 
     let table = execute_with_branches(&fixture, "MATCH (n:Person) RETURN n", &[person, sensor]);
     let counter_label = counter; // shadow for closure clarity
@@ -138,9 +138,9 @@ fn disjunctive_scan_executor_dedups_multi_label_node() {
     let label_a = istr_local("Alpha");
     let label_b = istr_local("Beta");
     let label_c = istr_local("Gamma");
-    let multi_label = LabelSet::from_iter([label_a, label_b]);
-    let single_a = LabelSet::single(label_a);
-    let single_b = LabelSet::single(label_b);
+    let multi_label = LabelSet::from_iter([label_a.clone(), label_b.clone()]);
+    let single_a = LabelSet::single(label_a.clone());
+    let single_b = LabelSet::single(label_b.clone());
 
     let graph = SharedGraph::new(GraphId::new(155));
     {
