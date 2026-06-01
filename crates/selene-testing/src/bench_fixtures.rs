@@ -186,6 +186,40 @@ impl BenchFixture {
     }
 }
 
+/// Build a deterministic **star / hub** graph: one center node with `degree`
+/// outgoing edges to `degree` distinct leaf nodes.
+///
+/// Returned as an immutable snapshot so a bench can `SharedGraph::from_graph`
+/// it per iteration. The center is `NodeId(1)` (the first node created), so a
+/// bench deletes `NodeId::new(1)` to detach all `degree` incident edges at once
+/// — the high-degree hub the uniform ~degree-6 [`BenchFixture`] never builds,
+/// and the O(D²) adjacency-removal vector (GRAPH-05) that `delete_only` (which
+/// deletes edgeless nodes) cannot exercise.
+#[must_use]
+pub fn star_graph(degree: usize) -> SeleneGraph {
+    let center_label = istr("Hub");
+    let leaf_label = istr("Leaf");
+    let edge_label = istr("LINK");
+    let shared = SharedGraph::new(GraphId::new(1));
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let center = mutator
+            .create_node(LabelSet::single(center_label), PropertyMap::new())
+            .expect("hub center node create succeeds");
+        for _ in 0..degree {
+            let leaf = mutator
+                .create_node(LabelSet::single(leaf_label.clone()), PropertyMap::new())
+                .expect("hub leaf node create succeeds");
+            mutator
+                .create_edge(edge_label.clone(), center, leaf, PropertyMap::new())
+                .expect("hub edge create succeeds");
+        }
+        txn.commit().expect("hub fixture commit succeeds");
+    }
+    shared.read().as_ref().clone()
+}
+
 /// Canonical write-side GQL corpus used by benchmark binaries.
 pub struct WriteCorpus;
 

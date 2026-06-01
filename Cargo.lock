@@ -1679,10 +1679,12 @@ version = "1.1.0"
 dependencies = [
  "bytes",
  "compact_str",
+ "criterion",
  "insta",
  "jiff",
  "metrics",
  "miette",
+ "mimalloc",
  "parking_lot",
  "postcard",
  "proptest",

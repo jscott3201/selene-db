@@ -1,5 +1,14 @@
 #![allow(missing_docs)]
 //! Criterion benches for write-path GQL and direct durable mutation flows.
+//!
+//! Two families. The in-memory CPU family (`gql_*` arms) runs on a no-WAL
+//! `SharedGraph` (`gql_write_state_in_memory`) so it isolates parse, plan,
+//! execute, and in-memory commit CPU — the deltas GQLRT-05 / CORE-06 move. The
+//! durable family (`*_with_flush`, `direct_*`) keeps a real WAL. Note that a
+//! WAL-backed `SharedGraph` ALWAYS commits in `OnFlushOnly` with
+//! `CommitBatching::Off` (the committer owns fsync since v1.1), so any caller
+//! `SyncPolicy` is inert — which is exactly why the CPU arms must not be
+//! WAL-backed (one fsync per commit would swamp the CPU sample).
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -65,7 +74,7 @@ fn bench_gql_insert_single_node_cached(
     scale: usize,
 ) {
     group.throughput(Throughput::Elements(1));
-    let state = common::gql_write_state(scale, SyncPolicy::EveryN(1_000));
+    let state = common::gql_write_state_in_memory(scale);
     let registry = EmptyProcedureRegistry;
     let source = WriteCorpus::insert_single_node();
     let mut session =
@@ -88,7 +97,7 @@ fn bench_gql_insert_single_node_cached_with_schema_churn(
     scale: usize,
 ) {
     group.throughput(Throughput::Elements(1));
-    let state = common::gql_write_state(scale, SyncPolicy::EveryN(1_000));
+    let state = common::gql_write_state_in_memory(scale);
     let registry = EmptyProcedureRegistry;
     let source = WriteCorpus::insert_single_node();
     let label = intern("Person").expect("Person label interns");
@@ -157,7 +166,7 @@ fn bench_gql_per_iter_plan(
         BenchmarkId::new("gql_insert_single_node_per_iter_plan", scale),
         |b| {
             b.iter_batched(
-                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                || common::gql_write_state_in_memory(scale),
                 |state| {
                     let plan = common::plan_write(WriteCorpus::insert_single_node());
                     let mut session = Session::new(&state.graph);
@@ -181,7 +190,7 @@ fn bench_gql_fresh_preplanned(
     let plan = common::plan_write(source);
     group.bench_function(BenchmarkId::new(name, scale), |b| {
         b.iter_batched(
-            || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+            || common::gql_write_state_in_memory(scale),
             |state| {
                 let mut session = Session::new(&state.graph);
                 let rows = common::execute_preplanned(&plan, &mut session);
@@ -229,7 +238,7 @@ fn bench_gql_multi_statement(
         BenchmarkId::new("gql_multi_statement_txn_preplanned", scale),
         |b| {
             b.iter_batched(
-                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                || common::gql_write_state_in_memory(scale),
                 |state| {
                     let mut session = Session::new(&state.graph);
                     let rows = plans
@@ -258,7 +267,7 @@ fn bench_explicit_txn_3_inserts_rust_api(
         BenchmarkId::new("explicit_txn_3_inserts_rust_api", scale),
         |b| {
             b.iter_batched(
-                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                || common::gql_write_state_in_memory(scale),
                 |state| {
                     let mut session = Session::new(&state.graph);
                     session.start_transaction().expect("start succeeds");
@@ -289,7 +298,7 @@ fn bench_explicit_txn_3_inserts_rollback(
         BenchmarkId::new("explicit_txn_3_inserts_rollback", scale),
         |b| {
             b.iter_batched(
-                || common::gql_write_state(scale, SyncPolicy::EveryN(1_000)),
+                || common::gql_write_state_in_memory(scale),
                 |state| {
                     let mut session = Session::new(&state.graph);
                     session.start_transaction().expect("start succeeds");

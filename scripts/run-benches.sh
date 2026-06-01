@@ -38,6 +38,7 @@ set -euo pipefail
 # bin if the feature is absent, so those entries are marked needs_test_harness=1.
 # ---------------------------------------------------------------------------
 REGISTRY="
+selene-core|value_clone|0
 selene-graph|single_graph|0
 selene-graph|bulk_mutation|0
 selene-graph|concurrent_read|0
@@ -46,6 +47,7 @@ selene-graph|write_txn_lifecycle|0
 selene-graph|provider_fanout|0
 selene-graph|bound_type_validation|0
 selene-graph|concurrent_writers|0
+selene-graph|graph_hub_delete|0
 selene-persist|wal|0
 selene-persist|snapshot|0
 selene-gql|parse|1
@@ -54,6 +56,7 @@ selene-gql|plan_optimize|1
 selene-gql|write_e2e|1
 selene-gql|expression_eval|0
 selene-gql|procedure_call_repeat|0
+selene-gql|correlated_subquery|0
 selene-algorithms|algo_bench|0
 "
 
