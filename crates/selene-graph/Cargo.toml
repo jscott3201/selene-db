@@ -76,5 +76,13 @@ harness = false
 name = "graph_hub_delete"
 harness = false
 
+[[bench]]
+name = "graph_snapshot_roundtrip"
+harness = false
+
+[[bench]]
+name = "graph_read_under_write"
+harness = false
+
 [lints]
 workspace = true
