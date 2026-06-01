@@ -62,20 +62,36 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 ///   of `NOT` keywords.
 /// - `case_expr` ↔ `expr` (`grammar.pest:447`) — *nested* `CASE … END`
 ///   expressions: each level re-enters the full precedence cascade for its
-///   `WHEN`/`THEN`/`ELSE` operand exprs. Unlike the two runs, this is
-///   **bracket-like** (`CASE` opens a frame, `END` closes it, separated by other
-///   tokens), so it is tracked by a *balanced* `case_depth` counter rather than
-///   a run.
+///   `WHEN`/`THEN`/`ELSE` operand exprs. `CASE` is keyword-delimited, and a byte
+///   scan cannot soundly recognize its `END` *closer* (see below), so this is
+///   tracked by a **monotone** `case_depth` — a sound over-approximation of
+///   open-`CASE` pressure that never decrements — rather than a balanced counter.
 ///
 /// `NOT`/`CASE`/`END` are reserved keywords (`grammar.pest` `keyword` set), so
 /// they cannot be *bare* identifiers — but `prop_ident` (`grammar.pest:602`) has
 /// no keyword guard, so they appear as identifiers in property names (`n.END`),
-/// map/record keys (`{END: …}`), aliases (`AS END`), `YIELD` items, and
-/// parameters (`$END`). The word classifier counts a keyword **only** when it is
-/// not in one of those identifier positions (see [`validate`]); a stray
-/// identifier-`END` can only *under*-count (`case_depth` saturates at 0 and the
-/// cap is checked only on the `CASE` increment), so it is never a bypass and
-/// never a false reject of a realistic query.
+/// map/record keys (`{END: …}`), aliases (`AS END`), `YIELD` columns
+/// (`YIELD a, END`), and parameters (`$END`). This is why `case_depth` is
+/// **monotone**, with an asymmetry between the opener and the closer:
+///
+/// - A `CASE` **opener** is recognized soundly. It is counted only when *not* in
+///   an identifier position (`.`/`$` lookbehind, an `AS`/`YIELD` predecessor, or
+///   a `:` follower — see [`validate`]), and the grammar never places a real
+///   `case_expr` in any of those slots, so skipping an identifier-`CASE` can
+///   never *under*-count a real frame.
+/// - The `END` **closer** cannot be told apart from an identifier `END` in every
+///   position — a comma-tail `YIELD` column (`CALL p() YIELD a, END`) is a bare
+///   `prop_ident` that a lookbehind/lookahead cannot distinguish from the
+///   keyword. So the guard **never decrements** on `END`. Trusting `END` as a
+///   closer would let a phantom identifier-`END` cancel a real open `CASE` and
+///   reopen the overflow (a confirmed bypass).
+///
+/// The cost of monotonicity is a *documented, conformant* limit: a single
+/// statement's combined `CASE`-count-plus-nesting-pressure must stay ≤
+/// [`MAX_RECURSION_DEPTH`], so a pathological statement with hundreds of (even
+/// non-nested) `CASE` expressions is rejected with the program-limit GQLSTATUS.
+/// Realistic queries (a handful of `CASE`s, shallow nesting) are unaffected — the
+/// deepest legitimate nesting anywhere in the workspace is 3.
 ///
 /// (The `type_name` `LIST<…>` recursion is *also* zero-delimiter, but `LIST` is
 /// **not** reserved — it is a legal bare variable and `LIST < x` is a comparison
@@ -100,12 +116,24 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 /// independently would admit their *product* (e.g. 64 nested `(` each carrying a
 /// 255-deep sign chain ≈ 16 k frames) while every individual counter stayed under
 /// its cap — a real stack-overflow vector. So the guard bounds the running SUM
-/// `depth + sign_run + not_run + case_depth`; the *run* counters (`sign_run`,
-/// `not_run`) reset at a value/closer (where the active chain reduces) but never
-/// at an opener, and the *balanced* counters (`depth`, `case_depth`) decrement
-/// only at their matching closer (`)`/`}`/`]`, keyword `END`). The delimiter caps
-/// [`MAX_NESTING_DEPTH`] (64) and [`MAX_LIST_NESTING_DEPTH`] (32) remain as
-/// tighter, more precise sub-bounds.
+/// `depth + sign_run + not_run + case_depth`, maintained as a sound upper bound
+/// on the live native-stack depth at every position
+/// (`depth + sign_run + not_run + case_depth ≥ true_open_frames`), so the cap is
+/// detected at or before the deepest point. The counters differ in how they
+/// reduce:
+///
+/// - The *run* counters (`sign_run`, `not_run`) reset at a value/closer (where
+///   the active chain reduces) but never at an opener.
+/// - `depth` is a balanced delimiter counter (decrements at `)`/`}`/`]`).
+/// - `case_depth` is **monotone** (never decrements — see above). A real `CASE`
+///   opener folds the wrapping sign/`NOT` run into it
+///   (`case_depth += 1 + sign_run + not_run`) before resetting those runs, so the
+///   run frames that stay open across the `CASE` operands are not lost. This is
+///   what bounds `NOT … NOT CASE … THEN NOT … NOT CASE …`, whose true descent
+///   depth is `levels × (run + 1)` — folding keeps the sum ≥ that depth.
+///
+/// The delimiter caps [`MAX_NESTING_DEPTH`] (64) and [`MAX_LIST_NESTING_DEPTH`]
+/// (32) remain as tighter, more precise sub-bounds.
 ///
 /// The cap mirrors `ANALYZER_MAX_DEPTH = 256` (`analyze/bind/mod.rs:29`) and is
 /// a deliberate safety floor, not a tuning knob: it sits ~4-8x below the
@@ -142,9 +170,11 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // `prev_*` lookbehind state, so adjacency survives an intervening comment.
     let mut sign_run = 0_u32;
     let mut not_run = 0_u32;
-    // Balanced nested-`CASE … END` depth (see `MAX_RECURSION_DEPTH`). Keyword
-    // `CASE` opens a frame; keyword `END` closes it (saturating at 0). Counted
-    // only when not in an identifier position — see the word arm.
+    // Monotone nested-`CASE` pressure (see `MAX_RECURSION_DEPTH`). A real keyword
+    // `CASE` opener adds 1 plus the sign/`NOT` run that wraps it; it NEVER
+    // decrements (a byte scan cannot soundly tell a keyword `END` closer from an
+    // identifier `END`, e.g. a `YIELD` column). Counted only when the `CASE` word
+    // is not in an identifier position — see the word arm.
     let mut case_depth = 0_u32;
     // Lookbehind for the word classifier. `prev_sig_byte` is the last
     // *significant* (non-whitespace, non-comment) byte; only `.`/`$` matter (a
@@ -317,13 +347,21 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         }
                     }
                     WordClass::Case if !in_ident_pos => {
-                        // A real `CASE` opener terminates any active sign/`NOT`
-                        // chain and opens a `CASE` frame. Reject only here (the
-                        // increment side): a stray identifier-`END` can only
-                        // under-count, never manufacture depth.
+                        // A real `CASE` opener. `case_depth` is a *monotone* sound
+                        // over-approximation of open-`CASE` stack pressure: it never
+                        // decrements (a byte scan cannot reliably tell a keyword
+                        // `END` closer from an identifier `END` — e.g. a `YIELD`
+                        // column — so trusting `END` as a closer is unsound). Fold
+                        // the sign/`NOT` run that *wraps* this `CASE` (those frames
+                        // stay open across its operands) into `case_depth`, then
+                        // reset the runs so they are not double-counted. See
+                        // `MAX_RECURSION_DEPTH`.
+                        case_depth = case_depth
+                            .saturating_add(1)
+                            .saturating_add(sign_run)
+                            .saturating_add(not_run);
                         sign_run = 0;
                         not_run = 0;
-                        case_depth += 1;
                         if exceeds_recursion_budget(depth, sign_run, not_run, case_depth) {
                             return Err(ParserError::ComplexityLimitExceeded {
                                 limit: MAX_RECURSION_DEPTH,
@@ -331,14 +369,12 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                             });
                         }
                     }
-                    WordClass::End if !in_ident_pos => {
-                        sign_run = 0;
-                        not_run = 0;
-                        case_depth = case_depth.saturating_sub(1);
-                    }
-                    // A value/primary word, or a `NOT`/`CASE`/`END`/`AS`/`YIELD`
-                    // word sitting in an identifier position: it terminates the
-                    // active sign/`NOT` run but changes no balanced counter.
+                    // Every other word — a value/primary, an identifier-positioned
+                    // `CASE`, or any `END`/`NOT`/`AS`/`YIELD` (`AS`/`YIELD` act via
+                    // the `prev_word` lookbehind below, not here) — terminates the
+                    // active sign/`NOT` run but never decrements the monotone
+                    // `case_depth`. In particular a keyword `END` is treated exactly
+                    // like an ordinary word: it is NOT a trusted closer.
                     _ => {
                         sign_run = 0;
                         not_run = 0;
@@ -406,9 +442,13 @@ fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {
 enum WordClass {
     /// `NOT` — a unary-run opener.
     Not,
-    /// `CASE` — opens a balanced `CASE … END` frame.
+    /// `CASE` — opens a (monotone) nested-`CASE` frame.
     Case,
-    /// `END` — closes a balanced `CASE … END` frame.
+    /// `END` — the nested-`CASE` closer keyword. **Deliberately treated as an
+    /// ordinary word** (no `case_depth` decrement): a byte scan cannot reliably
+    /// tell a keyword `END` from an identifier `END` (a `YIELD` column, property
+    /// name, or map key), so `case_depth` is a monotone over-approximation that
+    /// never trusts `END` as a closer. See [`MAX_RECURSION_DEPTH`].
     End,
     /// `AS` — the following `prop_ident` is an alias identifier.
     As,
@@ -488,9 +528,10 @@ fn classify_word(word: &str) -> WordClass {
 /// `::` of a typed record field — `::` starts with `:`).
 ///
 /// Skips whitespace and both comment forms because pest's non-atomic `~` allows
-/// them between a `prop_ident` key and its `:` (`{ END /* */ : 1 }`). A word
-/// followed by `:`/`::` is a key identifier, never the `CASE`/`END` keyword (no
-/// grammar production places `:` after a `case_expr`).
+/// them between a `prop_ident` key and its `:` (`{ CASE /* */ : 1 }`). A word
+/// followed by `:`/`::` is a key identifier, never a real `CASE` opener (no
+/// grammar production places `:` after a `case_expr`). (`END` is never counted
+/// regardless of position, so this lookahead is only load-bearing for `CASE`.)
 fn next_sig_is_colon(bytes: &[u8], from: usize) -> bool {
     let mut index = from;
     while index < bytes.len() {

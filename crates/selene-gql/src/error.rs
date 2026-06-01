@@ -207,9 +207,14 @@ pub enum ParserError {
     ///   leading unary signs (`unary`), `NOT` keywords (`not_expr`), or nested
     ///   `CASE … END` expressions (`case_expr`) recurses pest's descent one stack
     ///   frame per level with no `(`/`[`/`{` delimiter to bound it, overflowing
-    ///   the native stack (a non-unwindable crash) on a small input. The byte
-    ///   scan counts `CASE`/`END`/`NOT` only as keywords, not where they appear as
-    ///   identifiers (property names, map keys, aliases, `YIELD` items, params).
+    ///   the native stack (a non-unwindable crash) on a small input. Signs and
+    ///   `NOT` are bounded as runs; `CASE` is bounded by a *monotone*
+    ///   over-approximation — a real opener (counted only outside identifier
+    ///   positions: property names, map keys, aliases, `YIELD` columns, params)
+    ///   adds 1 plus its wrapping run and never decrements, because an identifier
+    ///   `END` cannot be soundly distinguished from the keyword closer. The
+    ///   conformant cost is that a statement whose combined `CASE`-count and
+    ///   nesting pressure exceeds the ceiling (256) is rejected.
     /// - **Expression nesting depth** (post-build, iterative scan). A flat
     ///   left-associative operator fold (`a OR a OR …`) or postfix chain
     ///   (`a.b.c.…`) parses and builds iteratively but yields a depth-N

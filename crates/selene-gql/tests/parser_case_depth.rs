@@ -4,16 +4,25 @@
 //! `CASE WHEN … THEN … END` re-enters the full precedence cascade for its
 //! operand expressions, overflowing the native stack at ~2264 nesting (a ~53 KB
 //! input) — a non-unwindable crash. The pre-pest byte-scan guard tracks a
-//! *balanced* `case_depth` (keyword `CASE` opens, keyword `END` closes) folded
-//! into the combined recursion ceiling (256), rejecting hostile nesting as
-//! `ComplexityLimitExceeded` (GQLSTATUS 5GQL1) before pest runs.
+//! **monotone** `case_depth`: a real `CASE` opener adds 1 plus the sign/`NOT`
+//! run that wraps it, and it NEVER decrements. That sum (with the delimiter and
+//! run counters) is a sound upper bound on the live native-stack depth, so
+//! hostile nesting is rejected as `ComplexityLimitExceeded` (GQLSTATUS 5GQL1)
+//! before pest runs.
 //!
-//! The crux is SOUND keyword recognition: `CASE`/`END` are reserved but appear
-//! as identifiers (via `prop_ident`) in property names, map/record keys,
-//! aliases, `YIELD` items, and parameters. The guard must NOT count those — a
-//! prior attempt (PR #224) let `{END: 1}` decrement `case_depth` and re-opened
-//! the crash. These tests assert (a) hostile nesting rejects, (b) the `{END:1}`
-//! bypass is closed, and (c) every identifier position still parses.
+//! Why monotone (not balanced)? `CASE`/`END` are reserved but appear as
+//! identifiers (via `prop_ident`) in property names, map/record keys, aliases,
+//! `YIELD` columns, and parameters. A `CASE` *opener* is recognized soundly (it
+//! is counted only outside identifier positions, which a real `case_expr` never
+//! occupies). But the `END` *closer* cannot be told from an identifier `END`
+//! (e.g. a comma-tail `YIELD a, END` column), so trusting it as a closer is a
+//! confirmed bypass — a phantom identifier-`END` would cancel a real open `CASE`.
+//! So the guard never decrements on `END`. The cost is a documented, conformant
+//! limit (combined `CASE`-count + nesting pressure ≤ 256). These tests assert
+//! (a) hostile nesting rejects, (b) the identifier-`END` bypasses (`{END:1}`,
+//! `n.END`, the `YIELD … , END` comma-tail) and `NOT`-wrapped nesting are all
+//! closed, (c) every identifier position still parses, and (d) the monotone
+//! sequential-`CASE` limit holds at the boundary.
 
 use selene_gql::{GqlStatus, ParserError, parse};
 
@@ -53,11 +62,11 @@ fn deeply_nested_case_rejects_before_pest() {
 
 #[test]
 fn nested_case_with_identifier_end_does_not_bypass() {
-    // THE load-bearing soundness test (the PR #224 bypass). Each level carries a
+    // A load-bearing soundness test (the PR #224 bypass). Each level carries a
     // `{END: 1}` map key in its WHEN condition: that `END` is a record-key
-    // identifier (followed by `:`) and MUST NOT decrement case_depth. If it did,
-    // the real `CASE` opens would be cancelled and the deep nesting would reach
-    // pest and crash. The guard must still reject.
+    // identifier. Under the monotone guard `END` never decrements at all, so the
+    // real `CASE` opens accumulate and the guard rejects — confirming no
+    // identifier-`END` can cancel an open `CASE`.
     let mut source = String::from("RETURN ");
     for _ in 0..HOSTILE_CASE_NESTING {
         source.push_str("CASE WHEN {END: 1} THEN ");
@@ -71,8 +80,9 @@ fn nested_case_with_identifier_end_does_not_bypass() {
 
 #[test]
 fn nested_case_with_property_end_does_not_bypass() {
-    // The `n.END` property-name variant of the bypass: `END` after `.` is an
-    // identifier and must not decrement case_depth.
+    // The `n.END` property-name variant: `END` after `.` is an identifier. The
+    // monotone guard never decrements on any `END`, so the real `CASE` opens
+    // accumulate and the deep nesting is rejected.
     let mut source = String::from("MATCH (n) RETURN ");
     for _ in 0..HOSTILE_CASE_NESTING {
         source.push_str("CASE WHEN n.END THEN ");
@@ -173,4 +183,72 @@ fn case_inside_function_arg_still_counts() {
     }
     source.push(')');
     assert_complexity_rejected(&source, "CASE nested inside function arg");
+}
+
+#[test]
+fn yield_tail_keyword_end_does_not_bypass() {
+    // CONFIRMED PRE-FIX BYPASS (#1). `END` is admitted as a bare `prop_ident`
+    // YIELD column (`CALL p() YIELD x, END`), and `VALUE { … }` lets that clause
+    // sit inside a `CASE` operand. A *balanced* counter wrongly decremented on
+    // that comma-tail `END` (the lookback sees `,`, not `YIELD`), pinning
+    // case_depth at ~1 and letting arbitrarily deep real `CASE` nesting reach
+    // pest and overflow. The monotone guard never decrements on `END`, so the
+    // real `CASE` opens accumulate and it rejects before pest.
+    let mut source = String::from("RETURN ");
+    for _ in 0..HOSTILE_CASE_NESTING {
+        source.push_str("CASE WHEN VALUE { CALL p() YIELD x, END RETURN true } THEN ");
+    }
+    source.push('0');
+    for _ in 0..HOSTILE_CASE_NESTING {
+        source.push_str(" ELSE 0 END");
+    }
+    assert_complexity_rejected(&source, "nested CASE hiding YIELD-tail END");
+}
+
+#[test]
+fn not_wrapped_nested_case_does_not_bypass() {
+    // CONFIRMED PRE-FIX BYPASS (#2). A run of `NOT` WRAPS each nested `CASE`
+    // (operand position), so the outer `NOT` frames stay open while inner CASEs
+    // parse; resetting the run counter at each `CASE` undercounts the true
+    // descent depth (`levels × (run + 1)`). The monotone guard folds the wrapping
+    // run into case_depth at each opener, so the sum tracks the true depth and
+    // rejects before pest.
+    const NOT_RUN: usize = 120;
+    let nots = "NOT ".repeat(NOT_RUN);
+    let mut source = String::from("RETURN ");
+    for _ in 0..HOSTILE_CASE_NESTING {
+        source.push_str(&nots);
+        source.push_str("CASE WHEN true THEN ");
+    }
+    source.push('0');
+    for _ in 0..HOSTILE_CASE_NESTING {
+        source.push_str(" ELSE 0 END");
+    }
+    assert_complexity_rejected(&source, "NOT-wrapped nested CASE");
+}
+
+#[test]
+fn sequential_case_expressions_within_cap_parse() {
+    // The monotone counter accumulates across SEQUENTIAL (non-nested) `CASE`
+    // expressions too. A statement exactly at the cap still parses:
+    // RECURSION_DEPTH_CAP independent shallow `CASE` columns drive case_depth to
+    // exactly the cap, which is admitted (the budget rejects only when exceeded).
+    let items: Vec<String> = (0..RECURSION_DEPTH_CAP)
+        .map(|i| format!("CASE WHEN true THEN 1 ELSE 0 END AS c{i}"))
+        .collect();
+    let source = format!("RETURN {}", items.join(", "));
+    parse(&source).expect("RECURSION_DEPTH_CAP sequential CASE columns parse");
+}
+
+#[test]
+fn excessive_sequential_case_expressions_reject() {
+    // One past the cap: the documented monotone tradeoff. A pathological
+    // statement with more than RECURSION_DEPTH_CAP `CASE` expressions (even
+    // entirely non-nested) is rejected with the program-limit GQLSTATUS — the
+    // conformant cost of never decrementing on `END`.
+    let items: Vec<String> = (0..=RECURSION_DEPTH_CAP)
+        .map(|i| format!("CASE WHEN true THEN 1 ELSE 0 END AS c{i}"))
+        .collect();
+    let source = format!("RETURN {}", items.join(", "));
+    assert_complexity_rejected(&source, "RECURSION_DEPTH_CAP+1 sequential CASE columns");
 }
