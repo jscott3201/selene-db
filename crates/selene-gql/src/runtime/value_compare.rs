@@ -132,9 +132,6 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
     Some(match (lhs, rhs) {
         (Value::Bool(lhs), Value::Bool(rhs)) => lhs.cmp(rhs),
         (Value::String(lhs), Value::String(rhs)) => lhs.as_str().cmp(rhs.as_str()),
-        (Value::String(lhs), Value::ExternalString(rhs)) => lhs.as_str().cmp(rhs.as_ref()),
-        (Value::ExternalString(lhs), Value::String(rhs)) => lhs.as_ref().cmp(rhs.as_str()),
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs.cmp(rhs),
         (Value::Date(lhs), Value::Date(rhs)) => lhs.cmp(rhs),
         (Value::LocalDateTime(lhs), Value::LocalDateTime(rhs)) => lhs.cmp(rhs),
         (Value::ZonedDateTime(lhs), Value::ZonedDateTime(rhs)) => lhs.cmp(rhs),
@@ -479,9 +476,6 @@ fn decimal_cmp_f64(lhs: &rust_decimal::Decimal, rhs: f64) -> Option<Ordering> {
 fn string_equal(lhs: &Value, rhs: &Value) -> Option<bool> {
     Some(match (lhs, rhs) {
         (Value::String(lhs), Value::String(rhs)) => lhs.as_str() == rhs.as_str(),
-        (Value::String(lhs), Value::ExternalString(rhs)) => lhs.as_str() == rhs.as_ref(),
-        (Value::ExternalString(lhs), Value::String(rhs)) => lhs.as_ref() == rhs.as_str(),
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => lhs == rhs,
         _ => return None,
     })
 }
@@ -518,28 +512,27 @@ fn value_rank(value: &Value) -> u8 {
         Value::Float32(_) => 6,
         Value::Decimal(_) => 7,
         Value::String(_) => 8,
-        Value::ExternalString(_) => 9,
-        Value::Bytes(_) => 10,
-        Value::List(_) => 11,
-        Value::Record(_) => 12,
-        Value::RecordTyped(_) => 13,
-        Value::Path(_) => 14,
-        Value::NodeRef(_) => 15,
-        Value::EdgeRef(_) => 16,
-        Value::GraphRef(_) => 17,
-        Value::TableRef(_) => 18,
-        Value::ZonedDateTime(_) => 19,
-        Value::LocalDateTime(_) => 20,
-        Value::Date(_) => 21,
-        Value::ZonedTime(_) => 22,
-        Value::LocalTime(_) => 23,
-        Value::Duration(_) => 24,
-        Value::Extended { .. } => 25,
-        Value::Null => 26,
-        Value::Uuid(_) => 27,
+        Value::Bytes(_) => 9,
+        Value::List(_) => 10,
+        Value::Record(_) => 11,
+        Value::RecordTyped(_) => 12,
+        Value::Path(_) => 13,
+        Value::NodeRef(_) => 14,
+        Value::EdgeRef(_) => 15,
+        Value::GraphRef(_) => 16,
+        Value::TableRef(_) => 17,
+        Value::ZonedDateTime(_) => 18,
+        Value::LocalDateTime(_) => 19,
+        Value::Date(_) => 20,
+        Value::ZonedTime(_) => 21,
+        Value::LocalTime(_) => 22,
+        Value::Duration(_) => 23,
+        Value::Extended { .. } => 24,
+        Value::Null => 25,
+        Value::Uuid(_) => 26,
         // Any future `Value` variant ranks after every enumerated one so it
-        // never silently ties with `Uuid` (27) in the sort fallback.
-        _ => 28,
+        // never silently ties with `Uuid` (26) in the sort fallback.
+        _ => 27,
     }
 }
 

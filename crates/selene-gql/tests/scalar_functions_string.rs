@@ -27,8 +27,8 @@ fn assert_status(source: &str, expected: &str) {
 }
 
 fn external_string(value: Value) -> String {
-    let Value::ExternalString(value) = value else {
-        panic!("expected ExternalString, got {value:?}");
+    let Value::String(value) = value else {
+        panic!("expected String, got {value:?}");
     };
     value.to_string()
 }

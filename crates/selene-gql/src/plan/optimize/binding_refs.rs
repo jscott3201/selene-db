@@ -260,10 +260,10 @@ mod tests {
     use crate::analyze::types::AnalyzedType;
     use crate::plan::BindingElement;
 
-    // `intern_with_admission` (not the budget-bypassing `intern`) keeps this
+    // `intern` (not the budget-bypassing `intern`) keeps this
     // test module clear of the `no_unbudgeted_intern_call_in_selene_gql` guard.
     fn name_of(name: &str) -> selene_core::IStr {
-        selene_core::intern_with_admission(name).unwrap().0
+        selene_core::intern(name).unwrap()
     }
 
     fn binding_def(name: &str, raw: u32, element: BindingElement) -> BindingDef {

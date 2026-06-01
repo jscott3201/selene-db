@@ -1,6 +1,6 @@
 //! Procedure-call bind handling.
 
-use selene_core::{IStr, intern_with_admission};
+use selene_core::{IStr, intern};
 
 use super::{BindContext, expr};
 use crate::{
@@ -155,13 +155,11 @@ fn default_expr(
         ProcedureDefaultValue::Null => Literal::Null(span),
         ProcedureDefaultValue::Integer(value) => Literal::Integer(value, span),
         ProcedureDefaultValue::String(value) => {
-            let interned = intern_with_admission(value)
-                .map(|(interned, _was_new)| interned)
-                .map_err(|_| AnalysisError::NotImplemented {
-                    message: "procedure default string exhausted the interner budget".to_owned(),
-                    span,
-                    hint: None,
-                })?;
+            let interned = intern(value).map_err(|_| AnalysisError::NotImplemented {
+                message: "procedure default string exhausted the interner budget".to_owned(),
+                span,
+                hint: None,
+            })?;
             Literal::String(interned, span)
         }
     };

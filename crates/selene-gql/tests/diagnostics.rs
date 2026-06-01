@@ -31,17 +31,19 @@ fn parse_with_source_reports_unsupported_feature() {
 }
 
 #[test]
-fn diagnostic_report_wraps_interner_budget_exceeded() {
-    let error = ParserError::InternerBudgetExceeded {
-        limit: 8_192,
+fn diagnostic_report_wraps_complexity_limit_exceeded() {
+    // Retargeted from the removed interner-budget render test: proves the
+    // 5GQL1 PROGRAM_LIMIT_EXCEEDED class still renders for a surviving
+    // parser DoS-guard error variant (the #218 bracket-depth guard).
+    let error = ParserError::ComplexityLimitExceeded {
+        limit: 32,
         span: SourceSpan::new(7, 5),
     };
-    let report = DiagnosticReport::new(error, Arc::<str>::from("RETURN over_budget"), "query.gql");
+    let report = DiagnosticReport::new(error, Arc::<str>::from("RETURN over_complex"), "query.gql");
 
     let rendered = render(&report);
     assert!(rendered.contains("5GQL1"));
-    assert!(rendered.contains("interner-admission budget exceeded"));
-    assert!(rendered.contains("8192 distinct new interner admissions"));
+    assert!(rendered.contains("parser complexity limit exceeded"));
 }
 
 #[test]

@@ -62,10 +62,6 @@ pub(super) fn execute(
         Err(GraphError::IndexValueRejected { .. }) => Err(invalid_arg(
             "existing nodes contain values incompatible with the requested index kind",
         )),
-        Err(GraphError::IndexAdmissionExhausted { .. }) => Err(invalid_arg(
-            "existing nodes contain string values that cannot be admitted to the IStr pool \
-             (cap exceeded); raise the cap or shed admitted strings before retrying",
-        )),
         Err(other) => Err(ProcedureError::Internal {
             detail: format!("unexpected graph error during index creation: {other}"),
         }),

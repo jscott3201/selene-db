@@ -298,7 +298,6 @@ fn execute_first_status(source: &str) -> String {
 fn as_string(value: Value) -> String {
     match value {
         Value::String(istr) => istr.as_str().to_owned(),
-        Value::ExternalString(arc) => arc.as_ref().to_owned(),
         other => panic!("expected string, got {other:?}"),
     }
 }

@@ -19,7 +19,7 @@ use crate::{GqlType, RecordType};
 /// `GqlType::Null`, so `NULL IS TYPED <T>` is `false` for any material `T`.
 pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     match ty {
-        GqlType::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
+        GqlType::String => matches!(value, Value::String(_)),
         GqlType::Uuid => matches!(value, Value::Uuid(_)),
         GqlType::Boolean => matches!(value, Value::Bool(_)),
         GqlType::Integer
@@ -111,9 +111,7 @@ mod tests {
     fn closed_record_type_rejects_recordtyped_operand_fail_closed() {
         // A catalog-bound RecordTyped cannot be name-verified without the (unbuilt)
         // named-record-type catalog, so a closed record type conservatively does not match.
-        let field = selene_core::intern_with_admission("a")
-            .expect("intern field")
-            .0;
+        let field = selene_core::intern("a").expect("intern field");
         let ty = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
         assert!(!value_matches_gql_type(&sample_recordtyped(), &ty));
     }

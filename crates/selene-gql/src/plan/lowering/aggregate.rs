@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{IStr, intern_with_admission};
+use selene_core::{IStr, intern};
 
 use crate::{
     ReturnItem, ValueExpr,
@@ -232,12 +232,10 @@ fn synthesized_aggregate_name(
     span: crate::SourceSpan,
 ) -> Result<IStr, PlannerError> {
     let name = format!("agg_{}", expr_id.get());
-    intern_with_admission(&name)
-        .map(|(name, _)| name)
-        .map_err(|_err| PlannerError::InternerCapExhausted {
-            detail: "aggregate synthesized column",
-            span,
-        })
+    intern(&name).map_err(|_err| PlannerError::InternerCapExhausted {
+        detail: "aggregate synthesized column",
+        span,
+    })
 }
 
 fn project_expr(

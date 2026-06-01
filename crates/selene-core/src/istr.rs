@@ -1,23 +1,19 @@
 //! Owned interned-style string handles backed by `compact_str::CompactString`.
 //!
-//! See spec 02 section 5.1. Stage A of the interner removal: `IStr` is now an
-//! owned `CompactString` newtype rather than a `lasso::Spur` handle into a
-//! process-global pool. The public surface (`intern`, `as_str`, the admission
-//! shims, the cap constants) is preserved so the ~798 `intern(..)?` call sites,
-//! the parser admission budget, and the `IStrAdmissionPolicy` seam still
-//! compile. The admission/cap machinery below is retained as thin shims over
-//! the retained global pool (cap-counting only); it is deleted in Stage B/C.
+//! See spec 02 section 5.1. After the interner removal (stages A–C), `IStr` is
+//! an owned `CompactString` newtype rather than a `lasso::Spur` handle into a
+//! process-global pool. There is no longer a global pool, no distinct-string
+//! cardinality cap, and no admission policy: [`intern`] simply constructs an
+//! owned [`IStr`] after enforcing the per-string byte cap (`IL013`).
 //!
-//! The cap of 1,000,000 distinct strings protects the retained admission pool
-//! against unbounded growth; exceeding it raises [`CoreError::IStrCapExceeded`],
-//! mapped to GQLSTATUS `5GQL1`.
+//! The only construction guard is the `IL013` per-string byte limit
+//! ([`MAX_INTERNED_STRING_BYTES`]); a string at or below it constructs an
+//! [`IStr`], a longer one raises [`CoreError::StringTooLong`] (GQLSTATUS
+//! `22G03`).
 
 use std::fmt;
-use std::sync::{Arc, OnceLock};
 
 use compact_str::CompactString;
-use lasso::{Spur, ThreadedRodeo};
-use parking_lot::Mutex;
 use rkyv::{
     Archive, Deserialize as RkyvDeserialize, Place, Serialize as RkyvSerialize, SerializeUnsized,
     rancor::{Fallible, Source},
@@ -25,16 +21,7 @@ use rkyv::{
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{
-    error::{CoreError, CoreResult},
-    value::Value,
-};
-
-/// Maximum number of distinct admitted strings per process.
-///
-/// This is the spec 02 section 5.1 DoS guard for the `IL013` family of implementation
-/// choices. Enforced by the retained admission pool (cap-counting only this stage).
-pub const MAX_INTERNED_STRINGS: usize = 1_000_000;
+use crate::error::{CoreError, CoreResult};
 
 /// Maximum byte length of a single interned string.
 ///
@@ -60,286 +47,36 @@ fn ensure_within_string_cap(s: &str) -> CoreResult<()> {
     Ok(())
 }
 
-/// Policy for converting raw text into engine values at string-admission boundaries.
-///
-/// The low-level [`intern`] and [`intern_with_admission`] APIs always preserve
-/// their hard cap. This policy is only applied by [`intern_or_external`] for
-/// callers that can safely carry high-cardinality text as
-/// [`Value::ExternalString`].
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum IStrAdmissionPolicy {
-    /// Propagate [`CoreError::IStrCapExceeded`] when the interner is full.
-    #[default]
-    Reject,
-    /// Fall back to [`Value::ExternalString`] only when the global interner cap is full.
-    FallbackToExternal,
-}
-
 /// Owned interned-style string handle.
 ///
-/// Stage A: `IStr` is a `CompactString` newtype. It is owned and `'static`
-/// (no borrow), so the multi-writer committer's
-/// `assert_send_static::<SealedCommit>()` proof holds for free. `Clone` is a
-/// memcpy (≤24 bytes inline). Ordering is **lexicographic** through the inner
-/// `CompactString` — no longer interner-handle order — so query-visible
+/// `IStr` is a `CompactString` newtype. It is owned and `'static` (no borrow),
+/// so the multi-writer committer's `assert_send_static::<SealedCommit>()` proof
+/// holds for free. `Clone` is a memcpy (≤24 bytes inline). Ordering is
+/// **lexicographic** through the inner `CompactString` — so query-visible
 /// comparisons and `BTreeMap`/`BTreeSet` iteration are content-ordered.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
 pub struct IStr(CompactString);
 
-/// Retained admission pool — cap-counting + `was_new` semantics only.
-///
-/// Stage A keeps the global pool ONLY so the admission/cap shims below still
-/// enforce [`MAX_INTERNED_STRINGS`] for the cap/race tests and so the parser
-/// budget + `IStrAdmissionPolicy` seam compile. Resolution/`as_str` no longer
-/// touch the pool — they read the owned `CompactString`. This double-work is
-/// temporary and is deleted in Stage B/C along with `lasso`.
-static INTERNER: OnceLock<ThreadedRodeo<Spur>> = OnceLock::new();
-
-/// Admission lock for cap-check + insert atomicity.
-///
-/// Held only on the slow path for strings that are not yet admitted to the
-/// retained pool. Already-admitted strings hit the lock-free fast path via
-/// `rodeo.get(s)`. Without this lock, concurrent callers could both observe
-/// capacity and insert distinct strings, breaking the spec 02 section 5.1
-/// GQLSTATUS 5GQL1 contract.
-///
-/// Uses `parking_lot::Mutex` with no poison semantics so a panic in the
-/// admission predicate path cannot brick all future intern calls.
-static ADMISSION_LOCK: Mutex<()> = Mutex::new(());
-
-fn interner() -> &'static ThreadedRodeo<Spur> {
-    INTERNER.get_or_init(ThreadedRodeo::new)
-}
-
-const fn cap_exceeded(current_len: usize) -> bool {
-    current_len >= MAX_INTERNED_STRINGS
-}
-
-/// Admit `s` to the retained cap-counting pool, reporting whether it was new.
-///
-/// Enforces [`MAX_INTERNED_STRINGS`] under concurrency via [`ADMISSION_LOCK`].
-/// Returns `Ok(true)` when this call inserted a new string, `Ok(false)` when it
-/// was already present, and [`CoreError::IStrCapExceeded`] at cap. This is the
-/// retained cap shim — it does NOT back `as_str`/resolution any more.
-fn admit_to_pool(s: &str) -> CoreResult<bool> {
-    let rodeo = interner();
-
-    // Fast path: already-admitted strings do not need admission.
-    if rodeo.get(s).is_some() {
-        return Ok(false);
-    }
-
-    // Slow path: serialize admission so cap-check + insert are atomic.
-    let _admission = ADMISSION_LOCK.lock();
-
-    // Re-check inside the lock; another thread may have admitted `s` between
-    // the fast-path miss and lock acquisition.
-    if rodeo.get(s).is_some() {
-        return Ok(false);
-    }
-
-    let count = rodeo.len();
-    if cap_exceeded(count) {
-        return Err(CoreError::IStrCapExceeded {
-            count,
-            max: MAX_INTERNED_STRINGS,
-        });
-    }
-    rodeo.get_or_intern(s);
-    Ok(true)
-}
-
 /// Intern a string slice, returning an owned [`IStr`].
 ///
-/// The string is admitted to the retained cap-counting pool (enforcing
-/// [`MAX_INTERNED_STRINGS`]) and an owned [`IStr`] carrying its own
-/// `CompactString` is returned. If the string is already admitted, the pool
-/// fast path is taken; the returned handle is still independently owned.
+/// Construction is a plain `CompactString::from(s)` guarded only by the
+/// `IL013` per-string byte cap; there is no global pool and no distinct-string
+/// cardinality cap.
 ///
 /// # Errors
 ///
-/// Returns [`CoreError::IStrCapExceeded`] if the pool is at cap and the string
-/// is not already present, or [`CoreError::StringTooLong`] if `s` exceeds
+/// Returns [`CoreError::StringTooLong`] if `s` exceeds
 /// [`MAX_INTERNED_STRING_BYTES`] (IL013).
 pub fn intern(s: &str) -> CoreResult<IStr> {
-    intern_with_admission(s).map(|(value, _was_new)| value)
-}
-
-/// Convert raw text into a [`Value`] using the requested admission policy.
-///
-/// Successful interning returns [`Value::String`]. When the global cap is full,
-/// [`IStrAdmissionPolicy::Reject`] propagates the cap error, while
-/// [`IStrAdmissionPolicy::FallbackToExternal`] returns
-/// [`Value::ExternalString`]. Other core errors are always propagated.
-///
-/// GQL runtime comparison and hashing treat `Value::String` and
-/// `Value::ExternalString` with the same content as equal even though Rust's
-/// derived `Value` equality is variant-strict.
-///
-/// # Errors
-///
-/// Returns [`CoreError::IStrCapExceeded`] when the policy is
-/// [`IStrAdmissionPolicy::Reject`] and the string is not already admitted.
-pub fn intern_or_external(s: &str, policy: IStrAdmissionPolicy) -> CoreResult<Value> {
-    intern_or_external_from_result(s, policy, intern(s))
-}
-
-fn intern_or_external_from_result(
-    s: &str,
-    policy: IStrAdmissionPolicy,
-    result: CoreResult<IStr>,
-) -> CoreResult<Value> {
-    match result {
-        Ok(value) => Ok(Value::String(value)),
-        Err(CoreError::IStrCapExceeded { .. })
-            if policy == IStrAdmissionPolicy::FallbackToExternal =>
-        {
-            Ok(Value::ExternalString(Arc::from(s)))
-        }
-        Err(error) => Err(error),
-    }
-}
-
-/// Intern a string slice and report whether it was newly admitted.
-///
-/// This has the same cap and concurrency behavior as [`intern`], but returns
-/// `true` in the second tuple slot only when the call inserted a new string
-/// into the retained cap-counting pool. Parser-side DoS guards use that signal
-/// to enforce per-request admission budgets without charging repeated names.
-///
-/// # Errors
-///
-/// Returns [`CoreError::IStrCapExceeded`] if the pool is at cap and the string
-/// is not already present, or [`CoreError::StringTooLong`] if `s` exceeds
-/// [`MAX_INTERNED_STRING_BYTES`] (IL013).
-pub fn intern_with_admission(s: &str) -> CoreResult<(IStr, bool)> {
-    // IL013: reject over-length strings before touching the pool. The check is
-    // O(1) and an already-admitted string is necessarily within cap, so this
-    // never rejects a string that is already admitted.
     ensure_within_string_cap(s)?;
-
-    let was_new = admit_to_pool(s)?;
-    Ok((IStr(CompactString::from(s)), was_new))
+    Ok(IStr(CompactString::from(s)))
 }
 
 /// Resolve an [`IStr`] to its string representation.
-///
-/// Stage A reads the owned `CompactString`; the retained pool is not consulted.
 #[must_use]
 pub fn resolve(istr: &IStr) -> &str {
     istr.0.as_str()
-}
-
-/// Look up whether a string is already present in the retained pool.
-///
-/// Returns an owned [`IStr`] if `s` is already admitted and `None` otherwise.
-/// Admits nothing.
-#[must_use]
-pub fn lookup(s: &str) -> Option<IStr> {
-    interner().get(s).map(|_| IStr(CompactString::from(s)))
-}
-
-/// Outcome of an atomic admission attempt via [`intern_atomic_admit`].
-#[derive(Debug)]
-#[non_exhaustive]
-pub enum AdmissionError {
-    /// The retained process-wide pool is at [`MAX_INTERNED_STRINGS`].
-    Cap(CoreError),
-    /// The caller-supplied admission predicate rejected this admission.
-    ///
-    /// Only raised when `s` would be a *new* admission and the caller's
-    /// predicate returned `Err`. Already-admitted strings never reach the
-    /// predicate.
-    Rejected,
-}
-
-impl fmt::Display for AdmissionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Cap(error) => fmt::Display::fmt(error, f),
-            Self::Rejected => f.write_str("admission rejected by caller predicate"),
-        }
-    }
-}
-
-impl std::error::Error for AdmissionError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Cap(error) => Some(error),
-            Self::Rejected => None,
-        }
-    }
-}
-
-/// Intern `s`, but route every *new* admission through a caller predicate.
-///
-/// Already-admitted strings hit the lock-free fast path; the predicate is not
-/// called. New admissions take the admission lock, then the predicate is run
-/// **under** the same lock that gates the global insertion. The predicate's
-/// `Ok`/`Err` decision is therefore atomic with the global cap check and
-/// insertion: a rejected admission cannot grow the retained pool, and the
-/// predicate is never invoked redundantly because of a race with another
-/// thread admitting the same string.
-///
-/// Use this from parser-side admission budgets that must charge a slot
-/// before — and only when — the admission is genuinely new from this
-/// thread's vantage. Compare with [`intern_with_admission`], which only
-/// reports `was_new` after the global insertion has already happened.
-///
-/// # Errors
-///
-/// - [`AdmissionError::Cap`] if the retained pool is at capacity, or if `s`
-///   exceeds [`MAX_INTERNED_STRING_BYTES`] (IL013, surfaced as a
-///   [`CoreError::StringTooLong`] cap error).
-/// - [`AdmissionError::Rejected`] if the caller's predicate returned `Err`
-///   for what would have been a new admission.
-pub fn intern_atomic_admit<F>(s: &str, on_new: F) -> Result<IStr, AdmissionError>
-where
-    F: FnOnce() -> Result<(), ()>,
-{
-    // IL013: reject over-length strings before touching the pool.
-    ensure_within_string_cap(s).map_err(AdmissionError::Cap)?;
-
-    let rodeo = interner();
-
-    // Fast path: already-admitted strings do not need admission.
-    if rodeo.get(s).is_some() {
-        return Ok(IStr(CompactString::from(s)));
-    }
-
-    // Slow path: serialize admission with the cap check and the predicate
-    // so callers see a single atomic accept-or-reject.
-    let _admission = ADMISSION_LOCK.lock();
-
-    // Re-check inside the lock: another thread may have admitted `s`
-    // between the fast-path miss and the lock acquisition. If so, the
-    // caller predicate is NOT called — admission was not consumed by this
-    // call.
-    if rodeo.get(s).is_some() {
-        return Ok(IStr(CompactString::from(s)));
-    }
-
-    // This call would be a genuine new admission. Cap check first so a
-    // global-cap failure never perturbs caller state via the predicate.
-    let count = rodeo.len();
-    if cap_exceeded(count) {
-        return Err(AdmissionError::Cap(CoreError::IStrCapExceeded {
-            count,
-            max: MAX_INTERNED_STRINGS,
-        }));
-    }
-
-    // Predicate runs under the lock; if it accepts, the global insertion
-    // happens immediately and the lock is released; if it rejects, no
-    // global insertion occurs at all.
-    if on_new().is_err() {
-        return Err(AdmissionError::Rejected);
-    }
-
-    rodeo.get_or_intern(s);
-    Ok(IStr(CompactString::from(s)))
 }
 
 impl IStr {
@@ -367,7 +104,7 @@ where
 {
     fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
         // Why: archive bytes mirror `String`/`ArchivedString` exactly so the
-        // newtype is wire-byte-identical to the pre-Stage-A handle and
+        // newtype is wire-byte-identical to the pre-removal handle and
         // cold-start portable per spec 04 section 2 / D9.
         ArchivedString::serialize_from_str(self.as_str(), serializer)
     }
@@ -401,8 +138,8 @@ impl Serialize for IStr {
     where
         S: Serializer,
     {
-        // Byte-identical to the pre-Stage-A impl and to `String`: emit the
-        // string content via `serialize_str`.
+        // Byte-identical to `String`: emit the string content via
+        // `serialize_str`.
         serializer.serialize_str(self.as_str())
     }
 }
@@ -420,10 +157,6 @@ impl<'de> Deserialize<'de> for IStr {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::panic::{AssertUnwindSafe, catch_unwind};
-    use std::thread;
-
     use super::*;
 
     #[test]
@@ -451,67 +184,24 @@ mod tests {
     }
 
     #[test]
-    fn intern_or_external_reject_policy_propagates_cap_without_global_fill() {
-        let err = intern_or_external_from_result(
-            "overflow",
-            IStrAdmissionPolicy::Reject,
-            Err(CoreError::IStrCapExceeded {
-                count: MAX_INTERNED_STRINGS,
-                max: MAX_INTERNED_STRINGS,
-            }),
-        )
-        .expect_err("reject policy propagates cap");
-
-        assert!(matches!(err, CoreError::IStrCapExceeded { .. }));
-    }
-
-    #[test]
-    fn intern_or_external_fallback_policy_returns_external_on_cap() {
-        let value = intern_or_external_from_result(
-            "overflow",
-            IStrAdmissionPolicy::FallbackToExternal,
-            Err(CoreError::IStrCapExceeded {
-                count: MAX_INTERNED_STRINGS,
-                max: MAX_INTERNED_STRINGS,
-            }),
-        )
-        .expect("fallback policy converts cap");
-
-        assert!(matches!(value, Value::ExternalString(ref text) if text.as_ref() == "overflow"));
-    }
-
-    #[test]
-    fn intern_or_external_returns_interned_string_on_success() {
-        let key = intern("admitted").expect("test string interns");
-        let value = intern_or_external_from_result(
-            "admitted",
-            IStrAdmissionPolicy::Reject,
-            Ok(key.clone()),
-        )
-        .expect("successful intern returns value");
-
-        assert_eq!(value, Value::String(key));
-    }
-
-    #[test]
     fn istr_is_compactstring_sized() {
-        // Stage A: IStr wraps a CompactString (24 bytes inline). istr.rs is not
-        // deleted until Stage C, so the size guard is retargeted, not removed.
+        // IStr wraps a CompactString (24 bytes inline).
         assert_eq!(std::mem::size_of::<IStr>(), 24);
     }
 
     #[test]
-    fn cap_check_boundary_is_tested_without_filling_global_interner() {
-        assert!(!cap_exceeded(MAX_INTERNED_STRINGS - 1));
-        assert!(cap_exceeded(MAX_INTERNED_STRINGS));
-        assert_eq!(MAX_INTERNED_STRINGS, 1_000_000);
+    fn istr_ord_is_lexicographic() {
+        let aaa = intern("aaa").unwrap();
+        let zzz = intern("zzz").unwrap();
+        assert!(aaa < zzz);
+        assert_eq!(aaa.cmp(&zzz), aaa.as_str().cmp(zzz.as_str()));
     }
 
     #[test]
     fn string_cap_boundary_is_il013_byte_limit() {
         // CORE-12: IL013 enforces 2^32 - 1 bytes per inline string. A 4 GiB
         // allocation is infeasible in a test, so exercise the length predicate
-        // at the exact boundary — same pattern as the cap-count boundary test.
+        // at the exact boundary.
         assert_eq!(MAX_INTERNED_STRING_BYTES, u32::MAX as usize);
         assert!(!string_cap_exceeded(MAX_INTERNED_STRING_BYTES));
         assert!(!string_cap_exceeded(MAX_INTERNED_STRING_BYTES - 1));
@@ -542,16 +232,6 @@ mod tests {
         assert_eq!(interned.as_str(), key);
     }
 
-    #[test]
-    fn intern_or_external_reject_interns_unique_string_end_to_end() {
-        // CORE-13: the public wrapper's success path, end to end (no seam helper).
-        let unique = format!("core-13-uniq-{}", std::process::id());
-        let value = intern_or_external(&unique, IStrAdmissionPolicy::Reject)
-            .expect("unique string interns under Reject");
-        let direct = intern(&unique).expect("direct intern of the same string");
-        assert_eq!(value, Value::String(direct));
-    }
-
     /// Test-only shim exercising the byte-cap producer at a synthetic length
     /// without allocating the multi-gigabyte string the real boundary needs.
     fn ensure_within_string_cap_for_len(byte_len: usize) -> CoreResult<()> {
@@ -566,165 +246,13 @@ mod tests {
     }
 
     #[test]
-    fn admission_lock_survives_panic() {
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            let _admission = ADMISSION_LOCK.lock();
-            panic!("simulated admission panic");
-        }));
-
-        assert!(result.is_err());
-        let key = format!("brief-98-post-panic-string-{}", std::process::id());
-        let _ = intern(&key).expect("intern after panic");
-    }
-
-    #[test]
-    fn cap_is_monotonic_under_concurrent_admission() {
-        let prefix = format!("brief-05.1-mono-{}", std::process::id());
-        let n_threads = 16;
-        let strings_per_thread = 64;
-
-        let handles: Vec<Vec<IStr>> = thread::scope(|scope| {
-            let mut joiners = Vec::new();
-            for t in 0..n_threads {
-                let prefix = prefix.clone();
-                joiners.push(scope.spawn(move || {
-                    let mut keys = Vec::new();
-                    for i in 0..strings_per_thread {
-                        let key = format!("{prefix}-t{t}-{i}");
-                        keys.push(intern(&key).expect("under cap"));
-                    }
-                    keys
-                }));
-            }
-            joiners
-                .into_iter()
-                .map(|handle| handle.join().unwrap())
-                .collect()
-        });
-
-        let admitted: HashSet<IStr> = handles.into_iter().flatten().collect();
-        assert_eq!(admitted.len(), n_threads * strings_per_thread);
-        assert!(interner().len() <= MAX_INTERNED_STRINGS);
-    }
-
-    #[test]
-    fn same_string_race_returns_equal_value() {
-        let key = format!("brief-05.1-same-{}", std::process::id());
-        let n_threads = 32;
-
-        let handles: Vec<IStr> = thread::scope(|scope| {
-            let mut joiners = Vec::new();
-            for _ in 0..n_threads {
-                let key = key.clone();
-                joiners
-                    .push(scope.spawn(move || intern(&key).expect("contended duplicate intern")));
-            }
-            joiners
-                .into_iter()
-                .map(|handle| handle.join().unwrap())
-                .collect()
-        });
-
-        let first = handles[0].clone();
-        for handle in &handles[1..] {
-            assert_eq!(
-                *handle, first,
-                "concurrent intern of same string must return an equal value"
-            );
-        }
-    }
-
-    #[test]
-    fn cap_error_carries_current_count_and_max() {
-        let err = CoreError::IStrCapExceeded {
-            count: MAX_INTERNED_STRINGS,
-            max: MAX_INTERNED_STRINGS,
-        };
-        assert_eq!(err.gqlstatus(), "5GQL1");
-        assert!(err.to_string().contains(&MAX_INTERNED_STRINGS.to_string()));
-    }
-
-    #[test]
-    fn concurrent_interning_is_thread_safe() {
-        let handles: Vec<_> = (0..8)
-            .map(|idx| thread::spawn(move || intern(&format!("threaded-{idx}")).unwrap()))
-            .collect();
-        for handle in handles {
-            assert!(handle.join().is_ok());
-        }
-    }
-
-    #[test]
     fn rkyv_archives_resolved_string() {
         // Wire-stability guard: the newtype archives its string content as an
-        // ArchivedString, byte-identical to the pre-Stage-A handle.
+        // ArchivedString, byte-identical to the pre-removal handle.
         let key = intern("istr.rkyv.portable").unwrap();
         let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&key).unwrap();
         let archived = rkyv::access::<rkyv::Archived<IStr>, rkyv::rancor::Error>(&bytes).unwrap();
         assert_eq!(archived.as_str(), "istr.rkyv.portable");
-    }
-
-    #[test]
-    fn intern_atomic_admit_skips_predicate_for_existing_strings() {
-        let key = format!("brief-19.atomic.exists-{}", std::process::id());
-        let _admitted = intern(&key).expect("seed admission");
-
-        let mut predicate_calls = 0;
-        let result = intern_atomic_admit(&key, || {
-            predicate_calls += 1;
-            Ok(())
-        });
-        assert!(result.is_ok(), "already-interned string returns Ok");
-        assert_eq!(
-            predicate_calls, 0,
-            "predicate must not run for already-interned strings"
-        );
-    }
-
-    #[test]
-    fn intern_atomic_admit_rejects_without_global_growth() {
-        let key = format!("brief-19.atomic.reject-{}", std::process::id());
-        assert!(lookup(&key).is_none(), "test setup: key not yet interned");
-
-        let result = intern_atomic_admit(&key, || Err(()));
-        assert!(matches!(result, Err(AdmissionError::Rejected)));
-        assert!(
-            lookup(&key).is_none(),
-            "rejected admission must not have grown the global pool"
-        );
-    }
-
-    #[test]
-    fn intern_atomic_admit_accepts_and_admits() {
-        let key = format!("brief-19.atomic.accept-{}", std::process::id());
-        assert!(lookup(&key).is_none());
-
-        let mut admit_count = 0;
-        let result = intern_atomic_admit(&key, || {
-            admit_count += 1;
-            Ok(())
-        });
-        assert!(result.is_ok());
-        assert_eq!(
-            admit_count, 1,
-            "predicate runs exactly once on new admission"
-        );
-        assert!(lookup(&key).is_some(), "accepted admission grew the pool");
-    }
-
-    #[test]
-    fn lookup_returns_some_for_already_interned_strings() {
-        let key = format!("brief-19.lookup-some-{}", std::process::id());
-        let admitted = intern(&key).expect("intern succeeds");
-        assert_eq!(lookup(&key), Some(admitted));
-    }
-
-    #[test]
-    fn lookup_returns_none_for_unseen_string_without_admitting() {
-        let key = format!("brief-19.lookup-none-{}", std::process::id());
-        assert!(lookup(&key).is_none());
-        // The lookup must not have admitted the string.
-        assert!(lookup(&key).is_none());
     }
 
     #[test]

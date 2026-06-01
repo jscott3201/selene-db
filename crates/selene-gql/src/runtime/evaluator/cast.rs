@@ -125,7 +125,6 @@ fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
         Value::Bool(b) => Ok(Value::Int(i64::from(b))),
         Value::Float(f) => float_to_integer(f, span),
         Value::String(s) => string_to_integer(s.as_str(), span),
-        Value::ExternalString(s) => string_to_integer(s.as_ref(), span),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for INTEGER target",
             span,
@@ -144,7 +143,6 @@ fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError>
         }
         Value::Bool(b) => Ok(Value::Float(if b { 1.0 } else { 0.0 })),
         Value::String(s) => string_to_float(s.as_str(), span),
-        Value::ExternalString(s) => string_to_float(s.as_ref(), span),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for FLOAT target",
             span,
@@ -163,7 +161,6 @@ fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
             span,
         )),
         Value::String(s) => string_to_boolean(s.as_str(), span),
-        Value::ExternalString(s) => string_to_boolean(s.as_ref(), span),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for BOOLEAN target",
             span,
@@ -177,7 +174,6 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
         Value::Int(v) => v.to_string(),
         Value::Float(f) => format_float(f),
         Value::String(s) => s.as_str().to_owned(),
-        Value::ExternalString(s) => s.as_ref().to_owned(),
         Value::Uuid(v) => v.to_string(),
         _ => {
             return Err(ExecutorError::FeatureNotSupportedYet {
@@ -186,20 +182,22 @@ fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError
             });
         }
     };
-    // Why: CAST output strings go to `Value::ExternalString` to avoid
-    // exhausting the global IStr pool from user-controlled input. The DoS
-    // guard at `tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql`
-    // enforces this for runtime paths — per [[feedback_mem_forget_leak_dos]]
-    // user-driven allocations get the unbounded path, not the bounded
-    // interner.
-    Ok(Value::ExternalString(rendered.into()))
+    // CAST output strings construct a plain `Value::String`; the only guard is
+    // the IL013 per-string byte cap (there is no global interner pool).
+    match selene_core::intern(&rendered) {
+        Ok(istr) => Ok(Value::String(istr)),
+        Err(_err) => Err(ExecutorError::data_exception(
+            DataExceptionSubclass::DataException,
+            "CAST result string exceeds the maximum byte length",
+            span,
+        )),
+    }
 }
 
 fn cast_to_uuid(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
     match value {
         Value::Uuid(v) => Ok(Value::Uuid(v)),
         Value::String(s) => parse_uuid_string(s.as_str(), span).map(Value::Uuid),
-        Value::ExternalString(s) => parse_uuid_string(s.as_ref(), span).map(Value::Uuid),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for UUID target",
             span,
@@ -494,9 +492,7 @@ mod tests {
             type_id: RecordTypeId::new(1),
             values: [Some(Value::Int(1))].into_iter().collect(),
         }));
-        let field = selene_core::intern_with_admission("a")
-            .expect("intern field")
-            .0;
+        let field = selene_core::intern("a").expect("intern field");
         let target = GqlType::Record(RecordType::Closed(vec![(field, GqlType::Integer)]));
         let err = eval_cast(value, &target, span()).expect_err("RecordTyped source rejected");
         assert!(

@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use selene_core::{GraphId, IStr, Value, intern_with_admission};
+use selene_core::{GraphId, IStr, Value, intern};
 
 use crate::ProcedureContext;
 use crate::procedure_registry::{
@@ -219,17 +219,13 @@ fn builtin_name(kind: BuiltinKind) -> String {
 
 fn intern_name(raw: &'static [&'static str]) -> Vec<IStr> {
     raw.iter()
-        .map(|segment| {
-            intern_with_admission(segment)
-                .map(|(istr, _was_new)| istr)
-                .expect("static procedure name segment interns")
-        })
+        .map(|segment| intern(segment).expect("static procedure name segment interns"))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use selene_core::intern_with_admission;
+    use selene_core::intern;
 
     use super::*;
     use crate::{ProcedureMutability, ProcedureTier};
@@ -240,7 +236,7 @@ mod tests {
     fn name(segments: &[&str]) -> Vec<IStr> {
         segments
             .iter()
-            .map(|segment| intern_with_admission(segment).expect("interns").0)
+            .map(|segment| intern(segment).expect("interns"))
             .collect()
     }
 

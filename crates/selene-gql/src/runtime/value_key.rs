@@ -90,10 +90,6 @@ fn hash_value_runtime_eq<H: Hasher>(value: &Value, state: &mut H) {
             "runtime-string".hash(state);
             value.as_str().hash(state);
         }
-        Value::ExternalString(value) => {
-            "runtime-string".hash(state);
-            value.as_ref().hash(state);
-        }
         // Records / lists must recurse through the runtime-eq regime so the
         // field/element values (including cross-type numerics and permuted
         // record fields) hash exactly as `equal_non_null` compares them
@@ -140,7 +136,6 @@ fn hash_value_variant_strict<H: Hasher>(value: &Value, state: &mut H) {
         Value::Float32(value) => hash_f32_canonical(*value, state),
         Value::Decimal(value) => value.hash(state),
         Value::String(value) => value.hash(state),
-        Value::ExternalString(value) => value.hash(state),
         Value::Bytes(value) => value.as_ref().hash(state),
         Value::List(values) => {
             values.len().hash(state);
@@ -411,11 +406,10 @@ mod tests {
     use std::{
         collections::{HashMap, hash_map::DefaultHasher},
         hash::{Hash, Hasher},
-        sync::Arc,
     };
 
     use proptest::{prelude::*, test_runner::Config};
-    use selene_core::{Record, Value, intern_with_admission};
+    use selene_core::{Record, Value, intern};
     use smallvec::smallvec;
 
     use super::{DistinctRowKey, RuntimeEqKey, runtime_values_equal};
@@ -502,8 +496,8 @@ mod tests {
         // GQLRT-14 parity: `{a:1,b:2}` and `{b:2,a:1}` are field-name-equal, so
         // the RuntimeEqKey must treat them equal AND hash them identically, or
         // DISTINCT / GROUP BY / set-ops keep them apart.
-        let a = intern_with_admission("a").expect("key interns").0;
-        let b = intern_with_admission("b").expect("key interns").0;
+        let a = intern("a").expect("key interns");
+        let b = intern("b").expect("key interns");
         let lhs = Value::Record(Box::new(Record::Open(smallvec![
             (a.clone(), Value::Int(1)),
             (b.clone(), Value::Int(2)),
@@ -532,7 +526,7 @@ mod tests {
     fn runtime_eq_key_record_cross_type_numeric_field_parity() {
         // A record field comparing equal under runtime numeric collapse
         // (`{a:1}` vs `{a:1.0}`) must also hash equal.
-        let a = intern_with_admission("a").expect("key interns").0;
+        let a = intern("a").expect("key interns");
         let int_rec = RuntimeEqKey::from_row(vec![Value::Record(Box::new(Record::Open(
             smallvec![(a.clone(), Value::Int(1))],
         )))]);
@@ -545,21 +539,21 @@ mod tests {
     }
 
     #[test]
-    fn runtime_eq_key_hashes_interned_and_external_strings_by_content() {
-        let interned = RuntimeEqKey::from_row(vec![Value::String(
-            intern_with_admission("same")
-                .expect("test string interns")
-                .0,
+    fn runtime_eq_key_hashes_strings_by_content() {
+        let a = RuntimeEqKey::from_row(vec![Value::String(
+            intern("same").expect("test string interns"),
         )]);
-        let external = RuntimeEqKey::from_row(vec![Value::ExternalString(Arc::from("same"))]);
+        let b = RuntimeEqKey::from_row(vec![Value::String(
+            intern("same").expect("test string interns"),
+        )]);
 
-        assert_eq!(interned, external);
-        assert_eq!(key_hash(&interned), key_hash(&external));
+        assert_eq!(a, b);
+        assert_eq!(key_hash(&a), key_hash(&b));
     }
 
     #[test]
     fn runtime_eq_key_dedups_record_with_null_by_rust_equality() {
-        let key = intern_with_admission("x").expect("test key interns").0;
+        let key = intern("x").expect("test key interns");
         let record = Value::Record(Box::new(Record::Open(smallvec![(key, Value::Null)])));
         let mut map = HashMap::new();
 
@@ -608,11 +602,8 @@ mod tests {
                 .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::from(value)) }),
             (-1000_i64..1000)
                 .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::new(value, 1)) }),
-            prop::sample::select(vec!["a", "b", "same"]).prop_map(|value| {
-                Value::String(intern_with_admission(value).expect("test string interns").0)
-            }),
             prop::sample::select(vec!["a", "b", "same"])
-                .prop_map(|value| { Value::ExternalString(Arc::from(value)) }),
+                .prop_map(|value| { Value::String(intern(value).expect("test string interns")) }),
             permuted_record_strategy(),
         ]
         .boxed()
@@ -627,8 +618,8 @@ mod tests {
             Just(Value::Null),
         ];
         (field_value.clone(), field_value, any::<bool>()).prop_map(|(a, b, reversed)| {
-            let a_key = intern_with_admission("a").expect("interns").0;
-            let b_key = intern_with_admission("b").expect("interns").0;
+            let a_key = intern("a").expect("interns");
+            let b_key = intern("b").expect("interns");
             let fields = if reversed {
                 smallvec![(b_key, b), (a_key, a)]
             } else {

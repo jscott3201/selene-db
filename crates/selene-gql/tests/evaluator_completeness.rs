@@ -4,8 +4,6 @@
 
 mod exec_common;
 
-use std::sync::Arc;
-
 use exec_common::{
     ExecFixture, column_values, execute_read, execute_read_result, istr, planned, props,
 };
@@ -190,19 +188,16 @@ fn scalar_string_and_collection_functions_dispatch() {
     assert_eq!(column_values(&table, "len"), vec![Value::Int(3)]);
     assert_eq!(
         column_values(&table, "sub"),
-        vec![Value::ExternalString(Arc::from("cde"))]
+        vec![Value::String(istr("cde"))]
     );
-    assert_eq!(
-        column_values(&table, "up"),
-        vec![Value::ExternalString(Arc::from("AB"))]
-    );
+    assert_eq!(column_values(&table, "up"), vec![Value::String(istr("AB"))]);
     assert_eq!(
         column_values(&table, "low"),
-        vec![Value::ExternalString(Arc::from("ab"))]
+        vec![Value::String(istr("ab"))]
     );
     assert_eq!(
         column_values(&table, "trimmed"),
-        vec![Value::ExternalString(Arc::from("x"))]
+        vec![Value::String(istr("x"))]
     );
     assert_eq!(column_values(&table, "co"), vec![Value::String(istr("x"))]);
     assert_eq!(column_values(&table, "nf"), vec![Value::Null]);
@@ -295,7 +290,7 @@ fn binary_operator_completion_covers_power_xor_concat_and_string_predicates() {
     assert_eq!(column_values(&table, "xor_value"), vec![Value::Bool(true)]);
     assert_eq!(
         column_values(&table, "concat_value"),
-        vec![Value::ExternalString(Arc::from("abcd"))]
+        vec![Value::String(istr("abcd"))]
     );
     assert_eq!(
         column_values(&table, "contains_value"),

@@ -35,11 +35,11 @@ fn assert_status(source: &str, expected: &str) {
 }
 
 fn assert_external_id(value: Value, prefix: &str) {
-    let Value::ExternalString(actual) = value else {
-        panic!("expected ExternalString ID, got {value:?}");
+    let Value::String(actual) = value else {
+        panic!("expected String ID, got {value:?}");
     };
     assert!(
-        actual.starts_with(prefix),
+        actual.as_str().starts_with(prefix),
         "expected {prefix} ID, got {actual}"
     );
 }

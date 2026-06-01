@@ -6,50 +6,37 @@ use selene_core::IStr;
 use crate::{
     ast::{Literal, SourceSpan, ValueExpr},
     error::ParserError,
-    parser::budget::InternerBudget,
 };
 
 use super::{Rule, build_value_expr};
-use crate::parser::builders::{first_child, not_implemented, span};
+use crate::parser::builders::{first_child, intern_str, not_implemented, span};
 
-pub(super) fn build_literal_expr(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_literal_expr(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::literal);
     let child = first_child(pair)?;
     if child.as_rule() == Rule::list_lit {
-        return build_list_lit(child, budget);
+        return build_list_lit(child);
     }
-    build_literal_child(child, budget).map(ValueExpr::Literal)
+    build_literal_child(child).map(ValueExpr::Literal)
 }
 
-pub(super) fn build_list_lit(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ValueExpr, ParserError> {
+pub(super) fn build_list_lit(pair: Pair<'_, Rule>) -> Result<ValueExpr, ParserError> {
     let source_span = span(&pair);
     Ok(ValueExpr::ListLiteral {
-        items: build_list_items(pair, budget)?,
+        items: build_list_items(pair)?,
         span: source_span,
     })
 }
 
-pub(super) fn build_list_items(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Vec<ValueExpr>, ParserError> {
+pub(super) fn build_list_items(pair: Pair<'_, Rule>) -> Result<Vec<ValueExpr>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::expr)
-        .map(|child| build_value_expr(child, budget))
+        .map(|child| build_value_expr(child))
         .collect()
 }
 
-pub(super) fn parse_string_pair(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<IStr, ParserError> {
-    let Literal::String(value, _) = parse_string(pair.as_str(), span(&pair), budget)? else {
+pub(super) fn parse_string_pair(pair: Pair<'_, Rule>) -> Result<IStr, ParserError> {
+    let Literal::String(value, _) = parse_string(pair.as_str(), span(&pair))? else {
         unreachable!("parse_string returns a string literal");
     };
     Ok(value)
@@ -76,10 +63,7 @@ pub(super) fn with_numeric_span(value: ValueExpr, source_span: SourceSpan) -> Va
     }
 }
 
-fn build_literal_child(
-    child: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Literal, ParserError> {
+fn build_literal_child(child: Pair<'_, Rule>) -> Result<Literal, ParserError> {
     let child_span = span(&child);
     match child.as_rule() {
         Rule::null_lit => Ok(Literal::Null(child_span)),
@@ -94,7 +78,7 @@ fn build_literal_child(
         )),
         Rule::int_lit => parse_i64(child.as_str(), child_span),
         Rule::float_lit => parse_f64(child.as_str(), child_span),
-        Rule::string_lit => parse_string(child.as_str(), child_span, budget),
+        Rule::string_lit => parse_string(child.as_str(), child_span),
         Rule::uuid_lit => parse_uuid_lit(child, child_span),
         _ => Err(not_implemented(
             &child,
@@ -170,13 +154,9 @@ fn validate_underscores(text: &str, span: SourceSpan) -> Result<(), ParserError>
     Ok(())
 }
 
-fn parse_string(
-    text: &str,
-    span: SourceSpan,
-    budget: &mut InternerBudget,
-) -> Result<Literal, ParserError> {
+fn parse_string(text: &str, span: SourceSpan) -> Result<Literal, ParserError> {
     let value = parse_string_text(text, span)?;
-    let interned = budget.intern_str(&value, span, "string literal")?;
+    let interned = intern_str(&value, span, "string literal")?;
     Ok(Literal::String(interned, span))
 }
 

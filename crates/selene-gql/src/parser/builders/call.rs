@@ -10,7 +10,6 @@ use crate::{
         YieldColumn, YieldItem, util::NonEmpty,
     },
     error::ParserError,
-    parser::budget::InternerBudget,
 };
 
 use super::{
@@ -18,12 +17,9 @@ use super::{
     not_implemented, span, unexpected_pair,
 };
 
-pub(super) fn build_top_level_call(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Statement, ParserError> {
+pub(super) fn build_top_level_call(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
-    match build_call_stmt(pair, budget)? {
+    match build_call_stmt(pair)? {
         BuiltCall::Procedure(call) => Ok(Statement::Call(call)),
         BuiltCall::Inline(call) => Ok(Statement::Query(QueryPipeline {
             statements: vec![PipelineStatement::CallSubquery(call)],
@@ -32,11 +28,8 @@ pub(super) fn build_top_level_call(
     }
 }
 
-pub(super) fn build_pipeline_call(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<PipelineStatement, ParserError> {
-    match build_call_stmt(pair, budget)? {
+pub(super) fn build_pipeline_call(pair: Pair<'_, Rule>) -> Result<PipelineStatement, ParserError> {
+    match build_call_stmt(pair)? {
         BuiltCall::Procedure(call) => Ok(PipelineStatement::Call(call)),
         BuiltCall::Inline(call) => Ok(PipelineStatement::CallSubquery(call)),
     }
@@ -47,23 +40,17 @@ enum BuiltCall {
     Inline(InlineProcedureCall),
 }
 
-fn build_call_stmt(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<BuiltCall, ParserError> {
+fn build_call_stmt(pair: Pair<'_, Rule>) -> Result<BuiltCall, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_stmt);
     let inner = first_child(pair)?;
     match inner.as_rule() {
-        Rule::call_procedure => build_procedure_call(inner, budget).map(BuiltCall::Procedure),
-        Rule::call_subquery => build_inline_call(inner, budget).map(BuiltCall::Inline),
+        Rule::call_procedure => build_procedure_call(inner).map(BuiltCall::Procedure),
+        Rule::call_subquery => build_inline_call(inner).map(BuiltCall::Inline),
         _ => Err(unexpected_pair(inner, "expected CALL body")),
     }
 }
 
-fn build_inline_call(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<InlineProcedureCall, ParserError> {
+fn build_inline_call(pair: Pair<'_, Rule>) -> Result<InlineProcedureCall, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_subquery);
     let source_span = span(&pair);
     let mut variable_scope = None;
@@ -74,10 +61,10 @@ fn build_inline_call(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::variable_scope_clause => {
-                variable_scope = Some(build_variable_scope(child, budget)?);
+                variable_scope = Some(build_variable_scope(child)?);
             }
-            Rule::query_pipeline => body = Some(build_query_pipeline(child, budget)?),
-            Rule::yield_clause => yield_items = build_yield_items(child, budget)?,
+            Rule::query_pipeline => body = Some(build_query_pipeline(child)?),
+            Rule::yield_clause => yield_items = build_yield_items(child)?,
             Rule::call_transactions_clause => in_transactions = true,
             _ => return Err(unexpected_pair(child, "unexpected CALL subquery child")),
         }
@@ -94,20 +81,14 @@ fn build_inline_call(
     })
 }
 
-fn build_variable_scope(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Vec<IStr>, ParserError> {
+fn build_variable_scope(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::ident)
-        .map(|child| intern_pair(child, budget))
+        .map(|child| intern_pair(child))
         .collect()
 }
 
-fn build_procedure_call(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<ProcedureCall, ParserError> {
+fn build_procedure_call(pair: Pair<'_, Rule>) -> Result<ProcedureCall, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::call_procedure);
     let source_span = span(&pair);
     let mut name = None;
@@ -116,15 +97,15 @@ fn build_procedure_call(
 
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::qualified_name => name = Some(build_qualified_name(child, budget)?),
+            Rule::qualified_name => name = Some(build_qualified_name(child)?),
             Rule::arg_list => {
                 args = child
                     .into_inner()
                     .filter(|arg| arg.as_rule() == Rule::expr)
-                    .map(|arg| expr::build_value_expr(arg, budget))
+                    .map(|arg| expr::build_value_expr(arg))
                     .collect::<Result<Vec<_>, _>>()?;
             }
-            Rule::yield_clause => yield_items = build_yield_items(child, budget)?,
+            Rule::yield_clause => yield_items = build_yield_items(child)?,
             Rule::yield_filter => {
                 return Err(not_implemented(
                     &child,
@@ -146,20 +127,14 @@ fn build_procedure_call(
     })
 }
 
-pub(super) fn build_yield_items(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Vec<YieldItem>, ParserError> {
+pub(super) fn build_yield_items(pair: Pair<'_, Rule>) -> Result<Vec<YieldItem>, ParserError> {
     pair.into_inner()
         .filter(|child| child.as_rule() == Rule::yield_item)
-        .map(|child| build_yield_item(child, budget))
+        .map(|child| build_yield_item(child))
         .collect()
 }
 
-fn build_yield_item(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<YieldItem, ParserError> {
+fn build_yield_item(pair: Pair<'_, Rule>) -> Result<YieldItem, ParserError> {
     let source_span = span(&pair);
     let is_star = pair.as_str().trim_start().starts_with('*');
     let mut column = if is_star {
@@ -172,9 +147,9 @@ fn build_yield_item(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::prop_ident if column.is_none() => {
-                column = Some(YieldColumn::Named(intern_pair(child, budget)?));
+                column = Some(YieldColumn::Named(intern_pair(child)?));
             }
-            Rule::alias => alias = Some(intern_pair(first_child(child)?, budget)?),
+            Rule::alias => alias = Some(intern_pair(first_child(child)?)?),
             _ => return Err(unexpected_pair(child, "unexpected YIELD item child")),
         }
     }

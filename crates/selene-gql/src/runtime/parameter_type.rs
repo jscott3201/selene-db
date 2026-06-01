@@ -74,7 +74,7 @@ fn value_gql_type_name(value: &Value) -> &'static str {
         Value::Float(_) => "FLOAT64",
         Value::Float32(_) => "FLOAT32",
         Value::Decimal(_) => "DECIMAL",
-        Value::String(_) | Value::ExternalString(_) => "STRING",
+        Value::String(_) => "STRING",
         Value::Bytes(_) => "BYTES",
         Value::List(_) => "LIST",
         Value::Record(_) | Value::RecordTyped(_) => "RECORD",

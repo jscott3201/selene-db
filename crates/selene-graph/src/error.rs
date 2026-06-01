@@ -108,28 +108,6 @@ pub enum GraphError {
         observed: &'static str,
     },
 
-    /// A `Value::ExternalString` could not be admitted to the global
-    /// [`IStr`] pool for use as a `STRING`-kind property-index key —
-    /// typically because the pool reached
-    /// [`selene_core::MAX_INTERNED_STRINGS`].
-    ///
-    /// DDL `INDEXED` is the user's consent to admit a column's content to
-    /// the pool (BRIEF-153 carve-out from D20); cap exhaustion at that
-    /// boundary is a hard error rather than a silent skip. Maps to
-    /// GQLSTATUS `5GQL1`, matching the source
-    /// [`CoreError::IStrCapExceeded`].
-    #[error("property index ({label}, {property}) cannot admit value to the IStr pool: {source}")]
-    #[diagnostic(code(SLENE_G_018))]
-    IndexAdmissionExhausted {
-        /// Indexed node label.
-        label: IStr,
-        /// Indexed property key.
-        property: IStr,
-        /// Underlying admission failure (carries count + max).
-        #[source]
-        source: CoreError,
-    },
-
     /// A composite property index already exists for this `(label, properties...)`.
     #[error("composite property index already exists for ({label}, {properties:?})")]
     #[diagnostic(code(SLENE_G_020))]
@@ -192,7 +170,6 @@ impl GraphError {
             | Self::PropertyIndexNotFound { .. }
             | Self::IndexValueRejected { .. }
             | Self::CompositePropertyIndexAlreadyExists { .. } => "22G03",
-            Self::IndexAdmissionExhausted { .. } => "5GQL1",
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",
@@ -245,14 +222,6 @@ mod tests {
             observed: "String",
         },
         "22G03"
-    )]
-    #[case(
-        GraphError::IndexAdmissionExhausted {
-            label: intern("err.label.admission").unwrap(),
-            property: intern("err.property.admission").unwrap(),
-            source: CoreError::IStrCapExceeded { count: 2, max: 1 },
-        },
-        "5GQL1"
     )]
     #[case(
         GraphError::TypeViolation(TypeViolation::UnknownEdgeLabel {
@@ -336,11 +305,6 @@ mod tests {
                 property: prop.clone(),
                 expected_kind: TypedIndexKind::I64,
                 observed: "String",
-            },
-            GraphError::IndexAdmissionExhausted {
-                label: lbl.clone(),
-                property: prop.clone(),
-                source: CoreError::IStrCapExceeded { count: 2, max: 1 },
             },
             GraphError::CompositePropertyIndexAlreadyExists {
                 label: lbl.clone(),

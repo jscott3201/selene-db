@@ -1,10 +1,9 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
 
 use jiff::civil::{date, datetime};
 use roaring::RoaringBitmap;
-use selene_core::{Value, intern, lookup};
+use selene_core::{Value, intern};
 
 use super::*;
 
@@ -240,190 +239,110 @@ fn prefix_scan_matches_string_keys_only() {
 }
 
 #[test]
-fn typed_key_admit_external_string_returns_string_key() {
-    // ExternalString admits into the global IStr pool on the write path so
-    // a STRING-kind index can key on it (BRIEF-153 carve-out).
-    let probe = Arc::<str>::from("typed_key_admit.external.unique-1");
-    assert!(lookup(probe.as_ref()).is_none());
-    let value = Value::ExternalString(Arc::clone(&probe));
+fn typed_key_admit_string_returns_string_key() {
+    let value = Value::String(intern("typed_key_admit.string.unique-1").unwrap());
 
-    let key = typed_key_admit(&value, TypedIndexKind::String)
-        .expect("admission succeeds under the pool cap");
+    let key = typed_key_admit(&value, TypedIndexKind::String).expect("string coerces");
 
     let TypedKey::String(istr) = key else {
         panic!("expected TypedKey::String, got {key:?}");
     };
-    assert_eq!(istr.as_str(), probe.as_ref());
-    assert!(lookup(probe.as_ref()).is_some());
+    assert_eq!(istr.as_str(), "typed_key_admit.string.unique-1");
 }
 
 #[test]
-fn typed_key_admit_non_string_kind_with_external_string_does_not_admit() {
-    // BRIEF-153 fix-cycle C3: probing a non-STRING-kind admit path with a
-    // `Value::ExternalString` must fail KindMismatch BEFORE admitting the
-    // content to the global IStr pool — otherwise probing an I64 index with
-    // arbitrary ExternalString content amplifies into pool growth.
-    let probe = "typed_key_admit.kind_mismatch.unique-never-pooled";
-    assert!(lookup(probe).is_none());
-    let value = Value::ExternalString(Arc::<str>::from(probe));
+fn typed_key_admit_unindexable_value_rejects_kind_mismatch() {
+    // A value whose variant has no typed-key coercion (e.g. BOOLEAN) fails
+    // KindMismatch on the admit path for every index kind.
+    let value = Value::Bool(true);
 
     for kind in [
         TypedIndexKind::I64,
         TypedIndexKind::F64,
+        TypedIndexKind::String,
         TypedIndexKind::Date,
         TypedIndexKind::LocalDateTime,
         TypedIndexKind::Uuid,
     ] {
-        let err = typed_key_admit(&value, kind).expect_err("non-STRING kind rejects");
+        let err = typed_key_admit(&value, kind).expect_err("unindexable value rejects");
         assert!(matches!(
             err,
             TypedIndexValueError::KindMismatch {
-                observed: "ExternalString",
+                observed: "Bool",
                 ..
             }
         ));
     }
-    assert!(
-        lookup(probe).is_none(),
-        "no admission must have happened on any non-STRING kind probe"
-    );
 }
 
 #[test]
-fn typed_key_lookup_external_string_returns_none_when_not_in_pool() {
-    // Lookup MUST NOT admit (read-path no-admit; BRIEF-153 bar 2).
-    let probe = Arc::<str>::from("typed_key_lookup.external.unique-not-admitted");
-    assert!(lookup(probe.as_ref()).is_none());
-    let value = Value::ExternalString(Arc::clone(&probe));
-
-    let result = typed_key_lookup(&value).expect("kind matches");
-
-    assert!(result.is_none(), "probe content was not in the pool");
-    assert!(
-        lookup(probe.as_ref()).is_none(),
-        "lookup must not admit a new IStr"
-    );
+fn string_value_rejected_by_non_string_index() {
+    // Inserting a `Value::String` into an I64-kind index is rejected by the
+    // outer `(self, key)` kind check, leaving the index empty.
+    let mut index = TypedIndex::new(TypedIndexKind::I64);
+    let err = index
+        .insert(
+            &Value::String(intern("typed_key_admit.kind_mismatch.unique").unwrap()),
+            0,
+        )
+        .expect_err("cross-kind insert rejects");
+    assert!(matches!(
+        err,
+        TypedIndexValueError::KindMismatch {
+            observed: "String",
+            ..
+        }
+    ));
+    assert_eq!(index.cardinality(), 0);
 }
 
 #[test]
-fn typed_key_lookup_external_string_returns_some_when_pre_admitted() {
-    // After admitting the content separately, lookup resolves to the pool
-    // handle without re-admitting.
-    let content = "typed_key_lookup.external.unique-pre-admitted";
-    let admitted = intern(content).unwrap();
-    let value = Value::ExternalString(Arc::<str>::from(content));
-
-    let result = typed_key_lookup(&value).expect("kind matches");
-
-    let Some(TypedKey::String(istr)) = result else {
-        panic!("expected Ok(Some(String(_))), got {result:?}");
-    };
-    assert_eq!(istr, admitted);
-}
-
-#[test]
-fn lookup_eq_returns_none_for_kind_drift_under_open_graph() {
-    // BRIEF-153 fix-cycle C1: an open-graph index can have rows stored
-    // with values that don't match its declared kind (the commit path
-    // logs and skips kind drift). A query bound to `Value::ExternalString`
-    // against a non-STRING index must return `None` from `lookup_eq` so
-    // the caller drops to a linear scan + cross-variant `value_compare`.
-    // Returning `Some(empty)` would silently lose the drifted row.
-    let index = TypedIndex::new(TypedIndexKind::I64);
-    let probe_content = "lookup_eq.kind_drift.never_pooled";
-    assert!(lookup(probe_content).is_none());
-
-    let result = index.lookup_eq(&Value::ExternalString(Arc::<str>::from(probe_content)));
-
-    assert!(
-        result.is_none(),
-        "non-STRING-kind index with ExternalString probe must return None (scan fallback), \
-         got Some(_)"
-    );
-    assert!(
-        lookup(probe_content).is_none(),
-        "lookup_eq must not admit even on the kind-mismatch path"
-    );
-}
-
-#[test]
-fn lookup_eq_with_external_string_does_not_admit_unknown_content() {
-    // Read-path symmetry test (BRIEF-153 bar 2): populate via Value::String,
-    // probe via a fresh Value::ExternalString whose content was never
-    // admitted; assert empty result AND the probe content is still absent
-    // from the global pool afterward.
+fn lookup_eq_string_finds_admitted_row() {
     let mut index = TypedIndex::new(TypedIndexKind::String);
-    let admitted = intern("lookup_eq.external.admitted").unwrap();
-    index.insert(&Value::String(admitted), 7).unwrap();
-
-    let probe_content = "lookup_eq.external.unique-not-admitted";
-    assert!(lookup(probe_content).is_none());
-    let probe = Value::ExternalString(Arc::<str>::from(probe_content));
-
-    let result = index.lookup_eq(&probe).expect("kind matches");
-
-    assert!(
-        result.is_empty(),
-        "no row could be keyed on unadmitted content"
-    );
-    assert!(
-        lookup(probe_content).is_none(),
-        "lookup_eq must not admit the probe content"
-    );
-}
-
-#[test]
-fn lookup_eq_external_string_finds_admitted_row_via_pool_handle() {
-    // Variant-cross test: a row inserted as Value::String can still be
-    // located by a probe bound as Value::ExternalString with matching
-    // content, because typed_key_lookup resolves the content through the
-    // existing IStr pool.
-    let mut index = TypedIndex::new(TypedIndexKind::String);
-    let content = "lookup_eq.external.cross-variant";
+    let content = "lookup_eq.string.cross-variant";
     let istr = intern(content).unwrap();
-    index.insert(&Value::String(istr), 3).unwrap();
+    index.insert(&Value::String(istr.clone()), 3).unwrap();
 
-    let probe = Value::ExternalString(Arc::<str>::from(content));
-    let result = index.lookup_eq(&probe).expect("kind matches");
+    let result = index.lookup_eq(&Value::String(istr)).expect("kind matches");
 
     assert!(result.contains(3));
 }
 
 #[test]
-fn values_share_key_falls_through_for_unpoolable_external_string() {
-    // Diff path MUST NOT admit (BRIEF-153 §B.1). Two distinct fresh
-    // ExternalString contents — neither in the pool — must NOT share a
-    // key, so the update fires a write that admits through the write path.
-    let index = TypedIndex::new(TypedIndexKind::String);
-    let lhs_content = "values_share_key.external.lhs-unique";
-    let rhs_content = "values_share_key.external.rhs-unique";
-    assert!(lookup(lhs_content).is_none());
-    assert!(lookup(rhs_content).is_none());
-    let lhs = Value::ExternalString(Arc::<str>::from(lhs_content));
-    let rhs = Value::ExternalString(Arc::<str>::from(rhs_content));
+fn lookup_eq_returns_none_for_kind_drift_under_open_graph() {
+    // An open-graph index can have a probe value whose kind does not match
+    // its declared kind. A `Value::String` probe against a non-STRING index
+    // must return `None` from `lookup_eq` so the caller drops to a linear
+    // scan + cross-variant `value_compare`.
+    let index = TypedIndex::new(TypedIndexKind::I64);
 
-    assert!(!index.values_share_key(&lhs, &rhs));
+    let result = index.lookup_eq(&Value::String(
+        intern("lookup_eq.kind_drift.unique").unwrap(),
+    ));
+
     assert!(
-        lookup(lhs_content).is_none() && lookup(rhs_content).is_none(),
-        "values_share_key must not admit either operand"
+        result.is_none(),
+        "non-STRING-kind index with String probe must return None (scan fallback)"
     );
 }
 
 #[test]
-fn values_share_key_returns_true_for_same_external_string_content() {
-    // Identical raw content from two ExternalString Arcs — neither in the
-    // pool — falls through to the raw-value comparison and matches.
+fn values_share_key_falls_through_for_distinct_strings() {
     let index = TypedIndex::new(TypedIndexKind::String);
-    let content = "values_share_key.external.same-content-unique";
-    assert!(lookup(content).is_none());
-    let lhs = Value::ExternalString(Arc::<str>::from(content));
-    let rhs = Value::ExternalString(Arc::<str>::from(content));
+    let lhs = Value::String(intern("values_share_key.string.lhs-unique").unwrap());
+    let rhs = Value::String(intern("values_share_key.string.rhs-unique").unwrap());
+
+    assert!(!index.values_share_key(&lhs, &rhs));
+}
+
+#[test]
+fn values_share_key_returns_true_for_same_string_content() {
+    let index = TypedIndex::new(TypedIndexKind::String);
+    let content = "values_share_key.string.same-content-unique";
+    let lhs = Value::String(intern(content).unwrap());
+    let rhs = Value::String(intern(content).unwrap());
 
     assert!(index.values_share_key(&lhs, &rhs));
-    assert!(
-        lookup(content).is_none(),
-        "values_share_key must not admit even on equality match"
-    );
 }
 
 #[test]

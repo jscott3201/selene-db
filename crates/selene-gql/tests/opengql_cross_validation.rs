@@ -51,9 +51,6 @@ fn opengql_samples_return_structured_results() {
                     SYNTAX_GAP_ALLOWED.contains(&file_name),
                     "{file_name}: unexpected syntax drift for {chunk:?}"
                 ),
-                Err(ParserError::InternerBudgetExceeded { .. }) => {
-                    panic!("{file_name}: static sample exceeded interner budget")
-                }
                 Err(other) => panic!("{file_name}: unexpected parser error {other:?}"),
             }
         }

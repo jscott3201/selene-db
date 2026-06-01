@@ -89,7 +89,6 @@ fn all_values() -> Vec<Value> {
         Value::Float32(2.5),
         Value::Decimal(rust_decimal::Decimal::new(1234, 2)),
         Value::String(istr("serde.value.string")),
-        Value::ExternalString(Arc::from("serde.value.external-string")),
         Value::Bytes(Arc::from([1_u8, 2, 3])),
         Value::List(vec![Value::Int(1), Value::Null]),
         Value::Record(Box::new(Record::Open(smallvec![(

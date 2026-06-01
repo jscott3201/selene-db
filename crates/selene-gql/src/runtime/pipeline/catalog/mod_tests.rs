@@ -7,7 +7,7 @@
 use super::*;
 
 fn istr(value: &str) -> IStr {
-    intern_with_admission(value).expect("test label admits").0
+    intern(value).expect("test label admits")
 }
 
 #[test]

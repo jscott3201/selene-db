@@ -8,7 +8,7 @@ use crate::{
         BinaryOp, GqlType, IsCheckKind, NormalForm, RecordType, SourceSpan, TruthValue, ValueExpr,
     },
     error::ParserError,
-    parser::{MAX_NESTING_DEPTH, budget::InternerBudget},
+    parser::MAX_NESTING_DEPTH,
 };
 
 use super::{Rule, build_value_expr, literal};
@@ -20,7 +20,6 @@ pub(super) fn apply_is_suffix(
     operand: ValueExpr,
     suffix: Pair<'_, Rule>,
     source_span: SourceSpan,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     debug_assert_eq!(suffix.as_rule(), Rule::is_suffix);
     let children: Vec<_> = suffix.into_inner().collect();
@@ -28,7 +27,7 @@ pub(super) fn apply_is_suffix(
     // source text. Substring scans were misleading when an operand contained
     // a quoted identifier with `NOT` in it (e.g. `IS LABELED :"NOT"`).
     let negated = children.iter().any(|child| child.as_rule() == Rule::not_kw);
-    dispatch_is_suffix(operand, &children, negated, source_span, budget)
+    dispatch_is_suffix(operand, &children, negated, source_span)
 }
 
 fn dispatch_is_suffix(
@@ -36,20 +35,19 @@ fn dispatch_is_suffix(
     children: &[Pair<'_, Rule>],
     negated: bool,
     source_span: SourceSpan,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     if let Some(string_op) = children
         .iter()
         .find(|child| child.as_rule() == Rule::string_match_op)
     {
-        return build_string_match(operand, string_op, children, source_span, budget);
+        return build_string_match(operand, string_op, children, source_span);
     }
 
     if children.iter().any(|child| child.as_rule() == Rule::in_kw) {
         let list_pair = find_child(children, Rule::list_lit, "IN predicate is missing list")?;
         return Ok(ValueExpr::InList {
             operand: Box::new(operand),
-            list: literal::build_list_items(list_pair, budget)?,
+            list: literal::build_list_items(list_pair)?,
             negated,
             span: source_span,
         });
@@ -57,7 +55,7 @@ fn dispatch_is_suffix(
 
     Ok(ValueExpr::IsCheck {
         operand: Box::new(operand),
-        kind: build_is_kind(children, source_span, budget)?,
+        kind: build_is_kind(children, source_span)?,
         negated,
         span: source_span,
     })
@@ -68,7 +66,6 @@ fn build_string_match(
     string_op: &Pair<'_, Rule>,
     children: &[Pair<'_, Rule>],
     source_span: SourceSpan,
-    budget: &mut InternerBudget,
 ) -> Result<ValueExpr, ParserError> {
     let upper = string_op.as_str().to_ascii_uppercase();
     let op = if upper.starts_with("STARTS") {
@@ -86,7 +83,7 @@ fn build_string_match(
     Ok(ValueExpr::BinaryOp {
         op,
         lhs: Box::new(operand),
-        rhs: Box::new(build_value_expr(rhs_pair, budget)?),
+        rhs: Box::new(build_value_expr(rhs_pair)?),
         span: source_span,
     })
 }
@@ -94,7 +91,6 @@ fn build_string_match(
 fn build_is_kind(
     children: &[Pair<'_, Rule>],
     source_span: SourceSpan,
-    budget: &mut InternerBudget,
 ) -> Result<IsCheckKind, ParserError> {
     if children
         .iter()
@@ -111,9 +107,7 @@ fn build_is_kind(
             Rule::label_expr,
             "IS LABELED is missing label expression",
         )?;
-        return Ok(IsCheckKind::Labeled(pattern::build_label_expr(
-            label_pair, budget,
-        )?));
+        return Ok(IsCheckKind::Labeled(pattern::build_label_expr(label_pair)?));
     }
     if children
         .iter()
@@ -124,9 +118,7 @@ fn build_is_kind(
             Rule::comparison,
             "IS SOURCE OF is missing expression",
         )?;
-        return Ok(IsCheckKind::SourceOf(Box::new(build_value_expr(
-            rhs_pair, budget,
-        )?)));
+        return Ok(IsCheckKind::SourceOf(Box::new(build_value_expr(rhs_pair)?)));
     }
     if children
         .iter()
@@ -138,7 +130,7 @@ fn build_is_kind(
             "IS DESTINATION OF is missing expression",
         )?;
         return Ok(IsCheckKind::DestinationOf(Box::new(build_value_expr(
-            rhs_pair, budget,
+            rhs_pair,
         )?)));
     }
     if children
@@ -179,7 +171,7 @@ fn build_is_kind(
         .any(|child| child.as_rule() == Rule::typed_kw)
     {
         let type_pair = find_child(children, Rule::type_name, "IS TYPED is missing type")?;
-        return Ok(IsCheckKind::Typed(build_type_name(type_pair, budget)?));
+        return Ok(IsCheckKind::Typed(build_type_name(type_pair)?));
     }
     Err(ParserError::syntax(
         "unsupported IS predicate",
@@ -200,18 +192,11 @@ fn find_child<'a>(
         .ok_or_else(|| ParserError::syntax(missing, SourceSpan::default(), None))
 }
 
-pub(super) fn build_type_name(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<GqlType, ParserError> {
-    build_type_name_with_depth(pair, 0, budget)
+pub(super) fn build_type_name(pair: Pair<'_, Rule>) -> Result<GqlType, ParserError> {
+    build_type_name_with_depth(pair, 0)
 }
 
-fn build_type_name_with_depth(
-    pair: Pair<'_, Rule>,
-    depth: u32,
-    budget: &mut InternerBudget,
-) -> Result<GqlType, ParserError> {
+fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlType, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::type_name);
     let source_span = span(&pair);
     if depth > MAX_NESTING_DEPTH {
@@ -290,7 +275,6 @@ fn build_type_name_with_depth(
         return Ok(GqlType::List(Box::new(build_type_name_with_depth(
             inner,
             depth + 1,
-            budget,
         )?)));
     }
 
@@ -312,8 +296,8 @@ fn build_type_name_with_depth(
                     ParserError::syntax("record field type is missing type", field_span, None)
                 })?;
                 Ok((
-                    intern_pair(name_pair, budget)?,
-                    build_type_name_with_depth(type_pair, depth + 1, budget)?,
+                    intern_pair(name_pair)?,
+                    build_type_name_with_depth(type_pair, depth + 1)?,
                 ))
             })
             .collect::<Result<Vec<_>, ParserError>>()?;

@@ -1,6 +1,6 @@
 //! Literal constant-folding rule.
 
-use selene_core::intern_with_admission;
+use selene_core::intern;
 
 use crate::{
     BinaryOp, Literal, SourceSpan, UnaryOp, ValueExpr,
@@ -181,7 +181,7 @@ fn fold_concat(lhs: &Literal, rhs: &Literal, span: SourceSpan) -> Option<ValueEx
     let mut value = String::with_capacity(left.as_str().len() + right.as_str().len());
     value.push_str(left.as_str());
     value.push_str(right.as_str());
-    let interned = intern_with_admission(&value).ok()?.0;
+    let interned = intern(&value).ok()?;
     Some(ValueExpr::Literal(Literal::String(interned, span)))
 }
 

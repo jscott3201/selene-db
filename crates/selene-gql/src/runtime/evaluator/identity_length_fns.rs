@@ -1,7 +1,5 @@
 //! Identity and length scalar function evaluation.
 
-use std::sync::Arc;
-
 use selene_core::{Record, Value};
 
 use crate::{
@@ -9,13 +7,13 @@ use crate::{
     runtime::{DataExceptionSubclass, EvalCtx, ExecutorError},
 };
 
-use super::binary_ops::data_exception_with;
+use super::binary_ops::{data_exception_with, intern_string};
 
 pub(super) fn eval_element_id(args: Vec<Value>, span: SourceSpan) -> Result<Value, ExecutorError> {
     match args.into_iter().next().expect("arity checked") {
         Value::Null => Ok(Value::Null),
-        Value::NodeRef(id) => Ok(Value::ExternalString(Arc::from(id.to_string()))),
-        Value::EdgeRef(id) => Ok(Value::ExternalString(Arc::from(id.to_string()))),
+        Value::NodeRef(id) => intern_string(&id.to_string(), span),
+        Value::EdgeRef(id) => intern_string(&id.to_string(), span),
         Value::List(_) => data_exception_with(
             DataExceptionSubclass::InvalidValueType,
             "element_id argument is not a singleton element reference",

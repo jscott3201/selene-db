@@ -4,18 +4,18 @@
 //! change is the interner helper: the runtime-path DoS guard
 //! (`tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql`) forbids the
 //! bare interner-admission shorthand in any `src/` file, so the helper uses the
-//! budget-aware `intern_with_admission` instead.
+//! budget-aware `intern` instead.
 
 use std::sync::Arc;
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern_with_admission};
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, intern};
 use selene_graph::{SeleneGraph, SharedGraph, TypedIndex};
 
 use super::verify_snapshot;
 use crate::ProcedureResult;
 
 fn istr(value: &str) -> IStr {
-    intern_with_admission(value).expect("test string interns").0
+    intern(value).expect("test string interns")
 }
 
 fn graph_with_one_indexed_node() -> SeleneGraph {

@@ -181,7 +181,6 @@ fn raw_value_key(value: &Value) -> String {
         Value::Float32(value) => format!("float32:{:08x}", canonical_f32_bits(*value)),
         Value::Decimal(value) => format!("decimal:{value}"),
         Value::String(value) => format!("string:{}", value.as_str()),
-        Value::ExternalString(value) => format!("external_string:{}", value.as_ref()),
         Value::Bytes(value) => format!("bytes:{}", hex_bytes(value)),
         Value::List(values) => raw_sequence_key("list:[", "]", values.iter().map(raw_value_key)),
         Value::Record(record) => raw_record_key(record),
@@ -317,7 +316,6 @@ fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
         Value::Float32(value) => format!("{value:?}f32"),
         Value::Decimal(value) => value.to_string(),
         Value::String(value) => format!("\"{}\"", value.as_str()),
-        Value::ExternalString(value) => format!("\"{}\"", value.as_ref()),
         Value::Bytes(value) => format!("0x{}", hex_bytes(value)),
         Value::List(values) => format!(
             "[{}]",
@@ -412,7 +410,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{NodeId, Value, intern_with_admission};
+    use selene_core::{NodeId, Value, intern};
 
     use crate::{
         Binding, BindingTable, BindingTableColumn, BindingTableSchema, analyze::AnalyzedType,
@@ -449,20 +447,12 @@ mod tests {
     #[test]
     fn raw_list_keys_are_injective_when_string_elements_contain_commas() {
         let lhs = Value::List(vec![
-            Value::String(intern_with_admission("a").expect("test string interns").0),
-            Value::String(
-                intern_with_admission("b,string:c")
-                    .expect("test string interns")
-                    .0,
-            ),
+            Value::String(intern("a").expect("test string interns")),
+            Value::String(intern("b,string:c").expect("test string interns")),
         ]);
         let rhs = Value::List(vec![
-            Value::String(
-                intern_with_admission("a,string:b")
-                    .expect("test string interns")
-                    .0,
-            ),
-            Value::String(intern_with_admission("c").expect("test string interns").0),
+            Value::String(intern("a,string:b").expect("test string interns")),
+            Value::String(intern("c").expect("test string interns")),
         ]);
 
         assert_ne!(raw_value_key(&lhs), raw_value_key(&rhs));

@@ -77,9 +77,7 @@ pub use crate::runtime::{
     RollbackOutcome, Session, SessionParameterValue, StatementOutput, TransactionOutcome,
     TxContext, WarningSink, WriteOutcome, execute_pattern, execute_pipeline, execute_statement,
 };
-pub use selene_core::{
-    CancellationCause, CancellationChecker, CancellationToken, IStrAdmissionPolicy,
-};
+pub use selene_core::{CancellationCause, CancellationChecker, CancellationToken};
 
 #[cfg(any(test, feature = "test-harness"))]
 pub use crate::runtime::{

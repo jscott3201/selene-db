@@ -19,17 +19,13 @@ use super::{parse, to_u32};
 ///
 /// # DoS guards are enforced per-statement, not per-call
 ///
-/// Each non-empty segment is handed to [`parse`], which constructs a fresh
-/// [`InternerBudget`](super::budget::InternerBudget) and runs the nesting
-/// [`guard`](super::guard) over that segment alone. The interner-admission
-/// budget therefore **resets at every statement boundary** — a program of N
-/// statements may admit up to `N × MAX_NEW_ADMISSIONS_PER_PARSE` distinct new
-/// strings in aggregate (the global interner cap remains the absolute
-/// backstop), and the syntactic nesting limit applies to each statement's own
-/// delimiter depth rather than the summed depth of the whole input. A single
-/// segment that exceeds either guard is rejected with that segment's error,
-/// span-rebased to the original multi-statement source; preceding statements
-/// that already parsed are discarded with it.
+/// Each non-empty segment is handed to [`parse`], which runs the nesting
+/// [`guard`](super::guard) over that segment alone. The syntactic nesting
+/// limit therefore applies to each statement's own delimiter depth rather
+/// than the summed depth of the whole input. A single segment that exceeds
+/// the guard is rejected with that segment's error, span-rebased to the
+/// original multi-statement source; preceding statements that already parsed
+/// are discarded with it.
 ///
 /// # Errors
 ///
@@ -153,7 +149,6 @@ fn rebase_parser_error(error: &mut ParserError, offset: usize) {
     match error {
         ParserError::SyntaxError { span, .. }
         | ParserError::UnsupportedFeature { span, .. }
-        | ParserError::InternerBudgetExceeded { span, .. }
         | ParserError::NestingLimitExceeded { span, .. }
         | ParserError::ComplexityLimitExceeded { span, .. }
         | ParserError::NotImplemented { span, .. } => rebase_span(span, offset),

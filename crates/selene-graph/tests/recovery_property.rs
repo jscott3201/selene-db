@@ -191,7 +191,7 @@ proptest! {
 //
 // `recovery_round_trips_arbitrary_op_sequence` (above) uses the shared harness's
 // `arb_value`, which only emits Int/Float/String/Null. This focused test carries
-// every heavy `Value` variant (all numeric widths, Decimal, ExternalString,
+// every heavy `Value` variant (all numeric widths, Decimal, String,
 // Bytes, temporals, Uuid, nested List/Record) on a dedicated NON-indexed property
 // key, commits a real `SchemaChange` (a property-index DDL — index admission for
 // the indexed I64 key stays type-clean), snapshots + WALs through the funnel,
@@ -231,7 +231,7 @@ fn heavy_value() -> impl Strategy<Value = Value> {
         any::<f32>().prop_map(Value::Float32),
         any::<i64>().prop_map(|m| Value::Decimal(rust_decimal::Decimal::new(m, 2))),
         "[a-z]{1,8}".prop_map(|s| Value::String(intern(&format!("recover.v.{s}")).unwrap())),
-        "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::ExternalString(std::sync::Arc::from(s.as_str()))),
+        "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(intern(&s).unwrap())),
         proptest::collection::vec(any::<u8>(), 0..20)
             .prop_map(|b| Value::Bytes(std::sync::Arc::from(b))),
         Just(Value::Date("2024-06-15".parse().unwrap())),
@@ -277,7 +277,7 @@ proptest! {
     /// node/edge creates carrying heavy-Value PropertyMaps through a WAL-backed
     /// funnel, drop, recover, and assert the recovered graph reproduces every
     /// alive id's exact content. Exercises the heavy `Value` postcard variants
-    /// (numeric widths, Decimal, ExternalString, Bytes, temporals, Uuid, nested
+    /// (numeric widths, Decimal, String, Bytes, temporals, Uuid, nested
     /// List/Record) end-to-end through WAL replay + index re-derivation — none of
     /// which the shared-harness `arb_value` (Int/Float/String/Null) reaches.
     #[test]

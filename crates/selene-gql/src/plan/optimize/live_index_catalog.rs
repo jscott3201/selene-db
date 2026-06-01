@@ -226,8 +226,8 @@ impl IndexCatalog for LiveIndexCatalog {
             return None;
         }
         let ordered: Vec<&Value> = order.iter().map(|&i| &keys[i]).collect();
-        // Read-path key build (no IStr admission). `Ok(None)` = an unpoolable
-        // ExternalString component → no row can be keyed → exact count 0.
+        // Read-path key build. `Ok(None)` (retained pending the two-phase
+        // collapse) → no row can be keyed → exact count 0.
         match index.key_from_values_lookup(&ordered) {
             Ok(Some(key)) => Some(index.lookup_key(&key).map_or(0, |bm| bm.len())),
             Ok(None) => Some(0),

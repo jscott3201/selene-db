@@ -40,8 +40,7 @@ pub enum ScanAccess {
         /// Indexed property key.
         property: IStr,
         /// Typed-index value kind. Carried so runtime parameter resolution
-        /// can run the BRIEF-154 §B.3 F4 ExternalString carve-out and the
-        /// F12 IndexKind-mismatch loud error path against bound values.
+        /// can run the IndexKind-mismatch loud error path against bound values.
         kind: IndexKind,
         /// Lookup keys; each is either an inline literal or a parameter slot.
         keys: Vec<IndexKey>,
