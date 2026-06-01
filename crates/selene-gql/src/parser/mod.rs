@@ -8,6 +8,7 @@
 //! with v1.0 support guidance. See ISO GQL Clause 14 and Spec 07.
 
 mod builders;
+mod depth;
 mod guard;
 mod many;
 
@@ -65,6 +66,16 @@ pub fn parse(source: &str) -> Result<Statement, ParserError> {
             .map_err(|error| pest_error(source, error))?;
         let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;
         let statement = builders::build_statement(program_pair)?;
+        // Bound expression nesting depth before the recursive Flagger walk (and
+        // before handing the AST to any other recursive consumer). pest and the
+        // builders fold flat operator chains (`a OR a OR …`) and postfix chains
+        // (`a.b.c.…`) iteratively, so they do not overflow on them — but the
+        // resulting depth-N `Box<ValueExpr>` tree overflows the recursive
+        // Flagger / `Drop` / analyzer at ~130k deep (a non-unwindable crash).
+        // `depth::reject_excessive_expr_depth` is itself iterative, so it cannot
+        // overflow on the input it rejects; the manual iterative `Drop` on
+        // `ValueExpr` makes tearing the rejected over-cap tree down safe.
+        depth::reject_excessive_expr_depth(&statement)?;
         flagger::flag(&statement)?;
         Ok(statement)
     })
@@ -183,11 +194,11 @@ mod tests {
     #[test]
     fn parse_return_string() {
         let item = only_item("RETURN 'hello'");
-        let ValueExpr::Literal(Literal::String(value, span)) = item.expr else {
+        let ValueExpr::Literal(Literal::String(value, span)) = &item.expr else {
             panic!("expected string literal");
         };
         assert_eq!(value.as_str(), "hello");
-        assert_eq!(span, SourceSpan::new(7, 7));
+        assert_eq!(*span, SourceSpan::new(7, 7));
     }
 
     #[test]
@@ -436,12 +447,12 @@ mod tests {
             op: BinaryOp::Add,
             rhs,
             ..
-        } = item.expr
+        } = &item.expr
         else {
             panic!("expected addition");
         };
         assert!(matches!(
-            *rhs,
+            **rhs,
             ValueExpr::BinaryOp {
                 op: BinaryOp::Mul,
                 ..
@@ -726,7 +737,7 @@ mod tests {
         // fail with "missing list", and `IS LABELED :"NOT"` would
         // silently flip negation.
         let labeled_in = only_item("RETURN n IS LABELED :\"IN\"").expr;
-        let ValueExpr::IsCheck { kind, negated, .. } = labeled_in else {
+        let ValueExpr::IsCheck { kind, negated, .. } = &labeled_in else {
             panic!("expected IS LABELED to parse as IsCheck");
         };
         assert!(!negated, "no NOT token, but negation flagged");
@@ -736,7 +747,7 @@ mod tests {
         ));
 
         let labeled_not = only_item("RETURN n IS LABELED :\"NOT\"").expr;
-        let ValueExpr::IsCheck { negated, .. } = labeled_not else {
+        let ValueExpr::IsCheck { negated, .. } = &labeled_not else {
             panic!("expected IS LABELED to parse as IsCheck");
         };
         assert!(!negated, "quoted NOT in label name must not flip negation");
@@ -746,7 +757,7 @@ mod tests {
     fn is_not_labeled_uses_token_negation() {
         // The NOT keyword in IS NOT LABELED really does negate the predicate.
         let item = only_item("RETURN n IS NOT LABELED :Person").expr;
-        let ValueExpr::IsCheck { negated, .. } = item else {
+        let ValueExpr::IsCheck { negated, .. } = &item else {
             panic!("expected IS NOT LABELED to parse as IsCheck");
         };
         assert!(negated, "IS NOT LABELED must produce negated=true");
@@ -761,21 +772,21 @@ mod tests {
         let bare = only_item("RETURN foo.bar.baz()").expr;
         let ValueExpr::FunctionCall {
             name: name_three, ..
-        } = bare
+        } = &bare
         else {
             panic!("expected FunctionCall");
         };
         assert_eq!(name_three.len(), 3);
 
         let quoted = only_item("RETURN foo.\"bar.baz\"()").expr;
-        let ValueExpr::FunctionCall { name: name_two, .. } = quoted else {
+        let ValueExpr::FunctionCall { name: name_two, .. } = &quoted else {
             panic!("expected FunctionCall");
         };
         assert_eq!(name_two.len(), 2);
 
         // Single-segment bare name is still one segment.
         let single = only_item("RETURN count(*)").expr;
-        let ValueExpr::FunctionCall { name: name_one, .. } = single else {
+        let ValueExpr::FunctionCall { name: name_one, .. } = &single else {
             panic!("expected FunctionCall");
         };
         assert_eq!(name_one.len(), 1);

@@ -192,31 +192,41 @@ pub enum ParserError {
     /// [`GqlStatus::PROGRAM_LIMIT_EXCEEDED`]).
     ///
     /// Distinct from [`Self::NestingLimitExceeded`], which bounds *all-bracket*
-    /// net delimiter nesting depth at a looser cap. This variant covers two
-    /// pre-pest complexity guards, both of which would otherwise drive
-    /// pathological pest behavior on a sub-kilobyte hostile input:
+    /// net delimiter nesting depth at a looser cap. This variant covers the
+    /// parser's complexity guards, each of which would otherwise drive
+    /// pathological pest behavior or overflow the native stack on a small
+    /// hostile input:
     ///
-    /// - **`[`-depth.** pest is not packrat-memoized, so a run of *unclosed* `[`
-    ///   nests the three ambiguous `[`-prefixed grammar rules and recomputes
-    ///   their failed branches at every level, driving super-linear
-    ///   backtracking. Balanced, promptly closed `[` (an edge pattern, a flat
-    ///   list) never accrue depth, so legitimate wide paths and lists are
-    ///   unaffected.
-    /// - **Zero-delimiter recursion depth.** A long run of leading unary signs
-    ///   (`unary`), `NOT` keywords (`not_expr`), or nested `CASE` expressions
-    ///   recurses pest's descent one stack frame per level with no `(`/`[`/`{`
-    ///   delimiter to bound it, overflowing the native stack (a non-unwindable
-    ///   crash) on a small input.
+    /// - **`[`-depth** (pre-pest byte scan). pest is not packrat-memoized, so a
+    ///   run of *unclosed* `[` nests the three ambiguous `[`-prefixed grammar
+    ///   rules and recomputes their failed branches at every level, driving
+    ///   super-linear backtracking. Balanced, promptly closed `[` (an edge
+    ///   pattern, a flat list) never accrue depth, so legitimate wide paths and
+    ///   lists are unaffected.
+    /// - **Zero-delimiter recursion depth** (pre-pest byte scan). A long run of
+    ///   leading unary signs (`unary`) or `NOT` keywords (`not_expr`) recurses
+    ///   pest's descent one stack frame per level with no `(`/`[`/`{` delimiter
+    ///   to bound it, overflowing the native stack (a non-unwindable crash) on a
+    ///   small input.
+    /// - **Expression nesting depth** (post-build, iterative scan). A flat
+    ///   left-associative operator fold (`a OR a OR …`) or postfix chain
+    ///   (`a.b.c.…`) parses and builds iteratively but yields a depth-N
+    ///   `Box<ValueExpr>` tree whose *recursive* consumers (the Flagger,
+    ///   `Drop`, the analyzer) overflow the native stack at ~130k deep. The
+    ///   parser rejects any expression deeper than the shared recursion ceiling
+    ///   (256) before the Flagger walks it.
     ///
-    /// The byte-scan guard rejects both classes before recursive descent
-    /// begins, so the rejection is deterministic and cheap.
+    /// The pre-pest guards reject before recursive descent begins; the
+    /// expression-depth guard runs after AST construction and before the
+    /// Flagger. All are deterministic and cheap.
     #[error("parser complexity limit exceeded (limit {limit})")]
     #[diagnostic(
         code(SLENE_GQL_5GQL1),
         help(
-            "queries are bounded in `[` (list, index, comprehension) nesting depth and in \
-             zero-delimiter recursion depth (consecutive unary signs, `NOT` keywords, or nested \
-             `CASE` expressions); deep nesting of either drives pathological parser recursion"
+            "queries are bounded in `[` (list, index, comprehension) nesting depth, in \
+             zero-delimiter recursion depth (consecutive unary signs or `NOT` keywords), and in \
+             expression nesting depth (deep operator folds or access chains); deep nesting of any \
+             of these drives pathological parser recursion or overflows the native stack"
         )
     )]
     ComplexityLimitExceeded {
