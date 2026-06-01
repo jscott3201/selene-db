@@ -203,10 +203,11 @@ mod dos {
 
 /// BRIEF 01b: zero-delimiter deep-recursion crash regression.
 ///
-/// Three `grammar.pest` rules recurse toward `expr` with no guarded delimiter
-/// (`(`/`[`/`{`): `unary` (a run of unary `+`/`-` signs), `not_expr` (a run of
-/// `NOT` keywords), and `case_expr`↔`expr` (nested `CASE`). A long enough run
-/// drives pest's recursive descent off the native stack — a non-unwindable
+/// Two `grammar.pest` rules recurse toward `expr` with no guarded delimiter
+/// (`(`/`[`/`{`) AND a token the byte-scan can soundly recognize: `unary` (a run
+/// of unary `+`/`-` signs) and `not_expr` (a run of reserved-keyword `NOT`). A
+/// long enough run drives pest's recursive descent off the native stack — a
+/// non-unwindable
 /// SIGABRT that hard-kills the host process embedding selene-db, because
 /// `catch_unwind` cannot trap a stack overflow. The pre-pest byte-scan guard
 /// (`guard::validate`, `MAX_RECURSION_DEPTH = 256`) rejects each run
@@ -294,17 +295,6 @@ mod recursion_crash {
         let chain = "not ".repeat(OVER_CAP);
         let source = format!("RETURN {chain}true");
         assert_rejected_pre_pest("lowercase not chain", &source);
-    }
-
-    #[test]
-    fn nested_case_rejected_pre_pest() {
-        // Vector 3: nested `CASE WHEN true THEN <nested> ELSE 1 END` — `case_expr`
-        // ↔ `expr`. You cannot nest N deep without N `CASE` keywords, so the
-        // opening run trips the cap regardless of `END` padding. Build the chain
-        // as a flat opener run (the byte-scan only needs the opener count).
-        let opener = "CASE WHEN true THEN ".repeat(OVER_CAP);
-        let source = format!("RETURN {opener}1");
-        assert_rejected_pre_pest("nested CASE opener run", &source);
     }
 
     #[test]

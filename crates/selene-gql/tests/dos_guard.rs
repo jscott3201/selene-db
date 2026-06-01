@@ -34,13 +34,10 @@ fn rejects_excessive_bracket_run_before_pest_parse() {
 
 #[test]
 fn rejects_excessive_type_name_list_nesting() {
-    // Moderately over-deep `LIST<…>` nesting (just past the 64-deep builder cap
-    // but below the 256 pre-pest recursion cap) is admitted to pest — 65 levels
-    // descend safely on the big-stack backstop — and then rejected by the
-    // POST-parse builder guard `build_type_name_with_depth` as NestingLimitExceeded.
-    // This pins the builder path; the pre-pest stack-overflow guard for a
-    // *deeply* nested `LIST<…>` is covered by
-    // `rejects_deep_type_name_list_nesting_before_pest_parse` below.
+    // Over-deep `LIST<…>` type nesting is rejected by the POST-parse builder
+    // guard `build_type_name_with_depth` as NestingLimitExceeded (the pre-pest
+    // byte-scan does not count the `<`-delimited `LIST` type recursion — that
+    // keyword-vs-identifier recursion is deferred to a follow-up; see guard.rs).
     let depth = NESTING_LIMIT + 1;
     let source = format!(
         "CREATE NODE TYPE :Deep (v :: {}INTEGER{})",
@@ -55,35 +52,8 @@ fn rejects_excessive_type_name_list_nesting() {
 }
 
 #[test]
-fn rejects_deep_type_name_list_nesting_before_pest_parse() {
-    // `type_name = { … | ^"LIST" ~ "<" ~ type_name ~ ">" | … }` (grammar.pest:508)
-    // is the only `type_name` self-recursion, and its inter-level delimiter `<`
-    // is `comp_op`, not a tracked bracket. Before the `LIST`-keyword recursion
-    // cap, a deep `LIST<…>` chain (reachable via CAST / `IS TYPED` / `::`) sailed
-    // past the byte-scan guard AND the 64-deep builder cap into pest's recursive
-    // descent, overflowing the native stack (a non-unwindable process abort) at
-    // ~135k levels even on the 32 MB parse backstop. The pre-pest `LIST`-depth
-    // counter now rejects it deterministically as ComplexityLimitExceeded BEFORE
-    // recursive descent. Depth is cap+64, well below any stack-overflow point, so
-    // this test never crashes the (~2 MB) nextest runner.
-    let depth = RECURSION_DEPTH_CAP + 64;
-    let source = format!(
-        "RETURN CAST(x AS {}INTEGER{})",
-        "LIST<".repeat(depth),
-        ">".repeat(depth)
-    );
-    let error = parse(&source).expect_err("over-deep LIST<…> type rejects pre-pest");
-    assert!(
-        matches!(error, ParserError::ComplexityLimitExceeded { limit, .. } if limit as usize == RECURSION_DEPTH_CAP),
-        "expected ComplexityLimitExceeded(limit=256), got {error:?}"
-    );
-}
-
-#[test]
 fn moderate_type_name_list_nesting_parses() {
-    // A realistically nested `LIST<…>` type (depth 3) parses cleanly — the
-    // `LIST`-keyword recursion cap (256) sits far above any legitimate type
-    // nesting, so it never false-rejects.
+    // A realistically nested `LIST<…>` type (depth 3) parses cleanly.
     parse("RETURN CAST(x AS LIST<LIST<LIST<INTEGER>>>)").expect("triple-nested LIST type parses");
 }
 

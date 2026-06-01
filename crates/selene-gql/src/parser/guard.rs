@@ -37,7 +37,7 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 
 /// Maximum zero-delimiter recursive-descent depth admitted by the parser.
 ///
-/// pest's recursive descent recurses one stack frame per nesting level. Three
+/// pest's recursive descent recurses one stack frame per nesting level. Two
 /// `grammar.pest` rules recurse back toward `expr` with **no** guarded
 /// delimiter (`(`/`[`/`{`) in between, so [`MAX_NESTING_DEPTH`] (which only
 /// counts delimiters) cannot bound them:
@@ -45,18 +45,20 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 /// - `unary = { sign_op ~ unary | postfix }` (`grammar.pest:380`) — a run of
 ///   leading unary `+`/`-` signs.
 /// - `not_expr = { not_kw ~ not_expr | is_expr }` (`grammar.pest:324`) — a run
-///   of `NOT` keywords.
-/// - `case_expr` ↔ `expr` (`grammar.pest:447-452`) — `^"CASE" ~ expr` nests a
-///   fresh expression with only the `CASE` keyword before it.
-/// - `type_name = { … | ^"LIST" ~ "<" ~ type_name ~ ">" | … }`
-///   (`grammar.pest:508`) — the only `type_name` self-recursion (reachable via
-///   `cast_expr`, `IS TYPED`, `:: type_name`, record fields). Its inter-level
-///   delimiter is `<`, which is **also** `comp_op` (`<`/`>`/`<=`/`>=`/`<>`,
-///   `grammar.pest:369`) and so cannot be counted as a bracket. We instead bound
-///   the `LIST` *keyword* depth (increment per `LIST`, decrement per `>`); this
-///   never accumulates on a comparison chain (the depth only rises inside a
-///   `LIST<…>` whose contents are types, never comparisons) and is immune to a
-///   comment inserted between `LIST` and `<`.
+///   of `NOT` keywords. `NOT` is a reserved keyword (`grammar.pest` `keyword`
+///   set), so it cannot be a *bare* identifier; in the few `prop_ident`/param
+///   positions it can occupy (`n.NOT`, `{NOT: …}`, `$NOT`) the run counter is
+///   reset by the surrounding `.`/`$`/`:`/separator before it can accrue, so
+///   only a genuine consecutive `NOT NOT NOT` keyword chain reaches the cap.
+///
+/// (The keyword-bracketed `case_expr` ↔ `expr` recursion and the `type_name`
+/// `LIST<…>` recursion are *also* zero-delimiter, but `CASE`/`END`/`LIST` are
+/// legal identifiers in many context-sensitive positions — property names, map
+/// keys, aliases, parameters, and — for the non-reserved `LIST` — bare variables
+/// and `LIST < x` comparisons — which a byte scan cannot soundly distinguish
+/// from the keyword. Bounding those recursions is deferred to a follow-up that
+/// classifies tokens with the grammar's exact lexical rules. Until then they are
+/// bounded only by the `stacker` parse backstop in `parser/mod.rs`.)
 ///
 /// A long enough zero-delimiter run overflows the native stack inside pest.
 /// A Rust stack overflow is **non-unwindable** (`catch_unwind` cannot trap it),
@@ -66,19 +68,18 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 ///
 /// **This is a single COMBINED ceiling on total recursion pressure**, not a
 /// per-counter cap. The native stack depth at the deepest point is the *sum* of
-/// every simultaneously-open recursion frame across all families — open
-/// delimiters *plus* the current unary-sign chain *plus* the `NOT` chain *plus*
-/// open `CASE` bodies *plus* open `LIST<…>` levels — because they nest as
+/// every simultaneously-open recursion frame — open delimiters (`depth`) *plus*
+/// the current unary-sign chain *plus* the `NOT` chain — because they nest as
 /// operands of one another (`(` `-` `(` `-` … each frame stays open until its
 /// operand reduces). Capping each counter independently would admit their
 /// *product* (e.g. 64 nested `(` each carrying a 255-deep sign chain ≈ 16 k
 /// frames) while every individual counter stayed under its cap — a real
 /// stack-overflow vector. So the guard bounds the running SUM
-/// `depth + sign_run + not_run + case_depth + list_type_depth`, and the
-/// zero-token counters are reset only at a value/closer (where the active chain
-/// reduces), **never** at an opener (where the outer chain stays frozen-open and
-/// must keep counting). The delimiter caps [`MAX_NESTING_DEPTH`] (64) and
-/// [`MAX_LIST_NESTING_DEPTH`] (32) remain as tighter, more precise sub-bounds.
+/// `depth + sign_run + not_run`, and the zero-token counters are reset only at a
+/// value/closer (where the active chain reduces), **never** at an opener (where
+/// the outer chain stays frozen-open and must keep counting). The delimiter caps
+/// [`MAX_NESTING_DEPTH`] (64) and [`MAX_LIST_NESTING_DEPTH`] (32) remain as
+/// tighter, more precise sub-bounds.
 ///
 /// The cap mirrors `ANALYZER_MAX_DEPTH = 256` (`analyze/bind/mod.rs:29`) and is
 /// a deliberate safety floor, not a tuning knob: it sits ~4-8x below the
@@ -106,21 +107,14 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     // current position. pest treats comments as whitespace, so a comment between
     // two signs does NOT break the unary run (`- /* c */ -` is a 2-deep `unary`).
     // Resets happen ONLY at a value (a primary — string/backtick/number/other
-    // word) or a closer (`)`/`}`/`]`/`END`/`>`), where the active unary/`NOT`
-    // chain reduces; an OPENER (`(`/`{`/`[`/`CASE`/`LIST`/sign/`NOT`) never resets
-    // the other counters, so a chain frozen open across a delimiter keeps being
-    // counted (otherwise the guard would admit the product of the per-counter
-    // caps — see `MAX_RECURSION_DEPTH`). Whitespace/comment arms `continue`
-    // without touching any counter.
+    // word) or a closer (`)`/`}`/`]`), where the active unary/`NOT` chain
+    // reduces; an OPENER (`(`/`{`/`[`/sign/`NOT`) never resets the other counter,
+    // so a chain frozen open across a delimiter keeps being counted (otherwise
+    // the guard would admit the product of the per-counter caps — see
+    // `MAX_RECURSION_DEPTH`). Whitespace/comment arms `continue` without touching
+    // any counter.
     let mut sign_run = 0_u32;
     let mut not_run = 0_u32;
-    // `CASE` body nesting: +1 per `CASE`, -1 per `END`.
-    let mut case_depth = 0_u32;
-    // `LIST<…>` type-name nesting: +1 per `LIST` keyword, -1 per `>`. The depth
-    // only rises inside a `LIST<…>` whose contents are types (no comparison
-    // operators), so a `>` belonging to a comparison can only appear while the
-    // depth is already 0, where the saturating decrement is a no-op.
-    let mut list_type_depth = 0_u32;
 
     while index < bytes.len() {
         match bytes[index] {
@@ -156,10 +150,10 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 index += 1;
                 continue;
             }
+            // An opener does NOT reset the sign / `NOT` runs: the delimiter
+            // expression is the operand of any enclosing unary chain, which
+            // stays open and must keep counting toward the combined cap.
             b'(' | b'{' => {
-                // An opener does NOT reset the sign / `NOT` runs: the delimiter
-                // expression is the operand of any enclosing unary chain, which
-                // stays open and must keep counting toward the combined cap.
                 depth += 1;
                 if depth > MAX_NESTING_DEPTH {
                     return Err(ParserError::NestingLimitExceeded {
@@ -167,7 +161,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         span: point_span(index),
                     });
                 }
-                if exceeds_recursion_budget(depth, sign_run, not_run, case_depth, list_type_depth) {
+                if exceeds_recursion_budget(depth, sign_run, not_run) {
                     return Err(ParserError::ComplexityLimitExceeded {
                         limit: MAX_RECURSION_DEPTH,
                         span: point_span(index),
@@ -195,7 +189,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         span: point_span(index),
                     });
                 }
-                if exceeds_recursion_budget(depth, sign_run, not_run, case_depth, list_type_depth) {
+                if exceeds_recursion_budget(depth, sign_run, not_run) {
                     return Err(ParserError::ComplexityLimitExceeded {
                         limit: MAX_RECURSION_DEPTH,
                         span: point_span(index),
@@ -221,95 +215,40 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
             // does not reset `not_run`; the combined budget bounds the depth.
             b'+' | b'-' => {
                 sign_run += 1;
-                if exceeds_recursion_budget(depth, sign_run, not_run, case_depth, list_type_depth) {
+                if exceeds_recursion_budget(depth, sign_run, not_run) {
                     return Err(ParserError::ComplexityLimitExceeded {
                         limit: MAX_RECURSION_DEPTH,
                         span: point_span(index),
                     });
                 }
             }
-            // `>` closes one `LIST<…>` type-name nesting level. It is also a
-            // primary/separator, so it terminates a leading-sign / `NOT` chain.
-            // Outside a `LIST<…>` (depth 0) — e.g. a `comp_op` `>` — the
-            // saturating decrement is a no-op, so comparison chains never
-            // underflow or false-trip the cap.
-            b'>' => {
-                sign_run = 0;
-                not_run = 0;
-                list_type_depth = list_type_depth.saturating_sub(1);
-            }
             // Whitespace is transparent to all counters (pest skips it).
             b' ' | b'\t' | b'\r' | b'\n' => {}
-            // An ASCII identifier-start byte begins a whole word. Recognize it
-            // case-insensitively: `NOT`/`CASE`/`LIST` are openers (they add a
-            // recursion frame, checked against the combined budget, and do NOT
-            // reset the other open chains); `END` is a closer; any other word is
-            // a value/primary that reduces the active unary / `NOT` chain.
+            // An ASCII identifier-start byte begins a whole word. `NOT` (the only
+            // keyword the guard counts) opens a `not_expr` frame; every other
+            // word is a value/primary that reduces the active unary / `NOT` chain.
             byte if is_word_start(byte) => {
-                let (word_kind, next_index) = recognize_word(bytes, index);
+                let (is_not_keyword, next_index) = recognize_not_keyword(bytes, index);
                 index = next_index;
-                match word_kind {
-                    WordKind::Not => {
-                        not_run += 1;
-                        if exceeds_recursion_budget(
-                            depth,
-                            sign_run,
-                            not_run,
-                            case_depth,
-                            list_type_depth,
-                        ) {
-                            return Err(ParserError::ComplexityLimitExceeded {
-                                limit: MAX_RECURSION_DEPTH,
-                                span: point_span(index),
-                            });
-                        }
+                if is_not_keyword {
+                    not_run += 1;
+                    if exceeds_recursion_budget(depth, sign_run, not_run) {
+                        return Err(ParserError::ComplexityLimitExceeded {
+                            limit: MAX_RECURSION_DEPTH,
+                            span: point_span(index),
+                        });
                     }
-                    WordKind::Case => {
-                        case_depth += 1;
-                        if exceeds_recursion_budget(
-                            depth,
-                            sign_run,
-                            not_run,
-                            case_depth,
-                            list_type_depth,
-                        ) {
-                            return Err(ParserError::ComplexityLimitExceeded {
-                                limit: MAX_RECURSION_DEPTH,
-                                span: point_span(index),
-                            });
-                        }
-                    }
-                    WordKind::End => {
-                        case_depth = case_depth.saturating_sub(1);
-                        sign_run = 0;
-                        not_run = 0;
-                    }
-                    WordKind::List => {
-                        list_type_depth += 1;
-                        if exceeds_recursion_budget(
-                            depth,
-                            sign_run,
-                            not_run,
-                            case_depth,
-                            list_type_depth,
-                        ) {
-                            return Err(ParserError::ComplexityLimitExceeded {
-                                limit: MAX_RECURSION_DEPTH,
-                                span: point_span(index),
-                            });
-                        }
-                    }
-                    WordKind::Other => {
-                        sign_run = 0;
-                        not_run = 0;
-                    }
+                } else {
+                    sign_run = 0;
+                    not_run = 0;
                 }
-                // `recognize_word` already advanced the index past the word, so
-                // skip the trailing `index += 1` below.
+                // `recognize_not_keyword` already advanced the index past the
+                // word, so skip the trailing `index += 1` below.
                 continue;
             }
-            // Any other byte (operators like `.`, `,`, `*`, digits, etc.) is a
-            // primary or separator: it reduces the active sign / `NOT` chain.
+            // Any other byte (operators like `.`, `,`, `*`, `<`, `>`, digits,
+            // etc.) is a primary or separator: it reduces the active sign / `NOT`
+            // chain.
             _ => {
                 sign_run = 0;
                 not_run = 0;
@@ -325,54 +264,24 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
 ///
 /// The native pest stack depth at any position is the sum of every open
 /// recursion frame: open delimiters (`depth`) plus the active unary-sign chain
-/// (`sign_run`) plus the `NOT` chain (`not_run`) plus open `CASE` bodies
-/// (`case_depth`) plus open `LIST<…>` levels (`list_type_depth`). Bounding the
-/// SUM — not each counter independently — is what prevents the product-depth
-/// vector (e.g. nested `(` each carrying a long sign chain). `saturating_add`
-/// guards against overflow even though each addend is checked at +1 increments.
-fn exceeds_recursion_budget(
-    depth: u32,
-    sign_run: u32,
-    not_run: u32,
-    case_depth: u32,
-    list_type_depth: u32,
-) -> bool {
-    depth
-        .saturating_add(sign_run)
-        .saturating_add(not_run)
-        .saturating_add(case_depth)
-        .saturating_add(list_type_depth)
-        > MAX_RECURSION_DEPTH
+/// (`sign_run`) plus the `NOT` chain (`not_run`). Bounding the SUM — not each
+/// counter independently — is what prevents the product-depth vector (e.g.
+/// nested `(` each carrying a long sign chain). `saturating_add` guards against
+/// overflow even though each addend is checked at +1 increments.
+fn exceeds_recursion_budget(depth: u32, sign_run: u32, not_run: u32) -> bool {
+    depth.saturating_add(sign_run).saturating_add(not_run) > MAX_RECURSION_DEPTH
 }
 
 fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {
     bytes.get(index + 1).is_some_and(|value| *value == expected)
 }
 
-/// The whole-word categories the recursion counters care about.
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum WordKind {
-    /// `NOT` (case-insensitive, whole word) — drives `not_expr` recursion.
-    Not,
-    /// `CASE` (case-insensitive, whole word) — opens a `case_expr`.
-    Case,
-    /// `END` (case-insensitive, whole word) — closes a `case_expr`.
-    End,
-    /// `LIST` (case-insensitive, whole word) — opens a `LIST<…>` `type_name`
-    /// nesting level (the only `<`-delimited recursive type constructor). A
-    /// matching `>` closes it. `COLLECT_LIST` and other words containing `LIST`
-    /// are distinct whole words and do not match.
-    List,
-    /// Any other identifier word — a primary that resets the leading-sign /
-    /// `NOT` runs.
-    Other,
-}
-
 /// An ASCII byte that may begin a GQL identifier word (`[A-Za-z_]`).
 ///
 /// Mirrors the leading character class of `grammar.pest`'s identifier rules so
-/// the guard segments words exactly as pest does. Non-ASCII bytes never begin
-/// the keywords `NOT`/`CASE`/`END`, so they are handled by the catch-all arm.
+/// the guard segments words the way pest does for the keyword check. Non-ASCII
+/// bytes never begin the keyword `NOT`, so they are handled by the catch-all
+/// arm (which resets the runs — the conservative direction).
 fn is_word_start(byte: u8) -> bool {
     byte.is_ascii_alphabetic() || byte == b'_'
 }
@@ -382,32 +291,21 @@ fn is_word_continue(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-/// Consume one whole ASCII identifier word starting at `start` and classify it.
+/// Consume one whole ASCII identifier word starting at `start` and report
+/// whether it is exactly the `NOT` keyword.
 ///
-/// Returns the word category and the index of the first byte **after** the
-/// word, so the caller can resume scanning past it (the keyword guards must not
-/// re-scan the word's interior). Word boundaries match the grammar's
-/// `!(LETTER | NUMBER | "_")` keyword guard: `NOTE`/`NOTNULL` are distinct words
-/// and do not match `NOT`. Comparison is ASCII-case-insensitive, matching the
-/// `^"..."` (case-insensitive literal) keyword rules.
-fn recognize_word(bytes: &[u8], start: usize) -> (WordKind, usize) {
+/// Returns `(is_not, index_after_word)` so the caller can resume scanning past
+/// it. Word boundaries match the grammar's `!(LETTER | NUMBER | "_")` keyword
+/// guard: `NOTE`/`NOTNULL` are distinct words and do not match `NOT`. Comparison
+/// is ASCII-case-insensitive, matching the `^"NOT"` case-insensitive rule. (A
+/// `NOT` used as a property/parameter name is harmless: the run counter is reset
+/// by the surrounding `.`/`$`/`:`/separator before it can accrue.)
+fn recognize_not_keyword(bytes: &[u8], start: usize) -> (bool, usize) {
     let mut end = start;
     while end < bytes.len() && is_word_continue(bytes[end]) {
         end += 1;
     }
-    let word = &bytes[start..end];
-    let kind = if word.eq_ignore_ascii_case(b"NOT") {
-        WordKind::Not
-    } else if word.eq_ignore_ascii_case(b"CASE") {
-        WordKind::Case
-    } else if word.eq_ignore_ascii_case(b"END") {
-        WordKind::End
-    } else if word.eq_ignore_ascii_case(b"LIST") {
-        WordKind::List
-    } else {
-        WordKind::Other
-    };
-    (kind, end)
+    (bytes[start..end].eq_ignore_ascii_case(b"NOT"), end)
 }
 
 fn skip_single_quoted(bytes: &[u8], mut index: usize, last_quote: Option<usize>) -> usize {
