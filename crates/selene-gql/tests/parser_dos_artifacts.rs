@@ -200,3 +200,164 @@ mod dos {
         parse(&long_path).expect("a 30-hop fixed path has list-bracket depth 1 and must parse");
     }
 }
+
+/// BRIEF 01b: zero-delimiter deep-recursion crash regression.
+///
+/// Two `grammar.pest` rules recurse toward `expr` with no guarded delimiter
+/// (`(`/`[`/`{`) AND a token the byte-scan can soundly recognize: `unary` (a run
+/// of unary `+`/`-` signs) and `not_expr` (a run of reserved-keyword `NOT`). A
+/// long enough run drives pest's recursive descent off the native stack — a
+/// non-unwindable
+/// SIGABRT that hard-kills the host process embedding selene-db, because
+/// `catch_unwind` cannot trap a stack overflow. The pre-pest byte-scan guard
+/// (`guard::validate`, `MAX_RECURSION_DEPTH = 256`) rejects each run
+/// deterministically with `ComplexityLimitExceeded` (GQLSTATUS 5GQL1) **before**
+/// recursive descent begins.
+///
+/// # These tests MUST NOT crash the runner
+///
+/// nextest runs each test on the default ~2 MB thread stack. On that stack the
+/// sign chain overflows pest at ~1000-2000 signs, so an over-floor input run
+/// *through pest* would SIGABRT the entire test binary (taking every other test
+/// with it). The cap of 256 is a deliberate safety floor ~4-8x below that
+/// overflow point: an input at `cap + 1` (257) is rejected by the byte-scan
+/// guard before pest sees it, so it is safe to replay here. Every assertion
+/// below checks the *structural pre-pest rejection by error variant* and never
+/// relies on pest surviving an over-floor descent.
+mod recursion_crash {
+    use selene_gql::{GqlStatus, ParserError, parse};
+
+    /// `guard::MAX_RECURSION_DEPTH` (the crate does not re-export the parser
+    /// constant). An input one deeper than this must be rejected pre-pest.
+    const RECURSION_CAP: usize = 256;
+
+    /// A count safely above the cap but far below the ~2 MB-thread pest overflow
+    /// floor (~1000-2000), so replaying it can never crash the runner: the guard
+    /// rejects it structurally before pest is reached.
+    const OVER_CAP: usize = RECURSION_CAP + 64;
+
+    /// Assert `source` is rejected by the pre-pest guard with the deterministic
+    /// complexity error (never a post-descent syntax error, never a crash).
+    fn assert_rejected_pre_pest(label: &str, source: &str) {
+        let error = parse(source).expect_err(label);
+        assert!(
+            matches!(error, ParserError::ComplexityLimitExceeded { .. }),
+            "{label}: expected ComplexityLimitExceeded (pre-pest), got {error:?}"
+        );
+        assert_eq!(
+            error.gqlstatus(),
+            GqlStatus::PROGRAM_LIMIT_EXCEEDED,
+            "{label}: rejection must carry 5GQL1 PROGRAM_LIMIT_EXCEEDED"
+        );
+    }
+
+    #[test]
+    fn unary_sign_chain_rejected_pre_pest() {
+        // Vector 1: `RETURN ----...1` — `unary = { sign_op ~ unary | postfix }`.
+        let chain = "-".repeat(OVER_CAP);
+        let source = format!("RETURN {chain}1");
+        assert_rejected_pre_pest("unary sign chain", &source);
+    }
+
+    #[test]
+    fn mixed_sign_chain_rejected_pre_pest() {
+        // A `+`/`-` mix is still one maximal `sign_run`.
+        let chain = "+-".repeat(OVER_CAP); // 2*OVER_CAP signs, all consecutive
+        let source = format!("RETURN {chain}1");
+        assert_rejected_pre_pest("mixed sign chain", &source);
+    }
+
+    #[test]
+    fn sign_chain_with_interleaved_comments_rejected_pre_pest() {
+        // Comments are whitespace to pest, so `- /* c */ -` is still a 2-deep
+        // unary chain: the guard must NOT reset the run on a comment. A chain of
+        // signs separated only by block comments must still trip the cap.
+        let mut chain = String::new();
+        for _ in 0..OVER_CAP {
+            chain.push_str("- /* c */ ");
+        }
+        let source = format!("RETURN {chain}1");
+        assert_rejected_pre_pest("comment-separated sign chain", &source);
+    }
+
+    #[test]
+    fn not_keyword_chain_rejected_pre_pest() {
+        // Vector 2: `RETURN NOT NOT ... true` — `not_expr = { not_kw ~ not_expr
+        // | is_expr }`. Whole-word, case-insensitive recognition.
+        let chain = "NOT ".repeat(OVER_CAP);
+        let source = format!("RETURN {chain}true");
+        assert_rejected_pre_pest("NOT keyword chain", &source);
+    }
+
+    #[test]
+    fn lowercase_not_chain_rejected_pre_pest() {
+        // The keyword recognition is case-insensitive (`^"NOT"` in the grammar).
+        let chain = "not ".repeat(OVER_CAP);
+        let source = format!("RETURN {chain}true");
+        assert_rejected_pre_pest("lowercase not chain", &source);
+    }
+
+    #[test]
+    fn note_and_notnull_do_not_match_not() {
+        // `NOTE`/`NOTNULL` are distinct whole words and must NOT increment the
+        // `NOT` counter. A long run of `NOTE` identifiers (here used as RETURN
+        // aliases) must not be rejected as a `NOT` chain. They reset the run, so
+        // even far past the cap the guard admits the structure to pest, which
+        // then rejects it as a plain syntax error (NOT a complexity error).
+        let words = (0..OVER_CAP)
+            .map(|index| format!("NOTE{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let source = format!("RETURN {words}");
+        // A run of bare identifiers is a syntax error at pest; that is fine — the
+        // point is it must NOT be the complexity guard (which would mean `NOTE`
+        // was misread as `NOT`).
+        if let Err(ParserError::ComplexityLimitExceeded { .. }) = parse(&source) {
+            panic!("a run of NOTE identifiers must not be misread as a NOT chain");
+        }
+    }
+
+    #[test]
+    fn flat_wide_return_is_linear_and_admitted() {
+        // AC#9 (parity): the `InternerBudget` removal (#222) exposed Lens-C
+        // linearity — a flat, wide RETURN of N distinct identifiers no longer
+        // hits a per-parse admission cap, so it must parse cleanly and stay
+        // linear in N (no super-linear blow-up, no false complexity rejection).
+        // This pins both the cardinality (every item makes it into the AST) and
+        // a loose timing tripwire.
+        use std::time::{Duration, Instant};
+
+        // Wide but well within all caps (flat, zero-delimiter, zero recursion).
+        let n = 2_000;
+        let items = (0..n)
+            .map(|index| format!("item{index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let source = format!("RETURN {items}");
+
+        let start = Instant::now();
+        let statement = parse(&source).expect("a wide flat RETURN parses without a budget cap");
+        let elapsed = start.elapsed();
+
+        // Loose tripwire: generous against CI jitter, but a super-linear
+        // regression on a 2000-item flat list would blow well past it.
+        assert!(
+            elapsed < Duration::from_millis(500),
+            "flat RETURN of {n} items took {elapsed:?}; parse cost should be ~linear in N"
+        );
+
+        // Cardinality: all N projection items survive into the AST (linearity is
+        // meaningless if items are silently dropped).
+        let selene_gql::Statement::Query(query) = statement else {
+            panic!("expected a query statement");
+        };
+        let selene_gql::PipelineStatement::Return(clause) = &query.statements[0] else {
+            panic!("expected a RETURN clause");
+        };
+        assert_eq!(
+            clause.items.len(),
+            n,
+            "every projection item must be parsed"
+        );
+    }
+}

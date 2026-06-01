@@ -44,13 +44,48 @@ pub(crate) const MAX_NESTING_DEPTH: u32 = guard::MAX_NESTING_DEPTH;
 #[tracing::instrument(name = "selene.gql.parse", skip(source), fields(source_len = source.len()))]
 pub fn parse(source: &str) -> Result<Statement, ParserError> {
     guard::validate(source)?;
-    let mut pairs =
-        GqlParser::parse(Rule::gql_program, source).map_err(|error| pest_error(source, error))?;
-    let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;
-    let statement = builders::build_statement(program_pair)?;
-    flagger::flag(&statement)?;
-    Ok(statement)
+    // Why: pest's generated recursive descent and the AST builder both recurse
+    // one native stack frame per expression-nesting level. `guard::validate`
+    // deterministically bounds the *known* zero-delimiter recursion drivers
+    // (unary signs, `NOT`, `CASE`) to `MAX_RECURSION_DEPTH = 256`, but pest
+    // cannot re-invoke `maybe_grow` per generated frame, so this single big
+    // segment is the floor any *un*enumerated future driver runs on. A stack
+    // overflow in pest is non-unwindable and would hard-kill the host process,
+    // so we run the descent + builder on a generous 32 MB segment via
+    // `stacker::maybe_grow`. The 24 MB red zone forces the grow so the work
+    // always runs on the large segment regardless of the caller's remaining
+    // stack (an embedder may call `parse` from an arbitrarily deep frame).
+    // `stacker` runs the closure on the same logical thread, preserving the
+    // `&str` borrow, thread-locals, and panic propagation (a spawned worker
+    // would not); it caches the segment thread-locally, so the warm path adds
+    // near-zero overhead. Precedent: `analyze/bind/expr.rs`,
+    // `runtime/evaluator/cast.rs`.
+    stacker::maybe_grow(PARSE_STACK_RED_ZONE, PARSE_STACK_SEGMENT, || {
+        let mut pairs = GqlParser::parse(Rule::gql_program, source)
+            .map_err(|error| pest_error(source, error))?;
+        let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;
+        let statement = builders::build_statement(program_pair)?;
+        flagger::flag(&statement)?;
+        Ok(statement)
+    })
 }
+
+/// Red-zone for the parser's [`stacker::maybe_grow`] backstop.
+///
+/// Sized larger than [`PARSE_STACK_SEGMENT`] minus a small margin so the grow
+/// always fires on entry — pest's generated descent cannot itself call
+/// `maybe_grow`, so the whole parse must run on a freshly grown segment, never
+/// the caller's (unknown, possibly nearly exhausted) stack.
+const PARSE_STACK_RED_ZONE: usize = 24 * 1024 * 1024;
+
+/// Stack segment size for the parser's [`stacker::maybe_grow`] backstop.
+///
+/// 32 MB is generous relative to the analyzer's 1 MB segment because pest's
+/// generated recursive descent runs entirely within this single segment (it
+/// cannot grow per frame). It raises the overflow floor for any unenumerated
+/// recursion driver to an implausibly large, fuzz-catchable input; the
+/// deterministic [`guard::validate`] cap is the guarantee for the known ones.
+const PARSE_STACK_SEGMENT: usize = 32 * 1024 * 1024;
 
 /// Parse one GQL program and wrap failures with source text for miette rendering.
 ///

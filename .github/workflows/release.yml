@@ -180,4 +180,8 @@ jobs:
         # silently tolerated the super-linear bracket-backtracking blow-up; a
         # 20s ceiling makes any future regression fail the gate. No legitimate
         # input parses anywhere near this long.
-        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=300 -timeout=20
+        # -max_len=65536 lifts libFuzzer's 4096-byte default so the soak can
+        # reach the zero-delimiter deep-recursion crash thresholds (a sign/NOT
+        # chain only crashes in the thousands-to-tens-of-thousands of bytes); the
+        # default could never generate an input long enough to trip them.
+        run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=300 -timeout=20 -max_len=65536
