@@ -204,10 +204,17 @@ pub enum ParserError {
     ///   pattern, a flat list) never accrue depth, so legitimate wide paths and
     ///   lists are unaffected.
     /// - **Zero-delimiter recursion depth** (pre-pest byte scan). A long run of
-    ///   leading unary signs (`unary`) or `NOT` keywords (`not_expr`) recurses
-    ///   pest's descent one stack frame per level with no `(`/`[`/`{` delimiter
-    ///   to bound it, overflowing the native stack (a non-unwindable crash) on a
-    ///   small input.
+    ///   leading unary signs (`unary`), `NOT` keywords (`not_expr`), or nested
+    ///   `CASE … END` expressions (`case_expr`) recurses pest's descent one stack
+    ///   frame per level with no `(`/`[`/`{` delimiter to bound it, overflowing
+    ///   the native stack (a non-unwindable crash) on a small input. Signs and
+    ///   `NOT` are bounded as runs; `CASE` is bounded by a *monotone*
+    ///   over-approximation — a real opener (counted only outside identifier
+    ///   positions: property names, map keys, aliases, `YIELD` columns, params)
+    ///   adds 1 plus its wrapping run and never decrements, because an identifier
+    ///   `END` cannot be soundly distinguished from the keyword closer. The
+    ///   conformant cost is that a statement whose combined `CASE`-count and
+    ///   nesting pressure exceeds the ceiling (256) is rejected.
     /// - **Expression nesting depth** (post-build, iterative scan). A flat
     ///   left-associative operator fold (`a OR a OR …`) or postfix chain
     ///   (`a.b.c.…`) parses and builds iteratively but yields a depth-N
@@ -224,9 +231,10 @@ pub enum ParserError {
         code(SLENE_GQL_5GQL1),
         help(
             "queries are bounded in `[` (list, index, comprehension) nesting depth, in \
-             zero-delimiter recursion depth (consecutive unary signs or `NOT` keywords), and in \
-             expression nesting depth (deep operator folds or access chains); deep nesting of any \
-             of these drives pathological parser recursion or overflows the native stack"
+             zero-delimiter recursion depth (consecutive unary signs or `NOT` keywords, or nested \
+             `CASE … END` expressions), and in expression nesting depth (deep operator folds or \
+             access chains); deep nesting of any of these drives pathological parser recursion or \
+             overflows the native stack"
         )
     )]
     ComplexityLimitExceeded {
