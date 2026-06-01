@@ -2,8 +2,10 @@
 //!
 //! Labels are ordered in memory lexicographically by [`IStr`] (through the
 //! inner `CompactString`). On the wire, labels serialize in that same canonical
-//! lexicographic order by [`IStr::as_str`] and deserialize by re-sorting
-//! before duplicate validation. The inline capacity of 3 matches the common
+//! lexicographic order by [`IStr::as_str`] and deserialize by *validating* that
+//! canonical order — a non-ascending or duplicate payload is rejected as
+//! malformed (the in-memory order is already lexicographic, so no re-sort is
+//! needed). The inline capacity of 3 matches the common
 //! node-label case; larger sets spill cleanly to the heap. Edges semantically
 //! carry exactly one label, but that constraint is enforced by `selene-graph`,
 //! not by this plain set type.
