@@ -97,3 +97,31 @@ fn nesting_guard_is_per_segment_not_summed_across_segments() {
     let statements = parse_many(&source).expect("each segment's depth is bounded independently");
     assert_eq!(statements.len(), segments);
 }
+
+/// `guard::MAX_RECURSION_DEPTH` mirror (not re-exported); a run one deeper is
+/// rejected pre-pest, far below the ~2 MB-thread pest overflow floor.
+const RECURSION_CAP: usize = 256;
+
+#[test]
+fn hostile_recursion_statement_in_multi_statement_input_rejected_per_segment() {
+    // BRIEF 01b: a single hostile zero-delimiter recursion statement embedded in
+    // a multi-statement program must be rejected by the per-segment guard
+    // (ComplexityLimitExceeded, span rebased into the offending segment), never
+    // crash the recursive descent. The over-cap count is safely below the
+    // ~2 MB-thread pest overflow floor so this test cannot SIGABRT the runner.
+    let over_cap = RECURSION_CAP + 64;
+    let lead = "RETURN 1 AS ok";
+    let chain = "NOT ".repeat(over_cap);
+    let hostile = format!("RETURN {chain}true");
+    let source = format!("{lead}; {hostile}");
+    let hostile_start = source.find("RETURN N").unwrap();
+
+    let error = parse_many(&source).expect_err("the second segment is over-recursive");
+    let ParserError::ComplexityLimitExceeded { span, .. } = error else {
+        panic!("expected ComplexityLimitExceeded, got {error:?}");
+    };
+    assert!(
+        span.byte_offset >= hostile_start as u32,
+        "span {span:?} should be rebased into the hostile second statement (>= {hostile_start})"
+    );
+}
