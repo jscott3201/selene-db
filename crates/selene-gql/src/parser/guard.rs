@@ -64,12 +64,28 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 /// selene-db. This pre-pest cap rejects such runs deterministically before
 /// recursive descent begins, mapped to GQLSTATUS `5GQL1`.
 ///
+/// **This is a single COMBINED ceiling on total recursion pressure**, not a
+/// per-counter cap. The native stack depth at the deepest point is the *sum* of
+/// every simultaneously-open recursion frame across all families — open
+/// delimiters *plus* the current unary-sign chain *plus* the `NOT` chain *plus*
+/// open `CASE` bodies *plus* open `LIST<…>` levels — because they nest as
+/// operands of one another (`(` `-` `(` `-` … each frame stays open until its
+/// operand reduces). Capping each counter independently would admit their
+/// *product* (e.g. 64 nested `(` each carrying a 255-deep sign chain ≈ 16 k
+/// frames) while every individual counter stayed under its cap — a real
+/// stack-overflow vector. So the guard bounds the running SUM
+/// `depth + sign_run + not_run + case_depth + list_type_depth`, and the
+/// zero-token counters are reset only at a value/closer (where the active chain
+/// reduces), **never** at an opener (where the outer chain stays frozen-open and
+/// must keep counting). The delimiter caps [`MAX_NESTING_DEPTH`] (64) and
+/// [`MAX_LIST_NESTING_DEPTH`] (32) remain as tighter, more precise sub-bounds.
+///
 /// The cap mirrors `ANALYZER_MAX_DEPTH = 256` (`analyze/bind/mod.rs:29`) and is
 /// a deliberate safety floor, not a tuning knob: it sits ~4-8x below the
 /// smallest realistic stack's overflow point (a 2 MB nextest thread overflows
 /// the sign chain at ~1000-2000) so regression tests can replay an over-cap
-/// input without crashing the test runner, while the deepest legitimate sign /
-/// `NOT` / `CASE` nesting anywhere in the workspace is 3.
+/// input without crashing the test runner, while the deepest legitimate nesting
+/// of any kind anywhere in the workspace is 3.
 pub(crate) const MAX_RECURSION_DEPTH: u32 = 256;
 
 pub(super) fn validate(source: &str) -> Result<(), ParserError> {
@@ -85,20 +101,25 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let mut index = 0;
     let mut depth = 0_u32;
     let mut list_depth = 0_u32;
-    // Zero-delimiter recursion counters (see `MAX_RECURSION_DEPTH`). pest treats
-    // comments as whitespace, so a comment between two signs does NOT break the
-    // unary run (`- /* c */ -` is a 2-deep `unary`); a string / backtick literal
-    // is a primary and DOES reset the run. The `skip_*` helpers below advance
-    // past each span; whitespace/comment arms therefore must `continue` WITHOUT
-    // resetting `sign_run`, while every primary-introducing byte resets it.
+    // Recursion-pressure counters (see `MAX_RECURSION_DEPTH`). Their SUM with
+    // `depth` is the bounded quantity: it tracks the native stack depth at the
+    // current position. pest treats comments as whitespace, so a comment between
+    // two signs does NOT break the unary run (`- /* c */ -` is a 2-deep `unary`).
+    // Resets happen ONLY at a value (a primary — string/backtick/number/other
+    // word) or a closer (`)`/`}`/`]`/`END`/`>`), where the active unary/`NOT`
+    // chain reduces; an OPENER (`(`/`{`/`[`/`CASE`/`LIST`/sign/`NOT`) never resets
+    // the other counters, so a chain frozen open across a delimiter keeps being
+    // counted (otherwise the guard would admit the product of the per-counter
+    // caps — see `MAX_RECURSION_DEPTH`). Whitespace/comment arms `continue`
+    // without touching any counter.
     let mut sign_run = 0_u32;
     let mut not_run = 0_u32;
+    // `CASE` body nesting: +1 per `CASE`, -1 per `END`.
     let mut case_depth = 0_u32;
-    // `LIST<…>` type-name nesting depth (see `MAX_RECURSION_DEPTH`). Incremented
-    // per `LIST` keyword, decremented per `>`. The depth only rises inside a
-    // `LIST<…>` whose contents are types (no comparison operators), so a `>`
-    // belonging to a comparison can only appear while the depth is already 0,
-    // where the saturating decrement is a no-op.
+    // `LIST<…>` type-name nesting: +1 per `LIST` keyword, -1 per `>`. The depth
+    // only rises inside a `LIST<…>` whose contents are types (no comparison
+    // operators), so a `>` belonging to a comparison can only appear while the
+    // depth is already 0, where the saturating decrement is a no-op.
     let mut list_type_depth = 0_u32;
 
     while index < bytes.len() {
@@ -136,12 +157,19 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 continue;
             }
             b'(' | b'{' => {
-                sign_run = 0;
-                not_run = 0;
+                // An opener does NOT reset the sign / `NOT` runs: the delimiter
+                // expression is the operand of any enclosing unary chain, which
+                // stays open and must keep counting toward the combined cap.
                 depth += 1;
                 if depth > MAX_NESTING_DEPTH {
                     return Err(ParserError::NestingLimitExceeded {
                         limit: MAX_NESTING_DEPTH,
+                        span: point_span(index),
+                    });
+                }
+                if exceeds_recursion_budget(depth, sign_run, not_run, case_depth, list_type_depth) {
+                    return Err(ParserError::ComplexityLimitExceeded {
+                        limit: MAX_RECURSION_DEPTH,
                         span: point_span(index),
                     });
                 }
@@ -151,9 +179,8 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 // it carries the tighter dedicated depth cap on top of the
                 // shared nesting cap. Check the tighter cap first so a deeply
                 // nested `[` run is reported as the more precise complexity
-                // violation rather than a generic nesting violation.
-                sign_run = 0;
-                not_run = 0;
+                // violation rather than a generic nesting violation. Like the
+                // other openers it does NOT reset the sign / `NOT` runs.
                 list_depth += 1;
                 if list_depth > MAX_LIST_NESTING_DEPTH {
                     return Err(ParserError::ComplexityLimitExceeded {
@@ -168,21 +195,33 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         span: point_span(index),
                     });
                 }
+                if exceeds_recursion_budget(depth, sign_run, not_run, case_depth, list_type_depth) {
+                    return Err(ParserError::ComplexityLimitExceeded {
+                        limit: MAX_RECURSION_DEPTH,
+                        span: point_span(index),
+                    });
+                }
             }
-            b')' | b'}' => depth = depth.saturating_sub(1),
+            // A closer reduces the delimiter expression, so the unary / `NOT`
+            // chain that wrapped it (if any) is now complete: reset both runs.
+            b')' | b'}' => {
+                depth = depth.saturating_sub(1);
+                sign_run = 0;
+                not_run = 0;
+            }
             b']' => {
                 depth = depth.saturating_sub(1);
                 list_depth = list_depth.saturating_sub(1);
-            }
-            // A leading unary `+`/`-` extends the `unary` chain. `--` is two
-            // signs (not a comment), `-->`/`<--`/`-[r]-` and binary `a-b-c`
-            // never exceed run ~2-3. A sign does not terminate a `NOT` chain in
-            // a way the count cares about, but it is not a `NOT`, so reset
-            // `not_run`. The cap bounds the maximal consecutive run.
-            b'+' | b'-' => {
+                sign_run = 0;
                 not_run = 0;
+            }
+            // A leading unary `+`/`-` opens one more `unary` frame. `--` is two
+            // signs (not a comment); `->`/`-[r]-` and binary `a-b-c` never run
+            // beyond ~2-3 before a value resets the run. It is an opener, so it
+            // does not reset `not_run`; the combined budget bounds the depth.
+            b'+' | b'-' => {
                 sign_run += 1;
-                if sign_run > MAX_RECURSION_DEPTH {
+                if exceeds_recursion_budget(depth, sign_run, not_run, case_depth, list_type_depth) {
                     return Err(ParserError::ComplexityLimitExceeded {
                         limit: MAX_RECURSION_DEPTH,
                         span: point_span(index),
@@ -199,20 +238,26 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 not_run = 0;
                 list_type_depth = list_type_depth.saturating_sub(1);
             }
-            // Whitespace is transparent to all three runs (pest skips it).
+            // Whitespace is transparent to all counters (pest skips it).
             b' ' | b'\t' | b'\r' | b'\n' => {}
-            // An ASCII identifier-start byte begins a whole word. Recognize the
-            // word case-insensitively: `NOT` (and `CASE`/`END`) drive the
-            // keyword-only recursion counters; any other word is a primary that
-            // resets the unary and `NOT` runs.
+            // An ASCII identifier-start byte begins a whole word. Recognize it
+            // case-insensitively: `NOT`/`CASE`/`LIST` are openers (they add a
+            // recursion frame, checked against the combined budget, and do NOT
+            // reset the other open chains); `END` is a closer; any other word is
+            // a value/primary that reduces the active unary / `NOT` chain.
             byte if is_word_start(byte) => {
                 let (word_kind, next_index) = recognize_word(bytes, index);
                 index = next_index;
                 match word_kind {
                     WordKind::Not => {
-                        sign_run = 0;
                         not_run += 1;
-                        if not_run > MAX_RECURSION_DEPTH {
+                        if exceeds_recursion_budget(
+                            depth,
+                            sign_run,
+                            not_run,
+                            case_depth,
+                            list_type_depth,
+                        ) {
                             return Err(ParserError::ComplexityLimitExceeded {
                                 limit: MAX_RECURSION_DEPTH,
                                 span: point_span(index),
@@ -220,10 +265,14 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         }
                     }
                     WordKind::Case => {
-                        sign_run = 0;
-                        not_run = 0;
                         case_depth += 1;
-                        if case_depth > MAX_RECURSION_DEPTH {
+                        if exceeds_recursion_budget(
+                            depth,
+                            sign_run,
+                            not_run,
+                            case_depth,
+                            list_type_depth,
+                        ) {
                             return Err(ParserError::ComplexityLimitExceeded {
                                 limit: MAX_RECURSION_DEPTH,
                                 span: point_span(index),
@@ -231,15 +280,19 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         }
                     }
                     WordKind::End => {
+                        case_depth = case_depth.saturating_sub(1);
                         sign_run = 0;
                         not_run = 0;
-                        case_depth = case_depth.saturating_sub(1);
                     }
                     WordKind::List => {
-                        sign_run = 0;
-                        not_run = 0;
                         list_type_depth += 1;
-                        if list_type_depth > MAX_RECURSION_DEPTH {
+                        if exceeds_recursion_budget(
+                            depth,
+                            sign_run,
+                            not_run,
+                            case_depth,
+                            list_type_depth,
+                        ) {
                             return Err(ParserError::ComplexityLimitExceeded {
                                 limit: MAX_RECURSION_DEPTH,
                                 span: point_span(index),
@@ -256,7 +309,7 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                 continue;
             }
             // Any other byte (operators like `.`, `,`, `*`, digits, etc.) is a
-            // primary or separator: it terminates a leading-sign / `NOT` chain.
+            // primary or separator: it reduces the active sign / `NOT` chain.
             _ => {
                 sign_run = 0;
                 not_run = 0;
@@ -266,6 +319,30 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     }
 
     Ok(())
+}
+
+/// Whether the combined recursion pressure exceeds [`MAX_RECURSION_DEPTH`].
+///
+/// The native pest stack depth at any position is the sum of every open
+/// recursion frame: open delimiters (`depth`) plus the active unary-sign chain
+/// (`sign_run`) plus the `NOT` chain (`not_run`) plus open `CASE` bodies
+/// (`case_depth`) plus open `LIST<…>` levels (`list_type_depth`). Bounding the
+/// SUM — not each counter independently — is what prevents the product-depth
+/// vector (e.g. nested `(` each carrying a long sign chain). `saturating_add`
+/// guards against overflow even though each addend is checked at +1 increments.
+fn exceeds_recursion_budget(
+    depth: u32,
+    sign_run: u32,
+    not_run: u32,
+    case_depth: u32,
+    list_type_depth: u32,
+) -> bool {
+    depth
+        .saturating_add(sign_run)
+        .saturating_add(not_run)
+        .saturating_add(case_depth)
+        .saturating_add(list_type_depth)
+        > MAX_RECURSION_DEPTH
 }
 
 fn next_is(bytes: &[u8], index: usize, expected: u8) -> bool {

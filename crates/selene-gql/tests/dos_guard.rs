@@ -84,8 +84,62 @@ fn moderate_type_name_list_nesting_parses() {
     // A realistically nested `LIST<…>` type (depth 3) parses cleanly — the
     // `LIST`-keyword recursion cap (256) sits far above any legitimate type
     // nesting, so it never false-rejects.
-    parse("RETURN CAST(x AS LIST<LIST<LIST<INTEGER>>>)")
-        .expect("triple-nested LIST type parses");
+    parse("RETURN CAST(x AS LIST<LIST<LIST<INTEGER>>>)").expect("triple-nested LIST type parses");
+}
+
+#[test]
+fn rejects_product_depth_paren_sign_nesting_before_pest_parse() {
+    // PRODUCT-DEPTH hazard: each of N nested `(` independently re-enters `expr`
+    // and may carry a deep `unary` sign run. Capping delimiter depth (64) and
+    // the sign run (256) INDEPENDENTLY would admit their product (~16k native
+    // frames) while each counter stayed under its own cap — a stack-overflow
+    // vector even through the 32 MB parse backstop. The guard instead bounds the
+    // combined sum `depth + sign_run + … `, and the zero-token counters are not
+    // reset on an opener, so the frozen outer sign chains keep counting. This
+    // canonical product (63 nested `(`, each with 255 leading `-`) is rejected
+    // pre-pest as ComplexityLimitExceeded long before recursive descent.
+    let mut source = String::from("RETURN ");
+    for _ in 0..63 {
+        source.push('(');
+        source.push_str(&"-".repeat(255));
+    }
+    source.push('1');
+    source.push_str(&")".repeat(63));
+    let error = parse(&source).expect_err("product-depth nesting rejects");
+    assert!(
+        matches!(error, ParserError::ComplexityLimitExceeded { limit, .. } if limit as usize == RECURSION_DEPTH_CAP),
+        "expected ComplexityLimitExceeded(limit=256), got {error:?}"
+    );
+}
+
+#[test]
+fn rejects_product_depth_not_nesting_before_pest_parse() {
+    // The NOT-keyword variant of the product hazard: nested `(` each carrying a
+    // long `NOT` run. Same combined-budget rejection.
+    let mut source = String::from("RETURN ");
+    for _ in 0..63 {
+        source.push('(');
+        source.push_str(&"NOT ".repeat(255));
+    }
+    source.push_str("true");
+    source.push_str(&")".repeat(63));
+    let error = parse(&source).expect_err("product-depth NOT nesting rejects");
+    assert!(
+        matches!(error, ParserError::ComplexityLimitExceeded { .. }),
+        "expected ComplexityLimitExceeded, got {error:?}"
+    );
+}
+
+#[test]
+fn nested_parens_with_small_sign_runs_parse() {
+    // The legitimate shape the product guard must NOT false-reject: moderately
+    // nested parens each with a small unary chain. Combined pressure stays tiny.
+    parse("RETURN (-(-(-(1))))").expect("nested unary in parens parses");
+    parse("RETURN (1 + (2 + (3 + (4 + 5))))").expect("nested arithmetic parses");
+    // Many SEQUENTIAL (non-nested) negatives must also parse — the per-value
+    // reset keeps the run from accumulating across sibling groups.
+    let many = format!("RETURN {}", vec!["(-1)"; 300].join(" + "));
+    parse(&many).expect("300 sequential negated groups parse");
 }
 
 #[test]
