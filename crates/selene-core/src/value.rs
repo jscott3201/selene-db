@@ -93,6 +93,16 @@ pub enum Value {
     Uuid(uuid::Uuid),
 }
 
+/// Compile-time ceiling on `size_of::<Value>` — a zero-cost re-bloat tripwire.
+///
+/// `Value` is moved and cloned on every property read, `PropertyMap` copy, and
+/// binding-table row, so its in-memory size is a hot-path cost multiplier (see
+/// the `value_clone` bench). It is currently 128 bytes on 64-bit targets,
+/// dominated by the inlined `Duration(jiff::Span)` (64 B) and `jiff::Zoned`
+/// time variants. This assert fails the build if a future variant grows the
+/// enum; **lower the ceiling** when CORE-06 boxes the large time variants.
+const _: () = assert!(core::mem::size_of::<Value>() <= 128);
+
 impl Value {
     /// Factory table with one sample value for each [`Value`] variant.
     ///

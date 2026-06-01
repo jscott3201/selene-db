@@ -72,5 +72,9 @@ harness = false
 name = "bfs"
 harness = false
 
+[[bench]]
+name = "graph_hub_delete"
+harness = false
+
 [lints]
 workspace = true

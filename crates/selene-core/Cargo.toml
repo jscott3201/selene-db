@@ -23,6 +23,8 @@ rkyv.workspace = true
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
+mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
 insta.workspace = true
@@ -30,6 +32,10 @@ postcard.workspace = true
 
 [features]
 metrics = ["dep:metrics"]
+
+[[bench]]
+name = "value_clone"
+harness = false
 
 [lints]
 workspace = true

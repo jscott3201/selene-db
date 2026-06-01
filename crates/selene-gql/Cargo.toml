@@ -102,5 +102,9 @@ harness = false
 name = "procedure_call_repeat"
 harness = false
 
+[[bench]]
+name = "correlated_subquery"
+harness = false
+
 [lints]
 workspace = true
