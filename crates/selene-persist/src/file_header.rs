@@ -9,7 +9,16 @@ pub const WAL_MAGIC: [u8; 4] = *b"SLDB";
 /// WAL major format version.
 pub const WAL_VERSION_MAJOR: u16 = 2;
 /// WAL minor format version.
-pub const WAL_VERSION_MINOR: u16 = 0;
+///
+/// Bumped `0 -> 1` by the IStr-removal stage B: deleting `Value::ExternalString`
+/// from the middle of the `Value` enum shifts the postcard variant discriminant
+/// of every following variant (`Bytes`, `List`, `Record`, the temporals, …),
+/// and WAL change payloads (`payload.rs`) postcard-encode `Value`. The version
+/// gate ([`WalFileHeader::read_from`]) rejects any mismatch, so a pre-stage-B
+/// WAL is cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
+/// rather than silently mis-decoding a shifted variant — a clean greenfield
+/// break, not a dual decoder.
+pub const WAL_VERSION_MINOR: u16 = 1;
 /// Fixed WAL file header length.
 pub const WAL_FILE_HEADER_LEN: usize = 16;
 
@@ -108,9 +117,11 @@ mod tests {
         let mut bytes = Vec::new();
         WalFileHeader::new(0).write_to(&mut bytes).unwrap();
         bytes[4..6].copy_from_slice(&1u16.to_le_bytes());
+        // `new()` writes the current minor (1 after the stage-B bump); patching
+        // only the major byte leaves minor at its written value.
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 1, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 1, minor: 1 })
         ));
     }
 
@@ -121,7 +132,7 @@ mod tests {
         bytes[4..6].copy_from_slice(&3u16.to_le_bytes());
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 3, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 3, minor: 1 })
         ));
     }
 
@@ -132,7 +143,7 @@ mod tests {
         bytes[4..6].copy_from_slice(&0u16.to_le_bytes());
         assert!(matches!(
             WalFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 0, minor: 0 })
+            Err(PersistError::UnsupportedVersion { major: 0, minor: 1 })
         ));
     }
 
