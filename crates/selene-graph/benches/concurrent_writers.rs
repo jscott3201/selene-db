@@ -229,8 +229,8 @@ fn writer_loop(shared: &SharedGraph, thread_idx: usize, commits: usize) {
             for update_idx in 0..UPDATES_PER_COMMIT {
                 let node = node_for(thread_idx, update_idx);
                 let value = ((commit_idx * UPDATES_PER_COMMIT) + update_idx) as i64;
-                let diff =
-                    PropertyDiff::new([(score, Value::Int(value))], []).expect("property diff");
+                let diff = PropertyDiff::new([(score.clone(), Value::Int(value))], [])
+                    .expect("property diff");
                 mutator
                     .update_node(
                         node,
@@ -276,8 +276,9 @@ fn dump_percentiles(fixture: &BenchFixture, threads: usize, label: &str, batchin
                             for update_idx in 0..UPDATES_PER_COMMIT {
                                 let node = node_for(thread_idx, update_idx);
                                 let value = ((commit_idx * UPDATES_PER_COMMIT) + update_idx) as i64;
-                                let diff = PropertyDiff::new([(score, Value::Int(value))], [])
-                                    .expect("property diff");
+                                let diff =
+                                    PropertyDiff::new([(score.clone(), Value::Int(value))], [])
+                                        .expect("property diff");
                                 mutator
                                     .update_node(
                                         node,

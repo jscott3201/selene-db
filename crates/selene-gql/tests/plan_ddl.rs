@@ -35,7 +35,7 @@ fn create_node_type_preserves_properties_default_and_validation() {
         panic!("expected create node type");
     };
     assert!(*if_not_exists);
-    assert_eq!(extends.expect("extends").as_str(), "Entity");
+    assert_eq!(extends.clone().expect("extends").as_str(), "Entity");
     assert_eq!(*validation_mode, Some(selene_gql::ValidationMode::Strict));
     assert_eq!(properties.len(), 2);
     assert!(matches!(
@@ -61,7 +61,7 @@ fn create_edge_type_preserves_endpoints() {
         panic!("expected create edge type");
     };
     assert_eq!(label.as_str(), "KNOWS");
-    assert_eq!(extends.expect("parent").as_str(), "RELATIONSHIP");
+    assert_eq!(extends.clone().expect("parent").as_str(), "RELATIONSHIP");
     let endpoints = endpoints.as_ref().expect("endpoint spec");
     assert_eq!(endpoints.from_labels[0].as_str(), "Person");
     assert_eq!(endpoints.to_labels[0].as_str(), "Person");
@@ -82,9 +82,12 @@ fn drop_type_and_show_type_plans() {
     let plan = plan_one("SHOW NODE TYPES");
     assert!(matches!(catalog_op(&plan), CatalogOp::ShowNodeTypes(_)));
     let columns = &plan.output_schema.columns;
-    assert_eq!(columns[0].name.expect("label").as_str(), "label");
+    assert_eq!(columns[0].name.clone().expect("label").as_str(), "label");
     assert_eq!(columns[0].ty, AnalyzedType::Resolved(GqlType::String));
-    assert_eq!(columns[1].name.expect("definition").as_str(), "definition");
+    assert_eq!(
+        columns[1].name.clone().expect("definition").as_str(),
+        "definition"
+    );
     assert_eq!(columns[1].ty, AnalyzedType::DYNAMIC);
 }
 
@@ -180,9 +183,14 @@ fn sentinel_ddl_plan_shape_snapshot() {
         } else {
             "other"
         },
-        plan.output_schema.columns[0].name.expect("label").as_str(),
+        plan.output_schema.columns[0]
+            .name
+            .clone()
+            .expect("label")
+            .as_str(),
         plan.output_schema.columns[1]
             .name
+            .clone()
             .expect("definition")
             .as_str(),
     );

@@ -445,7 +445,7 @@ fn index_ddl_serializes_with_commits_through_committer() {
     {
         let mut txn = shared.begin_write();
         txn.mutator()
-            .create_node(LabelSet::single(label), prop("rank", Value::Int(1)))
+            .create_node(LabelSet::single(label.clone()), prop("rank", Value::Int(1)))
             .unwrap();
         txn.commit().unwrap();
     }
@@ -456,12 +456,13 @@ fn index_ddl_serializes_with_commits_through_committer() {
     for _ in 0..threads {
         let shared = Arc::clone(&shared);
         let barrier = Arc::clone(&barrier);
+        let value = label.clone();
         handles.push(thread::spawn(move || {
             barrier.wait();
             for n in 0..20 {
                 let mut txn = shared.begin_write();
                 txn.mutator()
-                    .create_node(LabelSet::single(label), prop("rank", Value::Int(n)))
+                    .create_node(LabelSet::single(value.clone()), prop("rank", Value::Int(n)))
                     .unwrap();
                 txn.commit().unwrap();
             }
@@ -470,6 +471,8 @@ fn index_ddl_serializes_with_commits_through_committer() {
     let ddl = {
         let shared = Arc::clone(&shared);
         let barrier = Arc::clone(&barrier);
+        let label = label.clone();
+        let key = key.clone();
         thread::spawn(move || {
             barrier.wait();
             shared

@@ -56,15 +56,19 @@ fn table_parameter_replacements_share_scalar_namespace() {
     let mut session = Session::new(&graph);
     let name = admitted("t");
 
-    assert_eq!(session.bind_parameter(name, Value::Int(1)), None);
+    assert_eq!(session.bind_parameter(name.clone(), Value::Int(1)), None);
     assert!(matches!(
-        session.bind_table_parameter(name, empty_table()),
+        session.bind_table_parameter(name.clone(), empty_table()),
         Some(SessionParameterValue::Scalar(Value::Int(1)))
     ));
-    assert_eq!(session.bind_parameter(name, Value::Int(2)), None);
+    assert_eq!(session.bind_parameter(name.clone(), Value::Int(2)), None);
     assert_eq!(session.clear_parameter(&name), Some(Value::Int(2)));
 
-    assert!(session.bind_table_parameter(name, empty_table()).is_none());
+    assert!(
+        session
+            .bind_table_parameter(name.clone(), empty_table())
+            .is_none()
+    );
     assert_eq!(session.clear_parameter(&name), None);
     assert!(session.parameters().is_empty());
 
@@ -80,7 +84,7 @@ fn scalar_only_materialization_borrows_parameter_map() {
     let name = admitted("x");
     let registry = BindingTableRegistry::new();
 
-    session.bind_parameter(name, Value::Int(7));
+    session.bind_parameter(name.clone(), Value::Int(7));
 
     let parameters = session.materialize_parameters(&registry);
 
@@ -96,8 +100,8 @@ fn materialize_parameters_registers_table_values() {
     let table = admitted("t");
     let registry = BindingTableRegistry::new();
 
-    session.bind_parameter(scalar, Value::Int(7));
-    session.bind_table_parameter(table, empty_table());
+    session.bind_parameter(scalar.clone(), Value::Int(7));
+    session.bind_table_parameter(table.clone(), empty_table());
 
     let parameters = session.materialize_parameters(&registry);
 

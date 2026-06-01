@@ -550,7 +550,7 @@ fn closed_record_violation_is_graph_type_violation_g2000() {
         .expect_err("non-conforming record must be rejected");
     assert!(matches!(
         violation,
-        TypeViolation::PropertyTypeMismatch { property, .. } if property == istr("config")
+        TypeViolation::PropertyTypeMismatch { ref property, .. } if *property == istr("config")
     ));
     assert_eq!(GraphError::from(violation).gqlstatus(), "G2000");
 }

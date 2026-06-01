@@ -50,13 +50,13 @@ fn build_line(depth: usize) -> (SharedGraph, Vec<NodeId>) {
     for _ in 0..depth {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for i in 0..depth - 1 {
         txn.mutator()
-            .create_edge(rel, nodes[i], nodes[i + 1], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[i], nodes[i + 1], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();

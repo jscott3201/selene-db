@@ -23,10 +23,10 @@ fn graph_with_one_indexed_node() -> SeleneGraph {
     let label = istr("Person");
     let age = istr("age");
     let mut props = PropertyMap::new();
-    props.set(age, Value::Int(42)).unwrap();
+    props.set(age.clone(), Value::Int(42)).unwrap();
     let mut txn = graph.begin_write();
     txn.mutator()
-        .create_node(LabelSet::single(label), props)
+        .create_node(LabelSet::single(label.clone()), props)
         .expect("node created");
     txn.mutator()
         .create_property_index(label, age, selene_graph::TypedIndexKind::I64)
@@ -41,11 +41,13 @@ fn graph_with_one_composite_indexed_node() -> SeleneGraph {
     let ts = istr("ts");
     let location = istr("location");
     let mut props = PropertyMap::new();
-    props.set(ts, Value::Int(42)).unwrap();
-    props.set(location, Value::String(istr("north"))).unwrap();
+    props.set(ts.clone(), Value::Int(42)).unwrap();
+    props
+        .set(location.clone(), Value::String(istr("north")))
+        .unwrap();
     let mut txn = graph.begin_write();
     txn.mutator()
-        .create_node(LabelSet::single(label), props)
+        .create_node(LabelSet::single(label.clone()), props)
         .expect("node created");
     txn.mutator()
         .create_composite_property_index_named(
@@ -71,7 +73,7 @@ fn graph_with_one_edge() -> SeleneGraph {
     let mut txn = graph.begin_write();
     let source = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .expect("source created");
     let target = txn
         .mutator()
@@ -187,7 +189,7 @@ fn adjacency_symmetry_reports_label_drift_in_both_maps() {
         .get_mut(&source)
         .expect("source adjacency exists")
         .edges[0]
-        .label = wrong_label;
+        .label = wrong_label.clone();
     graph
         .adjacency_in
         .get_mut(&target)

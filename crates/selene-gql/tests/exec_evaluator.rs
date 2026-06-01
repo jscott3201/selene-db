@@ -78,8 +78,8 @@ fn eval_binary_values(op: BinaryOp, lhs: Value, rhs: Value) -> Result<Value, Exe
     let rhs_name = intern("rhs").unwrap();
     let expr = ValueExpr::BinaryOp {
         op,
-        lhs: Box::new(var(lhs_name)),
-        rhs: Box::new(var(rhs_name)),
+        lhs: Box::new(var(lhs_name.clone())),
+        rhs: Box::new(var(rhs_name.clone())),
         span: span(),
     };
     let binding = Binding::new([lhs, rhs]);
@@ -312,7 +312,7 @@ fn record_field_access_reads_named_field() {
     let score = intern("score").unwrap();
     let rank = intern("rank").unwrap();
     let record = ValueExpr::RecordLiteral {
-        fields: vec![(score, int_lit(7)), (rank, int_lit(2))],
+        fields: vec![(score.clone(), int_lit(7)), (rank, int_lit(2))],
         span: span(),
     };
     let access = ValueExpr::PropertyAccess {
@@ -350,11 +350,11 @@ fn nested_record_field_access_reads_inner_field() {
     let inner_key = intern("inner").unwrap();
     let leaf = intern("leaf").unwrap();
     let inner = ValueExpr::RecordLiteral {
-        fields: vec![(leaf, int_lit(42))],
+        fields: vec![(leaf.clone(), int_lit(42))],
         span: span(),
     };
     let outer = ValueExpr::RecordLiteral {
-        fields: vec![(inner_key, inner)],
+        fields: vec![(inner_key.clone(), inner)],
         span: span(),
     };
     let access = ValueExpr::PropertyAccess {
@@ -514,7 +514,7 @@ fn negate_value(value: Value) -> Result<Value, ExecutorError> {
     let name = intern("v").unwrap();
     let expr = ValueExpr::UnaryOp {
         op: UnaryOp::Negate,
-        operand: Box::new(var(name)),
+        operand: Box::new(var(name.clone())),
         span: span(),
     };
     let binding = Binding::new([value]);

@@ -65,7 +65,7 @@ fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError>
             "selene.drop_index {name} must be a non-empty STRING"
         )));
     }
-    Ok(*value)
+    Ok(value.clone())
 }
 
 fn invalid_arg(detail: impl Into<String>) -> ProcedureError {

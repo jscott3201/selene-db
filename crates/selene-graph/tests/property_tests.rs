@@ -119,12 +119,13 @@ fn delete_node_with_incident_edges_cleans_adjacency_and_labels() {
         {
             let mut m = txn.mutator();
             a = m
-                .create_node(LabelSet::single(alpha), PropertyMap::new())
+                .create_node(LabelSet::single(alpha.clone()), PropertyMap::new())
                 .unwrap();
             b = m
                 .create_node(LabelSet::single(alpha), PropertyMap::new())
                 .unwrap();
-            m.create_edge(knows, a, b, PropertyMap::new()).unwrap();
+            m.create_edge(knows.clone(), a, b, PropertyMap::new())
+                .unwrap();
             m.create_edge(knows, b, a, PropertyMap::new()).unwrap();
         }
         txn.commit().unwrap();
@@ -152,18 +153,18 @@ fn flipping_a_label_moves_index_buckets() {
     let [alpha, beta, _] = labels();
     let [age, _, _] = prop_keys();
     shared
-        .create_property_index(alpha, age, TypedIndexKind::I64)
+        .create_property_index(alpha.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
     shared
-        .create_property_index(beta, age, TypedIndexKind::I64)
+        .create_property_index(beta.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
     let node = {
         let mut txn = shared.begin_write();
         let id = txn
             .mutator()
             .create_node(
-                LabelSet::single(alpha),
-                PropertyMap::from_pairs([(age, Value::Int(7))]).unwrap(),
+                LabelSet::single(alpha.clone()),
+                PropertyMap::from_pairs([(age.clone(), Value::Int(7))]).unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -192,7 +193,7 @@ fn flipping_a_label_moves_index_buckets() {
         txn.mutator()
             .update_node(
                 node,
-                LabelDiff::new([beta], [alpha]).unwrap(),
+                LabelDiff::new([beta.clone()], [alpha.clone()]).unwrap(),
                 PropertyDiff::new([], []).unwrap(),
             )
             .unwrap();
@@ -223,16 +224,19 @@ fn external_string_admits_into_string_index() {
     let [alpha, ..] = labels();
     let [_, _, name] = prop_keys();
     shared
-        .create_property_index(alpha, name, TypedIndexKind::String)
+        .create_property_index(alpha.clone(), name.clone(), TypedIndexKind::String)
         .unwrap();
     let content = "proptest.external.unique-admit";
     {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(alpha),
-                PropertyMap::from_pairs([(name, Value::ExternalString(Arc::<str>::from(content)))])
-                    .unwrap(),
+                LabelSet::single(alpha.clone()),
+                PropertyMap::from_pairs([(
+                    name.clone(),
+                    Value::ExternalString(Arc::<str>::from(content)),
+                )])
+                .unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
@@ -256,7 +260,7 @@ fn nan_float_is_skipped_without_false_positive() {
     let [alpha, ..] = labels();
     let [_, score, _] = prop_keys();
     shared
-        .create_property_index(alpha, score, TypedIndexKind::F64)
+        .create_property_index(alpha.clone(), score.clone(), TypedIndexKind::F64)
         .unwrap();
     {
         let mut txn = shared.begin_write();
@@ -281,14 +285,14 @@ fn null_property_is_never_indexed() {
     let [alpha, ..] = labels();
     let [age, _, _] = prop_keys();
     shared
-        .create_property_index(alpha, age, TypedIndexKind::I64)
+        .create_property_index(alpha.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(alpha),
-                PropertyMap::from_pairs([(age, Value::Null)]).unwrap(),
+                PropertyMap::from_pairs([(age.clone(), Value::Null)]).unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();

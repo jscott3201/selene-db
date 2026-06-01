@@ -51,7 +51,10 @@ pub(super) fn execute(
     let property = string_arg(&args[1], "property")?;
     let kind = parse_kind(string_arg(&args[2], "kind")?)?;
 
-    match ctx.mutator().create_property_index(label, property, kind) {
+    match ctx
+        .mutator()
+        .create_property_index(label.clone(), property.clone(), kind)
+    {
         Ok(()) => Ok(unit_result()),
         Err(GraphError::PropertyIndexAlreadyExists { .. }) => Err(invalid_arg(format!(
             "index for ({label}, {property}) already exists"
@@ -80,7 +83,7 @@ fn string_arg(value: &Value, name: &'static str) -> Result<IStr, ProcedureError>
             "selene.create_index {name} must be a non-empty STRING"
         )));
     }
-    Ok(*value)
+    Ok(value.clone())
 }
 
 fn parse_kind(value: IStr) -> Result<TypedIndexKind, ProcedureError> {

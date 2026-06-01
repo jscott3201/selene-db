@@ -102,9 +102,9 @@ fn set_alive(bitmap: &mut roaring::RoaringBitmap, row_index: usize, alive: bool)
 fn edge_hole_label() -> Result<IStr, crate::GraphError> {
     static CELL: OnceLock<IStr> = OnceLock::new();
     if let Some(label) = CELL.get() {
-        return Ok(*label);
+        return Ok(label.clone());
     }
     let label = selene_core::intern("__selene_hole").map_err(crate::GraphError::Core)?;
-    let _ = CELL.set(label);
+    let _ = CELL.set(label.clone());
     Ok(label)
 }

@@ -281,6 +281,7 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
                     .enumerate()
                     .map(|(index, item)| item
                         .alias
+                        .clone()
                         .map(|alias| alias.as_str().to_owned())
                         .unwrap_or_else(|| format!("expr{index}")))
                     .collect::<Vec<_>>()
@@ -293,7 +294,7 @@ fn pipeline_summary(op: &PipelineOp, bindings: &BTreeMap<BindingId, String>) -> 
                 "bindings=[{}]",
                 items
                     .iter()
-                    .filter_map(|item| item.alias.map(|alias| alias.as_str().to_owned()))
+                    .filter_map(|item| item.alias.clone().map(|alias| alias.as_str().to_owned()))
                     .collect::<Vec<_>>()
                     .join(",")
             ),
@@ -419,6 +420,7 @@ fn output_columns(columns: &[BindingTableColumn]) -> Vec<String> {
         .map(|(index, column)| {
             column
                 .name
+                .clone()
                 .map(|name| name.as_str().to_owned())
                 .unwrap_or_else(|| format!("expr{index}"))
         })
@@ -711,11 +713,12 @@ fn aggregate_summary(aggregate: &Aggregate) -> String {
 }
 
 fn yield_summary(item: &PlannedYieldItem) -> String {
-    let column = match item.column {
+    let column = match &item.column {
         YieldKind::Star => "*".to_owned(),
         YieldKind::Named(name) => name.as_str().to_owned(),
     };
     item.alias
+        .clone()
         .map(|alias| format!("{column} as {}", alias.as_str()))
         .unwrap_or(column)
 }

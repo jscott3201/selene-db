@@ -118,7 +118,7 @@ impl SeleneGraph {
                 return Err(format!("alive node row {row} has no label column entry"));
             };
             for label in labels.iter() {
-                reference.entry(*label).or_default().insert(row);
+                reference.entry(label.clone()).or_default().insert(row);
             }
         }
         compare_bitmap_index("node label index", &self.idx_label, &reference)
@@ -131,7 +131,7 @@ impl SeleneGraph {
             let Some(label) = self.edge_store.label.get(row as usize) else {
                 return Err(format!("alive edge row {row} has no label column entry"));
             };
-            reference.entry(*label).or_default().insert(row);
+            reference.entry(label.clone()).or_default().insert(row);
         }
         compare_bitmap_index("edge label index", &self.idx_edge_label, &reference)
     }
@@ -146,8 +146,8 @@ impl SeleneGraph {
             }
             let reference = crate::property_index::build_property_index_lenient(
                 self,
-                *label,
-                *property,
+                label.clone(),
+                property.clone(),
                 entry.kind(),
             )
             .map_err(|err| {
@@ -177,7 +177,7 @@ impl SeleneGraph {
             let reference =
                 crate::composite_property_index::build_composite_property_index_lenient(
                     self,
-                    *label,
+                    label.clone(),
                     entry.declared_properties.clone(),
                     entry.kinds(),
                 )
@@ -208,7 +208,7 @@ impl SeleneGraph {
             let Some(edge_id) = self.edge_id_for_row(crate::store::RowIndex::new(row)) else {
                 return Err(format!("alive edge row {row} has no mapped external id"));
             };
-            let Some(label) = self.edge_store.label.get(row as usize).copied() else {
+            let Some(label) = self.edge_store.label.get(row as usize).cloned() else {
                 return Err(format!("alive edge row {row} has no label column entry"));
             };
             let Some(source) = self.edge_store.source.get(row as usize).copied() else {
@@ -221,7 +221,7 @@ impl SeleneGraph {
                 .entry(source)
                 .or_default()
                 .push(AdjacencyEdge {
-                    label,
+                    label: label.clone(),
                     neighbor: target,
                     edge_id,
                 });
@@ -291,7 +291,7 @@ fn compare_adjacency(
                 "{direction} adjacency: node {node} holds a present-but-empty entry"
             ));
         }
-        let maintained_edges: Vec<AdjacencyEdge> = entry.iter().copied().collect();
+        let maintained_edges: Vec<AdjacencyEdge> = entry.iter().cloned().collect();
         match reference.get(node) {
             None => {
                 return Err(format!(
@@ -323,7 +323,7 @@ fn compare_adjacency(
 }
 
 fn adjacency_sort_key(edge: &AdjacencyEdge) -> (IStr, NodeId, EdgeId) {
-    (edge.label, edge.neighbor, edge.edge_id)
+    (edge.label.clone(), edge.neighbor, edge.edge_id)
 }
 
 #[cfg(test)]

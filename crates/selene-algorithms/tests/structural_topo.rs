@@ -33,13 +33,13 @@ fn build_graph(count: usize, edges: &[(usize, usize)]) -> (SharedGraph, Vec<Node
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .unwrap();
     }
     txn.commit().unwrap();

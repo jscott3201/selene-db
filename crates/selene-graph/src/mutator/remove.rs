@@ -31,7 +31,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             return Ok(());
         }
 
-        let diff = PropertyDiff::new([], [property])?;
+        let diff = PropertyDiff::new([], [property.clone()])?;
         reject_immutable_node_update(self.txn.read(), id, &labels, &diff)?;
         let mut new_props = old_props.clone();
         new_props.remove(&property);
@@ -78,7 +78,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             return Ok(());
         }
 
-        let diff = PropertyDiff::new([], [property])?;
+        let diff = PropertyDiff::new([], [property.clone()])?;
         reject_immutable_edge_update(self.txn.read(), id, &diff)?;
         let mut new_props = old_props;
         new_props.remove(&property);

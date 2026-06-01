@@ -12,7 +12,7 @@ pub(super) fn execute(
     let new_columns = items
         .iter()
         .map(|item| BindingTableColumn {
-            name: item.alias,
+            name: item.alias.clone(),
             hidden: None,
             ty: item.ty.clone(),
         })

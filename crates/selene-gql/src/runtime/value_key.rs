@@ -505,8 +505,8 @@ mod tests {
         let a = intern_with_admission("a").expect("key interns").0;
         let b = intern_with_admission("b").expect("key interns").0;
         let lhs = Value::Record(Box::new(Record::Open(smallvec![
-            (a, Value::Int(1)),
-            (b, Value::Int(2)),
+            (a.clone(), Value::Int(1)),
+            (b.clone(), Value::Int(2)),
         ])));
         let rhs = Value::Record(Box::new(Record::Open(smallvec![
             (b, Value::Int(2)),
@@ -534,7 +534,7 @@ mod tests {
         // (`{a:1}` vs `{a:1.0}`) must also hash equal.
         let a = intern_with_admission("a").expect("key interns").0;
         let int_rec = RuntimeEqKey::from_row(vec![Value::Record(Box::new(Record::Open(
-            smallvec![(a, Value::Int(1))],
+            smallvec![(a.clone(), Value::Int(1))],
         )))]);
         let float_rec = RuntimeEqKey::from_row(vec![Value::Record(Box::new(Record::Open(
             smallvec![(a, Value::Float(1.0))],

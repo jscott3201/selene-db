@@ -32,12 +32,17 @@ pub(super) fn resolve_amount(
         } => match ctx.parameters().get(name) {
             Some(value) => {
                 if let Some(declared_type) = declared_type {
-                    parameter_type::validate_declared_type(*name, value, declared_type, *span)?;
+                    parameter_type::validate_declared_type(
+                        name.clone(),
+                        value,
+                        declared_type,
+                        *span,
+                    )?;
                 }
-                parameter_amount(*name, *span, value)
+                parameter_amount(name.clone(), *span, value)
             }
             None => Err(ExecutorError::UnboundParameter {
-                name: *name,
+                name: name.clone(),
                 span: *span,
             }),
         },

@@ -41,8 +41,8 @@ fn graph_with_age_index() -> SharedGraph {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
-                LabelSet::single(person),
-                PropertyMap::from_pairs([(age, Value::Int(30))]).unwrap(),
+                LabelSet::single(person.clone()),
+                PropertyMap::from_pairs([(age.clone(), Value::Int(30))]).unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();

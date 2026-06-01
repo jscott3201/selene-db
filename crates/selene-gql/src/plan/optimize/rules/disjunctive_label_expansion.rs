@@ -147,7 +147,7 @@ fn maybe_expand_scan(
         .iter()
         .map(|label| {
             let mut clone = original.clone();
-            clone.label_predicate = Some(LabelExpr::Single(*label));
+            clone.label_predicate = Some(LabelExpr::Single(label.clone()));
             clone
         })
         .collect();
@@ -176,7 +176,7 @@ fn any_branch_has_applicable_index(
     let eq_candidates = equality_candidates(predicates, bindings);
     let eq_keys: Vec<IStr> = eq_candidates
         .iter()
-        .map(|candidate| candidate.key)
+        .map(|candidate| candidate.key.clone())
         .collect();
     labels.iter().any(|label| {
         // Single-property typed index — covers equality, comparison,
@@ -189,7 +189,7 @@ fn any_branch_has_applicable_index(
                 continue;
             };
             if catalog
-                .typed_index(IndexTarget::Node, *label, matched.key)
+                .typed_index(IndexTarget::Node, label.clone(), matched.key)
                 .is_some()
             {
                 return true;
@@ -198,7 +198,7 @@ fn any_branch_has_applicable_index(
         // Composite index — needs ≥ 2 equality candidates.
         if eq_keys.len() >= 2
             && catalog
-                .composite_index(IndexTarget::Node, *label, &eq_keys)
+                .composite_index(IndexTarget::Node, label.clone(), &eq_keys)
                 .is_some()
         {
             return true;

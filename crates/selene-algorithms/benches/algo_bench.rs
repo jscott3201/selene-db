@@ -154,7 +154,7 @@ fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
     for _ in 0..scale {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(node_label), PropertyMap::new())
+                .create_node(LabelSet::single(node_label.clone()), PropertyMap::new())
                 .expect("bench node inserts"),
         );
     }
@@ -175,12 +175,12 @@ fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
                     continue;
                 }
                 let target = start + ((local + offset) % len);
-                create_undirected_edge(&mut txn, rel, nodes[source], nodes[target]);
+                create_undirected_edge(&mut txn, rel.clone(), nodes[source], nodes[target]);
             }
         }
         if community + 1 < community_count {
             let next = ((community + 1) * community_size).min(scale - 1);
-            create_undirected_edge(&mut txn, rel, nodes[end - 1], nodes[next]);
+            create_undirected_edge(&mut txn, rel.clone(), nodes[end - 1], nodes[next]);
         }
     }
     txn.commit().expect("bench graph commits");
@@ -194,7 +194,7 @@ fn create_undirected_edge(
     target: NodeId,
 ) {
     txn.mutator()
-        .create_edge(rel, source, target, PropertyMap::new())
+        .create_edge(rel.clone(), source, target, PropertyMap::new())
         .expect("bench edge inserts");
     txn.mutator()
         .create_edge(rel, target, source, PropertyMap::new())

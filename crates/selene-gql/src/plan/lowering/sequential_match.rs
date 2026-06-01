@@ -18,7 +18,7 @@ pub(super) fn lower(
 ) -> Result<(), PlannerError> {
     let left_names = visible
         .iter()
-        .filter_map(|column| column.name)
+        .filter_map(|column| column.name.clone())
         .collect::<BTreeSet<_>>();
     let (pattern, global_filters) =
         match_clause::lower_pipeline_match(clause, analyzed, &left_names)?;

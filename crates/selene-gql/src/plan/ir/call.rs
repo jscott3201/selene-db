@@ -43,7 +43,7 @@ pub struct PlannedYieldItem {
 }
 
 /// Planned yield column selector.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum YieldKind {
     /// `YIELD *`.
     Star,

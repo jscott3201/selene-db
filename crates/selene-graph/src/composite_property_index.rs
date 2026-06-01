@@ -63,10 +63,10 @@ pub(crate) fn apply_node_update(
             continue;
         }
         if let Some(values) = old_values {
-            remove_commit(*label, entry, &values, row)?;
+            remove_commit(label.clone(), entry, &values, row)?;
         }
         if let Some(values) = new_values {
-            insert_commit(*label, entry, &values, row)?;
+            insert_commit(label.clone(), entry, &values, row)?;
         }
     }
     Ok(())
@@ -101,18 +101,22 @@ pub(crate) fn rebuild_composite_property_indexes(
         .iter()
         .map(|((label, _), entry)| {
             (
-                *label,
+                label.clone(),
                 entry.declared_properties.clone(),
                 entry.kinds(),
-                entry.name,
+                entry.name.clone(),
             )
         })
         .collect();
     graph.composite_property_index.clear();
     for (label, properties, kinds, name) in registrations {
         let key = composite_property_key(&properties);
-        let index =
-            build_composite_property_index_lenient(graph, label, properties.clone(), kinds)?;
+        let index = build_composite_property_index_lenient(
+            graph,
+            label.clone(),
+            properties.clone(),
+            kinds,
+        )?;
         graph.composite_property_index.insert(
             (label, key),
             CompositePropertyIndexEntry::new(index, properties, name),
@@ -162,10 +166,10 @@ fn build_composite_property_index_inner(
             Err(err) => match (&err, policy) {
                 (CompositeIndexValueError::ComponentAdmissionFailed { .. }, _)
                 | (_, BuildPolicy::Strict) => {
-                    return Err(index_rejection(label, &properties, err));
+                    return Err(index_rejection(label.clone(), &properties, err));
                 }
                 (_, BuildPolicy::Lenient) => {
-                    warn_rejected("rebuild", label, &properties, row, &err);
+                    warn_rejected("rebuild", label.clone(), &properties, row, &err);
                 }
             },
         }
@@ -179,7 +183,7 @@ fn indexes_for_labels<'a>(
 ) -> impl Iterator<Item = (IStr, &'a mut CompositePropertyIndexEntry)> {
     indexes
         .iter_mut()
-        .filter_map(|((label, _), entry)| labels.contains(label).then_some((*label, entry)))
+        .filter_map(|((label, _), entry)| labels.contains(label).then_some((label.clone(), entry)))
 }
 
 fn indexable_values<'a>(
@@ -271,11 +275,11 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             expected_kind,
             observed,
         } => GraphError::IndexValueRejected {
-            label,
             property: properties
                 .get(index)
-                .copied()
-                .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
+                .cloned()
+                .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
+            label,
             expected_kind,
             observed,
         },
@@ -288,11 +292,11 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             expected_kind: _,
             reason,
         } => GraphError::IndexAdmissionExhausted {
-            label,
             property: properties
                 .get(index)
-                .copied()
-                .unwrap_or_else(|| properties.first().copied().unwrap_or(label)),
+                .cloned()
+                .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
+            label,
             source: reason,
         },
     }

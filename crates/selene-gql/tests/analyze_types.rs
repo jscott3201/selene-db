@@ -35,7 +35,7 @@ fn projection_type(analyzed: &AnalyzedStatement, name: &str) -> AnalyzedType {
         })
         .flatten()
         .find(|item| {
-            item.alias.is_some_and(|alias| alias.as_str() == name)
+            item.alias.clone().is_some_and(|alias| alias.as_str() == name)
                 || matches!(&item.expr, ValueExpr::Variable { name: value, .. } if value.as_str() == name)
         })
         .unwrap_or_else(|| panic!("projection {name} exists"));

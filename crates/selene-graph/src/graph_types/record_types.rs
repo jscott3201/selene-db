@@ -189,7 +189,7 @@ pub(super) fn validate_record_field_types(
     // ISO 39075:2024 §18.10 SR2: a field name shall not equal another field name.
     let mut seen = BTreeSet::new();
     for field in &fields.0 {
-        if !seen.insert(field.name) {
+        if !seen.insert(field.name.clone()) {
             return Err(GraphError::Inconsistent {
                 reason: format!(
                     "property {property_name} on type {type_name} declares duplicate record field name {}",
@@ -197,7 +197,12 @@ pub(super) fn validate_record_field_types(
                 ),
             });
         }
-        validate_record_field_type(type_name, property_name, &field.field_type, depth)?;
+        validate_record_field_type(
+            type_name.clone(),
+            property_name.clone(),
+            &field.field_type,
+            depth,
+        )?;
     }
     Ok(())
 }

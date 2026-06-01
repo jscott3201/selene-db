@@ -33,7 +33,7 @@ fn chain_replaces_schema_completely_does_not_extend_lhs_columns() {
         .schema()
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_owned()))
+        .filter_map(|column| column.name.clone().map(|name| name.as_str().to_owned()))
         .collect::<Vec<_>>();
     assert_eq!(names, vec!["b".to_owned()]);
     assert_eq!(column_values(&table, "b"), vec![Value::Int(2)]);
@@ -88,7 +88,11 @@ fn chain_with_empty_rhs_returns_empty() {
 
     assert!(table.is_empty());
     assert_eq!(
-        table.schema().columns[0].name.expect("rhs name").as_str(),
+        table.schema().columns[0]
+            .name
+            .as_ref()
+            .expect("rhs name")
+            .as_str(),
         "b"
     );
 }
@@ -98,7 +102,11 @@ fn nested_chain_blocks_each_replace_schema() {
     let table = execute_read("RETURN 1 AS a NEXT RETURN 2 AS b NEXT RETURN 3 AS c");
 
     assert_eq!(
-        table.schema().columns[0].name.expect("final name").as_str(),
+        table.schema().columns[0]
+            .name
+            .as_ref()
+            .expect("final name")
+            .as_str(),
         "c"
     );
     assert_eq!(column_values(&table, "c"), vec![Value::Int(3)]);
@@ -121,8 +129,11 @@ fn chain_rhs_sees_same_snapshot_as_lhs() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(fixture.person),
-                props([(fixture.name, Value::String(exec_common::istr("Dina")))]),
+                LabelSet::single(fixture.person.clone()),
+                props([(
+                    fixture.name.clone(),
+                    Value::String(exec_common::istr("Dina")),
+                )]),
             )
             .expect("late node inserts");
         txn.commit().expect("late write commits");

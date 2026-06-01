@@ -102,20 +102,20 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
         node_types: vec![
             NodeTypeDef {
                 name: istr("closed.immutable.edge.person"),
-                key_labels: LabelSet::single(person),
+                key_labels: LabelSet::single(person.clone()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             NodeTypeDef {
                 name: istr("closed.immutable.edge.temp"),
-                key_labels: LabelSet::single(temp),
+                key_labels: LabelSet::single(temp.clone()),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
         ],
         edge_types: vec![crate::EdgeTypeDef {
             name: istr("closed.immutable.edge.knows"),
-            label: knows,
+            label: knows.clone(),
             source_node_type: EdgeEndpointDef::NodeType(0),
             target_node_type: EdgeEndpointDef::NodeType(0),
             properties: vec![PropertyTypeDef {
@@ -140,10 +140,10 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
     let (source, target, edge) = {
         let mut mutator = txn.mutator();
         let source = mutator
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let target = mutator
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let edge = mutator
             .create_edge(
@@ -163,7 +163,7 @@ fn edge_property_rejects_endpoint_relabel_bypass_at_commit() {
         mutator
             .update_node(
                 source,
-                LabelDiff::new([temp], [person]).unwrap(),
+                LabelDiff::new([temp.clone()], [person.clone()]).unwrap(),
                 PropertyDiff::new([], []).unwrap(),
             )
             .unwrap();

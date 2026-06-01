@@ -72,7 +72,7 @@ fn intent_node_type_added() -> SchemaChange {
     let label = intern("IntentNode").unwrap();
     SchemaChange::NodeTypeAdded {
         graph_type: test_graph_type_id(),
-        label,
+        label: label.clone(),
         def: NodeTypeDefV1::new(LabelSet::single(label)),
     }
 }
@@ -82,10 +82,10 @@ fn intent_edge_type_added() -> SchemaChange {
     let endpoint = intern("IntentNode").unwrap();
     SchemaChange::EdgeTypeAdded {
         graph_type: test_graph_type_id(),
-        label,
+        label: label.clone(),
         def: EdgeTypeDefV1 {
             label,
-            source_node_type: NodeTypeRef(endpoint),
+            source_node_type: NodeTypeRef(endpoint.clone()),
             target_node_type: NodeTypeRef(endpoint),
             properties: smallvec![],
         },

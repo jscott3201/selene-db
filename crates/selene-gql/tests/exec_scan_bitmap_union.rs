@@ -20,9 +20,9 @@ fn bitmap_union_scan_returns_small_in_list_matches() {
     let scan = exec_common::first_scan(&pattern.join_tree).expect("scan");
 
     assert!(matches!(
-        scan.access,
-        ScanAccess::BitmapUnion { property, ref keys, .. }
-            if property == istr("email") && keys.len() == 2
+        &scan.access,
+        ScanAccess::BitmapUnion { property, keys, .. }
+            if *property == istr("email") && keys.len() == 2
     ));
     let ctx = fixture.context_caps(&plan);
     let table = execute_pattern(pattern, &ctx);
@@ -39,7 +39,7 @@ fn bitmap_union_fallback_in_list_preserves_integer_precision() {
         pattern,
         ScanAccess::BitmapUnion {
             handle: IndexHandle::new(9_002),
-            property: fixture.count,
+            property: fixture.count.clone(),
             kind: IndexKind::Integer,
             keys: vec![IndexKey::Literal(Literal::Integer(
                 LARGE_COUNTER_B,

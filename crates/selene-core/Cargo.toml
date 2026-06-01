@@ -13,6 +13,7 @@ thiserror.workspace = true
 parking_lot.workspace = true
 miette.workspace = true
 lasso.workspace = true
+compact_str.workspace = true
 jiff.workspace = true
 rust_decimal.workspace = true
 uuid.workspace = true

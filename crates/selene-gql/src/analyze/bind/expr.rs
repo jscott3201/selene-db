@@ -19,11 +19,14 @@ pub(crate) fn bind_value_expr(
 ) -> Result<ExprId, AnalysisError> {
     // Why: `ValueExpr` recursion fans out to one stack frame per nesting
     // level; the depth-256 contract enforced by `check_expr_depth` is well
-    // above what macOS's 2 MB default thread stack can carry in debug
-    // builds once enum-variant sizes grow. `stacker::maybe_grow` allocates
-    // a fresh 1 MB segment whenever fewer than 64 KB remain, matching the
-    // rustc/syn/serde analyzer pattern.
-    stacker::maybe_grow(64 * 1024, 1024 * 1024, || bind_value_expr_inner(ctx, expr))
+    // above what a small (e.g. 2 MB default, or smaller test-harness) thread
+    // stack can carry in debug builds — and the per-level bind frame grew once
+    // `IStr` became an owned 24-byte `CompactString` (istr-removal Stage A).
+    // `stacker::maybe_grow` allocates a fresh 1 MB segment whenever fewer than
+    // 256 KB remain; the red zone is sized to comfortably exceed a single
+    // unoptimized `bind_value_expr_inner` frame so growth always fires before
+    // the next descent can overrun the live segment (rustc/syn/serde pattern).
+    stacker::maybe_grow(256 * 1024, 1024 * 1024, || bind_value_expr_inner(ctx, expr))
 }
 
 fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<ExprId, AnalysisError> {
@@ -35,7 +38,7 @@ fn bind_value_expr_inner(ctx: &mut BindContext, expr: &ValueExpr) -> Result<Expr
         let ty = match expr {
             ValueExpr::Literal(literal) => infer::literal(literal),
             ValueExpr::Variable { name, span } => {
-                let binding = ctx.resolve(*name, *span, BindingUseKind::Variable)?;
+                let binding = ctx.resolve(name.clone(), *span, BindingUseKind::Variable)?;
                 ctx.binding_type(binding)
             }
             ValueExpr::Parameter { declared_type, .. } => declared_type

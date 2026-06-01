@@ -57,7 +57,7 @@ fn closed_person_graph(id: u64) -> SharedGraph {
         .bound_to(GraphTypeDef {
             name: istr("statement.person.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,

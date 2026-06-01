@@ -67,7 +67,7 @@ fn typed_index_fallback_equality_preserves_integer_precision() {
         pattern,
         ScanAccess::TypedIndexRange {
             handle: IndexHandle::new(9_001),
-            property: fixture.count,
+            property: fixture.count.clone(),
             kind: IndexKind::Integer,
             bounds: TypedIndexBounds::Equality(IndexKey::Literal(Literal::Integer(
                 LARGE_COUNTER_B,

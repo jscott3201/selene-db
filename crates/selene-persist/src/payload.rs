@@ -185,10 +185,11 @@ mod tests {
         let edge_label = provider("payload.edge");
         let prop = provider("payload.property");
         prop_oneof![
-            (1_u64..10_000, property_map_strategy()).prop_map(move |(id, properties)| {
-                Change::NodeCreated {
+            (1_u64..10_000, property_map_strategy()).prop_map({
+                let value = node_label.clone();
+                move |(id, properties)| Change::NodeCreated {
                     id: NodeId::new(id),
-                    labels: LabelSet::single(node_label),
+                    labels: LabelSet::single(value.clone()),
                     properties,
                 }
             }),
@@ -205,23 +206,30 @@ mod tests {
             (1_u64..10_000).prop_map(|id| Change::NodeDeleted {
                 id: NodeId::new(id),
             }),
-            (1_u64..10_000).prop_map(move |id| Change::NodePropertyRemoved {
-                id: NodeId::new(id),
-                property: prop,
+            (1_u64..10_000).prop_map({
+                let value = prop.clone();
+                move |id| Change::NodePropertyRemoved {
+                    id: NodeId::new(id),
+                    property: value.clone(),
+                }
             }),
-            (1_u64..10_000).prop_map(move |id| Change::NodeLabelRemoved {
-                id: NodeId::new(id),
-                label: node_label,
+            (1_u64..10_000).prop_map({
+                let value = node_label.clone();
+                move |id| Change::NodeLabelRemoved {
+                    id: NodeId::new(id),
+                    label: value.clone(),
+                }
             }),
-            (1_u64..10_000, 1_u64..10_000, property_map_strategy()).prop_map(
+            (1_u64..10_000, 1_u64..10_000, property_map_strategy()).prop_map({
+                let value = edge_label.clone();
                 move |(id, target, properties)| Change::EdgeCreated {
                     id: EdgeId::new(id),
-                    label: edge_label,
+                    label: value.clone(),
                     source: NodeId::new(id),
                     target: NodeId::new(target),
                     properties,
                 }
-            ),
+            }),
             (1_u64..10_000, property_diff_strategy()).prop_map(|(id, properties_diff)| {
                 Change::EdgeUpdated {
                     id: EdgeId::new(id),
@@ -233,7 +241,7 @@ mod tests {
             }),
             (1_u64..10_000).prop_map(move |id| Change::EdgePropertyRemoved {
                 id: EdgeId::new(id),
-                property: prop,
+                property: prop.clone(),
             }),
             schema_change_strategy().prop_map(|change| Change::SchemaChanged {
                 graph: GraphId::new(1),

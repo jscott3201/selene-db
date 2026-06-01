@@ -246,7 +246,8 @@ fn parse_indexed_constraint_with_explicit_name() {
         panic!("expected CREATE NODE TYPE");
     };
     let TypePropertyConstraint::Indexed {
-        name: Some(name), ..
+        name: Some(ref name),
+        ..
     } = properties[0].constraints[0]
     else {
         panic!("expected named INDEXED constraint");
@@ -319,7 +320,10 @@ fn parse_call_yield_star_alias_and_quoted_segment() {
     };
     assert_eq!(call.name[1].as_str(), "bar.baz");
     assert!(matches!(call.yield_items[0].column, YieldColumn::Star));
-    assert_eq!(call.yield_items[1].alias.expect("alias").as_str(), "alias");
+    assert_eq!(
+        call.yield_items[1].alias.clone().expect("alias").as_str(),
+        "alias"
+    );
 }
 
 #[test]

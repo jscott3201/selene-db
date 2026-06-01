@@ -195,7 +195,7 @@ fn eval_is_labeled(
         }
         Value::EdgeRef(id) => {
             Ok(Value::Bool(ctx.tx.snapshot().edge_label(id).is_some_and(
-                |label| scan::label_matches_edge(label_expr, *label),
+                |label| scan::label_matches_edge(label_expr, label.clone()),
             )))
         }
         _ => data_exception("IS LABELED operand is not a graph element", span),

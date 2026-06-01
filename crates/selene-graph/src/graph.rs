@@ -354,7 +354,7 @@ impl SeleneGraph {
     #[must_use]
     pub fn property_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<TypedIndex>> {
         self.property_index
-            .get(&(*label, *property))
+            .get(&(label.clone(), property.clone()))
             .map(|entry| Arc::clone(&entry.index))
     }
 
@@ -377,7 +377,7 @@ impl SeleneGraph {
         properties: &[IStr],
     ) -> Option<&CompositePropertyIndexEntry> {
         let key = composite_property_key(properties);
-        self.composite_property_index.get(&(*label, key))
+        self.composite_property_index.get(&(label.clone(), key))
     }
 
     /// Number of distinct `(label, property)` indexes currently registered.
@@ -400,7 +400,7 @@ impl SeleneGraph {
     pub fn iter_property_indexes(&self) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind)> + '_ {
         self.property_index
             .iter()
-            .map(|((label, property), entry)| (*label, *property, entry.kind()))
+            .map(|((label, property), entry)| (label.clone(), property.clone(), entry.kind()))
     }
 
     /// Iterate built-in property indexes with optional explicit catalog names.
@@ -409,7 +409,14 @@ impl SeleneGraph {
     ) -> impl Iterator<Item = (IStr, IStr, TypedIndexKind, Option<IStr>)> + '_ {
         self.property_index
             .iter()
-            .map(|((label, property), entry)| (*label, *property, entry.kind(), entry.name))
+            .map(|((label, property), entry)| {
+                (
+                    label.clone(),
+                    property.clone(),
+                    entry.kind(),
+                    entry.name.clone(),
+                )
+            })
     }
 
     /// Iterate built-in composite property indexes with optional explicit catalog names.
@@ -420,10 +427,10 @@ impl SeleneGraph {
             .iter()
             .map(|((label, _), entry)| {
                 (
-                    *label,
+                    label.clone(),
                     entry.declared_properties.clone(),
                     entry.kinds(),
-                    entry.name,
+                    entry.name.clone(),
                 )
             })
     }
@@ -449,7 +456,7 @@ impl SeleneGraph {
         value: &Value,
     ) -> Option<Cow<'_, RoaringBitmap>> {
         self.property_index
-            .get(&(*label, *property))
+            .get(&(label.clone(), property.clone()))
             .and_then(|entry| entry.index.lookup_eq(value))
     }
 
@@ -469,7 +476,7 @@ impl SeleneGraph {
         R: RangeBounds<Value>,
     {
         self.property_index
-            .get(&(*label, *property))
+            .get(&(label.clone(), property.clone()))
             .and_then(|entry| entry.index.lookup_range(range))
     }
 
@@ -485,7 +492,7 @@ impl SeleneGraph {
         prefix: &str,
     ) -> Option<RoaringBitmap> {
         self.property_index
-            .get(&(*label, *property))
+            .get(&(label.clone(), property.clone()))
             .and_then(|entry| entry.index.lookup_prefix(prefix))
     }
 
@@ -503,7 +510,7 @@ impl SeleneGraph {
 }
 
 pub(crate) fn composite_property_key(properties: &[IStr]) -> SmallVec<[IStr; 4]> {
-    let mut key: SmallVec<[IStr; 4]> = properties.iter().copied().collect();
+    let mut key: SmallVec<[IStr; 4]> = properties.iter().cloned().collect();
     key.sort();
     key
 }
@@ -547,7 +554,10 @@ mod tests {
     fn node_labels_returns_some_for_alive_node() {
         let mut graph = SeleneGraph::new(GraphId::new(1));
         let label = intern("graph.node").unwrap();
-        graph.node_store.labels.push(LabelSet::single(label));
+        graph
+            .node_store
+            .labels
+            .push(LabelSet::single(label.clone()));
         graph.node_store.properties.push(PropertyMap::new());
         // BRIEF-Item-4a: a manually built row must also bind id <-> row, the way
         // create_node / rebuild_id_maps do — reads now resolve through the map.
@@ -561,7 +571,7 @@ mod tests {
                 .node_labels(NodeId::new(1))
                 .unwrap()
                 .iter()
-                .copied()
+                .cloned()
                 .collect::<Vec<_>>(),
             vec![label]
         );
@@ -574,7 +584,7 @@ mod tests {
         let mut bitmap = RoaringBitmap::new();
         bitmap.insert(0);
         bitmap.insert(1);
-        graph.idx_label.insert(label, bitmap);
+        graph.idx_label.insert(label.clone(), bitmap);
         assert_eq!(graph.label_count(), 1);
         assert!(graph.nodes_with_label(&label).unwrap().contains(0));
         assert!(graph.nodes_with_label(&label).unwrap().contains(1));

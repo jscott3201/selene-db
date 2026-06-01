@@ -66,18 +66,18 @@ fn standard_seeded(graph_id: GraphId, node_count: usize, with_indexes: bool) -> 
         for idx in 0..node_count {
             mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     PropertyMap::from_pairs([
-                        (age, Value::Int(20 + idx as i64)),
+                        (age.clone(), Value::Int(20 + idx as i64)),
                         (
-                            email,
+                            email.clone(),
                             Value::String(istr(&format!("{}@example.com", name_for(idx)))),
                         ),
-                        (kind, Value::String(istr("person"))),
-                        (name, Value::String(istr(name_for(idx)))),
-                        (score, Value::Int((idx + 1) as i64)),
+                        (kind.clone(), Value::String(istr("person"))),
+                        (name.clone(), Value::String(istr(name_for(idx)))),
+                        (score.clone(), Value::Int((idx + 1) as i64)),
                         (
-                            tenant,
+                            tenant.clone(),
                             Value::String(if idx % 2 == 0 { istr("t1") } else { istr("t2") }),
                         ),
                     ])
@@ -88,10 +88,10 @@ fn standard_seeded(graph_id: GraphId, node_count: usize, with_indexes: bool) -> 
         for idx in 1..node_count.min(3) {
             mutator
                 .create_edge(
-                    knows,
+                    knows.clone(),
                     selene_core::NodeId::new(idx as u64),
                     selene_core::NodeId::new(idx as u64 + 1),
-                    PropertyMap::from_pairs([(score, Value::Int(idx as i64))])
+                    PropertyMap::from_pairs([(score.clone(), Value::Int(idx as i64))])
                         .expect("fixture edge properties fit core caps"),
                 )
                 .expect("fixture edge inserts");
@@ -101,13 +101,13 @@ fn standard_seeded(graph_id: GraphId, node_count: usize, with_indexes: bool) -> 
 
     if with_indexes {
         graph
-            .create_property_index(person, age, TypedIndexKind::I64)
+            .create_property_index(person.clone(), age, TypedIndexKind::I64)
             .expect("age index builds");
         graph
-            .create_property_index(person, email, TypedIndexKind::String)
+            .create_property_index(person.clone(), email, TypedIndexKind::String)
             .expect("email index builds");
         graph
-            .create_property_index(person, kind, TypedIndexKind::String)
+            .create_property_index(person.clone(), kind, TypedIndexKind::String)
             .expect("kind index builds");
         graph
             .create_property_index(person, tenant, TypedIndexKind::String)

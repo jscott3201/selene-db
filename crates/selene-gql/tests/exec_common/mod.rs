@@ -47,80 +47,93 @@ impl ExecFixture {
             let mut mutator = txn.mutator();
             let alice = mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     props([
-                        (age, Value::Int(30)),
-                        (name, Value::String(istr("Alice"))),
-                        (email, Value::String(istr("alice@example.com"))),
-                        (tenant, Value::String(istr("t1"))),
-                        (kind, Value::String(istr("person"))),
-                        (score, Value::Int(7)),
+                        (age.clone(), Value::Int(30)),
+                        (name.clone(), Value::String(istr("Alice"))),
+                        (email.clone(), Value::String(istr("alice@example.com"))),
+                        (tenant.clone(), Value::String(istr("t1"))),
+                        (kind.clone(), Value::String(istr("person"))),
+                        (score.clone(), Value::Int(7)),
                     ]),
                 )
                 .expect("alice inserts");
             let bob = mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     props([
-                        (age, Value::Int(42)),
-                        (name, Value::String(istr("Bob"))),
-                        (email, Value::String(istr("bob@example.com"))),
-                        (tenant, Value::String(istr("t1"))),
-                        (kind, Value::String(istr("person"))),
-                        (score, Value::Int(3)),
+                        (age.clone(), Value::Int(42)),
+                        (name.clone(), Value::String(istr("Bob"))),
+                        (email.clone(), Value::String(istr("bob@example.com"))),
+                        (tenant.clone(), Value::String(istr("t1"))),
+                        (kind.clone(), Value::String(istr("person"))),
+                        (score.clone(), Value::Int(3)),
                     ]),
                 )
                 .expect("bob inserts");
             mutator
                 .create_node(
-                    LabelSet::single(person),
+                    LabelSet::single(person.clone()),
                     props([
-                        (age, Value::Int(55)),
-                        (name, Value::String(istr("Cara"))),
-                        (email, Value::String(istr("cara@example.com"))),
-                        (tenant, Value::String(istr("t2"))),
-                        (kind, Value::String(istr("person"))),
-                        (score, Value::Int(9)),
+                        (age.clone(), Value::Int(55)),
+                        (name.clone(), Value::String(istr("Cara"))),
+                        (email.clone(), Value::String(istr("cara@example.com"))),
+                        (tenant.clone(), Value::String(istr("t2"))),
+                        (kind.clone(), Value::String(istr("person"))),
+                        (score.clone(), Value::Int(9)),
                     ]),
                 )
                 .expect("cara inserts");
             let sensor_node = mutator
                 .create_node(
-                    LabelSet::single(sensor),
-                    props([(age, Value::Int(5)), (score, Value::Int(99))]),
+                    LabelSet::single(sensor.clone()),
+                    props([
+                        (age.clone(), Value::Int(5)),
+                        (score.clone(), Value::Int(99)),
+                    ]),
                 )
                 .expect("sensor inserts");
             mutator
                 .create_node(
-                    LabelSet::single(counter),
-                    props([(count, Value::Int(LARGE_COUNTER_A))]),
+                    LabelSet::single(counter.clone()),
+                    props([(count.clone(), Value::Int(LARGE_COUNTER_A))]),
                 )
                 .expect("counter A inserts");
             mutator
                 .create_node(
-                    LabelSet::single(counter),
-                    props([(count, Value::Int(LARGE_COUNTER_B))]),
+                    LabelSet::single(counter.clone()),
+                    props([(count.clone(), Value::Int(LARGE_COUNTER_B))]),
                 )
                 .expect("counter B inserts");
             mutator
-                .create_edge(knows, alice, bob, props([(score, Value::Int(1))]))
+                .create_edge(
+                    knows.clone(),
+                    alice,
+                    bob,
+                    props([(score.clone(), Value::Int(1))]),
+                )
                 .expect("edge inserts");
             mutator
-                .create_edge(knows, bob, sensor_node, props([(score, Value::Int(2))]))
+                .create_edge(
+                    knows,
+                    bob,
+                    sensor_node,
+                    props([(score.clone(), Value::Int(2))]),
+                )
                 .expect("edge inserts");
             txn.commit().expect("fixture commits");
         }
         graph
-            .create_property_index(person, age, TypedIndexKind::I64)
+            .create_property_index(person.clone(), age.clone(), TypedIndexKind::I64)
             .expect("age index builds");
         graph
-            .create_property_index(person, email, TypedIndexKind::String)
+            .create_property_index(person.clone(), email.clone(), TypedIndexKind::String)
             .expect("email index builds");
         graph
-            .create_property_index(person, tenant, TypedIndexKind::String)
+            .create_property_index(person.clone(), tenant.clone(), TypedIndexKind::String)
             .expect("tenant index builds");
         graph
-            .create_property_index(person, kind, TypedIndexKind::String)
+            .create_property_index(person.clone(), kind.clone(), TypedIndexKind::String)
             .expect("kind index builds");
         Self {
             graph,
@@ -149,16 +162,32 @@ impl ExecFixture {
 
     pub fn index_catalog(&self) -> MockIndexCatalog {
         MockIndexCatalog::new()
-            .with_node_label_index(self.person)
-            .with_node_typed_index(self.person, self.age, selene_gql::IndexKind::Integer)
-            .with_node_typed_index(self.person, self.email, selene_gql::IndexKind::String)
-            .with_node_typed_index(self.person, self.tenant, selene_gql::IndexKind::String)
-            .with_node_typed_index(self.person, self.kind, selene_gql::IndexKind::String)
+            .with_node_label_index(self.person.clone())
+            .with_node_typed_index(
+                self.person.clone(),
+                self.age.clone(),
+                selene_gql::IndexKind::Integer,
+            )
+            .with_node_typed_index(
+                self.person.clone(),
+                self.email.clone(),
+                selene_gql::IndexKind::String,
+            )
+            .with_node_typed_index(
+                self.person.clone(),
+                self.tenant.clone(),
+                selene_gql::IndexKind::String,
+            )
+            .with_node_typed_index(
+                self.person.clone(),
+                self.kind.clone(),
+                selene_gql::IndexKind::String,
+            )
             .with_node_composite_index(
-                self.person,
+                self.person.clone(),
                 vec![
-                    (self.tenant, selene_gql::IndexKind::String),
-                    (self.kind, selene_gql::IndexKind::String),
+                    (self.tenant.clone(), selene_gql::IndexKind::String),
+                    (self.kind.clone(), selene_gql::IndexKind::String),
                 ],
             )
     }
@@ -278,7 +307,12 @@ pub fn column_values(table: &selene_gql::BindingTable, name: &str) -> Vec<Value>
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|column| column.as_str() == name))
+        .position(|column| {
+            column
+                .name
+                .clone()
+                .is_some_and(|column| column.as_str() == name)
+        })
         .expect("column exists");
     table
         .rows()

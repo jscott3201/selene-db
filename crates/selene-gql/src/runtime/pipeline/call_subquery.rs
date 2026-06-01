@@ -77,13 +77,13 @@ fn target_schema(
             columns: Vec::new(),
         });
     for outer in &call.outer_binding_refs {
-        if pattern::column_index(&schema, outer.name).is_some() {
+        if pattern::column_index(&schema, outer.name.clone()).is_some() {
             continue;
         }
-        let source_index = source_index(source_schema, outer.name)?;
+        let source_index = source_index(source_schema, outer.name.clone())?;
         let source_column = &source_schema.columns[source_index];
         schema.columns.push(BindingTableColumn {
-            name: Some(outer.name),
+            name: Some(outer.name.clone()),
             hidden: None,
             ty: source_column.ty.clone(),
         });
@@ -99,9 +99,9 @@ fn seed_binding(
 ) -> Result<Binding, ExecutorError> {
     let mut values = vec![Value::Null; target_schema.columns.len()];
     for outer in &call.outer_binding_refs {
-        let source_index = source_index(source_schema, outer.name)?;
+        let source_index = source_index(source_schema, outer.name.clone())?;
         let value = row.get(source_index).cloned().unwrap_or(Value::Null);
-        let target_index = pattern::column_index(target_schema, outer.name).ok_or(
+        let target_index = pattern::column_index(target_schema, outer.name.clone()).ok_or(
             ExecutorError::ImplementationDefined {
                 detail: "CALL subquery outer binding missing from target row",
             },
@@ -117,10 +117,10 @@ fn null_outer_binding_is_plan_pattern_binding(
     source_schema: &BindingTableSchema,
 ) -> Result<bool, ExecutorError> {
     for outer in &call.outer_binding_refs {
-        if !plan_binds_name(&call.body, outer.name) {
+        if !plan_binds_name(&call.body, outer.name.clone()) {
             continue;
         }
-        let source_index = source_index(source_schema, outer.name)?;
+        let source_index = source_index(source_schema, outer.name.clone())?;
         if matches!(row.get(source_index), Some(Value::Null) | None) {
             return Ok(true);
         }
@@ -131,8 +131,11 @@ fn null_outer_binding_is_plan_pattern_binding(
 fn plan_binds_name(plan: &ExecutionPlan, name: selene_core::IStr) -> bool {
     plan.pattern_plan
         .as_ref()
-        .is_some_and(|pattern| pattern_binds_name(pattern, name))
-        || plan.pipeline.iter().any(|op| op_binds_name(op, name))
+        .is_some_and(|pattern| pattern_binds_name(pattern, name.clone()))
+        || plan
+            .pipeline
+            .iter()
+            .any(|op| op_binds_name(op, name.clone()))
 }
 
 fn op_binds_name(op: &PipelineOp, name: selene_core::IStr) -> bool {
@@ -158,7 +161,7 @@ fn yield_indices(
 ) -> Result<Vec<usize>, ExecutorError> {
     call.yield_items
         .iter()
-        .map(|item| source_index(inner_schema, item.source))
+        .map(|item| source_index(inner_schema, item.source.clone()))
         .collect()
 }
 

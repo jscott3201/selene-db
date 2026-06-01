@@ -90,7 +90,7 @@ pub(crate) fn execute_pipeline_with_plan(
                     expr_ids,
                     subqueries,
                 };
-                unwind::execute(source, *alias, *span, table, &eval_ctx)?
+                unwind::execute(source, alias.clone(), *span, table, &eval_ctx)?
             }
             PipelineOp::OrderBy(keys) => {
                 let eval_ctx = EvalCtx {
@@ -196,7 +196,7 @@ pub(crate) fn execute_pipeline_read_only_with_plan(
                     expr_ids,
                     subqueries,
                 };
-                unwind::execute(source, *alias, *span, table, &eval_ctx)?
+                unwind::execute(source, alias.clone(), *span, table, &eval_ctx)?
             }
             PipelineOp::OrderBy(keys) => {
                 let eval_ctx = EvalCtx {

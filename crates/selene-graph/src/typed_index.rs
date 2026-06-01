@@ -434,14 +434,14 @@ impl TypedIndex {
     /// Return the union of string-key rows whose key starts with `prefix`.
     ///
     /// This scans every key in the BTreeMap and runs `starts_with` per
-    /// entry — O(total cardinality), not O(matching prefix span). The
-    /// reason is that `IStr` ordering is **interner-key order** (allocation
-    /// order), not lexicographic — see `selene_core::IStr` rustdoc. So a
-    /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval is
-    /// not possible; lex-equivalent keys can be scattered throughout the
-    /// map. String range lookups return `None` from [`Self::lookup_range`],
-    /// letting runtime scan fallback preserve query semantics until a
-    /// string-bytes secondary index exists.
+    /// entry — O(total cardinality), not O(matching prefix span). `IStr` now
+    /// orders **lexicographically** (through the inner `CompactString`), so a
+    /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval *is*
+    /// possible; converting this scan to a range lookup (and likewise teaching
+    /// [`Self::lookup_range`] to return real string ranges instead of `None`)
+    /// is deferred to the typed-index simplification stage of the interner
+    /// removal. Until then the O(n) scan and the `None` range fallback preserve
+    /// exact query semantics.
     #[must_use]
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {
@@ -550,7 +550,7 @@ impl TypedIndexValueError {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 enum TypedKey {
     I64(i64),
     F64(NotNanF64),
@@ -561,7 +561,7 @@ enum TypedKey {
 }
 
 impl TypedKey {
-    const fn observed(self) -> &'static str {
+    const fn observed(&self) -> &'static str {
         match self {
             Self::I64(_) => "Int",
             Self::F64(_) => "Float",
@@ -612,7 +612,7 @@ fn typed_key_admit(
             .map_err(|NotNanError| TypedIndexValueError::NaN {
                 expected_kind: TypedIndexKind::F64,
             }),
-        Value::String(value) => Ok(TypedKey::String(*value)),
+        Value::String(value) => Ok(TypedKey::String(value.clone())),
         Value::Date(value) => Ok(TypedKey::Date(*value)),
         Value::LocalDateTime(value) => Ok(TypedKey::LocalDateTime(*value)),
         Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
@@ -640,7 +640,7 @@ fn typed_key_lookup(value: &Value) -> Result<Option<TypedKey>, TypedIndexValueEr
             .map_err(|NotNanError| TypedIndexValueError::NaN {
                 expected_kind: TypedIndexKind::F64,
             }),
-        Value::String(value) => Ok(Some(TypedKey::String(*value))),
+        Value::String(value) => Ok(Some(TypedKey::String(value.clone()))),
         Value::ExternalString(value) => {
             Ok(selene_core::lookup(value.as_ref()).map(TypedKey::String))
         }

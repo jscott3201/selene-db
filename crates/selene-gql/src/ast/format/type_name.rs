@@ -49,7 +49,9 @@ pub(super) fn fmt_type(ty: &GqlType) -> String {
         GqlType::Record(RecordType::Closed(fields)) => {
             let body = fields
                 .iter()
-                .map(|(name, field_ty)| format!("{} :: {}", fmt_ident(*name), fmt_type(field_ty)))
+                .map(|(name, field_ty)| {
+                    format!("{} :: {}", fmt_ident(name.clone()), fmt_type(field_ty))
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("RECORD{{{body}}}")

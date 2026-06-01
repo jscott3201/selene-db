@@ -117,7 +117,7 @@ fn yield_star_expands_registered_columns() {
         .declarations()
         .iter()
         .filter(|decl| decl.kind() == BindingDeclKind::YieldColumn)
-        .map(|decl| decl.name().as_str())
+        .map(|decl| decl.name().as_str().to_owned())
         .collect::<Vec<_>>();
     assert_eq!(yield_names, ["first", "second"]);
 }

@@ -61,7 +61,7 @@ pub(super) fn project_items(
         .map(|item| {
             project_expr(
                 &item.expr,
-                column_name(&item.expr, item.alias),
+                column_name(&item.expr, item.alias.clone()),
                 analyzed,
                 aggregate_names,
             )
@@ -116,7 +116,9 @@ fn collect_aggregates(
             ValueExpr::FunctionCall { args, .. } => args,
             _ => unreachable!("aggregate_name only matches function calls"),
         };
-        rewrite.names_by_expr_id.insert(aggregate_id, output_name);
+        rewrite
+            .names_by_expr_id
+            .insert(aggregate_id, output_name.clone());
         rewrite.aggregates.push(Aggregate {
             aggregate_id,
             output_name,
@@ -266,7 +268,7 @@ fn rewrite_aggregate_refs(
         .and_then(|expr_id| aggregate_names.get(&expr_id))
     {
         return ValueExpr::Variable {
-            name: *name,
+            name: name.clone(),
             span: value.span(),
         };
     }
@@ -280,7 +282,7 @@ fn rewrite_aggregate_refs(
         | ValueExpr::ValueSubquery { .. } => value.clone(),
         ValueExpr::PropertyAccess { target, key, span } => ValueExpr::PropertyAccess {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
-            key: *key,
+            key: key.clone(),
             span: *span,
         },
         ValueExpr::ListAccess {
@@ -301,7 +303,7 @@ fn rewrite_aggregate_refs(
                 .iter()
                 .map(|(key, field)| {
                     (
-                        *key,
+                        key.clone(),
                         rewrite_aggregate_refs(field, aggregate_names, analyzed),
                     )
                 })
@@ -364,7 +366,7 @@ fn rewrite_aggregate_refs(
         },
         ValueExpr::PropertyExists { target, key, span } => ValueExpr::PropertyExists {
             target: Box::new(rewrite_aggregate_refs(target, aggregate_names, analyzed)),
-            key: *key,
+            key: key.clone(),
             span: *span,
         },
         ValueExpr::Case {
@@ -452,13 +454,13 @@ fn group_key_alias(expr: &ValueExpr, items: &[ReturnItem]) -> Option<IStr> {
     items
         .iter()
         .find(|item| item.expr == *expr)
-        .and_then(|item| column_name(&item.expr, item.alias))
+        .and_then(|item| column_name(&item.expr, item.alias.clone()))
         .or_else(|| column_name(expr, None))
 }
 
 fn column_name(expr: &ValueExpr, alias: Option<IStr>) -> Option<IStr> {
     alias.or(match expr {
-        ValueExpr::Variable { name, .. } => Some(*name),
+        ValueExpr::Variable { name, .. } => Some(name.clone()),
         _ => None,
     })
 }

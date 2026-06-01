@@ -52,7 +52,7 @@ fn pattern_executes_simple_cycle_through_wco_marker() {
                 exec_common::istr("KNOWS"),
                 NodeId::new(4),
                 NodeId::new(1),
-                props([(fixture.score, Value::Int(3))]),
+                props([(fixture.score.clone(), Value::Int(3))]),
             )
             .expect("cycle edge inserts");
         txn.commit().expect("cycle update commits");

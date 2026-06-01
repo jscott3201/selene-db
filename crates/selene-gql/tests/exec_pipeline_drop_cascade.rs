@@ -68,7 +68,7 @@ fn person_graph(id: u64) -> SharedGraph {
         GraphTypeDef {
             name: istr("catalog.person.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -87,13 +87,13 @@ fn person_self_knows_graph(id: u64) -> SharedGraph {
         GraphTypeDef {
             name: istr("catalog.person.knows.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
             edge_types: vec![EdgeTypeDef {
-                name: knows,
+                name: knows.clone(),
                 label: knows,
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::NodeType(0),
@@ -114,13 +114,13 @@ fn person_any_knows_graph(id: u64) -> SharedGraph {
         GraphTypeDef {
             name: istr("catalog.person.any.knows.graph"),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             }],
             edge_types: vec![EdgeTypeDef {
-                name: knows,
+                name: knows.clone(),
                 label: knows,
                 source_node_type: EdgeEndpointDef::Any,
                 target_node_type: EdgeEndpointDef::Any,
@@ -187,11 +187,11 @@ fn drop_node_type_cascade_truncates_then_drops_observably_equal_to_manual() {
         let mut txn = graph.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         txn.mutator()
             .create_edge(knows, a, b, PropertyMap::new())
@@ -256,7 +256,7 @@ fn drop_edge_type_restrict_rejects_with_surviving_edges_g2000() {
         let mut txn = graph.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
@@ -288,14 +288,14 @@ fn drop_edge_type_cascade_removes_edges_then_drops_type() {
         let mut txn = graph.begin_write();
         let a = txn
             .mutator()
-            .create_node(LabelSet::single(person), PropertyMap::new())
+            .create_node(LabelSet::single(person.clone()), PropertyMap::new())
             .unwrap();
         let b = txn
             .mutator()
             .create_node(LabelSet::single(person), PropertyMap::new())
             .unwrap();
         txn.mutator()
-            .create_edge(knows, a, b, PropertyMap::new())
+            .create_edge(knows.clone(), a, b, PropertyMap::new())
             .unwrap();
         txn.commit().unwrap();
     }

@@ -69,8 +69,8 @@ pub(crate) fn changes(count: usize) -> Vec<Change> {
     (0..count)
         .map(|idx| Change::NodeCreated {
             id: NodeId::new(idx as u64 + 1),
-            labels: LabelSet::single(label),
-            properties: PropertyMap::from_pairs([(key, Value::Int(idx as i64))])
+            labels: LabelSet::single(label.clone()),
+            properties: PropertyMap::from_pairs([(key.clone(), Value::Int(idx as i64))])
                 .expect("fixture properties fit"),
         })
         .collect()

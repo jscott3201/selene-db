@@ -44,7 +44,7 @@ fn non_identity_graph() -> SeleneGraph {
         g.node_store.labels.push(if id == NodeId::TOMBSTONE {
             LabelSet::new()
         } else {
-            LabelSet::single(nlabel)
+            LabelSet::single(nlabel.clone())
         });
         g.node_store.properties.push(PropertyMap::new());
         g.node_store.row_to_id.push(id);
@@ -64,9 +64,9 @@ fn non_identity_graph() -> SeleneGraph {
         |g: &mut SeleneGraph, id: EdgeId, source: NodeId, target: NodeId, alive: bool| {
             let row = g.edge_store.row_to_id.len() as u32;
             g.edge_store.label.push(if id == EdgeId::TOMBSTONE {
-                hole_elabel
+                hole_elabel.clone()
             } else {
-                elabel
+                elabel.clone()
             });
             g.edge_store.source.push(source);
             g.edge_store.target.push(target);
@@ -137,7 +137,7 @@ fn non_identity_snapshot_round_trips_positionally() {
         g.node_labels(NodeId::new(20))
             .unwrap()
             .iter()
-            .copied()
+            .cloned()
             .collect::<Vec<_>>(),
         vec![intern("nidr.node").unwrap()]
     );
@@ -185,7 +185,7 @@ fn descending_first_graph() -> SeleneGraph {
     let mut g = SeleneGraph::new(GraphId::new(2));
     for id in [10u64, 3, 7] {
         let row = g.node_store.row_to_id.len() as u32;
-        g.node_store.labels.push(LabelSet::single(nlabel));
+        g.node_store.labels.push(LabelSet::single(nlabel.clone()));
         g.node_store.properties.push(PropertyMap::new());
         g.node_store.row_to_id.push(NodeId::new(id));
         g.node_store.alive.insert(row);

@@ -89,13 +89,13 @@ fn candidate_rows(
             kind,
             bounds,
             ..
-        } => typed_index_rows(scan, *property, *kind, bounds, ctx),
+        } => typed_index_rows(scan, property.clone(), *kind, bounds, ctx),
         ScanAccess::BitmapUnion {
             property,
             kind,
             keys,
             ..
-        } => bitmap_union_rows(scan, *property, *kind, keys, ctx),
+        } => bitmap_union_rows(scan, property.clone(), *kind, keys, ctx),
         ScanAccess::CompositeLookup {
             properties, keys, ..
         } => composite_lookup_rows(scan, properties, keys, ctx),
@@ -255,7 +255,13 @@ fn union_property_eq(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+                property_matches_any_resolved(
+                    scan.kind,
+                    *row,
+                    property.clone(),
+                    &resolved_keys,
+                    ctx,
+                )
             })
             .collect());
     }
@@ -263,7 +269,13 @@ fn union_property_eq(
         return Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+                property_matches_any_resolved(
+                    scan.kind,
+                    *row,
+                    property.clone(),
+                    &resolved_keys,
+                    ctx,
+                )
             })
             .collect());
     };
@@ -285,7 +297,13 @@ fn union_property_eq(
         Ok(linear_rows(scan.kind, ctx)
             .into_iter()
             .filter(|row| {
-                property_matches_any_resolved(scan.kind, *row, property, &resolved_keys, ctx)
+                property_matches_any_resolved(
+                    scan.kind,
+                    *row,
+                    property.clone(),
+                    &resolved_keys,
+                    ctx,
+                )
             })
             .collect())
     }
@@ -319,7 +337,10 @@ fn composite_lookup_rows(
             ctx,
         ));
     };
-    let property_keys: Vec<IStr> = properties.iter().map(|(property, _)| *property).collect();
+    let property_keys: Vec<IStr> = properties
+        .iter()
+        .map(|(property, _)| property.clone())
+        .collect();
     if let Some(index) = ctx
         .tx
         .snapshot()
@@ -390,7 +411,7 @@ fn linear_rows_filtered_by_resolved_composite(
                 .iter()
                 .zip(values.iter())
                 .all(|((property, _), expected)| {
-                    property_value(scan.kind, *row, *property, ctx)
+                    property_value(scan.kind, *row, property.clone(), ctx)
                         .is_some_and(|value| value_eq_non_null(value, expected))
                 })
         })
@@ -406,7 +427,7 @@ fn linear_rows_filtered_by_resolved_bounds(
     linear_rows(scan.kind, ctx)
         .into_iter()
         .filter(|row| {
-            property_value(scan.kind, *row, property, ctx)
+            property_value(scan.kind, *row, property.clone(), ctx)
                 .is_some_and(|value| value_matches_resolved_bounds(value, resolved))
         })
         .collect()
@@ -487,7 +508,7 @@ pub(crate) fn value_for_binding(
     let index = schema
         .columns
         .iter()
-        .position(|column| column.name == Some(binding_def.name))?;
+        .position(|column| column.name == Some(binding_def.name.clone()))?;
     binding.get(index).cloned()
 }
 
@@ -511,7 +532,7 @@ fn label_matches_scan(scan: &NodeOrEdgeScan, row: u32, ctx: &EvalCtx<'_, '_, '_,
             };
             snapshot
                 .edge_label(id)
-                .is_some_and(|label| label_matches_edge(label_expr, *label))
+                .is_some_and(|label| label_matches_edge(label_expr, label.clone()))
         }
     }
 }
@@ -529,8 +550,12 @@ pub(crate) fn label_matches_node(expr: &LabelExpr, labels: &LabelSet) -> bool {
 pub(crate) fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
     match expr {
         LabelExpr::Single(expected) => *expected == label,
-        LabelExpr::Conjunction(parts) => parts.iter().all(|part| label_matches_edge(part, label)),
-        LabelExpr::Disjunction(parts) => parts.iter().any(|part| label_matches_edge(part, label)),
+        LabelExpr::Conjunction(parts) => parts
+            .iter()
+            .all(|part| label_matches_edge(part, label.clone())),
+        LabelExpr::Disjunction(parts) => parts
+            .iter()
+            .any(|part| label_matches_edge(part, label.clone())),
         LabelExpr::Negation(part) => !label_matches_edge(part, label),
         LabelExpr::Wildcard => true,
     }
@@ -538,7 +563,7 @@ pub(crate) fn label_matches_edge(expr: &LabelExpr, label: IStr) -> bool {
 
 fn single_label(label: &Option<LabelExpr>) -> Option<IStr> {
     match label {
-        Some(LabelExpr::Single(label)) => Some(*label),
+        Some(LabelExpr::Single(label)) => Some(label.clone()),
         _ => None,
     }
 }

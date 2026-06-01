@@ -18,15 +18,15 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
             crate::Literal::Uuid(value, _) => write!(out, "UUID '{value}'")?,
             crate::Literal::Null(_) => out.push_str("null"),
         },
-        ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(*name)),
+        ValueExpr::Variable { name, .. } => out.push_str(&fmt_ident(name.clone())),
         ValueExpr::Parameter {
             name,
             declared_type,
             ..
-        } => fmt_parameter(out, *name, declared_type.as_ref())?,
+        } => fmt_parameter(out, name.clone(), declared_type.as_ref())?,
         ValueExpr::PropertyAccess { target, key, .. } => {
             fmt_expr(out, target)?;
-            write!(out, ".{}", fmt_ident(*key))?;
+            write!(out, ".{}", fmt_ident(key.clone()))?;
         }
         ValueExpr::ListAccess { target, index, .. } => {
             fmt_expr(out, target)?;
@@ -50,7 +50,7 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 if index > 0 {
                     out.push_str(", ");
                 }
-                write!(out, "{}: ", fmt_ident(*key))?;
+                write!(out, "{}: ", fmt_ident(key.clone()))?;
                 fmt_expr(out, value)?;
             }
             out.push('}');
@@ -99,7 +99,7 @@ pub(super) fn fmt_expr(out: &mut String, expr: &ValueExpr) -> fmt::Result {
                 if index > 0 {
                     out.push('.');
                 }
-                out.push_str(&fmt_call_segment(*part));
+                out.push_str(&fmt_call_segment(part.clone()));
             }
             out.push('(');
             if *distinct {

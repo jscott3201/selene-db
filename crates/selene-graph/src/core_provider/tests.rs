@@ -243,7 +243,7 @@ fn encode_decode_round_trip_empty_graph_types() {
 }
 
 #[test]
-fn scma_decode_resorts_rows_by_receiver_handle() {
+fn scma_decode_resorts_rows_lexicographically() {
     let zebra = intern("core.scma.zebra").unwrap();
     let apple = intern("core.scma.apple").unwrap();
     let zebra_prop = intern("core.scma.zebra.prop").unwrap();
@@ -256,20 +256,22 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
         label: apple,
         property: apple_prop,
     };
-    // Out-of-handle-order rows under the current (versioned) layout. `decode_schemas`
-    // must re-sort by the (label, property) key regardless of input order.
+    // Out-of-(label, property)-order rows under the current (versioned) layout.
+    // `decode_schemas` must re-sort by the (label, property) key regardless of
+    // input order; `SchemaKey` Ord is lexicographic through `IStr`, so the
+    // "apple" row sorts ahead of the "zebra" row on decode.
     let rows = vec![
         (
-            apple_key,
+            zebra_key.clone(),
             SchemaEntry {
-                kind: TypedIndexKind::I64,
+                kind: TypedIndexKind::String,
                 name: None,
             },
         ),
         (
-            zebra_key,
+            apple_key.clone(),
             SchemaEntry {
-                kind: TypedIndexKind::String,
+                kind: TypedIndexKind::I64,
                 name: None,
             },
         ),
@@ -287,16 +289,16 @@ fn scma_decode_resorts_rows_by_receiver_handle() {
         decoded,
         vec![
             (
-                zebra_key,
+                apple_key,
                 SchemaEntry {
-                    kind: TypedIndexKind::String,
+                    kind: TypedIndexKind::I64,
                     name: None,
                 }
             ),
             (
-                apple_key,
+                zebra_key,
                 SchemaEntry {
-                    kind: TypedIndexKind::I64,
+                    kind: TypedIndexKind::String,
                     name: None,
                 }
             ),
@@ -311,8 +313,8 @@ fn scma_v2_round_trip_preserves_property_index_name() {
     let name = intern("core.scma.named.index").unwrap();
     let mut graph = SeleneGraph::new(GraphId::new(9991));
     graph.property_index.insert(
-        (label, property),
-        PropertyIndexEntry::new(TypedIndex::new(TypedIndexKind::String), Some(name)),
+        (label.clone(), property.clone()),
+        PropertyIndexEntry::new(TypedIndex::new(TypedIndexKind::String), Some(name.clone())),
     );
 
     let decoded = decode_schemas(&encode_schemas(&graph).unwrap()).unwrap();
@@ -336,7 +338,7 @@ fn scma_decode_rejects_duplicate_keys_after_resort() {
     let key = SchemaKey { label, property };
     let rows = vec![
         (
-            key,
+            key.clone(),
             SchemaEntry {
                 kind: TypedIndexKind::I64,
                 name: None,
@@ -662,7 +664,7 @@ fn recovery_mode_on_change_applies_each_change_variant() {
         provider.as_ref(),
         &Change::NodeCreated {
             id: NodeId::new(1),
-            labels: LabelSet::single(base_label),
+            labels: LabelSet::single(base_label.clone()),
             properties: PropertyMap::new(),
         },
     )
@@ -692,7 +694,7 @@ fn recovery_mode_on_change_applies_each_change_variant() {
         &Change::NodeUpdated {
             id: NodeId::new(1),
             labels_diff: LabelDiff::new([add_label], []).unwrap(),
-            properties_diff: PropertyDiff::new([(prop_key, Value::Int(42))], []).unwrap(),
+            properties_diff: PropertyDiff::new([(prop_key.clone(), Value::Int(42))], []).unwrap(),
         },
     )
     .unwrap();

@@ -125,8 +125,8 @@ mod tests {
         clause.items.into_iter().next().unwrap()
     }
 
-    fn optional_name(value: Option<selene_core::IStr>) -> Option<&'static str> {
-        value.map(selene_core::IStr::as_str)
+    fn optional_name(value: Option<selene_core::IStr>) -> Option<String> {
+        value.map(|name| name.as_str().to_owned())
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn parse_return_alias() {
         let item = only_item("RETURN 1 AS one");
-        assert_eq!(optional_name(item.alias), Some("one"));
+        assert_eq!(optional_name(item.alias).as_deref(), Some("one"));
         assert_eq!(item.span, SourceSpan::new(7, 8));
     }
 
@@ -275,19 +275,19 @@ mod tests {
     #[test]
     fn parse_return_alias_quoted() {
         let item = only_item("RETURN 1 AS \"my name\"");
-        assert_eq!(optional_name(item.alias), Some("my name"));
+        assert_eq!(optional_name(item.alias).as_deref(), Some("my name"));
     }
 
     #[test]
     fn parse_return_alias_quoted_doubled_quote() {
         let item = only_item("RETURN 1 AS \"a\"\"b\"");
-        assert_eq!(optional_name(item.alias), Some("a\"b"));
+        assert_eq!(optional_name(item.alias).as_deref(), Some("a\"b"));
     }
 
     #[test]
     fn parse_return_alias_backtick() {
         let item = only_item("RETURN 1 AS `my name`");
-        assert_eq!(optional_name(item.alias), Some("my name"));
+        assert_eq!(optional_name(item.alias).as_deref(), Some("my name"));
     }
 
     #[test]
@@ -341,7 +341,7 @@ mod tests {
             crate::ast::PatternElement::Node(node) => node,
             _ => panic!("expected node pattern"),
         };
-        assert_eq!(optional_name(node.binding), Some("n"));
+        assert_eq!(optional_name(node.binding.clone()).as_deref(), Some("n"));
         let Some(LabelExpr::Single(label)) = node.label_expr.as_ref() else {
             panic!("expected Person label");
         };
@@ -351,7 +351,10 @@ mod tests {
         let PipelineStatement::Return(return_clause) = &query.statements[1] else {
             panic!("expected RETURN");
         };
-        assert_eq!(optional_name(return_clause.items[0].alias), Some("name"));
+        assert_eq!(
+            optional_name(return_clause.items[0].alias.clone()).as_deref(),
+            Some("name")
+        );
         assert!(matches!(
             return_clause.items[0].expr,
             ValueExpr::PropertyAccess { .. }
@@ -532,7 +535,10 @@ mod tests {
             panic!("expected RETURN");
         };
         assert!(return_clause.distinct);
-        assert_eq!(optional_name(return_clause.items[0].alias), Some("one"));
+        assert_eq!(
+            optional_name(return_clause.items[0].alias.clone()).as_deref(),
+            Some("one")
+        );
         assert!(matches!(query.statements[1], PipelineStatement::Sorting(_)));
         assert!(matches!(query.statements[2], PipelineStatement::Limit(_)));
     }

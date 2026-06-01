@@ -170,7 +170,7 @@ impl RecoveryState {
                 properties_diff,
             } => {
                 let row = require_live_node(&mut self.nodes, *id)?;
-                for label in labels_diff.added.iter().copied() {
+                for label in labels_diff.added.iter().cloned() {
                     row.labels.insert(label);
                 }
                 for label in labels_diff.removed.iter() {
@@ -200,7 +200,7 @@ impl RecoveryState {
                 self.edges.insert(
                     *id,
                     EdgeRow {
-                        label: *label,
+                        label: label.clone(),
                         source: *source,
                         target: *target,
                         properties: properties.clone(),
@@ -574,7 +574,7 @@ fn apply_property_diff(
     diff: &PropertyDiff,
 ) -> Result<(), crate::ProviderError> {
     for (key, value) in diff.set.iter() {
-        map.set(*key, value.clone())
+        map.set(key.clone(), value.clone())
             .map_err(|error| inconsistent(format!("WAL replay property set failed: {error}")))?;
     }
     for key in diff.removed.iter() {

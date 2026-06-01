@@ -29,7 +29,7 @@ fn linear_node_scan(label: IStr) -> NodeOrEdgeScan {
 fn disjunction_anchor(labels: &[IStr]) -> NodeOrEdgeScan {
     let parts: Vec<LabelExpr> = labels
         .iter()
-        .map(|label| LabelExpr::Single(*label))
+        .map(|label| LabelExpr::Single(label.clone()))
         .collect();
     let disjunction = LabelExpr::Disjunction(
         Vec2OrMore::try_from_vec(parts).expect("≥ 2 labels for a disjunction anchor"),
@@ -49,7 +49,7 @@ fn disjunction_anchor(labels: &[IStr]) -> NodeOrEdgeScan {
 fn disjunctive_scan_construction_two_branches() {
     let a = istr("A");
     let b = istr("B");
-    let branches = vec![linear_node_scan(a), linear_node_scan(b)];
+    let branches = vec![linear_node_scan(a.clone()), linear_node_scan(b.clone())];
     let scan_anchor = disjunction_anchor(&[a, b]);
 
     let tree = JoinTree::DisjunctiveScan {
@@ -85,7 +85,7 @@ fn disjunctive_scan_clone_and_debug() {
         .copied()
         .map(istr)
         .collect();
-    let branches: Vec<NodeOrEdgeScan> = labels.iter().copied().map(linear_node_scan).collect();
+    let branches: Vec<NodeOrEdgeScan> = labels.iter().cloned().map(linear_node_scan).collect();
     let tree = JoinTree::DisjunctiveScan {
         branches,
         scan_anchor: disjunction_anchor(&labels),
@@ -120,7 +120,7 @@ fn disjunctive_scan_branches_inherit_scan_kind() {
     // Even though the rule only fires on `ScanKind::Node` (F6), the IR shape
     // itself doesn't restrict the kind — guard against accidental coupling.
     let label = istr("Foo");
-    let mut branch = linear_node_scan(label);
+    let mut branch = linear_node_scan(label.clone());
     branch.kind = ScanKind::Node;
     let anchor = disjunction_anchor(&[label, istr("Bar")]);
 

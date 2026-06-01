@@ -20,7 +20,7 @@ fn fixture_small() -> (SharedGraph, [NodeId; 3]) {
     let mut txn = shared.begin_write();
     let n1 = txn
         .mutator()
-        .create_node(LabelSet::single(person), PropertyMap::new())
+        .create_node(LabelSet::single(person.clone()), PropertyMap::new())
         .unwrap();
     let n2 = txn
         .mutator()

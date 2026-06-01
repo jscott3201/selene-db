@@ -27,8 +27,8 @@ pub(super) fn assert_arms_column_name_equal(
             return Err(PlannerError::SetOpArmsNotCombinable {
                 op: op_name(op),
                 position,
-                lhs: lhs_col.name,
-                rhs: rhs_col.name,
+                lhs: lhs_col.name.clone(),
+                rhs: rhs_col.name.clone(),
                 span,
             });
         }

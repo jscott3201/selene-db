@@ -197,14 +197,14 @@ impl EdgeEndpointDef {
     #[must_use]
     pub fn one_of(refs: impl IntoIterator<Item = NodeTypeRef>) -> Self {
         let mut buf: SmallVec<[NodeTypeRef; 4]> = refs.into_iter().collect();
-        buf.sort_unstable_by_key(|node| node.0);
+        buf.sort_unstable_by(|a, b| a.0.cmp(&b.0));
         buf.dedup();
         assert!(
             !buf.is_empty(),
             "EdgeEndpointDef::one_of called with empty NodeTypeRef set"
         );
         match buf.len() {
-            1 => Self::NodeType(buf[0]),
+            1 => Self::NodeType(buf[0].clone()),
             _ => Self::OneOf(buf),
         }
     }
@@ -308,7 +308,7 @@ pub enum ValidationMode {
 }
 
 /// Node type reference by label.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[repr(transparent)]
 pub struct NodeTypeRef(pub IStr);
 

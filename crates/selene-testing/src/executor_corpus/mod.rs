@@ -73,11 +73,11 @@ impl ExecutorCorpus {
     pub fn standard_mock_catalog() -> MockIndexCatalog {
         let person = istr("Person");
         MockIndexCatalog::new()
-            .with_node_label_index(person)
-            .with_node_typed_index(person, istr("age"), IndexKind::Integer)
-            .with_node_typed_index(person, istr("email"), IndexKind::String)
-            .with_node_typed_index(person, istr("kind"), IndexKind::String)
-            .with_node_typed_index(person, istr("tenant"), IndexKind::String)
+            .with_node_label_index(person.clone())
+            .with_node_typed_index(person.clone(), istr("age"), IndexKind::Integer)
+            .with_node_typed_index(person.clone(), istr("email"), IndexKind::String)
+            .with_node_typed_index(person.clone(), istr("kind"), IndexKind::String)
+            .with_node_typed_index(person.clone(), istr("tenant"), IndexKind::String)
             .with_node_composite_index(
                 person,
                 vec![

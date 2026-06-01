@@ -33,7 +33,7 @@ fn fixture_small() -> (SharedGraph, [NodeId; 3], [IStr; 2]) {
     let mut txn = shared.begin_write();
     let n1 = txn
         .mutator()
-        .create_node(LabelSet::single(person), PropertyMap::new())
+        .create_node(LabelSet::single(person.clone()), PropertyMap::new())
         .unwrap();
     let n2 = txn
         .mutator()
@@ -45,14 +45,14 @@ fn fixture_small() -> (SharedGraph, [NodeId; 3], [IStr; 2]) {
         .unwrap();
 
     txn.mutator()
-        .create_edge(friend, n1, n2, weight_props(2.5))
+        .create_edge(friend.clone(), n1, n2, weight_props(2.5))
         .unwrap();
     txn.mutator()
-        .create_edge(friend, n2, n3, weight_props(4.0))
+        .create_edge(friend.clone(), n2, n3, weight_props(4.0))
         .unwrap();
     // Edge with no weight property — exercises §O.2 default-to-1.0.
     txn.mutator()
-        .create_edge(employs, n3, n1, PropertyMap::new())
+        .create_edge(employs.clone(), n3, n1, PropertyMap::new())
         .unwrap();
 
     txn.commit().unwrap();
@@ -120,7 +120,7 @@ fn projection_edge_label_filter() {
         &ProjectionConfig {
             name: "friends".to_string(),
             node_labels: vec![],
-            edge_labels: vec![friend],
+            edge_labels: vec![friend.clone()],
             weight_property: None,
         },
         None,
@@ -146,13 +146,18 @@ fn projection_transpose_invariant_holds_on_directed_dag() {
     for _ in 0..4 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     for (source, target) in [(0, 1), (1, 2), (2, 3)] {
         txn.mutator()
-            .create_edge(rel, nodes[source], nodes[target], PropertyMap::new())
+            .create_edge(
+                rel.clone(),
+                nodes[source],
+                nodes[target],
+                PropertyMap::new(),
+            )
             .unwrap();
     }
     txn.commit().unwrap();
@@ -186,22 +191,22 @@ fn projection_transpose_invariant_holds_on_label_filtered_non_reciprocal() {
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let c = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let d = txn
         .mutator()
         .create_node(LabelSet::single(label), PropertyMap::new())
         .unwrap();
     txn.mutator()
-        .create_edge(knows, a, b, PropertyMap::new())
+        .create_edge(knows.clone(), a, b, PropertyMap::new())
         .unwrap();
     txn.mutator()
         .create_edge(owns, c, d, PropertyMap::new())
@@ -301,7 +306,7 @@ fn projection_weight_uint_coerced_to_f64() {
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
@@ -347,11 +352,11 @@ fn projection_weight_null_or_non_numeric_defaults_to_one() {
     let mut txn = shared.begin_write();
     let a = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let b = txn
         .mutator()
-        .create_node(LabelSet::single(label), PropertyMap::new())
+        .create_node(LabelSet::single(label.clone()), PropertyMap::new())
         .unwrap();
     let c = txn
         .mutator()
@@ -359,7 +364,7 @@ fn projection_weight_null_or_non_numeric_defaults_to_one() {
         .unwrap();
     // a -> b: weight present but Null.
     txn.mutator()
-        .create_edge(rel, a, b, props_with_weight(Value::Null))
+        .create_edge(rel.clone(), a, b, props_with_weight(Value::Null))
         .unwrap();
     // b -> c: weight present but non-numeric (Bool).
     txn.mutator()
@@ -479,7 +484,7 @@ proptest! {
         for _ in 0..8 {
             let id = txn
                 .mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap();
             nodes.push(id);
         }
@@ -494,7 +499,7 @@ proptest! {
             let tgt_idx = ((state >> 8) % 8) as usize;
             txn
                 .mutator()
-                .create_edge(rel, nodes[src_idx], nodes[tgt_idx], PropertyMap::new())
+                .create_edge(rel.clone(), nodes[src_idx], nodes[tgt_idx], PropertyMap::new())
                 .unwrap();
         }
         txn.commit().unwrap();

@@ -17,27 +17,27 @@ fn create_property_index_builds_from_existing_nodes() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(person),
-                property_map([(age, Value::Int(30))]),
+                LabelSet::single(person.clone()),
+                property_map([(age.clone(), Value::Int(30))]),
             )
             .unwrap();
         mutator
             .create_node(
-                LabelSet::single(person),
-                property_map([(age, Value::Int(40))]),
+                LabelSet::single(person.clone()),
+                property_map([(age.clone(), Value::Int(40))]),
             )
             .unwrap();
         mutator
             .create_node(
                 LabelSet::single(order),
-                property_map([(age, Value::Int(30))]),
+                property_map([(age.clone(), Value::Int(30))]),
             )
             .unwrap();
         txn.commit().unwrap();
     }
 
     shared
-        .create_property_index(person, age, TypedIndexKind::I64)
+        .create_property_index(person.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
 
     let snapshot = shared.read();
@@ -54,11 +54,11 @@ fn create_property_index_rejects_duplicates() {
     let label = intern("prop.duplicate.label").unwrap();
     let property = intern("prop.duplicate.property").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
 
     let err = shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap_err();
 
     assert!(matches!(
@@ -80,15 +80,15 @@ fn create_property_index_rejects_existing_kind_violations() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(label),
-                property_map([(property, Value::String(intern("wrong").unwrap()))]),
+                LabelSet::single(label.clone()),
+                property_map([(property.clone(), Value::String(intern("wrong").unwrap()))]),
             )
             .unwrap();
         txn.commit().unwrap();
     }
 
     let err = shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap_err();
 
     assert!(matches!(
@@ -108,11 +108,13 @@ fn drop_property_index_is_idempotent() {
     let label = intern("prop.drop.label").unwrap();
     let property = intern("prop.drop.property").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     assert_eq!(shared.read().property_index_count(), 1);
 
-    shared.drop_property_index(label, property).unwrap();
+    shared
+        .drop_property_index(label.clone(), property.clone())
+        .unwrap();
     shared.drop_property_index(label, property).unwrap();
 
     assert_eq!(shared.read().property_index_count(), 0);
@@ -124,28 +126,28 @@ fn property_index_tracks_create_update_delete_in_one_commit() {
     let label = intern("prop.track.label").unwrap();
     let property = intern("prop.track.property").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     let mut txn = shared.begin_write();
     {
         let mut mutator = txn.mutator();
         let first = mutator
             .create_node(
-                LabelSet::single(label),
-                property_map([(property, Value::Int(30))]),
+                LabelSet::single(label.clone()),
+                property_map([(property.clone(), Value::Int(30))]),
             )
             .unwrap();
         let second = mutator
             .create_node(
-                LabelSet::single(label),
-                property_map([(property, Value::Int(30))]),
+                LabelSet::single(label.clone()),
+                property_map([(property.clone(), Value::Int(30))]),
             )
             .unwrap();
         mutator
             .update_node(
                 first,
                 LabelDiff::new([], []).unwrap(),
-                PropertyDiff::new([(property, Value::Int(31))], []).unwrap(),
+                PropertyDiff::new([(property.clone(), Value::Int(31))], []).unwrap(),
             )
             .unwrap();
         mutator.delete_node(second).unwrap();
@@ -180,15 +182,15 @@ fn property_range_lookup_unions_matching_keys() {
         for value in [1, 2, 3, 4] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
-                    property_map([(property, Value::Int(value))]),
+                    LabelSet::single(label.clone()),
+                    property_map([(property.clone(), Value::Int(value))]),
                 )
                 .unwrap();
         }
         txn.commit().unwrap();
     }
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
 
     let rows = shared
@@ -212,23 +214,29 @@ fn property_prefix_lookup_is_string_only() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(label),
-                property_map([(name, Value::String(ada)), (age, Value::Int(36))]),
+                LabelSet::single(label.clone()),
+                property_map([
+                    (name.clone(), Value::String(ada)),
+                    (age.clone(), Value::Int(36)),
+                ]),
             )
             .unwrap();
         mutator
             .create_node(
-                LabelSet::single(label),
-                property_map([(name, Value::String(grace)), (age, Value::Int(85))]),
+                LabelSet::single(label.clone()),
+                property_map([
+                    (name.clone(), Value::String(grace)),
+                    (age.clone(), Value::Int(85)),
+                ]),
             )
             .unwrap();
         txn.commit().unwrap();
     }
     shared
-        .create_property_index(label, name, TypedIndexKind::String)
+        .create_property_index(label.clone(), name.clone(), TypedIndexKind::String)
         .unwrap();
     shared
-        .create_property_index(label, age, TypedIndexKind::I64)
+        .create_property_index(label.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
 
     let snapshot = shared.read();
@@ -254,23 +262,23 @@ fn cross_label_property_indexes_are_independent() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(person),
-                property_map([(age, Value::Int(30))]),
+                LabelSet::single(person.clone()),
+                property_map([(age.clone(), Value::Int(30))]),
             )
             .unwrap();
         mutator
             .create_node(
-                LabelSet::single(order),
-                property_map([(age, Value::Int(30))]),
+                LabelSet::single(order.clone()),
+                property_map([(age.clone(), Value::Int(30))]),
             )
             .unwrap();
         txn.commit().unwrap();
     }
     shared
-        .create_property_index(person, age, TypedIndexKind::I64)
+        .create_property_index(person.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
     shared
-        .create_property_index(order, age, TypedIndexKind::I64)
+        .create_property_index(order.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
 
     let snapshot = shared.read();
@@ -313,7 +321,7 @@ proptest! {
         let shared = SharedGraph::new(GraphId::new(1));
         let label = intern("prop.sequence.label").unwrap();
         let property = intern("prop.sequence.property").unwrap();
-        shared.create_property_index(label, property, TypedIndexKind::I64).unwrap();
+        shared.create_property_index(label.clone(), property.clone(), TypedIndexKind::I64).unwrap();
         let mut nodes: Vec<(NodeId, bool)> = Vec::new();
 
         for op in ops {
@@ -328,8 +336,8 @@ proptest! {
                 match op % 4 {
                     0 | 3 => {
                         let id = mutator.create_node(
-                            LabelSet::single(label),
-                            property_map([(property, Value::Int((op % 5) as i64))]),
+                            LabelSet::single(label.clone()),
+                            property_map([(property.clone(), Value::Int((op % 5) as i64))]),
                         ).unwrap();
                         nodes.push((id, true));
                     }
@@ -338,7 +346,7 @@ proptest! {
                         mutator.update_node(
                             nodes[pos].0,
                             LabelDiff::new([], []).unwrap(),
-                            PropertyDiff::new([(property, Value::Int(((op + 1) % 5) as i64))], []).unwrap(),
+                            PropertyDiff::new([(property.clone(), Value::Int(((op + 1) % 5) as i64))], []).unwrap(),
                         ).unwrap();
                     }
                     2 if !live_positions.is_empty() => {
@@ -352,7 +360,7 @@ proptest! {
             txn.commit().unwrap();
             let snapshot = shared.read();
             for value in 0..5 {
-                let expected = brute_force_i64(&snapshot, label, property, value);
+                let expected = brute_force_i64(&snapshot, label.clone(), property.clone(), value);
                 let actual = snapshot
                     .nodes_with_property_eq(&label, &property, &Value::Int(value))
                     .unwrap();

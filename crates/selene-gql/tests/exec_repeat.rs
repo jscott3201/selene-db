@@ -156,10 +156,10 @@ fn repeat_checks_cancellation_during_traversal() {
             .expect("root inserts");
         for _ in 0..1100 {
             let target = mutator
-                .create_node(LabelSet::single(target_label), props([]))
+                .create_node(LabelSet::single(target_label.clone()), props([]))
                 .expect("target inserts");
             mutator
-                .create_edge(edge_label, root, target, props([]))
+                .create_edge(edge_label.clone(), root, target, props([]))
                 .expect("edge inserts");
         }
         txn.commit().expect("fixture commits");
@@ -194,7 +194,7 @@ fn repeat_checks_cancellation_between_source_rows_without_adjacent_edges() {
         let mut mutator = txn.mutator();
         for _ in 0..1100 {
             mutator
-                .create_node(LabelSet::single(root_label), props([]))
+                .create_node(LabelSet::single(root_label.clone()), props([]))
                 .expect("root inserts");
         }
         txn.commit().expect("fixture commits");

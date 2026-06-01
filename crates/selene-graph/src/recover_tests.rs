@@ -224,7 +224,7 @@ fn recover_from_wal_only_replays_changes_to_state() {
         node_created(2),
         Change::EdgeCreated {
             id: EdgeId::new(1),
-            label: edge_label,
+            label: edge_label.clone(),
             source: NodeId::new(1),
             target: NodeId::new(2),
             properties: prop("recover.wal.weight", Value::Int(5)),
@@ -279,10 +279,10 @@ fn recover_closed_wal_only_replays_catalog_ddl() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
-                LabelSet::single(sensor),
+                sensor.clone(),
+                LabelSet::single(sensor.clone()),
                 vec![PropertyTypeDef {
-                    name: serial,
+                    name: serial.clone(),
                     value_type: selene_core::PropertyValueType::String,
                     list_element_type: None,
                     required: false,
@@ -344,10 +344,10 @@ fn recover_closed_wal_only_preserves_typed_list_property() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node_type(
-                sensor,
+                sensor.clone(),
                 LabelSet::single(sensor),
                 vec![PropertyTypeDef {
-                    name: readings,
+                    name: readings.clone(),
                     value_type: selene_core::PropertyValueType::List,
                     list_element_type: Some(element_type.clone()),
                     required: false,
@@ -382,13 +382,13 @@ fn recover_closed_wal_only_preserves_any_edge_endpoints() {
         name: intern("recover.any.edge.graph").unwrap(),
         node_types: vec![
             crate::NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
             },
             crate::NodeTypeDef {
-                name: company,
+                name: company.clone(),
                 key_labels: LabelSet::single(company),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -405,7 +405,7 @@ fn recover_closed_wal_only_preserves_any_edge_endpoints() {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_edge_type(
-                rel,
+                rel.clone(),
                 rel,
                 EdgeEndpointDef::Any,
                 EdgeEndpointDef::Any,
@@ -456,7 +456,7 @@ fn recover_closed_rejects_overdeep_typed_list_property() {
             graph: graph_id,
             change: SchemaChange::NodeTypeAddedV2 {
                 graph_type,
-                label: sensor,
+                label: sensor.clone(),
                 def: selene_core::NodeTypeDef {
                     labels: LabelSet::single(sensor),
                     properties: smallvec![PropertyDef {
@@ -658,7 +658,7 @@ fn recover_round_trips_property_index_registrations() {
     let label = intern("recover.node").unwrap();
     let property = intern("recover.index").unwrap();
     shared
-        .create_property_index(label, property, TypedIndexKind::I64)
+        .create_property_index(label.clone(), property.clone(), TypedIndexKind::I64)
         .unwrap();
     write_snapshot(&dir, &shared, shared.read().meta.generation);
 
@@ -684,7 +684,12 @@ fn recover_round_trips_named_property_index_registrations() {
     let property = intern("recover.named.index").unwrap();
     let name = intern("recover_named_index").unwrap();
     shared
-        .create_property_index_named(label, property, TypedIndexKind::I64, Some(name))
+        .create_property_index_named(
+            label.clone(),
+            property.clone(),
+            TypedIndexKind::I64,
+            Some(name.clone()),
+        )
         .unwrap();
     write_snapshot(&dir, &shared, shared.read().meta.generation);
 

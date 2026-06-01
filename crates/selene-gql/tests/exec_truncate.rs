@@ -70,10 +70,10 @@ fn fixture() -> SharedGraph {
         let e = istr("REL");
         let mut m = txn.mutator();
         let n0 = m
-            .create_node(LabelSet::single(l), PropertyMap::new())
+            .create_node(LabelSet::single(l.clone()), PropertyMap::new())
             .unwrap();
         let n1 = m
-            .create_node(LabelSet::single(l), PropertyMap::new())
+            .create_node(LabelSet::single(l.clone()), PropertyMap::new())
             .unwrap();
         let n2 = m
             .create_node(LabelSet::single(l), PropertyMap::new())
@@ -81,9 +81,11 @@ fn fixture() -> SharedGraph {
         let k = m
             .create_node(LabelSet::single(keep), PropertyMap::new())
             .unwrap();
-        m.create_edge(e, n0, n1, PropertyMap::new()).unwrap();
-        m.create_edge(e, n1, n2, PropertyMap::new()).unwrap();
-        m.create_edge(e, n2, k, PropertyMap::new()).unwrap();
+        m.create_edge(e.clone(), n0, n1, PropertyMap::new())
+            .unwrap();
+        m.create_edge(e.clone(), n1, n2, PropertyMap::new())
+            .unwrap();
+        m.create_edge(e.clone(), n2, k, PropertyMap::new()).unwrap();
         m.create_edge(e, k, k, PropertyMap::new()).unwrap(); // survivor
     }
     txn.commit().expect("fixture commits");
@@ -119,8 +121,8 @@ fn truncate_node_type_equals_detach_delete_end_to_end() {
         "truncate writes exactly one change"
     );
     assert!(matches!(
-        outcome.changes[0],
-        Change::NodesOfTypeTruncated { label } if label == istr("L")
+        &outcome.changes[0],
+        Change::NodesOfTypeTruncated { label } if *label == istr("L")
     ));
 
     run_write(&detached, &planned("MATCH (n:L) DETACH DELETE n")).expect("detach delete executes");
@@ -150,8 +152,8 @@ fn truncate_edge_type_writes_one_change_end_to_end() {
         run_write(&graph, &planned("TRUNCATE EDGE TYPE :REL")).expect("edge truncate executes");
     assert_eq!(outcome.changes.len(), 1);
     assert!(matches!(
-        outcome.changes[0],
-        Change::EdgesOfTypeTruncated { label } if label == istr("REL")
+        &outcome.changes[0],
+        Change::EdgesOfTypeTruncated { label } if *label == istr("REL")
     ));
     let g = graph.read();
     assert_eq!(g.edge_count(), 0, "all REL edges removed");

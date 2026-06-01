@@ -75,8 +75,8 @@ fn bind_graph_pattern(
     pattern: &GraphPattern,
     mode: PatternBindingMode,
 ) -> Result<(), AnalysisError> {
-    if let Some(name) = pattern.path_binding {
-        ctx.declare_or_reuse(BindingDeclKind::PathBinding, name, pattern.span)?;
+    if let Some(name) = &pattern.path_binding {
+        ctx.declare_or_reuse(BindingDeclKind::PathBinding, name.clone(), pattern.span)?;
     }
 
     for element in &pattern.elements {
@@ -93,13 +93,17 @@ fn bind_node_pattern(
     node: &NodePattern,
     mode: PatternBindingMode,
 ) -> Result<(), AnalysisError> {
-    if let Some(name) = node.binding {
+    if let Some(name) = &node.binding {
         let kind = match mode {
             PatternBindingMode::Match => BindingDeclKind::NodePattern,
             PatternBindingMode::Insert { .. } => BindingDeclKind::InsertNode,
         };
-        let (binding, reused) =
-            ctx.declare_or_reuse_with_labels_info(kind, name, node.span, node.label_expr.clone())?;
+        let (binding, reused) = ctx.declare_or_reuse_with_labels_info(
+            kind,
+            name.clone(),
+            node.span,
+            node.label_expr.clone(),
+        )?;
         if let PatternBindingMode::Insert { statement_index } = mode
             && !reused
         {
@@ -141,7 +145,7 @@ fn bind_edge_pattern(
     edge: &EdgePattern,
     mode: PatternBindingMode,
 ) -> Result<(), AnalysisError> {
-    if let Some(name) = edge.binding {
+    if let Some(name) = &edge.binding {
         let kind = match mode {
             PatternBindingMode::Match => BindingDeclKind::EdgePattern,
             PatternBindingMode::Insert { .. } => BindingDeclKind::InsertEdge,
@@ -149,7 +153,7 @@ fn bind_edge_pattern(
         let ty = edge_binding_type(edge, mode);
         let (binding, reused) = ctx.declare_or_reuse_with_labels_typed_info(
             kind,
-            name,
+            name.clone(),
             edge.span,
             ty,
             edge.label_expr.clone(),

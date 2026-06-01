@@ -13,7 +13,7 @@ use crate::typed_index::{NotNanError, NotNanF64, TypedIndexKind, TypedIndexValue
 pub type CompositeKey = SmallVec<[CompositeKeyComponent; 4]>;
 
 /// One ordered component in a [`CompositeKey`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CompositeKeyComponent {
     /// Signed integer component.
     I64(i64),
@@ -65,7 +65,7 @@ impl Hash for CompositeKeyComponent {
 }
 
 impl CompositeKeyComponent {
-    const fn discriminant(self) -> u8 {
+    const fn discriminant(&self) -> u8 {
         match self {
             Self::I64(_) => 0,
             Self::F64(_) => 1,
@@ -371,7 +371,9 @@ fn component_from_value_admit(
             .map_err(|NotNanError| TypedIndexValueError::NaN {
                 expected_kind: TypedIndexKind::F64,
             }),
-        (TypedIndexKind::String, Value::String(value)) => Ok(CompositeKeyComponent::String(*value)),
+        (TypedIndexKind::String, Value::String(value)) => {
+            Ok(CompositeKeyComponent::String(value.clone()))
+        }
         (TypedIndexKind::String, Value::ExternalString(value)) => {
             match selene_core::intern(value.as_ref()) {
                 Ok(interned) => Ok(CompositeKeyComponent::String(interned)),
@@ -405,7 +407,7 @@ fn component_from_value_lookup(
                 expected_kind: TypedIndexKind::F64,
             }),
         (TypedIndexKind::String, Value::String(value)) => {
-            Ok(Some(CompositeKeyComponent::String(*value)))
+            Ok(Some(CompositeKeyComponent::String(value.clone())))
         }
         (TypedIndexKind::String, Value::ExternalString(value)) => {
             Ok(selene_core::lookup(value.as_ref()).map(CompositeKeyComponent::String))

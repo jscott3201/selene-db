@@ -63,8 +63,8 @@ fn cycle_graph() -> SharedGraph {
         let mut mutator = txn.mutator();
         let a = mutator
             .create_node(
-                LabelSet::single(node),
-                props([(name, Value::String(istr("A")))]),
+                LabelSet::single(node.clone()),
+                props([(name.clone(), Value::String(istr("A")))]),
             )
             .expect("A inserts");
         let b = mutator
@@ -73,7 +73,9 @@ fn cycle_graph() -> SharedGraph {
                 props([(name, Value::String(istr("B")))]),
             )
             .expect("B inserts");
-        mutator.create_edge(edge, a, b, props([])).expect("edge 1");
+        mutator
+            .create_edge(edge.clone(), a, b, props([]))
+            .expect("edge 1");
         mutator.create_edge(edge, b, a, props([])).expect("edge 2");
         txn.commit().expect("fixture commits");
     }
@@ -88,10 +90,12 @@ fn chain_graph() -> SharedGraph {
     {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
-        let a = named_node(&mut mutator, node, name, "A");
-        let b = named_node(&mut mutator, node, name, "B");
+        let a = named_node(&mut mutator, node.clone(), name.clone(), "A");
+        let b = named_node(&mut mutator, node.clone(), name.clone(), "B");
         let c = named_node(&mut mutator, node, name, "C");
-        mutator.create_edge(edge, a, b, props([])).expect("edge 1");
+        mutator
+            .create_edge(edge.clone(), a, b, props([]))
+            .expect("edge 1");
         mutator.create_edge(edge, b, c, props([])).expect("edge 2");
         txn.commit().expect("fixture commits");
     }

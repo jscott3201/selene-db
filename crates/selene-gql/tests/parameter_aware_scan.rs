@@ -64,10 +64,10 @@ fn person_graph_with_name_index() -> (SharedGraph, MockIndexCatalog) {
         ] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
+                    LabelSet::single(label.clone()),
                     props([
-                        (id_key, Value::Int(id)),
-                        (name_key, Value::String(istr(name))),
+                        (id_key.clone(), Value::Int(id)),
+                        (name_key.clone(), Value::String(istr(name))),
                     ]),
                 )
                 .expect("person inserts");
@@ -77,7 +77,7 @@ fn person_graph_with_name_index() -> (SharedGraph, MockIndexCatalog) {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_property_index(label, name_key, TypedIndexKind::String)
+            .create_property_index(label.clone(), name_key.clone(), TypedIndexKind::String)
             .expect("name index registers");
         txn.commit().expect("index commit");
     }
@@ -408,8 +408,11 @@ fn equality_after_range_keeps_range_as_residual_filter() {
         for age in [5_i64, 15, 25] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
-                    props([(istr("id"), Value::Int(age)), (age_key, Value::Int(age))]),
+                    LabelSet::single(label.clone()),
+                    props([
+                        (istr("id"), Value::Int(age)),
+                        (age_key.clone(), Value::Int(age)),
+                    ]),
                 )
                 .expect("age node inserts");
         }
@@ -418,12 +421,12 @@ fn equality_after_range_keeps_range_as_residual_filter() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_property_index(label, age_key, TypedIndexKind::I64)
+            .create_property_index(label.clone(), age_key.clone(), TypedIndexKind::I64)
             .expect("age index registers");
         txn.commit().expect("index commit");
     }
     let catalog = MockIndexCatalog::new()
-        .with_node_typed_index(label, istr("name"), IndexKind::String)
+        .with_node_typed_index(label.clone(), istr("name"), IndexKind::String)
         .with_node_typed_index(label, age_key, IndexKind::Integer);
 
     // Parameter equality after range: `$p = 5` AND `age > 10` should be empty
@@ -487,8 +490,11 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
         for age in [20_i64, 35, 50] {
             mutator
                 .create_node(
-                    LabelSet::single(label),
-                    props([(istr("id"), Value::Int(age)), (age_key, Value::Int(age))]),
+                    LabelSet::single(label.clone()),
+                    props([
+                        (istr("id"), Value::Int(age)),
+                        (age_key.clone(), Value::Int(age)),
+                    ]),
                 )
                 .expect("age node inserts");
         }
@@ -497,12 +503,12 @@ fn range_with_inverted_parameter_bounds_returns_empty_not_panic() {
     {
         let mut txn = graph.begin_write();
         txn.mutator()
-            .create_property_index(label, age_key, TypedIndexKind::I64)
+            .create_property_index(label.clone(), age_key.clone(), TypedIndexKind::I64)
             .expect("age index registers");
         txn.commit().expect("index commit");
     }
     let catalog = MockIndexCatalog::new()
-        .with_node_typed_index(label, istr("name"), IndexKind::String)
+        .with_node_typed_index(label.clone(), istr("name"), IndexKind::String)
         .with_node_typed_index(label, age_key, IndexKind::Integer);
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.age > $lo AND n.age < $hi RETURN n.id AS id",

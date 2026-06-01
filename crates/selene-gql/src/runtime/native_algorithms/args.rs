@@ -63,7 +63,7 @@ pub(super) fn nullable_istr(
 ) -> Result<Option<IStr>, ProcedureError> {
     match &args[index] {
         Value::Null => Ok(None),
-        Value::String(value) => Ok(Some(*value)),
+        Value::String(value) => Ok(Some(value.clone())),
         Value::ExternalString(value) => Ok(Some(intern_label(procedure, name, value)?)),
         other => Err(invalid_argument(format!(
             "{procedure} expected {name} to be STRING or NULL, got {other:?}"
@@ -83,7 +83,7 @@ pub(super) fn nullable_istr_list(
             .iter()
             .enumerate()
             .map(|(item_index, value)| match value {
-                Value::String(value) => Ok(*value),
+                Value::String(value) => Ok(value.clone()),
                 Value::ExternalString(value) => intern_label(procedure, name, value),
                 other => Err(invalid_argument(format!(
                     "{procedure} expected {name}[{item_index}] to be STRING, got {other:?}"

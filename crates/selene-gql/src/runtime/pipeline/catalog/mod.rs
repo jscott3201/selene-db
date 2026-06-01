@@ -51,7 +51,7 @@ pub(super) fn execute(
             name,
             if_exists,
             span,
-        } => drop_graph::execute_drop_graph(*name, *if_exists, *span, table, ctx),
+        } => drop_graph::execute_drop_graph(name.clone(), *if_exists, *span, table, ctx),
         CatalogOp::CreateNodeType {
             label,
             or_replace,
@@ -63,24 +63,24 @@ pub(super) fn execute(
         } => {
             reject_or_replace(*or_replace)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            if node_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
+            if node_type_exists(ctx.snapshot().meta.bound_type.as_deref(), label.clone()) {
                 if *if_not_exists {
                     return Ok(table);
                 }
                 return Err(ExecutorError::DuplicateObject {
                     kind: "node type",
-                    name: *label,
+                    name: label.clone(),
                     span: *span,
                 });
             }
             let indexes = inline_index_specs(properties)?;
-            validate_index_name_collisions(*label, &indexes, ctx.snapshot())?;
+            validate_index_name_collisions(label.clone(), &indexes, ctx.snapshot())?;
             let properties = property_defs(properties, true)?;
             let properties = if let Some(parent) = extends {
                 compose_node_properties(
                     &closed_graph_type(ctx.snapshot(), *span)?,
-                    *label,
-                    *parent,
+                    label.clone(),
+                    parent.clone(),
                     properties,
                     *span,
                 )?
@@ -92,15 +92,20 @@ pub(super) fn execute(
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?;
                 mutator
                     .create_node_type(
-                        *label,
-                        LabelSet::single(*label),
+                        label.clone(),
+                        LabelSet::single(label.clone()),
                         properties,
                         graph_validation_mode(*validation_mode),
                     )
                     .map_err(|source| catalog_graph_error(source, *span))?;
                 for index in indexes {
                     mutator
-                        .create_property_index_named(*label, index.property, index.kind, index.name)
+                        .create_property_index_named(
+                            label.clone(),
+                            index.property,
+                            index.kind,
+                            index.name,
+                        )
                         .map_err(|source| catalog_graph_error(source, index.span))?;
                 }
             }
@@ -118,13 +123,13 @@ pub(super) fn execute(
         } => {
             reject_or_replace(*or_replace)?;
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), *label) {
+            if edge_type_exists(ctx.snapshot().meta.bound_type.as_deref(), label.clone()) {
                 if *if_not_exists {
                     return Ok(table);
                 }
                 return Err(ExecutorError::DuplicateObject {
                     kind: "edge type",
-                    name: *label,
+                    name: label.clone(),
                     span: *span,
                 });
             }
@@ -136,14 +141,20 @@ pub(super) fn execute(
                 .unwrap_or((EdgeEndpointDef::Any, EdgeEndpointDef::Any));
             let properties = property_defs(properties, false)?;
             let properties = if let Some(parent) = extends {
-                compose_edge_properties(&graph_type, *label, *parent, properties, *span)?
+                compose_edge_properties(
+                    &graph_type,
+                    label.clone(),
+                    parent.clone(),
+                    properties,
+                    *span,
+                )?
             } else {
                 properties
             };
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(
-                    *label,
-                    *label,
+                    label.clone(),
+                    label.clone(),
                     source,
                     target,
                     properties,
@@ -157,13 +168,27 @@ pub(super) fn execute(
             if_exists,
             behavior,
             span,
-        } => drop_cascade::execute_drop_node_type(*label, *if_exists, *behavior, *span, table, ctx),
+        } => drop_cascade::execute_drop_node_type(
+            label.clone(),
+            *if_exists,
+            *behavior,
+            *span,
+            table,
+            ctx,
+        ),
         CatalogOp::DropEdgeType {
             label,
             if_exists,
             behavior,
             span,
-        } => drop_cascade::execute_drop_edge_type(*label, *if_exists, *behavior, *span, table, ctx),
+        } => drop_cascade::execute_drop_edge_type(
+            label.clone(),
+            *if_exists,
+            *behavior,
+            *span,
+            table,
+            ctx,
+        ),
         CatalogOp::TruncateNodeType { label, span } => {
             // TRUNCATE removes instances by label (IM_TRUNCATE, audit Item 11).
             // It is valid on both open (GG01) and closed (GG02) graphs — unlike
@@ -171,14 +196,14 @@ pub(super) fn execute(
             // gate. An absent label is a clean no-op inside the mutator.
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .truncate_node_type(*label)
+                .truncate_node_type(label.clone())
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
         CatalogOp::TruncateEdgeType { label, span } => {
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                .truncate_edge_type(*label)
+                .truncate_edge_type(label.clone())
                 .map_err(|source| catalog_graph_error(source, *span))?;
             Ok(table)
         }
@@ -190,15 +215,26 @@ pub(super) fn execute(
             span,
         } => {
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let Some(index_path) =
-                create_index_plan(ctx, *name, *label, properties, *if_not_exists, *span)?
+            let Some(index_path) = create_index_plan(
+                ctx,
+                name.clone(),
+                label.clone(),
+                properties,
+                *if_not_exists,
+                *span,
+            )?
             else {
                 return Ok(table);
             };
             match index_path {
                 IndexPath::Single { property, kind } => {
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
-                        .create_property_index_named(*label, property, kind, Some(*name))
+                        .create_property_index_named(
+                            label.clone(),
+                            property,
+                            kind,
+                            Some(name.clone()),
+                        )
                         .map_err(|source| catalog_graph_error(source, *span))?;
                 }
                 IndexPath::Composite { properties, kinds } => {
@@ -206,10 +242,10 @@ pub(super) fn execute(
                     let kinds = kinds.into_iter().collect::<SmallVec<[TypedIndexKind; 4]>>();
                     ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                         .create_composite_property_index_named(
-                            *label,
+                            label.clone(),
                             properties,
                             kinds,
-                            Some(*name),
+                            Some(name.clone()),
                         )
                         .map_err(|source| catalog_graph_error(source, *span))?;
                 }
@@ -222,7 +258,8 @@ pub(super) fn execute(
             span,
         } => {
             ctx.ensure_write_txn("catalog op invoked without write transaction", *span)?;
-            let Some(target) = resolve_drop_index(ctx.snapshot(), *name, *if_exists, *span)? else {
+            let Some(target) = resolve_drop_index(ctx.snapshot(), name.clone(), *if_exists, *span)?
+            else {
                 return Ok(table);
             };
             match target {
@@ -359,7 +396,7 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
     let rows = indexes
         .into_iter()
         .map(|(label, property, kind, name)| {
-            let name = render_index_name(label, property, name);
+            let name = render_index_name(label.clone(), property.clone(), name);
             Ok(Binding::new([
                 Value::String(intern_runtime(&name)?),
                 Value::String(label),
@@ -681,44 +718,5 @@ fn catalog_graph_error(source: GraphError, span: SourceSpan) -> ExecutorError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn istr(value: &str) -> IStr {
-        intern_with_admission(value).expect("test label admits").0
-    }
-
-    #[test]
-    fn render_partial_any_edge_endpoint_as_endpoint_less_ddl() {
-        let person = istr("Person");
-        let graph_type = GraphTypeDef {
-            name: istr("catalog.partial.any.graph"),
-            node_types: vec![NodeTypeDef {
-                name: person,
-                key_labels: LabelSet::single(person),
-                properties: Vec::new(),
-                validation_mode: GraphValidationMode::Strict,
-            }],
-            edge_types: Vec::new(),
-        };
-        let knows = istr("KNOWS");
-
-        for (source_node_type, target_node_type) in [
-            (EdgeEndpointDef::Any, EdgeEndpointDef::NodeType(0)),
-            (EdgeEndpointDef::NodeType(0), EdgeEndpointDef::Any),
-        ] {
-            let edge_type = EdgeTypeDef {
-                name: knows,
-                label: knows,
-                source_node_type,
-                target_node_type,
-                properties: Vec::new(),
-                validation_mode: GraphValidationMode::Strict,
-            };
-            let rendered =
-                render_edge_type_def(&graph_type, &edge_type).expect("edge type DDL renders");
-            assert_eq!(rendered, "CREATE EDGE TYPE :KNOWS ()");
-            crate::parse(&rendered).expect("rendered edge type DDL parses");
-        }
-    }
-}
+#[path = "mod_tests.rs"]
+mod tests;

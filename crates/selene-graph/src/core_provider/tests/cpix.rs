@@ -16,18 +16,18 @@ fn round_trip_preserves_composite_registration_metadata() {
     let ts = intern("ts").unwrap();
     let location = intern("location").unwrap();
     let name = intern("sensor_ts_location_idx").unwrap();
-    let declared_properties = smallvec![ts, location];
+    let declared_properties = smallvec![ts.clone(), location.clone()];
     let kinds = smallvec![TypedIndexKind::LocalDateTime, TypedIndexKind::String];
     let mut graph = SeleneGraph::new(GraphId::new(9992));
     graph.composite_property_index.insert(
         (
-            label,
+            label.clone(),
             crate::graph::composite_property_key(&declared_properties),
         ),
         CompositePropertyIndexEntry::new(
             CompositeTypedIndex::new(kinds.clone()),
             declared_properties,
-            Some(name),
+            Some(name.clone()),
         ),
     );
 
@@ -56,8 +56,8 @@ fn decode_rejects_duplicate_canonical_property_sets() {
     let rows = vec![
         (
             CompositeSchemaKey {
-                label,
-                properties: vec![left, right],
+                label: label.clone(),
+                properties: vec![left.clone(), right.clone()],
             },
             CompositeSchemaEntry {
                 kinds: vec![TypedIndexKind::I64, TypedIndexKind::String],

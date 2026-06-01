@@ -138,8 +138,14 @@ fn insert_node_extends_row_with_new_node_id_at_planner_assigned_column() {
 
     let (table, _) = run_write(&graph, &plan).expect("write executes");
 
-    assert_eq!(table.schema().columns[0].name.unwrap().as_str(), "p");
-    assert_eq!(table.schema().columns[1].name.unwrap().as_str(), "n");
+    assert_eq!(
+        table.schema().columns[0].name.clone().unwrap().as_str(),
+        "p"
+    );
+    assert_eq!(
+        table.schema().columns[1].name.clone().unwrap().as_str(),
+        "n"
+    );
     assert!(matches!(table.rows()[0].get(0), Some(Value::NodeRef(_))));
     assert!(matches!(table.rows()[0].get(1), Some(Value::NodeRef(_))));
 }

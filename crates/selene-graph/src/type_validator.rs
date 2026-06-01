@@ -168,7 +168,7 @@ pub fn validate_change(
             let node_type = &type_def.node_types[node_type_index as usize];
             reject_immutable_property_update(
                 EntityId::Node(*id),
-                node_type.name,
+                node_type.name.clone(),
                 &node_type.properties,
                 properties_diff,
             )?;
@@ -196,7 +196,7 @@ pub fn validate_change(
             let (edge_type, warnings) = validate_edge_state(*id, graph, type_def)?;
             reject_immutable_property_update(
                 EntityId::Edge(*id),
-                edge_type.name,
+                edge_type.name.clone(),
                 &edge_type.properties,
                 properties_diff,
             )?;
@@ -210,9 +210,9 @@ pub fn validate_change(
             let node_type = &type_def.node_types[node_type_index as usize];
             reject_if_immutable(
                 EntityId::Node(*id),
-                node_type.name,
+                node_type.name.clone(),
                 &node_type.properties,
-                *property,
+                property.clone(),
             )?;
             Ok(warnings)
         }
@@ -223,9 +223,9 @@ pub fn validate_change(
             let (edge_type, warnings) = validate_edge_state(*id, graph, type_def)?;
             reject_if_immutable(
                 EntityId::Edge(*id),
-                edge_type.name,
+                edge_type.name.clone(),
                 &edge_type.properties,
-                *property,
+                property.clone(),
             )?;
             Ok(warnings)
         }
@@ -321,7 +321,7 @@ fn validate_node_state(
     let properties = graph.node_properties(id).unwrap_or(&empty_props);
     let warnings = validate_properties(
         EntityId::Node(id),
-        node_type.name,
+        node_type.name.clone(),
         node_type.validation_mode,
         &node_type.properties,
         properties,
@@ -334,21 +334,26 @@ fn validate_edge_state<'a>(
     graph: &SeleneGraph,
     type_def: &'a GraphTypeDef,
 ) -> Result<(&'a crate::graph_types::EdgeTypeDef, Vec<TypeWarning>), TypeViolation> {
-    let label = *graph
+    let label = graph
         .edge_label(id)
+        .cloned()
         .ok_or(TypeViolation::UnknownEdgeLabel {
             id,
             label: selene_core::intern("__selene_missing_edge_label").expect("static label admits"),
         })?;
-    let (source, target) = graph
-        .edge_endpoints(id)
-        .ok_or(TypeViolation::UnknownEdgeLabel { id, label })?;
+    let (source, target) =
+        graph
+            .edge_endpoints(id)
+            .ok_or_else(|| TypeViolation::UnknownEdgeLabel {
+                id,
+                label: label.clone(),
+            })?;
     let (source_type, mut warnings) = validate_node_state(source, graph, type_def)?;
     let (target_type, target_warnings) = validate_node_state(target, graph, type_def)?;
     warnings.extend(target_warnings);
 
-    let Some(edge_type) = type_def.find_edge_type(label, source_type, target_type) else {
-        let Some(expected) = type_def.first_edge_type_with_label(label) else {
+    let Some(edge_type) = type_def.find_edge_type(label.clone(), source_type, target_type) else {
+        let Some(expected) = type_def.first_edge_type_with_label(label.clone()) else {
             return Err(TypeViolation::UnknownEdgeLabel { id, label });
         };
         return Err(TypeViolation::EdgeEndpointTypeMismatch {
@@ -364,7 +369,7 @@ fn validate_edge_state<'a>(
     let properties = graph.edge_properties(id).unwrap_or(&empty_props);
     warnings.extend(validate_properties(
         EntityId::Edge(id),
-        edge_type.name,
+        edge_type.name.clone(),
         edge_type.validation_mode,
         &edge_type.properties,
         properties,
@@ -379,10 +384,10 @@ fn reject_immutable_property_update(
     diff: &selene_core::PropertyDiff,
 ) -> Result<(), TypeViolation> {
     for (key, _) in &diff.set {
-        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+        reject_if_immutable(entity_id, declared_in.clone(), declarations, key.clone())?;
     }
     for key in &diff.removed {
-        reject_if_immutable(entity_id, declared_in, declarations, *key)?;
+        reject_if_immutable(entity_id, declared_in.clone(), declarations, key.clone())?;
     }
     Ok(())
 }
@@ -418,7 +423,7 @@ fn validate_properties(
         let Some(declaration) = declarations.iter().find(|decl| decl.name == *key) else {
             let violation = TypeViolation::UndeclaredProperty {
                 entity_id,
-                property: *key,
+                property: key.clone(),
             };
             if validation_mode == ValidationMode::Warn {
                 warnings.push(TypeWarning { violation });
@@ -429,15 +434,15 @@ fn validate_properties(
         if matches!(value, Value::Extended { .. }) {
             return Err(TypeViolation::ExtensionValueRejected {
                 entity_id,
-                property: *key,
+                property: key.clone(),
             });
         }
         if matches!(value, Value::Null) {
             if declaration.required {
                 return Err(TypeViolation::MissingRequiredProperty {
                     entity_id,
-                    property: *key,
-                    declared_in,
+                    property: key.clone(),
+                    declared_in: declared_in.clone(),
                 });
             }
             continue;
@@ -445,7 +450,7 @@ fn validate_properties(
         if !property_value_matches(declaration, value) {
             return Err(TypeViolation::PropertyTypeMismatch {
                 entity_id,
-                property: *key,
+                property: key.clone(),
                 expected: declaration.value_type,
                 observed: PropertyValueType::observed_name(value),
             });
@@ -459,8 +464,8 @@ fn validate_properties(
         {
             return Err(TypeViolation::MissingRequiredProperty {
                 entity_id,
-                property: declaration.name,
-                declared_in,
+                property: declaration.name.clone(),
+                declared_in: declared_in.clone(),
             });
         }
     }

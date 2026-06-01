@@ -105,8 +105,10 @@ impl MockIndexCatalog {
         properties: Vec<(IStr, IndexKind)>,
     ) {
         let handle = self.next_handle();
-        let mut key_properties: Vec<IStr> =
-            properties.iter().map(|(property, _)| *property).collect();
+        let mut key_properties: Vec<IStr> = properties
+            .iter()
+            .map(|(property, _)| property.clone())
+            .collect();
         key_properties.sort();
         self.composites.insert(
             (target, label, key_properties),

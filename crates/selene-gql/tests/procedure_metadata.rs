@@ -117,6 +117,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         .map(|column| {
             column
                 .name
+                .as_ref()
                 .expect("SHOW PROCEDURES columns are named")
                 .as_str()
         })

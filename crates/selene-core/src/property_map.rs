@@ -1,9 +1,9 @@
 //! Property maps per spec 02 section 5.2.
 //!
-//! Keys are ordered in memory by [`IStr`] interner-key order for fast lookups.
-//! The wire format is different: maps serialize keys in canonical
-//! lexicographic order by [`IStr::as_str`], and deserialize by re-sorting into
-//! the receiver's local interner-key order before validating duplicate keys.
+//! Keys are ordered in memory lexicographically by [`IStr`] (through the inner
+//! `CompactString`) for fast binary-search lookups. The wire format uses that
+//! same canonical lexicographic order by [`IStr::as_str`], and deserialize
+//! re-sorts before validating duplicate keys.
 //! Compact maps are closed-shape views over a fixed key set; inserting an
 //! unknown key widens them to the standard open representation.
 
@@ -76,7 +76,7 @@ impl PropertyMap {
         }
         let mut slots: Vec<(IStr, Option<Value>)> = keys.into_iter().zip(values).collect();
         ensure_within_cap(slots.len())?;
-        slots.sort_by_key(|(key, _)| *key);
+        slots.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
         slots.dedup_by(|(lhs_key, lhs_value), (rhs_key, rhs_value)| {
             if lhs_key == rhs_key {
                 *lhs_value = rhs_value.take();
@@ -97,7 +97,7 @@ impl PropertyMap {
     pub fn get(&self, key: &IStr) -> Option<&Value> {
         match self {
             Self::Standard(entries) => entries
-                .binary_search_by_key(key, |(entry_key, _)| *entry_key)
+                .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
                 .ok()
                 .map(|idx| &entries[idx].1),
             Self::Compact { keys, values } => keys
@@ -140,7 +140,7 @@ impl PropertyMap {
     pub fn remove(&mut self, key: &IStr) -> Option<Value> {
         match self {
             Self::Standard(entries) => entries
-                .binary_search_by_key(key, |(entry_key, _)| *entry_key)
+                .binary_search_by(|(entry_key, _)| entry_key.cmp(key))
                 .ok()
                 .map(|idx| entries.remove(idx).1),
             Self::Compact { keys, values } => keys
@@ -300,7 +300,7 @@ impl Serialize for PropertyMap {
             }
             Self::Compact { keys, values } => {
                 let mut pairs: Vec<(IStr, Option<Value>)> =
-                    keys.iter().copied().zip(values.iter().cloned()).collect();
+                    keys.iter().cloned().zip(values.iter().cloned()).collect();
                 pairs.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
                 let (keys, values): (Vec<_>, SmallVec<_>) = pairs.into_iter().unzip();
                 PropertyMapWire::Compact {
@@ -321,7 +321,7 @@ impl<'de> Deserialize<'de> for PropertyMap {
         let wire = PropertyMapWire::deserialize(deserializer)?;
         match wire {
             PropertyMapWire::Standard(mut entries) => {
-                entries.sort_unstable_by_key(|(key, _)| *key);
+                entries.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
                 for window in entries.windows(2) {
                     if window[0].0 >= window[1].0 {
                         return Err(serde::de::Error::custom(
@@ -340,8 +340,8 @@ impl<'de> Deserialize<'de> for PropertyMap {
                     )));
                 }
                 let mut pairs: Vec<(IStr, Option<Value>)> =
-                    keys.iter().copied().zip(values).collect();
-                pairs.sort_unstable_by_key(|(key, _)| *key);
+                    keys.iter().cloned().zip(values).collect();
+                pairs.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
                 for window in pairs.windows(2) {
                     if window[0].0 >= window[1].0 {
                         return Err(serde::de::Error::custom(
@@ -375,7 +375,7 @@ fn set_standard(
     key: IStr,
     value: Value,
 ) -> CoreResult<()> {
-    match entries.binary_search_by_key(&key, |(entry_key, _)| *entry_key) {
+    match entries.binary_search_by(|(entry_key, _)| entry_key.cmp(&key)) {
         Ok(idx) => {
             entries[idx].1 = value;
             Ok(())
@@ -393,7 +393,7 @@ fn compact_to_standard(
     values: &SmallVec<[Option<Value>; 6]>,
 ) -> SmallVec<[(IStr, Value); 6]> {
     keys.iter()
-        .copied()
+        .cloned()
         .zip(values.iter())
         .filter_map(|(key, value)| value.clone().map(|value| (key, value)))
         .collect()
@@ -418,7 +418,7 @@ mod tests {
     fn standard_get_set_remove_round_trip() {
         let mut map = PropertyMap::new();
         let name = key("pm.name");
-        map.set(name, int(1)).unwrap();
+        map.set(name.clone(), int(1)).unwrap();
         assert_eq!(map.get(&name), Some(&int(1)));
         assert_eq!(map.remove(&name), Some(int(1)));
         assert!(map.get(&name).is_none());
@@ -437,7 +437,7 @@ mod tests {
     fn compact_get_by_known_key() {
         let a = key("pm.compact.a");
         let b = key("pm.compact.b");
-        let map = PropertyMap::compact([a, b], [Some(int(1)), None]).unwrap();
+        let map = PropertyMap::compact([a.clone(), b.clone()], [Some(int(1)), None]).unwrap();
         assert_eq!(map.get(&a), Some(&int(1)));
         assert_eq!(map.get(&b), None);
     }
@@ -447,8 +447,9 @@ mod tests {
         let a = key("pm.widen.a");
         let b = key("pm.widen.b");
         let c = key("pm.widen.c");
-        let mut map = PropertyMap::compact([a, b], [Some(int(1)), Some(int(2))]).unwrap();
-        map.set(c, int(3)).unwrap();
+        let mut map =
+            PropertyMap::compact([a.clone(), b.clone()], [Some(int(1)), Some(int(2))]).unwrap();
+        map.set(c.clone(), int(3)).unwrap();
         assert!(matches!(map, PropertyMap::Standard(_)));
         assert_eq!(map.get(&a), Some(&int(1)));
         assert_eq!(map.get(&b), Some(&int(2)));
@@ -460,7 +461,7 @@ mod tests {
         let a = key("pm.none.a");
         let b = key("pm.none.b");
         let c = key("pm.none.c");
-        let mut map = PropertyMap::compact([a, b], [None, Some(int(2))]).unwrap();
+        let mut map = PropertyMap::compact([a.clone(), b.clone()], [None, Some(int(2))]).unwrap();
         map.set(c, int(3)).unwrap();
         assert_eq!(map.get(&a), None);
         assert_eq!(map.get(&b), Some(&int(2)));
@@ -471,11 +472,15 @@ mod tests {
     fn iter_yields_keys_in_sorted_order() {
         let a = key("pm.iter.a");
         let b = key("pm.iter.b");
-        let standard = PropertyMap::from_pairs([(b, int(2)), (a, int(1))]).unwrap();
-        assert_eq!(standard.keys().copied().collect::<Vec<_>>(), vec![a, b]);
+        let standard = PropertyMap::from_pairs([(b.clone(), int(2)), (a.clone(), int(1))]).unwrap();
+        assert_eq!(
+            standard.keys().cloned().collect::<Vec<_>>(),
+            vec![a.clone(), b.clone()]
+        );
 
-        let compact = PropertyMap::compact([b, a], [Some(int(2)), Some(int(1))]).unwrap();
-        assert_eq!(compact.keys().copied().collect::<Vec<_>>(), vec![a, b]);
+        let compact =
+            PropertyMap::compact([b.clone(), a.clone()], [Some(int(2)), Some(int(1))]).unwrap();
+        assert_eq!(compact.keys().cloned().collect::<Vec<_>>(), vec![a, b]);
     }
 
     #[test]
@@ -491,7 +496,7 @@ mod tests {
     fn compact_rejects_mismatched_key_value_lengths() {
         let a = key("pm.mismatch.a");
         let b = key("pm.mismatch.b");
-        let err = PropertyMap::compact([a, b], [Some(int(1))]).unwrap_err();
+        let err = PropertyMap::compact([a.clone(), b], [Some(int(1))]).unwrap_err();
         assert!(matches!(
             err,
             CoreError::CompactKeyValueLengthMismatch { keys: 2, values: 1 }
@@ -504,12 +509,12 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_resorts_standard_keys_by_receiver_handle() {
+    fn deserialize_resorts_standard_keys_lexicographically() {
         let b = key("pm.de.std.zebra");
         let a = key("pm.de.std.apple");
         let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
-        entries.push((a, int(1)));
-        entries.push((b, int(2)));
+        entries.push((a.clone(), int(1)));
+        entries.push((b.clone(), int(2)));
         let wire = PropertyMapWire::Standard(entries);
         let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
         let result: PropertyMap = postcard::from_bytes(&bytes).unwrap();
@@ -522,7 +527,7 @@ mod tests {
     fn deserialize_rejects_duplicate_standard_keys() {
         let a = key("pm.de.std.dup");
         let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
-        entries.push((a, int(1)));
+        entries.push((a.clone(), int(1)));
         entries.push((a, int(2)));
         let wire = PropertyMapWire::Standard(entries);
         let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
@@ -544,11 +549,11 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_resorts_compact_keys_and_values_by_receiver_handle() {
+    fn deserialize_resorts_compact_keys_and_values_lexicographically() {
         let b = key("pm.de.cmpsort.zebra");
         let a = key("pm.de.cmpsort.apple");
         let wire = PropertyMapWire::Compact {
-            keys: Arc::from([a, b]),
+            keys: Arc::from([a.clone(), b.clone()]),
             values: SmallVec::from_vec(vec![Some(int(1)), Some(int(2))]),
         };
         let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
@@ -562,7 +567,7 @@ mod tests {
     fn deserialize_rejects_duplicate_compact_keys() {
         let a = key("pm.de.cmpdup.a");
         let bad = PropertyMapWire::Compact {
-            keys: Arc::from([a, a]),
+            keys: Arc::from([a.clone(), a]),
             values: SmallVec::from_vec(vec![Some(int(1)), Some(int(2))]),
         };
         let bytes = postcard::to_allocvec(&bad_wire_map(bad)).unwrap();
@@ -594,8 +599,8 @@ mod tests {
         let mut map = PropertyMap::new();
         assert_eq!(map.get(&a), None);
         assert_eq!(map.remove(&a), None);
-        map.set(a, int(1)).unwrap();
-        map.set(a, int(2)).unwrap();
+        map.set(a.clone(), int(1)).unwrap();
+        map.set(a.clone(), int(2)).unwrap();
         assert_eq!(map.len(), 1);
         assert_eq!(map.remove(&a), Some(int(2)));
         assert!(map.is_empty());
@@ -610,7 +615,7 @@ mod tests {
                 let name = format!("pm.prop.{raw}");
                 let key = intern(&name).unwrap();
                 if insert {
-                    map.set(key, Value::Uint(u64::from(raw))).unwrap();
+                    map.set(key.clone(), Value::Uint(u64::from(raw))).unwrap();
                     expected.insert(key);
                 } else {
                     map.remove(&key);
@@ -646,7 +651,7 @@ mod tests {
                 .zip(&seed)
                 .map(|(k, present)| {
                     if *present {
-                        oracle.insert(*k, Value::Uint(0));
+                        oracle.insert(k.clone(), Value::Uint(0));
                         Some(Value::Uint(0))
                     } else {
                         None
@@ -654,15 +659,15 @@ mod tests {
                 })
                 .collect();
 
-            let mut map = PropertyMap::compact(schema_keys.iter().copied(), seed_values).unwrap();
+            let mut map = PropertyMap::compact(schema_keys.iter().cloned(), seed_values).unwrap();
             let is_compact = matches!(map, PropertyMap::Compact { .. });
             prop_assert!(is_compact);
 
             for (idx, present, raw) in ops {
-                let key = all_keys[idx];
+                let key = all_keys[idx].clone();
                 if present {
                     let value = Value::Uint(raw);
-                    map.set(key, value.clone()).unwrap();
+                    map.set(key.clone(), value.clone()).unwrap();
                     oracle.insert(key, value);
                 } else {
                     let removed = map.remove(&key);
@@ -679,9 +684,9 @@ mod tests {
 
                 // iter() yields exactly the oracle's present pairs in key order.
                 let observed: Vec<(IStr, Value)> =
-                    map.iter().map(|(k, v)| (*k, v.clone())).collect();
+                    map.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 let expected: Vec<(IStr, Value)> =
-                    oracle.iter().map(|(k, v)| (*k, v.clone())).collect();
+                    oracle.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
                 // Both are key-handle-sorted (BTreeMap by IStr Ord, map by invariant).
                 prop_assert_eq!(observed, expected);
             }

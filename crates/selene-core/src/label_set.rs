@@ -1,8 +1,8 @@
 //! Sorted label sets per spec 02 section 5.3.
 //!
-//! Labels are ordered in memory by [`IStr`] interner-key order. On the wire,
-//! labels serialize in canonical lexicographic order by [`IStr::as_str`] and
-//! deserialize by re-sorting into the receiver's local interner-key order
+//! Labels are ordered in memory lexicographically by [`IStr`] (through the
+//! inner `CompactString`). On the wire, labels serialize in that same canonical
+//! lexicographic order by [`IStr::as_str`] and deserialize by re-sorting
 //! before duplicate validation. The inline capacity of 3 matches the common
 //! node-label case; larger sets spill cleanly to the heap. Edges semantically
 //! carry exactly one label, but that constraint is enforced by `selene-graph`,
@@ -144,7 +144,7 @@ impl<'de> Deserialize<'de> for LabelSet {
         D: Deserializer<'de>,
     {
         let mut raw: SmallVec<[IStr; 3]> = SmallVec::deserialize(deserializer)?;
-        raw.sort_unstable_by_key(|label| *label);
+        raw.sort_unstable();
         for window in raw.windows(2) {
             if window[0] >= window[1] {
                 return Err(serde::de::Error::custom("LabelSet has duplicate labels"));
@@ -182,11 +182,11 @@ where
     Archived<IStr>: RkyvDeserialize<IStr, D>,
 {
     fn deserialize(&self, deserializer: &mut D) -> Result<LabelSet, D::Error> {
-        let mut raw = SmallVec::new();
+        let mut raw: SmallVec<[IStr; 3]> = SmallVec::new();
         for label in self.as_slice() {
             raw.push(label.deserialize(deserializer)?);
         }
-        raw.sort_unstable_by_key(|label| *label);
+        raw.sort_unstable();
         for window in raw.windows(2) {
             if window[0] >= window[1] {
                 rkyv::rancor::fail!(InvalidArchivedLabelSet);
@@ -221,7 +221,7 @@ mod tests {
     fn insert_remove_contains_round_trip() {
         let a = label("ls.a");
         let mut set = LabelSet::new();
-        assert!(set.insert(a));
+        assert!(set.insert(a.clone()));
         assert!(set.contains(&a));
         assert!(set.remove(&a));
         assert!(!set.contains(&a));
@@ -231,7 +231,7 @@ mod tests {
     fn insert_returns_false_on_duplicate() {
         let a = label("ls.dup");
         let mut set = LabelSet::new();
-        assert!(set.insert(a));
+        assert!(set.insert(a.clone()));
         assert!(!set.insert(a));
         assert_eq!(set.len(), 1);
     }
@@ -240,8 +240,8 @@ mod tests {
     fn iter_yields_sorted_order() {
         let a = label("ls.sorted.a");
         let b = label("ls.sorted.b");
-        let set = LabelSet::from_iter([b, a]);
-        assert_eq!(set.iter().copied().collect::<Vec<_>>(), vec![a, b]);
+        let set = LabelSet::from_iter([b.clone(), a.clone()]);
+        assert_eq!(set.iter().cloned().collect::<Vec<_>>(), vec![a, b]);
     }
 
     #[test]
@@ -262,15 +262,18 @@ mod tests {
     fn from_iter_dedups_and_sorts() {
         let a = label("ls.dedup.a");
         let b = label("ls.dedup.b");
-        let set = LabelSet::from_iter([b, a, b]);
-        assert_eq!(set.iter().copied().collect::<Vec<_>>(), vec![a, b]);
+        let set = LabelSet::from_iter([b.clone(), a.clone(), b.clone()]);
+        assert_eq!(set.iter().cloned().collect::<Vec<_>>(), vec![a, b]);
     }
 
     #[test]
     fn eq_independent_of_insertion_order() {
         let a = label("ls.eq.a");
         let b = label("ls.eq.b");
-        assert_eq!(LabelSet::from_iter([a, b]), LabelSet::from_iter([b, a]));
+        assert_eq!(
+            LabelSet::from_iter([a.clone(), b.clone()]),
+            LabelSet::from_iter([b, a])
+        );
     }
 
     #[test]
@@ -284,13 +287,13 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_resorts_payload_by_receiver_handle() {
+    fn deserialize_resorts_payload_lexicographically() {
         let b = label("ls.de.bad.zebra");
         let a = label("ls.de.bad.apple");
         let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
             let mut v = SmallVec::<[IStr; 3]>::new();
-            v.push(a);
-            v.push(b);
+            v.push(a.clone());
+            v.push(b.clone());
             v
         })
         .unwrap();
@@ -305,7 +308,7 @@ mod tests {
         let a = label("ls.de.dup.a");
         let bytes = postcard::to_allocvec::<SmallVec<[IStr; 3]>>(&{
             let mut v = SmallVec::<[IStr; 3]>::new();
-            v.push(a);
+            v.push(a.clone());
             v.push(a);
             v
         })
@@ -337,10 +340,10 @@ mod tests {
     }
 
     #[test]
-    fn rkyv_deserialize_resorts_payload_by_receiver_handle() {
+    fn rkyv_deserialize_resorts_payload_lexicographically() {
         let b = label("ls.rkyv.bad.zebra");
         let a = label("ls.rkyv.bad.apple");
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![a, b]).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![a.clone(), b.clone()]).unwrap();
         let result = rkyv::from_bytes::<LabelSet, rkyv::rancor::Error>(&bytes).unwrap();
         assert!(result.contains(&a));
         assert!(result.contains(&b));
@@ -350,7 +353,7 @@ mod tests {
     #[test]
     fn rkyv_deserialize_rejects_duplicate_payload() {
         let a = label("ls.rkyv.dup.a");
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![a, a]).unwrap();
+        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&vec![a.clone(), a]).unwrap();
         let result = rkyv::from_bytes::<LabelSet, rkyv::rancor::Error>(&bytes);
         assert!(result.is_err());
     }
@@ -363,7 +366,7 @@ mod tests {
             for value in raw {
                 let name = format!("ls.prop.{value}");
                 let label = intern(&name).unwrap();
-                let inserted = set.insert(label);
+                let inserted = set.insert(label.clone());
                 prop_assert_eq!(inserted, expected.insert(label));
                 prop_assert!(set.sorted_deduped_invariant_holds());
                 prop_assert_eq!(set.len(), expected.len());

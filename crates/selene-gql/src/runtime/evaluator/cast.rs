@@ -272,7 +272,7 @@ fn cast_to_record(
                         let casted = stacker::maybe_grow(64 * 1024, 1024 * 1024, || {
                             eval_cast(source_value, ty, span)
                         })?;
-                        out.push((*name, casted));
+                        out.push((name.clone(), casted));
                     }
                 }
                 // Fail-closed. SR12's closed→closed projection is by field NAME, but a

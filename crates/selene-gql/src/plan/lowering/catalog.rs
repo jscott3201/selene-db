@@ -25,7 +25,7 @@ pub(crate) fn lower_ddl(
             if_not_exists,
             span,
         } => CatalogOp::CreateGraph {
-            name: *name,
+            name: name.clone(),
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
             span: *span,
@@ -35,7 +35,7 @@ pub(crate) fn lower_ddl(
             if_exists,
             span,
         } => CatalogOp::DropGraph {
-            name: *name,
+            name: name.clone(),
             if_exists: *if_exists,
             span: *span,
         },
@@ -48,10 +48,10 @@ pub(crate) fn lower_ddl(
             validation_mode,
             span,
         } => CatalogOp::CreateNodeType {
-            label: *label,
+            label: label.clone(),
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
-            extends: *extends,
+            extends: extends.clone(),
             properties: lower_property_defs(properties, analyzed)?,
             validation_mode: *validation_mode,
             span: *span,
@@ -66,10 +66,10 @@ pub(crate) fn lower_ddl(
             validation_mode,
             span,
         } => CatalogOp::CreateEdgeType {
-            label: *label,
+            label: label.clone(),
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
-            extends: *extends,
+            extends: extends.clone(),
             endpoints: endpoints.clone(),
             properties: lower_property_defs(properties, analyzed)?,
             validation_mode: *validation_mode,
@@ -81,7 +81,7 @@ pub(crate) fn lower_ddl(
             behavior,
             span,
         } => CatalogOp::DropNodeType {
-            label: *label,
+            label: label.clone(),
             if_exists: *if_exists,
             behavior: *behavior,
             span: *span,
@@ -92,17 +92,17 @@ pub(crate) fn lower_ddl(
             behavior,
             span,
         } => CatalogOp::DropEdgeType {
-            label: *label,
+            label: label.clone(),
             if_exists: *if_exists,
             behavior: *behavior,
             span: *span,
         },
         DdlStatement::TruncateNodeType { label, span } => CatalogOp::TruncateNodeType {
-            label: *label,
+            label: label.clone(),
             span: *span,
         },
         DdlStatement::TruncateEdgeType { label, span } => CatalogOp::TruncateEdgeType {
-            label: *label,
+            label: label.clone(),
             span: *span,
         },
         DdlStatement::CreateIndex {
@@ -112,8 +112,8 @@ pub(crate) fn lower_ddl(
             if_not_exists,
             span,
         } => CatalogOp::CreateIndex {
-            name: *name,
-            label: *label,
+            name: name.clone(),
+            label: label.clone(),
             properties: properties.clone(),
             if_not_exists: *if_not_exists,
             span: *span,
@@ -123,7 +123,7 @@ pub(crate) fn lower_ddl(
             if_exists,
             span,
         } => CatalogOp::DropIndex {
-            name: *name,
+            name: name.clone(),
             if_exists: *if_exists,
             span: *span,
         },
@@ -159,7 +159,7 @@ fn lower_property_defs(
                 .map(|constraint| lower_property_constraint(constraint, analyzed))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(PlannedTypePropertyDef {
-                name: def.name,
+                name: def.name.clone(),
                 gql_type: def.gql_type.clone(),
                 constraints,
                 span: def.span,
@@ -181,7 +181,7 @@ fn lower_property_constraint(
         TypePropertyConstraint::Immutable(span) => PlannedTypePropertyConstraint::Immutable(*span),
         TypePropertyConstraint::Unique(span) => PlannedTypePropertyConstraint::Unique(*span),
         TypePropertyConstraint::Indexed { name, span } => PlannedTypePropertyConstraint::Indexed {
-            name: *name,
+            name: name.clone(),
             span: *span,
         },
     })

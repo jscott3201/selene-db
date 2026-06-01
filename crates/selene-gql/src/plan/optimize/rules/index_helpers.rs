@@ -11,7 +11,7 @@ use crate::{
 /// Return the single label carried by a label expression.
 pub(super) fn single_label(label: &Option<LabelExpr>) -> Option<selene_core::IStr> {
     match label {
-        Some(LabelExpr::Single(label)) => Some(*label),
+        Some(LabelExpr::Single(label)) => Some(label.clone()),
         _ => None,
     }
 }
@@ -51,7 +51,7 @@ pub(super) fn flat_disjunction_singles(
     parts
         .iter()
         .map(|part| match part {
-            LabelExpr::Single(label) => Some(*label),
+            LabelExpr::Single(label) => Some(label.clone()),
             _ => None,
         })
         .collect()

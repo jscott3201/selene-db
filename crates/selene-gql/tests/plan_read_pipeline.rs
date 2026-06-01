@@ -77,7 +77,10 @@ fn lowers_match_return_scan() {
     assert_eq!(scan.kind, ScanKind::Node);
     assert!(scan.binding.is_some());
     assert_eq!(variant_names(&plan), ["Project"]);
-    assert_eq!(plan.output_schema.columns[0].name.unwrap().as_str(), "n");
+    assert_eq!(
+        plan.output_schema.columns[0].name.clone().unwrap().as_str(),
+        "n"
+    );
 }
 
 #[test]
@@ -89,7 +92,7 @@ fn anonymous_node_scan_has_no_binding() {
     };
     assert_eq!(scan.binding, None);
     assert!(matches!(
-        scan.label_predicate,
+        &scan.label_predicate,
         Some(LabelExpr::Single(label)) if label.as_str() == "Person"
     ));
 }
@@ -135,7 +138,10 @@ fn bounded_quantified_edge_lowers_to_repeat_with_group_list_binding() {
         group.ty,
         AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
     );
-    assert_eq!(plan.output_schema.columns[0].name.unwrap().as_str(), "r");
+    assert_eq!(
+        plan.output_schema.columns[0].name.clone().unwrap().as_str(),
+        "r"
+    );
     assert_eq!(
         plan.output_schema.columns[0].ty,
         AnalyzedType::Resolved(GqlType::List(Box::new(GqlType::EdgeRef)))
@@ -165,7 +171,7 @@ fn property_maps_and_inline_where_are_preserved() {
     };
     assert_eq!(scan.property_predicates.len(), 1);
     assert!(matches!(
-        scan.property_predicates[0].kind,
+        &scan.property_predicates[0].kind,
         FilterPredicateKind::PropertyEquals { key, .. } if key.as_str() == "age"
     ));
     assert_eq!(pattern.filters.len(), 1);
@@ -224,12 +230,12 @@ fn unaliased_derived_projection_column_has_no_name() {
 #[test]
 fn return_star_keeps_visible_binding_columns() {
     let plan = plan_one("MATCH (n) RETURN *");
-    assert!(
-        plan.output_schema
-            .columns
-            .iter()
-            .any(|column| column.name.is_some_and(|name| name.as_str() == "n"))
-    );
+    assert!(plan.output_schema.columns.iter().any(|column| {
+        column
+            .name
+            .as_ref()
+            .is_some_and(|name| name.as_str() == "n")
+    }));
 }
 
 #[test]
@@ -316,7 +322,7 @@ fn return_star_after_with_uses_with_projection() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
         .collect();
     assert!(
         names.iter().any(|name| name == "x"),
@@ -341,10 +347,10 @@ fn return_star_does_not_emit_empty_project() {
         .count();
     assert_eq!(empty_projects, 0, "got pipeline {:?}", variant_names(&plan));
     assert!(
-        plan.output_schema
-            .columns
-            .iter()
-            .any(|column| column.name.is_some_and(|name| name.as_str() == "n")),
+        plan.output_schema.columns.iter().any(|column| column
+            .name
+            .as_ref()
+            .is_some_and(|name| name.as_str() == "n")),
         "RETURN * output_schema must still expose visible bindings"
     );
 }
@@ -359,7 +365,7 @@ fn chained_plan_output_schema_uses_last_block() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
         .collect();
     assert_eq!(names, vec!["b".to_string()]);
 }
@@ -505,7 +511,7 @@ fn let_uses_dedicated_pipeline_op_so_prior_bindings_remain_visible() {
         .output_schema
         .columns
         .iter()
-        .filter_map(|column| column.name.map(|name| name.as_str().to_string()))
+        .filter_map(|column| column.name.as_ref().map(|name| name.as_str().to_string()))
         .collect();
     assert!(
         names.iter().any(|name| name == "n"),

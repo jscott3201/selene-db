@@ -64,7 +64,7 @@ fn bind_set_items(
                 value,
                 span,
             } => {
-                let target = ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let target = ctx.resolve(target.clone(), *span, BindingUseKind::SetTarget)?;
                 expr::bind_value_expr(ctx, value)?;
                 let element = ctx.element_kind(target);
                 ctx.record_write(
@@ -73,7 +73,7 @@ fn bind_set_items(
                     WriteKind::SetProperty {
                         target,
                         element,
-                        key: *key,
+                        key: key.clone(),
                         value_span: value.span(),
                     },
                 );
@@ -83,7 +83,7 @@ fn bind_set_items(
                 properties,
                 span,
             } => {
-                let target = ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let target = ctx.resolve(target.clone(), *span, BindingUseKind::SetTarget)?;
                 let element = ctx.element_kind(target);
                 for (_, value) in properties {
                     expr::bind_value_expr(ctx, value)?;
@@ -95,7 +95,7 @@ fn bind_set_items(
                         WriteKind::SetProperty {
                             target,
                             element,
-                            key: *key,
+                            key: key.clone(),
                             value_span: value.span(),
                         },
                     );
@@ -106,7 +106,7 @@ fn bind_set_items(
                 label,
                 span,
             } => {
-                let target = ctx.resolve(*target, *span, BindingUseKind::SetTarget)?;
+                let target = ctx.resolve(target.clone(), *span, BindingUseKind::SetTarget)?;
                 let element = ctx.element_kind(target);
                 ctx.record_write(
                     statement_index,
@@ -114,7 +114,7 @@ fn bind_set_items(
                     WriteKind::SetLabel {
                         target,
                         element,
-                        label: *label,
+                        label: label.clone(),
                     },
                 );
             }
@@ -131,7 +131,7 @@ fn bind_remove_items(
     for item in items {
         match item {
             RemoveItem::Property { target, key, span } => {
-                let target = ctx.resolve(*target, *span, BindingUseKind::RemoveTarget)?;
+                let target = ctx.resolve(target.clone(), *span, BindingUseKind::RemoveTarget)?;
                 let element = ctx.element_kind(target);
                 ctx.record_write(
                     statement_index,
@@ -139,7 +139,7 @@ fn bind_remove_items(
                     WriteKind::RemoveProperty {
                         target,
                         element,
-                        key: *key,
+                        key: key.clone(),
                     },
                 );
             }
@@ -148,7 +148,7 @@ fn bind_remove_items(
                 label,
                 span,
             } => {
-                let target = ctx.resolve(*target, *span, BindingUseKind::RemoveTarget)?;
+                let target = ctx.resolve(target.clone(), *span, BindingUseKind::RemoveTarget)?;
                 let element = ctx.element_kind(target);
                 if matches!(element, ElementKind::Edge) {
                     return Err(AnalysisError::NotImplemented {
@@ -164,7 +164,7 @@ fn bind_remove_items(
                     WriteKind::RemoveLabel {
                         target,
                         element,
-                        label: *label,
+                        label: label.clone(),
                     },
                 );
             }
@@ -179,7 +179,7 @@ fn bind_delete(
     statement: &DeleteStatement,
 ) -> Result<(), AnalysisError> {
     for item in &statement.items {
-        let target = ctx.resolve(*item, statement.span, BindingUseKind::DeleteTarget)?;
+        let target = ctx.resolve(item.clone(), statement.span, BindingUseKind::DeleteTarget)?;
         let element = ctx.element_kind(target);
         ctx.record_write(
             statement_index,

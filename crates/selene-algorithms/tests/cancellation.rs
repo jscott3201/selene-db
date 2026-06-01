@@ -46,13 +46,13 @@ fn build_graph() -> SharedGraph {
     for _ in 0..4 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .expect("node inserts"),
         );
     }
     for &(s, t) in &[(0, 1), (1, 2), (2, 0), (2, 3)] {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[s], nodes[t], PropertyMap::new())
             .expect("edge inserts");
     }
     txn.commit().expect("graph commits");
@@ -77,13 +77,13 @@ fn build_large_line_graph(n: usize) -> SharedGraph {
     for _ in 0..n {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .expect("node inserts"),
         );
     }
     for i in 0..n - 1 {
         txn.mutator()
-            .create_edge(rel, nodes[i], nodes[i + 1], PropertyMap::new())
+            .create_edge(rel.clone(), nodes[i], nodes[i + 1], PropertyMap::new())
             .expect("edge inserts");
     }
     txn.commit().expect("graph commits");

@@ -123,7 +123,7 @@ impl IndexCatalog for LiveIndexCatalog {
             .declared_properties
             .iter()
             .zip(kinds.iter())
-            .map(|(property, kind)| (*property, index_kind_from(*kind)))
+            .map(|(property, kind)| (property.clone(), index_kind_from(*kind)))
             .collect();
         Some(CompositeIndexHandle::new(
             IndexHandle::new(0),
@@ -221,7 +221,7 @@ impl IndexCatalog for LiveIndexCatalog {
         // The runtime composite index orders components by canonical (sorted)
         // property order; reorder `keys` (given in `properties` order) to match.
         let mut order: Vec<usize> = (0..properties.len()).collect();
-        order.sort_by_key(|&i| properties[i]);
+        order.sort_by_key(|&i| properties[i].clone());
         if keys.len() != properties.len() {
             return None;
         }

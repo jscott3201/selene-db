@@ -49,10 +49,10 @@ fn build_graph(id: u64, skewed: bool) -> SharedGraph {
     // Open-graph indexes are created via the graph API (CREATE INDEX DDL needs a
     // bound graph type). Single-property (age, city) + composite (city, age).
     graph
-        .create_property_index(person, age, TypedIndexKind::I64)
+        .create_property_index(person.clone(), age.clone(), TypedIndexKind::I64)
         .unwrap();
     graph
-        .create_property_index(person, city, TypedIndexKind::String)
+        .create_property_index(person.clone(), city.clone(), TypedIndexKind::String)
         .unwrap();
     {
         let mut txn = graph.begin_write();

@@ -40,16 +40,17 @@ fn property_names(keys: &[IStr]) -> Vec<&str> {
     keys.iter().map(|key| key.as_str()).collect()
 }
 
-fn binding_name(analyzed: &AnalyzedStatement, binding: BindingId) -> &'static str {
+fn binding_name(analyzed: &AnalyzedStatement, binding: BindingId) -> String {
     analyzed
         .scopes
         .declaration(binding)
         .expect("binding exists")
         .name()
         .as_str()
+        .to_owned()
 }
 
-fn target_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> &'static str {
+fn target_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> String {
     let target = match kind {
         WriteKind::SetProperty { target, .. }
         | WriteKind::SetLabel { target, .. }
@@ -64,7 +65,7 @@ fn target_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> &'static str {
     binding_name(analyzed, target)
 }
 
-fn insert_binding_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> Option<&'static str> {
+fn insert_binding_name(analyzed: &AnalyzedStatement, kind: &WriteKind) -> Option<String> {
     let binding = match kind {
         WriteKind::InsertNode { binding, .. } | WriteKind::InsertEdge { binding, .. } => *binding,
         _ => panic!("expected insert write kind"),
@@ -210,7 +211,10 @@ fn insert_reused_binding_emits_no_duplicate_entry() {
     };
     assert_eq!(binding, None);
 
-    assert_eq!(insert_binding_name(&analyzed, &entries[2].kind), Some("b"));
+    assert_eq!(
+        insert_binding_name(&analyzed, &entries[2].kind).as_deref(),
+        Some("b")
+    );
     let emitted_a_count = entries
         .iter()
         .filter(|entry| {
@@ -241,7 +245,10 @@ fn set_property_writeset_records_target_and_key() {
     let analyzed = analyze_one("MATCH (n) SET n.age = 18").expect("analyzes");
     let entries = &write_set(&analyzed).entries;
     assert_eq!(entries.len(), 1);
-    let WriteKind::SetProperty { element, key, .. } = entries[0].kind else {
+    let WriteKind::SetProperty {
+        element, ref key, ..
+    } = entries[0].kind
+    else {
         panic!("expected SetProperty");
     };
     assert_eq!(element, ElementKind::Node);
@@ -276,7 +283,7 @@ fn set_property_map_writeset_emits_one_entry_per_key() {
     assert!(matches!(entries[1].kind, WriteKind::SetProperty { .. }));
     let keys = entries
         .iter()
-        .map(|entry| match entry.kind {
+        .map(|entry| match &entry.kind {
             WriteKind::SetProperty { key, .. } => key.as_str(),
             _ => panic!("expected SetProperty"),
         })
@@ -288,7 +295,10 @@ fn set_property_map_writeset_emits_one_entry_per_key() {
 fn set_label_writeset_records_label() {
     let analyzed = analyze_one("MATCH (n) SET n :Tagged").expect("analyzes");
     let entries = &write_set(&analyzed).entries;
-    let WriteKind::SetLabel { element, label, .. } = entries[0].kind else {
+    let WriteKind::SetLabel {
+        element, ref label, ..
+    } = entries[0].kind
+    else {
         panic!("expected SetLabel");
     };
     assert_eq!(element, ElementKind::Node);
@@ -299,7 +309,10 @@ fn set_label_writeset_records_label() {
 fn remove_property_writeset_records_target_and_key() {
     let analyzed = analyze_one("MATCH (n) REMOVE n.age").expect("analyzes");
     let entries = &write_set(&analyzed).entries;
-    let WriteKind::RemoveProperty { element, key, .. } = entries[0].kind else {
+    let WriteKind::RemoveProperty {
+        element, ref key, ..
+    } = entries[0].kind
+    else {
         panic!("expected RemoveProperty");
     };
     assert_eq!(element, ElementKind::Node);
@@ -328,7 +341,10 @@ fn analyzer_resolves_remove_target_by_binding_id_not_name() {
 fn remove_label_writeset_records_label() {
     let analyzed = analyze_one("MATCH (n) REMOVE n :Tagged").expect("analyzes");
     let entries = &write_set(&analyzed).entries;
-    let WriteKind::RemoveLabel { element, label, .. } = entries[0].kind else {
+    let WriteKind::RemoveLabel {
+        element, ref label, ..
+    } = entries[0].kind
+    else {
         panic!("expected RemoveLabel");
     };
     assert_eq!(element, ElementKind::Node);

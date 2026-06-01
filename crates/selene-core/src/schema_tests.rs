@@ -19,7 +19,7 @@ fn graph_type_id_rejects_zero() {
 #[test]
 fn node_type_def_constructed_with_labels() {
     let label = istr("schema.node");
-    let def = NodeTypeDef::new(LabelSet::single(label));
+    let def = NodeTypeDef::new(LabelSet::single(label.clone()));
     assert!(def.labels.contains(&label));
     assert!(def.properties.is_empty());
     assert!(def.key.is_none());
@@ -30,7 +30,7 @@ fn edge_type_def_constructed_with_endpoints() {
     let edge = istr("schema.edge");
     let source = NodeTypeRef(istr("schema.source"));
     let target = NodeTypeRef(istr("schema.target"));
-    let def = EdgeTypeDef::new(edge, source, target);
+    let def = EdgeTypeDef::new(edge.clone(), source.clone(), target.clone());
     assert_eq!(def.label, edge);
     assert_eq!(def.source_node_type, EdgeEndpointDef::NodeType(source));
     assert_eq!(def.target_node_type, EdgeEndpointDef::NodeType(target));
@@ -151,7 +151,7 @@ fn graph_type_id_deserialize_rejects_zero() {
 fn wal_one_of_canonicalizes_singleton_to_node_type() {
     let source = NodeTypeRef(istr("schema.solo"));
     assert_eq!(
-        EdgeEndpointDef::one_of([source]),
+        EdgeEndpointDef::one_of([source.clone()]),
         EdgeEndpointDef::NodeType(source)
     );
 }
@@ -160,7 +160,7 @@ fn wal_one_of_canonicalizes_singleton_to_node_type() {
 fn wal_one_of_dedupes() {
     let a = NodeTypeRef(istr("schema.aaa"));
     let b = NodeTypeRef(istr("schema.bbb"));
-    let endpoint = EdgeEndpointDef::one_of([a, b, a]);
+    let endpoint = EdgeEndpointDef::one_of([a.clone(), b, a]);
     match endpoint {
         EdgeEndpointDef::OneOf(refs) => assert_eq!(refs.len(), 2),
         other => panic!("expected OneOf, got {other:?}"),

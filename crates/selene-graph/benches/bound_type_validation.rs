@@ -94,7 +94,7 @@ fn update_batch(shared: &SharedGraph) -> usize {
     {
         let mut mutator = txn.mutator();
         for idx in 0..UPDATE_BATCH {
-            let diff = PropertyDiff::new([(score, Value::Int(idx as i64))], [])
+            let diff = PropertyDiff::new([(score.clone(), Value::Int(idx as i64))], [])
                 .expect("property diff is valid");
             mutator
                 .update_node(
@@ -129,7 +129,7 @@ fn graph_snapshot(
         {
             let mut mutator = txn.mutator();
             for idx in 0..scale.max(1) {
-                let label = labels[idx % labels.len()];
+                let label = labels[idx % labels.len()].clone();
                 mutator
                     .create_node(LabelSet::single(label), properties(idx, property_count))
                     .expect("fixture node inserts");

@@ -37,8 +37,8 @@ fn subplan_uses_same_tx_context_no_new_snapshot() {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(fixture.person),
-                props([(fixture.score, Value::Int(12))]),
+                LabelSet::single(fixture.person.clone()),
+                props([(fixture.score.clone(), Value::Int(12))]),
             )
             .expect("late node inserts");
         txn.commit().expect("late update commits");

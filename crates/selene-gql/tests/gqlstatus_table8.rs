@@ -86,11 +86,11 @@ fn dynamic_ordering_of_incomparable_values_emits_22g04() {
     let expr = ValueExpr::BinaryOp {
         op: BinaryOp::Lt,
         lhs: Box::new(ValueExpr::Variable {
-            name: lhs,
+            name: lhs.clone(),
             span: SourceSpan::new(0, 3),
         }),
         rhs: Box::new(ValueExpr::Variable {
-            name: rhs,
+            name: rhs.clone(),
             span: SourceSpan::new(6, 3),
         }),
         span: SourceSpan::new(0, 9),
@@ -174,7 +174,7 @@ fn closed_graph_schema_analysis_emits_g2000() {
     let graph_type = GraphTypeDef {
         name: istr("schema.graph"),
         node_types: vec![NodeTypeDef {
-            name: person,
+            name: person.clone(),
             key_labels: LabelSet::single(person),
             properties: Vec::new(),
             validation_mode: ValidationMode::Strict,

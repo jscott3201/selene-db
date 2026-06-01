@@ -68,7 +68,7 @@ mod tests {
         let graph_type = GraphTypeDef {
             name: intern("version.graph").unwrap(),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,
@@ -103,26 +103,26 @@ mod tests {
             name: intern("v3.oneof.graph").unwrap(),
             node_types: vec![
                 NodeTypeDef {
-                    name: person,
+                    name: person.clone(),
                     key_labels: LabelSet::single(person),
                     properties: Vec::new(),
                     validation_mode: ValidationMode::Strict,
                 },
                 NodeTypeDef {
-                    name: company,
+                    name: company.clone(),
                     key_labels: LabelSet::single(company),
                     properties: Vec::new(),
                     validation_mode: ValidationMode::Strict,
                 },
                 NodeTypeDef {
-                    name: school,
+                    name: school.clone(),
                     key_labels: LabelSet::single(school),
                     properties: Vec::new(),
                     validation_mode: ValidationMode::Strict,
                 },
             ],
             edge_types: vec![EdgeTypeDef {
-                name: affiliated,
+                name: affiliated.clone(),
                 label: affiliated,
                 source_node_type: EdgeEndpointDef::NodeType(0),
                 target_node_type: EdgeEndpointDef::one_of([1, 2]),
@@ -193,7 +193,7 @@ mod tests {
         let graph_type = GraphTypeDef {
             name: intern("record.graph").unwrap(),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: vec![PropertyTypeDef {
                     name: config,
@@ -238,7 +238,7 @@ mod tests {
         let graph_type = GraphTypeDef {
             name: intern("unknown.version.graph").unwrap(),
             node_types: vec![NodeTypeDef {
-                name: person,
+                name: person.clone(),
                 key_labels: LabelSet::single(person),
                 properties: Vec::new(),
                 validation_mode: ValidationMode::Strict,

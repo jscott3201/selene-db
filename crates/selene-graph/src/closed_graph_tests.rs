@@ -328,8 +328,8 @@ fn warn_validation_mode_records_undeclared_property_warning() {
 
     assert_eq!(outcome.warnings.len(), 1);
     assert!(matches!(
-        outcome.warnings[0].warning.violation,
-        TypeViolation::UndeclaredProperty { property, .. } if property == istr("extra")
+        &outcome.warnings[0].warning.violation,
+        TypeViolation::UndeclaredProperty { property, .. } if *property == istr("extra")
     ));
 }
 

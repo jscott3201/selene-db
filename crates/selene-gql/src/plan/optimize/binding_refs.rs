@@ -14,7 +14,7 @@ use crate::{
 /// slots into typed-index / composite-index / bitmap-union access paths
 /// (BRIEF-154 §B.2). The `declared_type` borrow lets call sites run plan-time
 /// typed-incompatibility checks without cloning [`GqlType`].
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ParameterRef<'a> {
     /// Parameter name without the leading `$`.
     pub name: IStr,
@@ -104,7 +104,7 @@ pub(crate) fn match_property_predicate<'a>(
             key,
         } => Some(MatchedPropertyPredicate {
             binding: *binding,
-            key: *key,
+            key: key.clone(),
             shape: PropertyPredicateShape::Equality(&pred.expr),
         }),
         FilterPredicateKind::Expression => match_property_expr(&pred.expr, bindings),
@@ -126,7 +126,7 @@ pub(crate) fn match_property_access(
     bindings
         .iter()
         .find(|binding| binding.name == *name)
-        .map(|binding| (binding.binding, *key))
+        .map(|binding| (binding.binding, key.clone()))
 }
 
 /// Return `expr` as a non-null literal.
@@ -155,7 +155,7 @@ pub(crate) fn parameter(expr: &ValueExpr) -> Option<ParameterRef<'_>> {
         return None;
     };
     Some(ParameterRef {
-        name: *name,
+        name: name.clone(),
         declared_type: declared_type.as_ref(),
         span: *span,
     })

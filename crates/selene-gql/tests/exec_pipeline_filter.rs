@@ -62,10 +62,10 @@ fn where_date_a_lt_date_b_filters_rows() {
         let mut mutator = txn.mutator();
         matching = mutator
             .create_node(
-                LabelSet::single(event),
+                LabelSet::single(event.clone()),
                 props([
-                    (date_a, Value::Date("2024-01-01".parse().unwrap())),
-                    (date_b, Value::Date("2024-01-02".parse().unwrap())),
+                    (date_a.clone(), Value::Date("2024-01-01".parse().unwrap())),
+                    (date_b.clone(), Value::Date("2024-01-02".parse().unwrap())),
                 ]),
             )
             .expect("matching event inserts");
@@ -100,7 +100,10 @@ fn where_uint_plus_one_gt_int_works() {
         let mut txn = fixture.graph.begin_write();
         let mut mutator = txn.mutator();
         matching = mutator
-            .create_node(LabelSet::single(metric), props([(u, Value::Uint(10))]))
+            .create_node(
+                LabelSet::single(metric.clone()),
+                props([(u.clone(), Value::Uint(10))]),
+            )
             .expect("matching metric inserts");
         mutator
             .create_node(LabelSet::single(metric), props([(u, Value::Uint(9))]))

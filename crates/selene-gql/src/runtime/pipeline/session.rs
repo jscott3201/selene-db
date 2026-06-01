@@ -31,7 +31,14 @@ pub(crate) fn execute(
             value,
             if_not_exists,
             span,
-        } => set_value(session, registry, *param, value, *if_not_exists, *span),
+        } => set_value(
+            session,
+            registry,
+            param.clone(),
+            value,
+            *if_not_exists,
+            *span,
+        ),
         SessionOp::SetTimeZone { zone, span } => set_time_zone(session, zone, *span),
         SessionOp::ResetAllCharacteristics { .. } => {
             session.reset_characteristics();

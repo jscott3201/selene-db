@@ -327,13 +327,13 @@ fn power_negative_integer_exponent_uses_float_path() {
 fn power_treats_128_bit_integers_as_numeric_for_float_path() {
     let lhs = intern("lhs").unwrap();
     let rhs = intern("rhs").unwrap();
-    let power = function_call("power", vec![var(lhs), var(rhs)]);
+    let power = function_call("power", vec![var(lhs.clone()), var(rhs.clone())]);
 
     assert_float_near(
         eval_with_binding(
             &power,
             Binding::new([Value::Int128(2), Value::Int(3)]),
-            vec![lhs, rhs],
+            vec![lhs.clone(), rhs.clone()],
         )
         .expect("Int128 power evaluates"),
         8.0,
@@ -397,7 +397,7 @@ fn predicate_completion_covers_all_different_and_same() {
     let left = intern("left").unwrap();
     let right = intern("right").unwrap();
     let same = ValueExpr::Same {
-        items: vec![var(left), var(right)],
+        items: vec![var(left.clone()), var(right.clone())],
         span: span(),
     };
     assert_eq!(
@@ -421,8 +421,8 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
     let edge = intern("edge").unwrap();
 
     let labeled = ValueExpr::IsCheck {
-        operand: Box::new(var(node)),
-        kind: IsCheckKind::Labeled(LabelExpr::Single(fixture.person)),
+        operand: Box::new(var(node.clone())),
+        kind: IsCheckKind::Labeled(LabelExpr::Single(fixture.person.clone())),
         negated: false,
         span: span(),
     };
@@ -431,15 +431,15 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
             &labeled,
             &fixture,
             Binding::new([Value::NodeRef(NodeId::new(1))]),
-            vec![node],
+            vec![node.clone()],
         )
         .expect("label predicate evaluates"),
         Value::Bool(true)
     );
 
     let property_exists = ValueExpr::PropertyExists {
-        target: Box::new(var(node)),
-        key: fixture.name,
+        target: Box::new(var(node.clone())),
+        key: fixture.name.clone(),
         span: span(),
     };
     assert_eq!(
@@ -447,14 +447,14 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
             &property_exists,
             &fixture,
             Binding::new([Value::NodeRef(NodeId::new(1))]),
-            vec![node],
+            vec![node.clone()],
         )
         .expect("property exists evaluates"),
         Value::Bool(true)
     );
 
     let directed = ValueExpr::IsCheck {
-        operand: Box::new(var(edge)),
+        operand: Box::new(var(edge.clone())),
         kind: IsCheckKind::Directed,
         negated: false,
         span: span(),
@@ -464,15 +464,15 @@ fn is_predicates_and_property_exists_use_graph_snapshot() {
             &directed,
             &fixture,
             Binding::new([Value::EdgeRef(EdgeId::new(1))]),
-            vec![edge],
+            vec![edge.clone()],
         )
         .expect("directed predicate evaluates"),
         Value::Bool(true)
     );
 
     let source = ValueExpr::IsCheck {
-        operand: Box::new(var(edge)),
-        kind: IsCheckKind::SourceOf(Box::new(var(node))),
+        operand: Box::new(var(edge.clone())),
+        kind: IsCheckKind::SourceOf(Box::new(var(node.clone()))),
         negated: false,
         span: span(),
     };
@@ -497,8 +497,8 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
     let node = intern("node").unwrap();
 
     let property_exists = ValueExpr::PropertyExists {
-        target: Box::new(var(node)),
-        key: fixture.name,
+        target: Box::new(var(node.clone())),
+        key: fixture.name.clone(),
         span: span(),
     };
 
@@ -507,7 +507,7 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
             &property_exists,
             &fixture,
             Binding::new([Value::Null]),
-            vec![node],
+            vec![node.clone()],
         )
         .expect("null target propagates"),
         Value::Null
@@ -517,7 +517,7 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
             &property_exists,
             &fixture,
             Binding::new([Value::NodeRef(NodeId::new(1))]),
-            vec![node],
+            vec![node.clone()],
         )
         .expect("present property evaluates"),
         Value::Bool(true)
@@ -527,7 +527,7 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
             &property_exists,
             &fixture,
             Binding::new([Value::NodeRef(NodeId::new(4))]),
-            vec![node],
+            vec![node.clone()],
         )
         .expect("absent property evaluates"),
         Value::Bool(false)
@@ -538,8 +538,8 @@ fn property_exists_target_null_propagates_but_property_null_is_false() {
         let mut mutator = txn.mutator();
         let node = mutator
             .create_node(
-                LabelSet::single(fixture.sensor),
-                props([(fixture.name, Value::Null)]),
+                LabelSet::single(fixture.sensor.clone()),
+                props([(fixture.name.clone(), Value::Null)]),
             )
             .expect("null-property node inserts");
         txn.commit().expect("fixture update commits");
@@ -657,10 +657,10 @@ fn case_list_access_and_record_literal_evaluate() {
         eval_with_binding(
             &list_access(
                 list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-                var(index),
+                var(index.clone()),
             ),
             Binding::new([Value::Uint(1)]),
-            vec![index],
+            vec![index.clone()],
         )
         .unwrap(),
         Value::Int(1)
@@ -669,7 +669,7 @@ fn case_list_access_and_record_literal_evaluate() {
         eval_with_binding(
             &list_access(
                 list_lit(vec![int_lit(1), int_lit(2), int_lit(3)]),
-                var(index),
+                var(index.clone()),
             ),
             Binding::new([Value::Uint(0)]),
             vec![index],

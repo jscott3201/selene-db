@@ -16,10 +16,11 @@
 //! snapshots are cleanly rejected — a clean break, not a dual decoder
 //! (deferred to 4c per the D14 amendment).
 //!
-//! `CORE/SCMA` schema rows are stored in memory by [`IStr`] handle order via
-//! [`SchemaKey::Ord`]. Their wire order is canonical lexicographic order by
-//! `(label.as_str(), property.as_str())`; decode re-sorts to the receiver's
-//! local handle order before duplicate validation.
+//! `CORE/SCMA` schema rows are stored in memory in `(label, property)` order
+//! via [`SchemaKey`]'s derived `Ord`, which is lexicographic through [`IStr`].
+//! Their wire order is the same canonical lexicographic order by
+//! `(label.as_str(), property.as_str())`; decode re-sorts defensively into that
+//! canonical order before duplicate validation.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -203,7 +204,6 @@ impl EdgeArchiveRow {
 /// `property.as_str()` for cross-process stability.
 #[derive(
     Clone,
-    Copy,
     Debug,
     Deserialize,
     Eq,
@@ -225,7 +225,6 @@ pub struct SchemaKey {
 /// Persisted shape of a single schema entry.
 #[derive(
     Clone,
-    Copy,
     Debug,
     Deserialize,
     Eq,
@@ -388,7 +387,7 @@ pub(super) fn encode_edges(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Provid
             inconsistent(format!("edge properties column missing row {row_index}"))
         })?;
         let runtime = EdgeRow {
-            label: *label,
+            label: label.clone(),
             source: *source,
             target: *target,
             properties: properties.clone(),
@@ -425,12 +424,12 @@ pub(super) fn encode_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::Prov
         .map(|((label, property), entry)| {
             (
                 SchemaKey {
-                    label: *label,
-                    property: *property,
+                    label: label.clone(),
+                    property: property.clone(),
                 },
                 SchemaEntry {
                     kind: entry.kind(),
-                    name: entry.name,
+                    name: entry.name.clone(),
                 },
             )
         })
@@ -460,7 +459,7 @@ pub(super) fn decode_schemas(
         )));
     }
     let mut rows: Vec<(SchemaKey, SchemaEntry)> = decode_rkyv(rest, "CORE/SCMA")?;
-    rows.sort_unstable_by_key(|(key, _)| *key);
+    rows.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
     validate_sorted_unique(&rows, "CORE/SCMA")?;
     Ok(rows)
 }
@@ -479,12 +478,12 @@ pub(super) fn encode_composite_schemas(
         .map(|((label, _), entry)| {
             (
                 CompositeSchemaKey {
-                    label: *label,
-                    properties: entry.declared_properties.iter().copied().collect(),
+                    label: label.clone(),
+                    properties: entry.declared_properties.iter().cloned().collect(),
                 },
                 CompositeSchemaEntry {
                     kinds: entry.kinds().iter().copied().collect(),
-                    name: entry.name,
+                    name: entry.name.clone(),
                 },
             )
         })
@@ -547,7 +546,7 @@ fn validate_composite_schema_rows(
                 key.label
             )));
         }
-        if !seen.insert((key.label, canonical)) {
+        if !seen.insert((key.label.clone(), canonical)) {
             return Err(invalid_payload(format!(
                 "CORE/CPIX rows contain duplicate composite registration for label {}",
                 key.label

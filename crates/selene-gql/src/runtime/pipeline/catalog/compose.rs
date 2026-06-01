@@ -13,11 +13,11 @@ pub(super) fn compose_node_properties(
     child_properties: Vec<PropertyTypeDef>,
     span: SourceSpan,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
-    if let Some(index) = graph_type.node_type_index_for(parent) {
+    if let Some(index) = graph_type.node_type_index_for(parent.clone()) {
         let parent_properties = &graph_type.node_types[index as usize].properties;
         return merge_properties(parent_properties, child, child_properties, span);
     }
-    if graph_type.edge_type_index_for(parent).is_some() {
+    if graph_type.edge_type_index_for(parent.clone()).is_some() {
         return Err(ExecutorError::GraphTypeViolation {
             message: format!(
                 "CREATE NODE TYPE :{child} EXTENDS :{parent} - parent '{parent}' is an edge type; node types may only extend node types"
@@ -40,11 +40,11 @@ pub(super) fn compose_edge_properties(
     child_properties: Vec<PropertyTypeDef>,
     span: SourceSpan,
 ) -> Result<Vec<PropertyTypeDef>, ExecutorError> {
-    if let Some(index) = graph_type.edge_type_index_for(parent) {
+    if let Some(index) = graph_type.edge_type_index_for(parent.clone()) {
         let parent_properties = &graph_type.edge_types[index as usize].properties;
         return merge_properties(parent_properties, child, child_properties, span);
     }
-    if graph_type.node_type_index_for(parent).is_some() {
+    if graph_type.node_type_index_for(parent.clone()).is_some() {
         return Err(ExecutorError::GraphTypeViolation {
             message: format!(
                 "CREATE EDGE TYPE :{child} EXTENDS :{parent} - parent '{parent}' is a node type; edge types may only extend edge types"
@@ -72,7 +72,7 @@ fn merge_properties(
             .iter()
             .find(|property| property.name == child_property.name)
         {
-            check_property_match(parent_property, &child_property, child, span)?;
+            check_property_match(parent_property, &child_property, child.clone(), span)?;
             continue;
         }
         merged.push(child_property);

@@ -149,7 +149,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
                 .edge_store
                 .label
                 .get(r)
-                .copied()
+                .cloned()
                 .ok_or_else(|| column_missing("label"))?,
         );
         edges.source.push(source);
@@ -189,8 +189,8 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
     // directly would copy stale OLD-row bitmaps.
     for ((label, property), entry) in &graph.property_index {
         dense.property_index.insert(
-            (*label, *property),
-            PropertyIndexEntry::new(TypedIndex::new(entry.kind()), entry.name),
+            (label.clone(), property.clone()),
+            PropertyIndexEntry::new(TypedIndex::new(entry.kind()), entry.name.clone()),
         );
     }
     for (key, entry) in &graph.composite_property_index {
@@ -199,7 +199,7 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
             CompositePropertyIndexEntry::new(
                 crate::CompositeTypedIndex::new(entry.kinds()),
                 entry.declared_properties.clone(),
-                entry.name,
+                entry.name.clone(),
             ),
         );
     }

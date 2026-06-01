@@ -54,7 +54,7 @@ fn validate_accepts_well_formed_type() {
 #[test]
 fn validate_rejects_duplicate_node_type_names() {
     let mut graph_type = valid_type();
-    graph_type.node_types[1].name = graph_type.node_types[0].name;
+    graph_type.node_types[1].name = graph_type.node_types[0].name.clone();
     assert!(matches!(
         graph_type.validate(),
         Err(GraphError::Inconsistent { reason }) if reason.contains("duplicate node type name")
@@ -131,7 +131,7 @@ fn lookup_returns_matching_elements() {
     assert_eq!(
         graph_type
             .find_node_type(&person)
-            .map(|node_type| node_type.name),
+            .map(|node_type| node_type.name.clone()),
         Some(label("types.person"))
     );
     assert_eq!(graph_type.find_node_type_index(&person), Some(0));
@@ -142,7 +142,7 @@ fn lookup_returns_matching_elements() {
     assert_eq!(
         graph_type
             .find_edge_type(label("WORKS_AT"), 0, 1)
-            .map(|edge_type| edge_type.name),
+            .map(|edge_type| edge_type.name.clone()),
         Some(label("types.works_at"))
     );
 }

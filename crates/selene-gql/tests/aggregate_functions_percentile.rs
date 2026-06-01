@@ -34,7 +34,12 @@ fn column_values(table: &selene_gql::BindingTable, name: &str) -> Vec<Value> {
         .schema()
         .columns
         .iter()
-        .position(|column| column.name.is_some_and(|column| column.as_str() == name))
+        .position(|column| {
+            column
+                .name
+                .clone()
+                .is_some_and(|column| column.as_str() == name)
+        })
         .expect("column exists");
     table
         .rows()

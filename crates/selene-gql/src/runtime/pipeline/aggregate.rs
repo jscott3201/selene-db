@@ -78,7 +78,7 @@ impl AggregateSlot {
 }
 
 pub(super) fn output_names(aggregate: &Aggregate) -> Vec<selene_core::IStr> {
-    vec![aggregate.output_name]
+    vec![aggregate.output_name.clone()]
 }
 
 #[derive(Clone, Copy)]

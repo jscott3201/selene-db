@@ -24,13 +24,19 @@ pub(super) fn validate_property_values(
     for (key, value) in properties {
         let declaration = declarations.iter().find(|decl| decl.name == *key).ok_or(
             AnalysisError::SchemaUndeclaredProperty {
-                property: *key,
-                declared_in,
-                graph_type: graph_type.name,
+                property: key.clone(),
+                declared_in: declared_in.clone(),
+                graph_type: graph_type.name.clone(),
                 span: value.span(),
             },
         )?;
-        validate_one_property_value(declared_in, declaration, *key, value, analyzed)?;
+        validate_one_property_value(
+            declared_in.clone(),
+            declaration,
+            key.clone(),
+            value,
+            analyzed,
+        )?;
     }
     Ok(())
 }
@@ -92,12 +98,17 @@ pub(super) fn validate_required_properties(
             continue;
         }
         if check.binding.is_some_and(|binding| {
-            required_property_supplied(check.stmt_index, binding, declaration.name, check.analyzed)
+            required_property_supplied(
+                check.stmt_index,
+                binding,
+                declaration.name.clone(),
+                check.analyzed,
+            )
         }) {
             continue;
         }
         return Err(AnalysisError::SchemaRequiredPropertyMissing {
-            property: declaration.name,
+            property: declaration.name.clone(),
             declared_in: check.declared_in,
             span: check.span,
         });
@@ -178,7 +189,7 @@ pub(super) fn property_agreement<'a>(
                 {
                     return PropertyAgreement::Disagree;
                 }
-                agreed = Some((decl, node_type.name));
+                agreed = Some((decl, node_type.name.clone()));
             }
             None if agreed.is_some() => return PropertyAgreement::Disagree,
             None => saw_undeclared = true,
@@ -186,7 +197,7 @@ pub(super) fn property_agreement<'a>(
     }
     agreed
         .map(|(decl, name)| PropertyAgreement::Declared(decl, name))
-        .unwrap_or(PropertyAgreement::Undeclared(first_type.name))
+        .unwrap_or(PropertyAgreement::Undeclared(first_type.name.clone()))
 }
 
 pub(super) fn validate_declared_property(
@@ -201,7 +212,7 @@ pub(super) fn validate_declared_property(
         .find(|decl| decl.name == key)
         .ok_or(AnalysisError::SchemaUndeclaredProperty {
             property: key,
-            declared_in: edge_type.name,
+            declared_in: edge_type.name.clone(),
             graph_type,
             span,
         })
@@ -238,7 +249,7 @@ pub(super) fn validate_node_label_transition(
     if let Some(labels) = first_invalid {
         return Err(AnalysisError::SchemaUnknownNodeType {
             labels,
-            graph_type: graph_type.name,
+            graph_type: graph_type.name.clone(),
             span,
         });
     }

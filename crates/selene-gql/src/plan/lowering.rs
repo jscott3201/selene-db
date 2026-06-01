@@ -97,7 +97,7 @@ fn lower_statement_kind(
             if_not_exists,
             span,
         } => Ok(session_plan(SessionOp::SetValue {
-            param: *param,
+            param: param.clone(),
             value: value.clone(),
             if_not_exists: *if_not_exists,
             span: *span,
@@ -124,7 +124,7 @@ fn session_reset_op(target: &crate::SessionResetTarget, span: SourceSpan) -> Ses
         SessionResetTarget::Parameters => SessionOp::ResetParameters { span },
         SessionResetTarget::TimeZone => SessionOp::ResetTimeZone { span },
         SessionResetTarget::Parameter(param) => SessionOp::ResetParameter {
-            param: *param,
+            param: param.clone(),
             span,
         },
     }
@@ -223,12 +223,12 @@ fn lower_query_pipeline(
                 let projects = bindings
                     .iter()
                     .map(|binding| {
-                        expr::project_expr(&binding.value, Some(binding.alias), analyzed)
+                        expr::project_expr(&binding.value, Some(binding.alias.clone()), analyzed)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 for project in &projects {
                     visible.push(BindingTableColumn {
-                        name: project.alias,
+                        name: project.alias.clone(),
                         hidden: None,
                         ty: project.ty.clone(),
                     });
@@ -241,13 +241,13 @@ fn lower_query_pipeline(
             PipelineStatement::Unwind(unwind) => {
                 let source = expr::project_expr(&unwind.source, None, analyzed)?;
                 visible.push(BindingTableColumn {
-                    name: Some(unwind.alias),
+                    name: Some(unwind.alias.clone()),
                     hidden: None,
                     ty: AnalyzedType::DYNAMIC,
                 });
                 ops.push(PipelineOp::Unwind {
                     source,
-                    alias: unwind.alias,
+                    alias: unwind.alias.clone(),
                     span: unwind.span,
                 });
             }
@@ -347,9 +347,9 @@ fn lower_call_subquery(
     let yield_schema = yield_items
         .iter()
         .map(|item| {
-            let column = body_column(&body.output_schema, item.source, item.span)?;
+            let column = body_column(&body.output_schema, item.source.clone(), item.span)?;
             Ok(BindingTableColumn {
-                name: Some(item.output),
+                name: Some(item.output.clone()),
                 hidden: None,
                 ty: column.ty.clone(),
             })
@@ -370,25 +370,25 @@ fn table_subquery_yields(
 ) -> Result<Vec<PlannedTableSubqueryYield>, PlannerError> {
     let mut yields = Vec::new();
     for item in &call.yield_items {
-        match item.column {
+        match &item.column {
             YieldColumn::Star => {
                 for column in output_schema
                     .columns
                     .iter()
-                    .filter_map(|column| column.name)
+                    .filter_map(|column| column.name.clone())
                 {
                     yields.push(PlannedTableSubqueryYield {
-                        source: column,
+                        source: column.clone(),
                         output: column,
                         span: item.span,
                     });
                 }
             }
             YieldColumn::Named(source) => {
-                let output = item.alias.unwrap_or(source);
-                body_column(output_schema, source, item.span)?;
+                let output = item.alias.clone().unwrap_or_else(|| source.clone());
+                body_column(output_schema, source.clone(), item.span)?;
                 yields.push(PlannedTableSubqueryYield {
-                    source,
+                    source: source.clone(),
                     output,
                     span: item.span,
                 });
@@ -406,7 +406,7 @@ fn body_column(
     schema
         .columns
         .iter()
-        .find(|column| column.name == Some(name))
+        .find(|column| column.name == Some(name.clone()))
         .ok_or(PlannerError::ProcedureMetadataMismatch {
             procedure: Box::new([]),
             detail: "CALL subquery yield column missing from body output schema",
@@ -489,7 +489,7 @@ fn projects_to_columns(projects: &[ProjectExpr]) -> Vec<BindingTableColumn> {
     projects
         .iter()
         .map(|project| BindingTableColumn {
-            name: project.alias,
+            name: project.alias.clone(),
             hidden: None,
             ty: project.ty.clone(),
         })
@@ -505,7 +505,7 @@ pub(super) fn visible_after_pattern(
                 .iter()
                 .filter(|binding| binding.element != BindingElement::Path)
                 .map(|binding| BindingTableColumn {
-                    name: Some(binding.name),
+                    name: Some(binding.name.clone()),
                     hidden: None,
                     ty: binding.ty.clone(),
                 })
@@ -550,7 +550,7 @@ fn limit_amount(value: &LimitValue) -> LimitAmount {
             declared_type,
             span,
         } => LimitAmount::Parameter {
-            name: *name,
+            name: name.clone(),
             declared_type: declared_type.clone(),
             span: *span,
         },
@@ -658,9 +658,10 @@ mod defensive_tests {
         let PipelineStatement::Return(parsed_return) = parsed_query.statements[0].clone() else {
             unreachable!("parser returns return");
         };
-        let ValueExpr::Variable { name, .. } = parsed_return.items[0].expr else {
+        let ValueExpr::Variable { name, .. } = &parsed_return.items[0].expr else {
             unreachable!("test projection is variable");
         };
+        let name = name.clone();
         let mut expr_types = ExprTypeTable::default();
         let expr_id = expr_types.push(crate::AnalyzedType::DYNAMIC);
         let mut statement = AnalyzedStatement {

@@ -28,7 +28,7 @@ fn create_node_admission_failure_leaves_no_partial_node_state() {
     let label = intern("admission_atomicity.label").unwrap();
     let indexed_prop = intern("admission_atomicity.name").unwrap();
     graph
-        .create_property_index(label, indexed_prop, TypedIndexKind::String)
+        .create_property_index(label.clone(), indexed_prop.clone(), TypedIndexKind::String)
         .unwrap();
 
     // Fill the IStr pool to its hard cap.

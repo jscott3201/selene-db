@@ -142,12 +142,12 @@ fn composite_ranking_picks_cheaper_index() {
     let b = istr("b");
     let c = istr("c");
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(label)
-        .with_node_composite_index(label, vec![(a, IndexKind::Integer), (b, IndexKind::Integer)])
-        .with_node_composite_index(label, vec![(b, IndexKind::Integer), (c, IndexKind::Integer)])
-        .with_label_cardinality(label, 1000)
+        .with_node_label_index(label.clone())
+        .with_node_composite_index(label.clone(), vec![(a, IndexKind::Integer), (b.clone(), IndexKind::Integer)])
+        .with_node_composite_index(label.clone(), vec![(b, IndexKind::Integer), (c, IndexKind::Integer)])
+        .with_label_cardinality(label.clone(), 1000)
         // (a, b) canonical-sorted keys [a<b] → [1, 2]; expensive.
-        .with_composite_cardinality(label, vec![Value::Int(1), Value::Int(2)], 200)
+        .with_composite_cardinality(label.clone(), vec![Value::Int(1), Value::Int(2)], 200)
         // (b, c) canonical-sorted keys [b<c] → [2, 3]; cheap.
         .with_composite_cardinality(label, vec![Value::Int(2), Value::Int(3)], 5);
     let plan = optimized(
@@ -170,12 +170,12 @@ fn composite_gate_declines_when_not_cheaper_than_label() {
     let a = istr("a");
     let b = istr("b");
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(label)
+        .with_node_label_index(label.clone())
         .with_node_composite_index(
-            label,
+            label.clone(),
             vec![(a, IndexKind::Integer), (b, IndexKind::Integer)],
         )
-        .with_label_cardinality(label, 100)
+        .with_label_cardinality(label.clone(), 100)
         .with_composite_cardinality(label, vec![Value::Int(1), Value::Int(2)], 100);
     let plan = optimized(
         "MATCH (n:Doc2) FILTER n.a = 1 AND n.b = 2 RETURN n",
@@ -196,10 +196,10 @@ fn composite_gate_declines_when_not_cheaper_than_label() {
 fn in_list_selective_uses_bitmap_union() {
     let label = istr("PersonIn");
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(label)
-        .with_node_typed_index(label, istr("age"), IndexKind::Integer)
-        .with_label_cardinality(label, 1000)
-        .with_equality_cardinality(label, istr("age"), Value::Int(1), 3)
+        .with_node_label_index(label.clone())
+        .with_node_typed_index(label.clone(), istr("age"), IndexKind::Integer)
+        .with_label_cardinality(label.clone(), 1000)
+        .with_equality_cardinality(label.clone(), istr("age"), Value::Int(1), 3)
         .with_equality_cardinality(label, istr("age"), Value::Int(2), 4);
     let plan = optimized(
         "MATCH (n:PersonIn) FILTER n.age IN [1, 2] RETURN n",
@@ -216,11 +216,11 @@ fn in_list_selective_uses_bitmap_union() {
 fn in_list_non_selective_declines_bitmap_union() {
     let label = istr("PersonIn2");
     let catalog = MockIndexCatalog::new()
-        .with_node_label_index(label)
-        .with_node_typed_index(label, istr("age"), IndexKind::Integer)
-        .with_label_cardinality(label, 10)
+        .with_node_label_index(label.clone())
+        .with_node_typed_index(label.clone(), istr("age"), IndexKind::Integer)
+        .with_label_cardinality(label.clone(), 10)
         // Each value matches ~all rows: 8+8 ≥ 10 baseline → not cheaper.
-        .with_equality_cardinality(label, istr("age"), Value::Int(1), 8)
+        .with_equality_cardinality(label.clone(), istr("age"), Value::Int(1), 8)
         .with_equality_cardinality(label, istr("age"), Value::Int(2), 8);
     let plan = optimized(
         "MATCH (n:PersonIn2) FILTER n.age IN [1, 2] RETURN n",

@@ -174,8 +174,10 @@ pub fn in_list_cost(
     let mut total: u64 = 0;
     for key in keys {
         let element = match literal_value(key) {
-            Some(value) => catalog.equality_cardinality(target, label, property, &value)?,
-            None => catalog.typed_avg_bucket(target, label, property)?,
+            Some(value) => {
+                catalog.equality_cardinality(target, label.clone(), property.clone(), &value)?
+            }
+            None => catalog.typed_avg_bucket(target, label.clone(), property.clone())?,
         };
         total = total.saturating_add(element);
     }
@@ -218,7 +220,7 @@ pub fn disjunctive_cost(
 ) -> Option<u64> {
     let mut total: u64 = 0;
     for label in labels {
-        total = total.saturating_add(catalog.label_cardinality(target, *label)?);
+        total = total.saturating_add(catalog.label_cardinality(target, label.clone())?);
     }
     Some(total)
 }
@@ -270,7 +272,7 @@ fn literal_to_value(literal: &Literal) -> Option<Value> {
         Literal::Bool(value, _) => Value::Bool(*value),
         Literal::Integer(value, _) => Value::Int(*value),
         Literal::Float(value, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(*value),
+        Literal::String(value, _) => Value::String(value.clone()),
         Literal::Uuid(value, _) => Value::Uuid(*value),
         Literal::Null(_) => return None,
     })

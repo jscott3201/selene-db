@@ -37,13 +37,13 @@ fn build_graph(count: usize, edges: &[(usize, usize, f64)]) -> (SharedGraph, Vec
     for _ in 0..count {
         let id = txn
             .mutator()
-            .create_node(LabelSet::single(label), PropertyMap::new())
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
             .unwrap();
         nodes.push(id);
     }
     for &(s, t, w) in edges {
         txn.mutator()
-            .create_edge(rel, nodes[s], nodes[t], weight_props(w))
+            .create_edge(rel.clone(), nodes[s], nodes[t], weight_props(w))
             .unwrap();
     }
     txn.commit().unwrap();
@@ -166,13 +166,13 @@ fn sssp_handles_sparse_row_projection() {
     for _ in 0..100 {
         nodes.push(
             txn.mutator()
-                .create_node(LabelSet::single(label), PropertyMap::new())
+                .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                 .unwrap(),
         );
     }
     // Connect 0 -> 50 -> 99 within the scope (other rows are filtered out).
     txn.mutator()
-        .create_edge(rel, nodes[0], nodes[50], weight_props(2.5))
+        .create_edge(rel.clone(), nodes[0], nodes[50], weight_props(2.5))
         .unwrap();
     txn.mutator()
         .create_edge(rel, nodes[50], nodes[99], weight_props(3.5))

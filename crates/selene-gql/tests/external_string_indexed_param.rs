@@ -40,7 +40,11 @@ fn external_string_parameter_lands_in_indexed_string_column() {
     let function_label = istr("Brief153Function");
     let qualified_name = istr("qualified_name");
     graph
-        .create_property_index(function_label, qualified_name, TypedIndexKind::String)
+        .create_property_index(
+            function_label.clone(),
+            qualified_name.clone(),
+            TypedIndexKind::String,
+        )
         .expect("registers");
 
     let probe = "brief153::ext::unique_qualified_name";

@@ -142,20 +142,20 @@ fn seeded_sensor_graph(id: u64, with_index: bool) -> SharedGraph {
         let mut mutator = txn.mutator();
         mutator
             .create_node(
-                LabelSet::single(sensor),
+                LabelSet::single(sensor.clone()),
                 props([
-                    (ts, Value::Int(1)),
-                    (location, Value::String(istr("north"))),
-                    (value, Value::String(istr("alpha"))),
+                    (ts.clone(), Value::Int(1)),
+                    (location.clone(), Value::String(istr("north"))),
+                    (value.clone(), Value::String(istr("alpha"))),
                 ]),
             )
             .unwrap();
         mutator
             .create_node(
-                LabelSet::single(sensor),
+                LabelSet::single(sensor.clone()),
                 props([
-                    (ts, Value::Int(1)),
-                    (location, Value::String(istr("south"))),
+                    (ts.clone(), Value::Int(1)),
+                    (location.clone(), Value::String(istr("south"))),
                     (value, Value::String(istr("beta"))),
                 ]),
             )
@@ -287,7 +287,12 @@ fn cross_map_name_collisions_and_ambiguous_drop_use_flat_namespace() {
         let mut txn = graph.begin_write();
         let mut mutator = txn.mutator();
         mutator
-            .create_property_index_named(sensor, ts, TypedIndexKind::I64, Some(istr("foo")))
+            .create_property_index_named(
+                sensor.clone(),
+                ts.clone(),
+                TypedIndexKind::I64,
+                Some(istr("foo")),
+            )
             .unwrap();
         mutator
             .create_composite_property_index_named(
@@ -326,7 +331,10 @@ fn optimized_composite_lookup_executes_against_live_storage() {
     let ScanAccess::CompositeLookup { properties, .. } = &scan.access else {
         panic!("expected composite lookup, got {:?}", scan.access);
     };
-    let property_keys: Vec<IStr> = properties.iter().map(|(property, _)| *property).collect();
+    let property_keys: Vec<IStr> = properties
+        .iter()
+        .map(|(property, _)| property.clone())
+        .collect();
     assert_eq!(property_keys, vec![istr("ts"), istr("location")]);
     assert_eq!(
         graph

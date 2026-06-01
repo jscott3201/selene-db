@@ -133,7 +133,7 @@ impl GraphProjection {
             name: config.name.clone(),
             nodes,
             edge_labels: config.edge_labels.clone(),
-            weight_property: config.weight_property,
+            weight_property: config.weight_property.clone(),
             row_index,
             out_csr,
             in_csr,
@@ -326,7 +326,7 @@ mod tests {
             for _ in 0..total {
                 let nid = txn
                     .mutator()
-                    .create_node(LabelSet::single(label), PropertyMap::new())
+                    .create_node(LabelSet::single(label.clone()), PropertyMap::new())
                     .unwrap();
                 all.push(nid);
             }
@@ -351,7 +351,7 @@ mod tests {
                 let b = survivors[(i + 1) % survivors.len()];
                 if a != b {
                     txn.mutator()
-                        .create_edge(link, a, b, PropertyMap::new())
+                        .create_edge(link.clone(), a, b, PropertyMap::new())
                         .unwrap();
                 }
             }
@@ -512,7 +512,10 @@ mod tests {
         let label = istr("T");
         let link = istr("link");
         let mut built = SeleneGraph::new(GraphId::new(7_702));
-        built.node_store.labels.push(LabelSet::single(label));
+        built
+            .node_store
+            .labels
+            .push(LabelSet::single(label.clone()));
         built.node_store.properties.push(PropertyMap::new());
         built.node_store.row_to_id.push(NodeId::new(5));
         built.node_store.labels.push(LabelSet::single(label));

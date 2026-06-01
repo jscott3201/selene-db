@@ -68,7 +68,8 @@ fn stats_selectivity(pred: &FilterPredicate, scan_ctx: &ScanContext<'_>) -> Opti
     // Only literal equality has an exact count at plan time; parameters defer
     // to the heuristic so the no-value case stays unchanged.
     let value = equality_literal_value(value_expr)?;
-    let matches = catalog.equality_cardinality(IndexTarget::Node, label, matched.key, &value)?;
+    let matches =
+        catalog.equality_cardinality(IndexTarget::Node, label.clone(), matched.key, &value)?;
     let population = catalog.label_cardinality(IndexTarget::Node, label)?;
     if population == 0 {
         return None;
@@ -84,7 +85,7 @@ fn equality_literal_value(expr: &ValueExpr) -> Option<Value> {
         Literal::Bool(value, _) => Some(Value::Bool(*value)),
         Literal::Integer(value, _) => Some(Value::Int(*value)),
         Literal::Float(value, _) => Some(Value::Float(*value)),
-        Literal::String(value, _) => Some(Value::String(*value)),
+        Literal::String(value, _) => Some(Value::String(value.clone())),
         Literal::Uuid(value, _) => Some(Value::Uuid(*value)),
         Literal::Null(_) => None,
     }
@@ -125,7 +126,7 @@ fn label_for_binding(bindings: &[BindingDef], binding_id: crate::BindingId) -> O
         .iter()
         .find(|binding| binding.binding == binding_id)
         .and_then(|binding| match &binding.label_predicate {
-            Some(LabelExpr::Single(label)) => Some(*label),
+            Some(LabelExpr::Single(label)) => Some(label.clone()),
             _ => None,
         })
 }

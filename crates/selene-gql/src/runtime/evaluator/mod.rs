@@ -48,10 +48,10 @@ pub fn evaluate(
 ) -> Result<Value, ExecutorError> {
     match expr {
         ValueExpr::Literal(literal) => Ok(literal_value(literal)),
-        ValueExpr::Variable { name, span } => lookup_variable(*name, *span, binding, schema),
+        ValueExpr::Variable { name, span } => lookup_variable(name.clone(), *span, binding, schema),
         ValueExpr::PropertyAccess { target, key, span } => {
             let target = evaluate(target, binding, schema, ctx)?;
-            property_access(&target, *key, *span, ctx)
+            property_access(&target, key.clone(), *span, ctx)
         }
         ValueExpr::BinaryOp { op, lhs, rhs, span } => {
             let lhs = evaluate(lhs, binding, schema, ctx)?;
@@ -86,7 +86,7 @@ pub fn evaluate(
             name,
             declared_type,
             span,
-        } => resolve_parameter(*name, declared_type.as_ref(), *span, ctx),
+        } => resolve_parameter(name.clone(), declared_type.as_ref(), *span, ctx),
         ValueExpr::FunctionCall {
             name,
             args,
@@ -137,7 +137,7 @@ pub fn evaluate(
         }
         ValueExpr::Same { items, span } => eval_same(items, *span, binding, schema, ctx),
         ValueExpr::PropertyExists { target, key, span } => {
-            eval_property_exists(target, *key, *span, binding, schema, ctx)
+            eval_property_exists(target, key.clone(), *span, binding, schema, ctx)
         }
         ValueExpr::ListAccess {
             target,
@@ -192,7 +192,7 @@ fn lookup_variable(
     let Some(index) = schema
         .columns
         .iter()
-        .position(|column| column.name == Some(name))
+        .position(|column| column.name == Some(name.clone()))
     else {
         // GA07 binder keeps pre-projection bindings visible after RETURN.
         // OrderBy evaluates against the projected schema when the TopK
@@ -221,7 +221,10 @@ fn resolve_parameter(
         .parameters()
         .get(&name)
         .cloned()
-        .ok_or(ExecutorError::UnboundParameter { name, span })?;
+        .ok_or(ExecutorError::UnboundParameter {
+            name: name.clone(),
+            span,
+        })?;
     if let Some(declared_type) = declared_type {
         crate::runtime::parameter_type::validate_declared_type(name, &value, declared_type, span)?;
     }
@@ -274,7 +277,7 @@ fn literal_value(literal: &Literal) -> Value {
         Literal::Bool(value, _) => Value::Bool(*value),
         Literal::Integer(value, _) => Value::Int(*value),
         Literal::Float(value, _) => Value::Float(*value),
-        Literal::String(value, _) => Value::String(*value),
+        Literal::String(value, _) => Value::String(value.clone()),
         Literal::Uuid(value, _) => Value::Uuid(*value),
         Literal::Null(_) => Value::Null,
     }

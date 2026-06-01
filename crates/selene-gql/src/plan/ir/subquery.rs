@@ -29,7 +29,7 @@ pub struct PlannedSubquery {
 }
 
 /// One outer-scope binding referenced from inside a planned subquery.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OuterBindingRef {
     /// Analyzer binding ID for the outer declaration.
     pub binding: BindingId,
@@ -76,7 +76,7 @@ pub struct PlannedTableSubquery {
 }
 
 /// One yielded column from a planned inline CALL body.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PlannedTableSubqueryYield {
     /// Column name in the inner body result.
     pub source: IStr,

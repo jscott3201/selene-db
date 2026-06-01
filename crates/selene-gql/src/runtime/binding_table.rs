@@ -138,6 +138,6 @@ impl BindingTable {
         self.schema
             .columns
             .iter()
-            .position(|column| column.name == Some(name))
+            .position(|column| column.name == Some(name.clone()))
     }
 }
