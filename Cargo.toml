@@ -96,7 +96,6 @@ selene-persist = { path = "crates/selene-persist", version = "1.1.0" }
 
 # Dev dependencies.
 criterion = "0.8"
-iai-callgrind = "0.16"
 # Bench-binary global allocator. Library crates do NOT depend on this;
 # embedders pick their own allocator.
 mimalloc = { version = "0.1", default-features = false }

@@ -34,7 +34,6 @@ metrics = ["selene-core/metrics"]
 
 [dev-dependencies]
 criterion.workspace = true
-iai-callgrind.workspace = true
 mimalloc.workspace = true
 proptest.workspace = true
 rstest.workspace = true
@@ -71,10 +70,6 @@ harness = false
 
 [[bench]]
 name = "bfs"
-harness = false
-
-[[bench]]
-name = "iai_gates"
 harness = false
 
 [lints]
