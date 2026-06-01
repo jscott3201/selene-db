@@ -13,8 +13,14 @@ use selene_algorithms::{
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
 use selene_graph::{SeleneGraph, SharedGraph};
-use selene_testing::bench_fixtures::BENCHMARK_SCALES as BENCH_SCALES;
 use selene_testing::{BenchFixture, BenchProfile};
+
+/// Node scales for the scale-swept algorithm groups, selected by
+/// `SELENE_BENCH_PROFILE` (quick=1k, full=10k/50k/100k, stress=+250k) so a
+/// `--profile quick` spot-check no longer runs the 100k betweenness baseline.
+fn profile_scales() -> &'static [usize] {
+    BenchProfile::from_env().scales()
+}
 
 // All-pairs SSSP iterates every source; N=1000 is roughly 10^6 output tuples.
 // Bump only with measured wall-clock evidence per BRIEF-87 section B.2.
@@ -35,7 +41,7 @@ const BENCH_PAGERANK_CONFIG: PageRankConfig = PageRankConfig {
 
 fn bench_pagerank(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/pagerank");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         let state = BenchState::from_bench_fixture(scale);
         for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
             let config = PageRankConfig {
@@ -52,7 +58,7 @@ fn bench_pagerank(c: &mut Criterion) {
 
 fn bench_betweenness(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/betweenness");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         let state = BenchState::from_bench_fixture(scale);
         // Sample large betweenness fixtures so the 10k baseline stays bounded.
         let sample_size = betweenness_sample_size(scale);
@@ -71,7 +77,7 @@ fn bench_betweenness(c: &mut Criterion) {
 
 fn bench_triangle_count(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/triangle_count");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         // Local planted communities keep triangle_count from measuring a mostly-empty result.
         let state = BenchState::from_planted_community(scale, 82_200 + scale as u64);
         for &(mode, parallelism) in PARALLELISM_BENCH_MODES {
@@ -103,7 +109,7 @@ fn bench_apsp(c: &mut Criterion) {
 
 fn bench_louvain(c: &mut Criterion) {
     let mut group = c.benchmark_group("algo/louvain");
-    for &scale in BENCH_SCALES {
+    for &scale in profile_scales() {
         // Local planted communities give Louvain an actual modularity structure.
         let state = BenchState::from_planted_community(scale, 82_300 + scale as u64);
         group.bench_function(BenchmarkId::from_parameter(scale_label(scale)), move |b| {

@@ -37,7 +37,6 @@ plan-cache-source-tracing = []
 
 [dev-dependencies]
 criterion.workspace = true
-iai-callgrind.workspace = true
 insta.workspace = true
 mimalloc.workspace = true
 metrics.workspace = true
@@ -102,11 +101,6 @@ harness = false
 [[bench]]
 name = "procedure_call_repeat"
 harness = false
-
-[[bench]]
-name = "iai_gates"
-harness = false
-required-features = ["test-harness"]
 
 [lints]
 workspace = true
