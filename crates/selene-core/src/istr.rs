@@ -1,7 +1,7 @@
 //! Owned interned-style string handles backed by `compact_str::CompactString`.
 //!
 //! See spec 02 section 5.1. After the interner removal (stages A–C), `IStr` is
-//! an owned `CompactString` newtype rather than a `lasso::Spur` handle into a
+//! an owned `CompactString` newtype rather than a pooled interner handle into a
 //! process-global pool. There is no longer a global pool, no distinct-string
 //! cardinality cap, and no admission policy: [`intern`] simply constructs an
 //! owned [`IStr`] after enforcing the per-string byte cap (`IL013`).

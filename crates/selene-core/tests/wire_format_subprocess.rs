@@ -1,78 +1,80 @@
-//! Cross-process wire-format checks for IStr-keyed containers.
-
-use std::env;
-use std::fs;
-use std::path::Path;
-use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+//! Wire-format canonical-order checks for IStr-keyed containers.
+//!
+//! Before the interner removal these checks spawned two child processes to
+//! prove the wire bytes did not depend on the *global interner admission
+//! order*. With the global pool gone (IStr is now an owned `CompactString`
+//! newtype with lexicographic Ord), admission order no longer exists — the only
+//! remaining order-sensitivity is *insertion* order into a `PropertyMap`, which
+//! is canonicalized to lexicographic key order at serialize time. These are now
+//! same-process assertions that two different insertion orders of the same keys
+//! produce byte-identical canonical wire.
 
 use selene_core::{PropertyMap, Value, intern};
 
+/// Two `PropertyMap`s built from different insertion orders of the same keys
+/// serialize to byte-identical (canonical lexicographic) postcard wire.
 #[test]
-fn property_map_wire_bytes_are_independent_of_admission_order() {
-    let unique = unique_prefix();
-    let apple = format!("{unique}.apple");
-    let banana = format!("{unique}.banana");
-    let zebra = format!("{unique}.zebra");
-    let first_order = [zebra.as_str(), apple.as_str(), banana.as_str()].join(",");
-    let second_order = [banana.as_str(), zebra.as_str(), apple.as_str()].join(",");
-    let dir = env::temp_dir();
-    let first_path = dir.join(format!("{unique}.first.postcard"));
-    let second_path = dir.join(format!("{unique}.second.postcard"));
+fn property_map_wire_bytes_are_independent_of_insertion_order() {
+    let apple = intern("wire.apple").unwrap();
+    let banana = intern("wire.banana").unwrap();
+    let zebra = intern("wire.zebra").unwrap();
 
-    run_child(&first_order, &first_path);
-    run_child(&second_order, &second_path);
-
-    let first = fs::read(&first_path).expect("read first child output");
-    let second = fs::read(&second_path).expect("read second child output");
-    assert_eq!(
-        first, second,
-        "canonical wire order must not depend on IStr admission order"
-    );
-    let _ = fs::remove_file(first_path);
-    let _ = fs::remove_file(second_path);
-}
-
-#[test]
-fn wire_format_child_entry() {
-    let Some(output) = env::var_os("SELENE_WIRE_CHILD_OUTPUT") else {
-        return;
-    };
-    let order = env::var("SELENE_WIRE_CHILD_ORDER").expect("child order env set");
-    let names: Vec<_> = order.split(',').collect();
-    assert_eq!(names.len(), 3, "test child expects three keys");
-    for name in &names {
-        intern(name).expect("child admits key in requested order");
-    }
-
-    let mut logical_keys = names.clone();
-    logical_keys.sort_unstable();
-    let map = PropertyMap::from_pairs([
-        (intern(logical_keys[0]).unwrap(), Value::Int(1)),
-        (intern(logical_keys[1]).unwrap(), Value::Int(2)),
-        (intern(logical_keys[2]).unwrap(), Value::Int(3)),
+    let first = PropertyMap::from_pairs([
+        (zebra.clone(), Value::Int(3)),
+        (apple.clone(), Value::Int(1)),
+        (banana.clone(), Value::Int(2)),
     ])
-    .expect("map builds");
-    let bytes = postcard::to_allocvec(&map).expect("map serializes");
-    fs::write(output, bytes).expect("child writes output");
+    .expect("first map builds");
+    let second = PropertyMap::from_pairs([
+        (banana, Value::Int(2)),
+        (zebra, Value::Int(3)),
+        (apple, Value::Int(1)),
+    ])
+    .expect("second map builds");
+
+    let first_bytes = postcard::to_allocvec(&first).expect("first serializes");
+    let second_bytes = postcard::to_allocvec(&second).expect("second serializes");
+    assert_eq!(
+        first_bytes, second_bytes,
+        "canonical wire order must not depend on PropertyMap insertion order"
+    );
+
+    // And both round-trip back to the same map.
+    let round: PropertyMap = postcard::from_bytes(&first_bytes).expect("round-trips");
+    assert_eq!(round, first);
+    assert_eq!(round, second);
 }
 
-fn run_child(order: &str, output: &Path) {
-    let status = Command::new(env::current_exe().expect("current test exe"))
-        .arg("--exact")
-        .arg("wire_format_child_entry")
-        .arg("--nocapture")
-        .env("SELENE_WIRE_CHILD_ORDER", order)
-        .env("SELENE_WIRE_CHILD_OUTPUT", output)
-        .status()
-        .expect("child test process starts");
-    assert!(status.success(), "child test process failed: {status}");
-}
+/// The same canonicalization holds for a Compact-shaped map: a fixed key set
+/// supplied in two different orders serializes identically.
+#[test]
+fn compact_property_map_wire_bytes_are_independent_of_key_order() {
+    let alpha = intern("wire.compact.alpha").unwrap();
+    let mid = intern("wire.compact.mid").unwrap();
+    let omega = intern("wire.compact.omega").unwrap();
 
-fn unique_prefix() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock after epoch")
-        .as_nanos();
-    format!("brief92-wire-{}-{nanos}", std::process::id())
+    let forward = PropertyMap::compact(
+        [alpha.clone(), mid.clone(), omega.clone()],
+        [
+            Some(Value::Int(1)),
+            Some(Value::Int(2)),
+            Some(Value::Int(3)),
+        ],
+    )
+    .expect("forward compact builds");
+    let reverse = PropertyMap::compact(
+        [omega, mid, alpha],
+        [
+            Some(Value::Int(3)),
+            Some(Value::Int(2)),
+            Some(Value::Int(1)),
+        ],
+    )
+    .expect("reverse compact builds");
+
+    assert_eq!(
+        postcard::to_allocvec(&forward).expect("forward serializes"),
+        postcard::to_allocvec(&reverse).expect("reverse serializes"),
+        "compact canonical wire must not depend on supplied key order"
+    );
 }

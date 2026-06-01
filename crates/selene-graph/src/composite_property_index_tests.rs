@@ -39,7 +39,7 @@ fn rows(
         return RoaringBitmap::new();
     };
     let refs = values.iter().collect::<Vec<_>>();
-    let key = entry.index.key_from_values_admit(&refs).unwrap();
+    let key = entry.index.key_from_values(&refs).unwrap();
     entry.index.lookup_key(&key).cloned().unwrap_or_default()
 }
 

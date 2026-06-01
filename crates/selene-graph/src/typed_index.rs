@@ -1,16 +1,19 @@
 //! Built-in per-`(label, property)` value index. See spec 03 section 5.2.
 //!
-//! # Caller classes
+//! # Value coercion
 //!
-//! `typed_key_admit` and `typed_key_lookup` split the `Value`→`TypedKey`
-//! conversion into write-side (`insert`, `remove`) and read/diff-side
-//! (`lookup_eq`, the per-type closures in `lookup_range`, and
-//! `values_share_key`) callers. With the interner removed there is a single
-//! string space, so a `STRING` value always resolves to its key; the
-//! `Ok(None)` resolution path is retained in the read/diff helper signature
-//! pending the two-phase collapse in the typed-index simplification stage.
+//! [`typed_key`] is the single `Value`→`TypedKey` coercion shared by every
+//! write-side (`insert`, `remove`) and read/diff-side (`lookup_eq`, the
+//! per-type closures in `lookup_range`, and `values_share_key`) caller. With
+//! the global string interner removed there is one string space, so a `STRING`
+//! value always resolves directly to its key — the historical two-phase
+//! `admit`/`lookup` split (which existed only to handle the now-deleted
+//! `Value::ExternalString` asymmetry) is collapsed to this one fallible
+//! coercion. Kind mismatch (e.g. a `Value::Bool` against any index) and NaN
+//! still raise [`TypedIndexValueError`]; a kind-mismatched read returns `None`
+//! to the caller so it drops to a runtime scan.
 //!
-//! The same split is mirrored in [`crate::composite_typed_index`] for
+//! The same collapse is mirrored in [`crate::composite_typed_index`] for
 //! composite indexes.
 
 use std::borrow::Cow;
@@ -236,7 +239,7 @@ impl TypedIndex {
     /// Insert `row` into the bitmap for `value`.
     pub(crate) fn insert(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (self, typed_key_admit(value, expected_kind)?) {
+        match (self, typed_key(value, expected_kind)?) {
             (Self::I64(index), TypedKey::I64(key)) => {
                 index.entry(key).or_default().insert(row);
                 Ok(())
@@ -274,7 +277,7 @@ impl TypedIndex {
     /// is pruned from the inner map.
     pub(crate) fn remove(&mut self, value: &Value, row: u32) -> Result<(), TypedIndexValueError> {
         let expected_kind = self.kind();
-        match (self, typed_key_admit(value, expected_kind)?) {
+        match (self, typed_key(value, expected_kind)?) {
             (Self::I64(index), TypedKey::I64(key)) => {
                 remove_row(index, &key, row);
                 Ok(())
@@ -309,14 +312,12 @@ impl TypedIndex {
     /// Return the rows matching `value` exactly.
     ///
     /// Returns `None` for kind-mismatched values (callers fall back to a
-    /// runtime scan). With a single string space every `STRING` value
-    /// resolves to its key directly, so the read helper no longer yields
-    /// `Ok(None)`; the arm is retained pending the two-phase collapse.
+    /// runtime scan). With a single string space every `STRING` value resolves
+    /// to its key directly through [`typed_key`].
     #[must_use]
     pub(crate) fn lookup_eq(&self, value: &Value) -> Option<Cow<'_, RoaringBitmap>> {
-        let key = match typed_key_lookup(value) {
-            Ok(Some(key)) => key,
-            Ok(None) => return None,
+        let key = match typed_key(value, self.kind()) {
+            Ok(key) => key,
             Err(_) => return None,
         };
         match (self, key) {
@@ -340,66 +341,97 @@ impl TypedIndex {
     {
         match self {
             Self::I64(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::I64(key))) => Some(key),
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::I64) {
+                        Ok(TypedKey::I64(key)) => Some(key),
                         _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::I64(key))) => Some(key),
-                    _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::I64) {
+                        Ok(TypedKey::I64(key)) => Some(key),
+                        _ => None,
+                    }
                 })?;
                 Some(range_union(index, &start, &end))
             }
             Self::F64(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::F64(key))) => Some(key),
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::F64) {
+                        Ok(TypedKey::F64(key)) => Some(key),
                         _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::F64(key))) => Some(key),
-                    _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::F64) {
+                        Ok(TypedKey::F64(key)) => Some(key),
+                        _ => None,
+                    }
                 })?;
                 Some(range_union(index, &start, &end))
             }
-            // String ranges fall back to runtime scans; converting this to a
-            // real `BTreeMap::range` walk over the now-lexicographic keys is
-            // deferred to the typed-index simplification stage.
-            Self::String(_) => None,
-            Self::Date(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::Date(key))) => Some(key),
+            // String ranges walk the now-lexicographic `BTreeMap<IStr, _>`
+            // range directly — result-identical to the old `None` linear-scan
+            // fallback (the linear scan compared `Value::String` rows
+            // lexicographically, and `IStr` Ord is lexicographic), just
+            // O(log n + matched) instead of O(total cardinality).
+            Self::String(index) => {
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::String) {
+                        Ok(TypedKey::String(key)) => Some(key),
                         _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::Date(key))) => Some(key),
-                    _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::String) {
+                        Ok(TypedKey::String(key)) => Some(key),
+                        _ => None,
+                    }
+                })?;
+                Some(range_union(index, &start, &end))
+            }
+            Self::Date(index) => {
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::Date) {
+                        Ok(TypedKey::Date(key)) => Some(key),
+                        _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::Date) {
+                        Ok(TypedKey::Date(key)) => Some(key),
+                        _ => None,
+                    }
                 })?;
                 Some(range_union(index, &start, &end))
             }
             Self::LocalDateTime(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::LocalDateTime(key))) => Some(key),
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::LocalDateTime) {
+                        Ok(TypedKey::LocalDateTime(key)) => Some(key),
                         _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::LocalDateTime(key))) => Some(key),
-                    _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::LocalDateTime) {
+                        Ok(TypedKey::LocalDateTime(key)) => Some(key),
+                        _ => None,
+                    }
                 })?;
                 Some(range_union(index, &start, &end))
             }
             Self::Uuid(index) => {
-                let start =
-                    bound_to_key(range.start_bound(), |value| match typed_key_lookup(value) {
-                        Ok(Some(TypedKey::Uuid(key))) => Some(key),
+                let start = bound_to_key(range.start_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::Uuid) {
+                        Ok(TypedKey::Uuid(key)) => Some(key),
                         _ => None,
-                    })?;
-                let end = bound_to_key(range.end_bound(), |value| match typed_key_lookup(value) {
-                    Ok(Some(TypedKey::Uuid(key))) => Some(key),
-                    _ => None,
+                    }
+                })?;
+                let end = bound_to_key(range.end_bound(), |value| {
+                    match typed_key(value, TypedIndexKind::Uuid) {
+                        Ok(TypedKey::Uuid(key)) => Some(key),
+                        _ => None,
+                    }
                 })?;
                 Some(range_union(index, &start, &end))
             }
@@ -408,24 +440,40 @@ impl TypedIndex {
 
     /// Return the union of string-key rows whose key starts with `prefix`.
     ///
-    /// This scans every key in the BTreeMap and runs `starts_with` per
-    /// entry — O(total cardinality), not O(matching prefix span). `IStr` now
-    /// orders **lexicographically** (through the inner `CompactString`), so a
-    /// `BTreeMap<IStr, _>::range` walk over a string-prefix interval *is*
-    /// possible; converting this scan to a range lookup (and likewise teaching
-    /// [`Self::lookup_range`] to return real string ranges instead of `None`)
-    /// is deferred to the typed-index simplification stage of the interner
-    /// removal. Until then the O(n) scan and the `None` range fallback preserve
-    /// exact query semantics.
+    /// `IStr` orders **lexicographically** (through the inner `CompactString`),
+    /// so every key starting with `prefix` forms a contiguous run beginning at
+    /// the first key `>= prefix`. This seeks that run with `BTreeMap::range`
+    /// (`Included(prefix)`, [`Bound::Unbounded`]) and stops at the first key
+    /// that no longer starts with `prefix` — O(log n + matched) rather than the
+    /// O(total cardinality) full scan, and result-identical to a per-key
+    /// `starts_with` filter because it applies the exact same predicate over a
+    /// sorted-order seek.
+    ///
+    /// Seeking from `Included(prefix)` (rather than computing an exclusive upper
+    /// bound) sidesteps the encoding hazards an explicit successor key carries:
+    /// an empty prefix or an all-`0xFF` prefix has no finite successor, and a
+    /// byte-incremented successor can fall out of valid UTF-8. The break-on-
+    /// first-mismatch walk handles all of those uniformly — an empty prefix
+    /// matches every key (every key seeks to the start and `starts_with("")` is
+    /// always true), and no matching tail is ever dropped.
     #[must_use]
     pub(crate) fn lookup_prefix(&self, prefix: &str) -> Option<RoaringBitmap> {
         match self {
             Self::String(index) => {
+                // `BTreeMap<IStr, _>` keys are owned `IStr`, so seek with an
+                // owned `IStr` lower bound. A prefix within the IL013 cap always
+                // interns; an over-cap prefix matches nothing (no stored key can
+                // exceed the cap) — return empty rather than panic.
+                let Ok(lo_key) = selene_core::intern(prefix) else {
+                    return Some(RoaringBitmap::new());
+                };
                 let mut result = RoaringBitmap::new();
-                for (key, bitmap) in index {
-                    if key.as_str().starts_with(prefix) {
-                        result |= bitmap;
+                for (key, bitmap) in index.range((Bound::Included(lo_key), Bound::Unbounded)) {
+                    if !key.as_str().starts_with(prefix) {
+                        // Keys are sorted; the first non-match ends the run.
+                        break;
                     }
+                    result |= bitmap;
                 }
                 Some(result)
             }
@@ -436,33 +484,23 @@ impl TypedIndex {
     /// Return true when two values address the same key in this index.
     ///
     /// This lets update maintenance avoid touching an index when a mutation
-    /// changed unrelated node columns. Uses [`typed_key_lookup`] (no
-    /// admission); when either side cannot be resolved through the existing
-    /// IStr pool the diff falls through to [`raw_value_same`] so we never
-    /// admit just to compare keys. If raw values differ the update path
-    /// fires remove+insert, which then admit through [`typed_key_admit`].
+    /// changed unrelated node columns. Uses [`typed_key`]; when either side
+    /// cannot be coerced to this index's kind the diff falls through to
+    /// [`raw_value_same`] so we compare raw content. If raw values differ the
+    /// update path fires remove+insert, which re-coerce through [`typed_key`].
     pub(crate) fn values_share_key(&self, lhs: &Value, rhs: &Value) -> bool {
-        match (self, typed_key_lookup(lhs), typed_key_lookup(rhs)) {
-            (Self::I64(_), Ok(Some(TypedKey::I64(lhs))), Ok(Some(TypedKey::I64(rhs)))) => {
-                lhs == rhs
-            }
-            (Self::F64(_), Ok(Some(TypedKey::F64(lhs))), Ok(Some(TypedKey::F64(rhs)))) => {
-                lhs == rhs
-            }
-            (Self::String(_), Ok(Some(TypedKey::String(lhs))), Ok(Some(TypedKey::String(rhs)))) => {
-                lhs == rhs
-            }
-            (Self::Date(_), Ok(Some(TypedKey::Date(lhs))), Ok(Some(TypedKey::Date(rhs)))) => {
-                lhs == rhs
-            }
+        let kind = self.kind();
+        match (self, typed_key(lhs, kind), typed_key(rhs, kind)) {
+            (Self::I64(_), Ok(TypedKey::I64(lhs)), Ok(TypedKey::I64(rhs))) => lhs == rhs,
+            (Self::F64(_), Ok(TypedKey::F64(lhs)), Ok(TypedKey::F64(rhs))) => lhs == rhs,
+            (Self::String(_), Ok(TypedKey::String(lhs)), Ok(TypedKey::String(rhs))) => lhs == rhs,
+            (Self::Date(_), Ok(TypedKey::Date(lhs)), Ok(TypedKey::Date(rhs))) => lhs == rhs,
             (
                 Self::LocalDateTime(_),
-                Ok(Some(TypedKey::LocalDateTime(lhs))),
-                Ok(Some(TypedKey::LocalDateTime(rhs))),
+                Ok(TypedKey::LocalDateTime(lhs)),
+                Ok(TypedKey::LocalDateTime(rhs)),
             ) => lhs == rhs,
-            (Self::Uuid(_), Ok(Some(TypedKey::Uuid(lhs))), Ok(Some(TypedKey::Uuid(rhs)))) => {
-                lhs == rhs
-            }
+            (Self::Uuid(_), Ok(TypedKey::Uuid(lhs)), Ok(TypedKey::Uuid(rhs))) => lhs == rhs,
             _ => raw_value_same(lhs, rhs),
         }
     }
@@ -527,8 +565,17 @@ impl TypedKey {
     }
 }
 
-/// Write-side coercion of `value` into a [`TypedKey`].
-fn typed_key_admit(
+/// Coerce `value` into a [`TypedKey`].
+///
+/// This is the single coercion shared by write-side (`insert`/`remove`) and
+/// read/diff-side (`lookup_eq`/`lookup_range`/`values_share_key`) callers.
+/// With the global interner removed there is one string space, so a `STRING`
+/// value always resolves directly to its key. `Err` carries the kind-mismatch
+/// (`expected_kind` set by the caller's index kind) / NaN semantics; the outer
+/// `(self, key)` match in `insert`/`remove` enforces the final kind check so a
+/// `Value::String` inserted into an `I64` index still rejects with
+/// `KindMismatch`.
+fn typed_key(
     value: &Value,
     expected_kind: TypedIndexKind,
 ) -> Result<TypedKey, TypedIndexValueError> {
@@ -545,32 +592,6 @@ fn typed_key_admit(
         Value::Uuid(value) => Ok(TypedKey::Uuid(*value)),
         _ => Err(TypedIndexValueError::KindMismatch {
             expected_kind,
-            observed: observed_value_kind(value),
-        }),
-    }
-}
-
-/// Read-side coercion of `value` into a [`TypedKey`].
-///
-/// With a single string space every `STRING` value resolves directly, so
-/// the `Ok(None)` case is no longer produced; it is retained in the return
-/// type pending the two-phase collapse in the typed-index simplification
-/// stage. `Ok(Some(_))` matches [`typed_key_admit`] for all coercible
-/// inputs; `Err` retains the kind-mismatch / NaN semantics.
-fn typed_key_lookup(value: &Value) -> Result<Option<TypedKey>, TypedIndexValueError> {
-    match value {
-        Value::Int(value) => Ok(Some(TypedKey::I64(*value))),
-        Value::Float(value) => NotNanF64::new(*value)
-            .map(|key| Some(TypedKey::F64(key)))
-            .map_err(|NotNanError| TypedIndexValueError::NaN {
-                expected_kind: TypedIndexKind::F64,
-            }),
-        Value::String(value) => Ok(Some(TypedKey::String(value.clone()))),
-        Value::Date(value) => Ok(Some(TypedKey::Date(*value))),
-        Value::LocalDateTime(value) => Ok(Some(TypedKey::LocalDateTime(*value))),
-        Value::Uuid(value) => Ok(Some(TypedKey::Uuid(*value))),
-        _ => Err(TypedIndexValueError::KindMismatch {
-            expected_kind: TypedIndexKind::I64,
             observed: observed_value_kind(value),
         }),
     }
