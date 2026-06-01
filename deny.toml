@@ -85,10 +85,6 @@ skip = [
   { name = "getrandom", version = "0.3.4" },
   # Same getrandom 0.3/0.4 split through WASI support crates.
   { name = "r-efi", version = "5.3.0" },
-  # BRIEF-14: rkyv 0.8's alloc support pulls hashbrown 0.17 for snapshot
-  # archives while lasso 0.7/dashmap remain on hashbrown 0.14. Both are live
-  # maintained lines; allow the older lasso line until upstream converges.
-  { name = "hashbrown", version = "0.14.5" },
   # BRIEF-43: jsonschema 0.46 pulls referencing 0.46, which remains on
   # hashbrown 0.16 while rkyv/proc-macro tooling have moved to 0.17. Both
   # lines are maintained; allow the resolver line until upstream converges.

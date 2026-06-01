@@ -57,7 +57,6 @@ thiserror = "2.0"
 miette = { version = "7.6", features = ["derive"] }
 pest = "2.8"
 pest_derive = "2.8"
-lasso = { version = "0.7", features = ["multi-threaded"] }
 compact_str = { version = "0.9", features = ["serde"] }
 jiff = { version = "0.2", features = ["serde"] }
 rust_decimal = { version = "1.42", default-features = false, features = ["std", "serde"] }

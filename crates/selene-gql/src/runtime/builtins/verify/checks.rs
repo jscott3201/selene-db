@@ -110,18 +110,11 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
             else {
                 continue;
             };
-            // With a single string space `key_from_values_lookup` resolves
-            // every coercible STRING component directly; the `Ok(None)` arm is
-            // retained pending the two-phase collapse and counts the row as
-            // expected + an issue so a bitmap desync cannot hide as a silent
-            // skip.
-            let key = match entry.index.key_from_values_lookup(&values) {
-                Ok(Some(key)) => key,
-                Ok(None) => {
-                    expected_rows += 1;
-                    issues += 1;
-                    continue;
-                }
+            // With a single string space `key_from_values` resolves every
+            // coercible STRING component directly; an `Err` (arity / kind
+            // mismatch) means this row is not indexable, so skip it.
+            let key = match entry.index.key_from_values(&values) {
+                Ok(key) => key,
                 Err(_) => continue,
             };
             expected_rows += 1;

@@ -226,13 +226,11 @@ impl IndexCatalog for LiveIndexCatalog {
             return None;
         }
         let ordered: Vec<&Value> = order.iter().map(|&i| &keys[i]).collect();
-        // Read-path key build. `Ok(None)` (retained pending the two-phase
-        // collapse) → no row can be keyed → exact count 0.
-        match index.key_from_values_lookup(&ordered) {
-            Ok(Some(key)) => Some(index.lookup_key(&key).map_or(0, |bm| bm.len())),
-            Ok(None) => Some(0),
-            // Arity / kind mismatch — decline so the caller keeps the structural
-            // decision.
+        // Single-coercion key build. A successful coercion yields the exact
+        // bucket count; an arity / kind mismatch (`Err`) declines so the caller
+        // keeps the structural decision.
+        match index.key_from_values(&ordered) {
+            Ok(key) => Some(index.lookup_key(&key).map_or(0, |bm| bm.len())),
             Err(_) => None,
         }
     }

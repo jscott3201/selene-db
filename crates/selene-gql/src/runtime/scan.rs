@@ -345,17 +345,13 @@ fn composite_lookup_rows(
         .composite_property_index_for(&label, &property_keys)
     {
         let refs = resolved_values.iter().collect::<Vec<_>>();
-        // Read-path key build; `Ok(None)` (retained pending the two-phase
-        // collapse) renders as an empty result.
-        match index.key_from_values_lookup(&refs) {
-            Ok(Some(key)) => {
-                return Ok(index
-                    .lookup_key(&key)
-                    .map(|bitmap| bitmap.iter().collect())
-                    .unwrap_or_default());
-            }
-            Ok(None) => return Ok(Vec::new()),
-            Err(_) => {}
+        // Single-coercion key build; a kind/arity mismatch (`Err`) declines the
+        // index probe and drops to the linear filter below.
+        if let Ok(key) = index.key_from_values(&refs) {
+            return Ok(index
+                .lookup_key(&key)
+                .map(|bitmap| bitmap.iter().collect())
+                .unwrap_or_default());
         }
     }
     Ok(linear_rows_filtered_by_resolved_composite(
@@ -384,7 +380,7 @@ fn resolve_composite_values(
             return Ok(None);
         };
         // Composite probes via `composite_property_index_for` →
-        // `key_from_values_lookup` are variant-strict on each component.
+        // `key_from_values` are variant-strict on each component.
         match resolve_index_key(key, *kind, ctx)? {
             IndexKeyOutcome::Value(value) => out.push(value),
             IndexKeyOutcome::EmptyResult => return Ok(None),

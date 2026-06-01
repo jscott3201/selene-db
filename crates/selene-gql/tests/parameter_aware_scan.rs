@@ -339,12 +339,13 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
 }
 
 #[test]
-fn string_range_parameter_finds_rows_via_linear_fallback() {
-    // STRING range probes return `None` from `lookup_range` today (the
-    // BTreeMap-range walk over the now-lexicographic keys lands in the
-    // typed-index simplification stage), so they fall back to a linear scan
-    // where `value_compare::compare_non_null` compares the indexed
-    // `Value::String` rows lexicographically against the range endpoints.
+fn string_range_parameter_finds_rows_via_index_range() {
+    // STRING range probes now resolve through the index: `lookup_range` walks
+    // the `BTreeMap<IStr, _>` over the lexicographically-ordered keys (the
+    // typed-index collapse landed). The matched rows are identical to the old
+    // linear-scan fallback (which compared `Value::String` rows
+    // lexicographically against the range endpoints) — just resolved via the
+    // index instead of a full scan.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.name > $lo AND n.name < $hi RETURN n.id AS id",

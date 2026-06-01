@@ -1,9 +1,12 @@
 //! Property maps per spec 02 section 5.2.
 //!
 //! Keys are ordered in memory lexicographically by [`IStr`] (through the inner
-//! `CompactString`) for fast binary-search lookups. The wire format uses that
-//! same canonical lexicographic order by [`IStr::as_str`], and deserialize
-//! re-sorts before validating duplicate keys.
+//! `CompactString`) for fast binary-search lookups. Serialize canonicalizes
+//! (sorts) the keys before emitting — a no-op for the common case (construction
+//! keeps them sorted) but load-bearing because the `Standard`/`Compact` variants
+//! are public and can be built non-canonically. Deserialize then *validates* the
+//! canonical invariant — strictly-ascending, no-duplicate keys — rejecting a
+//! non-canonical payload as malformed rather than re-sorting it.
 //! Compact maps are closed-shape views over a fixed key set; inserting an
 //! unknown key widens them to the standard open representation.
 
@@ -292,6 +295,14 @@ impl Serialize for PropertyMap {
     where
         S: Serializer,
     {
+        // Canonicalize on serialize. Construction through `set_standard` /
+        // `compact` / `from_pairs` already keeps keys in lexicographic `IStr`
+        // order, so this sort is a no-op (byte-identical) for those values. But
+        // `Standard` / `Compact` are PUBLIC variants, so a caller can build a
+        // non-canonical map directly; canonicalizing here guarantees the wire
+        // is always canonical and round-trips through the strict (validate,
+        // no-resort) deserializer below. The deserializer rejects a
+        // non-canonical payload rather than silently re-sorting it.
         match self {
             Self::Standard(entries) => {
                 let mut entries = entries.clone();
@@ -318,14 +329,18 @@ impl<'de> Deserialize<'de> for PropertyMap {
     where
         D: Deserializer<'de>,
     {
+        // The wire is canonical (lexicographic, dedup'd) by construction, so
+        // the decoder validates that invariant rather than re-sorting:
+        // strictly-ascending keys (which also rejects duplicates) and the
+        // Compact key/value length match. A non-canonical or duplicate-keyed
+        // payload is rejected as malformed.
         let wire = PropertyMapWire::deserialize(deserializer)?;
         match wire {
-            PropertyMapWire::Standard(mut entries) => {
-                entries.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+            PropertyMapWire::Standard(entries) => {
                 for window in entries.windows(2) {
                     if window[0].0 >= window[1].0 {
                         return Err(serde::de::Error::custom(
-                            "PropertyMap::Standard entries have duplicate keys",
+                            "PropertyMap::Standard entries must be sorted by IStr order with no duplicate keys",
                         ));
                     }
                 }
@@ -339,21 +354,14 @@ impl<'de> Deserialize<'de> for PropertyMap {
                         values.len(),
                     )));
                 }
-                let mut pairs: Vec<(IStr, Option<Value>)> =
-                    keys.iter().cloned().zip(values).collect();
-                pairs.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
-                for window in pairs.windows(2) {
-                    if window[0].0 >= window[1].0 {
+                for window in keys.windows(2) {
+                    if window[0] >= window[1] {
                         return Err(serde::de::Error::custom(
-                            "PropertyMap::Compact keys have duplicates",
+                            "PropertyMap::Compact keys must be sorted by IStr order with no duplicates",
                         ));
                     }
                 }
-                let (keys, values): (Vec<_>, SmallVec<_>) = pairs.into_iter().unzip();
-                Ok(Self::Compact {
-                    keys: Arc::from(keys),
-                    values,
-                })
+                Ok(Self::Compact { keys, values })
             }
         }
     }
@@ -509,7 +517,10 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_resorts_standard_keys_lexicographically() {
+    fn deserialize_round_trips_canonical_standard_keys() {
+        // Canonical (lexicographically sorted) Standard wire round-trips and
+        // preserves the sorted invariant. `IStr` Ord is lexicographic, so
+        // "apple" sorts before "zebra".
         let b = key("pm.de.std.zebra");
         let a = key("pm.de.std.apple");
         let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
@@ -521,6 +532,21 @@ mod tests {
         assert_eq!(result.get(&a), Some(&int(1)));
         assert_eq!(result.get(&b), Some(&int(2)));
         assert!(result.sorted_invariant_holds());
+    }
+
+    #[test]
+    fn deserialize_rejects_non_canonical_standard_keys() {
+        // A Standard wire whose keys are NOT in ascending IStr order is now
+        // rejected as malformed (deserialize validates, no longer resorts).
+        let zebra = key("pm.de.std.noncanon.zebra");
+        let apple = key("pm.de.std.noncanon.apple");
+        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        entries.push((zebra, int(2)));
+        entries.push((apple, int(1)));
+        let wire = PropertyMapWire::Standard(entries);
+        let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -549,7 +575,8 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_resorts_compact_keys_and_values_lexicographically() {
+    fn deserialize_round_trips_canonical_compact_keys_and_values() {
+        // Canonical (sorted-key) Compact wire round-trips with values aligned.
         let b = key("pm.de.cmpsort.zebra");
         let a = key("pm.de.cmpsort.apple");
         let wire = PropertyMapWire::Compact {
@@ -561,6 +588,21 @@ mod tests {
         assert_eq!(result.get(&a), Some(&int(1)));
         assert_eq!(result.get(&b), Some(&int(2)));
         assert!(result.sorted_invariant_holds());
+    }
+
+    #[test]
+    fn deserialize_rejects_non_canonical_compact_keys() {
+        // A Compact wire whose key list is NOT ascending is rejected as
+        // malformed (deserialize validates the canonical invariant).
+        let zebra = key("pm.de.cmpsort.noncanon.zebra");
+        let apple = key("pm.de.cmpsort.noncanon.apple");
+        let wire = PropertyMapWire::Compact {
+            keys: Arc::from([zebra, apple]),
+            values: SmallVec::from_vec(vec![Some(int(2)), Some(int(1))]),
+        };
+        let bytes = postcard::to_allocvec(&bad_wire_map(wire)).unwrap();
+        let result: Result<PropertyMap, _> = postcard::from_bytes(&bytes);
+        assert!(result.is_err());
     }
 
     #[test]
@@ -591,6 +633,87 @@ mod tests {
             keys: Arc<[IStr]>,
             values: SmallVec<[Option<Value>; 6]>,
         },
+    }
+
+    #[test]
+    fn serialize_emits_canonical_wire_bytes() {
+        // Wire-invariance proof: a PropertyMap built from out-of-order pairs
+        // (`from_pairs` sorts on construction) serializes to the exact canonical
+        // (sorted) wire bytes — the wire is byte-identical to the pre-removal
+        // format because the in-memory order is already lexicographic.
+        let zebra = key("pm.wire.zebra");
+        let apple = key("pm.wire.apple");
+        let mango = key("pm.wire.mango");
+        let map = PropertyMap::from_pairs([
+            (zebra.clone(), int(3)),
+            (apple.clone(), int(1)),
+            (mango.clone(), int(2)),
+        ])
+        .unwrap();
+        let map_bytes = postcard::to_allocvec(&map).unwrap();
+
+        // The canonical wire is the same keys in sorted order.
+        let mut canonical: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        canonical.push((apple, int(1)));
+        canonical.push((mango, int(2)));
+        canonical.push((zebra, int(3)));
+        let canonical_bytes =
+            postcard::to_allocvec(&bad_wire_map(PropertyMapWire::Standard(canonical))).unwrap();
+
+        assert_eq!(
+            map_bytes, canonical_bytes,
+            "serialize must emit canonical lexicographic bytes"
+        );
+
+        // And the bytes round-trip back to an equal map.
+        let round: PropertyMap = postcard::from_bytes(&map_bytes).unwrap();
+        assert_eq!(round, map);
+    }
+
+    #[test]
+    fn serialize_canonicalizes_non_canonical_standard_then_round_trips() {
+        // `PropertyMap::Standard` is a PUBLIC variant, so a caller can build a
+        // non-canonical (out-of-order) map without going through `set_standard`
+        // / `from_pairs`. Serialize canonicalizes it so the wire is always
+        // canonical and round-trips through the strict deserializer — guarding
+        // the public-construction path against the validate-no-resort decoder.
+        let zebra = key("pm.noncanon.zebra");
+        let apple = key("pm.noncanon.apple");
+        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        entries.push((zebra.clone(), int(2)));
+        entries.push((apple.clone(), int(1)));
+        let non_canonical = PropertyMap::Standard(entries);
+        let bytes = postcard::to_allocvec(&non_canonical).unwrap();
+
+        // Bytes are canonical (apple before zebra), so the strict decoder
+        // accepts them and the value round-trips.
+        let round: PropertyMap = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round.get(&apple), Some(&int(1)));
+        assert_eq!(round.get(&zebra), Some(&int(2)));
+
+        let canonical = PropertyMap::from_pairs([(apple, int(1)), (zebra, int(2))]).unwrap();
+        assert_eq!(
+            bytes,
+            postcard::to_allocvec(&canonical).unwrap(),
+            "non-canonical construction must serialize to the same canonical bytes"
+        );
+    }
+
+    #[test]
+    fn serialize_independent_of_insertion_order() {
+        // Two maps built from different insertion orders of the same pairs
+        // serialize to byte-identical wire (canonical lexicographic order).
+        let pairs = [
+            (key("pm.order.gamma"), int(3)),
+            (key("pm.order.alpha"), int(1)),
+            (key("pm.order.beta"), int(2)),
+        ];
+        let forward = PropertyMap::from_pairs(pairs.iter().cloned()).unwrap();
+        let reverse = PropertyMap::from_pairs(pairs.iter().rev().cloned()).unwrap();
+        assert_eq!(
+            postcard::to_allocvec(&forward).unwrap(),
+            postcard::to_allocvec(&reverse).unwrap(),
+        );
     }
 
     #[test]

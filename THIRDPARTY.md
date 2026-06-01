@@ -1361,19 +1361,19 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- cc v1.2.61 — https://github.com/rust-lang/cc-rs
+- cc v1.2.63 — https://github.com/rust-lang/cc-rs
 - cfg-if v1.0.4 — https://github.com/rust-lang/cfg-if
 - find-msvc-tools v0.1.9 — https://github.com/rust-lang/cc-rs
-- futures-timer v3.0.3 — https://github.com/async-rs/futures-timer
+- futures-timer v3.0.4 — https://github.com/async-rs/futures-timer
 - jobserver v0.1.34 — https://github.com/rust-lang/jobserver-rs
-- js-sys v0.3.98 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
+- js-sys v0.3.99 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys
 - pkg-config v0.3.33 — https://github.com/rust-lang/pkg-config-rs
 - stacker v0.1.24 — https://github.com/rust-lang/stacker
-- wasm-bindgen-macro-support v0.2.121 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support
-- wasm-bindgen-macro v0.2.121 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
-- wasm-bindgen-shared v0.2.121 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
-- wasm-bindgen v0.2.121 — https://github.com/wasm-bindgen/wasm-bindgen
-- web-sys v0.3.98 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys
+- wasm-bindgen-macro-support v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro-support
+- wasm-bindgen-macro v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro
+- wasm-bindgen-shared v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared
+- wasm-bindgen v0.2.122 — https://github.com/wasm-bindgen/wasm-bindgen
+- web-sys v0.3.99 — https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/web-sys
 
 ```
 Copyright (c) 2014 Alex Crichton
@@ -1561,7 +1561,7 @@ DEALINGS IN THE SOFTWARE.
 Used by:
 - bitflags v2.11.1 — https://github.com/bitflags/bitflags
 - glob v0.3.3 — https://github.com/rust-lang/glob
-- log v0.4.29 — https://github.com/rust-lang/log
+- log v0.4.30 — https://github.com/rust-lang/log
 - num-traits v0.2.19 — https://github.com/rust-num/num-traits
 - regex-automata v0.4.14 — https://github.com/rust-lang/regex
 - regex-syntax v0.8.10 — https://github.com/rust-lang/regex
@@ -1601,7 +1601,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- uuid v1.23.1 — https://github.com/uuid-rs/uuid
+- uuid v1.23.2 — https://github.com/uuid-rs/uuid
 
 ```
 Copyright (c) 2014 The Rust Project Developers
@@ -1674,7 +1674,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- either v1.15.0 — https://github.com/rayon-rs/either
+- either v1.16.0 — https://github.com/rayon-rs/either
 - itertools v0.13.0 — https://github.com/rust-itertools/itertools
 
 ```
@@ -1920,9 +1920,8 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- hashbrown v0.14.5 — https://github.com/rust-lang/hashbrown
 - hashbrown v0.16.1 — https://github.com/rust-lang/hashbrown
-- hashbrown v0.17.0 — https://github.com/rust-lang/hashbrown
+- hashbrown v0.17.1 — https://github.com/rust-lang/hashbrown
 
 ```
 Copyright (c) 2016 Amanieu d&#x27;Antras
@@ -2426,7 +2425,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- autocfg v1.5.0 — https://github.com/cuviper/autocfg
+- autocfg v1.5.1 — https://github.com/cuviper/autocfg
 
 ```
 Copyright (c) 2018 Josh Stone
@@ -2466,42 +2465,6 @@ Used by:
 
 ```
 Copyright (c) 2018 The Servo Project Developers
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the &quot;Software&quot;), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- ahash v0.8.12 — https://github.com/tkaitchuck/ahash
-
-```
-Copyright (c) 2018 Tom Kaitchuck
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -2782,7 +2745,7 @@ THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- bumpalo v3.20.2 — https://github.com/fitzgen/bumpalo
+- bumpalo v3.20.3 — https://github.com/fitzgen/bumpalo
 
 ```
 Copyright (c) 2019 Nick Fitzgerald
@@ -3104,7 +3067,7 @@ Used by:
 - clap_builder v4.6.0 — https://github.com/clap-rs/clap
 - clap_lex v1.1.0 — https://github.com/clap-rs/clap
 - toml_datetime v1.1.1+spec-1.1.0 — https://github.com/toml-rs/toml
-- toml_edit v0.25.11+spec-1.1.0 — https://github.com/toml-rs/toml
+- toml_edit v0.25.12+spec-1.1.0 — https://github.com/toml-rs/toml
 - toml_parser v1.1.2+spec-1.1.0 — https://github.com/toml-rs/toml
 
 ```
@@ -3277,7 +3240,7 @@ SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- mimalloc v0.1.50 — https://github.com/purpleprotocol/mimalloc_rust
+- mimalloc v0.1.52 — https://github.com/purpleprotocol/mimalloc_rust
 
 ```
 Copyright 2019 Octavian Oncescu
@@ -3305,29 +3268,6 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- lasso v0.7.3 — https://github.com/Kixiron/lasso
-
-```
-Copyright 2020 Chase Wilson
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files
-(the &quot;Software&quot;), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
-FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
 ---
@@ -3411,8 +3351,8 @@ THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRES
 ## MIT License (MIT)
 
 Used by:
-- zerocopy-derive v0.8.48 — https://github.com/google/zerocopy
-- zerocopy v0.8.48 — https://github.com/google/zerocopy
+- zerocopy-derive v0.8.50 — https://github.com/google/zerocopy
+- zerocopy v0.8.50 — https://github.com/google/zerocopy
 
 ```
 Copyright 2023 The Fuchsia Authors
@@ -3590,44 +3530,12 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- libmimalloc-sys v0.1.47 — https://github.com/purpleprotocol/mimalloc_rust/tree/master/libmimalloc-sys
+- libmimalloc-sys v0.1.49 — https://github.com/purpleprotocol/mimalloc_rust/tree/master/libmimalloc-sys
 
 ```
 MIT License
 
 Copyright (c) 2018-2025 Microsoft Corporation, Daan Leijen
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the &quot;Software&quot;), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-```
-
----
-
-## MIT License (MIT)
-
-Used by:
-- dashmap v6.1.0 — https://github.com/xacrimon/dashmap
-
-```
-MIT License
-
-Copyright (c) 2019 Acrimon
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the &quot;Software&quot;), to deal
@@ -4147,7 +4055,7 @@ Used by:
 - serde v1.0.228 — https://github.com/serde-rs/serde
 - serde_core v1.0.228 — https://github.com/serde-rs/serde
 - serde_derive v1.0.228 — https://github.com/serde-rs/serde
-- serde_json v1.0.149 — https://github.com/serde-rs/json
+- serde_json v1.0.150 — https://github.com/serde-rs/json
 - syn v2.0.117 — https://github.com/dtolnay/syn
 - thiserror-impl v2.0.18 — https://github.com/dtolnay/thiserror
 - thiserror v2.0.18 — https://github.com/dtolnay/thiserror
@@ -4223,7 +4131,7 @@ DEALINGS IN THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- winnow v1.0.2 — https://github.com/winnow-rs/winnow
+- winnow v1.0.3 — https://github.com/winnow-rs/winnow
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining
@@ -4327,7 +4235,7 @@ SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- typenum v1.20.0 — https://github.com/paholg/typenum
+- typenum v1.20.1 — https://github.com/paholg/typenum
 
 ```
 The MIT License (MIT)
@@ -4363,8 +4271,8 @@ Used by:
 - byteorder v1.5.0 — https://github.com/BurntSushi/byteorder
 - jiff-tzdb-platform v0.1.3 — https://github.com/BurntSushi/jiff
 - jiff-tzdb v0.1.6 — https://github.com/BurntSushi/jiff
-- jiff v0.2.24 — https://github.com/BurntSushi/jiff
-- memchr v2.8.0 — https://github.com/BurntSushi/memchr
+- jiff v0.2.28 — https://github.com/BurntSushi/jiff
+- memchr v2.8.1 — https://github.com/BurntSushi/memchr
 - ucd-trie v0.1.7 — https://github.com/BurntSushi/ucd-generate
 - walkdir v2.5.0 — https://github.com/BurntSushi/walkdir
 
@@ -4398,7 +4306,7 @@ THE SOFTWARE.
 ## MIT License (MIT)
 
 Used by:
-- shlex v1.3.0 — https://github.com/comex/rust-shlex
+- shlex v2.0.1 — https://github.com/comex/rust-shlex
 
 ```
 The MIT License (MIT)

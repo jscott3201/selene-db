@@ -2,6 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use jiff::civil::{date, datetime};
+use proptest::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{Value, intern};
 
@@ -239,10 +240,10 @@ fn prefix_scan_matches_string_keys_only() {
 }
 
 #[test]
-fn typed_key_admit_string_returns_string_key() {
+fn typed_key_string_returns_string_key() {
     let value = Value::String(intern("typed_key_admit.string.unique-1").unwrap());
 
-    let key = typed_key_admit(&value, TypedIndexKind::String).expect("string coerces");
+    let key = typed_key(&value, TypedIndexKind::String).expect("string coerces");
 
     let TypedKey::String(istr) = key else {
         panic!("expected TypedKey::String, got {key:?}");
@@ -251,9 +252,9 @@ fn typed_key_admit_string_returns_string_key() {
 }
 
 #[test]
-fn typed_key_admit_unindexable_value_rejects_kind_mismatch() {
+fn typed_key_unindexable_value_rejects_kind_mismatch() {
     // A value whose variant has no typed-key coercion (e.g. BOOLEAN) fails
-    // KindMismatch on the admit path for every index kind.
+    // KindMismatch for every index kind.
     let value = Value::Bool(true);
 
     for kind in [
@@ -264,7 +265,7 @@ fn typed_key_admit_unindexable_value_rejects_kind_mismatch() {
         TypedIndexKind::LocalDateTime,
         TypedIndexKind::Uuid,
     ] {
-        let err = typed_key_admit(&value, kind).expect_err("unindexable value rejects");
+        let err = typed_key(&value, kind).expect_err("unindexable value rejects");
         assert!(matches!(
             err,
             TypedIndexValueError::KindMismatch {
@@ -346,17 +347,150 @@ fn values_share_key_returns_true_for_same_string_content() {
 }
 
 #[test]
-fn string_range_returns_none_for_runtime_fallback() {
+fn string_range_returns_matched_rows_over_lexicographic_keys() {
+    // Post-collapse: `IStr` Ord is lexicographic, so the String arm of
+    // `lookup_range` walks the BTreeMap range directly instead of refusing
+    // with `None`. Half-open `[alpha, charlie)` includes "alpha" and "bravo"
+    // and excludes the exclusive end "charlie".
     let alpha = intern("typed-index.range.alpha").unwrap();
+    let bravo = intern("typed-index.range.bravo").unwrap();
     let charlie = intern("typed-index.range.charlie").unwrap();
+    let mut index = TypedIndex::new(TypedIndexKind::String);
+    index.insert(&Value::String(alpha.clone()), 0).unwrap();
+    index.insert(&Value::String(bravo.clone()), 1).unwrap();
+    index.insert(&Value::String(charlie.clone()), 2).unwrap();
+
+    let rows = index
+        .lookup_range(Value::String(alpha)..Value::String(charlie))
+        .expect("String ranges now resolve via lexicographic BTreeMap order");
+
+    assert!(rows.contains(0), "alpha (inclusive low) matches");
+    assert!(rows.contains(1), "bravo (interior) matches");
+    assert!(!rows.contains(2), "charlie (exclusive high) excluded");
+    assert_eq!(rows.len(), 2);
+}
+
+#[test]
+fn string_range_inclusive_includes_high_endpoint() {
+    let alpha = intern("typed-index.range.incl.alpha").unwrap();
+    let charlie = intern("typed-index.range.incl.charlie").unwrap();
     let mut index = TypedIndex::new(TypedIndexKind::String);
     index.insert(&Value::String(alpha.clone()), 0).unwrap();
     index.insert(&Value::String(charlie.clone()), 1).unwrap();
 
-    assert!(
-        index
-            .lookup_range(Value::String(alpha)..Value::String(charlie))
-            .is_none(),
-        "String ranges cannot use IStr-handle BTreeMap order"
-    );
+    let rows = index
+        .lookup_range(Value::String(alpha)..=Value::String(charlie))
+        .expect("inclusive String range resolves");
+
+    assert!(rows.contains(0));
+    assert!(rows.contains(1), "inclusive high endpoint matches");
+    assert_eq!(rows.len(), 2);
+}
+
+/// Reference implementation: the pre-collapse O(n) full-scan `starts_with`
+/// filter that `lookup_prefix` replaced with a `BTreeMap::range` seek. The
+/// proptest below asserts the two are result-identical.
+fn lookup_prefix_full_scan_oracle(keys: &[(IStr, u32)], prefix: &str) -> RoaringBitmap {
+    let mut result = RoaringBitmap::new();
+    for (key, row) in keys {
+        if key.as_str().starts_with(prefix) {
+            result.insert(*row);
+        }
+    }
+    result
+}
+
+#[test]
+fn lookup_prefix_handles_empty_and_high_byte_edges() {
+    // Deterministic coverage of the brief's critical edges: the empty prefix
+    // (no finite successor → matches every key) and high-code-point keys whose
+    // UTF-8 trails in 0xBF/0xFF-range bytes (the prefix span must not silently
+    // drop the tail of matching keys).
+    let keys = [
+        intern("").unwrap(),
+        intern("a").unwrap(),
+        intern("a\u{FF}").unwrap(),     // ends in 0xC3 0xBF
+        intern("a\u{FFFF}").unwrap(),   // ends in 0xEF 0xBF 0xBF
+        intern("a\u{10FFFF}").unwrap(), // max code point, ends in 0xF4 0x8F 0xBF 0xBF
+        intern("ab").unwrap(),
+        intern("b").unwrap(),
+    ];
+    let mut index = TypedIndex::new(TypedIndexKind::String);
+    let mut pairs: Vec<(IStr, u32)> = Vec::new();
+    for (row, key) in keys.iter().enumerate() {
+        let row = row as u32;
+        index.insert(&Value::String(key.clone()), row).unwrap();
+        pairs.push((key.clone(), row));
+    }
+
+    for prefix in [
+        "",
+        "a",
+        "a\u{FF}",
+        "a\u{10FFFF}",
+        "ab",
+        "b",
+        "z",
+        "\u{10FFFF}",
+    ] {
+        let observed = index.lookup_prefix(prefix).expect("string index");
+        let expected = lookup_prefix_full_scan_oracle(&pairs, prefix);
+        assert_eq!(
+            observed, expected,
+            "prefix {prefix:?} range-seek must equal full-scan oracle"
+        );
+    }
+}
+
+proptest! {
+    /// `lookup_prefix` (BTreeMap range seek) must equal the old full-scan
+    /// `starts_with` filter for arbitrary key sets and prefixes, including
+    /// high-code-point (0xFF-range UTF-8 trailing byte) keys, the empty prefix,
+    /// and an all-high-code-point prefix.
+    #[test]
+    fn lookup_prefix_range_equals_full_scan(
+        // Keys drawn from a small alphabet that includes high code points so
+        // the prefix-span upper edge is exercised.
+        raw_keys in proptest::collection::vec(
+            proptest::collection::vec(
+                proptest::prop_oneof![
+                    Just('a'), Just('b'), Just('c'),
+                    Just('\u{FF}'), Just('\u{FFFF}'), Just('\u{10FFFF}'),
+                ],
+                0..4usize,
+            ),
+            1..16usize,
+        ),
+        prefix_chars in proptest::collection::vec(
+            proptest::prop_oneof![
+                Just('a'), Just('b'),
+                Just('\u{FF}'), Just('\u{10FFFF}'),
+            ],
+            0..3usize,
+        ),
+    ) {
+        // Dedup keys (an index has one bucket per distinct key) while assigning
+        // each distinct key a stable row.
+        let mut seen = std::collections::BTreeMap::<String, u32>::new();
+        let mut pairs: Vec<(IStr, u32)> = Vec::new();
+        let mut index = TypedIndex::new(TypedIndexKind::String);
+        let mut next_row = 0u32;
+        for chars in &raw_keys {
+            let s: String = chars.iter().collect();
+            if seen.contains_key(&s) {
+                continue;
+            }
+            let row = next_row;
+            next_row += 1;
+            seen.insert(s.clone(), row);
+            let key = intern(&s).unwrap();
+            index.insert(&Value::String(key.clone()), row).unwrap();
+            pairs.push((key, row));
+        }
+
+        let prefix: String = prefix_chars.iter().collect();
+        let observed = index.lookup_prefix(&prefix).expect("string index");
+        let expected = lookup_prefix_full_scan_oracle(&pairs, &prefix);
+        prop_assert_eq!(observed, expected);
+    }
 }

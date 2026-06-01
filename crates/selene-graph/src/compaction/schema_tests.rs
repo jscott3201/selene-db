@@ -153,7 +153,7 @@ fn compaction_rebuilds_composite_property_index() {
         let zone_v = Value::String(intern(z).unwrap());
         let rank_v = Value::Int(r);
         let refs: Vec<&Value> = vec![&zone_v, &rank_v];
-        let Ok(key) = entry.index.key_from_values_admit(&refs) else {
+        let Ok(key) = entry.index.key_from_values(&refs) else {
             return Vec::new();
         };
         entry
