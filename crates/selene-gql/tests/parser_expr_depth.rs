@@ -11,7 +11,10 @@
 //! rather than crashing, a legitimate moderate depth parses, and a directly
 //! built deep tree drops without overflowing a small stack.
 
-use selene_gql::{BinaryOp, GqlStatus, Literal, ParserError, SourceSpan, ValueExpr, parse};
+use selene_gql::{
+    BinaryOp, GqlStatus, GqlType, IsCheckKind, Literal, ParserError, SourceSpan, UnaryOp,
+    ValueExpr, parse,
+};
 
 /// Mirror of `parser::depth::MAX_EXPR_DEPTH` (not re-exported). An expression
 /// whose `Box<ValueExpr>` nesting depth exceeds this is rejected pre-Flagger.
@@ -166,34 +169,95 @@ fn moderate_expression_depth_parses() {
     parse(&where_clause).expect("a 150-term WHERE disjunction parses");
 }
 
-#[test]
-fn iterative_drop_does_not_overflow_small_stack() {
-    // Build a depth-200k left-leaning BinaryOp tree directly (bypassing the
-    // parser cap) and drop it on a deliberately small 256 KB stack. A recursive
-    // destructor overflows that stack after a few thousand levels — a
-    // non-unwindable SIGABRT that would kill the whole test process — so the
-    // thread completing proves the manual iterative `Drop` tears the tree down
-    // with a heap worklist instead of native stack frames.
+/// Build a 200k-deep chain where each level wraps the accumulator via `wrap`,
+/// on a deliberately small 256 KB stack, then drop it. A recursive destructor
+/// overflows that stack after a few thousand levels — a non-unwindable SIGABRT
+/// that would kill the whole test process — so the thread completing proves the
+/// manual iterative `Drop` hoisted `wrap`'s recursive child (via
+/// `ValueExpr::for_each_child_mut`) instead of recursing into it.
+fn assert_deep_chain_drops_iteratively(label: &str, wrap: fn(ValueExpr, SourceSpan) -> ValueExpr) {
     let handle = std::thread::Builder::new()
         .stack_size(256 * 1024)
-        .spawn(|| {
+        .spawn(move || {
             let span = SourceSpan::new(0, 1);
             let mut expr = ValueExpr::Literal(Literal::Integer(1, span));
             for _ in 0..200_000 {
-                expr = ValueExpr::BinaryOp {
-                    op: BinaryOp::Or,
-                    lhs: Box::new(expr),
-                    rhs: Box::new(ValueExpr::Literal(Literal::Integer(1, span))),
-                    span,
-                };
+                expr = wrap(expr, span);
             }
             // Explicit drop documents intent; scope-exit drop would do the same.
             drop(expr);
         })
         .expect("spawn deep-drop thread");
-    handle
-        .join()
-        .expect("deep ValueExpr tree drops without overflowing a 256 KB stack");
+    assert!(
+        handle.join().is_ok(),
+        "{label}: deep chain overflowed the 256 KB stack — the iterative Drop did not hoist this field"
+    );
+}
+
+#[test]
+fn iterative_drop_covers_diverse_hoisted_fields() {
+    // One deep chain per *structural shape* of recursive child that
+    // `for_each_child_mut` must hoist: a direct boxed child (`BinaryOp.lhs`,
+    // `UnaryOp.operand`), a boxed child reached through an enum payload
+    // (`IsCheckKind::SourceOf`), and a boxed child with a non-`ValueExpr`
+    // sibling (`Cast.value`, sibling `Box<GqlType>`). If a future
+    // `for_each_child_mut` arm stops visiting one of these, its chain recurses
+    // on drop and overflows the small stack.
+    assert_deep_chain_drops_iteratively("BinaryOp.lhs", |expr, span| ValueExpr::BinaryOp {
+        op: BinaryOp::Or,
+        lhs: Box::new(expr),
+        rhs: Box::new(ValueExpr::Literal(Literal::Integer(1, span))),
+        span,
+    });
+    assert_deep_chain_drops_iteratively("UnaryOp.operand", |expr, span| ValueExpr::UnaryOp {
+        op: UnaryOp::Not,
+        operand: Box::new(expr),
+        span,
+    });
+    assert_deep_chain_drops_iteratively("IsCheckKind::SourceOf", |expr, span| ValueExpr::IsCheck {
+        operand: Box::new(ValueExpr::Literal(Literal::Integer(1, span))),
+        kind: IsCheckKind::SourceOf(Box::new(expr)),
+        negated: false,
+        span,
+    });
+    assert_deep_chain_drops_iteratively("Cast.value", |expr, span| ValueExpr::Cast {
+        value: Box::new(expr),
+        target_type: Box::new(GqlType::Integer),
+        span,
+    });
+}
+
+#[test]
+fn nested_subqueries_with_deep_folds_do_not_crash() {
+    // Worst case for the *recursive* Flagger walk inside `parse`: subquery
+    // nesting (bounded by the pre-pest `{` cap, `MAX_NESTING_DEPTH` = 64) where
+    // every level carries a near-cap expression (`MAX_EXPR_DEPTH` = 256). The
+    // Flagger recurses ~nesting × depth frames; this must parse (each fold and
+    // the nesting are under their caps) without overflowing, validating that the
+    // 32 MB parse segment has headroom over the `MAX_NESTING_DEPTH ×
+    // MAX_EXPR_DEPTH` product. A regression here means a cap was raised past the
+    // stack budget (see `parser::guard::MAX_NESTING_DEPTH`). Counts stay under
+    // the caps with margin so the assertion is "parses", not "rejected".
+    const NESTING: usize = 45;
+    const FOLD: usize = 240;
+    let fold = |var: &str| {
+        let mut clause = String::from(var);
+        for _ in 0..FOLD {
+            clause.push_str(" OR ");
+            clause.push_str(var);
+        }
+        clause
+    };
+    let mut inner = format!("MATCH (x0) WHERE {}", fold("x0"));
+    for level in 1..NESTING {
+        let var = format!("x{level}");
+        inner = format!(
+            "MATCH ({var}) WHERE {} AND EXISTS {{ {inner} }}",
+            fold(&var)
+        );
+    }
+    let source = format!("MATCH (n) WHERE EXISTS {{ {inner} }} RETURN n");
+    parse(&source).expect("deeply nested subqueries with near-cap folds parse without crashing");
 }
 
 #[test]

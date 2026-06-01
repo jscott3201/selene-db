@@ -6,6 +6,20 @@ use crate::{SourceSpan, error::ParserError};
 ///
 /// This bounds pest recursion on hostile malformed expressions while leaving
 /// ordinary query, list, record, and subquery nesting comfortably below the cap.
+///
+/// **Load-bearing safety invariant — do not raise without re-checking the stack
+/// budget.** This cap also bounds *subquery* nesting (`EXISTS`/`COUNT`/`VALUE`/
+/// `CALL { … }` each open a counted `{`). The post-build expression-depth guard
+/// (`super::depth`) resets its depth counter at each subquery boundary, so the
+/// recursive Flagger walk's worst-case native-stack depth is the *product*
+/// `MAX_NESTING_DEPTH × depth::MAX_EXPR_DEPTH` (≈ 64 × 256 ≈ 16 k frames) — a
+/// deeply nested subquery whose every level carries a max-depth expression. That
+/// fits only because `parse` runs the whole descent + build + Flagger on the
+/// 32 MB `PARSE_STACK_SEGMENT` (`parser/mod.rs`). Raising this cap
+/// (or `MAX_EXPR_DEPTH`, or shrinking the segment) must keep
+/// `MAX_NESTING_DEPTH × MAX_EXPR_DEPTH × per_frame_bytes` safely under the
+/// segment, or the non-unwindable Flagger overflow re-opens with no guard to
+/// catch it. See `tests/parser_expr_depth.rs::nested_subqueries_with_deep_folds_do_not_crash`.
 pub(crate) const MAX_NESTING_DEPTH: u32 = 64;
 
 /// Maximum simultaneously-open `[` (list / index / comprehension) nesting
