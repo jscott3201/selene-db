@@ -137,51 +137,44 @@ fn null_parameter_binding_returns_empty_result_without_erroring() {
 }
 
 #[test]
-fn external_string_parameter_pooled_content_finds_row() {
-    // BRIEF-154 §B.3 F4: when `Value::ExternalString` content has been
-    // admitted to the global IStr pool (here via the literal seed values),
-    // resolve_index_key coerces it to `Value::String(IStr)` and the typed
-    // index probe finds the corresponding row.
+fn computed_string_equality_finds_row_on_indexed_string_column() {
+    // Interner-removal replacement for the BRIEF-153 ExternalString carve-out
+    // test: an equality probe on an INDEXED STRING column with a COMPUTED
+    // (CAST-derived) string value must still resolve to the indexed row.
+    // Post-removal there is a single string space, so a computed string is a
+    // plain `Value::String` and the indexed lookup finds the row exactly as a
+    // literal probe would.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
-        "MATCH (n:Person) WHERE n.name = $name RETURN n.id AS id",
+        "MATCH (n:Person) WHERE n.name = CAST('bob' AS STRING) RETURN n.id AS id",
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    // "bob" is already pooled because it appeared in the literal property
-    // seed; an ExternalString carrying the same content should coerce.
-    session.bind_parameter(istr("name"), Value::ExternalString(Arc::from("bob")));
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
-            .expect("pooled external string executes"),
+            .expect("computed-string equality executes"),
     );
     assert_eq!(collect_id_column(&table), vec![2]);
 }
 
 #[test]
-fn external_string_parameter_unpooled_content_returns_empty() {
-    // BRIEF-154 §B.3 F4 second leg: ExternalString content never admitted
-    // (here a fresh random suffix) can't possibly match any indexed row —
-    // resolve_index_key returns EmptyResult without admitting the string.
+fn computed_string_parameter_equality_finds_row_on_indexed_string_column() {
+    // Same as above but via a bound STRING parameter rather than a CAST
+    // literal: the indexed-column equality probe finds the matching row.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.name = $name RETURN n.id AS id",
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    session.bind_parameter(
-        istr("name"),
-        // The token below must NOT appear in any other test in this binary
-        // before this point, otherwise it would be admitted via the seed.
-        Value::ExternalString(Arc::from("param-aware-scan-unpooled-sentinel-3pXkQv7yLm9")),
-    );
+    session.bind_parameter(istr("name"), Value::String(istr("bob")));
 
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
-            .expect("unpooled external string executes"),
+            .expect("string-parameter equality executes"),
     );
-    assert!(table.rows().is_empty());
+    assert_eq!(collect_id_column(&table), vec![2]);
 }
 
 #[test]
@@ -346,42 +339,24 @@ fn session_plan_cache_hits_across_parameter_value_changes() {
 }
 
 #[test]
-fn range_with_external_string_parameter_finds_rows_via_linear_fallback() {
-    // BRIEF-154 PR #175 F4 (Codex P1): the BRIEF-153 ExternalString
-    // lookup-coerce carve-out is only valid for *equality* probes
-    // (`nodes_with_property_eq` is variant-strict). STRING range probes
-    // return `None` from `lookup_range` by design (IStr ordering is
-    // admission-order, not lexicographic — see
-    // `selene-graph::typed_index`), falling back to a linear scan where
-    // `value_compare::compare_non_null` handles cross-variant
-    // `String` / `ExternalString` lexicographic comparison natively.
-    //
-    // Pre-fix: `resolve_index_key` short-circuited any unpoolable
-    // `Value::ExternalString` against `IndexKind::String` to `EmptyResult`,
-    // including range probes — zeroing out queries that the linear
-    // fallback would have matched. The fix gates the carve-out on
-    // `ProbeShape::Equality`.
+fn string_range_parameter_finds_rows_via_linear_fallback() {
+    // STRING range probes return `None` from `lookup_range` today (the
+    // BTreeMap-range walk over the now-lexicographic keys lands in the
+    // typed-index simplification stage), so they fall back to a linear scan
+    // where `value_compare::compare_non_null` compares the indexed
+    // `Value::String` rows lexicographically against the range endpoints.
     let (graph, catalog) = person_graph_with_name_index();
     let plan = Arc::new(optimized_plan(
         "MATCH (n:Person) WHERE n.name > $lo AND n.name < $hi RETURN n.id AS id",
         &catalog,
     ));
     let mut session = Session::new(&graph);
-    // Bind range endpoints as unpooled ExternalString that bracket the
-    // seeded names alphabetically. Pre-fix this would short-circuit to
-    // empty; the linear fallback compares lexicographically against the
-    // indexed `Value::String` rows.
-    session.bind_parameter(
-        istr("lo"),
-        Value::ExternalString(Arc::from("a-unpooled-sentinel-1")),
-    );
-    session.bind_parameter(
-        istr("hi"),
-        Value::ExternalString(Arc::from("z-unpooled-sentinel-1")),
-    );
+    // Bind range endpoints that bracket the seeded names alphabetically.
+    session.bind_parameter(istr("lo"), Value::String(istr("a-sentinel-1")));
+    session.bind_parameter(istr("hi"), Value::String(istr("z-sentinel-1")));
     let table = rows(
         execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
-            .expect("string range with external-string parameter executes"),
+            .expect("string range with string parameter executes"),
     );
     let mut ids = collect_id_column(&table);
     ids.sort();

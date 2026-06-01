@@ -218,32 +218,27 @@ fn flipping_a_label_moves_index_buckets() {
 }
 
 #[test]
-fn external_string_admits_into_string_index() {
-    use std::sync::Arc;
+fn string_value_admits_into_string_index() {
     let shared = SharedGraph::new(GraphId::new(1));
     let [alpha, ..] = labels();
     let [_, _, name] = prop_keys();
     shared
         .create_property_index(alpha.clone(), name.clone(), TypedIndexKind::String)
         .unwrap();
-    let content = "proptest.external.unique-admit";
+    let content = "proptest.string.unique-admit";
+    let interned = intern(content).unwrap();
     {
         let mut txn = shared.begin_write();
         txn.mutator()
             .create_node(
                 LabelSet::single(alpha.clone()),
-                PropertyMap::from_pairs([(
-                    name.clone(),
-                    Value::ExternalString(Arc::<str>::from(content)),
-                )])
-                .unwrap(),
+                PropertyMap::from_pairs([(name.clone(), Value::String(interned.clone()))]).unwrap(),
             )
             .unwrap();
         txn.commit().unwrap();
     }
     let snapshot = shared.read();
     snapshot.assert_indexes_consistent().unwrap();
-    let interned = intern(content).unwrap();
     assert_eq!(
         snapshot
             .nodes_with_property_eq(&alpha, &name, &Value::String(interned))

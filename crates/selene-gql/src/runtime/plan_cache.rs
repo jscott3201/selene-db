@@ -187,7 +187,7 @@ impl std::fmt::Display for SourcePrefix<'_> {
 mod tests {
     use std::{num::NonZeroUsize, sync::Arc};
 
-    use selene_core::{IStr, intern_with_admission};
+    use selene_core::{IStr, intern};
 
     use super::*;
     use crate::{
@@ -205,7 +205,7 @@ mod tests {
     }
 
     fn admitted(value: &str) -> IStr {
-        intern_with_admission(value).expect("test name admits").0
+        intern(value).expect("test name admits")
     }
 
     fn call_plan() -> Arc<ExecutionPlan> {

@@ -207,9 +207,7 @@ pub(super) fn equality_candidates<'a>(
 ///   bind to `Value::Float`; `FLOAT32` binds to `Value::Float32` and would
 ///   need an explicit cast, so it is rejected.
 /// - `IndexKind::String`, `Date`, `LocalDateTime`, `Uuid` are 1:1 with the
-///   matching GqlType variant. `STRING` admits both `Value::String` and
-///   `Value::ExternalString`; ExternalString carve-out is handled at execute
-///   time via [`selene_core::lookup`] (see BRIEF-153 + §B.3 F4).
+///   matching GqlType variant. `STRING` binds to `Value::String`.
 ///
 /// Untyped parameters (no `$id :: TYPE` declaration) bypass this check and
 /// defer to the execute-time `IndexKind` probe on the resolved Value.

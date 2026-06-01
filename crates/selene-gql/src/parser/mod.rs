@@ -1,13 +1,12 @@
 //! Pest-backed GQL parser entry points.
 //!
-//! The parser admits one GQL program, enforces the string-interner admission
-//! budget, builds the public AST with source spans preserved, and runs the
+//! The parser admits one GQL program, builds the public AST with source spans
+//! preserved, and runs the
 //! Flagger before callers see unsupported syntax. It does not resolve names,
 //! infer types, or choose execution behavior; those invariants start at the
 //! analyzer. Deferred grammar surfaces return `ParserError::NotImplemented`
 //! with v1.0 support guidance. See ISO GQL Clause 14 and Spec 07.
 
-mod budget;
 mod builders;
 mod guard;
 mod many;
@@ -24,7 +23,6 @@ use crate::{
 };
 
 use self::pest_impl::{GqlParser, Rule};
-use budget::{InternerBudget, MAX_NEW_ADMISSIONS_PER_PARSE};
 
 mod pest_impl {
     #![allow(missing_docs)]
@@ -49,8 +47,7 @@ pub fn parse(source: &str) -> Result<Statement, ParserError> {
     let mut pairs =
         GqlParser::parse(Rule::gql_program, source).map_err(|error| pest_error(source, error))?;
     let program_pair = pairs.next().ok_or_else(ParserError::empty_program)?;
-    let mut budget = InternerBudget::new(MAX_NEW_ADMISSIONS_PER_PARSE);
-    let statement = builders::build_statement(program_pair, &mut budget)?;
+    let statement = builders::build_statement(program_pair)?;
     flagger::flag(&statement)?;
     Ok(statement)
 }
@@ -59,8 +56,8 @@ pub fn parse(source: &str) -> Result<Statement, ParserError> {
 ///
 /// # Errors
 ///
-/// Returns [`DiagnosticReport`] when parsing, AST construction, admission
-/// budgeting, or Flagger validation fails.
+/// Returns [`DiagnosticReport`] when parsing, AST construction, or Flagger
+/// validation fails.
 pub fn parse_with_source(
     source: Arc<str>,
     label: impl Into<String>,

@@ -9,9 +9,7 @@
 
 mod checks;
 
-use std::sync::Arc;
-
-use selene_core::{Value, intern_with_admission};
+use selene_core::{Value, intern};
 use selene_graph::SeleneGraph;
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -119,15 +117,19 @@ fn check_row(check: &'static str, result: CheckResult) -> Result<Vec<Value>, Pro
         } else {
             "inconsistent"
         })?,
-        Value::ExternalString(Arc::from(result.detail)),
+        verify_string(&result.detail)?,
     ])
 }
 
 fn static_string(value: &'static str) -> Result<Value, ProcedureError> {
-    intern_with_admission(value)
-        .map(|(value, _was_new)| Value::String(value))
+    verify_string(value)
+}
+
+fn verify_string(value: &str) -> Result<Value, ProcedureError> {
+    intern(value)
+        .map(Value::String)
         .map_err(|_err| ProcedureError::Internal {
-            detail: "interner cap exhausted during selene.verify".to_owned(),
+            detail: "selene.verify result string exceeds the maximum byte length".to_owned(),
         })
 }
 

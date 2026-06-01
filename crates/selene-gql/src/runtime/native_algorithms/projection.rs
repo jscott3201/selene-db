@@ -164,7 +164,11 @@ impl From<&GraphProjection> for ProjectionSnapshot {
 
 fn projection_snapshot_row(snapshot: ProjectionSnapshot) -> Vec<Value> {
     vec![
-        Value::ExternalString(snapshot.name),
+        // The projection name was already a validated catalog identifier, so
+        // it is within the IL013 byte cap and interns infallibly.
+        Value::String(
+            selene_core::intern(snapshot.name.as_ref()).expect("projection name within IL013 cap"),
+        ),
         Value::Uint(snapshot.generation),
         Value::Uint(snapshot.node_count),
         Value::Uint(snapshot.edge_count),

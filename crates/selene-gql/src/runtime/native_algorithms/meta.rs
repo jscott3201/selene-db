@@ -6,7 +6,7 @@
 //! parameter / column carries the same boilerplate description the pack emitted,
 //! so `SHOW PROCEDURES` introspection is byte-identical.
 
-use selene_core::intern_with_admission;
+use selene_core::intern;
 
 use crate::{GqlType, ProcedureOutputColumn, ProcedureParameter};
 
@@ -35,7 +35,5 @@ pub(super) fn output(name: &'static str, ty: GqlType) -> ProcedureOutputColumn {
 }
 
 fn intern_static(value: &'static str) -> selene_core::IStr {
-    intern_with_admission(value)
-        .map(|(istr, _was_new)| istr)
-        .expect("static procedure metadata name interns")
+    intern(value).expect("static procedure metadata name interns")
 }

@@ -316,7 +316,6 @@ fn execute_read_only(
             Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy)
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
@@ -333,7 +332,6 @@ fn execute_read_only(
             Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy)
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()?;
@@ -387,7 +385,6 @@ fn execute_inside_explicit_tx(
         Rc::clone(&binding_tables),
     )
     .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-    .with_istr_admission_policy(session.istr_admission_policy)
     .with_warning_sink(warning_sink)
     .with_session_time_zone(session_tz);
     let result = ctx
@@ -432,7 +429,6 @@ fn execute_auto_commit(
             Rc::clone(&binding_tables),
         )
         .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
-        .with_istr_admission_policy(session.istr_admission_policy)
         .with_warning_sink(warning_sink)
         .with_session_time_zone(session_tz);
         ctx.check_cancellation()

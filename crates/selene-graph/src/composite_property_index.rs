@@ -163,12 +163,11 @@ fn build_composite_property_index_inner(
         };
         match index.insert(&values, row) {
             Ok(()) => {}
-            Err(err) => match (&err, policy) {
-                (CompositeIndexValueError::ComponentAdmissionFailed { .. }, _)
-                | (_, BuildPolicy::Strict) => {
+            Err(err) => match policy {
+                BuildPolicy::Strict => {
                     return Err(index_rejection(label.clone(), &properties, err));
                 }
-                (_, BuildPolicy::Lenient) => {
+                BuildPolicy::Lenient => {
                     warn_rejected("rebuild", label.clone(), &properties, row, &err);
                 }
             },
@@ -235,13 +234,10 @@ fn remove_commit(
 }
 
 /// Commit-path branching for [`CompositeIndexValueError`]: parallel to the
-/// single-key helper in [`crate::property_index`]. Only
-/// `ComponentAdmissionFailed` promotes to a hard
-/// [`GraphError::IndexAdmissionExhausted`]; `Component` (kind mismatch)
-/// AND `ArityMismatch` retain the pre-BRIEF-153 commit-path semantics of
+/// single-key helper in [`crate::property_index`]. `Component` (kind
+/// mismatch) AND `ArityMismatch` retain the commit-path semantics of
 /// `warn_rejected` lenient skip. Build paths handle `ArityMismatch`
-/// separately via [`index_rejection`] under the strict policy (BRIEF-153
-/// fix-cycle R1).
+/// separately via [`index_rejection`] under the strict policy.
 fn demote_or_promote(
     label: IStr,
     properties: &[IStr],
@@ -250,9 +246,6 @@ fn demote_or_promote(
     err: CompositeIndexValueError,
 ) -> GraphResult<()> {
     match err {
-        CompositeIndexValueError::ComponentAdmissionFailed { .. } => {
-            Err(index_rejection(label, properties, err))
-        }
         CompositeIndexValueError::Component { .. }
         | CompositeIndexValueError::ArityMismatch { .. } => {
             warn_rejected(op, label, properties, row, &err);
@@ -282,22 +275,6 @@ fn index_rejection(label: IStr, properties: &[IStr], err: CompositeIndexValueErr
             label,
             expected_kind,
             observed,
-        },
-        // BRIEF-153: IStr-pool admission failure surfaces as the dedicated
-        // hard-error variant so the underlying CoreError chain (count, max)
-        // reaches the caller — `IndexValueRejected.observed` has no slot
-        // for it.
-        CompositeIndexValueError::ComponentAdmissionFailed {
-            index,
-            expected_kind: _,
-            reason,
-        } => GraphError::IndexAdmissionExhausted {
-            property: properties
-                .get(index)
-                .cloned()
-                .unwrap_or_else(|| properties.first().cloned().unwrap_or_else(|| label.clone())),
-            label,
-            source: reason,
         },
     }
 }

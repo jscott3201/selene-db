@@ -12,8 +12,7 @@ use std::{
 
 use rustc_hash::FxHashSet;
 use selene_core::{
-    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr,
-    IStrAdmissionPolicy, Value, metrics,
+    BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr, Value, metrics,
 };
 use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
@@ -56,7 +55,6 @@ pub struct TxContext<'a, 'g> {
     cancellation: Option<&'a CancellationToken>,
     deadline: Option<Instant>,
     row_cap: Option<usize>,
-    istr_admission_policy: IStrAdmissionPolicy,
     warning_sink: Option<&'a RefCell<Box<dyn WarningSink>>>,
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
     result_rows_emitted: Cell<usize>,
@@ -139,7 +137,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
@@ -188,7 +185,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
@@ -237,7 +233,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
@@ -267,7 +262,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
@@ -298,7 +292,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
@@ -318,13 +311,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
         self.cancellation = cancellation;
         self.deadline = deadline;
         self.row_cap = row_cap;
-        self
-    }
-
-    /// Attach the per-session string-admission policy visible to runtime helpers.
-    #[must_use]
-    pub const fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
-        self.istr_admission_policy = policy;
         self
     }
 
@@ -425,12 +411,6 @@ impl<'a, 'g> TxContext<'a, 'g> {
     #[must_use]
     pub(crate) const fn deadline(&self) -> Option<Instant> {
         self.deadline
-    }
-
-    /// Return the policy used when runtime code admits engine-created strings.
-    #[must_use]
-    pub const fn istr_admission_policy(&self) -> IStrAdmissionPolicy {
-        self.istr_admission_policy
     }
 
     pub(crate) fn cancellation_error(
@@ -600,7 +580,6 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("cancellation", &self.cancellation.is_some())
             .field("deadline", &self.deadline.is_some())
             .field("row_cap", &self.row_cap)
-            .field("istr_admission_policy", &self.istr_admission_policy)
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
             .finish()

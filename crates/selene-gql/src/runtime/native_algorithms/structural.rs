@@ -200,14 +200,12 @@ fn single_uint_result(value: u64) -> ProcedureResult {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{Value, intern_with_admission};
+    use selene_core::{Value, intern};
 
     use super::*;
 
-    // `intern_with_admission` (not bare `intern`) keeps the runtime-path DoS
-    // guard `tests/dos_guard.rs::no_unbudgeted_intern_call_in_selene_gql` green.
     fn projection_name() -> Value {
-        Value::String(intern_with_admission("p").expect("test string interns").0)
+        Value::String(intern("p").expect("test string interns"))
     }
 
     #[test]

@@ -515,11 +515,9 @@ pub(super) fn visible_after_pattern(
 }
 
 fn explain_output_schema(span: SourceSpan) -> Result<BindingTableSchema, PlannerError> {
-    let (name, _was_new) = selene_core::intern_with_admission("plan").map_err(|_err| {
-        PlannerError::InternerCapExhausted {
-            detail: "static EXPLAIN column 'plan'",
-            span,
-        }
+    let name = selene_core::intern("plan").map_err(|_err| PlannerError::InternerCapExhausted {
+        detail: "static EXPLAIN column 'plan'",
+        span,
     })?;
     Ok(BindingTableSchema {
         columns: vec![BindingTableColumn {

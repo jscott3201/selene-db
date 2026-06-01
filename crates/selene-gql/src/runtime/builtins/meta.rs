@@ -6,7 +6,7 @@
 //! `with_description` / `with_default_doc` / `with_default` shape identical means
 //! the relocated built-ins expose byte-identical `SHOW PROCEDURES` metadata.
 
-use selene_core::intern_with_admission;
+use selene_core::intern;
 
 use crate::{GqlType, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter};
 
@@ -107,16 +107,14 @@ impl StaticOutputColumn {
     }
 }
 
-/// Intern a static metadata name through the budget-aware admission path.
+/// Intern a static built-in metadata name.
 ///
 /// # Panics
 ///
-/// Panics only if the global interner is exhausted while interning a static
-/// metadata name. Built-in names/columns are a fixed, compile-time set; this
-/// mirrors the pack registry, which surfaced interner exhaustion as a
-/// construction error. The native registry is built once at engine startup.
+/// Panics only if the name exceeds the per-string byte cap (IL013). Built-in
+/// names/columns are a fixed, compile-time set of short identifiers, so this
+/// never fires in practice; the native registry is built once at engine
+/// startup.
 fn intern_static(value: &'static str) -> selene_core::IStr {
-    intern_with_admission(value)
-        .map(|(istr, _was_new)| istr)
-        .expect("static built-in metadata name interns")
+    intern(value).expect("static built-in metadata name interns")
 }

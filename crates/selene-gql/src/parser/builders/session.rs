@@ -5,34 +5,27 @@ use pest::iterators::Pair;
 use crate::{
     ast::{SessionResetTarget, Statement},
     error::ParserError,
-    parser::budget::InternerBudget,
 };
 
 use super::{Rule, expr, first_child, intern_param, span, unexpected_pair};
 
 /// Build a `session_command` parse tree into a session-control [`Statement`].
-pub(super) fn build_session_command(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Statement, ParserError> {
+pub(super) fn build_session_command(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     debug_assert_eq!(pair.as_rule(), Rule::session_command);
     let inner = first_child(pair)?;
     match inner.as_rule() {
-        Rule::session_set => build_session_set(inner, budget),
-        Rule::session_reset => build_session_reset(inner, budget),
+        Rule::session_set => build_session_set(inner),
+        Rule::session_reset => build_session_reset(inner),
         Rule::session_close => Ok(Statement::SessionClose { span: span(&inner) }),
         _ => Err(unexpected_pair(inner, "expected session-control statement")),
     }
 }
 
-fn build_session_set(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Statement, ParserError> {
+fn build_session_set(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let inner = first_child(pair)?;
     match inner.as_rule() {
         Rule::session_set_time_zone => build_session_set_time_zone(inner),
-        Rule::session_set_value => build_session_set_value(inner, budget),
+        Rule::session_set_value => build_session_set_value(inner),
         _ => Err(unexpected_pair(inner, "expected SESSION SET target")),
     }
 }
@@ -56,10 +49,7 @@ fn build_session_set_time_zone(pair: Pair<'_, Rule>) -> Result<Statement, Parser
     })
 }
 
-fn build_session_set_value(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Statement, ParserError> {
+fn build_session_set_value(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
     let mut if_not_exists = false;
     let mut param = None;
@@ -67,10 +57,10 @@ fn build_session_set_value(
     for child in pair.into_inner() {
         match child.as_rule() {
             Rule::if_not_exists => if_not_exists = true,
-            Rule::param_ref => param = Some(intern_param(child, budget)?),
+            Rule::param_ref => param = Some(intern_param(child)?),
             // <value specification>: a single literal or parameter reference.
             Rule::session_value_spec => {
-                value = Some(expr::build_value_expr(first_child(child)?, budget)?);
+                value = Some(expr::build_value_expr(first_child(child)?)?);
             }
             _ => return Err(unexpected_pair(child, "unexpected SESSION SET VALUE child")),
         }
@@ -97,10 +87,7 @@ fn build_session_set_value(
     })
 }
 
-fn build_session_reset(
-    pair: Pair<'_, Rule>,
-    budget: &mut InternerBudget,
-) -> Result<Statement, ParserError> {
+fn build_session_reset(pair: Pair<'_, Rule>) -> Result<Statement, ParserError> {
     let source_span = span(&pair);
     // Bare `SESSION RESET` (no arguments) = reset all characteristics
     // (ISO section 7.2 Syntax Rule 2b).
@@ -128,7 +115,7 @@ fn build_session_reset(
                         None,
                     )
                 })?;
-            SessionResetTarget::Parameter(intern_param(param_pair, budget)?)
+            SessionResetTarget::Parameter(intern_param(param_pair)?)
         }
         _ => return Err(unexpected_pair(inner, "unexpected SESSION RESET argument")),
     };

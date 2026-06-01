@@ -47,7 +47,6 @@ fn explain_dump(session: &mut Session<'_>, source: &str) -> String {
             .expect("EXPLAIN executes"),
     );
     match table.rows().first().and_then(|r| r.values().first()) {
-        Some(Value::ExternalString(dump)) => dump.as_ref().to_owned(),
         Some(Value::String(dump)) => dump.as_str().to_owned(),
         other => panic!("expected EXPLAIN dump string, got {other:?}"),
     }

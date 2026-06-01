@@ -77,7 +77,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::Float(_) => "float",
         Value::Float32(_) => "float32",
         Value::Decimal(_) => "decimal",
-        Value::String(_) | Value::ExternalString(_) => "string",
+        Value::String(_) => "string",
         Value::Bytes(_) => "bytes",
         Value::List(_) => "list",
         Value::Record(_) | Value::RecordTyped(_) => "record",

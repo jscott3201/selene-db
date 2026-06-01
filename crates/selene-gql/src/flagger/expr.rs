@@ -317,9 +317,7 @@ mod tests {
         // the `for_each_child` delegation recurses into children.
         let expr = ValueExpr::ListAccess {
             target: ValueExpr::Variable {
-                name: selene_core::intern_with_admission("list")
-                    .expect("interns")
-                    .0,
+                name: selene_core::intern("list").expect("interns"),
                 span: span(0),
             }
             .into(),
@@ -372,7 +370,7 @@ mod tests {
         // ordering `for_each_child` alone cannot express, hence the explicit
         // `IsCheck` arm.
         let typed_param = |name: &str, offset: u32| ValueExpr::Parameter {
-            name: selene_core::intern_with_admission(name).expect("interns").0,
+            name: selene_core::intern(name).expect("interns"),
             declared_type: Some(crate::ast::types::GqlType::Int8),
             span: span(offset),
         };

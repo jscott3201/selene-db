@@ -4,7 +4,7 @@ use std::{
     borrow::Cow, cell::RefCell, collections::BTreeMap, num::NonZeroUsize, sync::Arc, time::Instant,
 };
 
-use selene_core::{CancellationToken, Change, IStr, IStrAdmissionPolicy, Value};
+use selene_core::{CancellationToken, Change, IStr, Value};
 use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
 
 use crate::{
@@ -43,7 +43,6 @@ pub struct Session<'g> {
     pub(crate) cancellation: Option<CancellationToken>,
     pub(crate) deadline: Option<Instant>,
     pub(crate) row_cap: Option<usize>,
-    pub(crate) istr_admission_policy: IStrAdmissionPolicy,
     pub(crate) warning_sink: Option<RefCell<Box<dyn WarningSink>>>,
     /// When set, `execute_source` runs the optimizer with a snapshot-pinned
     /// [`LiveIndexCatalog`] so label / typed / composite index access paths are
@@ -151,7 +150,6 @@ impl<'g> Session<'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             index_selection: true,
             time_zone: None,
@@ -176,7 +174,6 @@ impl<'g> Session<'g> {
             cancellation: None,
             deadline: None,
             row_cap: None,
-            istr_admission_policy: IStrAdmissionPolicy::Reject,
             warning_sink: None,
             index_selection: true,
             time_zone: None,
@@ -218,18 +215,6 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_row_cap(mut self, max_rows: usize) -> Self {
         self.row_cap = Some(max_rows);
-        self
-    }
-
-    /// Set the policy used when engine-created strings cross admission boundaries.
-    ///
-    /// The default is [`IStrAdmissionPolicy::Reject`], preserving the hard-error
-    /// behavior of v1.0. [`IStrAdmissionPolicy::FallbackToExternal`] lets
-    /// eligible runtime boundaries carry over-cap strings as
-    /// [`Value::ExternalString`].
-    #[must_use]
-    pub fn with_istr_admission_policy(mut self, policy: IStrAdmissionPolicy) -> Self {
-        self.istr_admission_policy = policy;
         self
     }
 

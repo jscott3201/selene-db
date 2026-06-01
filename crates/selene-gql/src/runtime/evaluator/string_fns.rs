@@ -1,7 +1,5 @@
 //! String and adjacent scalar function evaluation.
 
-use std::sync::Arc;
-
 use selene_core::{Record, Value};
 use unicode_normalization::UnicodeNormalization;
 
@@ -13,7 +11,7 @@ use crate::{
 use super::{
     binary_ops::{
         data_exception, data_exception_value, data_exception_value_with, eval_equality,
-        string_slice,
+        intern_string, string_slice,
     },
     evaluate,
 };
@@ -123,13 +121,13 @@ pub(super) fn eval_substring(args: Vec<Value>, span: SourceSpan) -> Result<Value
     };
     let chars: Vec<char> = source.chars().collect();
     if start >= chars.len() {
-        return Ok(Value::ExternalString(Arc::from("")));
+        return intern_string("", span);
     }
     let end = length.map_or(chars.len(), |length| {
         start.saturating_add(length).min(chars.len())
     });
     let value: String = chars[start..end].iter().collect();
-    Ok(Value::ExternalString(Arc::from(value)))
+    intern_string(&value, span)
 }
 
 pub(super) fn eval_left_right(
@@ -153,7 +151,7 @@ pub(super) fn eval_left_right(
     } else {
         chars.iter().take(count).copied().collect()
     };
-    Ok(Value::ExternalString(Arc::from(value)))
+    intern_string(&value, span)
 }
 
 pub(super) fn eval_multi_char_trim(
@@ -180,9 +178,7 @@ pub(super) fn eval_multi_char_trim(
     } else {
         " "
     };
-    Ok(Value::ExternalString(Arc::from(trim_by_char_set(
-        source, trim_chars, side,
-    ))))
+    intern_string(&trim_by_char_set(source, trim_chars, side), span)
 }
 
 pub(super) fn eval_explicit_trim(
@@ -228,9 +224,7 @@ pub(super) fn eval_explicit_trim(
     } else {
         " ".to_owned()
     };
-    Ok(Value::ExternalString(Arc::from(trim_by_char_set(
-        source, &character, side,
-    ))))
+    intern_string(&trim_by_char_set(source, &character, side), span)
 }
 
 pub(super) fn eval_string_transform(
@@ -245,7 +239,7 @@ pub(super) fn eval_string_transform(
     let Some(value) = string_slice(&value) else {
         return data_exception("string function argument is not a string", span);
     };
-    Ok(Value::ExternalString(Arc::from(transform(value))))
+    intern_string(&transform(value), span)
 }
 
 pub(super) fn eval_normalize(
@@ -259,10 +253,10 @@ pub(super) fn eval_normalize(
     let Some(value) = string_slice(&value) else {
         return data_exception("normalize argument is not a string", span);
     };
-    Ok(Value::ExternalString(Arc::from(normalize_string(
-        value,
-        form.unwrap_or(NormalForm::Nfc),
-    ))))
+    intern_string(
+        &normalize_string(value, form.unwrap_or(NormalForm::Nfc)),
+        span,
+    )
 }
 
 pub(super) fn is_normalized(value: &str, form: NormalForm) -> bool {
@@ -284,7 +278,7 @@ pub(super) fn eval_trim(args: Vec<Value>, span: SourceSpan) -> Result<Value, Exe
     let Some(value) = string_slice(&value) else {
         return data_exception("trim argument is not a string", span);
     };
-    Ok(Value::ExternalString(Arc::from(value.trim())))
+    intern_string(value.trim(), span)
 }
 
 pub(super) fn eval_coalesce(

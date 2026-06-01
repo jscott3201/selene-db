@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::cmp::Ordering;
 
 use rust_decimal::prelude::ToPrimitive;
 use selene_core::Value;
@@ -367,18 +367,7 @@ fn eval_concat(lhs: Value, rhs: Value, span: SourceSpan) -> Result<Value, Execut
         return Ok(Value::Null);
     }
     match (lhs, rhs) {
-        (Value::String(lhs), Value::String(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::String(lhs), Value::ExternalString(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::ExternalString(lhs), Value::String(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
-        (Value::ExternalString(lhs), Value::ExternalString(rhs)) => {
-            Ok(Value::ExternalString(Arc::from(format!("{lhs}{rhs}"))))
-        }
+        (Value::String(lhs), Value::String(rhs)) => intern_string(&format!("{lhs}{rhs}"), span),
         (Value::List(mut lhs), Value::List(rhs)) => {
             lhs.extend(rhs);
             Ok(Value::List(lhs))
@@ -652,8 +641,16 @@ pub(super) fn numeric_to_f64(value: &Value) -> Option<f64> {
 pub(super) fn string_slice(value: &Value) -> Option<&str> {
     match value {
         Value::String(value) => Some(value.as_str()),
-        Value::ExternalString(value) => Some(value.as_ref()),
         _ => None,
+    }
+}
+
+/// Construct a `Value::String` from engine-produced text, mapping the IL013
+/// byte-cap failure to a runtime data exception at `span`.
+pub(super) fn intern_string(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
+    match selene_core::intern(text) {
+        Ok(istr) => Ok(Value::String(istr)),
+        Err(_err) => data_exception("string exceeds the maximum byte length", span),
     }
 }
 

@@ -8,7 +8,7 @@
 //!   this test exercises the no-multi-label case where the two forms agree.
 //! - Composition with BRIEF-154 parameterized index selection (acceptance
 //!   bar #7).
-//! - Composition with BRIEF-153 STRING-index ExternalString carve-out.
+//! - Composition with STRING-index equality probes.
 //! - Downstream LIMIT / ORDER BY / GROUP BY — the union happens at
 //!   JoinTree level, so the pipeline operates on the unioned binding
 //!   table, not per branch.
@@ -19,7 +19,6 @@
 //!   invariant for COUNT / LIMIT / aggregates.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, intern};
 use selene_gql::{
@@ -241,28 +240,23 @@ fn composition_with_parameterized_typed_range() {
 }
 
 // ---------------------------------------------------------------------------
-// Composition with BRIEF-153 ExternalString carve-out
+// Composition with a string-parameter equality probe
 // ---------------------------------------------------------------------------
 
 #[test]
-fn composition_with_external_string_carve_out() {
+fn composition_with_string_equality_probe() {
     let fixture = LabelFamilyFixture::build();
     let mut session = Session::new(&fixture.graph);
-    session.bind_parameter(istr("target"), Value::ExternalString(Arc::from("alice")));
+    session.bind_parameter(istr("target"), Value::String(istr("alice")));
 
     let plan = optimized(
         "MATCH (n:Person|Robot) WHERE n.email = $target RETURN n",
         &fixture.catalog,
     );
-    let table =
-        rows(execute_optimized(&mut session, &plan).expect("ExternalString param executes"));
+    let table = rows(execute_optimized(&mut session, &plan).expect("string param executes"));
 
     let ids = node_ref_ids(&table);
-    assert_eq!(
-        ids.len(),
-        1,
-        "exactly one Person has email == 'alice' (ExternalString equivalence)"
-    );
+    assert_eq!(ids.len(), 1, "exactly one Person has email == 'alice'");
 }
 
 // ---------------------------------------------------------------------------

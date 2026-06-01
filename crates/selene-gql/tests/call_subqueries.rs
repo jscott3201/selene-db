@@ -39,7 +39,6 @@ fn string_values(table: &selene_gql::BindingTable, name: &str) -> Vec<String> {
         .into_iter()
         .map(|value| match value {
             Value::String(value) => value.as_str().to_owned(),
-            Value::ExternalString(value) => value.as_ref().to_owned(),
             other => panic!("expected string, got {other:?}"),
         })
         .collect()

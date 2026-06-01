@@ -325,7 +325,7 @@ fn binding_column(col: &ProcedureOutputColumn, name: selene_core::IStr) -> Bindi
 
 #[cfg(test)]
 mod defensive_tests {
-    use selene_core::intern_with_admission;
+    use selene_core::intern;
 
     use super::*;
     use crate::{
@@ -355,7 +355,7 @@ mod defensive_tests {
     }
 
     fn istr(value: &str) -> selene_core::IStr {
-        intern_with_admission(value).expect("test interner").0
+        intern(value).expect("test interner")
     }
 
     fn param(name: &str, ty: GqlType, nullable: bool) -> ProcedureParameter {
@@ -519,8 +519,8 @@ mod defensive_tests {
 
     #[test]
     fn changed_yield_schema_reports_metadata_mismatch() {
-        let name = intern_with_admission("pkg").expect("test interner").0;
-        let col = intern_with_admission("out").expect("test interner").0;
+        let name = intern("pkg").expect("test interner");
+        let col = intern("out").expect("test interner");
         let planned = PlannedCall {
             procedure: Box::new([name.clone()]),
             handle: ProcedureHandle::new(1),

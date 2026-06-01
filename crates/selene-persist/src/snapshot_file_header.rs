@@ -18,7 +18,14 @@ pub const SNAPSHOT_VERSION_MAJOR: u16 = 1;
 /// ([`SnapshotFileHeader::read_from`]) rejects any mismatch, so pre-STEP-9
 /// (minor 0) snapshots are cleanly rejected with [`crate::PersistError::UnsupportedVersion`]
 /// — a clean break, not a dual decoder (deferred to 4c per the D14 amendment).
-pub const SNAPSHOT_VERSION_MINOR: u16 = 1;
+///
+/// Bumped `1 -> 2` by the IStr-removal stage B: deleting `Value::ExternalString`
+/// shifts the postcard variant discriminant of every following `Value` variant,
+/// and snapshot rows embed property values as postcard `PropertyMap` blobs
+/// inside the rkyv `CORE/NODE` / `CORE/EDGE` sections. A pre-stage-B snapshot is
+/// rejected by the same exact-match gate rather than mis-decoding a shifted
+/// variant — another clean greenfield break.
+pub const SNAPSHOT_VERSION_MINOR: u16 = 2;
 /// Fixed snapshot file-header length.
 pub const SNAPSHOT_FILE_HEADER_LEN: usize = 32;
 /// Whole-body compression flag, reserved in v1.0.
@@ -188,11 +195,11 @@ mod tests {
             .write_to(&mut bytes)
             .unwrap();
         bytes[4..6].copy_from_slice(&2_u16.to_le_bytes());
-        // `new()` writes the current minor (1 after the STEP 9 bump); patching
+        // `new()` writes the current minor (2 after the stage-B bump); patching
         // only the major byte leaves minor at its written value.
         assert!(matches!(
             SnapshotFileHeader::read_from(&mut bytes.as_slice()),
-            Err(PersistError::UnsupportedVersion { major: 2, minor: 1 })
+            Err(PersistError::UnsupportedVersion { major: 2, minor: 2 })
         ));
     }
 

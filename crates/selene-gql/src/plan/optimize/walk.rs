@@ -537,9 +537,7 @@ mod tests {
     };
 
     fn istr(value: &str) -> IStr {
-        selene_core::intern_with_admission(value)
-            .expect("test string interns")
-            .0
+        selene_core::intern(value).expect("test string interns")
     }
 
     fn span() -> SourceSpan {

@@ -13,8 +13,7 @@ use crate::{
 };
 
 use super::scan_resolve::{
-    IndexKeyOutcome, ProbeShape, ResolvedBounds, range_satisfiable_runtime, resolve_bounds,
-    resolve_index_key,
+    IndexKeyOutcome, ResolvedBounds, range_satisfiable_runtime, resolve_bounds, resolve_index_key,
 };
 use super::{EvalCtx, evaluator, pattern, value_compare};
 
@@ -234,14 +233,13 @@ fn union_property_eq(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BTreeSet<u32>, ExecutorError> {
     // Pre-resolve all keys once: parameter slots resolve to concrete Values
-    // under `ProbeShape::Equality` (BitmapUnion fans out variant-strict
-    // equality probes — same shape contract as `Equality(IndexKey)`).
-    // `IndexKeyOutcome::EmptyResult` slots (NULL binding or unpoolable
-    // ExternalString) drop out of the union per BRIEF-154 §B.3. A loud
-    // `InvalidParameterType` propagates immediately.
+    // for the variant-strict equality probes the BitmapUnion fans out.
+    // `IndexKeyOutcome::EmptyResult` slots (NULL binding) drop out of the
+    // union per BRIEF-154 §B.3. A loud `InvalidParameterType` propagates
+    // immediately.
     let mut resolved_keys: Vec<Value> = Vec::with_capacity(keys.len());
     for key in keys {
-        match resolve_index_key(key, kind, ProbeShape::Equality, ctx)? {
+        match resolve_index_key(key, kind, ctx)? {
             IndexKeyOutcome::Value(value) => resolved_keys.push(value),
             IndexKeyOutcome::EmptyResult => {}
         }
@@ -347,9 +345,8 @@ fn composite_lookup_rows(
         .composite_property_index_for(&label, &property_keys)
     {
         let refs = resolved_values.iter().collect::<Vec<_>>();
-        // Read-path MUST NOT admit new strings into the IStr pool (BRIEF-153);
-        // an unpoolable `Value::ExternalString` component proves no indexed
-        // row could match, so render as empty without admission.
+        // Read-path key build; `Ok(None)` (retained pending the two-phase
+        // collapse) renders as an empty result.
         match index.key_from_values_lookup(&refs) {
             Ok(Some(key)) => {
                 return Ok(index
@@ -371,9 +368,9 @@ fn composite_lookup_rows(
 
 /// Resolve a composite probe's per-component keys against bound parameters.
 ///
-/// Returns `Ok(None)` when any component resolved to `EmptyResult` (NULL
-/// parameter binding, unpoolable ExternalString against a STRING component).
-/// Returns `Ok(Some(values))` with `values` aligned to `properties` order.
+/// Returns `Ok(None)` when any component resolved to `EmptyResult` (e.g. a
+/// NULL parameter binding). Returns `Ok(Some(values))` with `values` aligned
+/// to `properties` order.
 fn resolve_composite_values(
     properties: &[(IStr, IndexKind)],
     keys: &[(IStr, IndexKey)],
@@ -387,10 +384,8 @@ fn resolve_composite_values(
             return Ok(None);
         };
         // Composite probes via `composite_property_index_for` →
-        // `key_from_values_lookup` are variant-strict on each component
-        // (BRIEF-153 carve-out is built into the lookup path), so every
-        // component is `ProbeShape::Equality`.
-        match resolve_index_key(key, *kind, ProbeShape::Equality, ctx)? {
+        // `key_from_values_lookup` are variant-strict on each component.
+        match resolve_index_key(key, *kind, ctx)? {
             IndexKeyOutcome::Value(value) => out.push(value),
             IndexKeyOutcome::EmptyResult => return Ok(None),
         }

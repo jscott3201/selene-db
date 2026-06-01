@@ -108,7 +108,7 @@ mod tests {
             any::<f32>().prop_map(Value::Float32),
             any::<i64>().prop_map(|m| Value::Decimal(rust_decimal::Decimal::new(m, 3))),
             "[a-z]{1,8}".prop_map(|s| Value::String(intern(&format!("payload.v.{s}")).unwrap())),
-            "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::ExternalString(Arc::from(s.as_str()))),
+            "[a-zA-Z0-9 ]{0,16}".prop_map(|s| Value::String(intern(&s).unwrap())),
             proptest::collection::vec(any::<u8>(), 0..24).prop_map(|b| Value::Bytes(Arc::from(b))),
             Just(Value::Date("2024-06-15".parse().unwrap())),
             Just(Value::LocalDateTime("2024-06-15T12:30:00".parse().unwrap())),

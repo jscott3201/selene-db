@@ -191,11 +191,11 @@ fn build_property_index_inner(
         }
         match index.insert(value, row) {
             Ok(()) => {}
-            Err(err) => match (&err, policy) {
-                (TypedIndexValueError::AdmissionFailed { .. }, _) | (_, BuildPolicy::Strict) => {
+            Err(err) => match policy {
+                BuildPolicy::Strict => {
                     return Err(index_rejection(label.clone(), property.clone(), err));
                 }
-                (_, BuildPolicy::Lenient) => {
+                BuildPolicy::Lenient => {
                     warn_rejected("rebuild", label.clone(), property.clone(), row, &err);
                 }
             },
@@ -282,13 +282,9 @@ fn remove_commit(
     Ok(())
 }
 
-/// Commit-path branching for [`TypedIndexValueError`]: `AdmissionFailed`
-/// surfaces as a hard [`GraphError::IndexAdmissionExhausted`] (BRIEF-153 —
-/// DDL `INDEXED` is the user's consent for STRING admission, cap exhaustion
-/// at that boundary cannot be silently dropped). Other variants
-/// (`KindMismatch`, `NaN`) keep the legacy `warn_rejected` lenient skip
-/// because open-graph kind drift remains recoverable per the module
-/// rustdoc.
+/// Commit-path branching for [`TypedIndexValueError`]. Open-graph kind
+/// drift (`KindMismatch`, `NaN`) keeps the `warn_rejected` lenient skip
+/// because it remains recoverable per the module rustdoc.
 fn demote_or_promote(
     label: IStr,
     property: IStr,
@@ -297,7 +293,6 @@ fn demote_or_promote(
     err: TypedIndexValueError,
 ) -> GraphResult<()> {
     match err {
-        TypedIndexValueError::AdmissionFailed { .. } => Err(index_rejection(label, property, err)),
         TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
             warn_rejected(op, label, property, row, &err);
             Ok(())
@@ -307,13 +302,6 @@ fn demote_or_promote(
 
 fn index_rejection(label: IStr, property: IStr, err: TypedIndexValueError) -> GraphError {
     match err {
-        TypedIndexValueError::AdmissionFailed { reason, .. } => {
-            GraphError::IndexAdmissionExhausted {
-                label,
-                property,
-                source: reason,
-            }
-        }
         TypedIndexValueError::KindMismatch { .. } | TypedIndexValueError::NaN { .. } => {
             GraphError::IndexValueRejected {
                 label,

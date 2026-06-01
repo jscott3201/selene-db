@@ -110,11 +110,11 @@ pub(super) fn check_property_index_coverage(snapshot: &SeleneGraph) -> CheckResu
             else {
                 continue;
             };
-            // Read-path MUST NOT admit (BRIEF-153 Q11(a)) — when a stored
-            // `Value::ExternalString` component isn't yet in the global IStr
-            // pool, the row cannot be in the index. BRIEF-153 fix-cycle C5:
-            // verify counts this as an expected row AND an issue so a
-            // bitmap/pool desync does not hide as a silent skip.
+            // With a single string space `key_from_values_lookup` resolves
+            // every coercible STRING component directly; the `Ok(None)` arm is
+            // retained pending the two-phase collapse and counts the row as
+            // expected + an issue so a bitmap desync cannot hide as a silent
+            // skip.
             let key = match entry.index.key_from_values_lookup(&values) {
                 Ok(Some(key)) => key,
                 Ok(None) => {

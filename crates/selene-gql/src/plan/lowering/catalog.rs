@@ -1,6 +1,6 @@
 //! DDL lowering.
 
-use selene_core::{IStr, intern_with_admission};
+use selene_core::{IStr, intern};
 
 use crate::{
     DdlStatement, GqlType, TypePropertyConstraint, TypePropertyDef,
@@ -188,7 +188,7 @@ fn lower_property_constraint(
 }
 
 fn ddl_output_schema(statement: &DdlStatement) -> Result<BindingTableSchema, PlannerError> {
-    ddl_output_schema_with(statement, intern_with_admission)
+    ddl_output_schema_with(statement, intern)
 }
 
 fn ddl_output_schema_with<F, E>(
@@ -196,7 +196,7 @@ fn ddl_output_schema_with<F, E>(
     intern: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<IStr, E>,
 {
     match statement {
         DdlStatement::ShowNodeTypes(span) => show_output_schema(
@@ -248,7 +248,7 @@ fn named_output_schema<F, E>(
     mut intern: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<IStr, E>,
 {
     let mut columns = Vec::with_capacity(names.len());
     for (name, detail) in names {
@@ -268,7 +268,7 @@ fn show_output_schema<F, E>(
     mut intern: F,
 ) -> Result<BindingTableSchema, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<IStr, E>,
 {
     Ok(BindingTableSchema {
         columns: vec![
@@ -298,11 +298,9 @@ fn show_column_name<F, E>(
     admit_name: &mut F,
 ) -> Result<IStr, PlannerError>
 where
-    F: FnMut(&str) -> Result<(IStr, bool), E>,
+    F: FnMut(&str) -> Result<IStr, E>,
 {
-    admit_name(value)
-        .map(|(name, _was_new)| name)
-        .map_err(|_err| PlannerError::InternerCapExhausted { detail, span })
+    admit_name(value).map_err(|_err| PlannerError::InternerCapExhausted { detail, span })
 }
 
 #[cfg(test)]

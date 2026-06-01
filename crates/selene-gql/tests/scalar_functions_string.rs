@@ -26,9 +26,9 @@ fn assert_status(source: &str, expected: &str) {
     assert_eq!(err.gqlstatus().as_str(), expected, "source: {source}");
 }
 
-fn external_string(value: Value) -> String {
-    let Value::ExternalString(value) = value else {
-        panic!("expected ExternalString, got {value:?}");
+fn string_value(value: Value) -> String {
+    let Value::String(value) = value else {
+        panic!("expected String, got {value:?}");
     };
     value.to_string()
 }
@@ -46,9 +46,9 @@ fn assert_feature_recorded(source: &str, expected: FeatureId) {
 }
 
 #[test]
-fn normalize_defaults_to_nfc_and_returns_external_string() {
+fn normalize_defaults_to_nfc_and_returns_string() {
     assert_eq!(
-        external_string(single_value(
+        string_value(single_value(
             "RETURN NORMALIZE('e\u{301}') AS value",
             "value"
         )),
@@ -70,7 +70,7 @@ fn normalize_accepts_all_unicode_normal_forms() {
         } else {
             format!("RETURN NORMALIZE('e\u{301}', {form}) AS value")
         };
-        assert_eq!(external_string(single_value(&source, "value")), expected);
+        assert_eq!(string_value(single_value(&source, "value")), expected);
     }
 }
 
@@ -123,7 +123,7 @@ fn left_and_right_return_unicode_prefixes_and_suffixes() {
         ("RETURN right('日本語', 99) AS value", "日本語"),
     ];
     for (source, expected) in cases {
-        assert_eq!(external_string(single_value(source, "value")), expected);
+        assert_eq!(string_value(single_value(source, "value")), expected);
     }
 }
 
@@ -158,7 +158,7 @@ fn multi_character_trim_family_trims_default_and_custom_character_sets() {
         ("RETURN rtrim('helloxy', 'xy') AS value", "hello"),
     ];
     for (source, expected) in cases {
-        assert_eq!(external_string(single_value(source, "value")), expected);
+        assert_eq!(string_value(single_value(source, "value")), expected);
     }
 }
 
@@ -206,7 +206,7 @@ fn explicit_trim_supports_both_leading_trailing_and_defaults() {
         ("RETURN TRIM(FROM ' hello ') AS value", "hello"),
     ];
     for (source, expected) in cases {
-        assert_eq!(external_string(single_value(source, "value")), expected);
+        assert_eq!(string_value(single_value(source, "value")), expected);
     }
 }
 

@@ -7,7 +7,7 @@ mod endpoints;
 mod index_ddl;
 mod property;
 
-use selene_core::{IStr, LabelSet, Value, intern_with_admission};
+use selene_core::{IStr, LabelSet, Value, intern};
 use selene_graph::{
     EdgeEndpointDef, EdgeTypeDef, GraphError, GraphTypeDef, NodeTypeDef, PropertyTypeDef,
     TypedIndexKind, ValidationMode as GraphValidationMode,
@@ -472,11 +472,9 @@ fn string_schema(names: &[&str]) -> Result<BindingTableSchema, ExecutorError> {
 }
 
 pub(super) fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
-    intern_with_admission(value)
-        .map(|(value, _was_new)| value)
-        .map_err(|_err| ExecutorError::ImplementationDefined {
-            detail: "interner cap exhausted during catalog rendering",
-        })
+    intern(value).map_err(|_err| ExecutorError::ImplementationDefined {
+        detail: "interner cap exhausted during catalog rendering",
+    })
 }
 
 fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding, ExecutorError> {

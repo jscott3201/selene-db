@@ -81,7 +81,7 @@ fn matches_gql_type(value: &Value, ty: &GqlType) -> bool {
     }
 
     match ty {
-        GqlType::String => matches!(value, Value::String(_) | Value::ExternalString(_)),
+        GqlType::String => matches!(value, Value::String(_)),
         GqlType::Uuid => matches!(value, Value::Uuid(_)),
         GqlType::Boolean => matches!(value, Value::Bool(_)),
         GqlType::Integer

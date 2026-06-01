@@ -40,8 +40,8 @@ impl SeleneGraph {
     ///    label sets and alive edge labels; no bucket is present-but-empty.
     /// 2. **Typed property indexes** match a fresh lenient re-build
     ///    (`build_property_index_lenient`). The lenient policy is reused so
-    ///    open-graph kind drift, NaN, and unpoolable `ExternalString` values —
-    ///    which the commit path legitimately skips — do not false-positive.
+    ///    open-graph kind drift and NaN — which the commit path legitimately
+    ///    skips — do not false-positive.
     /// 3. **Composite typed indexes** match a fresh lenient re-build, same
     ///    skip-aware policy.
     /// 4. **Store integrity / alive-set parity**: per-store columns share one

@@ -64,7 +64,6 @@ fn string_column(table: &BindingTable, name: &str) -> Vec<String> {
         .iter()
         .map(|row| match row.values().get(index) {
             Some(Value::String(value)) => value.as_str().to_owned(),
-            Some(Value::ExternalString(value)) => value.as_ref().to_owned(),
             other => panic!("expected string in {name}, got {other:?}"),
         })
         .collect()

@@ -1,8 +1,6 @@
-use std::{num::NonZeroUsize, thread, time::Instant};
+use std::{num::NonZeroUsize, time::Instant};
 
-use selene_core::{
-    BindingTableId, GraphId, IStr, IStrAdmissionPolicy, Value, intern_with_admission,
-};
+use selene_core::{BindingTableId, GraphId, IStr, Value, intern};
 use selene_graph::{GraphTypeDef, SharedGraph, TypedIndexKind};
 use selene_persist::{DEFAULT_WAL_FILE_NAME, WalConfig};
 
@@ -29,7 +27,7 @@ fn execute(source: &str, session: &mut Session<'_>) -> Result<StatementOutput, E
 }
 
 fn admitted(value: &str) -> IStr {
-    intern_with_admission(value).expect("test name admits").0
+    intern(value).expect("test name admits")
 }
 
 fn empty_closed_graph(id: u64) -> SharedGraph {
@@ -134,28 +132,6 @@ fn statement_execution_materializes_table_parameter_refs() {
         panic!("table parameter should surface as TableRef");
     };
     assert_ne!(*id, BindingTableId::TOMBSTONE);
-}
-
-#[test]
-fn istr_admission_policy_is_session_scoped_across_threads() {
-    let graph = SharedGraph::new(GraphId::new(3896));
-    thread::scope(|scope| {
-        let reject = scope.spawn(|| Session::new(&graph).istr_admission_policy);
-        let fallback = scope.spawn(|| {
-            Session::new(&graph)
-                .with_istr_admission_policy(IStrAdmissionPolicy::FallbackToExternal)
-                .istr_admission_policy
-        });
-
-        assert_eq!(
-            reject.join().expect("reject session joins"),
-            IStrAdmissionPolicy::Reject
-        );
-        assert_eq!(
-            fallback.join().expect("fallback session joins"),
-            IStrAdmissionPolicy::FallbackToExternal
-        );
-    });
 }
 
 #[test]

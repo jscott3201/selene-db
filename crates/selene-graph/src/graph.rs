@@ -439,15 +439,9 @@ impl SeleneGraph {
     ///
     /// `None` means no index is registered for `(label, property)` or the
     /// supplied value cannot be used with that index kind. `Some(empty)` means
-    /// the index exists but no row matches.
-    ///
-    /// For `STRING`-kind indexes, `Some(empty)` is also returned when
-    /// `value` is a [`Value::ExternalString`] whose content is not in the
-    /// global [`IStr`] pool — the read path MUST NOT admit, and an
-    /// unpooled content cannot be keyed in the index (BRIEF-153). Other
-    /// index kinds probed with `Value::ExternalString` return `None` so
-    /// the caller drops to a linear scan; open-graph kind drift remains
-    /// discoverable via cross-variant `value_compare`.
+    /// the index exists but no row matches. A kind-mismatched probe returns
+    /// `None` so the caller drops to a linear scan; open-graph kind drift
+    /// remains discoverable via cross-variant `value_compare`.
     #[must_use]
     pub fn nodes_with_property_eq(
         &self,

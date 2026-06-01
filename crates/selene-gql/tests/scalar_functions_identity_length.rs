@@ -35,11 +35,11 @@ fn assert_status(source: &str, expected: &str) {
 }
 
 fn assert_external_id(value: Value, prefix: &str) {
-    let Value::ExternalString(actual) = value else {
-        panic!("expected ExternalString ID, got {value:?}");
+    let Value::String(actual) = value else {
+        panic!("expected String ID, got {value:?}");
     };
     assert!(
-        actual.starts_with(prefix),
+        actual.as_str().starts_with(prefix),
         "expected {prefix} ID, got {actual}"
     );
 }
@@ -138,7 +138,7 @@ fn two_edge_path_value() -> Value {
 }
 
 #[test]
-fn element_id_returns_external_string_for_nodes_and_edges() {
+fn element_id_returns_string_for_nodes_and_edges() {
     assert_external_id(
         single_value("MATCH (n:Person) RETURN element_id(n) AS id LIMIT 1", "id"),
         "NodeId(",

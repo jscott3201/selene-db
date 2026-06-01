@@ -2,10 +2,10 @@
 
 mod exec_common;
 
-use std::{num::NonZeroUsize, sync::Arc};
+use std::num::NonZeroUsize;
 
 use exec_common::{column_values, execute_read, planned};
-use selene_core::{CancellationToken, GraphId, Value};
+use selene_core::{CancellationToken, GraphId, Value, intern};
 use selene_gql::{
     AnalyzedType, Binding, BindingTable, BindingTableColumn, BindingTableSchema,
     DataExceptionSubclass, EmptyProcedureRegistry, ExecutorError, GqlType, ImplDefinedCaps,
@@ -159,11 +159,11 @@ fn set_op_cross_type_numeric_equality() {
 }
 
 #[test]
-fn set_op_interned_external_string_equality() {
+fn set_op_string_equality() {
     let table = execute_manual_set_op(
         SetOp::Intersect,
         "RETURN 'same' AS s",
-        string_table("s", vec![Value::ExternalString(Arc::from("same"))]),
+        string_table("s", vec![Value::String(intern("same").unwrap())]),
         &ImplDefinedCaps::default(),
         None,
     )
@@ -171,7 +171,7 @@ fn set_op_interned_external_string_equality() {
 
     assert_eq!(
         column_values(&table, "s"),
-        vec![Value::ExternalString(Arc::from("same"))]
+        vec![Value::String(intern("same").unwrap())]
     );
 }
 

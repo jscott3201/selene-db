@@ -12,16 +12,6 @@ pub type CoreResult<T> = Result<T, CoreError>;
 #[derive(Debug, thiserror::Error, miette::Diagnostic)]
 #[non_exhaustive]
 pub enum CoreError {
-    /// The process-global string interner reached its distinct-string cap.
-    #[error("interner cap exceeded: {count} distinct strings (max {max})")]
-    #[diagnostic(code(SLENE_C_001), help("see Spec 02 §5.1"))]
-    IStrCapExceeded {
-        /// Number of distinct strings currently interned.
-        count: usize,
-        /// Maximum allowed distinct interned strings.
-        max: usize,
-    },
-
     /// A string or byte-string exceeded the implementation-defined length.
     #[error("string too long: {got} bytes (max {max})")]
     #[diagnostic(code(SLENE_C_002))]
@@ -86,9 +76,6 @@ impl CoreError {
     #[must_use]
     pub const fn gqlstatus(&self) -> &'static str {
         match self {
-            // Mirrors selene-gql::error::GqlStatus::PROGRAM_LIMIT_EXCEEDED
-            // without introducing a dependency from selene-core to selene-gql.
-            Self::IStrCapExceeded { .. } => "5GQL1",
             Self::StringTooLong { .. } | Self::ConstructedValueTooLarge { .. } => "22G03",
             Self::DecimalPrecisionExceeded { .. } => "22003",
             Self::ZeroIdentifier => "0G003",
@@ -106,7 +93,6 @@ mod tests {
     use super::*;
 
     #[rstest]
-    #[case(CoreError::IStrCapExceeded { count: 2, max: 1 }, "5GQL1", "SLENE_C_001")]
     #[case(CoreError::StringTooLong { got: 2, max: 1 }, "22G03", "SLENE_C_002")]
     #[case(
         CoreError::ConstructedValueTooLarge { got: 2, max: 1 },
@@ -147,7 +133,7 @@ mod tests {
 
     #[test]
     fn display_includes_structured_field_values() {
-        let error = CoreError::IStrCapExceeded { count: 7, max: 3 };
+        let error = CoreError::StringTooLong { got: 7, max: 3 };
         let rendered = error.to_string();
         assert!(rendered.contains('7'));
         assert!(rendered.contains('3'));

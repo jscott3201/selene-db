@@ -1,30 +1,17 @@
 //! Built-in per-`(label, property)` value index. See spec 03 section 5.2.
 //!
-//! # Caller classes (BRIEF-153)
+//! # Caller classes
 //!
 //! `typed_key_admit` and `typed_key_lookup` split the `Value`→`TypedKey`
-//! conversion into three caller classes, each chosen at every call site:
+//! conversion into write-side (`insert`, `remove`) and read/diff-side
+//! (`lookup_eq`, the per-type closures in `lookup_range`, and
+//! `values_share_key`) callers. With the interner removed there is a single
+//! string space, so a `STRING` value always resolves to its key; the
+//! `Ok(None)` resolution path is retained in the read/diff helper signature
+//! pending the two-phase collapse in the typed-index simplification stage.
 //!
-//! - **Write side** ([`TypedIndex::insert`], [`TypedIndex::remove`]):
-//!   `typed_key_admit`. Cap exhaustion surfaces as
-//!   [`TypedIndexValueError::AdmissionFailed`] and the mutator promotes it
-//!   to a hard [`crate::error::GraphError::IndexAdmissionExhausted`]
-//!   (GQLSTATUS `5GQL1`).
-//! - **Read side** ([`TypedIndex::lookup_eq`], the per-type closures in
-//!   [`TypedIndex::lookup_range`]): `typed_key_lookup`. Returning
-//!   `Ok(None)` for `STRING` content that is not in the pool renders as an
-//!   empty result; the read path MUST NOT admit a new `IStr` just to probe.
-//! - **Diff side** ([`TypedIndex::values_share_key`]): `typed_key_lookup`,
-//!   with `Ok(None)` falling through to [`raw_value_same`] so the diff
-//!   path never charges admission against a no-op update. If the values
-//!   genuinely differ, the resulting remove+insert pair admits through the
-//!   write path.
-//!
-//! See `selene_core::value::Value::ExternalString` rustdoc for the
-//! variant-strict storage carve-out this enables.
-//!
-//! The same three-helper split is mirrored in
-//! [`crate::composite_typed_index`] for composite indexes.
+//! The same split is mirrored in [`crate::composite_typed_index`] for
+//! composite indexes.
 
 use std::borrow::Cow;
 use std::cmp::Ordering;
@@ -33,7 +20,7 @@ use std::hash::{Hash, Hasher};
 use std::ops::{Bound, RangeBounds};
 
 use roaring::RoaringBitmap;
-use selene_core::{CoreError, IStr, Value};
+use selene_core::{IStr, Value};
 use serde::{Deserialize, Serialize};
 
 /// Indexable value kind for v1.0 built-in node property indexes.
@@ -322,25 +309,13 @@ impl TypedIndex {
     /// Return the rows matching `value` exactly.
     ///
     /// Returns `None` for kind-mismatched values (callers fall back to a
-    /// runtime scan). For a [`Self::String`] index probed with a
-    /// [`Value::ExternalString`] whose content is not in the global
-    /// [`IStr`] pool, returns `Some(empty)` — kind matches, content can't
-    /// possibly be in the index, no admission. For any other kind the
-    /// `Ok(None)` case is treated as kind-mismatch (return `None`) so the
-    /// caller drops to a linear scan; under open-graph drift a row whose
-    /// stored value is `Value::String("foo")` would otherwise be lost from
-    /// an I64 index probed with `Value::ExternalString("foo")`.
+    /// runtime scan). With a single string space every `STRING` value
+    /// resolves to its key directly, so the read helper no longer yields
+    /// `Ok(None)`; the arm is retained pending the two-phase collapse.
     #[must_use]
     pub(crate) fn lookup_eq(&self, value: &Value) -> Option<Cow<'_, RoaringBitmap>> {
         let key = match typed_key_lookup(value) {
             Ok(Some(key)) => key,
-            // Only String-kind indexes treat "ExternalString content not in
-            // the pool" as a definitive empty result. Other index kinds drop
-            // to scan fallback so open-graph drift remains discoverable via
-            // cross-variant `value_compare`.
-            Ok(None) if matches!(self, Self::String(_)) => {
-                return Some(Cow::Owned(RoaringBitmap::new()));
-            }
             Ok(None) => return None,
             Err(_) => return None,
         };
@@ -388,9 +363,9 @@ impl TypedIndex {
                 })?;
                 Some(range_union(index, &start, &end))
             }
-            // Why: `IStr` ordering is admission-order, not lexicographic, so
-            // string ranges fall back to runtime scans until a string-bytes
-            // secondary index exists.
+            // String ranges fall back to runtime scans; converting this to a
+            // real `BTreeMap::range` walk over the now-lexicographic keys is
+            // deferred to the typed-index simplification stage.
             Self::String(_) => None,
             Self::Date(index) => {
                 let start =
@@ -494,11 +469,6 @@ impl TypedIndex {
 }
 
 /// Internal value-admission error for index mutation.
-///
-/// `Clone + Copy + Eq + PartialEq` are intentionally NOT derived: the
-/// `AdmissionFailed` variant carries [`selene_core::CoreError`] which is a
-/// `Diagnostic`-bearing source-error type and is non-`Copy`/`Clone` by
-/// design.
 #[derive(Debug)]
 pub(crate) enum TypedIndexValueError {
     /// Value kind did not match the index kind.
@@ -513,30 +483,15 @@ pub(crate) enum TypedIndexValueError {
         /// The index kind being updated.
         expected_kind: TypedIndexKind,
     },
-    /// A [`Value::ExternalString`] could not be admitted to the global
-    /// [`IStr`] pool for use as a `STRING`-kind index key (typically because
-    /// the pool reached [`selene_core::MAX_INTERNED_STRINGS`]).
-    ///
-    /// Per D20 and the BRIEF-153 carve-out, DDL `INDEXED` is the user's
-    /// consent to admit a column's content to the pool; cap exhaustion at
-    /// that boundary is a hard error rather than a silent skip. The
-    /// mutator promotes this to [`crate::error::GraphError::IndexAdmissionExhausted`].
-    AdmissionFailed {
-        /// The index kind being updated (always [`TypedIndexKind::String`]
-        /// today; future non-STRING admissions could broaden this).
-        expected_kind: TypedIndexKind,
-        /// Underlying admission failure source.
-        reason: CoreError,
-    },
 }
 
 impl TypedIndexValueError {
     /// Return the expected index kind.
     pub(crate) fn expected_kind(&self) -> TypedIndexKind {
         match self {
-            Self::KindMismatch { expected_kind, .. }
-            | Self::NaN { expected_kind }
-            | Self::AdmissionFailed { expected_kind, .. } => *expected_kind,
+            Self::KindMismatch { expected_kind, .. } | Self::NaN { expected_kind } => {
+                *expected_kind
+            }
         }
     }
 
@@ -545,7 +500,6 @@ impl TypedIndexValueError {
         match self {
             Self::KindMismatch { observed, .. } => observed,
             Self::NaN { .. } => "NaN",
-            Self::AdmissionFailed { .. } => "ExternalString",
         }
     }
 }
@@ -574,37 +528,10 @@ impl TypedKey {
 }
 
 /// Write-side coercion of `value` into a [`TypedKey`].
-///
-/// [`Value::ExternalString`] admission is **gated on `expected_kind` being
-/// [`TypedIndexKind::String`]**. Probing a non-STRING index with an
-/// `ExternalString` would otherwise grow the global [`IStr`] pool just
-/// for the outer `match (self, key)` to reject it on kind mismatch — a
-/// DoS amplifier near pool-cap exhaustion (BRIEF-153 fix-cycle C3). For
-/// any other (kind, value) pair the function routes through the
-/// non-admitting body. Cap exhaustion on the admit branch surfaces as
-/// [`TypedIndexValueError::AdmissionFailed`], which the mutator promotes
-/// to [`crate::error::GraphError::IndexAdmissionExhausted`].
 fn typed_key_admit(
     value: &Value,
     expected_kind: TypedIndexKind,
 ) -> Result<TypedKey, TypedIndexValueError> {
-    if let Value::ExternalString(content) = value {
-        if expected_kind == TypedIndexKind::String {
-            return match selene_core::intern(content.as_ref()) {
-                Ok(interned) => Ok(TypedKey::String(interned)),
-                Err(reason) => Err(TypedIndexValueError::AdmissionFailed {
-                    expected_kind: TypedIndexKind::String,
-                    reason,
-                }),
-            };
-        }
-        // Non-STRING target — short-circuit BEFORE admitting so the global
-        // pool never grows on a kind-mismatched probe.
-        return Err(TypedIndexValueError::KindMismatch {
-            expected_kind,
-            observed: "ExternalString",
-        });
-    }
     match value {
         Value::Int(value) => Ok(TypedKey::I64(*value)),
         Value::Float(value) => NotNanF64::new(*value)
@@ -623,15 +550,13 @@ fn typed_key_admit(
     }
 }
 
-/// Read-side coercion of `value` into a [`TypedKey`] **without admitting
-/// new strings to the global [`IStr`] pool**.
+/// Read-side coercion of `value` into a [`TypedKey`].
 ///
-/// Returns `Ok(None)` when `value` is a [`Value::ExternalString`] whose
-/// content is not yet in the pool — because no row could be keyed on that
-/// content, callers render this as an empty result rather than admitting
-/// just to probe. `Ok(Some(_))` matches [`typed_key_admit`] for all
-/// already-admissible inputs. `Err` retains the kind-mismatch / NaN
-/// semantics from the admit path.
+/// With a single string space every `STRING` value resolves directly, so
+/// the `Ok(None)` case is no longer produced; it is retained in the return
+/// type pending the two-phase collapse in the typed-index simplification
+/// stage. `Ok(Some(_))` matches [`typed_key_admit`] for all coercible
+/// inputs; `Err` retains the kind-mismatch / NaN semantics.
 fn typed_key_lookup(value: &Value) -> Result<Option<TypedKey>, TypedIndexValueError> {
     match value {
         Value::Int(value) => Ok(Some(TypedKey::I64(*value))),
@@ -641,9 +566,6 @@ fn typed_key_lookup(value: &Value) -> Result<Option<TypedKey>, TypedIndexValueEr
                 expected_kind: TypedIndexKind::F64,
             }),
         Value::String(value) => Ok(Some(TypedKey::String(value.clone()))),
-        Value::ExternalString(value) => {
-            Ok(selene_core::lookup(value.as_ref()).map(TypedKey::String))
-        }
         Value::Date(value) => Ok(Some(TypedKey::Date(*value))),
         Value::LocalDateTime(value) => Ok(Some(TypedKey::LocalDateTime(*value))),
         Value::Uuid(value) => Ok(Some(TypedKey::Uuid(*value))),

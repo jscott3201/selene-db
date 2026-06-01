@@ -305,7 +305,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
 mod tests {
     use std::sync::Arc;
 
-    use selene_core::{BindingTableId, EdgeId, GraphId, NodeId, Value, intern_with_admission};
+    use selene_core::{BindingTableId, EdgeId, GraphId, NodeId, Value, intern};
 
     use super::*;
 
@@ -443,7 +443,7 @@ mod tests {
             (
                 PropertyValueType::String,
                 GqlType::String,
-                Value::String(intern_with_admission("schema.type.string").unwrap().0),
+                Value::String(intern("schema.type.string").unwrap()),
             ),
             (
                 PropertyValueType::Uuid,
