@@ -115,6 +115,8 @@ jobs:
       - run: bash .github/scripts/check-bench-invocation.test.sh
       - run: bash .github/scripts/check-mimalloc-dev-dep.sh .
       - run: bash .github/scripts/check-mimalloc-dev-dep.test.sh
+      - run: bash .github/scripts/check-benchmarks-doc.sh .
+      - run: bash .github/scripts/check-benchmarks-doc.test.sh
       - run: bash scripts/run-benches.test.sh
 
   deny:
