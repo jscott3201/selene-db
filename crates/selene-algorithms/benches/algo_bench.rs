@@ -4,16 +4,20 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+mod common;
+
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use selene_algorithms::{
-    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism, ProjectionConfig,
+    ApspConfig, BetweennessConfig, GraphProjection, PageRankConfig, Parallelism,
     TriangleCountConfig, apsp, betweenness, louvain, pagerank, triangle_count,
 };
 use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, intern};
-use selene_graph::{SeleneGraph, SharedGraph};
+use selene_graph::SharedGraph;
 use selene_testing::{BenchFixture, BenchProfile};
+
+use common::{build_projection, criterion_config, scale_label};
 
 /// Node scales for the scale-swept algorithm groups, selected by
 /// `SELENE_BENCH_PROFILE` (quick=1k, full=10k/50k/100k, stress=+250k) so a
@@ -140,16 +144,6 @@ impl BenchState {
     }
 }
 
-fn build_projection(snapshot: &SeleneGraph) -> GraphProjection {
-    let config = ProjectionConfig {
-        name: "bench".to_string(),
-        node_labels: Vec::new(),
-        edge_labels: Vec::new(),
-        weight_property: None,
-    };
-    GraphProjection::build(snapshot, &config, None).expect("bench projection builds")
-}
-
 fn planted_community_graph(scale: usize, graph_id: u64) -> SharedGraph {
     let scale = scale.max(6);
     let graph = SharedGraph::new(GraphId::new(graph_id));
@@ -211,28 +205,8 @@ fn betweenness_sample_size(scale: usize) -> Option<usize> {
     (scale > BENCH_BETWEENNESS_SAMPLE_SIZE).then_some(BENCH_BETWEENNESS_SAMPLE_SIZE)
 }
 
-fn scale_label(scale: usize) -> String {
-    if scale >= 1_000 {
-        format!("{}k", scale / 1_000)
-    } else {
-        scale.to_string()
-    }
-}
-
 fn istr(value: &str) -> IStr {
     intern(value).expect("bench string interns")
-}
-
-fn criterion_config() -> Criterion {
-    let profile = BenchProfile::from_env();
-    Criterion::default()
-        .sample_size(profile.sample_size())
-        .warm_up_time(std::time::Duration::from_millis(100))
-        .measurement_time(std::time::Duration::from_millis(match profile {
-            BenchProfile::Quick => 500,
-            BenchProfile::Full | BenchProfile::Stress => 1_500,
-            _ => 500,
-        }))
 }
 
 criterion_group! {

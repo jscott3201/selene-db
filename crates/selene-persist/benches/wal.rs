@@ -167,6 +167,69 @@ fn bench_wal_append_batch_1000_no_fsync(c: &mut Criterion) {
     group.finish();
 }
 
+/// Total changes written per sample for the body-size sweep — held constant so
+/// the only thing varying across the x-axis is how they are *packed* into WAL
+/// entries.
+fn body_size_total() -> usize {
+    match BenchProfile::from_env() {
+        BenchProfile::Quick => 10_000,
+        _ => 100_000,
+    }
+}
+
+/// Changes-per-entry packings swept at a fixed total: many tiny entries vs few
+/// large ones. The large packings exercise the big-body serialize+write path
+/// (PERSIST-04 vectored write) that the entry-count sweeps never reach.
+fn body_size_packings() -> &'static [usize] {
+    match BenchProfile::from_env() {
+        BenchProfile::Quick => &[100, 1_000],
+        _ => &[100, 1_000, 10_000, 50_000],
+    }
+}
+
+/// Fixed total work, swept entry body size, no fsync — isolates the per-byte
+/// body serialize+write cost from the per-entry overhead the count sweeps
+/// measure. OnFlushOnly so disk sync never enters the sample.
+fn bench_wal_body_size_no_fsync(c: &mut Criterion) {
+    let mut group = c.benchmark_group("persist_wal_body_size_no_fsync");
+    let total = body_size_total();
+    for &per_entry in body_size_packings() {
+        let entries = total.div_ceil(per_entry);
+        group.throughput(Throughput::Elements((entries * per_entry) as u64));
+        group.bench_function(BenchmarkId::from_parameter(per_entry), |b| {
+            b.iter_batched(
+                || {
+                    let dir = common::TempDir::new("wal-body-size");
+                    let writer = WalWriter::open(
+                        &dir.path().join(DEFAULT_WAL_FILE_NAME),
+                        WalConfig {
+                            sync_policy: SyncPolicy::OnFlushOnly,
+                            snapshot_seq: 0,
+                        },
+                    )
+                    .expect("wal opens");
+                    (dir, writer, common::changes(per_entry))
+                },
+                |(_dir, mut writer, changes)| {
+                    for idx in 0..entries {
+                        writer
+                            .append(
+                                HlcTimestamp::new(idx as u64 + 1, 0),
+                                Origin::Local,
+                                None,
+                                &changes,
+                            )
+                            .expect("append succeeds");
+                    }
+                    std::hint::black_box(writer.last_sequence());
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
 fn bench_wal_sync_policy_sweep(c: &mut Criterion) {
     let mut group = c.benchmark_group("persist_wal_sync_sweep");
     for (name, sync_policy) in [
@@ -264,6 +327,6 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_wal_append_single, bench_wal_append_batch_1000,
         bench_wal_append_single_no_fsync, bench_wal_append_batch_1000_no_fsync,
-        bench_wal_sync_policy_sweep, bench_wal_replay
+        bench_wal_body_size_no_fsync, bench_wal_sync_policy_sweep, bench_wal_replay
 }
 criterion_main!(wal_group);

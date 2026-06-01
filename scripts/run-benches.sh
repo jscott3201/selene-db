@@ -48,6 +48,8 @@ selene-graph|provider_fanout|0
 selene-graph|bound_type_validation|0
 selene-graph|concurrent_writers|0
 selene-graph|graph_hub_delete|0
+selene-graph|graph_snapshot_roundtrip|0
+selene-graph|graph_read_under_write|0
 selene-persist|wal|0
 selene-persist|snapshot|0
 selene-gql|parse|1
@@ -58,6 +60,7 @@ selene-gql|expression_eval|0
 selene-gql|procedure_call_repeat|0
 selene-gql|correlated_subquery|0
 selene-algorithms|algo_bench|0
+selene-algorithms|projection|0
 "
 
 # Curated smoke subset — highest-signal, lowest-variance rows for a <~60s
@@ -70,6 +73,7 @@ selene-graph|bulk_mutation|commit_batch
 selene-persist|wal|append_batch_1000
 selene-gql|plan_optimize|
 selene-gql|expression_eval|
+selene-algorithms|projection|projection_build
 selene-algorithms|algo_bench|pagerank
 "
 
