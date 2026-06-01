@@ -107,9 +107,14 @@ fn nested_parens_with_small_sign_runs_parse() {
     parse("RETURN (-(-(-(1))))").expect("nested unary in parens parses");
     parse("RETURN (1 + (2 + (3 + (4 + 5))))").expect("nested arithmetic parses");
     // Many SEQUENTIAL (non-nested) negatives must also parse — the per-value
-    // reset keeps the run from accumulating across sibling groups.
-    let many = format!("RETURN {}", vec!["(-1)"; 300].join(" + "));
-    parse(&many).expect("300 sequential negated groups parse");
+    // reset keeps the sign run from accumulating across sibling groups. The
+    // count stays under the post-build expression-depth cap (256, see
+    // `tests/parser_expr_depth.rs`): a `+`-fold of N groups is depth ~N, so a
+    // 200-group fold (depth ~201) exercises sign-run reset across many siblings
+    // while remaining a legitimately parseable expression. A larger fold is
+    // rejected as `ComplexityLimitExceeded`, not for any sign-run reason.
+    let many = format!("RETURN {}", vec!["(-1)"; 200].join(" + "));
+    parse(&many).expect("200 sequential negated groups parse");
 }
 
 #[test]

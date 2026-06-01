@@ -222,6 +222,55 @@ pub enum ValueExpr {
     },
 }
 
+impl Drop for ValueExpr {
+    /// Tear this expression down iteratively rather than with the compiler's
+    /// derived recursive destructor.
+    ///
+    /// A left-leaning `Box<ValueExpr>` chain (e.g. the depth-N tree built from
+    /// `a OR a OR …` or a long `a.b.c.…` access chain) overflows the native
+    /// stack when freed recursively — one frame per level — at roughly 130k
+    /// deep. A Rust stack overflow is **non-unwindable** (`catch_unwind` cannot
+    /// trap it), so it hard-kills the host process embedding selene-db. The
+    /// parser caps *accepted* expression depth far below that
+    /// (`parser::depth`), but an over-cap tree is still fully constructed before
+    /// the cap rejects it, and that rejected tree must be dropped without
+    /// recursing. This manual `Drop` hoists every owned child `ValueExpr` onto a
+    /// heap worklist (replacing it in place with a childless placeholder) and
+    /// drops the worklist in a pop-loop, so teardown is O(nodes) iterative.
+    ///
+    /// By the time any hoisted node is itself dropped, its children have already
+    /// been replaced by placeholders, so its re-entrant destructor finds nothing
+    /// to recurse into (recursion depth stays ≤ 2 regardless of tree depth).
+    /// Subquery bodies (`Box<MatchClause>` / `Box<QueryPipeline>`) and the
+    /// `Cast` target type (`Box<GqlType>`) are **not** direct `ValueExpr`
+    /// children (see [`ValueExpr::for_each_child_mut`]); they drop normally,
+    /// which is safe because subquery nesting is bounded by the pre-pest `{`
+    /// delimiter cap and `GqlType` depth by the type builder's gate.
+    fn drop(&mut self) {
+        let mut pending: Vec<ValueExpr> = Vec::new();
+        hoist_children(self, &mut pending);
+        while let Some(mut node) = pending.pop() {
+            hoist_children(&mut node, &mut pending);
+            // `node` drops here with its children already hoisted out.
+        }
+    }
+}
+
+/// Move every direct child [`ValueExpr`] of `expr` onto `pending`, leaving a
+/// childless placeholder in its slot. Shared by the iterative [`Drop`] impl.
+fn hoist_children(expr: &mut ValueExpr, pending: &mut Vec<ValueExpr>) {
+    expr.for_each_child_mut(&mut |child| {
+        pending.push(core::mem::replace(child, drop_placeholder()));
+    });
+}
+
+/// A cheap, childless [`ValueExpr`] swapped in for a hoisted child during
+/// iterative teardown. Constructing it allocates nothing and dropping it
+/// recurses into nothing.
+fn drop_placeholder() -> ValueExpr {
+    ValueExpr::Literal(Literal::Null(SourceSpan::default()))
+}
+
 impl ValueExpr {
     /// Return the source span for this expression.
     #[must_use]
