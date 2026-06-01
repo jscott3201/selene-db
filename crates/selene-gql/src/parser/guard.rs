@@ -48,6 +48,15 @@ pub(crate) const MAX_LIST_NESTING_DEPTH: u32 = 32;
 ///   of `NOT` keywords.
 /// - `case_expr` ↔ `expr` (`grammar.pest:447-452`) — `^"CASE" ~ expr` nests a
 ///   fresh expression with only the `CASE` keyword before it.
+/// - `type_name = { … | ^"LIST" ~ "<" ~ type_name ~ ">" | … }`
+///   (`grammar.pest:508`) — the only `type_name` self-recursion (reachable via
+///   `cast_expr`, `IS TYPED`, `:: type_name`, record fields). Its inter-level
+///   delimiter is `<`, which is **also** `comp_op` (`<`/`>`/`<=`/`>=`/`<>`,
+///   `grammar.pest:369`) and so cannot be counted as a bracket. We instead bound
+///   the `LIST` *keyword* depth (increment per `LIST`, decrement per `>`); this
+///   never accumulates on a comparison chain (the depth only rises inside a
+///   `LIST<…>` whose contents are types, never comparisons) and is immune to a
+///   comment inserted between `LIST` and `<`.
 ///
 /// A long enough zero-delimiter run overflows the native stack inside pest.
 /// A Rust stack overflow is **non-unwindable** (`catch_unwind` cannot trap it),
@@ -85,6 +94,12 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
     let mut sign_run = 0_u32;
     let mut not_run = 0_u32;
     let mut case_depth = 0_u32;
+    // `LIST<…>` type-name nesting depth (see `MAX_RECURSION_DEPTH`). Incremented
+    // per `LIST` keyword, decremented per `>`. The depth only rises inside a
+    // `LIST<…>` whose contents are types (no comparison operators), so a `>`
+    // belonging to a comparison can only appear while the depth is already 0,
+    // where the saturating decrement is a no-op.
+    let mut list_type_depth = 0_u32;
 
     while index < bytes.len() {
         match bytes[index] {
@@ -174,6 +189,16 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                     });
                 }
             }
+            // `>` closes one `LIST<…>` type-name nesting level. It is also a
+            // primary/separator, so it terminates a leading-sign / `NOT` chain.
+            // Outside a `LIST<…>` (depth 0) — e.g. a `comp_op` `>` — the
+            // saturating decrement is a no-op, so comparison chains never
+            // underflow or false-trip the cap.
+            b'>' => {
+                sign_run = 0;
+                not_run = 0;
+                list_type_depth = list_type_depth.saturating_sub(1);
+            }
             // Whitespace is transparent to all three runs (pest skips it).
             b' ' | b'\t' | b'\r' | b'\n' => {}
             // An ASCII identifier-start byte begins a whole word. Recognize the
@@ -210,6 +235,17 @@ pub(super) fn validate(source: &str) -> Result<(), ParserError> {
                         not_run = 0;
                         case_depth = case_depth.saturating_sub(1);
                     }
+                    WordKind::List => {
+                        sign_run = 0;
+                        not_run = 0;
+                        list_type_depth += 1;
+                        if list_type_depth > MAX_RECURSION_DEPTH {
+                            return Err(ParserError::ComplexityLimitExceeded {
+                                limit: MAX_RECURSION_DEPTH,
+                                span: point_span(index),
+                            });
+                        }
+                    }
                     WordKind::Other => {
                         sign_run = 0;
                         not_run = 0;
@@ -245,6 +281,11 @@ enum WordKind {
     Case,
     /// `END` (case-insensitive, whole word) — closes a `case_expr`.
     End,
+    /// `LIST` (case-insensitive, whole word) — opens a `LIST<…>` `type_name`
+    /// nesting level (the only `<`-delimited recursive type constructor). A
+    /// matching `>` closes it. `COLLECT_LIST` and other words containing `LIST`
+    /// are distinct whole words and do not match.
+    List,
     /// Any other identifier word — a primary that resets the leading-sign /
     /// `NOT` runs.
     Other,
@@ -284,6 +325,8 @@ fn recognize_word(bytes: &[u8], start: usize) -> (WordKind, usize) {
         WordKind::Case
     } else if word.eq_ignore_ascii_case(b"END") {
         WordKind::End
+    } else if word.eq_ignore_ascii_case(b"LIST") {
+        WordKind::List
     } else {
         WordKind::Other
     };
