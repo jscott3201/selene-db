@@ -4,8 +4,11 @@
 //! payloads carry only the graph mutation itself. Diff payloads keep key lists
 //! in canonical lexicographic order by [`IStr::as_str`] both in memory and on
 //! the wire (the derived [`IStr`] `Ord` is lexicographic through the inner
-//! string), and re-sort defensively into that canonical order after decode so
-//! a hand-built or out-of-order wire payload is canonicalized on receipt.
+//! string). Serialize canonicalizes (sorts) the lists before emitting — a no-op
+//! for diffs built via the constructors, but load-bearing because the diff
+//! fields are public and can be set non-canonically. Deserialize then validates
+//! the canonical invariant and rejects a non-canonical or out-of-order payload
+//! as malformed rather than re-sorting it.
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use smallvec::SmallVec;
@@ -190,14 +193,16 @@ impl Serialize for LabelDiff {
     where
         S: Serializer,
     {
-        // No resort: `LabelDiff::new` keeps `added`/`removed` in lexicographic
-        // `IStr` order, which is the canonical wire order — emit directly,
-        // byte-identical to the old `sort_by(as_str())`.
-        LabelDiffWire {
-            added: self.added.clone(),
-            removed: self.removed.clone(),
-        }
-        .serialize(serializer)
+        // Canonicalize on serialize. `LabelDiff::new` already sorts, so this is
+        // a no-op (byte-identical) for constructed diffs — but `added`/`removed`
+        // are public fields, so a caller can build a non-canonical diff directly;
+        // sorting here guarantees the wire is canonical and round-trips through
+        // the strict (validate, no-resort) deserializer below.
+        let mut added = self.added.clone();
+        let mut removed = self.removed.clone();
+        added.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        removed.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        LabelDiffWire { added, removed }.serialize(serializer)
     }
 }
 
@@ -282,14 +287,16 @@ impl Serialize for PropertyDiff {
     where
         S: Serializer,
     {
-        // No resort: `PropertyDiff::new` keeps `set`/`removed` in lexicographic
-        // `IStr` order, which is the canonical wire order — emit directly,
-        // byte-identical to the old `sort_by(as_str())`.
-        PropertyDiffWire {
-            set: self.set.clone(),
-            removed: self.removed.clone(),
-        }
-        .serialize(serializer)
+        // Canonicalize on serialize. `PropertyDiff::new` already sorts, so this
+        // is a no-op (byte-identical) for constructed diffs — but `set`/`removed`
+        // are public fields, so a caller can build a non-canonical diff directly;
+        // sorting here guarantees the wire is canonical and round-trips through
+        // the strict (validate, no-resort) deserializer below.
+        let mut set = self.set.clone();
+        let mut removed = self.removed.clone();
+        set.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
+        removed.sort_by(|lhs, rhs| lhs.as_str().cmp(rhs.as_str()));
+        PropertyDiffWire { set, removed }.serialize(serializer)
     }
 }
 
@@ -686,8 +693,7 @@ mod tests {
     #[test]
     fn label_diff_serialize_independent_of_construction_order() {
         // Wire-invariance proof: two diffs built from different input orders of
-        // the same labels serialize to byte-identical wire, confirming the
-        // dropped serialize-side resort changed no bytes.
+        // the same labels serialize to byte-identical (canonical) wire.
         let a = istr("change.wire.alpha");
         let b = istr("change.wire.beta");
         let c = istr("change.wire.gamma");
@@ -697,6 +703,45 @@ mod tests {
             postcard::to_allocvec(&forward).unwrap(),
             postcard::to_allocvec(&reverse).unwrap(),
         );
+    }
+
+    #[test]
+    fn label_diff_serialize_canonicalizes_public_field_construction() {
+        // `LabelDiff.added`/`removed` are PUBLIC fields, so a caller can build a
+        // non-canonical diff without `LabelDiff::new`. Serialize canonicalizes
+        // it so the wire round-trips through the strict (validate-no-resort)
+        // decoder rather than being rejected as malformed.
+        let zebra = istr("change.noncanon.label.zebra");
+        let apple = istr("change.noncanon.label.apple");
+        let non_canonical = LabelDiff {
+            added: smallvec![zebra.clone(), apple.clone()],
+            removed: SmallVec::new(),
+        };
+        let bytes = postcard::to_allocvec(&non_canonical).unwrap();
+        let round: LabelDiff = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(
+            round.added,
+            SmallVec::<[IStr; 2]>::from_vec(vec![apple, zebra])
+        );
+    }
+
+    #[test]
+    fn property_diff_serialize_canonicalizes_public_field_construction() {
+        // `PropertyDiff.set`/`removed` are PUBLIC fields; serialize canonicalizes
+        // a non-canonical diff so it round-trips through the strict decoder.
+        let zebra = istr("change.noncanon.prop.zebra");
+        let apple = istr("change.noncanon.prop.apple");
+        let non_canonical = PropertyDiff {
+            set: smallvec![
+                (zebra.clone(), Value::Int(2)),
+                (apple.clone(), Value::Int(1))
+            ],
+            removed: SmallVec::new(),
+        };
+        let bytes = postcard::to_allocvec(&non_canonical).unwrap();
+        let round: PropertyDiff = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round.set[0].0, apple);
+        assert_eq!(round.set[1].0, zebra);
     }
 
     #[test]

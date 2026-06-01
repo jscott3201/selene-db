@@ -1,10 +1,11 @@
 //! Property maps per spec 02 section 5.2.
 //!
 //! Keys are ordered in memory lexicographically by [`IStr`] (through the inner
-//! `CompactString`) for fast binary-search lookups. Because that in-memory
-//! order already IS the canonical lexicographic wire order, serialize emits the
-//! keys directly (no resort) and deserialize *validates* the canonical
-//! invariant — strictly-ascending, no-duplicate keys — rejecting a
+//! `CompactString`) for fast binary-search lookups. Serialize canonicalizes
+//! (sorts) the keys before emitting — a no-op for the common case (construction
+//! keeps them sorted) but load-bearing because the `Standard`/`Compact` variants
+//! are public and can be built non-canonically. Deserialize then *validates* the
+//! canonical invariant — strictly-ascending, no-duplicate keys — rejecting a
 //! non-canonical payload as malformed rather than re-sorting it.
 //! Compact maps are closed-shape views over a fixed key set; inserting an
 //! unknown key widens them to the standard open representation.
@@ -294,21 +295,31 @@ impl Serialize for PropertyMap {
     where
         S: Serializer,
     {
-        // No serialize-side resort: both variants keep their keys in `IStr`
-        // order in memory (`set_standard` inserts at the binary-search slot;
-        // `compact`/`from_pairs` sort on construction), and `IStr` Ord is
-        // lexicographic, so the in-memory order already IS the canonical wire
-        // order. Emitting it directly is byte-identical to the old
-        // `sort_by(as_str())` (proven by the round-trip byte-identity tests).
+        // Canonicalize on serialize. Construction through `set_standard` /
+        // `compact` / `from_pairs` already keeps keys in lexicographic `IStr`
+        // order, so this sort is a no-op (byte-identical) for those values. But
+        // `Standard` / `Compact` are PUBLIC variants, so a caller can build a
+        // non-canonical map directly; canonicalizing here guarantees the wire
+        // is always canonical and round-trips through the strict (validate,
+        // no-resort) deserializer below. The deserializer rejects a
+        // non-canonical payload rather than silently re-sorting it.
         match self {
             Self::Standard(entries) => {
-                PropertyMapWire::Standard(entries.clone()).serialize(serializer)
+                let mut entries = entries.clone();
+                entries.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
+                PropertyMapWire::Standard(entries).serialize(serializer)
             }
-            Self::Compact { keys, values } => PropertyMapWire::Compact {
-                keys: Arc::clone(keys),
-                values: values.clone(),
+            Self::Compact { keys, values } => {
+                let mut pairs: Vec<(IStr, Option<Value>)> =
+                    keys.iter().cloned().zip(values.iter().cloned()).collect();
+                pairs.sort_by(|(lhs, _), (rhs, _)| lhs.as_str().cmp(rhs.as_str()));
+                let (keys, values): (Vec<_>, SmallVec<_>) = pairs.into_iter().unzip();
+                PropertyMapWire::Compact {
+                    keys: Arc::from(keys),
+                    values,
+                }
+                .serialize(serializer)
             }
-            .serialize(serializer),
         }
     }
 }
@@ -625,11 +636,11 @@ mod tests {
     }
 
     #[test]
-    fn serialize_is_byte_identical_to_canonical_wire_and_resort_free() {
-        // Wire-invariance proof: a PropertyMap built from out-of-order pairs is
-        // serialized to the exact same bytes as the canonical (sorted) wire
-        // enum — i.e. dropping the serialize-side resort changed no bytes,
-        // because the in-memory order is already lexicographic.
+    fn serialize_emits_canonical_wire_bytes() {
+        // Wire-invariance proof: a PropertyMap built from out-of-order pairs
+        // (`from_pairs` sorts on construction) serializes to the exact canonical
+        // (sorted) wire bytes — the wire is byte-identical to the pre-removal
+        // format because the in-memory order is already lexicographic.
         let zebra = key("pm.wire.zebra");
         let apple = key("pm.wire.apple");
         let mango = key("pm.wire.mango");
@@ -651,12 +662,41 @@ mod tests {
 
         assert_eq!(
             map_bytes, canonical_bytes,
-            "serialize must emit canonical lexicographic bytes without resorting"
+            "serialize must emit canonical lexicographic bytes"
         );
 
         // And the bytes round-trip back to an equal map.
         let round: PropertyMap = postcard::from_bytes(&map_bytes).unwrap();
         assert_eq!(round, map);
+    }
+
+    #[test]
+    fn serialize_canonicalizes_non_canonical_standard_then_round_trips() {
+        // `PropertyMap::Standard` is a PUBLIC variant, so a caller can build a
+        // non-canonical (out-of-order) map without going through `set_standard`
+        // / `from_pairs`. Serialize canonicalizes it so the wire is always
+        // canonical and round-trips through the strict deserializer — guarding
+        // the public-construction path against the validate-no-resort decoder.
+        let zebra = key("pm.noncanon.zebra");
+        let apple = key("pm.noncanon.apple");
+        let mut entries: SmallVec<[(IStr, Value); 6]> = SmallVec::new();
+        entries.push((zebra.clone(), int(2)));
+        entries.push((apple.clone(), int(1)));
+        let non_canonical = PropertyMap::Standard(entries);
+        let bytes = postcard::to_allocvec(&non_canonical).unwrap();
+
+        // Bytes are canonical (apple before zebra), so the strict decoder
+        // accepts them and the value round-trips.
+        let round: PropertyMap = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(round.get(&apple), Some(&int(1)));
+        assert_eq!(round.get(&zebra), Some(&int(2)));
+
+        let canonical = PropertyMap::from_pairs([(apple, int(1)), (zebra, int(2))]).unwrap();
+        assert_eq!(
+            bytes,
+            postcard::to_allocvec(&canonical).unwrap(),
+            "non-canonical construction must serialize to the same canonical bytes"
+        );
     }
 
     #[test]
