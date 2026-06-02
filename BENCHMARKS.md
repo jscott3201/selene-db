@@ -299,9 +299,11 @@ would be a multi-minute single arm.
 _Refreshed post-GQLRT-05 (an A/B of development HEAD vs the feature branch on this
 M5, profile `full`), so these run ahead of the `3a864ac` header until the next
 clean re-sweep. The per-statement target-schema memo improved every arm: exists
-−1.8 / −6.8 / −4.7 %, count −3.7 / −5.8 / −0.4 % at 2.5k / 5k / 10k (p<0.05; the
-10k arms are the noisiest). A modest win — the per-row `schema_for_pattern` rebuild
-is a real but minority fraction of subquery cost, dominated by the inner MATCH._
+−1.8 / −6.8 / −4.7 %, count −3.7 / −5.8 / −0.4 % at 2.5k / 5k / 10k. The 2.5k–5k
+arms are clearly significant (p<0.05); the 10k arms are noisier (the 10k/count
+−0.4% is within run-to-run noise). A modest win — the per-row `schema_for_pattern`
+rebuild is a real but minority fraction of subquery cost, dominated by the inner
+MATCH._
 
 | Bench | 2.5k | 5k | 10k | Notes |
 |---|---:|---:|---:|---|

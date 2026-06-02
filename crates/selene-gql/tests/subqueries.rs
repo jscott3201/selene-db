@@ -121,6 +121,31 @@ fn distinct_correlated_subqueries_stay_independent_under_schema_memo() {
     assert_eq!(bool_values(&table, "knows_sensor"), [false, true, false]);
 }
 
+/// GQLRT-05 regression: a subquery nested inside another subquery crosses the
+/// `EvalCtx::with_plan` boundary (a distinct plan registry) yet shares the one
+/// per-statement schema memo. Because expression ids are allocated once per
+/// statement (a single `ExprTypeTable`) and every plan clones that one
+/// `ExprIdLookup`, the outer and inner `EXISTS` get distinct ids that cannot
+/// collide in the cache. This asserts the nested correlation still resolves
+/// per row through the memo.
+#[test]
+fn nested_correlated_subquery_through_memo_is_correct() {
+    let table = execute(
+        "MATCH (a:Person)
+         WHERE EXISTS {
+             MATCH (a)-[:KNOWS]->(b)
+             WHERE EXISTS { MATCH (b)-[:KNOWS]->(:Sensor) }
+         }
+         RETURN a.name AS name
+         ORDER BY name",
+    );
+
+    // Alice KNOWS Bob, and Bob KNOWS the Sensor -> Alice qualifies.
+    // Bob KNOWS the Sensor, but the Sensor has no outgoing KNOWS -> Bob fails.
+    // Cara has no out-edges -> fails.
+    assert_eq!(string_values(&table, "name"), vec!["Alice".to_owned()]);
+}
+
 #[test]
 fn exists_nested_two_levels() {
     let table = execute(
