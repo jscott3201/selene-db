@@ -97,11 +97,7 @@ fn pagerank_sequential(
     for d in 0..n_usize as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
-        let neighbors: Vec<u32> = proj
-            .out_neighbors(node)
-            .iter()
-            .filter_map(|nb| idx.dense_of_node(nb.node_id))
-            .collect();
+        let neighbors: Vec<u32> = proj.out_neighbors(node).iter().map(|nb| nb.dense).collect();
         out_neighbors_dense.push(neighbors);
     }
 
@@ -198,21 +194,13 @@ fn pagerank_parallel(
     for d in 0..n_usize as u32 {
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
-        let out_degree = proj
-            .out_neighbors(node)
-            .iter()
-            .filter_map(|nb| idx.dense_of_node(nb.node_id))
-            .count();
+        let out_degree = proj.out_degree(node);
         out_degree_dense[d as usize] = out_degree;
         if out_degree == 0 {
             dangling_rows.push(d);
         }
 
-        let in_neighbors: Vec<u32> = proj
-            .in_neighbors(node)
-            .iter()
-            .filter_map(|nb| idx.dense_of_node(nb.node_id))
-            .collect();
+        let in_neighbors: Vec<u32> = proj.in_neighbors(node).iter().map(|nb| nb.dense).collect();
         in_neighbors_dense.push(in_neighbors);
     }
 

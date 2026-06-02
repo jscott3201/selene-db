@@ -150,17 +150,13 @@ fn build_dense_adjacency<'a>(
         let node = idx.node_id_of(d);
         let neighbors = &mut adj[d as usize];
         for nb in proj.out_neighbors(node) {
-            if let Some(nd) = idx.dense_of_node(nb.node_id)
-                && nd != d
-            {
-                neighbors.push(nd);
+            if nb.dense != d {
+                neighbors.push(nb.dense);
             }
         }
         for nb in proj.in_neighbors(node) {
-            if let Some(nd) = idx.dense_of_node(nb.node_id)
-                && nd != d
-            {
-                neighbors.push(nd);
+            if nb.dense != d {
+                neighbors.push(nb.dense);
             }
         }
         neighbors.sort_unstable();

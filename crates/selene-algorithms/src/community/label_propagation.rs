@@ -70,14 +70,10 @@ pub fn label_propagation_with_checker(
             // Multiplicity-faithful: count each directed half-edge separately
             // per §E25. Parallel edges therefore contribute multiple times.
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    *label_counts.entry(labels[nd as usize]).or_insert(0) += 1;
-                }
+                *label_counts.entry(labels[nb.dense as usize]).or_insert(0) += 1;
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    *label_counts.entry(labels[nd as usize]).or_insert(0) += 1;
-                }
+                *label_counts.entry(labels[nb.dense as usize]).or_insert(0) += 1;
             }
 
             if label_counts.is_empty() {

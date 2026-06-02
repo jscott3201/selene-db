@@ -141,9 +141,7 @@ pub fn dijkstra_with_checker(
 
         let source_node = idx.node_id_of(dense);
         for nb in proj.out_neighbors(source_node) {
-            let Some(next_dense) = idx.dense_of_node(nb.node_id) else {
-                continue;
-            };
+            let next_dense = nb.dense;
             // Spec 16 §E15 lazy weight validation BEFORE heap insertion.
             if nb.weight.is_nan() {
                 return Err(PathfindingError::NaNWeight {

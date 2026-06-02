@@ -127,9 +127,7 @@ fn union_all_edges_with_checker(
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let nid = idx.node_id_of(d);
         for nb in proj.out_neighbors(nid) {
-            if let Some(other) = idx.dense_of_node(nb.node_id) {
-                uf.union(d, other);
-            }
+            uf.union(d, nb.dense);
         }
         // The in-neighbor pass is redundant in release: every edge appears once
         // in `out_neighbors(source)` and once in `in_neighbors(target)`, and the
@@ -142,9 +140,7 @@ fn union_all_edges_with_checker(
         // the duplicate union-find work.
         #[cfg(debug_assertions)]
         for nb in proj.in_neighbors(nid) {
-            if let Some(other) = idx.dense_of_node(nb.node_id) {
-                uf.union(d, other);
-            }
+            uf.union(d, nb.dense);
         }
     }
     Ok(())
@@ -324,7 +320,7 @@ fn tarjan_strongconnect(
         let neighbors = neighbors_cache.entry(v).or_insert_with(|| {
             proj.out_neighbors(idx.node_id_of(v))
                 .iter()
-                .filter_map(|nb| idx.dense_of_node(nb.node_id))
+                .map(|nb| nb.dense)
                 .collect()
         });
 
