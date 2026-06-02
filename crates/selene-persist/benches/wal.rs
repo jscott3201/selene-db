@@ -283,7 +283,13 @@ fn sync_sweep_scales(sync_policy: SyncPolicy) -> Vec<usize> {
         BenchProfile::Full | BenchProfile::Stress => vec![1_000, 10_000, 100_000],
         _ => vec![1_000],
     };
-    if sync_policy == SyncPolicy::EveryN(1) {
+    // The fsync-frequent policies are bound by `fsync` syscall latency, not
+    // selene-db code: at 100k entries `every1`/`every10`/`every100` cost tens of
+    // seconds per iteration, which criterion balloons to ~20 min for the
+    // `every10/100k` arm alone (`sample_size(30)`). Cap them at ≤10k so a full
+    // sweep is not dominated by one durability cell; `every1000`/`on_flush_only`
+    // (few/no fsyncs) keep the 100k point.
+    if matches!(sync_policy, SyncPolicy::EveryN(n) if n <= 100) {
         scales.retain(|scale| *scale <= 10_000);
     }
     scales

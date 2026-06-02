@@ -4,6 +4,7 @@
 .idea/
 .vscode/
 .direnv/
+.claude/
 node_modules/
 .env
 .env.*

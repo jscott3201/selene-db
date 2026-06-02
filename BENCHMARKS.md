@@ -1,18 +1,72 @@
 # selene-db benchmarks
 
-_Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.95.0 / commit `11537ed`)._
+_Last measured: 2026-06-01 on Apple M5 (10-core / 16 GiB / macOS 26.5 build 25F71 / rustc 1.95.0 / commit `3a864ac`)._
 
-> Methodology: `scripts/run-benches.sh --profile full --layer criterion`
-> (sequential execution; concurrent `cargo bench` is blocked by the script's
-> `pgrep` guard). Medians are criterion 0.8 wall-clock. iai-callgrind
-> instruction-count baselines are deferred to the v1.0.0 release-prep
-> panic-audit pass.
-> BRIEF-89 bulk-mutation benches return their per-iteration `SharedGraph`
-> from the timed routine so Criterion drops fixture teardown after timing;
-> those rows measure mutation + commit, not graph deallocation.
-> BRIEF-122 spot-refresh rows were measured on 2026-05-22 with the same
-> command and hardware: `graph_mutation_commit_batch`, `provider_fanout`,
-> `persist_snapshot_write`, and `procedure_call_repeat`.
+This file is the **north-star performance baseline** for selene-db: the medians
+below are the reference point for performance-uplift work and the tripwire for
+regressions. Every benchmark bin registered in `scripts/run-benches.sh` is
+documented here — that parity is CI-enforced (fast-gate
+`.github/scripts/check-benchmarks-doc.sh` + release-gate
+`crates/selene-testing/tests/benchmarks_md_pin.rs`), so a bench can never ship
+undocumented (the historical `expression_eval` orphan).
+
+The suite is **criterion-only** (wall-clock medians on the dev box). There is no
+iai-callgrind instruction-count layer — it needs valgrind, which never runs on
+the macOS dev machine, so it was dropped rather than left as a perpetually-TBD
+placeholder.
+
+## Running benchmarks
+
+`scripts/run-benches.sh` is the sanctioned entry point. Direct `cargo bench
+--workspace` is **forbidden** (Cargo may dispatch bench binaries concurrently,
+which corrupts wall-clock medians); the runner executes strictly one binary at a
+time, guarded by a `pgrep` check and a serial run loop.
+
+The runner is **flexibly scoped** so you never have to fire up a whole run to
+check one thing:
+
+```bash
+run-benches.sh --list                          # enumerate registered benches + smoke subset
+run-benches.sh --smoke                          # curated <~60s tripwire subset (profile quick)
+run-benches.sh                                  # FULL run, every bench (the north-star sweep)
+run-benches.sh --bench wal                      # one bench bin (scoped compile + run)
+run-benches.sh --crate selene-graph             # every bench in one crate
+run-benches.sh --bench wal --filter body_size   # one criterion group within a bin
+run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
+run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
+```
+
+### Profiles
+
+The workload envelope is selected by `SELENE_BENCH_PROFILE` (set via `--profile`;
+see `crates/selene-testing/src/bench_profiles.rs`):
+
+| Profile | Scales | Sample / measurement | Use |
+|---|---|---|---|
+| `quick` | one 1k scale | 10 / 500 ms | fast spot-check / smoke |
+| `full` (default) | 10k / 50k / 100k | 30 / 1500 ms | **publish-quality / this doc** |
+| `stress` | adds 250k | 30 / 1500 ms | opt-in larger envelope |
+
+A few benches sweep an independent axis instead of the node-scale envelope (hub
+degree, WAL entry-body packing, WAL sync policy, writer fan-in, correlated-row
+count); those are profile-trimmed too so `quick` stays fast.
+
+## Tracking regressions
+
+The full sweep saves a named criterion baseline so later runs report a
+percentage delta instead of a bare median:
+
+```bash
+run-benches.sh --profile full --save-baseline northstar     # record this doc's baseline
+# … later, after an optimization or to check for a regression …
+run-benches.sh --bench graph_hub_delete --baseline northstar # %-change vs northstar
+```
+
+`--save-baseline` and `--baseline` are mutually exclusive (one records, one
+compares). criterion stores baselines under `target/criterion/` (gitignored, so
+local to your machine); the committed baseline of record is the number tables in
+this file. Refresh both together (see [Update protocol](#update-protocol)) on a
+quiet machine — background load pollutes the medians.
 
 ## Hardware footprint
 
@@ -23,200 +77,318 @@ _Last measured: 2026-05-15 on Apple M5 (10-core / 16 GiB / macOS 26.5 / rustc 1.
 | Memory | 16.0 GiB | `sysctl -n hw.memsize` |
 | OS | macOS 26.5 (build 25F71) | `sw_vers` |
 | rustc | 1.95.0 (59807616e 2026-04-14) | `rustc --version` |
-| Commit | `11537ed` | `git rev-parse --short HEAD` |
+| Commit | `3a864ac` | `git rev-parse --short HEAD` |
 
-## §1 selene-graph hot paths
+All bench binaries use `mimalloc` as the global allocator; the library crates
+are allocator-agnostic.
 
-Registered tokens: `selene-graph:single_graph:criterion`,
-`selene-graph:bulk_mutation:criterion`, `selene-graph:concurrent_read:criterion`,
-`selene-graph:bfs:criterion`, `selene-graph:write_txn_lifecycle:criterion`,
-`selene-graph:provider_fanout:criterion`,
-`selene-graph:bound_type_validation:criterion`,
-`selene-graph:concurrent_writers:criterion`.
+## §1 selene-core
 
-| Bench | 10k | 50k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `graph_node_fetch` | **2.10 ns** | 2.11 ns | 2.09 ns | Near-flat O(1); columnar fetch. |
-| `graph_label_index_lookup` | 5.20 ns | 4.24 ns | 4.30 ns | Flat across all scales; `IStr`-keyed hash lookup. |
-| `graph_typed_index_point` | **4.53 ns** | 4.44 ns | 4.67 ns | Restored flat-curve via `lookup_eq` -> `Option<Cow<'_, RoaringBitmap>>` per BRIEF-88; tri-state semantics preserved. |
-| `graph_typed_index_range` | 20.10 µs | 178.8 µs | 294.4 µs | Sub-linear range scan. |
-| `graph_composite_index_proxy` | 52.12 ns | 143.2 ns | 287.8 ns | Linear. |
-| `graph_edge_create_cascade` | 211.7 µs | 153.0 µs | 343.5 µs | Mutation + commit body; fixture teardown excluded from timed routine. |
-| `graph_mutation_commit_batch` (10) | 291.3 µs | 234.9 µs | 382.7 µs | BRIEF-122 spot refresh after provider-notification loop inversion; no significant change at 100k/10. |
-| `graph_mutation_commit_batch` (100) | 347.1 µs | 328.8 µs | 465.5 µs | BRIEF-122 spot refresh; 10k/50k improved vs the immediately previous Criterion baseline, 100k was noise-flat. |
-| `graph_mutation_commit_batch` (1000) | 937.1 µs | 918.2 µs | 1.048 ms | BRIEF-122 spot refresh; 10k/1000 regressed in this local run, 50k/100k were noise-flat. |
-| `graph_concurrent_reads` | 76.78 µs | 84.18 µs | 84.72 µs | **Flat above 10k** — ArcSwap snapshot read confirmed O(1). |
-| `graph_bfs` (depth=1) | 99.36 ns | 98.31 ns | 99.66 ns | Depth-1 BFS independent of N. |
-| `graph_bfs` (depth=10) | 10.90 µs | 11.09 µs | 11.28 µs | Mostly traversal cost. |
-| `graph_bfs` (depth=50) | 94.45 µs | 106.6 µs | 108.3 µs | Saturates around 100 µs. |
-
-### §1a Write pipeline microbenches
-
-Rows added by BRIEF-111 are compile-registered but not measured yet. They isolate lifecycle, provider fanout, bound-type validation, and writer queueing costs before the GQL write e2e layer.
-
-| Bench | Variant | Median | Notes |
-|---|---|---:|---|
-| `write_txn_lifecycle/empty_commit` | n/a | TBD | Empty transaction commit floor. |
-| `write_txn_lifecycle/create_only` | batch=1 | TBD | Isolated node create + commit. |
-| `write_txn_lifecycle/create_only` | batch=10 | TBD | Isolated node create + commit. |
-| `write_txn_lifecycle/create_only` | batch=100 | TBD | Isolated node create + commit. |
-| `write_txn_lifecycle/create_only` | batch=1000 | TBD | Isolated node create + commit. |
-| `write_txn_lifecycle/delete_only` | batch=1 | TBD | Fixture seed excluded from timed body. |
-| `write_txn_lifecycle/delete_only` | batch=10 | TBD | Fixture seed excluded from timed body. |
-| `write_txn_lifecycle/delete_only` | batch=100 | TBD | Fixture seed excluded from timed body. |
-| `write_txn_lifecycle/delete_only` | batch=1000 | TBD | Fixture seed excluded from timed body. |
-| `provider_fanout/core_only` | providers=core | 194.7 µs | Commit notification baseline. |
-| `provider_fanout/extra_k1` | extra=1 | 190.1 µs | Additional no-op provider fanout. |
-| `provider_fanout/extra_k4` | extra=4 | 187.0 µs | Additional no-op provider fanout. |
-| `provider_fanout/extra_k16` | extra=16 | 187.9 µs | Additional no-op provider fanout. |
-| `provider_fanout/extra_k4_with_error_one` | extra=4 + error | 190.6 µs | Error-path notification scaling. |
-| `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | 198.5 µs | Opt-in via `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
-| `bound_type_validation/unbound_commit` | unbound | TBD | Commit without graph type validation. |
-| `bound_type_validation/bound_commit_simple` | simple type graph | TBD | Typed commit validation delta. |
-| `bound_type_validation/bound_commit_rich` | rich type graph | TBD | Wider type graph validation delta. |
-| `bound_type_validation/bound_schema_change` | schema change | TBD | Full graph state validation path. |
-
-Thread fan-in arms sweep `[1, 2, 4, 8, 16, 32]`. Two axes:
-
-- **In-memory** (`threads{N}`, `threads{N}_with_readers8`) — no WAL; measures pure
-  single-committer queueing + lock-free reads under contention. Group commit
-  has nothing to coalesce here (no `fsync`), so it is *not* run on this axis.
-- **WAL-backed** (`wal_threads{N}_batchOFF` vs `wal_threads{N}_batchON`) — a real
-  on-disk WAL (tempdir per iteration; the committer is the sole `fsync` caller,
-  driven in `SyncPolicy::OnFlushOnly`). This is the only axis where group commit
-  can win, because the win is coalesced `fsync` syscalls. `batchOFF` =
-  `CommitBatching::Off` (one `fsync` per commit, the BRIEF-1 baseline);
-  `batchON` = `CommitBatching::DEFAULT_ON` (coalesce up to 64 commits / 8 MiB
-  into one `fsync`). At 16/32-thread fan-in `batchON` shows higher
-  `Throughput::Elements` and lower p99/p999 than `batchOFF`; at 1 thread there is
-  no contiguous run to coalesce, so `batchON ≈ batchOFF` (and the 1-thread
-  `batchOFF` median is the BRIEF-2 parity check against the pre-BRIEF-2
-  per-commit-fsync baseline).
-
-On the `full` / `stress` profiles each WAL-backed arm also emits an **untimed**
-`[concurrent_writers percentiles] wal_threads{N}_{batch}: n=… p50=…us p99=…us
-p999=…us` line to stderr — per-commit wall-clock latency collected outside the
-Criterion measured closure (so it never pollutes the throughput sample). Read
-p99/p999 for the tail-latency story Criterion's mean cannot show; the headline
-`thrpt` row is the aggregate throughput.
-
-| Bench | Threads | Median | Notes |
-|---|---:|---:|---|
-| `concurrent_writers/threads{1,2,4,8,16,32}` | 1–32 | TBD | In-memory; 1000 total commits, 10 property updates per commit. |
-| `concurrent_writers/threads{1,2,4,8,16,32}_with_readers8` | 1–32 | TBD | Same writer load with 8 snapshot readers. |
-| `concurrent_writers/wal_threads{1,2,4,8,16,32}_batchOFF` | 1–32 | TBD | Real WAL, one `fsync` per commit (BRIEF-1 baseline). |
-| `concurrent_writers/wal_threads{1,2,4,8,16,32}_batchON` | 1–32 | TBD | Real WAL, group commit (≤64 commits / 8 MiB per `fsync`); the fan-in win. |
-
-## §2 selene-persist
-
-Registered tokens: `selene-persist:wal:criterion`,
-`selene-persist:snapshot:criterion`.
-
-| Bench | 10k | 50k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `persist_wal_append_single` | 59.51 ms | 293.7 ms | 588.9 ms | Single-entry append loop with `EveryN(1000)` group commit; scale = WAL entries, not graph nodes. |
-| `persist_wal_append_single_no_fsync` | **11.16 ms** | 54.49 ms | 108.6 ms | `SyncPolicy::OnFlushOnly`; donor-parity diagnostic with append/threshold/drop fsync suppressed. |
-| `persist_wal_append_batch_1000` | 6.31 ms | 8.02 ms | 10.95 ms | **54× faster than per-entry at 100k** — batching wins. |
-| `persist_wal_append_batch_1000_no_fsync` | **1.46 ms** | 3.79 ms | 6.37 ms | Batched donor-parity diagnostic; timed body does not call `flush()`. |
-| `persist_wal_replay` | **4.04 ms** | 16.78 ms | 30.51 ms | BRIEF-90 WAL v2: fixed-layout header + xxh3 checksum + BufReader. |
-| `persist_snapshot_write` | 395.7 µs | 534.9 µs | 652.5 µs | BRIEF-122 spot refresh with five independently compressed snapshot sections; per-section zstd work runs in parallel. |
-| `persist_snapshot_read` | 549.6 µs | 2.35 ms | 4.68 ms | Snapshot read-and-apply. |
-| `persist_full_recovery` | 2.93 ms | 12.91 ms | 24.75 ms | Snapshot reconciliation + WAL v2 replay. |
-
-### §2a WAL sync policy sweep
-
-`persist_wal_sync_sweep/*` measures append + explicit `flush()` across sync policies. Full/stress profiles use 1k, 10k, and 100k WAL entries, except `every1`, which is capped at 10k to keep benchmark time bounded. Existing append rows above use `EveryN(1000)` unless marked `_no_fsync`; `_no_fsync` rows omit explicit flush.
-
-| Bench | 1k | 10k | 100k | Notes |
-|---|---:|---:|---:|---|
-| `persist_wal_sync_sweep/every1` | TBD | TBD | n/a | `SyncPolicy::EveryN(1)`. |
-| `persist_wal_sync_sweep/every10` | TBD | TBD | TBD | `SyncPolicy::EveryN(10)`. |
-| `persist_wal_sync_sweep/every100` | TBD | TBD | TBD | `SyncPolicy::EveryN(100)`. |
-| `persist_wal_sync_sweep/every1000` | TBD | TBD | TBD | `SyncPolicy::EveryN(1000)`. |
-| `persist_wal_sync_sweep/on_flush_only` | TBD | TBD | TBD | `SyncPolicy::OnFlushOnly` with caller flush. |
-
-BRIEF-90: fixed-layout header (no postcard varint) + xxh3 checksum + BufReader on iterate path; WAL v1→v2.
-
-Platform note: donor WAL append baselines were measured with snapshot-only sync behavior. The `_no_fsync` rows use `SyncPolicy::OnFlushOnly`, which suppresses append fsync, threshold-triggered fsync, and drop-time fsync; an explicit caller-issued `flush()` would still sync. There is no replay `_no_fsync` sibling because replay's timed body is read-only, so sync policy would not isolate a useful signal.
-
-## §3 selene-gql (scale-independent)
-
-Registered tokens: `selene-gql:parse:criterion`, `selene-gql:analyze:criterion`,
-`selene-gql:plan_optimize:criterion`, `selene-gql:procedure_call_repeat:criterion`.
+Bench bin: `value_clone`. Measures `Value` / `PropertyMap` clone cost, which is
+dominated by `size_of::<Value>()` — every clone memcpys the whole enum regardless
+of the active variant. A compile-time `size_of::<Value>() <= 128` ceiling in
+`value.rs` is the zero-cost re-bloat tripwire; the bench prints the live size to
+stderr. **Measured `size_of::<Value>() = 128 bytes`** at this commit.
 
 | Bench | Median | Notes |
 |---|---:|---|
-| `gql_parse_corpus/m5c` | 263.8 µs | Single-query parse latency (m5c corpus). |
-| `gql_analyze_corpus/m5c` | **5.32 µs** | Semantic analysis; well below donor floor (<1 ms). |
-| `gql_plan_optimize_corpus/m5c` | 19.11 µs | Planner/optimizer end-to-end. |
-| `gql_plan_ir_clone/representative` | 94.95 ns | IR-clone hot path. |
-| `procedure_call_repeat/no_cache` | 235.6 µs | 100 short-lived sessions executing the same top-level `CALL`; parse/analyze/plan each time. |
-| `procedure_call_repeat/shared_cache` | **28.47 µs** | Shared `Arc<CallPlanCache>` warm-hit path; 88.2% lower than `no_cache`. |
+| `core_value_clone/vec_mixed_1024` | 6.10 µs | Clone a 1024-element mixed-variant `Vec<Value>`. |
+| `core_value_clone/property_map_5` | 74.6 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). |
 
-## §3a selene-gql write_e2e
+## §2 selene-graph — read hot paths
 
-Registered token: `selene-gql:write_e2e:criterion`.
-
-The GQL rows use prebuilt `BenchFixture` graphs plus a bench-local WAL append provider so `execute_statement` includes commit fanout and WAL append. Direct rows bypass GQL and call explicit WAL flush to isolate durable mutation cost.
+Bench bins: `single_graph`, `bulk_mutation`, `concurrent_read`, `bfs`. Medians
+reflect the current `Value` layout (128 B) and the v1.2 owned-`IStr` model.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `write_e2e/gql_insert_single_node_per_iter_plan` | TBD | TBD | TBD | Parse/plan/execute per iteration. |
-| `write_e2e/gql_insert_single_node_preplanned` | TBD | TBD | TBD | Preplanned single-node insert. |
-| `write_e2e/gql_insert_node_with_edge_preplanned` | TBD | TBD | TBD | Preplanned insert with matched source node and edge. |
-| `write_e2e/gql_match_set_preplanned` | TBD | TBD | TBD | Preplanned indexed match + property update. |
-| `write_e2e/gql_match_delete_preplanned` | TBD | TBD | TBD | Fresh fixture per timed iteration because target node is deleted. |
-| `write_e2e/gql_multi_statement_txn_preplanned` | TBD | TBD | TBD | START, three INSERTs, COMMIT. |
-| `write_e2e/direct_insert_single_node_with_wal_flush` | TBD | TBD | TBD | Direct graph mutation + one WAL flush. |
-| `write_e2e/direct_insert_single_node_with_wal_flush_every10` | TBD | TBD | TBD | Ten direct inserts amortized over one WAL flush. |
+| `graph_node_fetch` | 8.22 ns | 8.79 ns | 9.02 ns | Near-flat O(1) columnar fetch. |
+| `graph_label_index_lookup` | 7.83 ns | 7.88 ns | 8.09 ns | Flat; `IStr`-keyed hash lookup. |
+| `graph_typed_index_point` | 15.25 ns | 15.05 ns | 15.26 ns | Flat tri-state `lookup_eq`. |
+| `graph_typed_index_range` | 7.05 µs | 37.89 µs | 55.74 µs | Sub-linear range scan. |
+| `graph_composite_index_proxy` | 82.8 ns | 177.1 ns | 313.9 ns | Linear. |
+| `graph_edge_create_cascade` | 362.9 µs | 747.4 µs | 1.481 ms | Mutation + commit body; teardown excluded. |
+| `graph_mutation_commit_batch` (10) | 336.7 µs | 307.6 µs | 446.9 µs | Batched commit, 10 ops. |
+| `graph_mutation_commit_batch` (100) | 408.2 µs | 420.8 µs | 552.7 µs | Batched commit, 100 ops. |
+| `graph_mutation_commit_batch` (1000) | 952.4 µs | 1.053 ms | 1.226 ms | Batched commit, 1000 ops. |
+| `graph_concurrent_reads` | 74.6 µs | 71.7 µs | 71.8 µs | ArcSwap snapshot read; flat above 10k. |
+| `graph_bfs` (depth=1) | 106.3 ns | 109.0 ns | 109.6 ns | Depth-1 independent of N. |
+| `graph_bfs` (depth=10) | 11.34 µs | 12.09 µs | 12.18 µs | Mostly traversal cost. |
+| `graph_bfs` (depth=50) | 101.1 µs | 111.1 µs | 113.1 µs | Saturates ~110 µs. |
 
-## §4 selene-algorithms (Sequential vs Auto)
+## §3 selene-graph — write pipeline & concurrency
 
-Registered token: `selene-algorithms:algo_bench:criterion`. Fixture: `BenchFixture::build(N)` (≈3N edges) for pagerank/betweenness/apsp; `planted_community_graph(N)` (≈6N edges, ~N/64 communities) for triangle_count and louvain.
+Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
+`concurrent_writers`, `graph_hub_delete`, `graph_read_under_write`.
 
-| Bench | Scale | Sequential | Auto | Auto speedup | Notes |
+### §3a Write-pipeline microbenches
+
+`write_txn_lifecycle` create/delete rows below show the **batch axis at the 100k
+fixture** (the headline scale); `empty_commit` shows the scale axis.
+
+| Bench | Variant | Median | Notes |
+|---|---|---:|---|
+| `write_txn_lifecycle/empty_commit` | 10k / 50k / 100k | 211 / 139 / 270 µs | Empty-transaction commit floor. |
+| `write_txn_lifecycle/create_only` @100k | batch 1 / 10 / 100 / 1000 | 342 µs / 360 µs / 469 µs / 1.18 ms | Isolated node create + commit. |
+| `write_txn_lifecycle/delete_only` @100k | batch 1 / 10 / 100 / 1000 | 224 / 232 / 312 / 745 µs | Fixture seed excluded from timed body. |
+| `provider_fanout/core_only` | providers=core | 258.7 µs | Commit-notification baseline. |
+| `provider_fanout/extra_k1` / `k4` / `k16` | extra providers | 223.8 / 225.6 / 227.6 µs | No-op provider fanout — flat (notification is cheap). |
+| `provider_fanout/extra_k4_with_error_one` | extra=4 + error | 227.4 µs | Error-path notification scaling. |
+| `provider_fanout/extra_k4_with_panic_one` | extra=4 + panic | n/a | Opt-in `SELENE_BENCH_INCLUDE_PANIC_PROVIDER=1`. |
+| `bound_type_validation/unbound_commit` | 10k / 50k / 100k | 291 / 246 / 320 µs | Commit without graph-type validation. |
+| `bound_type_validation/bound_commit_simple` | 10k / 50k / 100k | 304 / 250 / 350 µs | Typed-commit validation delta (small). |
+| `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |
+| `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
+
+### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05)
+
+Deleting a node cascades over every incident edge; `adjacency` removal is linear
+(`.position()` + `Vec::remove`) per edge, so deleting a degree-`D` hub is O(D²).
+This sweeps the **degree** axis (not node scale). The current curve is plainly
+quadratic — it should bend to linear once in-place adjacency delete (GRAPH-05)
+lands.
+
+| Bench | degree=100 | degree=1000 | degree=10000 | Notes |
+|---|---:|---:|---:|---|
+| `graph_hub_delete` | 64.3 µs | 1.617 ms | 132.7 ms | 25× then 82× per 10× degree → quadratic. |
+
+### §3c `graph_read_under_write` — lock-free reads under contention (D10)
+
+Times a fixed read batch (8 threads × 20k = 160k reads) while one background
+writer churns commits on the `ArcSwap` snapshot. The D10 promise is that a held
+write lock never blocks a reader; a regression that puts reads behind the write
+lock collapses this. Dual of `concurrent_writers` (which times the writers).
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `graph_read_under_write` | 17.1 ms | 21.5 ms | 24.5 ms | ~107–153 ns/read; rises only with snapshot footprint, not lock contention. |
+
+### §3d `concurrent_writers` — serialized writer queueing under contention
+
+Thread fan-in arms sweep `[1, 2, 4, 8, 16, 32]` (representative `1/8/32` shown).
+Two axes:
+
+- **In-memory** (`threads{N}`, `threads{N}_with_readers8`) — no WAL; pure
+  single-committer queueing + lock-free reads under contention. Group commit has
+  nothing to coalesce here (no `fsync`), so it is not run on this axis.
+- **WAL-backed** (`wal_threads{N}_batchOFF` vs `_batchON`) — a real on-disk WAL
+  (tempdir per iteration; the committer is the sole `fsync` caller in
+  `SyncPolicy::OnFlushOnly`). The only axis where group commit can win, because
+  the win is coalesced `fsync` syscalls. `batchOFF` = `CommitBatching::Off` (one
+  `fsync`/commit); `batchON` = `CommitBatching::DEFAULT_ON` (coalesce ≤64 commits
+  / 8 MiB per `fsync`).
+
+On `full`/`stress`, each WAL-backed arm also prints an **untimed**
+`[concurrent_writers percentiles] … p50/p99/p999` line to stderr (the
+tail-latency story the mean sample can't show).
+
+| Bench | threads=1 | threads=8 | threads=32 | Notes |
+|---|---:|---:|---:|---|
+| `concurrent_writers/threads{N}` | 332 ms | 304 ms | 305 ms | In-memory; 1000 commits, 10 updates each. |
+| `concurrent_writers/threads{N}_with_readers8` | 726 ms | 641 ms | 651 ms | Same load + 8 snapshot readers. |
+| `concurrent_writers/wal_threads{N}_batchOFF` | 4.71 s | 3.86 s | 3.83 s | Real WAL, one `fsync`/commit. |
+| `concurrent_writers/wal_threads{N}_batchON` | 4.57 s | 953 ms | **269 ms** | Group commit — **14× over batchOFF at 32 threads**; ≈ batchOFF at 1 thread (nothing to coalesce). |
+
+## §4 selene-persist — WAL & snapshot
+
+Bench bins: `wal`, `snapshot`, plus `graph_snapshot_roundtrip` (lives in the
+`selene-graph` crate but exercises the persist/D14 path end to end).
+
+### §4a WAL
+
+`scale` = WAL entries, not graph nodes. `_no_fsync` rows use
+`SyncPolicy::OnFlushOnly` (append/threshold/drop fsync suppressed; a caller
+`flush()` would still sync).
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `persist_wal_append_single` | 65.2 ms | 322.4 ms | 630.9 ms | Single-entry loop, `EveryN(1000)`. |
+| `persist_wal_append_single_no_fsync` | 11.5 ms | 55.7 ms | 111.2 ms | Donor-parity diagnostic, no append fsync. |
+| `persist_wal_append_batch_1000` | 6.49 ms | 9.57 ms | 12.58 ms | 1000-change entries — **50× faster than per-entry at 100k**. |
+| `persist_wal_append_batch_1000_no_fsync` | 2.04 ms | 5.04 ms | 8.28 ms | Batched, no flush in timed body. |
+| `persist_wal_replay` | 4.23 ms | 18.67 ms | 32.27 ms | Fixed-layout header + xxh3 + BufReader. |
+
+#### `persist_wal_body_size_no_fsync` — entry-body packing (PERSIST-04)
+
+Fixed total changes (100k), swept changes-per-entry packing — isolates the
+per-byte serialize+write cost (vectored write) from the per-entry overhead the
+count sweeps cover. Per-entry overhead dominates at small bodies; the minimum is
+~10k changes/entry, after which large-`Vec` build/alloc creeps back in. A
+vectored-write win (PERSIST-04) should lower the large-body arms.
+
+| Bench | per-entry=100 | =1000 | =10000 | =50000 | Notes |
 |---|---:|---:|---:|---:|---|
-| `pagerank` | 10k | **245.5 µs** | 524.1 µs | **0.47×** | Auto pays parallelism overhead at sparse-graph scales. |
-| `pagerank` | 50k | 1.43 ms | 2.31 ms | 0.62× | DESC by score + NodeId ASC; V169 contract. |
-| `pagerank` | 100k | 2.94 ms | 4.49 ms | 0.65× | Per-iter work (3·N FP ops) doesn't beat coordination cost on M5. |
-| `betweenness` | 10k | 25.05 ms | 8.60 ms | **2.91×** | Endpoint-aware sampling; V168 contract. |
-| `betweenness` | 50k | 128.4 ms | 46.59 ms | **2.76×** | Per-source SSSP makes parallelism pay off. |
-| `betweenness` | 100k | 264.7 ms | **110.2 ms** | **2.40×** | Headline rayon win on selene-db. |
-| `triangle_count` | 10k | 985.5 µs | 951.8 µs | 1.04× | Tiny; already efficient sequentially. |
-| `triangle_count` | 50k | 5.21 ms | 4.44 ms | 1.17× | |
-| `triangle_count` | 100k | 10.33 ms | 8.86 ms | 1.17× | Modest gain. |
-| `apsp` | 200 | 1.52 ms | 466.1 µs | **3.27×** | All-pairs SSSP; scale = source count. |
-| `apsp` | 500 | 8.57 ms | 2.19 ms | **3.92×** | |
-| `apsp` | 1k | 34.54 ms | **8.46 ms** | **4.08×** | Strong parallel scaling at 10 cores. |
-| `louvain` | 10k | 5.03 ms | n/a | — | Sequential-only in v1.0 per V170. |
-| `louvain` | 50k | 27.08 ms | n/a | — | |
-| `louvain` | 100k | **55.43 ms** | n/a | — | No `LOUVAIN_SCALES` downgrade needed at this fixture. |
+| `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing. |
 
-**Notable**: pagerank/Auto is **slower** than pagerank/Sequential at every scale on this fixture. The bench graph is sparse (~3 edges/node), so per-iteration work (3·N FP multiplications + accumulator) doesn't outweigh rayon's thread-coordination cost on an M5. Auto remains the right choice on denser graphs where per-vertex work amortizes the overhead — the API exposes both modes deliberately.
+#### `persist_wal_sync_sweep` — sync-policy sweep
 
-## §iai-callgrind (deferred; instruction-count baselines pending)
+Append + explicit `flush()` across sync policies. The fsync-frequent policies
+(`every1`/`every10`/`every100`) are bound by `fsync` syscall latency, not
+selene-db code, and balloon to tens of seconds at 100k — they are **capped at
+≤10k** so a full sweep is not dominated by one durability cell.
 
-Pinned for parity with `scripts/run-benches.sh` BENCHES list. Numbers are
-populated during the v1.0.0 release-prep panic-audit cycle.
+| Bench | 1k | 10k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `persist_wal_sync_sweep/every1` | 3.74 s | 39.5 s | n/a (capped) | `EveryN(1)` — fsync per entry. |
+| `persist_wal_sync_sweep/every10` | 378 ms | 3.99 s | n/a (capped) | `EveryN(10)`. |
+| `persist_wal_sync_sweep/every100` | 47.5 ms | 479 ms | n/a (capped) | `EveryN(100)`. |
+| `persist_wal_sync_sweep/every1000` | 7.79 ms | 65.9 ms | 655 ms | `EveryN(1000)`. |
+| `persist_wal_sync_sweep/on_flush_only` | 7.60 ms | 15.8 ms | 113 ms | `OnFlushOnly` + caller flush. |
 
-| Token | Status |
-|---|---|
-| `selene-graph:iai_gates:iai` | TBD |
-| `selene-persist:iai_gates:iai` | TBD |
-| `selene-gql:iai_gates:iai` | TBD |
+### §4b Snapshot
+
+`persist_snapshot_*` measure the SLSN **container** (framing + per-section zstd +
+body hash) over synthetic byte payloads. `scale` drives section bytes.
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `persist_snapshot_write` | 341.9 µs | 444.5 µs | 572.0 µs | Five independently-compressed sections. |
+| `persist_snapshot_read` | 278.9 µs | 425.5 µs | 605.0 µs | Snapshot read-and-apply. |
+| `persist_full_recovery` | 3.01 ms | 11.28 ms | 20.75 ms | Snapshot reconcile + WAL replay. |
+
+### §4c `graph_snapshot_roundtrip` — real rkyv graph encode/decode (D14)
+
+Unlike the synthetic-bytes snapshot bench above, this drives the **real**
+`CoreProvider` path over fixture rows: `IndexProvider::write_section` over every
+`CORE/*` sub-tag (rkyv archive of `CORE/NODE`+`CORE/EDGE` positional rows, D14),
+then a recovery-mode provider + `finish_recovery` (positional placement / id↔row
+rebuild). Self-validating: asserts node/edge counts survive the roundtrip once
+(untimed) before measuring. `scale` = fixture node count.
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `graph_snapshot_roundtrip/encode` | 5.03 ms | 31.2 ms | 69.2 ms | rkyv encode of all `CORE/*` sections. |
+| `graph_snapshot_roundtrip/decode` | 20.1 ms | 106.3 ms | 216.4 ms | Positional recovery + `finish_recovery` — dominates. |
+| `graph_snapshot_roundtrip/roundtrip` | 26.2 ms | 141.2 ms | 289.9 ms | End-to-end (≈ encode + decode). |
+
+## §5 selene-gql — parse / plan / execute
+
+Bench bins: `parse`, `analyze`, `plan_optimize`, `expression_eval`,
+`procedure_call_repeat`, `correlated_subquery`, `write_e2e`. The first four are
+scale-independent (single-query CPU).
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `gql_parse_corpus/m5c` | 879.6 µs | Full single-query parse-corpus latency. |
+| `gql_parse_hostile/bracket_artifacts` | 566 ns | DoS-hardening: pathological `[`-backtracking input. |
+| `gql_parse_hostile/recursion_chains` | 12.6 µs | DoS-hardening: deep sign/NOT/CASE recursion-guard input. |
+| `gql_analyze_corpus/m5c` | 21.98 µs | Semantic analysis. |
+| `gql_plan_optimize_corpus/m5c` | 48.13 µs | Planner/optimizer end-to-end. |
+| `gql_plan_ir_clone/representative` | 164.0 ns | IR-clone hot path. |
+| `gql_expression_eval/*` (9 cases) | 180–245 ns | Scalar eval: predicates, scalar fns, CASE, list access, binary ops. |
+| `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
+| `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
+
+### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05)
+
+The only read-query **execution** bench in the suite (`expression_eval` is
+scalar-only; `write_e2e` is write-only). A correlated subquery is re-evaluated
+per outer row and its pattern schema is rebuilt per row (`schema_for_pattern`); a
+memoization win (GQLRT-05) would otherwise be invisible. In-memory graph (no WAL)
+so the per-row schema rebuild dominates, not durability. Uses a **small scale
+envelope** (2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
+re-evaluation is O(rows × subquery), so the cost grows super-linearly and 50k/100k
+would be a multi-minute single arm.
+
+| Bench | 2.5k | 5k | 10k | Notes |
+|---|---:|---:|---:|---|
+| `gql_correlated_subquery/exists` | 81.1 ms | 324.4 ms | 1.222 s | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`. |
+| `gql_correlated_subquery/count` | 81.3 ms | 328.3 ms | 1.259 s | `COUNT { (p)-[:KNOWS]->(:Person) }` projection. |
+
+### §5b `write_e2e` — GQL write end-to-end
+
+Two families. The **in-memory CPU** family runs on a no-WAL `SharedGraph` to
+isolate parse/plan/execute + in-memory commit CPU. The **durable** family
+(`*_with_flush`, `direct_*`) keeps a real WAL on `OnFlushOnly` /
+`CommitBatching::Off`. The `match_*` / `insert_node_with_edge` arms scan the
+fixture and so scale with N; the single-node arms are flat.
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `write_e2e/gql_insert_single_node_per_iter_plan` | 317 µs | 237 µs | 394 µs | Parse/plan/execute per iter (in-memory). |
+| `write_e2e/gql_insert_single_node_preplanned` | 279 µs | 190 µs | 342 µs | Preplanned single-node insert. |
+| `write_e2e/gql_insert_single_node_cached` | 129 µs | 115 µs | 151 µs | Plan-cache warm hit. |
+| `write_e2e/gql_insert_single_node_cached_with_schema_churn` | 152 µs | 165 µs | 289 µs | Cache hit under schema churn. |
+| `write_e2e/gql_insert_node_with_edge_preplanned` | 1.67 ms | 11.75 ms | 24.86 ms | Preplanned insert + matched source + edge (scans). |
+| `write_e2e/gql_match_set_preplanned` | 1.76 ms | 11.74 ms | 24.12 ms | Indexed match + property update (scans). |
+| `write_e2e/gql_match_delete_preplanned` | 1.68 ms | 12.25 ms | 24.97 ms | Fresh fixture per iter (target deleted). |
+| `write_e2e/gql_multi_statement_txn_preplanned` | 280 µs | 191 µs | 350 µs | START, three INSERTs, COMMIT. |
+| `write_e2e/explicit_txn_3_inserts_rust_api` | 275 µs | 223 µs | 363 µs | Three inserts via the Rust txn API. |
+| `write_e2e/explicit_txn_3_inserts_rollback` | 279 µs | 198 µs | 355 µs | Same, rolled back. |
+| `write_e2e/gql_insert_single_node_preplanned_with_flush` | 4.22 ms | 4.27 ms | 3.95 ms | Durable: preplanned insert + WAL flush. |
+| `write_e2e/direct_insert_single_node_with_wal_flush` | 4.20 ms | 4.30 ms | 4.17 ms | Direct mutation + one WAL flush. |
+| `write_e2e/direct_insert_single_node_with_wal_flush_every10` | 30.5 ms | 32.2 ms | 32.4 ms | Ten direct inserts over one flush. |
+
+## §6 selene-algorithms
+
+Bench bins: `algo_bench`, `projection`. Fixture: `BenchFixture::build(N)` (≈3N
+edges) for pagerank/betweenness/apsp and projection; `planted_community_graph(N)`
+(≈6N edges, ~N/64 communities) for triangle_count and louvain.
+
+### §6a Algorithm baselines (Sequential vs Auto)
+
+| Bench | Scale | Sequential | Auto | Notes |
+|---|---:|---:|---:|---|
+| `algo/pagerank` | 10k | 112.0 µs | 309.0 µs | Sparse graph: Auto pays coordination overhead… |
+| `algo/pagerank` | 50k | 595.6 µs | 993.9 µs | …at every scale on this fixture. |
+| `algo/pagerank` | 100k | 1.215 ms | 1.869 ms | Auto right on denser graphs; API exposes both. |
+| `algo/betweenness` | 10k | 25.02 ms | 7.35 ms | **3.4× Auto** — endpoint-aware sampling. |
+| `algo/betweenness` | 50k | 128.9 ms | 43.2 ms | **3.0× Auto** — per-source SSSP parallelizes. |
+| `algo/betweenness` | 100k | 258.1 ms | 96.3 ms | **2.7× Auto** — headline rayon win. |
+| `algo/triangle_count` | 10k | 669.5 µs | 675.2 µs | Tiny; already efficient sequentially. |
+| `algo/triangle_count` | 50k | 3.354 ms | 2.754 ms | 1.2× Auto. |
+| `algo/triangle_count` | 100k | 6.802 ms | 5.405 ms | 1.3× Auto. |
+| `algo/apsp` | 200 | 782.2 µs | 328.1 µs | All-pairs SSSP; scale = source count. |
+| `algo/apsp` | 500 | 4.929 ms | 1.547 ms | 3.2× Auto. |
+| `algo/apsp` | 1k | 19.88 ms | 5.897 ms | **3.4× Auto** — strong scaling at 10 cores. |
+| `algo/louvain` | 10k | 2.264 ms | n/a | Sequential-only (V170). |
+| `algo/louvain` | 50k | 11.70 ms | n/a | |
+| `algo/louvain` | 100k | 24.11 ms | n/a | |
+
+### §6b `projection` — CSR foundation (ALGO-01/02/05)
+
+Every algorithm runs *over* a projection, but `algo_bench` builds it in untimed
+setup. This isolates the build (graph scan + CSR construction) and the per-edge
+neighbor walk — exactly the two numbers the CSR dense-`u32` reshape
+(ALGO-01/02/05) changes.
+
+| Bench | 10k | 50k | 100k | Notes |
+|---|---:|---:|---:|---|
+| `algo/projection_build` | 1.196 ms | 12.97 ms | 36.43 ms | Full `GraphProjection::build`. |
+| `algo/projection_neighbor_iter` | 22.3 µs | 133.1 µs | 292.2 µs | Sweep every node's out-neighbor slice. |
+
+## Cluster-B regression targets
+
+This doc is the baseline for the v1.2 cluster-B performance-uplift work
+(graph node 767). Each optimization has a dedicated bench whose median should
+move when it lands; refresh that row + diff against the `northstar` baseline to
+confirm the win and guard the surrounding rows against regression.
+
+| Target | Optimization | Watch bench | Current baseline |
+|---|---|---|---|
+| CORE-06 | Box large `Value` time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | 128 B; vec 6.10 µs |
+| GRAPH-05 | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (degree sweep should flatten) | 133 ms @ degree 10k |
+| PERSIST-04 | WAL vectored write | `persist_wal_body_size_no_fsync` (large-body arms) | 13.1 ms @ 50k/entry |
+| ALGO-01/02/05 | CSR dense-`u32` index | `algo/projection_build` + `…_neighbor_iter` | build 36.4 ms / iter 292 µs @100k |
+| GQLRT-05 | Memoize correlated-subquery schema | `gql_correlated_subquery/{exists,count}` | 1.22 s @ 10k |
+| D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
+| D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
 
 ## Update protocol
 
-1. Switch to stable main: `git checkout main && git pull --ff-only`.
-2. Run: `scripts/run-benches.sh --profile full --layer criterion`.
-3. Paste hardware footprint into the header using the capture commands above.
-4. Update each table's `Median` / `Sequential` / `Auto` columns from criterion output.
-5. Set `_Last measured_` date.
-6. Commit: `chore: refresh BENCHMARKS.md (<short hardware string>)`.
+1. From a clean, synced `development` on a **quiet machine** (background load
+   pollutes medians): `git checkout development && git pull --ff-only`.
+2. Run the full sweep, saving the baseline:
+   `scripts/run-benches.sh --profile full --save-baseline northstar`.
+3. Refresh the header: `_Last measured_` date + hardware footprint (capture
+   commands above) + `git rev-parse --short HEAD`.
+4. Fill every `Median` / `Sequential` / `Auto` cell from criterion stdout.
+5. Commit: `chore(bench): refresh BENCHMARKS.md (<short hardware string>)`.
 
-## Out of scope for this file
+## Out of scope
 
-- iai-callgrind instruction-count baselines beyond the deferred token inventory.
+- CI bench jobs — benchmarks are local-only and sequential (CI only lints the
+  invocation hygiene; it never executes benches).
 - Cross-host comparison automation.
-- CI bench jobs.
-- Donor regression target comparison, which lives in gitignored `_design/perf-baselines.md`.
+- Donor regression-target comparison (lives in gitignored
+  `_design/perf-baselines.md`).
