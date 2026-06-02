@@ -295,6 +295,22 @@ fn lower_graph_pattern(
     // a path *selector*, so it is deferred to the `if let Some(selector)` block
     // below — a non-selector pattern over a bindingless source is legal.
     let source_binding = chain_tail_binding(&current);
+    // Per ISO 39075:2024 §16.4 NOTE 222, DIFFERENT EDGES imparts TRAIL to each
+    // path pattern. When a path SELECTOR (ANY/SHORTEST) is present it ranks/picks
+    // paths BEFORE the outer pattern-wide `MatchModeFilter` runs, so a bare-WALK
+    // repeat could surface an edge-reusing path that the selector chooses and the
+    // filter then drops — losing a valid edge-distinct binding. Bumping the
+    // effective path mode to TRAIL installs the per-path trail filter
+    // (`wrap_in_path_mode_filter`) BENEATH the selector, so the selector only
+    // ever ranks edge-distinct paths. Non-selector patterns keep their declared
+    // mode: the pattern-wide filter is then the sole, correct authority
+    // (result-equivalent, and it avoids a redundant per-path trail pass).
+    let effective_path_mode =
+        if ctx.different_edges && ctx.selector.is_some() && ctx.path_mode == PathMode::Walk {
+            PathMode::Trail
+        } else {
+            ctx.path_mode
+        };
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
             return Err(PlannerError::NotImplemented {
@@ -317,7 +333,7 @@ fn lower_graph_pattern(
             ctx.binding_ids,
             ctx.hidden,
         )?;
-        let path_mode = ctx.path_mode;
+        let path_mode = effective_path_mode;
         let selector = ctx.selector;
         let max_quantifier = ctx.max_quantifier;
         let different_edges = ctx.different_edges;
@@ -381,7 +397,7 @@ fn lower_graph_pattern(
             }
         };
     }
-    current = path_mode::wrap_in_path_mode_filter(current, ctx.path_mode, pattern.span)?;
+    current = path_mode::wrap_in_path_mode_filter(current, effective_path_mode, pattern.span)?;
     if let Some(selector) = ctx.selector {
         let source_binding = source_binding.ok_or(PlannerError::NotImplemented {
             feature: "path selector over bindingless source node",

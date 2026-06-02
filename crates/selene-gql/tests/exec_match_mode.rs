@@ -66,30 +66,37 @@ impl MatchModeFixture {
     }
 
     fn execute(&self, source: &str) -> Result<BindingTable, ExecutorError> {
-        let plan = planned(source);
-        let mut ctx = TxContext::read_only(
-            self.graph.read(),
-            &plan.impl_defined_caps,
-            &EmptyProcedureRegistry,
-            self.graph.index_providers(),
-        )
-        .with_plan_metadata(&plan.expr_ids, &plan.subqueries);
-        let input = if let Some(pattern) = &plan.pattern_plan {
-            execute_pattern(pattern, &ctx)?
-        } else {
-            BindingTable::new(
-                BindingTableSchema {
-                    columns: Vec::new(),
-                },
-                vec![Binding::empty()],
-            )
-        };
-        execute_pipeline(&plan.pipeline, input, &mut ctx)
+        execute_on(&self.graph, source)
     }
 
     fn row_count(&self, source: &str) -> usize {
         self.execute(source).expect("query executes").row_count()
     }
+}
+
+/// Plan and execute `source` against `graph`, returning the raw binding table.
+/// Shared by every match-mode fixture so they need not duplicate the read-only
+/// `TxContext` wiring.
+fn execute_on(graph: &SharedGraph, source: &str) -> Result<BindingTable, ExecutorError> {
+    let plan = planned(source);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &EmptyProcedureRegistry,
+        graph.index_providers(),
+    )
+    .with_plan_metadata(&plan.expr_ids, &plan.subqueries);
+    let input = if let Some(pattern) = &plan.pattern_plan {
+        execute_pattern(pattern, &ctx)?
+    } else {
+        BindingTable::new(
+            BindingTableSchema {
+                columns: Vec::new(),
+            },
+            vec![Binding::empty()],
+        )
+    };
+    execute_pipeline(&plan.pipeline, input, &mut ctx)
 }
 
 #[test]
@@ -317,5 +324,85 @@ fn different_edges_anonymous_unbounded_quantifier_terminates() {
         rows,
         fixture.row_count("MATCH DIFFERENT EDGES (a:N {name: 'A'})-[r:K+]->(b) RETURN b"),
         "anonymous and named unbounded forms must agree under DIFFERENT EDGES"
+    );
+}
+
+/// Graph with a 2-cycle through *distinct* edges plus a self-loop: nodes A and
+/// B (label `N`) joined by A->A (self-loop), A->B, and B->A. From A there are
+/// two 2-hop paths back to A — A->A->A (reuses the self-loop edge) and
+/// A->B->A (two distinct edges) — which lets a path selector exercise the
+/// §16.4 NOTE-222 ordering requirement.
+struct SelectorCycleFixture {
+    graph: SharedGraph,
+}
+
+impl SelectorCycleFixture {
+    fn build() -> Self {
+        let node = istr("N");
+        let edge = istr("K");
+        let name = istr("name");
+        let graph = SharedGraph::new(GraphId::new(7422));
+        {
+            let mut txn = graph.begin_write();
+            let mut mutator = txn.mutator();
+            let a = mutator
+                .create_node(
+                    LabelSet::single(node.clone()),
+                    props([(name.clone(), Value::String(istr("A")))]),
+                )
+                .expect("A inserts");
+            let b = mutator
+                .create_node(
+                    LabelSet::single(node),
+                    props([(name, Value::String(istr("B")))]),
+                )
+                .expect("B inserts");
+            // Self-loop created FIRST so it is the lowest edge id and is
+            // enumerated before A->B in adjacency order — a WALK repeat would
+            // surface A->A->A to the selector first.
+            mutator
+                .create_edge(edge.clone(), a, a, props([]))
+                .expect("A self-loop");
+            mutator
+                .create_edge(edge.clone(), a, b, props([]))
+                .expect("A to B");
+            mutator.create_edge(edge, b, a, props([])).expect("B to A");
+            txn.commit().expect("fixture commits");
+        }
+        Self { graph }
+    }
+
+    fn row_count(&self, source: &str) -> usize {
+        execute_on(&self.graph, source)
+            .expect("query executes")
+            .row_count()
+    }
+}
+
+#[test]
+fn different_edges_selector_ranks_only_edge_distinct_paths() {
+    // Regression (Codex round-2 P1): a path selector (`ANY`/SHORTEST) wraps the
+    // repeat and runs BEFORE the outer pattern-wide `MatchModeFilter`. If the
+    // bounded repeat stayed WALK, `ANY` could pick the A->A->A walk that reuses
+    // the self-loop, the filter would then drop it, and the valid edge-distinct
+    // A->B->A path would be lost (0 rows). Per ISO §16.4 NOTE 222 the path
+    // pattern itself behaves as TRAIL under DIFFERENT EDGES, so the selector
+    // sees only edge-distinct paths and returns the valid one.
+    let fixture = SelectorCycleFixture::build();
+    let any_different =
+        "MATCH ANY DIFFERENT EDGES (a:N {name: 'A'})-[:K*2..2]->(b:N {name: 'A'}) RETURN b";
+
+    assert_eq!(
+        fixture.row_count(any_different),
+        1,
+        "ANY DIFFERENT EDGES must surface the edge-distinct A->B->A path, not lose it to the filter"
+    );
+    // NOTE 222 equivalence: on a single path pattern, ANY DIFFERENT EDGES and
+    // ANY TRAIL select from the same edge-distinct candidate set.
+    assert_eq!(
+        fixture.row_count(any_different),
+        fixture
+            .row_count("MATCH ANY TRAIL (a:N {name: 'A'})-[:K*2..2]->(b:N {name: 'A'}) RETURN b"),
+        "ANY DIFFERENT EDGES must agree with ANY TRAIL on a single path pattern"
     );
 }

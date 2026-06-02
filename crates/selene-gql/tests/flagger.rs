@@ -162,6 +162,42 @@ fn quantifier_and_match_mode_features_are_recorded() {
 }
 
 #[test]
+fn match_mode_keywords_tolerate_whitespace_and_comments() {
+    // ISO §16.4 grammar `^"DIFFERENT" ~ ^"EDGES"` (and the REPEATABLE form) skip
+    // implicit WHITESPACE *and* COMMENTs between the two keywords, so every
+    // separator spelling is a legal G002/G003 form. `build_match_mode` must
+    // accept them — it dispatches on the leading keyword token, not a
+    // single-space string compare against the raw span.
+    let records = |source: &str| {
+        feature_walk(&parse(source).unwrap_or_else(|e| panic!("{source:?} must parse: {e:?}")))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+    for source in [
+        "MATCH DIFFERENT  EDGES (n) RETURN n",        // two spaces
+        "MATCH DIFFERENT\nEDGES (n) RETURN n",        // newline
+        "MATCH DIFFERENT\tEDGES (n) RETURN n",        // tab
+        "MATCH DIFFERENT /* c */ EDGES (n) RETURN n", // block comment
+    ] {
+        assert!(
+            records(source).contains(&FeatureId::G002),
+            "DIFFERENT EDGES with a non-single-space separator must record G002: {source:?}"
+        );
+    }
+    for source in [
+        "MATCH REPEATABLE  ELEMENTS (n) RETURN n",
+        "MATCH REPEATABLE\nELEMENTS (n) RETURN n",
+        "MATCH REPEATABLE // c\nELEMENTS (n) RETURN n", // line comment
+    ] {
+        assert!(
+            records(source).contains(&FeatureId::G003),
+            "REPEATABLE ELEMENTS with a non-single-space separator must record G003: {source:?}"
+        );
+    }
+}
+
+#[test]
 fn is_predicate_feature_family_is_supported() {
     for source in [
         "RETURN n IS DIRECTED",
