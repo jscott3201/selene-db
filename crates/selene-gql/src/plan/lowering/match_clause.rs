@@ -32,6 +32,13 @@ struct GraphLoweringContext<'a, 's> {
     /// Embedder-configured variable-length quantifier upper-bound cap
     /// (`ImplDefinedCaps::max_quantifier`), threaded to the plan-time gate.
     max_quantifier: u32,
+    /// True when this MATCH carries a DIFFERENT EDGES (`G002`) match mode. Per
+    /// ISO 39075:2024 §16.4 NOTE 222, DIFFERENT EDGES imparts the effect of
+    /// TRAIL to each path pattern, so every quantified edge must (a) carry an
+    /// edge-identity group slot the pattern-wide filter can read and (b) prune
+    /// repeated edges *during* an unbounded repeat — otherwise the post-walk
+    /// filter never runs because the WALK traversal first hits `max_quantifier`.
+    different_edges: bool,
 }
 
 /// Predicates collected from the syntactic right-side node of an edge
@@ -208,6 +215,7 @@ fn lower_match_clause(
             binding_ids,
             hidden,
             max_quantifier,
+            different_edges: clause.match_mode == Some(MatchMode::DifferentEdges),
         };
         let (tree, names) = lower_graph_pattern(pattern, &mut ctx)?;
         current = Some(match current {
@@ -312,6 +320,7 @@ fn lower_graph_pattern(
         let path_mode = ctx.path_mode;
         let selector = ctx.selector;
         let max_quantifier = ctx.max_quantifier;
+        let different_edges = ctx.different_edges;
         let mut edge_ctx = EdgeLoweringContext {
             analyzed: ctx.analyzed,
             filters: ctx.filters,
@@ -327,7 +336,7 @@ fn lower_graph_pattern(
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
                 if repeat_edge.group_binding.is_none()
-                    && repeat_needs_hidden_group(selector, path_mode, *min, *max)
+                    && repeat_needs_hidden_group(selector, path_mode, *min, *max, different_edges)
                 {
                     repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
                 }
@@ -337,7 +346,7 @@ fn lower_graph_pattern(
                     edge: repeat_edge,
                     min: *min,
                     max: *max,
-                    path_mode: repeat_path_mode_under_filter(path_mode, *max),
+                    path_mode: repeat_path_mode_under_filter(path_mode, *max, different_edges),
                 }
             }
             Some(Quantifier::Questioned) => {
@@ -663,8 +672,16 @@ fn repeat_needs_hidden_group(
     path_mode: PathMode,
     min: u32,
     max: Option<u32>,
+    different_edges: bool,
 ) -> bool {
-    path_mode != PathMode::Walk
+    // Per ISO 39075:2024 §16.4 NOTE 222: a DIFFERENT EDGES match mode imparts
+    // TRAIL to every path pattern, so an *anonymous* quantified edge still needs
+    // an edge-identity group slot — the pattern-wide `MatchModeFilter` reads it
+    // via `collect_path_contributors`/`repeat_contributor`. Without this, a
+    // legal G002 pattern such as `MATCH DIFFERENT EDGES (a)-[:K*2]->(b)` would
+    // fail to plan ("path mode over quantified edge without edge group slot").
+    different_edges
+        || path_mode != PathMode::Walk
         || selector.is_some_and(|selector| selector_needs_repeat_group(selector, min, max))
 }
 
@@ -682,10 +699,31 @@ fn selector_needs_repeat_group(selector: PathSelector, min: u32, max: Option<u32
         )
 }
 
-fn repeat_path_mode_under_filter(path_mode: PathMode, max: Option<u32>) -> PathMode {
+fn repeat_path_mode_under_filter(
+    path_mode: PathMode,
+    max: Option<u32>,
+    different_edges: bool,
+) -> PathMode {
     if max.is_none() {
-        path_mode
+        // An unbounded repeat must prune *during* traversal or it never
+        // terminates on a cyclic graph. Per ISO 39075:2024 §16.4 NOTE 222, a
+        // DIFFERENT EDGES match mode imparts TRAIL to each path pattern, so a
+        // bare WALK quantifier under DIFFERENT EDGES traverses as TRAIL — this
+        // is exactly the finiteness guarantee the analyzer relies on when it
+        // admits an unbounded quantifier gated only by DIFFERENT EDGES
+        // (`analyze::bind::pattern::validate_unbounded_legality`). A more
+        // restrictive declared path mode (TRAIL/ACYCLIC/SIMPLE) already prunes
+        // and is the user's explicit per-path choice, so it is left intact; the
+        // pattern-wide post-walk filter then enforces the broader G002
+        // cross-path-pattern edge-uniqueness on top.
+        if different_edges && path_mode == PathMode::Walk {
+            PathMode::Trail
+        } else {
+            path_mode
+        }
     } else {
+        // Bounded repeats are finite under WALK; the post-walk filter (path-mode
+        // or pattern-wide match-mode) prunes the surviving rows.
         PathMode::Walk
     }
 }

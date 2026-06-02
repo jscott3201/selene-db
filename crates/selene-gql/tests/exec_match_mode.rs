@@ -249,3 +249,73 @@ fn pipeline_match_different_edges_filters_in_a_later_segment() {
         "pipeline-segment no-prefix default keeps the reused self-loop"
     );
 }
+
+#[test]
+fn different_edges_anonymous_quantified_edge_plans_and_executes() {
+    // Regression (Codex P1): under DIFFERENT EDGES an *anonymous* quantified
+    // edge still needs an edge-identity group slot so the pattern-wide filter
+    // can read its edges — ISO §16.4 NOTE 222 imparts TRAIL to each path
+    // pattern. Before the fix this failed to plan ("path mode over quantified
+    // edge without edge group slot") while the named form `[r:K*1..2]` worked,
+    // leaving a legal G002 pattern unsupported right after claiming the feature.
+    let fixture = MatchModeFixture::build();
+    let anon = "MATCH DIFFERENT EDGES (a:N {name: 'A'})-[:K*1..2]->(b) RETURN b";
+    let named = "MATCH DIFFERENT EDGES (a:N {name: 'A'})-[r:K*1..2]->(b) RETURN b";
+
+    let anon_rows = fixture
+        .execute(anon)
+        .expect("anonymous quantified edge under DIFFERENT EDGES must plan + execute")
+        .row_count();
+    assert!(anon_rows > 0, "expected matches, got {anon_rows}");
+    assert_eq!(
+        anon_rows,
+        fixture.row_count(named),
+        "anonymous and named quantified edges must agree under DIFFERENT EDGES"
+    );
+}
+
+#[test]
+fn different_edges_unbounded_quantifier_terminates_on_cycle() {
+    // Regression (Codex P1): the analyzer admits an unbounded quantifier gated
+    // only by DIFFERENT EDGES (`validate_unbounded_legality`) on the ISO §16.4
+    // NOTE-222 premise that DIFFERENT EDGES imparts TRAIL and so bounds the
+    // traversal. The runtime must honour that DURING the repeat: over the A->A
+    // self-loop a bare WALK repeat reuses the self-loop edge forever and raises
+    // 5GQL1 ProgramLimitExceeded before the post-walk filter runs. With the fix
+    // the repeat traverses as TRAIL and terminates. (A WALK control is
+    // inexpressible — the analyzer rejects an unbounded WALK quantifier.)
+    let fixture = MatchModeFixture::build();
+    let different = "MATCH DIFFERENT EDGES (a:N {name: 'A'})-[r:K+]->(b) RETURN b";
+
+    let rows = fixture
+        .execute(different)
+        .expect("unbounded DIFFERENT EDGES repeat must terminate, not ProgramLimitExceeded")
+        .row_count();
+    assert!(rows > 0, "expected finite matches, got {rows}");
+    // NOTE 222: on a single path pattern, DIFFERENT EDGES coincides with TRAIL
+    // (no other path pattern's edges to conflict with), so the row sets agree.
+    assert_eq!(
+        rows,
+        fixture.row_count("MATCH TRAIL (a:N {name: 'A'})-[r:K+]->(b) RETURN b"),
+        "single-path DIFFERENT EDGES must match TRAIL (NOTE 222)"
+    );
+}
+
+#[test]
+fn different_edges_anonymous_unbounded_quantifier_terminates() {
+    // Regression (Codex P1, combined): an *anonymous* *unbounded* quantified
+    // edge under DIFFERENT EDGES needs BOTH fixes at once — the hidden group
+    // slot (so it plans) and TRAIL-during-traversal (so it terminates). Pins
+    // that the two repeat-lowering changes compose for `[:K+]`.
+    let fixture = MatchModeFixture::build();
+    let rows = fixture
+        .execute("MATCH DIFFERENT EDGES (a:N {name: 'A'})-[:K+]->(b) RETURN b")
+        .expect("anonymous unbounded DIFFERENT EDGES repeat must plan + terminate")
+        .row_count();
+    assert!(rows > 0, "expected finite matches, got {rows}");
+    assert_eq!(
+        rows,
+        fixture.row_count("MATCH DIFFERENT EDGES (a:N {name: 'A'})-[r:K+]->(b) RETURN b"),
+        "anonymous and named unbounded forms must agree under DIFFERENT EDGES"
+    );
+}
