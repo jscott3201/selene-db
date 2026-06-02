@@ -86,19 +86,24 @@ are allocator-agnostic.
 
 Bench bin: `value_clone`. Measures `Value` / `PropertyMap` clone cost, which is
 dominated by `size_of::<Value>()` — every clone memcpys the whole enum regardless
-of the active variant. A compile-time `size_of::<Value>() <= 128` ceiling in
+of the active variant. A compile-time `size_of::<Value>() <= 32` ceiling in
 `value.rs` is the zero-cost re-bloat tripwire; the bench prints the live size to
-stderr. **Measured `size_of::<Value>() = 128 bytes`** at this commit.
+stderr. **Measured `size_of::<Value>() = 32 bytes`** at this commit — CORE-06
+boxed the four oversized variants (`Path` 120 B — the real former ceiling, not
+the time variants — plus `Duration`/`ZonedDateTime`/`ZonedTime`), down from 128 B.
 
 | Bench | Median | Notes |
 |---|---:|---|
-| `core_value_clone/vec_mixed_1024` | 6.10 µs | Clone a 1024-element mixed-variant `Vec<Value>`. |
-| `core_value_clone/property_map_5` | 74.6 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). |
+| `core_value_clone/vec_mixed_1024` | 4.62 µs | Clone a 1024-element mixed-variant `Vec<Value>`. **−25%** vs the 128 B layout (was 6.10 µs). |
+| `core_value_clone/property_map_5` | 53.8 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). **−29%** (was 74.6 ns) — the *worst* case: 2 of 5 keys are now boxed (alloc-on-clone), so non-temporal maps gain more. |
 
 ## §2 selene-graph — read hot paths
 
-Bench bins: `single_graph`, `bulk_mutation`, `concurrent_read`, `bfs`. Medians
-reflect the current `Value` layout (128 B) and the v1.2 owned-`IStr` model.
+Bench bins: `single_graph`, `bulk_mutation`, `concurrent_read`, `bfs`. The
+medians below predate CORE-06 (measured at the 128 B `Value` layout); now that
+`Value` is 32 B, the `PropertyMap`-clone-heavy rows (`graph_edge_create_cascade`,
+`graph_mutation_commit_batch`) will tighten at the next full re-baseline.
+`graph_node_fetch` returns a column ref (no `Value` clone) and is unaffected.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
@@ -367,7 +372,7 @@ confirm the win and guard the surrounding rows against regression.
 
 | Target | Optimization | Watch bench | Current baseline |
 |---|---|---|---|
-| CORE-06 | Box large `Value` time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | 128 B; vec 6.10 µs |
+| CORE-06 ✓ | Box `Value` `Path` + time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | **32 B** (was 128); vec 4.62 µs / pmap 53.8 ns |
 | GRAPH-05 ✓ | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (now linear) | **4.54 ms** @ degree 10k (was 133 ms — 30×) |
 | PERSIST-04 | WAL vectored write | `persist_wal_body_size_no_fsync` (large-body arms) | 13.1 ms @ 50k/entry |
 | ALGO-01/02/05 | CSR dense-`u32` index | `algo/projection_build` + `…_neighbor_iter` | build 36.4 ms / iter 292 µs @100k |

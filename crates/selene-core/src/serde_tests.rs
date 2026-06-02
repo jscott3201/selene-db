@@ -99,25 +99,25 @@ fn all_values() -> Vec<Value> {
             type_id: RecordTypeId::new(1),
             values: smallvec![Some(Value::String(istr("serde.record.typed"))), None],
         })),
-        Value::Path(path),
+        Value::Path(Box::new(path)),
         Value::NodeRef(NodeId::new(1)),
         Value::EdgeRef(EdgeId::new(1)),
         Value::GraphRef(GraphId::new(1)),
         Value::TableRef(BindingTableId::new(1)),
-        Value::ZonedDateTime(
+        Value::ZonedDateTime(Box::new(
             "2026-05-07T12:34:56-04:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
+        )),
         Value::LocalDateTime("2026-05-07T12:34:56".parse().unwrap()),
         Value::Date("2026-05-07".parse().unwrap()),
-        Value::ZonedTime(
+        Value::ZonedTime(Box::new(
             "2026-05-07T12:34:56-04:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
+        )),
         Value::LocalTime("12:34:56".parse().unwrap()),
-        Value::Duration("PT1H2S".parse().unwrap()),
+        Value::Duration(Box::new("PT1H2S".parse().unwrap())),
         Value::Extended {
             type_id: ExtensionTypeId(0x100),
             payload: Arc::from([1_u8, 2, 3, 4]),

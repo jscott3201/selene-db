@@ -86,11 +86,11 @@ fn full_value_property_map(prefix: &str) -> PropertyMap {
         ),
         (
             intern(&format!("{prefix}.zoned_datetime")).unwrap(),
-            Value::ZonedDateTime(
+            Value::ZonedDateTime(Box::new(
                 "2026-05-07T12:34:56-04:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
+            )),
         ),
         (
             intern(&format!("{prefix}.date")).unwrap(),
@@ -106,7 +106,7 @@ fn full_value_property_map(prefix: &str) -> PropertyMap {
         ),
         (
             intern(&format!("{prefix}.duration")).unwrap(),
-            Value::Duration("PT1H2S".parse().unwrap()),
+            Value::Duration(Box::new("PT1H2S".parse().unwrap())),
         ),
     ])
     .unwrap()

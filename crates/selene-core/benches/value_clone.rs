@@ -50,8 +50,8 @@ fn mixed_values() -> Vec<Value> {
             0 => Value::Int(i as i64),
             1 => Value::Float(i as f64 * 1.5),
             2 => Value::String(intern(&format!("v{}", i % 64)).expect("string interns")),
-            3 => Value::Duration(span),
-            _ => Value::ZonedDateTime(zoned.clone()),
+            3 => Value::Duration(Box::new(span)),
+            _ => Value::ZonedDateTime(Box::new(zoned.clone())),
         })
         .collect()
 }
@@ -64,8 +64,11 @@ fn mixed_property_map() -> PropertyMap {
             intern("s").expect("key"),
             Value::String(intern("hello").expect("value")),
         ),
-        (intern("d").expect("key"), Value::Duration(span())),
-        (intern("z").expect("key"), Value::ZonedDateTime(zoned())),
+        (intern("d").expect("key"), Value::Duration(Box::new(span()))),
+        (
+            intern("z").expect("key"),
+            Value::ZonedDateTime(Box::new(zoned())),
+        ),
     ])
     .expect("property map fits core caps")
 }

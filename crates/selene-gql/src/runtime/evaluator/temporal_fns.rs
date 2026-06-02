@@ -16,7 +16,7 @@ use crate::runtime::{EvalCtx, ExecutorError};
 pub(super) fn eval_current_timestamp(
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<Value, ExecutorError> {
-    Ok(Value::ZonedDateTime(now_zoned(ctx)))
+    Ok(Value::ZonedDateTime(Box::new(now_zoned(ctx))))
 }
 
 /// `localtimestamp()`: the current local (zoneless) datetime, with wall-clock
@@ -36,7 +36,7 @@ pub(super) fn eval_current_date(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, 
 /// `jiff` 0.2 has no dedicated zoned-time type, so selene-core models a zoned
 /// time as a [`jiff::Zoned`] (matching `Value::ZonedTime`).
 pub(super) fn eval_current_time(ctx: &EvalCtx<'_, '_, '_, '_>) -> Result<Value, ExecutorError> {
-    Ok(Value::ZonedTime(now_zoned(ctx)))
+    Ok(Value::ZonedTime(Box::new(now_zoned(ctx))))
 }
 
 /// `localtime()`: the current local (zoneless) time, with wall-clock components

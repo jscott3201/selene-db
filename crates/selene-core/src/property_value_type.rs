@@ -230,7 +230,7 @@ mod tests {
             ),
             (
                 PropertyValueType::Path,
-                Value::Path(Path {
+                Value::Path(Box::new(Path {
                     graph: GraphId::new(1),
                     start: NodeId::new(1),
                     segments: smallvec![PathSegment {
@@ -238,7 +238,7 @@ mod tests {
                         direction: EdgeDirection::Outgoing,
                         node: NodeId::new(2),
                     }],
-                }),
+                })),
             ),
             (PropertyValueType::NodeRef, Value::NodeRef(NodeId::new(1))),
             (PropertyValueType::EdgeRef, Value::EdgeRef(EdgeId::new(1))),
@@ -252,11 +252,11 @@ mod tests {
             ),
             (
                 PropertyValueType::ZonedDateTime,
-                Value::ZonedDateTime(
+                Value::ZonedDateTime(Box::new(
                     "2026-05-07T12:34:56-04:00[America/New_York]"
                         .parse()
                         .unwrap(),
-                ),
+                )),
             ),
             (
                 PropertyValueType::LocalDateTime,
@@ -268,11 +268,11 @@ mod tests {
             ),
             (
                 PropertyValueType::ZonedTime,
-                Value::ZonedTime(
+                Value::ZonedTime(Box::new(
                     "2026-05-07T12:34:56-04:00[America/New_York]"
                         .parse()
                         .unwrap(),
-                ),
+                )),
             ),
             (
                 PropertyValueType::LocalTime,
@@ -280,7 +280,7 @@ mod tests {
             ),
             (
                 PropertyValueType::Duration,
-                Value::Duration("PT1H2S".parse().unwrap()),
+                Value::Duration(Box::new("PT1H2S".parse().unwrap())),
             ),
             (PropertyValueType::Null, Value::Null),
             (
