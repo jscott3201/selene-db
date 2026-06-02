@@ -156,18 +156,24 @@ fn parse_counted_uint(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
 }
 
 fn build_match_mode(pair: &Pair<'_, Rule>) -> Result<MatchMode, ParserError> {
-    // The grammar (`^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS"`)
-    // already guarantees the full two-keyword sequence matched. The `~` skips
-    // implicit WHITESPACE *and* COMMENTs between the keywords, so `as_str()` may
-    // contain newlines, runs of spaces/tabs, or comments (e.g. "DIFFERENT\n
-    // EDGES", "DIFFERENT /*x*/ EDGES"). Comparing the whole raw span to a
-    // single-space literal would wrongly reject those legal spellings, so
-    // dispatch on the leading keyword token — which the grammar makes
-    // unambiguous — instead.
-    let text = pair.as_str().to_ascii_uppercase();
-    match text.split_whitespace().next() {
-        Some("DIFFERENT") => Ok(MatchMode::DifferentEdges),
-        Some("REPEATABLE") => Ok(MatchMode::RepeatableElements),
+    // The grammar factors <match mode> (ISO §16.4) as
+    //   different_mode_kw  ~ edge_bindings_or_edges        (DIFFERENT EDGES, G002)
+    //   repeatable_mode_kw ~ element_bindings_or_elements  (REPEATABLE ELEMENTS, G003)
+    // where the leading mode keyword is a boundary-guarded atomic rule. Dispatch
+    // on that first child *rule* rather than slicing `as_str()`: the `~` skips
+    // implicit WHITESPACE *and* COMMENTs, so a comment can sit flush against the
+    // keyword with no surrounding space (e.g. "DIFFERENT/*x*/EDGE"), which a raw
+    // `split_whitespace()` would see as one un-delimited blob and wrongly reject.
+    // Structural dispatch is immune to every whitespace/comment spelling. All
+    // edge-/element-family synonyms collapse onto the two semantics here.
+    match pair
+        .clone()
+        .into_inner()
+        .next()
+        .map(|inner| inner.as_rule())
+    {
+        Some(Rule::different_mode_kw) => Ok(MatchMode::DifferentEdges),
+        Some(Rule::repeatable_mode_kw) => Ok(MatchMode::RepeatableElements),
         _ => Err(ParserError::syntax("unknown match mode", span(pair), None)),
     }
 }
