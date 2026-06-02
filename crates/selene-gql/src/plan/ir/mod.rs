@@ -636,6 +636,30 @@ impl ImplDefinedCaps {
     /// Default maximum distinct groups a `GROUP BY` may materialize.
     pub const DEFAULT_GROUP_BY_KEY_CAP: usize = 1_000_000;
 
+    /// The default implementation-defined caps as a `const`.
+    ///
+    /// Const-constructible so `const fn` callers (e.g. `Session::new`) can seed
+    /// the embedder-facing default without invoking the non-`const`
+    /// [`Default::default`]. [`Default`] delegates here, so the two never drift.
+    pub const DEFAULT: Self = Self {
+        max_quantifier: 100,
+        max_optimizer_iterations: 8,
+        max_path_length: 32,
+        max_wco_traversal_nodes: 64,
+        set_op_key_cap: NonZeroUsize::new(Self::DEFAULT_SET_OP_KEY_CAP)
+            .expect("default set-op key cap is non-zero"),
+        group_by_key_cap: NonZeroUsize::new(Self::DEFAULT_GROUP_BY_KEY_CAP)
+            .expect("default group-by key cap is non-zero"),
+    };
+
+    /// Return a copy with a different variable-length quantifier upper-bound
+    /// cap (ISO IL018). Consulted by the plan-time quantifier gate.
+    #[must_use]
+    pub const fn with_max_quantifier(mut self, max_quantifier: u32) -> Self {
+        self.max_quantifier = max_quantifier;
+        self
+    }
+
     /// Return the configured set-operation key cap.
     #[must_use]
     pub const fn set_op_key_cap(&self) -> usize {
@@ -665,16 +689,7 @@ impl ImplDefinedCaps {
 
 impl Default for ImplDefinedCaps {
     fn default() -> Self {
-        Self {
-            max_quantifier: 100,
-            max_optimizer_iterations: 8,
-            max_path_length: 32,
-            max_wco_traversal_nodes: 64,
-            set_op_key_cap: NonZeroUsize::new(Self::DEFAULT_SET_OP_KEY_CAP)
-                .expect("default set-op key cap is non-zero"),
-            group_by_key_cap: NonZeroUsize::new(Self::DEFAULT_GROUP_BY_KEY_CAP)
-                .expect("default group-by key cap is non-zero"),
-        }
+        Self::DEFAULT
     }
 }
 

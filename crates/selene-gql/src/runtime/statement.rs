@@ -13,7 +13,7 @@ use crate::{
     ast::Statement,
     optimize,
     parser::parse,
-    plan::plan as build_plan,
+    plan::plan_with_caps as build_plan,
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanKey, ExecutorError, ExecutorWarning, Session,
         TxContext, execute_plan, pipeline,
@@ -218,7 +218,7 @@ impl Session<'_> {
             }
             ExecutorError::Analysis { source }
         })?;
-        let lowered = build_plan(&analyzed, registry).map_err(|source| {
+        let lowered = build_plan(&analyzed, registry, &self.caps).map_err(|source| {
             if self.active_txn.is_some() {
                 self.aborted = true;
             }

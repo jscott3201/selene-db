@@ -6,6 +6,24 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Caller-configurable implementation-defined caps (CAPS-IL).** Embedders can
+  now set the `ImplDefinedCaps` limit surface (ISO IL013/IL015/IL018 — variable-
+  length quantifier upper bound, set-op / `GROUP BY` distinct-key caps,
+  optimizer-iteration and path-length bounds) via
+  **`Session::with_impl_defined_caps(caps)`**, mirroring `with_deadline` /
+  `with_row_cap`. Previously the caps existed and were honored by the
+  runtime/optimizer but no public path could set non-default values, and the
+  plan-time quantifier gate read `ImplDefinedCaps::default()` directly (so a
+  caller value could neither loosen nor tighten it). The session caps are now
+  threaded into planning via the new **`plan_with_caps(analyzed, registry, caps)`**
+  entry point (`plan(..)` is retained as a default-caps wrapper) and consulted by
+  both the plan-time quantifier gate (including quantifiers *inside* subquery
+  bodies) and the runtime/optimizer cap checks. Adds `ImplDefinedCaps::DEFAULT`
+  (a `const` so `Session::new` can stay `const fn`) and
+  `ImplDefinedCaps::with_max_quantifier`.
+
 ### Changed
 
 - **Conformance-honesty: feature-ID corrections (CONFORMANCE-00).** Three

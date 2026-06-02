@@ -9,6 +9,7 @@ use selene_graph::{CommitOutcome, SharedGraph, WriteTxn};
 
 use crate::{
     GqlStatus, SourceSpan,
+    plan::ImplDefinedCaps,
     runtime::{
         BindingTable, BindingTableRegistry, CallPlanCache, ExecutorError, ExecutorWarning,
         PlanCache, PlanCacheStats, WarningSink, WriteOutcome,
@@ -61,6 +62,13 @@ pub struct Session<'g> {
     /// Set by `SESSION CLOSE`; once set, every subsequent `execute_source`
     /// request returns [`ExecutorError::SessionClosed`].
     pub(crate) closed: bool,
+    /// Embedder-configured implementation-defined planning/runtime caps
+    /// (ISO IL013/IL015/IL018 limit surfaces). Defaults to
+    /// [`ImplDefinedCaps::DEFAULT`]; overridden via
+    /// [`Session::with_impl_defined_caps`]. Passed into `build_plan`, so it is
+    /// baked into every lowered plan and consulted by the plan-time quantifier
+    /// gate as well as the runtime/optimizer cap checks.
+    pub(crate) caps: ImplDefinedCaps,
 }
 
 pub(crate) fn materialize_parameter_values<'a>(
@@ -154,6 +162,7 @@ impl<'g> Session<'g> {
             index_selection: true,
             time_zone: None,
             closed: false,
+            caps: ImplDefinedCaps::DEFAULT,
         }
     }
 
@@ -178,6 +187,7 @@ impl<'g> Session<'g> {
             index_selection: true,
             time_zone: None,
             closed: false,
+            caps: ImplDefinedCaps::DEFAULT,
         }
     }
 
@@ -202,6 +212,20 @@ impl<'g> Session<'g> {
     #[must_use]
     pub fn with_deadline(mut self, deadline: Instant) -> Self {
         self.deadline = Some(deadline);
+        self
+    }
+
+    /// Set the implementation-defined planning/runtime caps for subsequent
+    /// statements (ISO IL013/IL015/IL018 limit surfaces — e.g.
+    /// [`max_quantifier`](ImplDefinedCaps::max_quantifier), set-op / `GROUP BY`
+    /// key caps, optimizer-iteration and path-length bounds).
+    ///
+    /// The caps are baked into every plan lowered for this session, so they are
+    /// honored by both the plan-time variable-length quantifier gate and the
+    /// runtime/optimizer cap checks. Defaults to [`ImplDefinedCaps::DEFAULT`].
+    #[must_use]
+    pub fn with_impl_defined_caps(mut self, caps: ImplDefinedCaps) -> Self {
+        self.caps = caps;
         self
     }
 
