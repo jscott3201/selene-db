@@ -59,6 +59,19 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
 }
 
 fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
+    // Per ISO 39075:2024 §16.6: the `SHORTEST <n> [GROUP[S]]` / `SHORTEST
+    // GROUP[S]` forms (counted shortest path G019 / group G020) carry a
+    // `counted_shortest_tail` child; the bare `ANY`/`ALL`/`ANY SHORTEST`/
+    // `ALL SHORTEST` forms do not. Dispatch on the structured child first so the
+    // counted forms never fall through to the keyword-text match below.
+    if let Some(tail) = pair
+        .clone()
+        .into_inner()
+        .find(|child| child.as_rule() == Rule::counted_shortest_tail)
+    {
+        return build_counted_shortest(tail);
+    }
+
     // Match the selector keyword(s) token-wise (case- and whitespace-
     // insensitive) without allocating a normalized `String`. `ANY SHORTEST` /
     // `ALL SHORTEST` keep their two-token match; check them before the bare
@@ -79,6 +92,67 @@ fn build_path_selector(pair: &Pair<'_, Rule>) -> Result<PathSelector, ParserErro
             None,
         ))
     }
+}
+
+// Build the counted shortest selector from a `counted_shortest_tail` pair.
+//
+// Per ISO 39075:2024 §16.6 the tail is `uint ~ counted_group_kw?` or a bare
+// `counted_group_kw`:
+//   - a `uint` with no GROUP keyword -> G019 counted shortest PATH (paths = N);
+//   - a `counted_group_kw` (with or without a leading `uint`) -> G020 counted
+//     shortest GROUP (groups = N, defaulting to 1 when no `uint` is written,
+//     per §16.6 SR2b).
+//
+// §16.6 SR2bii requires a written literal count to be positive; a literal `0`
+// (`SHORTEST 0` / `SHORTEST 0 GROUPS`) is a static violation rejected here with
+// GQLSTATUS 22G0F. A literal too large for `u32` saturates to `u32::MAX` rather
+// than erroring, because keep-up-to-N semantics make any count `>= |partition|`
+// equivalent to keep-all.
+fn build_counted_shortest(tail: Pair<'_, Rule>) -> Result<PathSelector, ParserError> {
+    let tail_span = span(&tail);
+    let mut count = None;
+    let mut is_group = false;
+    for child in tail.into_inner() {
+        match child.as_rule() {
+            Rule::uint => count = Some(parse_counted_uint(&child)?),
+            Rule::counted_group_kw => is_group = true,
+            _ => return Err(unexpected_pair(child, "unexpected counted-shortest child")),
+        }
+    }
+
+    if is_group {
+        // SHORTEST [N] GROUP[S]: N defaults to 1 per §16.6 SR2b.
+        Ok(PathSelector::CountedShortestGroup {
+            groups: count.unwrap_or(1),
+        })
+    } else {
+        // SHORTEST N (no GROUP): the count is mandatory in this grammar branch.
+        let paths = count.ok_or_else(|| {
+            ParserError::syntax(
+                "counted shortest path is missing its count",
+                tail_span,
+                None,
+            )
+        })?;
+        Ok(PathSelector::CountedShortest { paths })
+    }
+}
+
+// Parse a counted shortest path/group `uint` literal to a positive `u32`.
+//
+// Saturates an out-of-range literal to `u32::MAX` (keep-all). Rejects a literal
+// `0` with GQLSTATUS 22G0F per ISO 39075:2024 §16.6 SR2bii / §22.4 GR7.
+fn parse_counted_uint(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
+    let value = pair.as_str().parse::<u32>().unwrap_or(u32::MAX);
+    if value == 0 {
+        return Err(ParserError::syntax_with_status(
+            crate::error::GqlStatus::INVALID_NUMBER_OF_PATHS_OR_GROUPS,
+            "counted shortest path/group count must be a positive integer",
+            span(pair),
+            Some("write SHORTEST 1 (or more); 0 is invalid per ISO 39075:2024 §16.6".into()),
+        ));
+    }
+    Ok(value)
 }
 
 fn build_match_mode(pair: &Pair<'_, Rule>) -> Result<MatchMode, ParserError> {

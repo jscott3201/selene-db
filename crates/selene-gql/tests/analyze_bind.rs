@@ -186,6 +186,11 @@ fn unbounded_quantifier_with_restrictive_or_selective_gate_analyzes() {
         "MATCH TRAIL (a)-[:K*]->(b) RETURN b",
         "MATCH ANY (a)-[:K+]->(b) RETURN b",
         "MATCH ALL SHORTEST (a)-[:K{2,}]->(b) RETURN b",
+        // ISO §16.6 SR4: the counted shortest path (G019) and counted shortest
+        // group (G020) prefixes are selective, so they also gate an unbounded
+        // variable-length pattern — the primary use of a shortest selector.
+        "MATCH SHORTEST 3 (a)-[:K*]->(b) RETURN b",
+        "MATCH SHORTEST 2 GROUPS (a)-[:K+]->(b) RETURN b",
     ] {
         analyze_one(source).unwrap_or_else(|err| panic!("{source} should analyze: {err}"));
     }

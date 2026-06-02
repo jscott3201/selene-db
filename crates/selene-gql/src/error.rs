@@ -58,6 +58,11 @@ impl GqlStatus {
     pub const VALUES_NOT_COMPARABLE: Self = Self(*b"22G04");
     /// Maps to GQLSTATUS 22G0C per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const LIST_ELEMENT_ERROR: Self = Self(*b"22G0C");
+    /// Maps to GQLSTATUS 22G0F per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// (data exception — invalid number of paths or groups). Raised when a
+    /// counted shortest path/group count (§16.6, §22.4 GR7) is not a positive
+    /// integer.
+    pub const INVALID_NUMBER_OF_PATHS_OR_GROUPS: Self = Self(*b"22G0F");
     /// Maps to GQLSTATUS 22G0M per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const MULTIPLE_ASSIGNMENTS_TO_GRAPH_ELEMENT_PROPERTY: Self = Self(*b"22G0M");
     /// Maps to GQLSTATUS 22G0S per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -287,6 +292,24 @@ impl ParserError {
     ) -> Self {
         Self::SyntaxError {
             status: GqlStatus::SYNTAX_ERROR,
+            message: message.into(),
+            span,
+            hint,
+        }
+    }
+
+    /// Build a [`Self::SyntaxError`] carrying an explicit GQLSTATUS code rather
+    /// than the default `42001`. Used by builder-level static validations whose
+    /// ISO diagnostic is a specific data-exception subclass (e.g. counted
+    /// shortest path/group count `22G0F`, §22.4 GR7).
+    pub(crate) fn syntax_with_status(
+        status: GqlStatus,
+        message: impl Into<String>,
+        span: SourceSpan,
+        hint: Option<String>,
+    ) -> Self {
+        Self::SyntaxError {
+            status,
             message: message.into(),
             span,
             hint,

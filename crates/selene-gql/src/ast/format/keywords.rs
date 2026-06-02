@@ -1,5 +1,7 @@
 //! Keyword rendering helpers for the read-side formatter.
 
+use std::fmt::{self, Write};
+
 use crate::{BinaryOp, MatchMode, PathMode, PathSelector, SetOp};
 
 pub(super) fn fmt_set_op(op: SetOp) -> &'static str {
@@ -41,13 +43,20 @@ pub(super) fn fmt_binary(op: BinaryOp) -> &'static str {
     }
 }
 
-pub(super) fn fmt_path_selector(selector: PathSelector) -> &'static str {
+pub(super) fn fmt_path_selector(out: &mut String, selector: PathSelector) -> fmt::Result {
+    // Per ISO 39075:2024 §16.6: the counted forms carry a runtime count, so the
+    // selector is rendered directly into the buffer rather than via a static
+    // keyword string. `SHORTEST N` is the counted path search (G019); `SHORTEST
+    // N GROUPS` is the counted group search (G020).
     match selector {
-        PathSelector::Any => "ANY",
-        PathSelector::All => "ALL",
-        PathSelector::AnyShortest => "ANY SHORTEST",
-        PathSelector::AllShortest => "ALL SHORTEST",
+        PathSelector::Any => out.push_str("ANY"),
+        PathSelector::All => out.push_str("ALL"),
+        PathSelector::AnyShortest => out.push_str("ANY SHORTEST"),
+        PathSelector::AllShortest => out.push_str("ALL SHORTEST"),
+        PathSelector::CountedShortest { paths } => write!(out, "SHORTEST {paths}")?,
+        PathSelector::CountedShortestGroup { groups } => write!(out, "SHORTEST {groups} GROUPS")?,
     }
+    Ok(())
 }
 
 pub(super) fn fmt_match_mode(mode: MatchMode) -> &'static str {
