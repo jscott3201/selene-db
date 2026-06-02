@@ -67,9 +67,7 @@ pub fn louvain_with_checker(
         check_algorithm_stride(checker, &mut rows_since_check)?;
         let node = idx.node_id_of(d);
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of_node(nb.node_id).is_some() {
-                total_weight += nb.weight;
-            }
+            total_weight += nb.weight;
         }
     }
     if total_weight == 0.0 {
@@ -95,14 +93,10 @@ pub fn louvain_with_checker(
         let node = idx.node_id_of(d);
         let mut deg = 0.0;
         for nb in proj.out_neighbors(node) {
-            if idx.dense_of_node(nb.node_id).is_some() {
-                deg += nb.weight;
-            }
+            deg += nb.weight;
         }
         for nb in proj.in_neighbors(node) {
-            if idx.dense_of_node(nb.node_id).is_some() {
-                deg += nb.weight;
-            }
+            deg += nb.weight;
         }
         weighted_degree[d as usize] = deg;
     }
@@ -139,16 +133,12 @@ pub fn louvain_with_checker(
 
             comm_weights.clear();
             for nb in proj.out_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    let nb_comm = community[nd as usize];
-                    *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
-                }
+                let nb_comm = community[nb.dense as usize];
+                *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
             }
             for nb in proj.in_neighbors(node) {
-                if let Some(nd) = idx.dense_of_node(nb.node_id) {
-                    let nb_comm = community[nd as usize];
-                    *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
-                }
+                let nb_comm = community[nb.dense as usize];
+                *comm_weights.entry(nb_comm).or_insert(0.0) += nb.weight;
             }
 
             let ki_in_current = comm_weights.get(&current_comm).copied().unwrap_or(0.0);

@@ -178,14 +178,10 @@ fn biconn_dfs(
             let nid = idx.node_id_of(u);
             let mut v: Vec<u32> = Vec::new();
             for nb in proj.out_neighbors(nid) {
-                if let Some(d) = idx.dense_of_node(nb.node_id) {
-                    v.push(d);
-                }
+                v.push(nb.dense);
             }
             for nb in proj.in_neighbors(nid) {
-                if let Some(d) = idx.dense_of_node(nb.node_id) {
-                    v.push(d);
-                }
+                v.push(nb.dense);
             }
             v.sort_unstable();
             v

@@ -335,21 +335,21 @@ edges) for pagerank/betweenness/apsp and projection; `planted_community_graph(N)
 
 | Bench | Scale | Sequential | Auto | Notes |
 |---|---:|---:|---:|---|
-| `algo/pagerank` | 10k | 112.0 µs | 309.0 µs | Sparse graph: Auto pays coordination overhead… |
-| `algo/pagerank` | 50k | 595.6 µs | 993.9 µs | …at every scale on this fixture. |
-| `algo/pagerank` | 100k | 1.215 ms | 1.869 ms | Auto right on denser graphs; API exposes both. |
-| `algo/betweenness` | 10k | 25.02 ms | 7.35 ms | **3.4× Auto** — endpoint-aware sampling. |
-| `algo/betweenness` | 50k | 128.9 ms | 43.2 ms | **3.0× Auto** — per-source SSSP parallelizes. |
-| `algo/betweenness` | 100k | 258.1 ms | 96.3 ms | **2.7× Auto** — headline rayon win. |
-| `algo/triangle_count` | 10k | 669.5 µs | 675.2 µs | Tiny; already efficient sequentially. |
-| `algo/triangle_count` | 50k | 3.354 ms | 2.754 ms | 1.2× Auto. |
-| `algo/triangle_count` | 100k | 6.802 ms | 5.405 ms | 1.3× Auto. |
-| `algo/apsp` | 200 | 782.2 µs | 328.1 µs | All-pairs SSSP; scale = source count. |
-| `algo/apsp` | 500 | 4.929 ms | 1.547 ms | 3.2× Auto. |
-| `algo/apsp` | 1k | 19.88 ms | 5.897 ms | **3.4× Auto** — strong scaling at 10 cores. |
-| `algo/louvain` | 10k | 2.264 ms | n/a | Sequential-only (V170). |
-| `algo/louvain` | 50k | 11.70 ms | n/a | |
-| `algo/louvain` | 100k | 24.11 ms | n/a | |
+| `algo/pagerank` | 10k | 87.9 µs | 247.0 µs | Sparse graph: Auto pays coordination overhead… |
+| `algo/pagerank` | 50k | 494.5 µs | 687.3 µs | …at every scale on this fixture. |
+| `algo/pagerank` | 100k | 1.035 ms | 1.284 ms | Auto closes the gap on denser graphs; API exposes both. |
+| `algo/betweenness` | 10k | 25.52 ms | 7.73 ms | **3.3× Auto** — endpoint-aware sampling. |
+| `algo/betweenness` | 50k | 135.3 ms | 44.95 ms | **3.0× Auto** — per-source SSSP parallelizes. |
+| `algo/betweenness` | 100k | 266.1 ms | 101.7 ms | **2.6× Auto** — headline rayon win. |
+| `algo/triangle_count` | 10k | 631.9 µs | 620.6 µs | Tiny; already efficient sequentially. |
+| `algo/triangle_count` | 50k | 3.253 ms | 2.474 ms | 1.3× Auto. |
+| `algo/triangle_count` | 100k | 6.520 ms | 4.960 ms | 1.3× Auto. |
+| `algo/apsp` | 200 | 621.8 µs | 306.5 µs | All-pairs SSSP; scale = source count. |
+| `algo/apsp` | 500 | 4.091 ms | 1.457 ms | 2.8× Auto. |
+| `algo/apsp` | 1k | 17.17 ms | 5.576 ms | **3.1× Auto** — strong scaling at 10 cores. |
+| `algo/louvain` | 10k | 1.723 ms | n/a | Sequential-only (V170). |
+| `algo/louvain` | 50k | 9.294 ms | n/a | |
+| `algo/louvain` | 100k | 19.31 ms | n/a | |
 
 ### §6b `projection` — CSR foundation (ALGO-01/02/05)
 
@@ -358,10 +358,18 @@ setup. This isolates the build (graph scan + CSR construction) and the per-edge
 neighbor walk — exactly the two numbers the CSR dense-`u32` reshape
 (ALGO-01/02/05) changes.
 
+_§6a/§6b medians below are refreshed post-ALGO-01/02/05 (an A/B of development
+HEAD vs the feature branch on this M5, profile `full`), so they run ahead of the
+`3a864ac` north-star header until the next clean re-sweep. The dense-`u32` cache
+trades a one-time **+4–7% `projection_build`** (one extra `u32` write per
+neighbor, `ProjNeighbor` 24→32 B) for **−6 to −52%** across every algorithm that
+resolved the dense index per edge (pagerank/louvain/apsp/triangle); even raw
+`neighbor_iter` dropped −4 to −6%._
+
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
-| `algo/projection_build` | 1.196 ms | 12.97 ms | 36.43 ms | Full `GraphProjection::build`. |
-| `algo/projection_neighbor_iter` | 22.3 µs | 133.1 µs | 292.2 µs | Sweep every node's out-neighbor slice. |
+| `algo/projection_build` | 1.338 ms | 16.10 ms | 41.50 ms | Full `GraphProjection::build`; +4–7% (the `dense:u32` write). |
+| `algo/projection_neighbor_iter` | 20.7 µs | 128.0 µs | 291.9 µs | Sweep every node's out-neighbor slice. |
 
 ## Cluster-B regression targets
 
@@ -375,7 +383,7 @@ confirm the win and guard the surrounding rows against regression.
 | CORE-06 ✓ | Box `Value` `Path` + time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | **32 B** (was 128); vec 4.62 µs / pmap 53.8 ns |
 | GRAPH-05 ✓ | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (now linear) | **4.54 ms** @ degree 10k (was 133 ms — 30×) |
 | PERSIST-04 | WAL vectored write | `persist_wal_body_size_no_fsync` (large-body arms) | 13.1 ms @ 50k/entry |
-| ALGO-01/02/05 | CSR dense-`u32` index | `algo/projection_build` + `…_neighbor_iter` | build 36.4 ms / iter 292 µs @100k |
+| ALGO-01/02/05 ✓ | CSR dense-`u32` cache on `ProjNeighbor` | `algo/projection_build` + `…_neighbor_iter` + algo medians | **pagerank −15..31% · louvain −23..26% · apsp −9..52% · triangle −6..11% · iter −4..6%**; build +4–7% one-time (24→32 B/neighbor) |
 | GQLRT-05 | Memoize correlated-subquery schema | `gql_correlated_subquery/{exists,count}` | 1.22 s @ 10k |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
 | D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
