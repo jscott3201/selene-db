@@ -185,3 +185,39 @@ jobs:
         # chain only crashes in the thousands-to-tens-of-thousands of bytes); the
         # default could never generate an input long enough to trip them.
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=300 -timeout=20 -max_len=65536
+
+  persist-decode-fuzz:
+    name: persist-decode-fuzz (short smoke)
+    # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
+    # One job runs the four crash-recovery decoder targets sequentially; a 4-way
+    # matrix would re-pay the cargo-fuzz install + cold selene-persist compile
+    # four times. The budget is deliberately short (20s/target): these are small,
+    # linear, fixed-layout decoders with no deep state space (unlike the parser's
+    # super-linear backtracking, which earns the 5m/1h budgets), and the known
+    # bound/panic edges already have dedicated regression tests in the normal
+    # test suite. This pass is a fast pre-release sanity smoke, not a deep soak.
+    if: github.event.pull_request.draft == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      # Cache the evolving corpus libFuzzer accretes across runs (no committed
+      # seed files; the key is content-addressed on the target sources).
+      - uses: actions/cache@v4
+        with:
+          path: crates/selene-persist/fuzz/corpus
+          key: persist-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-persist/fuzz/fuzz_targets/**') }}
+          restore-keys: persist-fuzz-corpus-${{ runner.os }}-
+      - name: fuzz decoders (4 x 20s)
+        working-directory: crates/selene-persist/fuzz
+        # Invariant: arbitrary bytes -> Ok or typed PersistError, never
+        # panic/OOM/hang. -timeout=20 fails any input that hangs; -max_len=65536
+        # bounds the audit record count and the manifest/section length fields.
+        run: |
+          for target in decode_manifest decode_wal decode_audit decode_snapshot; do
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=20 -timeout=20 -max_len=65536
+          done

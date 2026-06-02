@@ -124,3 +124,34 @@ jobs:
         # chain only crashes in the thousands-to-tens-of-thousands of bytes); the
         # default could never generate an input long enough to trip them.
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu parse_gql -- -max_total_time=3600 -timeout=20 -max_len=65536
+
+  persist-decode-fuzz:
+    name: persist-decode-fuzz (short soak)
+    # Linux-only: cargo-fuzz/libFuzzer requires a Linux target triple.
+    # One job runs the four crash-recovery decoder targets sequentially (60s
+    # each). The budget is intentionally modest, not a 1h soak like the parser:
+    # these decoders are small, linear, fixed-layout readers with no deep state
+    # space, so coverage saturates fast; a long soak would just burn runner
+    # minutes. The cached corpus carries discovered inputs forward across nights.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz
+      - uses: actions/cache@v4
+        with:
+          path: crates/selene-persist/fuzz/corpus
+          key: persist-fuzz-corpus-${{ runner.os }}-${{ hashFiles('crates/selene-persist/fuzz/fuzz_targets/**') }}
+          restore-keys: persist-fuzz-corpus-${{ runner.os }}-
+      - name: fuzz decoders (4 x 60s)
+        working-directory: crates/selene-persist/fuzz
+        # Invariant: arbitrary bytes -> Ok or typed PersistError, never
+        # panic/OOM/hang. -timeout=20 fails any input that hangs; -max_len=65536
+        # bounds the audit record count and the manifest/section length fields.
+        run: |
+          for target in decode_manifest decode_wal decode_audit decode_snapshot; do
+            cargo +nightly fuzz run --target x86_64-unknown-linux-gnu "$target" -- -max_total_time=60 -timeout=20 -max_len=65536
+          done
