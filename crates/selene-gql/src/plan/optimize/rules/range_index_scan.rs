@@ -53,9 +53,9 @@ fn rewrite_tree(
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            rewrite_tree(child, bindings, catalog)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Walk each per-label branch; the disjunctive_label_expansion rule
         // runs at slot 5 (before this rule), so DisjunctiveScan only carries

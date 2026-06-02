@@ -15,9 +15,9 @@
 
 use selene_core::intern;
 use selene_gql::{
-    AnalyzedStatement, AnalyzedStatementKind, EmptyProcedureRegistry, MatchClause, MatchMode,
-    MutationStatement, PatternElement, PipelineStatement, PlannerError, WriteKind, YieldColumn,
-    YieldItem, analyze, parse, plan,
+    AnalyzedStatement, AnalyzedStatementKind, EmptyProcedureRegistry, JoinTree, MatchClause,
+    MatchMode, MutationStatement, PatternElement, PipelineStatement, PlannerError, WriteKind,
+    YieldColumn, YieldItem, analyze, parse, plan,
 };
 
 fn analyzed(source: &str) -> AnalyzedStatement {
@@ -118,34 +118,39 @@ fn edge_without_target_is_rejected() {
 }
 
 #[test]
-fn different_edges_match_mode_is_rejected() {
-    // PLAN-17: G003 (DIFFERENT EDGES) is absent from SUPPORTED_FEATURES, so the
-    // flagger rejects it at parse time and `reject_unsupported_clause` never sees
-    // a populated `match_mode` from real GQL. Set it directly on the analyzed
-    // clause to drive the defense-in-depth guard and pin its exact tag.
+fn different_edges_match_mode_lowers_to_filter() {
+    // 812: G002 (DIFFERENT EDGES) is claimed (ISO §16.4 GR8(a)). The
+    // `reject_unsupported_clause` backstop now lets it pass; lowering installs
+    // the pattern-wide `MatchModeFilter` wrapper. This pins that the (formerly
+    // rejecting) planner path now lowers the mode instead of erroring.
     let mut analyzed = analyzed("MATCH (a)-[:E]->(b) RETURN a");
     mutate_match_clause(&mut analyzed, |clause| {
         clause.match_mode = Some(MatchMode::DifferentEdges);
     });
-    assert_not_implemented(
-        plan_err(&analyzed),
-        "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
-    );
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("DIFFERENT EDGES lowers");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    assert!(matches!(
+        pattern.join_tree,
+        JoinTree::MatchModeFilter { .. }
+    ));
 }
 
 #[test]
-fn repeatable_elements_match_mode_is_rejected() {
-    // PLAN-17: the G002 (REPEATABLE ELEMENTS) sibling of the test above. Both
-    // MatchMode arms share the one rejection site, so this pins that neither
-    // arm slips through if the guard is later loosened to handle only one.
+fn repeatable_elements_match_mode_lowers_without_filter() {
+    // 812: G003 (REPEATABLE ELEMENTS) is claimed (ISO §16.4 GR8(b): BINDINGS =
+    // INNER), so lowering installs NO match-mode wrapper. The backstop lets it
+    // pass; the tree is a bare Expand identical to the no-prefix default.
     let mut analyzed = analyzed("MATCH (a)-[:E]->(b) RETURN a");
     mutate_match_clause(&mut analyzed, |clause| {
         clause.match_mode = Some(MatchMode::RepeatableElements);
     });
-    assert_not_implemented(
-        plan_err(&analyzed),
-        "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
-    );
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("REPEATABLE ELEMENTS lowers");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    assert!(!matches!(
+        pattern.join_tree,
+        JoinTree::MatchModeFilter { .. }
+    ));
+    assert!(matches!(pattern.join_tree, JoinTree::Expand { .. }));
 }
 
 // PLAN-17 coverage boundary: the questioned-edge / path-selector / path-mode

@@ -293,9 +293,35 @@ fn restrictive_path_mode_single_node_lowers_to_filter() {
 }
 
 #[test]
-fn unsupported_match_modes_emit_42n01() {
-    let err = parse("MATCH DIFFERENT EDGES (n) RETURN n").expect_err("unsupported match mode");
-    assert_eq!(err.gqlstatus().as_str(), "42N01");
+fn different_edges_match_mode_lowers_to_match_mode_filter() {
+    // ISO 39075:2024 §16.4 GR8(a): an explicit DIFFERENT EDGES installs the
+    // pattern-wide edge-uniqueness wrapper.
+    let plan = plan_one("MATCH DIFFERENT EDGES (a)-[:K]->(b) RETURN a");
+    let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+    assert!(matches!(
+        pattern.join_tree,
+        JoinTree::MatchModeFilter { .. }
+    ));
+}
+
+#[test]
+fn repeatable_elements_and_default_install_no_match_mode_filter() {
+    // ISO 39075:2024 §16.4 GR8(b): REPEATABLE ELEMENTS is BINDINGS = INNER, so
+    // it installs no wrapper. selene's ID086 default is REPEATABLE ELEMENTS, so
+    // a no-prefix MATCH installs none either. Both lower to a bare Expand.
+    for source in [
+        "MATCH REPEATABLE ELEMENTS (a)-[:K]->(b) RETURN a",
+        "MATCH (a)-[:K]->(b) RETURN a",
+    ] {
+        let plan = plan_one(source);
+        let pattern = plan.pattern_plan.as_ref().expect("pattern plan");
+        assert!(
+            !matches!(pattern.join_tree, JoinTree::MatchModeFilter { .. }),
+            "{source} must not install a MatchModeFilter; got {:?}",
+            pattern.join_tree
+        );
+        assert!(matches!(pattern.join_tree, JoinTree::Expand { .. }));
+    }
 }
 
 #[test]

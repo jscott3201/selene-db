@@ -13,7 +13,8 @@ use crate::{
 };
 
 use super::{
-    evaluator, expand, hash_join, outer, path_mode, questioned, scan, subplan, value_compare, wco,
+    evaluator, expand, hash_join, match_mode, outer, path_mode, questioned, scan, subplan,
+    value_compare, wco,
 };
 
 /// Execute a pattern plan and produce its initial binding table.
@@ -119,6 +120,11 @@ pub(crate) fn walk_join_tree(
             child,
             path_contributors,
         } => path_mode::execute(child, *path_mode, path_contributors, env),
+        JoinTree::MatchModeFilter {
+            match_mode,
+            child,
+            path_contributors,
+        } => match_mode::execute(child, *match_mode, path_contributors, env),
         JoinTree::HashJoin {
             left,
             right,
@@ -258,7 +264,9 @@ fn collect_hidden_slots(tree: &JoinTree, slots: &mut BTreeMap<HiddenBindingId, A
             );
             insert_hidden(slots, edge.final_hidden_binding, ScanKind::Node);
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => {
             collect_hidden_slots(child, slots);
         }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {

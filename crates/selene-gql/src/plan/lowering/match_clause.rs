@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use selene_core::IStr;
 
 use crate::{
-    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PathSelector,
-    PatternElement, Quantifier,
+    EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern, PathMode,
+    PathSelector, PatternElement, Quantifier,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
         BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, HiddenBindingId,
@@ -65,7 +65,7 @@ impl HiddenAllocator {
     }
 }
 
-use super::{expr, path_mode, path_search, repeat};
+use super::{expr, match_mode, path_mode, path_search, repeat};
 
 /// Lower leading MATCH clauses into one pattern plan.
 pub(crate) fn lower_match_prefix(
@@ -235,6 +235,12 @@ fn lower_match_clause(
         feature: "empty graph pattern",
         span: clause.span,
     })?;
+    // Per ISO 39075:2024 §16.4: the `<match mode>` is pattern-wide, so it wraps
+    // the join of every comma-separated path pattern in this MATCH clause (the
+    // `current` tree above). DIFFERENT EDGES installs the pattern-wide
+    // edge-uniqueness filter here; REPEATABLE ELEMENTS and the ID086 default
+    // install nothing.
+    let tree = match_mode::wrap_in_match_mode_filter(tree, clause.match_mode, clause.span)?;
     Ok(LoweredClause {
         tree,
         names,
@@ -636,19 +642,20 @@ fn binding_defs(
 }
 
 fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
-    // Why: unreachable-by-flagger defense. G002 (REPEATABLE ELEMENTS) and G003
-    // (DIFFERENT EDGES) are absent from `SUPPORTED_FEATURES`, so the GQL flagger
-    // (clause 24.6) rejects them at parse time, before the planner ever sees a
-    // populated `match_mode`. This guard is kept as defense-in-depth so that a
-    // future feature-register change (registering G002/G003 without wiring the
-    // runtime visited-set contract) cannot silently lower an unsupported mode.
-    if clause.match_mode.is_some() {
-        return Err(PlannerError::NotImplemented {
-            feature: "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
-            span: clause.span,
-        });
+    // Why: true backstop against any future `<match mode>` (ISO 39075:2024
+    // §16.4) that reaches the planner without a lowering arm. Per the §16.4
+    // Conformance Rules, G002 (DIFFERENT EDGES) and G003 (REPEATABLE ELEMENTS)
+    // are both claimed and lowered, so this guard lets them pass; it errors only
+    // on an unhandled mode so a future register change (registering a new mode
+    // without wiring its runtime contract) cannot silently lower it. The match
+    // is exhaustive so the compiler forces an explicit decision for any added
+    // `MatchMode` variant.
+    match clause.match_mode {
+        // Per ISO 39075:2024 §16.4 GR8: DIFFERENT EDGES installs the pattern-wide
+        // edge-uniqueness filter at lowering; REPEATABLE ELEMENTS installs none
+        // (GR8(b): BINDINGS = INNER). Both are handled — no rejection.
+        None | Some(MatchMode::DifferentEdges) | Some(MatchMode::RepeatableElements) => Ok(()),
     }
-    Ok(())
 }
 
 fn repeat_needs_hidden_group(
@@ -705,7 +712,9 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .final_binding
             .map(TailBinding::Named)
             .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
-        JoinTree::PathModeFilter { child, .. } => chain_tail_binding(child),
+        JoinTree::PathModeFilter { child, .. } | JoinTree::MatchModeFilter { child, .. } => {
+            chain_tail_binding(child)
+        }
         JoinTree::PathSearch { final_binding, .. } => Some(*final_binding),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)

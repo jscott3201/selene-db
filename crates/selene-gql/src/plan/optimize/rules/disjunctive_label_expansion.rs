@@ -82,7 +82,8 @@ fn rewrite_tree(tree: &mut JoinTree, bindings: &[BindingDef], catalog: &dyn Inde
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
         | JoinTree::PathSearch { child, .. }
-        | JoinTree::PathModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
