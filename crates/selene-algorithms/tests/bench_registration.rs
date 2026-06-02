@@ -9,10 +9,14 @@ fn bench_registration_is_pinned() {
     )
     .expect("read run-benches.sh");
 
+    // #227 replaced the old colon-delimited `BENCHES="<crate>:<bench>:<layer>"`
+    // list with the pipe-delimited `REGISTRY="<crate>|<bench>|<needs_test_harness>"`
+    // block (the iai layer was dropped). Pin the current token so this drift
+    // check stays meaningful — keep it in lockstep with the runner format and
+    // its sibling pin `selene-testing/tests/benchmarks_md_pin.rs`.
     assert!(
-        script.contains("selene-algorithms:algo_bench:criterion"),
-        "scripts/run-benches.sh BENCHES list is missing \
-         selene-algorithms:algo_bench:criterion"
+        script.contains("selene-algorithms|algo_bench|"),
+        "scripts/run-benches.sh REGISTRY is missing selene-algorithms|algo_bench|<harness>"
     );
 }
 
