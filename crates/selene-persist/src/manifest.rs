@@ -70,6 +70,17 @@ const MANIFEST_HEADER_LEN: usize = 8;
 const MANIFEST_BODY_FIXED_LEN: usize = 8 + 8 + 8 + 1;
 /// Trailing blake3-low-128 body hash length.
 const MANIFEST_BODY_HASH_LEN: usize = 16;
+/// Sanity cap on the decoded `archived_wal_seqs` count.
+///
+/// Not an OOM guard: postcard + serde already clamp the speculative sequence
+/// preallocation (`de::size_hint::cautious`) and the `Vec<u64>` can only grow as
+/// real input bytes are consumed (each element is at least one postcard byte),
+/// so a crafted length prefix yields a prompt [`PersistError::PayloadCodec`]
+/// rather than a runaway allocation. This is an explicit, documented upper bound
+/// on a *valid but pathological* archive-set size — a live retained WAL-archive
+/// set is tiny (D26 defaults keep 4), so 64 Ki is enormously generous — kept so
+/// decode robustness does not silently depend on a serde implementation detail.
+pub(crate) const MANIFEST_MAX_ARCHIVED_SEQS: usize = 65_536;
 
 /// Live persistence epoch descriptor.
 ///
@@ -270,17 +281,21 @@ fn decode_body(body: &[u8]) -> PersistResult<Manifest> {
     if body.len() < MANIFEST_BODY_FIXED_LEN + 2 {
         return Err(PersistError::TruncatedFileHeader);
     }
-    let live_snapshot_seq = u64::from_le_bytes(body[0..8].try_into().expect("8-byte slice"));
-    let active_wal_header_seq = u64::from_le_bytes(body[8..16].try_into().expect("8-byte slice"));
-    let compaction_epoch = u64::from_le_bytes(body[16..24].try_into().expect("8-byte slice"));
-    let retention_present = body[24];
+    // Every field read goes through a bounds-checked window reader so the
+    // decoder cannot panic on a short body regardless of how the `len < 27`
+    // guard above is later refactored — the `expect`s inside the helpers are on
+    // exact-width windows and are genuinely infallible.
+    let live_snapshot_seq = le_u64(body, 0)?;
+    let active_wal_header_seq = le_u64(body, 8)?;
+    let compaction_epoch = le_u64(body, 16)?;
+    let retention_present = byte_at(body, 24)?;
     if retention_present != 0 {
         // Reserved None placeholder (Item-5); a nonzero marker is a format we
         // do not understand in this version.
         return Err(PersistError::ReservedBytesNonZero { offset: 24 });
     }
 
-    let name_len = u16::from_le_bytes([body[25], body[26]]) as usize;
+    let name_len = le_u16(body, 25)? as usize;
     let name_start = MANIFEST_BODY_FIXED_LEN + 2;
     let name_end = name_start
         .checked_add(name_len)
@@ -294,6 +309,12 @@ fn decode_body(body: &[u8]) -> PersistResult<Manifest> {
 
     let archived_wal_seqs: Vec<u64> = postcard::from_bytes(&body[name_end..])
         .map_err(|error| PersistError::PayloadCodec(error.to_string()))?;
+    if archived_wal_seqs.len() > MANIFEST_MAX_ARCHIVED_SEQS {
+        return Err(PersistError::PayloadCodec(format!(
+            "archived WAL sequence count {} exceeds cap {MANIFEST_MAX_ARCHIVED_SEQS}",
+            archived_wal_seqs.len(),
+        )));
+    }
 
     Ok(Manifest {
         live_snapshot_seq,
@@ -302,6 +323,38 @@ fn decode_body(body: &[u8]) -> PersistResult<Manifest> {
         active_wal,
         archived_wal_seqs,
     })
+}
+
+/// Read a little-endian `u64` at `at`, or [`PersistError::TruncatedFileHeader`]
+/// if the 8-byte window runs past the slice (overflow-safe in `at`).
+fn le_u64(bytes: &[u8], at: usize) -> PersistResult<u64> {
+    let end = at.checked_add(8).ok_or(PersistError::TruncatedFileHeader)?;
+    let window = bytes
+        .get(at..end)
+        .ok_or(PersistError::TruncatedFileHeader)?;
+    Ok(u64::from_le_bytes(
+        window.try_into().expect("8-byte window"),
+    ))
+}
+
+/// Read a little-endian `u16` at `at`, or [`PersistError::TruncatedFileHeader`]
+/// if the 2-byte window runs past the slice (overflow-safe in `at`).
+fn le_u16(bytes: &[u8], at: usize) -> PersistResult<u16> {
+    let end = at.checked_add(2).ok_or(PersistError::TruncatedFileHeader)?;
+    let window = bytes
+        .get(at..end)
+        .ok_or(PersistError::TruncatedFileHeader)?;
+    Ok(u16::from_le_bytes(
+        window.try_into().expect("2-byte window"),
+    ))
+}
+
+/// Read a single byte at `at`, or [`PersistError::TruncatedFileHeader`].
+fn byte_at(bytes: &[u8], at: usize) -> PersistResult<u8> {
+    bytes
+        .get(at)
+        .copied()
+        .ok_or(PersistError::TruncatedFileHeader)
 }
 
 /// Compute the blake3-low-128 body hash, mirroring [`crate::section::body_hash`].
@@ -446,6 +499,73 @@ mod tests {
                 Err(PersistError::TruncatedFileHeader)
             ));
         }
+    }
+
+    /// Assemble valid header + matching body hash around an arbitrary body, so
+    /// the decoder reaches `decode_body` instead of failing the hash check.
+    fn frame(body: &[u8]) -> Vec<u8> {
+        let hash = body_hash(body);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&MANIFEST_MAGIC);
+        bytes.extend_from_slice(&MANIFEST_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&0_u16.to_le_bytes());
+        bytes.extend_from_slice(body);
+        bytes.extend_from_slice(&hash);
+        bytes
+    }
+
+    #[test]
+    fn archived_seqs_count_over_cap_is_rejected() {
+        // A valid encoding whose archive list exceeds the sanity cap decodes to
+        // a typed PayloadCodec error (not a panic); exactly the cap is accepted.
+        let over = Manifest {
+            live_snapshot_seq: 1,
+            active_wal_header_seq: 1,
+            compaction_epoch: 0,
+            active_wal: crate::DEFAULT_WAL_FILE_NAME.to_owned(),
+            archived_wal_seqs: (0..=MANIFEST_MAX_ARCHIVED_SEQS as u64).collect(),
+        };
+        assert_eq!(over.archived_wal_seqs.len(), MANIFEST_MAX_ARCHIVED_SEQS + 1);
+        assert!(matches!(
+            Manifest::decode(&over.encode().unwrap()),
+            Err(PersistError::PayloadCodec(_))
+        ));
+
+        let at_cap = Manifest {
+            archived_wal_seqs: (0..MANIFEST_MAX_ARCHIVED_SEQS as u64).collect(),
+            ..over
+        };
+        assert!(Manifest::decode(&at_cap.encode().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn crafted_huge_archive_count_varint_rejects_promptly() {
+        // body = [24-byte fixed u64s][retention=0][name_len=0][postcard tail].
+        // The tail is a Vec<u64> length varint claiming a huge count with zero
+        // element bytes, so postcard hits EOF immediately -> PayloadCodec, no
+        // multi-GB allocation or hang.
+        let mut body = Vec::new();
+        body.extend_from_slice(&1_u64.to_le_bytes());
+        body.extend_from_slice(&1_u64.to_le_bytes());
+        body.extend_from_slice(&0_u64.to_le_bytes());
+        body.push(0); // retention_present
+        body.extend_from_slice(&0_u16.to_le_bytes()); // name_len = 0
+        body.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0x7F]); // huge LEB128 count, no elements
+        assert!(matches!(
+            Manifest::decode(&frame(&body)),
+            Err(PersistError::PayloadCodec(_))
+        ));
+    }
+
+    #[test]
+    fn body_one_byte_short_of_name_len_is_truncated_not_panic() {
+        // A 26-byte body is one short of the 27 the name-length read needs.
+        // Wrapped with a valid header + matching hash, decode must return
+        // TruncatedFileHeader, never panic on the field reads.
+        assert!(matches!(
+            Manifest::decode(&frame(&[0_u8; 26])),
+            Err(PersistError::TruncatedFileHeader)
+        ));
     }
 
     #[test]

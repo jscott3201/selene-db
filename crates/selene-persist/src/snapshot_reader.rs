@@ -9,7 +9,7 @@ use std::sync::Arc;
 use crate::compression::decompress_zstd_bounded;
 use crate::section::{
     MAX_SECTION_PAYLOAD_BYTES, SECTION_TABLE_ROW_LEN, SectionEntry, read_section_table,
-    section_table_bytes,
+    read_section_table_from_bytes, section_table_bytes,
 };
 use crate::snapshot_file_header::SNAPSHOT_FILE_HEADER_LEN;
 use crate::{PersistError, PersistResult, SnapshotFileHeader};
@@ -41,6 +41,35 @@ impl SnapshotReader {
             header,
             sections: Arc::from(sections),
         })
+    }
+
+    /// Decode and validate a snapshot **envelope** — the fixed file header, the
+    /// section table, and the section layout — from an in-memory byte slice,
+    /// without reading any section payload.
+    ///
+    /// This is the pure-slice twin of the header/table/validation prefix of
+    /// [`Self::open`]: it runs the identical [`SnapshotFileHeader`] decode,
+    /// section-table decode, duplicate-tag check, and offset/length layout
+    /// validation, using `bytes.len()` as the file length. Section *payloads*
+    /// (and their downstream rkyv decode, which lives in `selene-graph` behind a
+    /// `CheckBytes` bound — never in this crate) are intentionally out of scope:
+    /// this validates the envelope an attacker could craft, which is the surface
+    /// a decoder fuzz target drives. For valid input it returns the same header
+    /// and section table [`Self::open`] would expose.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same header, section-table, duplicate-tag, and layout errors
+    /// as [`Self::open`] (e.g. [`PersistError::TruncatedSnapshotHeader`],
+    /// [`PersistError::TruncatedSectionTable`], [`PersistError::SectionTooLarge`],
+    /// [`PersistError::DuplicateSection`], [`PersistError::MalformedSectionLayout`]).
+    pub fn decode_envelope(bytes: &[u8]) -> PersistResult<(SnapshotFileHeader, Vec<SectionEntry>)> {
+        let (header, offset) = SnapshotFileHeader::from_bytes(bytes)?;
+        let sections =
+            read_section_table_from_bytes(bytes, offset, usize::from(header.section_count))?;
+        validate_unique_tags(&sections)?;
+        validate_section_offsets(&sections, bytes.len() as u64)?;
+        Ok((header, sections))
     }
 
     /// Return the snapshot file header.

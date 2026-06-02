@@ -88,7 +88,7 @@ impl SnapshotFileHeader {
         Ok(())
     }
 
-    /// Read and validate a fixed 32-byte snapshot header.
+    /// Read and validate a fixed 32-byte snapshot header from a reader.
     pub(crate) fn read_from(reader: &mut impl Read) -> PersistResult<Self> {
         let mut bytes = [0_u8; SNAPSHOT_FILE_HEADER_LEN];
         reader
@@ -97,21 +97,37 @@ impl SnapshotFileHeader {
                 std::io::ErrorKind::UnexpectedEof => PersistError::TruncatedSnapshotHeader,
                 _ => PersistError::Io(error),
             })?;
-        let observed = [bytes[0], bytes[1], bytes[2], bytes[3]];
+        Self::from_bytes(&bytes).map(|(header, _)| header)
+    }
+
+    /// Decode and validate the fixed 32-byte header from the front of `bytes`,
+    /// returning the header and the offset just past it (always
+    /// [`SNAPSHOT_FILE_HEADER_LEN`]). The pure-slice core of [`Self::read_from`].
+    ///
+    /// # Errors
+    ///
+    /// [`PersistError::TruncatedSnapshotHeader`] for a slice shorter than the
+    /// 32-byte header, plus the same magic/version/flag/reserved errors as
+    /// [`Self::read_from`].
+    pub(crate) fn from_bytes(bytes: &[u8]) -> PersistResult<(Self, usize)> {
+        let header = bytes
+            .get(..SNAPSHOT_FILE_HEADER_LEN)
+            .ok_or(PersistError::TruncatedSnapshotHeader)?;
+        let observed = [header[0], header[1], header[2], header[3]];
         if observed != SNAPSHOT_MAGIC {
             return Err(PersistError::MagicMismatch { observed });
         }
-        let version_major = u16::from_le_bytes([bytes[4], bytes[5]]);
-        let version_minor = u16::from_le_bytes([bytes[6], bytes[7]]);
+        let version_major = u16::from_le_bytes([header[4], header[5]]);
+        let version_minor = u16::from_le_bytes([header[6], header[7]]);
         if version_major != SNAPSHOT_VERSION_MAJOR || version_minor != SNAPSHOT_VERSION_MINOR {
             return Err(PersistError::UnsupportedVersion {
                 major: version_major,
                 minor: version_minor,
             });
         }
-        let flags = u16::from_le_bytes([bytes[8], bytes[9]]);
+        let flags = u16::from_le_bytes([header[8], header[9]]);
         validate_flags(flags)?;
-        for (index, byte) in bytes[12..16].iter().enumerate() {
+        for (index, byte) in header[12..16].iter().enumerate() {
             if *byte != 0 {
                 return Err(PersistError::ReservedBytesNonZero {
                     offset: RESERVED_START_OFFSET + index as u64,
@@ -119,14 +135,17 @@ impl SnapshotFileHeader {
             }
         }
         let mut body_hash = [0_u8; 16];
-        body_hash.copy_from_slice(&bytes[16..32]);
-        Ok(Self {
-            version_major,
-            version_minor,
-            flags,
-            section_count: u16::from_le_bytes([bytes[10], bytes[11]]),
-            body_hash,
-        })
+        body_hash.copy_from_slice(&header[16..32]);
+        Ok((
+            Self {
+                version_major,
+                version_minor,
+                flags,
+                section_count: u16::from_le_bytes([header[10], header[11]]),
+                body_hash,
+            },
+            SNAPSHOT_FILE_HEADER_LEN,
+        ))
     }
 
     /// Return true if the reserved whole-body compression flag is set.

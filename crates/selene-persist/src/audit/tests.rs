@@ -58,6 +58,55 @@ fn append_then_read_all_round_trips() {
 }
 
 #[test]
+fn decode_all_truncates_garbage_tail() {
+    // decode_all reproduces read_all's torn-tail semantics: a trailing partial
+    // record (here a short record header) is silently dropped, returning only
+    // the durable records, never erroring or panicking.
+    let dir = temp_dir("decode-torn");
+    let path = log_path(&dir);
+    {
+        let mut log = AuditLog::open(&path).unwrap();
+        log.append(&record(10, 0, b"first")).unwrap();
+        log.append(&record(20, AUDIT_KIND_RESERVED_0, b"second"))
+            .unwrap();
+    }
+    let mut bytes = fs::read(&path).unwrap();
+    bytes.extend_from_slice(&[0xAB_u8; AUDIT_RECORD_HEADER_LEN - 4]); // torn header
+    let decoded = AuditLog::decode_all(&bytes).unwrap();
+    assert_eq!(decoded, AuditLog::read_all(&path).unwrap());
+    assert_eq!(decoded.len(), 2);
+    assert_eq!(decoded[0].payload, b"first");
+    assert_eq!(decoded[1].payload, b"second");
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn decode_all_empty_and_header_only_are_empty() {
+    assert_eq!(AuditLog::decode_all(&[]).unwrap(), Vec::new());
+    let mut header = Vec::new();
+    header.extend_from_slice(&AUDIT_MAGIC);
+    header.extend_from_slice(&AUDIT_FORMAT_VERSION.to_le_bytes());
+    header.extend_from_slice(&0_u16.to_le_bytes());
+    assert_eq!(AuditLog::decode_all(&header).unwrap(), Vec::new());
+}
+
+#[test]
+fn decode_all_rejects_corrupt_header() {
+    assert!(matches!(
+        AuditLog::decode_all(b"NOPExxxx"),
+        Err(PersistError::MagicMismatch { .. })
+    ));
+    // A garbage over-cap payload length in the first record is a torn tail, not
+    // a panic: the header validates, then the record scan bails to Ok(empty).
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&AUDIT_MAGIC);
+    bytes.extend_from_slice(&AUDIT_FORMAT_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    bytes.extend_from_slice(&[0xFF_u8; AUDIT_RECORD_HEADER_LEN]); // payload_len = huge
+    assert_eq!(AuditLog::decode_all(&bytes).unwrap(), Vec::new());
+}
+
+#[test]
 fn multiple_records_preserve_oldest_first_order() {
     let dir = temp_dir("order");
     let path = log_path(&dir);
