@@ -296,10 +296,19 @@ envelope** (2.5k/5k/10k fixture rows, ~scale/3 `Person` rows) — correlated
 re-evaluation is O(rows × subquery), so the cost grows super-linearly and 50k/100k
 would be a multi-minute single arm.
 
+_Refreshed post-GQLRT-05 (an A/B of development HEAD vs the feature branch on this
+M5, profile `full`), so these run ahead of the `3a864ac` header until the next
+clean re-sweep. The per-statement target-schema memo improved every arm: exists
+−1.8 / −6.8 / −4.7 %, count −3.7 / −5.8 / −0.4 % at 2.5k / 5k / 10k. The 2.5k–5k
+arms are clearly significant (p<0.05); the 10k arms are noisier (the 10k/count
+−0.4% is within run-to-run noise). A modest win — the per-row `schema_for_pattern`
+rebuild is a real but minority fraction of subquery cost, dominated by the inner
+MATCH._
+
 | Bench | 2.5k | 5k | 10k | Notes |
 |---|---:|---:|---:|---|
-| `gql_correlated_subquery/exists` | 81.1 ms | 324.4 ms | 1.222 s | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`. |
-| `gql_correlated_subquery/count` | 81.3 ms | 328.3 ms | 1.259 s | `COUNT { (p)-[:KNOWS]->(:Person) }` projection. |
+| `gql_correlated_subquery/exists` | 62.2 ms | 252.9 ms | 1.008 s | `FILTER EXISTS { (p)-[:KNOWS]->(:Person) }`; schema memo (GQLRT-05). |
+| `gql_correlated_subquery/count` | 62.3 ms | 253.3 ms | 1.005 s | `COUNT { (p)-[:KNOWS]->(:Person) }` projection. |
 
 ### §5b `write_e2e` — GQL write end-to-end
 
@@ -384,7 +393,7 @@ confirm the win and guard the surrounding rows against regression.
 | GRAPH-05 ✓ | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (now linear) | **4.54 ms** @ degree 10k (was 133 ms — 30×) |
 | PERSIST-04 | WAL vectored write | `persist_wal_body_size_no_fsync` (large-body arms) | 13.1 ms @ 50k/entry |
 | ALGO-01/02/05 ✓ | CSR dense-`u32` cache on `ProjNeighbor` | `algo/projection_build` + `…_neighbor_iter` + algo medians | **pagerank −15..31% · louvain −23..26% · apsp −9..52% · triangle −6..11% · iter −4..6%**; build +4–7% one-time (24→32 B/neighbor) |
-| GQLRT-05 | Memoize correlated-subquery schema | `gql_correlated_subquery/{exists,count}` | 1.22 s @ 10k |
+| GQLRT-05 ✓ | Memoize correlated-subquery target schema (per statement, by expr id) | `gql_correlated_subquery/{exists,count}` | **−2 to −7%** — memo elides the per-row `schema_for_pattern` walk |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
 | D14 (guard) | Snapshot rkyv encode/positional recovery | `graph_snapshot_roundtrip/{encode,decode}` | enc 69 ms / dec 216 ms @100k |
 

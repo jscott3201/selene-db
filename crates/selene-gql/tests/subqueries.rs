@@ -94,6 +94,58 @@ fn exists_correlated_with_outer_binding() {
     assert_eq!(bool_values(&table, "has_sensor"), [false, true, false]);
 }
 
+/// GQLRT-05 regression: two distinct correlated subqueries in one statement must
+/// keep independent, correctly-correlated results across every outer row. The
+/// per-statement target-schema memo is keyed by expression id and populated on
+/// the first outer row, then reused — so this exercises both the cross-subquery
+/// keying (the two `EXISTS` get different schemas/labels) and the cache-hit path
+/// (rows 2..N reuse the row-1 schema while still correlating per row).
+#[test]
+fn distinct_correlated_subqueries_stay_independent_under_schema_memo() {
+    let table = execute(
+        "MATCH (a:Person)
+         RETURN a.name AS name,
+                EXISTS { MATCH (a)-[:KNOWS]->(:Person) } AS knows_person,
+                EXISTS { MATCH (a)-[:KNOWS]->(:Sensor) } AS knows_sensor
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    // Alice KNOWS Bob (a Person); Bob KNOWS the Sensor; Cara has no out-edges.
+    // The two columns must diverge — a memo that cross-wired the schemas or
+    // failed to re-correlate per row would collapse them.
+    assert_eq!(bool_values(&table, "knows_person"), [true, false, false]);
+    assert_eq!(bool_values(&table, "knows_sensor"), [false, true, false]);
+}
+
+/// GQLRT-05 regression: a subquery nested inside another subquery crosses the
+/// `EvalCtx::with_plan` boundary (a distinct plan registry) yet shares the one
+/// per-statement schema memo. Because expression ids are allocated once per
+/// statement (a single `ExprTypeTable`) and every plan clones that one
+/// `ExprIdLookup`, the outer and inner `EXISTS` get distinct ids that cannot
+/// collide in the cache. This asserts the nested correlation still resolves
+/// per row through the memo.
+#[test]
+fn nested_correlated_subquery_through_memo_is_correct() {
+    let table = execute(
+        "MATCH (a:Person)
+         WHERE EXISTS {
+             MATCH (a)-[:KNOWS]->(b)
+             WHERE EXISTS { MATCH (b)-[:KNOWS]->(:Sensor) }
+         }
+         RETURN a.name AS name
+         ORDER BY name",
+    );
+
+    // Alice KNOWS Bob, and Bob KNOWS the Sensor -> Alice qualifies.
+    // Bob KNOWS the Sensor, but the Sensor has no outgoing KNOWS -> Bob fails.
+    // Cara has no out-edges -> fails.
+    assert_eq!(string_values(&table, "name"), vec!["Alice".to_owned()]);
+}
+
 #[test]
 fn exists_nested_two_levels() {
     let table = execute(
