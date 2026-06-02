@@ -812,6 +812,35 @@ mod tests {
     }
 
     #[test]
+    fn parse_many_rebases_gg21_key_label_set_span() {
+        // The explicit GG21 `<...type key label set>` span feeds the planner's
+        // IL003 42013/42015 cardinality diagnostics; in a batch it must be
+        // rebased to the original source offset, not the segment-local one
+        // (otherwise a later statement's error points into the wrong segment).
+        let source = "CREATE NODE TYPE :Ok (); CREATE NODE TYPE :A & :B => ()";
+        let statements = parse_many(source).expect("parse_many succeeds");
+        assert_eq!(statements.len(), 2);
+        let crate::ast::Statement::Ddl(crate::ast::DdlStatement::CreateNodeType {
+            key_label_set,
+            ..
+        }) = &statements[1]
+        else {
+            panic!("expected a CREATE NODE TYPE with an explicit key label set");
+        };
+        let key_label_set = key_label_set
+            .as_ref()
+            .expect("explicit `=>` key label set present");
+        let second_stmt_offset =
+            u32::try_from(source.find("CREATE NODE TYPE :A").unwrap()).unwrap();
+        assert!(
+            key_label_set.span.byte_offset >= second_stmt_offset,
+            "key-label-set span {} must be rebased into the second statement (>= {})",
+            key_label_set.span.byte_offset,
+            second_stmt_offset
+        );
+    }
+
+    #[test]
     fn parse_many_skips_empty_statements() {
         let statements = parse_many(";;INSERT (:A) FINISH;;").expect("parse_many succeeds");
         assert_eq!(statements.len(), 1);
