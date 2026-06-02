@@ -651,20 +651,26 @@ pub struct ImplDefinedCaps {
     pub set_op_key_cap: NonZeroUsize,
     /// Maximum distinct groups a `GROUP BY` may materialize.
     pub group_by_key_cap: NonZeroUsize,
+    // The four key-label-set cardinality bounds (IL003) are `pub(crate)`, NOT
+    // `pub` like the other caps: the runtime can only represent a *singleton*
+    // key label set, so these are a fixed internal invariant (min = max = 1),
+    // not an embedder knob. Keeping them crate-private prevents an external
+    // caller from mutating `ImplDefinedCaps::DEFAULT.node_key_label_set_max` past
+    // 1 (which `#[non_exhaustive]` alone does NOT stop for public fields) and
+    // committing an unrepresentable multi-label set. They become `pub` +
+    // builder-configurable with multi-label runtime support (v1.3).
     /// Minimum cardinality of an explicit node-type key label set (ISO/IEC
-    /// 39075:2024 IL003, §18.2 SR10). Fixed at 1 in this release — see the
-    /// `impl` note on why these bounds are not embedder-tunable yet.
-    pub node_key_label_set_min: u32,
+    /// 39075:2024 IL003, §18.2 SR10). Fixed at 1.
+    pub(crate) node_key_label_set_min: u32,
     /// Maximum cardinality of an explicit node-type key label set (ISO/IEC
-    /// 39075:2024 IL003, §18.2 SR11). Fixed at 1 in this release (singleton —
-    /// multi-label key label sets are a deferred, v1.3 feature).
-    pub node_key_label_set_max: u32,
+    /// 39075:2024 IL003, §18.2 SR11). Fixed at 1 (singleton).
+    pub(crate) node_key_label_set_max: u32,
     /// Minimum cardinality of an explicit edge-type key label set (ISO/IEC
-    /// 39075:2024 IL003, §18.3 SR11). Fixed at 1 in this release.
-    pub edge_key_label_set_min: u32,
+    /// 39075:2024 IL003, §18.3 SR11). Fixed at 1.
+    pub(crate) edge_key_label_set_min: u32,
     /// Maximum cardinality of an explicit edge-type key label set (ISO/IEC
-    /// 39075:2024 IL003, §18.3 SR12). Fixed at 1 in this release (singleton).
-    pub edge_key_label_set_max: u32,
+    /// 39075:2024 IL003, §18.3 SR12). Fixed at 1 (singleton).
+    pub(crate) edge_key_label_set_max: u32,
 }
 
 impl ImplDefinedCaps {
@@ -739,11 +745,13 @@ impl ImplDefinedCaps {
     // only represent a *singleton* key label set: `EdgeTypeDef.label` is a single
     // discriminator, and an empty explicit set has no element-type name. A
     // configurable bound would let `> 1` silently drop labels or `0` synthesize a
-    // placeholder name. So the bounds are fixed at min = max = 1 via `DEFAULT`,
-    // and `#[non_exhaustive]` keeps external callers from overriding them by
-    // struct literal. Configurable bounds land *with* multi-label runtime support
-    // (v1.3); adding `with_{node,edge}_key_label_set_bounds` then is the atomic
-    // place to re-expose them.
+    // placeholder name. So the bounds are fixed at min = max = 1 via `DEFAULT` and
+    // their fields are `pub(crate)` (not `pub`) — `#[non_exhaustive]` blocks only
+    // struct-literal construction, not field mutation of a `DEFAULT`-derived
+    // instance, so crate-private visibility is what actually keeps an embedder
+    // from setting them. Configurable bounds land *with* multi-label runtime
+    // support (v1.3); adding `with_{node,edge}_key_label_set_bounds` + making the
+    // fields `pub` then is the atomic place to re-expose them.
 }
 
 impl Default for ImplDefinedCaps {

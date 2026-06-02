@@ -246,12 +246,24 @@ fn scrub_ddl(statement: &mut DdlStatement) {
         | DdlStatement::CreateIndex { span, .. }
         | DdlStatement::DropIndex { span, .. } => *span = SourceSpan::default(),
         DdlStatement::CreateNodeType {
-            properties, span, ..
+            properties,
+            key_label_set,
+            span,
+            ..
         }
         | DdlStatement::CreateEdgeType {
-            properties, span, ..
+            properties,
+            key_label_set,
+            span,
+            ..
         } => {
             *span = SourceSpan::default();
+            // The explicit GG21 key-label-set carries its own source span;
+            // erase it too so `structurally_eq` stays span-insensitive for
+            // identical DDL parsed at different offsets (e.g. via `parse_many`).
+            if let Some(key_label_set) = key_label_set {
+                key_label_set.span = SourceSpan::default();
+            }
             for property in properties {
                 scrub_property_def(property);
             }
@@ -318,5 +330,15 @@ mod tests {
         let right = parse("RETURN 2").expect("parse");
         assert!(!structurally_eq(&left, &right));
         assert!(matches!(left, Statement::Query(_)));
+    }
+
+    #[test]
+    fn ignores_gg21_key_label_set_span_differences() {
+        // The explicit GG21 `<...type key label set>` carries its own source
+        // span; two identical DDL statements parsed at different offsets must
+        // still compare structurally equal (the scrub clears `key_label_set.span`).
+        let left = parse("CREATE NODE TYPE :Person => (name :: STRING)").expect("parse");
+        let right = parse("   CREATE NODE TYPE :Person => (name :: STRING)").expect("parse");
+        assert!(structurally_eq(&left, &right));
     }
 }

@@ -157,6 +157,27 @@ fn explicit_singleton_key_label_set_parses_and_plans() {
     planned("CREATE NODE TYPE :Account => ()");
 }
 
+#[test]
+fn implies_keyword_is_accepted_like_the_symbolic_form() {
+    // ISO §21.3: `<implies> ::= <right double arrow> | IMPLIES`. Both spellings
+    // must parse, plan, and commit identically.
+    let (keyword_type, keyword_changes) =
+        commit_node_type(3820, "CREATE NODE TYPE :Person IMPLIES (name :: STRING)");
+    let (symbol_type, symbol_changes) =
+        commit_node_type(3821, "CREATE NODE TYPE :Person => (name :: STRING)");
+    assert_eq!(
+        keyword_type, symbol_type,
+        "`IMPLIES` keyword and `=>` must yield the same bound type"
+    );
+    assert_eq!(keyword_changes, symbol_changes);
+
+    // Case-insensitive; and `implies` is matched only in the key-label-set
+    // position — it is NOT a global reserved word, so a type/label literally
+    // named `implies` still parses as the bare GG20 form.
+    planned("CREATE EDGE TYPE :KNOWS implies (since :: INTEGER)");
+    planned("CREATE NODE TYPE :implies (x :: INT)");
+}
+
 // --- IL003 cardinality rejects (the spec-defined GQLSTATUS) ------------------
 
 #[test]

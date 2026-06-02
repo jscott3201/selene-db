@@ -56,19 +56,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   error. Violations filter (no GQLSTATUS).
 - **`GG21` "Explicit element type key label sets" — honest singleton (ISO
   §18.2/18.3).** The type-DDL grammar now parses the explicit
-  `[ <label set phrase> ] <implies>` form (the symbolic `=>` marker — no reserved
-  keyword added, so no parser-recursion surface), and the flagger stamps `GG21`
-  only for the explicit form (bare `:Name` stays `GG20`-only). Key-label-set
-  cardinality is bounded by the implementation-defined `IL003` cap (default
-  min=max=1, configurable via `ImplDefinedCaps`): a cardinality-0 set is rejected
-  with `42012` (node) / `42014` (edge) and a cardinality->1 set with `42013` /
+  `[ <label set phrase> ] <implies>` form, accepting **both** ISO `<implies>`
+  spellings — the symbolic `=>` and the `IMPLIES` keyword (matched only in this
+  position, not added to the global reserved-word set, so `implies` stays usable
+  as an identifier). The flagger stamps `GG21` only for the explicit form (bare
+  `:Name` stays `GG20`-only). Key-label-set cardinality is fixed at the singleton
+  `IL003` bound (min=max=1): a cardinality-0 set is rejected with `42012` (node) /
+  `42014` (edge) and a cardinality->1 set (e.g. `:A & :B =>`) with `42013` /
   `42015` — the spec's own GQLSTATUS. The accepted singleton is observationally
   identical to the implied `:Name` form (same `GraphTypeDef`, same WAL
   `SchemaChange`, exact-equality element-type identification — and it survives a
   snapshot+WAL recovery round-trip). The separate implied-label form
-  (`:Person => :Employee`) and multi-label key label sets are an honest `42N01`
-  `FEATURE_NOT_SUPPORTED` (deferred to v1.3). `GG21` re-enters `SUPPORTED_FEATURES`;
-  it implies `GG02` (§24.7), which stays claimed.
+  (`:Person => :Employee`, which needs containment identification) is the only
+  shape that returns `42N01` `FEATURE_NOT_SUPPORTED`; it and full multi-label key
+  label sets are deferred to v1.3. `GG21` re-enters `SUPPORTED_FEATURES`; it
+  implies `GG02` (§24.7), which stays claimed.
 
 ### Changed
 
