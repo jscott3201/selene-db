@@ -2,8 +2,9 @@
 
 use selene_core::{GraphId, feature_register::FeatureId};
 use selene_gql::{
-    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, GqlStatus, ParserError,
-    TxContext, analyze, execute_pattern, execute_pipeline, feature_walk, parse, plan,
+    Binding, BindingTable, BindingTableSchema, EmptyProcedureRegistry, GqlStatus, MatchMode,
+    ParserError, PipelineStatement, Statement, TxContext, analyze, execute_pattern,
+    execute_pipeline, feature_walk, parse, plan,
 };
 use selene_graph::SharedGraph;
 
@@ -194,6 +195,126 @@ fn match_mode_keywords_tolerate_whitespace_and_comments() {
             records(source).contains(&FeatureId::G003),
             "REPEATABLE ELEMENTS with a non-single-space separator must record G003: {source:?}"
         );
+    }
+}
+
+/// Parse `source` and return the leading MATCH clause's `match_mode`, panicking
+/// if `source` does not parse or contains no MATCH clause. Used by the §16.4
+/// match-mode synonym tests to assert the resolved [`MatchMode`] variant.
+fn match_mode_of(source: &str) -> Option<MatchMode> {
+    let statement = parse(source).unwrap_or_else(|e| panic!("{source:?} must parse: {e:?}"));
+    let Statement::Query(pipeline) = statement else {
+        panic!("{source:?} did not parse as a read query");
+    };
+    for stmt in &pipeline.statements {
+        if let PipelineStatement::Match(clause) = stmt {
+            return clause.match_mode;
+        }
+    }
+    panic!("{source:?} has no MATCH clause");
+}
+
+#[test]
+fn match_mode_synonyms_resolve_to_two_variants() {
+    // ISO/IEC 39075:2024 §16.4: <match mode> admits the noun synonyms EDGE /
+    // RELATIONSHIP / EDGES / RELATIONSHIPS / ELEMENT / ELEMENTS, each optionally
+    // followed by BINDINGS after the SINGULAR noun only. All edge-family
+    // spellings are DIFFERENT EDGES (G002); all element-family spellings are
+    // REPEATABLE ELEMENTS (G003) — pure syntactic sugar onto the two semantics.
+    for source in [
+        "MATCH DIFFERENT EDGE (n) RETURN n",
+        "MATCH DIFFERENT EDGES (n) RETURN n",
+        "MATCH DIFFERENT RELATIONSHIP (n) RETURN n",
+        "MATCH DIFFERENT RELATIONSHIPS (n) RETURN n",
+        "MATCH DIFFERENT EDGE BINDINGS (n) RETURN n",
+        "MATCH DIFFERENT RELATIONSHIP BINDINGS (n) RETURN n",
+    ] {
+        assert_eq!(
+            match_mode_of(source),
+            Some(MatchMode::DifferentEdges),
+            "{source:?} must resolve to DifferentEdges"
+        );
+        // Every synonym must still flag G002 and plan/execute unchanged.
+        let features = feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            features.contains(&FeatureId::G002),
+            "{source:?} must record G002; observed {features:?}"
+        );
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+
+    for source in [
+        "MATCH REPEATABLE ELEMENT (n) RETURN n",
+        "MATCH REPEATABLE ELEMENTS (n) RETURN n",
+        "MATCH REPEATABLE ELEMENT BINDINGS (n) RETURN n",
+    ] {
+        assert_eq!(
+            match_mode_of(source),
+            Some(MatchMode::RepeatableElements),
+            "{source:?} must resolve to RepeatableElements"
+        );
+        let features = feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+        assert!(
+            features.contains(&FeatureId::G003),
+            "{source:?} must record G003; observed {features:?}"
+        );
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+}
+
+#[test]
+fn match_mode_rejects_plural_bindings_and_non_synonyms() {
+    // ISO §16.4: BINDINGS is permitted ONLY after the SINGULAR noun. The plural
+    // forms (ELEMENTS / EDGES / RELATIONSHIPS) admit no trailing BINDINGS, and
+    // VERTEX / NODE are not ISO synonyms. A bare `DIFFERENT BINDINGS` is missing
+    // the required edge noun. Each must be a parse error (the trailing tokens
+    // can never start a valid graph pattern).
+    for source in [
+        "MATCH DIFFERENT EDGES BINDINGS (n) RETURN n",
+        "MATCH DIFFERENT RELATIONSHIPS BINDINGS (n) RETURN n",
+        "MATCH REPEATABLE ELEMENTS BINDINGS (n) RETURN n",
+        "MATCH DIFFERENT VERTEX (n) RETURN n",
+        "MATCH REPEATABLE NODE (n) RETURN n",
+        "MATCH DIFFERENT BINDINGS (n) RETURN n",
+    ] {
+        assert!(
+            parse(source).is_err(),
+            "{source:?} is not a valid ISO §16.4 match mode and must be rejected"
+        );
+    }
+}
+
+#[test]
+fn match_mode_synonyms_remain_usable_as_identifiers() {
+    // The §16.4 synonym nouns are recognised CONTEXTUALLY (only in the match-mode
+    // leading position) and are deliberately NOT added to the global `keyword`
+    // rule (parser-DoS no-new-reserved-word posture, IMPLIES precedent 813). They
+    // must therefore stay usable as ordinary property/variable identifiers.
+    for source in [
+        "MATCH (n) RETURN n.edge",
+        "MATCH (n) RETURN n.edges",
+        "MATCH (n) RETURN n.element",
+        "MATCH (n) RETURN n.elements",
+        "MATCH (n) RETURN n.relationship",
+        "MATCH (n) RETURN n.relationships",
+        "MATCH (n) RETURN n.bindings",
+        "MATCH (n) RETURN n.repeatable",
+        "MATCH (element) RETURN element",
+        "MATCH (relationship) RETURN relationship",
+        "MATCH (repeatable) RETURN repeatable",
+        "MATCH (bindings) RETURN bindings",
+    ] {
+        parse(source).unwrap_or_else(|e| {
+            panic!("{source:?} must parse: synonym nouns stay usable as identifiers: {e:?}")
+        });
     }
 }
 

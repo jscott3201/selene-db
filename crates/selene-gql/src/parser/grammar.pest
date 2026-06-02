@@ -166,7 +166,66 @@ with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 // -- MATCH ----------------------------------------------------------
 
 match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
-match_mode        = { ^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS" }
+// ISO/IEC 39075:2024 §16.4 <match mode>. Verbatim BNF:
+//   <match mode> ::= <repeatable elements match mode> | <different edges match mode>
+//   <repeatable elements match mode> ::= REPEATABLE <element bindings or elements>
+//   <different edges match mode>     ::= DIFFERENT <edge bindings or edges>
+//   <element bindings or elements>   ::= ELEMENT [ BINDINGS ] | ELEMENTS
+//   <edge bindings or edges>         ::= <edge synonym> [ BINDINGS ] | <edges synonym>
+//   <edge synonym>  ::= EDGE | RELATIONSHIP
+//   <edges synonym> ::= EDGES | RELATIONSHIPS
+//
+// Two correctness invariants this rule must encode exactly:
+//
+//  1. BINDINGS is permitted ONLY after the SINGULAR noun (ELEMENT / EDGE /
+//     RELATIONSHIP) and MUST be rejected after the PLURAL noun (ELEMENTS /
+//     EDGES / RELATIONSHIPS). "DIFFERENT EDGE BINDINGS" is legal; "DIFFERENT
+//     EDGES BINDINGS" is not. The singular branches carry the optional
+//     `match_mode_bindings`; the plural branches do not.
+//  2. Prefix-shadow safety: ^"ELEMENT" is a prefix of ^"ELEMENTS" (likewise
+//     EDGE/EDGES, RELATIONSHIP/RELATIONSHIPS). Every keyword token therefore
+//     ends in the Unicode word boundary `!(LETTER | NUMBER | "_")`, and each
+//     alternation tries the longer/plural spelling BEFORE the shorter/singular
+//     one — mirroring the `counted_group_kw` idiom (`(^"GROUPS" | ^"GROUP") ~
+//     !(LETTER | NUMBER | "_")`) so "ELEMENTS" can never parse as
+//     "ELEMENT" + a dangling "S".
+//
+// Deliberate no-keyword-growth decision: REPEATABLE / ELEMENT / ELEMENTS / EDGE
+// / EDGES / RELATIONSHIP / RELATIONSHIPS / BINDINGS are NOT added to the global
+// `keyword` rule. They are recognised purely contextually in the match_mode
+// leading position, so they remain usable as ordinary identifiers (property and
+// variable names). This preserves identifier usability and the parser-DoS
+// no-new-reserved-word posture, following the IMPLIES precedent (813). DIFFERENT
+// and BINDING are already reserved and are left untouched.
+// Each keyword token is a COMPOUND-ATOMIC (`@`) sub-rule so the trailing word
+// boundary `!(LETTER | NUMBER | "_")` abuts the keyword directly: inside a
+// non-atomic rule a bare `^"EDGE" ~ !(LETTER…)` would let pest consume the
+// inter-token WHITESPACE before testing the lookahead, making "EDGE BINDINGS"
+// fail the boundary against the following 'B'. Composing the atomic tokens in
+// the non-atomic parent below re-enables WHITESPACE *between* the noun and the
+// optional BINDINGS, where it belongs.
+match_mode        = {
+    ^"REPEATABLE" ~ element_bindings_or_elements
+  | ^"DIFFERENT"  ~ edge_bindings_or_edges
+}
+// <element bindings or elements> ::= ELEMENT [ BINDINGS ] | ELEMENTS
+element_bindings_or_elements = {
+    elements_synonym
+  | element_synonym ~ match_mode_bindings?
+}
+// <edge bindings or edges> ::= (EDGE|RELATIONSHIP) [ BINDINGS ] | (EDGES|RELATIONSHIPS)
+edge_bindings_or_edges = {
+    edges_synonym
+  | edge_synonym ~ match_mode_bindings?
+}
+// Plural alternatives are listed BEFORE the singular so the longer spelling
+// wins (mirrors the `counted_group_kw` GROUPS-before-GROUP idiom); the trailing
+// boundary then guarantees "EDGES" cannot be read as "EDGE" + a dangling "S".
+elements_synonym    = @{ ^"ELEMENTS" ~ !(LETTER | NUMBER | "_") }
+element_synonym     = @{ ^"ELEMENT" ~ !(LETTER | NUMBER | "_") }
+edges_synonym       = @{ (^"EDGES" | ^"RELATIONSHIPS") ~ !(LETTER | NUMBER | "_") }
+edge_synonym        = @{ (^"EDGE" | ^"RELATIONSHIP") ~ !(LETTER | NUMBER | "_") }
+match_mode_bindings = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
 path_selector     = {
     ^"ANY" ~ ^"SHORTEST"?
   | ^"ALL" ~ ^"SHORTEST"?
