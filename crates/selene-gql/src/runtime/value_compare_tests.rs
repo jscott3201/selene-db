@@ -163,16 +163,16 @@ fn compare_non_null_local_datetime_eq() {
 fn compare_non_null_zoned_and_time_values() {
     assert_eq!(
         compare_non_null(
-            &Value::ZonedDateTime(
+            &Value::ZonedDateTime(Box::new(
                 "2024-01-01T00:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
-            &Value::ZonedDateTime(
+            )),
+            &Value::ZonedDateTime(Box::new(
                 "2026-01-01T00:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
+            )),
         ),
         Some(Ordering::Less)
     );
@@ -185,16 +185,16 @@ fn compare_non_null_zoned_and_time_values() {
     );
     assert_eq!(
         compare_non_null(
-            &Value::ZonedTime(
+            &Value::ZonedTime(Box::new(
                 "2024-01-01T01:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
-            &Value::ZonedTime(
+            )),
+            &Value::ZonedTime(Box::new(
                 "2024-01-01T02:00:00-05:00[America/New_York]"
                     .parse()
                     .unwrap(),
-            ),
+            )),
         ),
         Some(Ordering::Less)
     );
@@ -204,8 +204,8 @@ fn compare_non_null_zoned_and_time_values() {
 fn compare_non_null_duration_lt() {
     assert_eq!(
         compare_non_null(
-            &Value::Duration("PT1S".parse().unwrap()),
-            &Value::Duration("PT2S".parse().unwrap())
+            &Value::Duration(Box::new("PT1S".parse().unwrap())),
+            &Value::Duration(Box::new("PT2S".parse().unwrap()))
         ),
         Some(Ordering::Less)
     );
@@ -310,36 +310,36 @@ fn compare_for_sort_orders_temporal_payloads() {
         Value::LocalDateTime("2026-01-01T00:00:00".parse().unwrap()),
     );
     assert_sort_less(
-        Value::ZonedDateTime(
+        Value::ZonedDateTime(Box::new(
             "2024-01-01T00:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
-        Value::ZonedDateTime(
+        )),
+        Value::ZonedDateTime(Box::new(
             "2026-01-01T00:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
+        )),
     );
     assert_sort_less(
         Value::LocalTime("01:00:00".parse().unwrap()),
         Value::LocalTime("02:00:00".parse().unwrap()),
     );
     assert_sort_less(
-        Value::ZonedTime(
+        Value::ZonedTime(Box::new(
             "2024-01-01T01:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
-        Value::ZonedTime(
+        )),
+        Value::ZonedTime(Box::new(
             "2024-01-01T02:00:00-05:00[America/New_York]"
                 .parse()
                 .unwrap(),
-        ),
+        )),
     );
     assert_sort_less(
-        Value::Duration("PT1H".parse().unwrap()),
-        Value::Duration("PT2H".parse().unwrap()),
+        Value::Duration(Box::new("PT1H".parse().unwrap())),
+        Value::Duration(Box::new("PT2H".parse().unwrap())),
     );
 }
 

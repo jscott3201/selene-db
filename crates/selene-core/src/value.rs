@@ -56,7 +56,11 @@ pub enum Value {
     /// Closed record value tied to a graph-type-defined record type.
     RecordTyped(Box<RecordTyped>),
     /// Path value.
-    Path(Path),
+    ///
+    /// Boxed (CORE-06): an inline `Path` is 120 B and was the `size_of::<Value>`
+    /// ceiling. Paths are ephemeral traversal results, rarely stored, so moving
+    /// one behind a pointer shrinks every `Value` clone/move to a pointer copy.
+    Path(Box<Path>),
     /// Node reference value.
     NodeRef(NodeId),
     /// Edge reference value.
@@ -66,7 +70,10 @@ pub enum Value {
     /// Binding-table reference value.
     TableRef(BindingTableId),
     /// Zoned datetime value.
-    ZonedDateTime(jiff::Zoned),
+    ///
+    /// Boxed (CORE-06): `jiff::Zoned` is 40 B; temporal values are uncommon in
+    /// hot graph data, so the indirection is paid only on temporal access.
+    ZonedDateTime(Box<jiff::Zoned>),
     /// Local datetime value.
     LocalDateTime(jiff::civil::DateTime),
     /// Date value.
@@ -75,11 +82,16 @@ pub enum Value {
     ///
     /// `jiff` 0.2 has no dedicated zoned-time type, so selene-core uses
     /// `jiff::Zoned`; date components are ignored at the GQL boundary.
-    ZonedTime(jiff::Zoned),
+    ///
+    /// Boxed (CORE-06): see [`Value::ZonedDateTime`].
+    ZonedTime(Box<jiff::Zoned>),
     /// Local time value.
     LocalTime(jiff::civil::Time),
     /// Duration value.
-    Duration(jiff::Span),
+    ///
+    /// Boxed (CORE-06): `jiff::Span` is 64 B (the largest time variant); boxing
+    /// it keeps the post-`Path` ceiling off `Value`.
+    Duration(Box<jiff::Span>),
     /// Extension-owned opaque payload.
     Extended {
         /// Registered extension type ID.
@@ -97,11 +109,15 @@ pub enum Value {
 ///
 /// `Value` is moved and cloned on every property read, `PropertyMap` copy, and
 /// binding-table row, so its in-memory size is a hot-path cost multiplier (see
-/// the `value_clone` bench). It is currently 128 bytes on 64-bit targets,
-/// dominated by the inlined `Duration(jiff::Span)` (64 B) and `jiff::Zoned`
-/// time variants. This assert fails the build if a future variant grows the
-/// enum; **lower the ceiling** when CORE-06 boxes the large time variants.
-const _: () = assert!(core::mem::size_of::<Value>() <= 128);
+/// the `value_clone` bench). CORE-06 boxed the four oversized variants —
+/// `Path` (120 B, which a `size_of` profile proved was the real former ceiling,
+/// **not** the time variants the design doc assumed), `Duration(jiff::Span)`
+/// (64 B), and the two `jiff::Zoned` variants (40 B) — bringing `Value` from
+/// 128 B down to 32 B (the `String(IStr)` / `List(Vec)` 24-byte payload plus
+/// the discriminant, 16-aligned by the `i128`/`Decimal` variants). This assert
+/// fails the build if a future variant regrows the enum; box the offending
+/// payload or lift the ceiling deliberately.
+const _: () = assert!(core::mem::size_of::<Value>() <= 32);
 
 impl Value {
     /// Factory table with one sample value for each [`Value`] variant.
@@ -129,22 +145,22 @@ impl Value {
             }))
         },
         || {
-            Self::Path(Path {
+            Self::Path(Box::new(Path {
                 graph: GraphId::new(1),
                 start: NodeId::new(1),
                 segments: SmallVec::new(),
-            })
+            }))
         },
         || Self::NodeRef(NodeId::new(1)),
         || Self::EdgeRef(EdgeId::new(1)),
         || Self::GraphRef(GraphId::new(1)),
         || Self::TableRef(BindingTableId::new(1)),
-        || Self::ZonedDateTime(value_variant_zoned()),
+        || Self::ZonedDateTime(Box::new(value_variant_zoned())),
         || Self::LocalDateTime("2024-01-01T00:00:00".parse().unwrap()),
         || Self::Date("2024-01-01".parse().unwrap()),
-        || Self::ZonedTime(value_variant_zoned()),
+        || Self::ZonedTime(Box::new(value_variant_zoned())),
         || Self::LocalTime("00:00:00".parse().unwrap()),
-        || Self::Duration("PT1S".parse().unwrap()),
+        || Self::Duration(Box::new("PT1S".parse().unwrap())),
         || Self::Extended {
             type_id: ExtensionTypeId::FIRST_PARTY_MIN,
             payload: Arc::from([0_u8]),

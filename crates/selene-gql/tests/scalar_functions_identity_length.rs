@@ -119,7 +119,7 @@ fn rows_from_output(output: StatementOutput) -> BindingTable {
 }
 
 fn two_edge_path_value() -> Value {
-    Value::Path(Path {
+    Value::Path(Box::new(Path {
         graph: GraphId::new(1),
         start: NodeId::new(1),
         segments: smallvec![
@@ -134,7 +134,7 @@ fn two_edge_path_value() -> Value {
                 node: NodeId::new(3),
             },
         ],
-    })
+    }))
 }
 
 #[test]

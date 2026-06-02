@@ -237,7 +237,7 @@ fn heavy_value() -> impl Strategy<Value = Value> {
         Just(Value::Date("2024-06-15".parse().unwrap())),
         Just(Value::LocalDateTime("2024-06-15T12:30:00".parse().unwrap())),
         Just(Value::LocalTime("12:30:00".parse().unwrap())),
-        Just(Value::Duration("PT3H15M".parse().unwrap())),
+        Just(Value::Duration(Box::new("PT3H15M".parse().unwrap()))),
         any::<u128>().prop_map(|n| Value::Uuid(uuid::Uuid::from_u128(n))),
         Just(Value::Null),
     ];

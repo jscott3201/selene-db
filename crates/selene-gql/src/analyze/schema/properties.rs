@@ -478,7 +478,7 @@ mod tests {
             (
                 PropertyValueType::ZonedDateTime,
                 GqlType::ZonedDateTime,
-                Value::ZonedDateTime(zoned.parse().unwrap()),
+                Value::ZonedDateTime(Box::new(zoned.parse().unwrap())),
             ),
             (
                 PropertyValueType::LocalDateTime,
@@ -493,7 +493,7 @@ mod tests {
             (
                 PropertyValueType::ZonedTime,
                 GqlType::ZonedTime,
-                Value::ZonedTime(zoned.parse().unwrap()),
+                Value::ZonedTime(Box::new(zoned.parse().unwrap())),
             ),
             (
                 PropertyValueType::LocalTime,
@@ -503,7 +503,7 @@ mod tests {
             (
                 PropertyValueType::Duration,
                 GqlType::Duration,
-                Value::Duration("PT1H2S".parse().unwrap()),
+                Value::Duration(Box::new("PT1H2S".parse().unwrap())),
             ),
             (PropertyValueType::Null, GqlType::Null, Value::Null),
         ];
