@@ -121,6 +121,66 @@ fn path_or_paths_is_accepted_in_a_data_modifying_match() {
 }
 
 #[test]
+fn path_variable_named_path_or_paths_is_preserved() {
+    // Codex (PR #244, P2): PATH/PATHS stay non-reserved, so a path variable literally
+    // named `path` / `paths` must win over the optional G014 keyword. The `!("=")`
+    // guard releases it to path_var_binding (`ident ~ "="`); the keyword is NOT
+    // consumed (flag stays false), mirroring the BINDINGS handling in §16.4.
+    for source in [
+        "MATCH paths = (n) RETURN paths",
+        "MATCH path = (n) RETURN path",
+        "MATCH ALL paths = (n) RETURN paths",
+        "MATCH WALK path = (n) RETURN path",
+    ] {
+        assert!(
+            !match_path_or_paths(source),
+            "{source:?} must parse with `path(s)` as the path variable, G014 flag false"
+        );
+    }
+}
+
+#[test]
+fn path_or_paths_rejected_after_counted_group() {
+    // Codex (PR #244, P2): ISO §16.6 places <path or paths> BEFORE the GROUP/GROUPS
+    // discriminator in <counted shortest group search>. selene's flattened trailing
+    // slot would put it AFTER GROUP[S] (wrong ISO order), so the builder rejects it.
+    for source in [
+        "MATCH SHORTEST 2 GROUPS PATHS (a)-[:K]->(b) RETURN b",
+        "MATCH SHORTEST GROUPS PATHS (a)-[:K]->(b) RETURN b",
+        "MATCH SHORTEST 1 GROUP PATH (a)-[:K]->(b) RETURN b",
+    ] {
+        let err = parse(source).expect_err(&format!("{source:?} must be rejected"));
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn concatenated_prefix_and_path_or_paths_is_rejected() {
+    // Codex (PR #244, P2): pest's `~` separator is zero-or-more whitespace, so the
+    // leading selector / mode keywords must be boundary-guarded or a run-together
+    // spelling would tokenize as keyword + PATHS. The boundary-guarded atomic
+    // sub-rules (all_kw / any_kw / shortest_kw and the atomic path_modifier) make
+    // these reject.
+    for source in [
+        "MATCH ALLPATHS (n) RETURN n",
+        "MATCH ANYPATHS (n) RETURN n",
+        "MATCH WALKPATHS (n) RETURN n",
+        "MATCH ACYCLICPATH (n) RETURN n",
+        "MATCH SIMPLEPATHS (n) RETURN n",
+        "MATCH TRAILPATH (n) RETURN n",
+    ] {
+        let err = parse(source).expect_err(&format!("{source:?} must be rejected"));
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {err:?}"
+        );
+    }
+}
+
+#[test]
 fn absent_path_or_paths_leaves_flag_false() {
     for source in [
         "MATCH (n) RETURN n",

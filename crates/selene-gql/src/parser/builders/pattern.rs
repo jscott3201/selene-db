@@ -69,6 +69,23 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
         ));
     }
 
+    // ISO §16.6 <counted shortest group search> places <path or paths> BEFORE the
+    // GROUP/GROUPS discriminator (`SHORTEST [n] [mode] [path-or-paths] {GROUP|
+    // GROUPS}`). selene's G020 form is the subset `SHORTEST [n] GROUP[S]` (no
+    // interposed mode / path-or-paths), so the flattened trailing slot would place
+    // PATH/PATHS AFTER GROUP[S] — the wrong ISO order. Reject it rather than accept
+    // a non-ISO spelling; the explicit keyword on the counted-group form is a
+    // deferred G020 sub-form (it would need <path or paths> threaded through
+    // counted_shortest_tail ahead of the group keyword).
+    if path_or_paths && matches!(selector, Some(PathSelector::CountedShortestGroup { .. })) {
+        return Err(ParserError::syntax(
+            "PATH/PATHS is not accepted after SHORTEST … GROUP[S]: ISO/IEC 39075:2024 \
+             §16.6 places <path or paths> before the GROUP/GROUPS keyword",
+            source_span,
+            None,
+        ));
+    }
+
     Ok(MatchClause {
         optional,
         selector,
