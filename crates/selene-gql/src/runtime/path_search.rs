@@ -176,13 +176,21 @@ fn select_counted(
         }
     }
 
-    // Pass 2: emit the kept rows in their original encounter order.
-    Ok(rows
-        .into_iter()
-        .enumerate()
-        .filter(|(index, _)| kept.contains(index))
-        .map(|(_, row)| row)
-        .collect())
+    // Pass 2: emit the kept rows in their original encounter order. Keep the
+    // cancellation responsiveness of the legacy two-pass selector — scanning a
+    // large `rows` here must surface a cancelled `TxContext` (5GQL2) during the
+    // emit, not only after the whole selected set has been materialized.
+    let mut selected = Vec::with_capacity(kept.len());
+    rows_since_check = 0;
+    for (index, row) in rows.into_iter().enumerate() {
+        env.ctx
+            .tx
+            .check_cancellation_stride(&mut rows_since_check, 1)?;
+        if kept.contains(&index) {
+            selected.push(row);
+        }
+    }
+    Ok(selected)
 }
 
 fn endpoint_pair(
