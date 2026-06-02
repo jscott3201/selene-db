@@ -10,7 +10,7 @@ use std::{
     time::Instant,
 };
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{
     BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr, Value, metrics,
 };
@@ -18,10 +18,13 @@ use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
 
 use crate::{
     GqlStatus, ProcedureRegistry, SourceSpan,
-    analyze::ExprIdLookup,
+    analyze::{ExprId, ExprIdLookup},
     plan::SubqueryRegistry,
     plan::{ImplDefinedCaps, PipelineOpId},
-    runtime::{BindingTable, BindingTableRegistry, ExecutorError, ExecutorWarning, WarningSink},
+    runtime::{
+        BindingTable, BindingTableRegistry, BindingTableSchema, ExecutorError, ExecutorWarning,
+        WarningSink,
+    },
 };
 
 /// Adaptive re-optimization hook reserved for future executor phases.
@@ -60,6 +63,14 @@ pub struct TxContext<'a, 'g> {
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
     session_time_zone: jiff::tz::TimeZone,
+    /// GQLRT-05 per-statement memo of correlated-subquery target schemas, keyed
+    /// by the subquery expression id. Within one statement an EXISTS/COUNT
+    /// expression is evaluated by exactly one filter/project op whose input
+    /// schema is loop-invariant, so the target schema is identical for every
+    /// outer row — caching it elides the per-row `schema_for_pattern` join-tree
+    /// walk + `BTreeMap` of hidden slots. The id is 1:1 with the source schema
+    /// within a statement, so the expression id alone is a sufficient key.
+    subquery_target_schema: RefCell<FxHashMap<ExprId, BindingTableSchema>>,
 }
 
 /// Expression-evaluation context for one planned execution point.
@@ -142,6 +153,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             result_rows_emitted: Cell::new(0),
             write_txn: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -190,6 +202,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             result_rows_emitted: Cell::new(0),
             write_txn: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -238,6 +251,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
             session_time_zone: jiff::tz::TimeZone::UTC,
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -267,6 +281,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             result_rows_emitted: Cell::new(0),
             write_txn: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -297,6 +312,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
             session_time_zone: jiff::tz::TimeZone::UTC,
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -341,6 +357,30 @@ impl<'a, 'g> TxContext<'a, 'g> {
     #[must_use]
     pub fn session_time_zone(&self) -> &jiff::tz::TimeZone {
         &self.session_time_zone
+    }
+
+    /// Return the cached target schema for the correlated subquery `expr_id`,
+    /// computing and memoizing it on first use within this statement (GQLRT-05).
+    ///
+    /// The target schema is loop-invariant across the outer rows that drive a
+    /// correlated `EXISTS`/`COUNT` subquery (its source schema is the enclosing
+    /// op's input schema), so this avoids rebuilding it — and the relatively
+    /// expensive `schema_for_pattern` join-tree walk it performs — per row.
+    /// `compute` is invoked at most once per `expr_id` per statement and must
+    /// not re-enter this method (it does not: schema construction is pure).
+    pub(crate) fn cached_subquery_schema(
+        &self,
+        expr_id: ExprId,
+        compute: impl FnOnce() -> Result<BindingTableSchema, ExecutorError>,
+    ) -> Result<BindingTableSchema, ExecutorError> {
+        if let Some(schema) = self.subquery_target_schema.borrow().get(&expr_id) {
+            return Ok(schema.clone());
+        }
+        let schema = compute()?;
+        self.subquery_target_schema
+            .borrow_mut()
+            .insert(expr_id, schema.clone());
+        Ok(schema)
     }
 
     /// Emit one runtime warning if the session opted into warning collection.

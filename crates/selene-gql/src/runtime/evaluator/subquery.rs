@@ -10,6 +10,7 @@ use selene_core::Value;
 
 use crate::{
     BindingTableColumn, ExecutionPlan, PatternPlan, PipelineOp, SourceSpan, ValueExpr,
+    analyze::ExprId,
     plan::{OuterBindingRef, PlannedSubquery, SubqueryBody},
     runtime::{
         Binding, BindingTable, BindingTableSchema, DataExceptionSubclass, EvalCtx, ExecutorError,
@@ -68,40 +69,50 @@ fn execute_subquery(
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let planned = planned_subquery(expr, ctx)?;
+    let (expr_id, planned) = planned_subquery(expr, ctx)?;
     match &planned.body {
         SubqueryBody::Pattern(plan) => {
-            execute_pattern_subquery(planned, plan, binding, schema, ctx)
+            execute_pattern_subquery(expr_id, planned, plan, binding, schema, ctx)
         }
-        SubqueryBody::Plan(plan) => execute_plan_subquery(planned, plan, binding, schema, ctx),
+        SubqueryBody::Plan(plan) => {
+            execute_plan_subquery(expr_id, planned, plan, binding, schema, ctx)
+        }
     }
 }
 
 fn planned_subquery<'plan>(
     expr: &ValueExpr,
     ctx: &EvalCtx<'_, '_, '_, 'plan>,
-) -> Result<&'plan PlannedSubquery, ExecutorError> {
+) -> Result<(ExprId, &'plan PlannedSubquery), ExecutorError> {
     let expr_id = ctx
         .expr_ids
         .get(expr)
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "subquery expression id missing -- analyzer/lowering bug",
         })?;
-    ctx.subqueries
+    let planned = ctx
+        .subqueries
         .get(expr_id)
         .ok_or(ExecutorError::ImplementationDefined {
             detail: "subquery plan missing -- analyzer/lowering bug",
-        })
+        })?;
+    Ok((expr_id, planned))
 }
 
 fn execute_pattern_subquery(
+    expr_id: ExprId,
     planned: &PlannedSubquery,
     plan: &crate::PatternPlan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let target_schema = target_schema_for_pattern(planned, plan, schema)?;
+    // GQLRT-05: the target schema is loop-invariant across the outer rows that
+    // drive this correlated subquery, so memoize it per statement instead of
+    // rebuilding it (schema_for_pattern join-tree walk) for every row.
+    let target_schema = ctx
+        .tx
+        .cached_subquery_schema(expr_id, || target_schema_for_pattern(planned, plan, schema))?;
     if null_outer_binding_is_pattern_binding(planned, binding, schema, plan)? {
         return Ok(BindingTable::new(target_schema, Vec::new()));
     }
@@ -110,13 +121,16 @@ fn execute_pattern_subquery(
 }
 
 fn execute_plan_subquery(
+    expr_id: ExprId,
     planned: &PlannedSubquery,
     plan: &ExecutionPlan,
     binding: &Binding,
     schema: &BindingTableSchema,
     ctx: &EvalCtx<'_, '_, '_, '_>,
 ) -> Result<BindingTable, ExecutorError> {
-    let target_schema = target_schema_for_plan(planned, plan, schema)?;
+    let target_schema = ctx
+        .tx
+        .cached_subquery_schema(expr_id, || target_schema_for_plan(planned, plan, schema))?;
     if null_outer_binding_is_plan_pattern_binding(planned, binding, schema, plan)? {
         return Ok(BindingTable::new(target_schema, Vec::new()));
     }

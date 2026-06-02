@@ -94,6 +94,33 @@ fn exists_correlated_with_outer_binding() {
     assert_eq!(bool_values(&table, "has_sensor"), [false, true, false]);
 }
 
+/// GQLRT-05 regression: two distinct correlated subqueries in one statement must
+/// keep independent, correctly-correlated results across every outer row. The
+/// per-statement target-schema memo is keyed by expression id and populated on
+/// the first outer row, then reused — so this exercises both the cross-subquery
+/// keying (the two `EXISTS` get different schemas/labels) and the cache-hit path
+/// (rows 2..N reuse the row-1 schema while still correlating per row).
+#[test]
+fn distinct_correlated_subqueries_stay_independent_under_schema_memo() {
+    let table = execute(
+        "MATCH (a:Person)
+         RETURN a.name AS name,
+                EXISTS { MATCH (a)-[:KNOWS]->(:Person) } AS knows_person,
+                EXISTS { MATCH (a)-[:KNOWS]->(:Sensor) } AS knows_sensor
+         ORDER BY name",
+    );
+
+    assert_eq!(
+        string_values(&table, "name"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+    // Alice KNOWS Bob (a Person); Bob KNOWS the Sensor; Cara has no out-edges.
+    // The two columns must diverge — a memo that cross-wired the schemas or
+    // failed to re-correlate per row would collapse them.
+    assert_eq!(bool_values(&table, "knows_person"), [true, false, false]);
+    assert_eq!(bool_values(&table, "knows_sensor"), [false, true, false]);
+}
+
 #[test]
 fn exists_nested_two_levels() {
     let table = execute(
