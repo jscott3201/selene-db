@@ -173,6 +173,10 @@ fn unbounded_quantifier_without_iso_gate_rejects_42001() {
     for source in [
         "MATCH (a)-[:K*]->(b) RETURN b",
         "MATCH ALL (a)-[:K+]->(b) RETURN b",
+        // An explicit bare WALK (no selector, no DIFFERENT EDGES) is still
+        // rejected — the FU-2 unbounded-shortest TRAIL downshift is a planner-only
+        // change and must not relax this analyzer gate.
+        "MATCH WALK (a)-[:K+]->(b) RETURN b",
     ] {
         let err = analyze_one(source).expect_err("unbounded quantifier requires a gate");
         assert!(matches!(err, AnalysisError::UnboundedRequiresGate { .. }));

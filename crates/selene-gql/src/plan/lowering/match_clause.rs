@@ -362,7 +362,13 @@ fn lower_graph_pattern(
                     edge: repeat_edge,
                     min: *min,
                     max: *max,
-                    path_mode: repeat_path_mode_under_filter(path_mode, *max, different_edges),
+                    path_mode: repeat_path_mode_under_filter(
+                        path_mode,
+                        *min,
+                        *max,
+                        different_edges,
+                        selector,
+                    ),
                 }
             }
             Some(Quantifier::Questioned) => {
@@ -717,8 +723,10 @@ fn selector_needs_repeat_group(selector: PathSelector, min: u32, max: Option<u32
 
 fn repeat_path_mode_under_filter(
     path_mode: PathMode,
+    min: u32,
     max: Option<u32>,
     different_edges: bool,
+    selector: Option<PathSelector>,
 ) -> PathMode {
     if max.is_none() {
         // An unbounded repeat must prune *during* traversal or it never
@@ -732,7 +740,44 @@ fn repeat_path_mode_under_filter(
         // and is the user's explicit per-path choice, so it is left intact; the
         // pattern-wide post-walk filter then enforces the broader G002
         // cross-path-pattern edge-uniqueness on top.
-        if different_edges && path_mode == PathMode::Walk {
+        //
+        // A minimum-length shortest selector — `ANY SHORTEST` / `ALL SHORTEST`
+        // and their ISO §16.6 SR2c-equivalent count-1 counted spellings
+        // `SHORTEST 1 [PATH]` / `SHORTEST [1] GROUP[S]` — gives the same
+        // finiteness guarantee and the same downshift is result-equivalent —
+        // BUT ONLY when the quantifier lower bound is <= 1.
+        // Reason: an UNCONSTRAINED minimum-hop path never repeats a node (a
+        // repeated node is a removable cycle, yielding a strictly shorter path), so
+        // it is simple, hence a trail; TRAIL traversal then contains *all*
+        // minimum-hop paths (the extra node-repeating trails it produces are
+        // strictly longer and the shortest selector discards them). With a lower
+        // bound `min >= 2` that argument FAILS: removing the cycle would drop below
+        // `min`, so the shortest path satisfying the bound can legitimately reuse an
+        // edge — e.g. `ALL SHORTEST WALK (a)-[r:K*2..]->(a)` over a self-loop has
+        // shortest walk `[e, e]`, which TRAIL would reject (losing the row). So the
+        // shortest downshift is gated on `min <= 1`; a `min >= 2` shortest stays
+        // WALK and, over a cyclic graph, raises 5GQL1 (deferred — like counted, it
+        // needs ordered length-enumeration over an infinite WALK candidate set).
+        //
+        // The count-`>= 2` counted forms (`SHORTEST N` G019 / `SHORTEST N GROUP`
+        // G020, N >= 2) are deliberately *excluded* regardless of bound: per ISO
+        // 39075:2024 §22.4 they rank paths by hop count *including* non-simple
+        // (cyclic) paths — consistent with selene's bounded counted-shortest.
+        // Downshifting them to TRAIL would silently change their semantics (count
+        // trails, not walks); over an unbounded cyclic WALK the candidate set is
+        // infinite, so plain counted (N >= 2) stays WALK and raises 5GQL1. The
+        // count-`1` forms are NOT excluded — they ARE the min-length shortest
+        // selector above (§16.6 SR2c) and downshift identically to ANY/ALL
+        // SHORTEST.
+        // NOTE the exception: a selector written WITH `DIFFERENT EDGES` *does*
+        // downshift via the `different_edges` arm regardless of `min` / counted, and
+        // that is correct — DIFFERENT EDGES constrains the candidate set to
+        // edge-distinct paths (TRAIL), which is finite, so e.g.
+        // `SHORTEST N DIFFERENT EDGES` counts the N shortest edge-distinct paths and
+        // terminates. The min/counted exclusions above are only about the *plain*
+        // (WALK) forms.
+        let shortest_simple_safe = is_min_length_shortest(selector) && min <= 1;
+        if path_mode == PathMode::Walk && (different_edges || shortest_simple_safe) {
             PathMode::Trail
         } else {
             path_mode
@@ -742,6 +787,33 @@ fn repeat_path_mode_under_filter(
         // or pattern-wide match-mode) prunes the surviving rows.
         PathMode::Walk
     }
+}
+
+/// A minimum-length shortest selector retains *only* the single minimum
+/// hop-rank, so the TRAIL downshift is result-equivalent (every minimum-hop
+/// path is simple when the lower bound is <= 1). Per ISO 39075:2024 §16.6 SR2c
+/// the count-1 counted forms are the *same selector* as the keyword spellings —
+/// `ANY SHORTEST == SHORTEST 1 [PATH]` (`CountedShortest { paths: 1 }`) and
+/// `ALL SHORTEST == SHORTEST [1] GROUP[S]` (`CountedShortestGroup { groups: 1 }`,
+/// the count defaulting to 1 per §16.6 SR2b) — the runtime collapses all four to
+/// one `select_counted(count = 1, group)` (`runtime::path_search`). Matching on
+/// the count-1 *semantics* (not just the keyword spelling) keeps ISO-equivalent
+/// forms behaving identically on cyclic graphs.
+///
+/// The count-`>= 2` counted forms (`SHORTEST N` / `SHORTEST N GROUP[S]`, N >= 2)
+/// are intentionally excluded: they admit longer, possibly non-simple, paths
+/// (§22.4), so the TRAIL downshift is not result-equivalent for them. See
+/// `repeat_path_mode_under_filter`.
+fn is_min_length_shortest(selector: Option<PathSelector>) -> bool {
+    matches!(
+        selector,
+        Some(
+            PathSelector::AnyShortest
+                | PathSelector::AllShortest
+                | PathSelector::CountedShortest { paths: 1 }
+                | PathSelector::CountedShortestGroup { groups: 1 }
+        )
+    )
 }
 
 fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
