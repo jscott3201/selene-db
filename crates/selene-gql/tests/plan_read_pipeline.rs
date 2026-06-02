@@ -314,6 +314,31 @@ fn quantifier_max_exceeding_cap_emits_program_limit() {
 }
 
 #[test]
+fn gp03_subquery_label_does_not_leak_to_outer_binding() {
+    // GP03 regression: a body pattern that reuses an imported binding with a
+    // label must NOT refine the OUTER declaration's labels. `binding_defs`
+    // (match_clause.rs) copies `decl.label_expr()` into the outer pattern plan,
+    // so a leak would conjunct `:Sensor` onto the outer `a` and corrupt its scan
+    // — invisible at execution (the same label also empties the inner semi-join)
+    // but a real plan corruption. Imports are read-only, so outer `a` keeps
+    // exactly the single `:Person` label, never a Conjunction.
+    let plan = plan_one(
+        "MATCH (a:Person) CALL (a) { MATCH (a:Sensor) RETURN 1 AS n LIMIT 1 } YIELD n RETURN n",
+    );
+    let pattern = plan.pattern_plan.as_ref().expect("outer pattern plan");
+    let a = pattern
+        .bindings
+        .iter()
+        .find(|binding| binding.name.as_str() == "a")
+        .expect("outer binding a");
+    assert!(
+        matches!(&a.label_predicate, Some(LabelExpr::Single(label)) if label.as_str() == "Person"),
+        "outer `a` label must stay the single :Person (no subquery leak), got {:?}",
+        a.label_predicate
+    );
+}
+
+#[test]
 fn return_star_after_with_uses_with_projection() {
     // Why: prior planner walked `analyzed.scopes.declarations()` for RETURN *,
     // leaking bindings discarded by a WITH boundary into the output schema.

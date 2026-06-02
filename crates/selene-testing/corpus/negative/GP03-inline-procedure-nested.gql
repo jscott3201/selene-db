@@ -1,4 +1,0 @@
-// corpus: negative
-// feature: GP03
-// expects: parse-rejected(GP03)
-CALL (n) { RETURN 1 AS n }

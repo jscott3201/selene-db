@@ -57,6 +57,12 @@ pub struct BindingScope {
     pub parent: Option<ScopeId>,
     /// Declaration indexes owned by this scope.
     pub locals: Vec<BindingId>,
+    /// Outer binding ids re-exposed in this scope by reference (GP03 explicit
+    /// variable-scope `CALL` imports — ISO §15.2). Visible for name resolution
+    /// like [`Self::locals`], but **read-only**: a pattern that reuses an
+    /// imported binding must not refine the (shared, outer) declaration's
+    /// labels, matching GP02's cross-subquery-boundary behavior.
+    pub imports: Vec<BindingId>,
     /// Best-effort source extent for this scope.
     pub span: SourceSpan,
     /// Diagnostic scope kind.
@@ -81,6 +87,7 @@ impl BindingScopeTree {
             scopes: vec![BindingScope {
                 parent: None,
                 locals: Vec::new(),
+                imports: Vec::new(),
                 span: root_span,
                 kind: ScopeKind::Statement,
                 boundary: false,
@@ -129,6 +136,7 @@ impl BindingScopeTree {
         self.scopes.push(BindingScope {
             parent: Some(parent),
             locals: Vec::new(),
+            imports: Vec::new(),
             span,
             kind,
             boundary,
@@ -156,6 +164,46 @@ impl BindingScopeTree {
             });
         }
         Ok(self.declare_unchecked(scope, kind, name, span, ty, None))
+    }
+
+    /// Re-expose an already-declared binding inside `scope` under `name`,
+    /// without creating a new declaration (the existing [`BindingId`] is shared).
+    ///
+    /// Used by GP03 explicit variable-scope `CALL (x, ...) { ... }` subqueries
+    /// (ISO/IEC 39075:2024 §15.2) to seed a boundary subquery scope with only the
+    /// named outer bindings: body references then resolve to the *outer* binding
+    /// id (so they flow through `outer_binding_refs`), while any unnamed outer
+    /// variable hits the boundary and resolves to nothing. A duplicate import
+    /// name is rejected with [`AnalysisError::Shadow`] (ISO §15.2 forbids
+    /// duplicate imported variable names).
+    pub(crate) fn import_binding(
+        &mut self,
+        scope: ScopeId,
+        binding: BindingId,
+        name: IStr,
+        span: SourceSpan,
+    ) -> Result<(), AnalysisError> {
+        if let Some(prior) = self.resolve_local(scope, name.clone()) {
+            let prior_span = self
+                .declaration(prior)
+                .map(BindingDecl::span)
+                .unwrap_or_default();
+            return Err(AnalysisError::Shadow {
+                name,
+                span,
+                prior_span,
+            });
+        }
+        self.scopes[scope.get() as usize].imports.push(binding);
+        Ok(())
+    }
+
+    /// Return true when `binding` is an *import* (re-exposed outer binding) of
+    /// `scope`, rather than a declaration owned by it. Imports are read-only:
+    /// pattern reuse must not refine their labels (see [`BindingScope::imports`]).
+    fn scope_imports(&self, scope: ScopeId, binding: BindingId) -> bool {
+        self.scope(scope)
+            .is_some_and(|scope| scope.imports.contains(&binding))
     }
 
     pub(crate) fn declare_or_reuse_with_labels_typed(
@@ -211,7 +259,14 @@ impl BindingScopeTree {
                     ),
                 });
             }
-            if !self.crosses_subquery_boundary(scope, existing_scope) {
+            // Skip label refinement when the reused binding is an explicit
+            // import (GP03): the declaration lives in an outer scope, and
+            // refining it here would leak the subquery's label constraint into
+            // the outer query's plan. This mirrors the cross-subquery-boundary
+            // skip below (GP02), which protects implicitly-inherited bindings.
+            if !self.crosses_subquery_boundary(scope, existing_scope)
+                && !self.scope_imports(existing_scope, existing)
+            {
                 self.decls[existing.get() as usize].refine_label_expr(labels);
             }
             return Ok((existing, true));
@@ -280,10 +335,18 @@ impl BindingScopeTree {
     }
 
     fn resolve_local(&self, scope: ScopeId, name: IStr) -> Option<BindingId> {
-        self.scope(scope)?.locals.iter().cloned().find(|id| {
-            self.declaration(*id)
-                .is_some_and(|decl| decl.name() == name)
-        })
+        let scope = self.scope(scope)?;
+        // Locals first, then imports (GP03): both are visible in this scope; a
+        // local declared here shadows an import of the same name.
+        scope
+            .locals
+            .iter()
+            .chain(scope.imports.iter())
+            .cloned()
+            .find(|id| {
+                self.declaration(*id)
+                    .is_some_and(|decl| decl.name() == name)
+            })
     }
 }
 

@@ -65,13 +65,6 @@ fn bind_inline_call(
     ctx: &mut BindContext,
     call: &mut InlineProcedureCall,
 ) -> Result<(), AnalysisError> {
-    if call.variable_scope.is_some() {
-        return Err(AnalysisError::NotImplemented {
-            message: "explicit variable-scope CALL subqueries require unsupported GP03".into(),
-            span: call.span,
-            hint: None,
-        });
-    }
     if call.in_transactions {
         return Err(AnalysisError::NotImplemented {
             message: "CALL { ... } IN TRANSACTIONS is not yet supported".into(),
@@ -80,9 +73,22 @@ fn bind_inline_call(
         });
     }
     expr::check_query_subquery_depth(&call.body, 1)?;
-    let bind_result = ctx.with_child_scope(ScopeKind::Subquery, call.span, false, |ctx| {
-        bind_query_pipeline(ctx, &mut call.body)
-    });
+    let bind_result = match &call.variable_scope {
+        // GP03 (ISO §15.2): explicit variable scope — the body sees ONLY the
+        // named imports. An empty list (`CALL () { ... }`) is fully isolated.
+        // Imports are cloned so the body's `&mut call.body` borrow stays disjoint
+        // from the `call.variable_scope` read.
+        Some(imports) => {
+            let imports = imports.clone();
+            ctx.with_imported_scope(&imports, call.span, |ctx| {
+                bind_query_pipeline(ctx, &mut call.body)
+            })
+        }
+        // GP02: implicit scope — the body inherits all outer bindings.
+        None => ctx.with_child_scope(ScopeKind::Subquery, call.span, false, |ctx| {
+            bind_query_pipeline(ctx, &mut call.body)
+        }),
+    };
     if let Err(AnalysisError::MutatingProcedureInReadPipeline { span, .. }) = bind_result {
         return Err(AnalysisError::NotImplemented {
             message: "write operations inside CALL { ... } are not yet supported".into(),

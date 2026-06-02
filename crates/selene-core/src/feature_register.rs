@@ -251,6 +251,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG20,
     FeatureId::GP01,
     FeatureId::GP02,
+    FeatureId::GP03,
     FeatureId::GP04,
     FeatureId::GQ03,
     FeatureId::GQ04,
@@ -332,10 +333,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::G020,
         "counted shortest selectors require grammar support and counted-path selector semantics",
-    ),
-    (
-        FeatureId::GP03,
-        "explicit variable-scope inline procedures are deferred to a future release",
     ),
     (
         FeatureId::GP05,
