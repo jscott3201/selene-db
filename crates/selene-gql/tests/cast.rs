@@ -408,30 +408,42 @@ fn cast_string_to_float_returns_22018() {
 }
 
 #[test]
-fn cast_boolean_to_string_lowercase() {
-    // ISO §22 — boolean→string yields lowercase "true"/"false".
+fn cast_boolean_to_string_uppercase() {
+    // ISO §20.8 GR4(j)(v)(1) / GR4v — boolean→string yields the UPPERCASE
+    // literal "TRUE"/"FALSE" (810 strict-ISO fix; was lowercase).
     assert_eq!(
         as_string(execute_first_value("RETURN CAST(true AS STRING) AS v")),
-        "true"
+        "TRUE"
     );
     assert_eq!(
         as_string(execute_first_value("RETURN CAST(false AS STRING) AS v")),
-        "false"
+        "FALSE"
     );
 }
 
 #[test]
-fn cast_string_to_boolean_strict_lowercase_only() {
-    // Q3 fold — strict lowercase. "TRUE"/"True"/"YES" all reject as 22018.
-    assert_eq!(
-        execute_first_value("RETURN CAST('true' AS BOOLEAN) AS v"),
-        Value::Bool(true)
-    );
-    assert_eq!(
-        execute_first_value("RETURN CAST('false' AS BOOLEAN) AS v"),
-        Value::Bool(false)
-    );
-    for bad in ["TRUE", "True", "FALSE", "yes", "1"] {
+fn cast_string_to_boolean_case_insensitive() {
+    // ISO §20.8 GR4(q) defers C→BO to the §21.2 boolean literal, which is
+    // case-insensitive (810 strict-ISO fix; was strict-lowercase). Leading /
+    // trailing whitespace is trimmed per GR4(g)(ii).
+    for good in ["true", "True", "TRUE", "tRuE", "  true  "] {
+        let source = format!("RETURN CAST('{good}' AS BOOLEAN) AS v");
+        assert_eq!(
+            execute_first_value(&source),
+            Value::Bool(true),
+            "input `{good}` must parse to TRUE"
+        );
+    }
+    for good in ["false", "False", "FALSE", "fAlSe", " FALSE "] {
+        let source = format!("RETURN CAST('{good}' AS BOOLEAN) AS v");
+        assert_eq!(
+            execute_first_value(&source),
+            Value::Bool(false),
+            "input `{good}` must parse to FALSE"
+        );
+    }
+    // Non-boolean text still rejects with 22018.
+    for bad in ["yes", "1", "t"] {
         let source = format!("RETURN CAST('{bad}' AS BOOLEAN) AS v");
         assert_eq!(
             execute_first_status(&source),
@@ -442,37 +454,226 @@ fn cast_string_to_boolean_strict_lowercase_only() {
 }
 
 #[test]
-fn cast_boolean_to_integer_zero_or_one() {
+fn cast_boolean_to_integer_returns_22g03() {
+    // ISO §20.8 Table 4 marks BO→EN `N` — there is no boolean→numeric cast
+    // (810 strict-ISO fix; the old 0/1 extension is removed). 22G03 datatype
+    // mismatch.
     assert_eq!(
-        execute_first_value("RETURN CAST(true AS INTEGER) AS v"),
-        Value::Int(1)
+        execute_first_status("RETURN CAST(true AS INTEGER) AS v"),
+        "22G03"
     );
     assert_eq!(
-        execute_first_value("RETURN CAST(false AS INTEGER) AS v"),
-        Value::Int(0)
-    );
-}
-
-#[test]
-fn cast_integer_to_boolean_zero_is_false_one_is_true() {
-    assert_eq!(
-        execute_first_value("RETURN CAST(0 AS BOOLEAN) AS v"),
-        Value::Bool(false)
-    );
-    assert_eq!(
-        execute_first_value("RETURN CAST(1 AS BOOLEAN) AS v"),
-        Value::Bool(true)
+        execute_first_status("RETURN CAST(false AS INTEGER) AS v"),
+        "22G03"
     );
 }
 
 #[test]
-fn cast_integer_to_boolean_other_returns_22000() {
-    // Any integer other than 0/1 has no boolean image. The dispatch matrix
-    // returns a generic 22000 data exception (not 22018, which is reserved
-    // for STRING parse failures per ISO §22).
+fn cast_boolean_to_float_returns_22g03() {
+    // ISO §20.8 Table 4 marks BO→AN `N` (810 strict-ISO fix).
+    assert_eq!(
+        execute_first_status("RETURN CAST(true AS FLOAT) AS v"),
+        "22G03"
+    );
+}
+
+#[test]
+fn cast_integer_to_boolean_returns_22g03() {
+    // ISO §20.8 Table 4 marks EN→BO `N` — there is no numeric→boolean cast
+    // (810 strict-ISO fix; the old 0/1 extension is removed). Every integer,
+    // including 0/1, is now a 22G03 datatype mismatch.
+    assert_eq!(
+        execute_first_status("RETURN CAST(0 AS BOOLEAN) AS v"),
+        "22G03"
+    );
+    assert_eq!(
+        execute_first_status("RETURN CAST(1 AS BOOLEAN) AS v"),
+        "22G03"
+    );
     assert_eq!(
         execute_first_status("RETURN CAST(2 AS BOOLEAN) AS v"),
-        "22000"
+        "22G03"
+    );
+}
+
+#[test]
+fn cast_float_to_boolean_returns_22g03() {
+    // ISO §20.8 Table 4 marks AN→BO `N` (810 strict-ISO fix).
+    assert_eq!(
+        execute_first_status("RETURN CAST(1.0 AS BOOLEAN) AS v"),
+        "22G03"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 810 — DECIMAL CAST arms + numeric-family source widening (end-to-end).
+// These thread the widened/decimal source variants through the full
+// parse → analyze → plan → execute pipeline. Sources that have no GQL literal
+// (Uint / Int128 / Uint128 / Float32 / Decimal) are bound as session
+// parameters. The DECIMAL conversion helpers themselves are unit-tested in
+// `runtime/evaluator/cast/decimal.rs`.
+// ---------------------------------------------------------------------------
+
+fn execute_with_param(source: &str, name: &str, value: Value) -> Value {
+    let graph = SharedGraph::new(GraphId::new(13_530));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(intern(name).expect("intern param"), value);
+    let output = session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .unwrap_or_else(|err| panic!("execute failed for `{source}`: {err:?}"));
+    let StatementOutput::Rows(table) = output else {
+        panic!("`{source}` produced no rows");
+    };
+    table
+        .rows()
+        .first()
+        .and_then(|row| row.values().first())
+        .cloned()
+        .unwrap_or_else(|| panic!("`{source}` produced an empty row"))
+}
+
+fn execute_with_param_status(source: &str, name: &str, value: Value) -> String {
+    let graph = SharedGraph::new(GraphId::new(13_531));
+    let mut session = Session::new(&graph);
+    session.bind_parameter(intern(name).expect("intern param"), value);
+    session
+        .execute_source(source, &EmptyProcedureRegistry)
+        .expect_err("statement errors")
+        .gqlstatus()
+        .as_str()
+        .to_owned()
+}
+
+#[test]
+fn cast_string_to_decimal_and_back_round_trips() {
+    // String → DECIMAL (GR4g(ii)) then DECIMAL → STRING (GR4j canonical).
+    let value = execute_first_value("RETURN CAST(CAST('123.45' AS DECIMAL) AS STRING) AS v");
+    assert_eq!(as_string(value), "123.45");
+}
+
+#[test]
+fn cast_string_parse_fail_to_decimal_returns_22018() {
+    assert_eq!(
+        execute_first_status("RETURN CAST('not-a-number' AS DECIMAL) AS v"),
+        "22018"
+    );
+}
+
+#[test]
+fn cast_decimal_source_to_integer_truncates() {
+    // DECIMAL → INTEGER: truncate toward zero.
+    let value = execute_first_value("RETURN CAST(CAST('3.7' AS DECIMAL) AS INTEGER) AS v");
+    assert_eq!(value, Value::Int(3));
+}
+
+#[test]
+fn cast_decimal_source_to_float() {
+    let value = execute_first_value("RETURN CAST(CAST('2.5' AS DECIMAL) AS FLOAT) AS v");
+    assert_eq!(value, Value::Float(2.5));
+}
+
+#[test]
+fn cast_int_literal_to_decimal_then_string() {
+    // Int → DECIMAL (GR4g) end-to-end via nested CAST.
+    let value = execute_first_value("RETURN CAST(CAST(42 AS DECIMAL) AS STRING) AS v");
+    assert_eq!(as_string(value), "42");
+}
+
+#[test]
+fn cast_uint_param_to_integer_widens() {
+    assert_eq!(
+        execute_with_param("RETURN CAST($p AS INTEGER) AS v", "p", Value::Uint(7)),
+        Value::Int(7)
+    );
+}
+
+#[test]
+fn cast_uint_param_above_i64_max_to_integer_returns_22003() {
+    assert_eq!(
+        execute_with_param_status(
+            "RETURN CAST($p AS INTEGER) AS v",
+            "p",
+            Value::Uint(u64::MAX)
+        ),
+        "22003"
+    );
+}
+
+#[test]
+fn cast_int128_param_to_float_widens() {
+    assert_eq!(
+        execute_with_param("RETURN CAST($p AS FLOAT) AS v", "p", Value::Int128(-9)),
+        Value::Float(-9.0)
+    );
+}
+
+#[test]
+fn cast_uint128_param_to_string_widens() {
+    assert_eq!(
+        as_string(execute_with_param(
+            "RETURN CAST($p AS STRING) AS v",
+            "p",
+            Value::Uint128(123)
+        )),
+        "123"
+    );
+}
+
+#[test]
+fn cast_float32_param_to_integer_truncates() {
+    assert_eq!(
+        execute_with_param(
+            "RETURN CAST($p AS INTEGER) AS v",
+            "p",
+            Value::Float32(3.7_f32)
+        ),
+        Value::Int(3)
+    );
+}
+
+#[test]
+fn cast_float_special_values_to_string_render_symbolically() {
+    // `format_float` renders the non-finite FLOAT values symbolically per the
+    // numeric→C (GR4j) shortest-conforming-literal path: NaN → "NaN",
+    // ±Infinity → "Infinity"/"-Infinity". These have no GQL literal, so they
+    // are threaded through a bound FLOAT parameter (the only reachable surface
+    // for the `format_float` special-case branches).
+    assert_eq!(
+        as_string(execute_with_param(
+            "RETURN CAST($p AS STRING) AS v",
+            "p",
+            Value::Float(f64::NAN)
+        )),
+        "NaN"
+    );
+    assert_eq!(
+        as_string(execute_with_param(
+            "RETURN CAST($p AS STRING) AS v",
+            "p",
+            Value::Float(f64::INFINITY)
+        )),
+        "Infinity"
+    );
+    assert_eq!(
+        as_string(execute_with_param(
+            "RETURN CAST($p AS STRING) AS v",
+            "p",
+            Value::Float(f64::NEG_INFINITY)
+        )),
+        "-Infinity"
+    );
+}
+
+#[test]
+fn cast_decimal_param_to_boolean_returns_22g03() {
+    // ISO §20.8 Table 4 marks EN→BO `N`; DECIMAL is signed-exact (EN).
+    assert_eq!(
+        execute_with_param_status(
+            "RETURN CAST($p AS BOOLEAN) AS v",
+            "p",
+            Value::Decimal("1".parse().unwrap())
+        ),
+        "22G03"
     );
 }
 
