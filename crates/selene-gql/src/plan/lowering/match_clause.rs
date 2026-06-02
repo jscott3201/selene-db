@@ -362,7 +362,12 @@ fn lower_graph_pattern(
                     edge: repeat_edge,
                     min: *min,
                     max: *max,
-                    path_mode: repeat_path_mode_under_filter(path_mode, *max, different_edges),
+                    path_mode: repeat_path_mode_under_filter(
+                        path_mode,
+                        *max,
+                        different_edges,
+                        selector,
+                    ),
                 }
             }
             Some(Quantifier::Questioned) => {
@@ -719,6 +724,7 @@ fn repeat_path_mode_under_filter(
     path_mode: PathMode,
     max: Option<u32>,
     different_edges: bool,
+    selector: Option<PathSelector>,
 ) -> PathMode {
     if max.is_none() {
         // An unbounded repeat must prune *during* traversal or it never
@@ -732,7 +738,32 @@ fn repeat_path_mode_under_filter(
         // and is the user's explicit per-path choice, so it is left intact; the
         // pattern-wide post-walk filter then enforces the broader G002
         // cross-path-pattern edge-uniqueness on top.
-        if different_edges && path_mode == PathMode::Walk {
+        //
+        // A minimum-length shortest selector (`ANY SHORTEST` / `ALL SHORTEST`)
+        // gives the same finiteness guarantee and the same downshift is
+        // result-equivalent: a minimum-hop path never repeats a node (a repeated
+        // node is a removable cycle, yielding a strictly shorter path), so every
+        // minimum-hop path is simple, hence a trail. TRAIL traversal therefore
+        // still contains *all* minimum-hop paths; the additional node-repeating
+        // trails it produces are strictly longer, so the shortest selector
+        // (`runtime::path_search`) discards them — ANY/ALL SHORTEST over TRAIL ==
+        // over WALK, but TRAIL terminates on cycles (bounded by edge count).
+        // The counted forms (`SHORTEST N` G019 / `SHORTEST N GROUP` G020) are
+        // deliberately *excluded*: per ISO 39075:2024 §22.4 they rank paths by
+        // hop count *including* non-simple (cyclic) paths — consistent with
+        // selene's bounded counted-shortest, which counts non-simple paths within
+        // the bound. Downshifting them to TRAIL would silently change their
+        // semantics (count trails, not walks). Over an unbounded cyclic WALK the
+        // candidate set is infinite, so an unbounded *plain* counted-shortest needs
+        // ordered length-enumeration (a separate, larger effort) and therefore
+        // stays WALK — raising 5GQL1 (ProgramLimitExceeded) on unbounded cyclic.
+        // NOTE the exception: a counted selector written WITH `DIFFERENT EDGES`
+        // *does* downshift here via the `different_edges` arm, and that is correct —
+        // DIFFERENT EDGES constrains the candidate set to edge-distinct paths
+        // (TRAIL), which is finite, so `SHORTEST N DIFFERENT EDGES` counts the N
+        // shortest edge-distinct paths and terminates (not the deferred plain-WALK
+        // case). The exclusion above is only about the *plain* (WALK) counted form.
+        if path_mode == PathMode::Walk && (different_edges || is_min_length_shortest(selector)) {
             PathMode::Trail
         } else {
             path_mode
@@ -742,6 +773,19 @@ fn repeat_path_mode_under_filter(
         // or pattern-wide match-mode) prunes the surviving rows.
         PathMode::Walk
     }
+}
+
+/// A minimum-length shortest selector is `ANY SHORTEST` / `ALL SHORTEST` — the
+/// forms that retain *only* the (single) minimum hop-rank. The counted forms
+/// (`SHORTEST N` / `SHORTEST N GROUP`) are intentionally excluded: they admit
+/// longer, possibly non-simple, paths (ISO 39075:2024 §22.4), so the TRAIL
+/// downshift is not result-equivalent for them. See
+/// `repeat_path_mode_under_filter`.
+fn is_min_length_shortest(selector: Option<PathSelector>) -> bool {
+    matches!(
+        selector,
+        Some(PathSelector::AnyShortest | PathSelector::AllShortest)
+    )
 }
 
 fn shared_names(left: &BTreeSet<IStr>, right: &BTreeSet<IStr>) -> Vec<IStr> {
