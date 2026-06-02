@@ -351,6 +351,90 @@ fn unbounded_counted_shortest_still_program_limit_on_cycle() {
     assert_eq!(err.gqlstatus().as_str(), "5GQL1");
 }
 
+// FU-2 (Codex PR #245 r2, P2): the count-1 counted spellings are ISO §16.6 SR2c
+// EQUIVALENT to the keyword forms — `SHORTEST 1 [PATH]` == `ANY SHORTEST`
+// (`CountedShortest { paths: 1 }`) and `SHORTEST [1] GROUP[S]` == `ALL SHORTEST`
+// (`CountedShortestGroup { groups: 1 }`). They are min-length shortest selectors,
+// so on a cyclic graph they must downshift to TRAIL and TERMINATE identically to
+// their keyword twins, not raise 5GQL1. The downshift predicate matches on the
+// count-1 *semantics*, not the surface keyword, so equivalent forms agree.
+
+#[test]
+fn unbounded_counted_shortest_one_terminates_and_equals_any_shortest_on_cycle() {
+    let graph = cycle_graph();
+    let counted = planned("MATCH SHORTEST 1 (a:N {name: 'A'})-[r:K+]->(b:N) RETURN b");
+
+    let table = execute_on_graph(&graph, &counted)
+        .expect("unbounded SHORTEST 1 terminates (== ANY SHORTEST)");
+
+    // One row per distinct (source, target) endpoint pair, exactly like ANY SHORTEST.
+    let mut bs = node_ids_for(&table, "b");
+    bs.sort();
+    assert_eq!(bs, vec![Some(1), Some(2)]);
+
+    let any = planned("MATCH ANY SHORTEST (a:N {name: 'A'})-[r:K+]->(b:N) RETURN b");
+    let any_table = execute_on_graph(&graph, &any).expect("ANY SHORTEST executes");
+    let mut any_bs = node_ids_for(&any_table, "b");
+    any_bs.sort();
+    assert_eq!(bs, any_bs);
+}
+
+#[test]
+fn unbounded_shortest_one_group_terminates_and_equals_all_shortest_on_cycle() {
+    let graph = cycle_graph();
+    let counted = planned("MATCH SHORTEST 1 GROUP (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+
+    let table = execute_on_graph(&graph, &counted)
+        .expect("unbounded SHORTEST 1 GROUP terminates (== ALL SHORTEST)");
+
+    // Identical to ALL SHORTEST: b=A path [1, 2], b=B path [1].
+    assert_eq!(
+        shortest_rows(&table),
+        vec![(Some(1), Some(vec![1, 2])), (Some(2), Some(vec![1]))]
+    );
+
+    let all = planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+    let all_table = execute_on_graph(&graph, &all).expect("ALL SHORTEST executes");
+    assert_eq!(shortest_rows(&table), shortest_rows(&all_table));
+}
+
+#[test]
+fn unbounded_shortest_bare_group_defaults_to_one_and_terminates_on_cycle() {
+    // `SHORTEST GROUP` (no count) defaults groups -> 1 per ISO §16.6 SR2b, so it is
+    // also the ALL SHORTEST min-length selector and must terminate on a cycle.
+    let graph = cycle_graph();
+    let plan = planned("MATCH SHORTEST GROUP (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r, b");
+
+    let table =
+        execute_on_graph(&graph, &plan).expect("unbounded SHORTEST GROUP (groups=1) terminates");
+
+    assert_eq!(
+        shortest_rows(&table),
+        vec![(Some(1), Some(vec![1, 2])), (Some(2), Some(vec![1]))]
+    );
+}
+
+#[test]
+fn unbounded_counted_shortest_group_two_still_program_limit_on_cycle() {
+    // Boundary pin (complements the SHORTEST 2 PATH deferral above): a count-`>= 2`
+    // GROUP form admits a strictly-longer second length-group, which can be
+    // non-simple — so it is NOT downshiftable and stays DEFERRED (5GQL1) on an
+    // unbounded cyclic graph. Only count-1 downshifts.
+    let graph = cycle_graph();
+    let plan = planned("MATCH SHORTEST 2 GROUPS (a:N {name: 'A'})-[r:K+]->(b:N) RETURN r");
+
+    let err = execute_on_graph(&graph, &plan).expect_err("count>=2 group form still capped");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ProgramLimitExceeded {
+            detail: "max_quantifier",
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
+
 #[test]
 fn different_edges_makes_counted_shortest_finite_on_cycle() {
     // The counted-shortest DEFERRAL (5GQL1, pinned above) is specific to plain WALK,

@@ -741,9 +741,11 @@ fn repeat_path_mode_under_filter(
         // pattern-wide post-walk filter then enforces the broader G002
         // cross-path-pattern edge-uniqueness on top.
         //
-        // A minimum-length shortest selector (`ANY SHORTEST` / `ALL SHORTEST`)
-        // gives the same finiteness guarantee and the same downshift is
-        // result-equivalent — BUT ONLY when the quantifier lower bound is <= 1.
+        // A minimum-length shortest selector — `ANY SHORTEST` / `ALL SHORTEST`
+        // and their ISO §16.6 SR2c-equivalent count-1 counted spellings
+        // `SHORTEST 1 [PATH]` / `SHORTEST [1] GROUP[S]` — gives the same
+        // finiteness guarantee and the same downshift is result-equivalent —
+        // BUT ONLY when the quantifier lower bound is <= 1.
         // Reason: an UNCONSTRAINED minimum-hop path never repeats a node (a
         // repeated node is a removable cycle, yielding a strictly shorter path), so
         // it is simple, hence a trail; TRAIL traversal then contains *all*
@@ -757,13 +759,16 @@ fn repeat_path_mode_under_filter(
         // WALK and, over a cyclic graph, raises 5GQL1 (deferred — like counted, it
         // needs ordered length-enumeration over an infinite WALK candidate set).
         //
-        // The counted forms (`SHORTEST N` G019 / `SHORTEST N GROUP` G020) are
-        // deliberately *excluded* regardless of bound: per ISO 39075:2024 §22.4 they
-        // rank paths by hop count *including* non-simple (cyclic) paths — consistent
-        // with selene's bounded counted-shortest. Downshifting them to TRAIL would
-        // silently change their semantics (count trails, not walks); over an
-        // unbounded cyclic WALK the candidate set is infinite, so plain counted
-        // stays WALK and raises 5GQL1.
+        // The count-`>= 2` counted forms (`SHORTEST N` G019 / `SHORTEST N GROUP`
+        // G020, N >= 2) are deliberately *excluded* regardless of bound: per ISO
+        // 39075:2024 §22.4 they rank paths by hop count *including* non-simple
+        // (cyclic) paths — consistent with selene's bounded counted-shortest.
+        // Downshifting them to TRAIL would silently change their semantics (count
+        // trails, not walks); over an unbounded cyclic WALK the candidate set is
+        // infinite, so plain counted (N >= 2) stays WALK and raises 5GQL1. The
+        // count-`1` forms are NOT excluded — they ARE the min-length shortest
+        // selector above (§16.6 SR2c) and downshift identically to ANY/ALL
+        // SHORTEST.
         // NOTE the exception: a selector written WITH `DIFFERENT EDGES` *does*
         // downshift via the `different_edges` arm regardless of `min` / counted, and
         // that is correct — DIFFERENT EDGES constrains the candidate set to
@@ -784,16 +789,30 @@ fn repeat_path_mode_under_filter(
     }
 }
 
-/// A minimum-length shortest selector is `ANY SHORTEST` / `ALL SHORTEST` — the
-/// forms that retain *only* the (single) minimum hop-rank. The counted forms
-/// (`SHORTEST N` / `SHORTEST N GROUP`) are intentionally excluded: they admit
-/// longer, possibly non-simple, paths (ISO 39075:2024 §22.4), so the TRAIL
-/// downshift is not result-equivalent for them. See
+/// A minimum-length shortest selector retains *only* the single minimum
+/// hop-rank, so the TRAIL downshift is result-equivalent (every minimum-hop
+/// path is simple when the lower bound is <= 1). Per ISO 39075:2024 §16.6 SR2c
+/// the count-1 counted forms are the *same selector* as the keyword spellings —
+/// `ANY SHORTEST == SHORTEST 1 [PATH]` (`CountedShortest { paths: 1 }`) and
+/// `ALL SHORTEST == SHORTEST [1] GROUP[S]` (`CountedShortestGroup { groups: 1 }`,
+/// the count defaulting to 1 per §16.6 SR2b) — the runtime collapses all four to
+/// one `select_counted(count = 1, group)` (`runtime::path_search`). Matching on
+/// the count-1 *semantics* (not just the keyword spelling) keeps ISO-equivalent
+/// forms behaving identically on cyclic graphs.
+///
+/// The count-`>= 2` counted forms (`SHORTEST N` / `SHORTEST N GROUP[S]`, N >= 2)
+/// are intentionally excluded: they admit longer, possibly non-simple, paths
+/// (§22.4), so the TRAIL downshift is not result-equivalent for them. See
 /// `repeat_path_mode_under_filter`.
 fn is_min_length_shortest(selector: Option<PathSelector>) -> bool {
     matches!(
         selector,
-        Some(PathSelector::AnyShortest | PathSelector::AllShortest)
+        Some(
+            PathSelector::AnyShortest
+                | PathSelector::AllShortest
+                | PathSelector::CountedShortest { paths: 1 }
+                | PathSelector::CountedShortestGroup { groups: 1 }
+        )
     )
 }
 
