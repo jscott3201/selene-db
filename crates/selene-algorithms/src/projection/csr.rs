@@ -35,12 +35,12 @@ pub struct ProjNeighbor {
     /// non-numeric / `Value::Null` per spec 16 §3 E04 (matches the donor's
     /// permissive behavior).
     pub weight: f64,
-    /// Dense index of [`Self::node_id`] within the projection's
-    /// [`RowIndex`] (ALGO-01). The CSR only ever stores projected neighbors
-    /// (see `build_csr` pass-1/pass-2, which skip any neighbor outside the
-    /// projection), and the `RowIndex` is immutable after projection build, so
-    /// this equals `row_index.dense_of_node(node_id).unwrap()` for the lifetime
-    /// of the projection. Caching it lets the centrality / community / structural
+    /// Dense index of [`Self::node_id`] within the projection's row index
+    /// (ALGO-01). The CSR only ever stores projected neighbors (`build_csr`
+    /// pass-1 and pass-2 each skip any neighbor outside the projection), and the
+    /// row index is immutable after projection build, so this equals
+    /// `row_index.dense_of_node(node_id).unwrap()` for the lifetime of the
+    /// projection. Caching it lets the centrality / community / structural
     /// algorithms read the dense index directly from the contiguous CSR slice
     /// instead of re-probing the `node_to_dense` hash map on every edge visit.
     pub dense: u32,
@@ -214,9 +214,9 @@ fn build_csr(
             continue;
         };
         for adj in entry.iter() {
-            // Capture the neighbor's dense index here (ALGO-01): pass-2 already
-            // had to resolve it for the projection-membership skip, so storing it
-            // costs one extra u32 write and zero extra lookups.
+            // Capture the neighbor's dense index here (ALGO-01): this pass is
+            // already resolving it for the projection-membership skip, so caching
+            // it costs one extra u32 write and zero additional map probes.
             let Some(neighbor_dense) = row_index.dense_of_node(adj.neighbor) else {
                 continue;
             };
