@@ -196,16 +196,27 @@ impl AuditLog {
     ///
     /// Returns I/O / header-validation errors.
     pub fn read_all(path: &Path) -> PersistResult<Vec<AuditRecord>> {
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
+        // Streams record-by-record over the file handle rather than slurping the
+        // whole log into memory first: a long-lived log under unbounded retention
+        // can be large, and peak memory should stay at the decoded records plus a
+        // single payload (the slice twin [`Self::decode_all`] is for fuzzing the
+        // decoder on an already-in-memory buffer, not for reading real files).
+        let mut file = match OpenOptions::new().read(true).open(path) {
+            Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(PersistError::Io(error)),
         };
-        Self::decode_all(&bytes)
+        let file_len = file.metadata()?.len();
+        if file_len == 0 {
+            return Ok(Vec::new());
+        }
+        verify_file_header(&mut file)?;
+        read_records(&mut file, file_len)
     }
 
     /// Decode every durable record from an in-memory audit-log byte slice,
-    /// oldest first — the pure-slice twin of [`Self::read_all`].
+    /// oldest first — the pure-slice twin of [`Self::read_all`] used by the
+    /// decoder fuzz target (it feeds bytes directly, no file handle).
     ///
     /// Validates the 8-byte file header, then scans records, stopping at the
     /// durable tail exactly as [`Self::read_all`] / [`Self::open`] would: a
@@ -368,6 +379,19 @@ fn scan_durable_end(file: &mut File, file_len: u64) -> PersistResult<u64> {
             None => return Ok(offset),
         }
     }
+}
+
+/// Stream every durable record from the file, oldest first, stopping at the
+/// first torn record. Used by [`AuditLog::read_all`] — peak memory is the
+/// decoded records plus the single payload being read, not the whole file.
+fn read_records(file: &mut File, file_len: u64) -> PersistResult<Vec<AuditRecord>> {
+    let mut out = Vec::new();
+    let mut offset = AUDIT_FILE_HEADER_LEN as u64;
+    while let Some((record, next)) = read_one_record(file, offset, file_len)? {
+        out.push(record);
+        offset = next;
+    }
+    Ok(out)
 }
 
 /// Read the record at `offset`. Returns `Ok(Some((record, next_offset)))` for a

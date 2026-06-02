@@ -70,17 +70,6 @@ const MANIFEST_HEADER_LEN: usize = 8;
 const MANIFEST_BODY_FIXED_LEN: usize = 8 + 8 + 8 + 1;
 /// Trailing blake3-low-128 body hash length.
 const MANIFEST_BODY_HASH_LEN: usize = 16;
-/// Sanity cap on the decoded `archived_wal_seqs` count.
-///
-/// Not an OOM guard: postcard + serde already clamp the speculative sequence
-/// preallocation (`de::size_hint::cautious`) and the `Vec<u64>` can only grow as
-/// real input bytes are consumed (each element is at least one postcard byte),
-/// so a crafted length prefix yields a prompt [`PersistError::PayloadCodec`]
-/// rather than a runaway allocation. This is an explicit, documented upper bound
-/// on a *valid but pathological* archive-set size — a live retained WAL-archive
-/// set is tiny (D26 defaults keep 4), so 64 Ki is enormously generous — kept so
-/// decode robustness does not silently depend on a serde implementation detail.
-pub(crate) const MANIFEST_MAX_ARCHIVED_SEQS: usize = 65_536;
 
 /// Live persistence epoch descriptor.
 ///
@@ -307,14 +296,16 @@ fn decode_body(body: &[u8]) -> PersistResult<Manifest> {
         .map_err(|error| PersistError::PayloadCodec(error.to_string()))?
         .to_owned();
 
+    // No explicit count cap here: postcard + serde already clamp the speculative
+    // sequence preallocation (`de::size_hint::cautious`) and the `Vec<u64>` only
+    // grows as real input bytes are consumed (>= 1 postcard byte per element), so
+    // a crafted length prefix yields a prompt `PayloadCodec` error, not a runaway
+    // allocation. A decode-side cap was deliberately NOT added: it would make
+    // decode reject a manifest the writer can legitimately produce (a long-lived
+    // unpruned archive set), bricking the directory on the next read — decode must
+    // accept everything `encode` can emit.
     let archived_wal_seqs: Vec<u64> = postcard::from_bytes(&body[name_end..])
         .map_err(|error| PersistError::PayloadCodec(error.to_string()))?;
-    if archived_wal_seqs.len() > MANIFEST_MAX_ARCHIVED_SEQS {
-        return Err(PersistError::PayloadCodec(format!(
-            "archived WAL sequence count {} exceeds cap {MANIFEST_MAX_ARCHIVED_SEQS}",
-            archived_wal_seqs.len(),
-        )));
-    }
 
     Ok(Manifest {
         live_snapshot_seq,
@@ -515,27 +506,21 @@ mod tests {
     }
 
     #[test]
-    fn archived_seqs_count_over_cap_is_rejected() {
-        // A valid encoding whose archive list exceeds the sanity cap decodes to
-        // a typed PayloadCodec error (not a panic); exactly the cap is accepted.
-        let over = Manifest {
+    fn large_archive_list_round_trips() {
+        // A genuinely large (but valid) archive set must decode without a cap —
+        // decode accepts everything the writer can emit, so a long-lived unpruned
+        // directory never bricks itself on the next read.
+        let manifest = Manifest {
             live_snapshot_seq: 1,
             active_wal_header_seq: 1,
             compaction_epoch: 0,
             active_wal: crate::DEFAULT_WAL_FILE_NAME.to_owned(),
-            archived_wal_seqs: (0..=MANIFEST_MAX_ARCHIVED_SEQS as u64).collect(),
+            archived_wal_seqs: (0..100_000_u64).collect(),
         };
-        assert_eq!(over.archived_wal_seqs.len(), MANIFEST_MAX_ARCHIVED_SEQS + 1);
-        assert!(matches!(
-            Manifest::decode(&over.encode().unwrap()),
-            Err(PersistError::PayloadCodec(_))
-        ));
-
-        let at_cap = Manifest {
-            archived_wal_seqs: (0..MANIFEST_MAX_ARCHIVED_SEQS as u64).collect(),
-            ..over
-        };
-        assert!(Manifest::decode(&at_cap.encode().unwrap()).is_ok());
+        assert_eq!(
+            Manifest::decode(&manifest.encode().unwrap()).unwrap(),
+            manifest
+        );
     }
 
     #[test]
@@ -543,7 +528,8 @@ mod tests {
         // body = [24-byte fixed u64s][retention=0][name_len=0][postcard tail].
         // The tail is a Vec<u64> length varint claiming a huge count with zero
         // element bytes, so postcard hits EOF immediately -> PayloadCodec, no
-        // multi-GB allocation or hang.
+        // multi-GB allocation or hang (postcard + serde bound the preallocation;
+        // growth is bounded by the consumed input length).
         let mut body = Vec::new();
         body.extend_from_slice(&1_u64.to_le_bytes());
         body.extend_from_slice(&1_u64.to_le_bytes());
