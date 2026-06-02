@@ -157,25 +157,16 @@ fn repeatable_elements_match_mode_is_rejected() {
 // those `None` arms requires hand-constructing the internal `JoinTree`, which
 // is not a public API. They remain pure defense-in-depth; this file pins every
 // tag that a parsed-then-analyzed AST can actually reach (empty /
-// non-alternating / edge-without-target / MATCH-mode here; variable-scope CALL
-// + IN TRANSACTIONS below; correlated NEXT + leading OPTIONAL MATCH are pinned
-// in exec_pipeline_chain.rs + plan_read_pipeline.rs).
+// non-alternating / edge-without-target / MATCH-mode here; IN TRANSACTIONS
+// below; correlated NEXT + leading OPTIONAL MATCH are pinned in
+// exec_pipeline_chain.rs + plan_read_pipeline.rs). GP03 explicit variable-scope
+// CALL is now SUPPORTED — it is bound in the analyzer (the body sees only the
+// named imports), so the former planner backstop is gone; its positive +
+// restriction tests live in call_subqueries.rs.
 
 // ---------------------------------------------------------------------------
 // PLAN-17: inline-CALL defensive guards.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn variable_scope_call_subquery_is_rejected() {
-    let mut analyzed = analyzed("CALL { RETURN 1 AS x }");
-    mutate_call_subquery(&mut analyzed, |call| {
-        call.variable_scope = Some(vec![intern("x").expect("interns")]);
-    });
-    assert_not_implemented(
-        plan_err(&analyzed),
-        "explicit variable-scope CALL subquery (GP03)",
-    );
-}
 
 #[test]
 fn in_transactions_call_subquery_is_rejected() {

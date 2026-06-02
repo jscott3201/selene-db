@@ -8,6 +8,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **GP03 — explicit variable-scope `CALL` subqueries (ISO §15.2).** `CALL (x, y) { ... }`
+  now binds and executes: the subquery body sees **only** the named imported
+  variables, and an empty `CALL () { ... }` is fully isolated. An outer variable
+  not in the import list is out of scope inside the body (`42N03` undefined
+  reference), and duplicate import names are rejected (`42N10`). Implemented in
+  the analyzer via a boundary subquery scope seeded with the named outer
+  bindings' ids (so body references flow through `outer_binding_refs` unchanged —
+  no lowering/runtime change); the former analyzer + planner `NotImplemented`
+  rejects are removed and `GP03` moves from `NOT_SUPPORTED_RATIONALE` to
+  `SUPPORTED_FEATURES`. Plain `CALL { ... }` (GP02, implicit import-all) is
+  unchanged. `IN TRANSACTIONS` and write-ops-inside-`CALL{}` remain unsupported.
 - **Caller-configurable implementation-defined caps (CAPS-IL).** Embedders can
   now set the `ImplDefinedCaps` limit surface (ISO IL013/IL015/IL018 — variable-
   length quantifier upper bound, set-op / `GROUP BY` distinct-key caps,

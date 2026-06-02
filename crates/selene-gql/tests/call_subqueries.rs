@@ -177,12 +177,80 @@ fn call_subquery_rejects_in_transactions() {
     assert_status("CALL { RETURN 1 LIMIT 1 } IN TRANSACTIONS", "42N01");
 }
 
+// GP03 (ISO/IEC 39075:2024 §15.2): explicit variable-scope CALL subqueries.
+// The body sees ONLY the named imports; an empty `()` is fully isolated.
+
 #[test]
-fn call_subquery_rejects_explicit_variable_scope() {
-    assert_status(
-        "MATCH (a:Person) CALL (a) { RETURN 1 AS one LIMIT 1 } YIELD one RETURN one",
-        "42N01",
+fn gp03_imports_named_outer_binding() {
+    // `a` is imported, so `a.name` resolves inside the body — one row per outer
+    // Person, carrying that person's name.
+    let table = execute(
+        "MATCH (a:Person) CALL (a) { RETURN a.name AS n LIMIT 1 } YIELD n RETURN n ORDER BY n",
     );
+    assert_eq!(
+        string_values(&table, "n"),
+        vec!["Alice".to_owned(), "Bob".to_owned(), "Cara".to_owned()]
+    );
+}
+
+#[test]
+fn gp03_empty_scope_executes_isolated_body() {
+    // `CALL () { ... }` imports nothing; a self-contained body still runs once
+    // per outer row.
+    let table =
+        execute("MATCH (a:Person) CALL () { RETURN 1 AS n LIMIT 1 } YIELD n RETURN n ORDER BY n");
+    assert_eq!(int_values(&table, "n"), vec![1, 1, 1]);
+}
+
+#[test]
+fn gp03_unimported_outer_binding_is_out_of_scope() {
+    // `b` is an outer binding but is NOT in the import list, so it is invisible
+    // inside the subquery — an undefined reference (42N03). This is the core
+    // GP03 restriction.
+    assert_status(
+        "MATCH (a:Person) MATCH (b:Person) CALL (a) { RETURN b.name AS n LIMIT 1 } YIELD n RETURN n",
+        "42N03",
+    );
+}
+
+#[test]
+fn gp03_empty_scope_rejects_outer_reference() {
+    assert_status(
+        "MATCH (a:Person) CALL () { RETURN a.name AS n LIMIT 1 } YIELD n RETURN n",
+        "42N03",
+    );
+}
+
+#[test]
+fn gp03_unknown_import_name_is_undefined() {
+    assert_status(
+        "MATCH (a:Person) CALL (nonesuch) { RETURN 1 AS n LIMIT 1 } YIELD n RETURN n",
+        "42N03",
+    );
+}
+
+#[test]
+fn gp03_duplicate_import_is_rejected() {
+    assert_status(
+        "MATCH (a:Person) CALL (a, a) { RETURN 1 AS n LIMIT 1 } YIELD n RETURN n",
+        "42N10",
+    );
+}
+
+#[test]
+fn gp03_pattern_reuse_of_import_executes_cleanly() {
+    // Reusing the imported `a` in a labeled pattern (`a:Sensor`) executes without
+    // error: each outer Person `a` is constrained by the inner `:Sensor`, which
+    // matches nothing (single-label fixture), so the `CALL{}` semi-join drops
+    // every row → empty result. The point is that labeled reuse of an import is
+    // handled (the read-only-import path), not a panic or analysis error.
+    // (The no-leak property — the inner label must not corrupt the OUTER scan's
+    // label predicate — is asserted at the plan level in plan_read_pipeline.rs,
+    // because the conflicting label masks it in execution results.)
+    let table = execute(
+        "MATCH (a:Person) CALL (a) { MATCH (a:Sensor) RETURN 1 AS n LIMIT 1 } YIELD n RETURN n",
+    );
+    assert!(table.is_empty());
 }
 
 #[test]

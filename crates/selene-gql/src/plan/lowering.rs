@@ -365,18 +365,16 @@ fn lower_call_subquery(
     analyzed: &AnalyzedStatement,
     max_quantifier: u32,
 ) -> Result<PlannedTableSubquery, PlannerError> {
-    if call.variable_scope.is_some() {
-        return Err(PlannerError::NotImplemented {
-            feature: "explicit variable-scope CALL subquery (GP03)",
-            span: call.span,
-        });
-    }
     if call.in_transactions {
         return Err(PlannerError::NotImplemented {
             feature: "CALL { ... } IN TRANSACTIONS",
             span: call.span,
         });
     }
+    // GP03: explicit variable scope is bound in the analyzer (the body sees only
+    // the named imports); the import set flows into `outer_binding_refs` below
+    // via `outer_binding_refs_in_span` because body references resolve to the
+    // outer bindings' ids. No planner-side scope handling is required.
     let mut body = lower_query_pipeline(&call.body, registry, analyzed, max_quantifier)?;
     expr::populate_plan_subqueries(&mut body, analyzed, registry, max_quantifier)?;
     let yield_items = table_subquery_yields(call, &body.output_schema)?;

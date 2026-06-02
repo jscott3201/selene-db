@@ -329,6 +329,46 @@ impl<'ctx> BindContext<'ctx> {
         result
     }
 
+    /// Bind `f` inside a boundary subquery scope that imports ONLY the named
+    /// outer bindings (ISO/IEC 39075:2024 §15.2 explicit variable scope, GP03).
+    ///
+    /// Each name is resolved against the current (parent) scope first — an
+    /// unknown name is an undefined-reference error — and re-exposed in the
+    /// child by id, so a body reference to an import resolves to the outer
+    /// binding (and flows through `outer_binding_refs`). The child is a
+    /// `boundary`, so any *unnamed* outer variable referenced in the body stops
+    /// at the child and resolves to undefined. An empty `imports` slice
+    /// (`CALL () { ... }`) yields a fully isolated scope. Duplicate import names
+    /// are rejected by [`BindingScopeTree::import_binding`].
+    pub(crate) fn with_imported_scope<T>(
+        &mut self,
+        imports: &[IStr],
+        span: SourceSpan,
+        f: impl FnOnce(&mut Self) -> Result<T, AnalysisError>,
+    ) -> Result<T, AnalysisError> {
+        let parent = self.current;
+        // Resolve imports against the parent scope before entering the (boundary)
+        // child — the child cannot see the parent, so resolution must happen now.
+        let mut resolved = Vec::with_capacity(imports.len());
+        for name in imports {
+            let binding = self
+                .scopes
+                .resolve(parent, name.clone())
+                .ok_or_else(|| AnalysisError::undefined_reference(name.clone(), span))?;
+            resolved.push((name.clone(), binding));
+        }
+        let child = self
+            .scopes
+            .push_scope(parent, ScopeKind::Subquery, span, true);
+        for (name, binding) in resolved {
+            self.scopes.import_binding(child, binding, name, span)?;
+        }
+        self.current = child;
+        let result = f(self);
+        self.current = parent;
+        result
+    }
+
     pub(crate) fn allocate_expr(&mut self, expr: &ValueExpr, ty: AnalyzedType) -> ExprId {
         let id = self.expr_types.push(ty);
         self.expr_ids.insert(expr, id);
