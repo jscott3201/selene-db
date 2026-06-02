@@ -33,6 +33,13 @@ pub enum CatalogOp {
     CreateNodeType {
         /// Node label.
         label: IStr,
+        /// Resolved key label set in source order (ISO/IEC 39075:2024 §18.2 SR5,
+        /// Feature GG21). Empty means the bare `:Name` element-type-name form
+        /// whose singleton key label set is implied (Feature GG20) — the
+        /// executor then keys on `LabelSet::single(label)`. A non-empty vector is
+        /// an explicit `<node type key label set>` already validated against the
+        /// IL003 cardinality cap at lowering.
+        key_labels: Vec<IStr>,
         /// Whether `OR REPLACE` was requested.
         or_replace: bool,
         /// Whether `IF NOT EXISTS` was requested.
@@ -50,6 +57,12 @@ pub enum CatalogOp {
     CreateEdgeType {
         /// Edge label.
         label: IStr,
+        /// Resolved key label set in source order (ISO/IEC 39075:2024 §18.3 SR6,
+        /// Feature GG21). Empty means the bare `:Name` form whose singleton key
+        /// label set is implied (Feature GG20). A non-empty vector is an explicit
+        /// `<edge type key label set>` already validated against the IL003
+        /// cardinality cap at lowering.
+        key_labels: Vec<IStr>,
         /// Whether `OR REPLACE` was requested.
         or_replace: bool,
         /// Whether `IF NOT EXISTS` was requested.

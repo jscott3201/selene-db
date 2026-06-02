@@ -34,6 +34,43 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   bodies) and the runtime/optimizer cap checks. Adds `ImplDefinedCaps::DEFAULT`
   (a `const` so `Session::new` can stay `const fn`) and
   `ImplDefinedCaps::with_max_quantifier`.
+- **CAST specification completeness (GA05, ISO §20.8).** The `<cast specification>`
+  conversion matrix is now complete across the numeric family and `DECIMAL`:
+  `DECIMAL` in both directions, numeric-family widening guarded by `i64::try_from`
+  range-checks (no silent narrow-through), and strict-ISO boolean conversions —
+  `BOOLEAN`↔numeric (including `BOOLEAN`↔`DECIMAL`, raising `22G03` for an
+  out-of-domain value), `BOOLEAN`→`STRING` (uppercase `TRUE`/`FALSE`), and
+  case-insensitive `STRING`→`BOOLEAN`. Builds on the `GA05` claim (see **Changed**
+  / CONFORMANCE-00 below). (§20.8 is the `<cast specification>` clause; §22.10 is
+  the distinct store-assignment clause.)
+- **Counted shortest paths — `SHORTEST n PATH(S)` / `SHORTEST n GROUP(S)`
+  (G019/G020, ISO §16.6).** The path-pattern grammar accepts the ISO counted
+  forms, and the planner/executor return the `n` lowest-cost paths (PATHS) or the
+  paths in the `n` lowest-cost length groups (GROUPS), per pattern.
+- **Match modes — `DIFFERENT EDGES` / `REPEATABLE ELEMENTS` (G002/G003, ISO
+  §16.4).** A `MATCH` may carry an explicit element-binding match mode.
+  `DIFFERENT EDGES` imposes edge-uniqueness across the whole comma-separated
+  pattern (NOTE 222 — "imparts `TRAIL` to each path pattern"); `REPEATABLE
+  ELEMENTS` is the user-chosen default (ID086) and imposes no constraint. A
+  multiply-declared edge variable yields the empty result (NOTE 225/227), not an
+  error. Violations filter (no GQLSTATUS).
+- **`GG21` "Explicit element type key label sets" — honest singleton (ISO
+  §18.2/18.3).** The type-DDL grammar now parses the explicit
+  `[ <label set phrase> ] <implies>` form, accepting **both** ISO `<implies>`
+  spellings — the symbolic `=>` and the `IMPLIES` keyword (matched only in this
+  position, not added to the global reserved-word set, so `implies` stays usable
+  as an identifier). The flagger stamps `GG21` only for the explicit form (bare
+  `:Name` stays `GG20`-only). Key-label-set cardinality is fixed at the singleton
+  `IL003` bound (min=max=1): a cardinality-0 set is rejected with `42012` (node) /
+  `42014` (edge) and a cardinality->1 set (e.g. `:A & :B =>`) with `42013` /
+  `42015` — the spec's own GQLSTATUS. The accepted singleton is observationally
+  identical to the implied `:Name` form (same `GraphTypeDef`, same WAL
+  `SchemaChange`, exact-equality element-type identification — and it survives a
+  snapshot+WAL recovery round-trip). The separate implied-label form
+  (`:Person => :Employee`, which needs containment identification) is the only
+  shape that returns `42N01` `FEATURE_NOT_SUPPORTED`; it and full multi-label key
+  label sets are deferred to v1.3. `GG21` re-enters `SUPPORTED_FEATURES`; it
+  implies `GG02` (§24.7), which stays claimed.
 
 ### Changed
 
@@ -62,8 +99,9 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
     §18.2 Syntax Rule 3c, not explicitly specified. With no syntax to express an
     explicit key label set, `GG21` was an over-claim and is removed from
     `SUPPORTED_FEATURES` and the type-DDL flagger. `GG02` (closed graph type) and
-    `GG20` (explicit element type names) are unaffected. Re-stamp `GG21` only
-    when explicit `<implies>` key-label-set syntax lands.
+    `GG20` (explicit element type names) are unaffected. (Later in this cycle the
+    explicit `<implies>` syntax landed and `GG21` was re-claimed as an honest
+    singleton — see the `GG21` entry under **Added** above.)
   - **`ExecutorError::FeatureNotInV1_1` renamed to `FeatureNotSupportedYet`**
     and its (and sibling parser/analyzer) user-facing messages degraded to
     version-agnostic phrasing (e.g. "feature not yet supported") so they do not

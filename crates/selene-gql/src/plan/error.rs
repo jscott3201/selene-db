@@ -130,6 +130,54 @@ pub enum PlannerError {
         #[label("limit exceeded")]
         span: SourceSpan,
     },
+
+    /// An explicit `<...type key label set>` (Feature GG21) declared a key
+    /// label set whose effective cardinality falls outside the
+    /// implementation-defined (IL003) element-type key-label-set cardinality
+    /// bounds (ISO/IEC 39075:2024 §18.2 SR10/SR11 for nodes, §18.3 SR11/SR12 for
+    /// edges). selene-db sets the IL003 minimum and maximum both to 1, so any
+    /// cardinality other than 1 (the empty bare `<implies>`, or a multi-label
+    /// `:A & :B =>`) is rejected here with the spec-defined GQLSTATUS.
+    #[error(
+        "{element} type key label set cardinality {actual} is outside the supported range [{min}, {max}]"
+    )]
+    #[diagnostic(code(SLENE_P_020))]
+    KeyLabelSetCardinality {
+        /// `"node"` or `"edge"`.
+        element: &'static str,
+        /// Observed key-label-set cardinality.
+        actual: usize,
+        /// IL003 minimum cardinality.
+        min: u32,
+        /// IL003 maximum cardinality.
+        max: u32,
+        /// The spec-defined GQLSTATUS for this element/direction (42012/42013
+        /// for nodes, 42014/42015 for edges).
+        status: GqlStatus,
+        /// Source span of the key-label-set production.
+        #[label("key label set out of range")]
+        span: SourceSpan,
+    },
+
+    /// An explicit `<...type key label set>` was followed by a separate implied
+    /// `<...type label set>` (the `:Key => :Implied` shape). Per ISO/IEC
+    /// 39075:2024 §18.2 SR7/SR8 the element type's label set is the union of the
+    /// key label set and the implied label set, which requires key-label-set
+    /// *containment* identification rather than exact equality. selene-db defers
+    /// that semantics; this is an honest `FEATURE_NOT_SUPPORTED` rather than a
+    /// silent mis-identification.
+    #[error(
+        "{element} type key label set with a separate implied label set is not yet supported \
+         (key label set followed by a distinct implied label set requires containment identification)"
+    )]
+    #[diagnostic(code(SLENE_P_021))]
+    SeparateImpliedLabelSet {
+        /// `"node"` or `"edge"`.
+        element: &'static str,
+        /// Source span of the key-label-set production.
+        #[label("separate implied label set not supported")]
+        span: SourceSpan,
+    },
 }
 
 impl PlannerError {
@@ -149,6 +197,11 @@ impl PlannerError {
             // ISO §14.2 SR v is a Syntax Rule; its violation is the syntax
             // error class (matching the analyzer's SR-violation precedents).
             Self::SetOpArmsNotCombinable { .. } => GqlStatus::SYNTAX_ERROR,
+            // ISO §18.2 SR10/SR11 / §18.3 SR11/SR12 attach a specific
+            // GQLSTATUS to the IL003 cardinality violation per element/direction.
+            Self::KeyLabelSetCardinality { status, .. } => *status,
+            // The separate-implied-label-set shape is a deferred feature.
+            Self::SeparateImpliedLabelSet { .. } => GqlStatus::FEATURE_NOT_SUPPORTED,
         }
     }
 }

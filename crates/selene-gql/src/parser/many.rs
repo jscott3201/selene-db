@@ -387,12 +387,25 @@ fn rebase_ddl(statement: &mut DdlStatement, offset: usize) {
         | DdlStatement::CreateIndex { span, .. }
         | DdlStatement::DropIndex { span, .. } => rebase_span(span, offset),
         DdlStatement::CreateNodeType {
-            properties, span, ..
+            properties,
+            key_label_set,
+            span,
+            ..
         }
         | DdlStatement::CreateEdgeType {
-            properties, span, ..
+            properties,
+            key_label_set,
+            span,
+            ..
         } => {
             rebase_span(span, offset);
+            // The explicit GG21 key-label-set span carries the source location
+            // the planner uses for the IL003 42012–42015 cardinality diagnostics;
+            // rebase it so batch-statement errors point at the original source,
+            // not the segment-local offset.
+            if let Some(key_label_set) = key_label_set {
+                rebase_span(&mut key_label_set.span, offset);
+            }
             for property in properties {
                 rebase_property_def(property, offset);
             }

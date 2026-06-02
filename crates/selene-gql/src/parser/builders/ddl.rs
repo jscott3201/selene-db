@@ -2,10 +2,12 @@
 
 use pest::iterators::Pair;
 
+use selene_core::IStr;
+
 use crate::{
     ast::{
-        DdlStatement, DropBehavior, EdgeEndpointSpec, TypePropertyConstraint, TypePropertyDef,
-        ValidationMode,
+        DdlStatement, DropBehavior, EdgeEndpointSpec, KeyLabelSet, TypePropertyConstraint,
+        TypePropertyDef, ValidationMode,
     },
     error::ParserError,
 };
@@ -143,7 +145,7 @@ fn build_drop_index(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
 
 fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let mut label = None;
+    let mut descriptor = None;
     let mut extends = None;
     let mut or_replace = false;
     let mut if_not_exists = false;
@@ -154,7 +156,9 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident if label.is_none() => label = Some(intern_pair(child)?),
+            Rule::node_type_descriptor => descriptor = Some(build_type_descriptor(child)?),
+            // The `EXTENDS :ident` parent is the only bare `ident` child once the
+            // element-type descriptor is its own rule.
             Rule::ident => extends = Some(intern_pair(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
             Rule::validation_mode_clause => validation_mode = Some(build_validation_mode(&child)?),
@@ -162,10 +166,13 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         }
     }
 
+    let (label, key_label_set) = descriptor.ok_or_else(|| {
+        ParserError::syntax("CREATE NODE TYPE is missing label", source_span, None)
+    })?;
+
     Ok(DdlStatement::CreateNodeType {
-        label: label.ok_or_else(|| {
-            ParserError::syntax("CREATE NODE TYPE is missing label", source_span, None)
-        })?,
+        label,
+        key_label_set,
         or_replace,
         if_not_exists,
         extends,
@@ -177,7 +184,7 @@ fn build_create_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
 
 fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {
     let source_span = span(&pair);
-    let mut label = None;
+    let mut descriptor = None;
     let mut extends = None;
     let mut or_replace = false;
     let mut if_not_exists = false;
@@ -189,7 +196,7 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         match child.as_rule() {
             Rule::or_replace => or_replace = true,
             Rule::if_not_exists => if_not_exists = true,
-            Rule::ident if label.is_none() => label = Some(intern_pair(child)?),
+            Rule::edge_type_descriptor => descriptor = Some(build_type_descriptor(child)?),
             Rule::ident => extends = Some(intern_pair(child)?),
             Rule::edge_endpoint_clause => endpoints = Some(build_edge_endpoint(child)?),
             Rule::type_prop_def_list => properties = build_type_prop_def_list(child)?,
@@ -198,10 +205,13 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         }
     }
 
+    let (label, key_label_set) = descriptor.ok_or_else(|| {
+        ParserError::syntax("CREATE EDGE TYPE is missing label", source_span, None)
+    })?;
+
     Ok(DdlStatement::CreateEdgeType {
-        label: label.ok_or_else(|| {
-            ParserError::syntax("CREATE EDGE TYPE is missing label", source_span, None)
-        })?,
+        label,
+        key_label_set,
         or_replace,
         if_not_exists,
         extends,
@@ -210,6 +220,71 @@ fn build_create_edge_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserEr
         validation_mode,
         span: source_span,
     })
+}
+
+/// Build the element-type descriptor: either a bare `<...type name>` (`:Name`)
+/// or an explicit `<...type key label set>` (Feature GG21). Returns the derived
+/// type-name label plus the optional explicit key label set.
+///
+/// The `node_type_descriptor`/`edge_type_descriptor` rule wraps either a single
+/// `ident` (the bare-name GG20 path) or a `*_type_key_label_set` rule (the GG21
+/// path). For GG21 the preferred type-name label is the first key-label-set
+/// phrase label (ISO §18.2 SR5a — the key label set is the phrase's labels). A
+/// bare `<implies>` with no phrase has no label; that empty key label set is
+/// left for the plan-time IL003 minimum-cardinality reject (42012/42014), so an
+/// empty placeholder name is interned to keep the AST total — it never reaches
+/// the catalog because the plan rejects first.
+fn build_type_descriptor(pair: Pair<'_, Rule>) -> Result<(IStr, Option<KeyLabelSet>), ParserError> {
+    let descriptor_span = span(&pair);
+    let inner = first_child(pair)?;
+    match inner.as_rule() {
+        Rule::ident => Ok((intern_pair(inner)?, None)),
+        Rule::node_type_key_label_set | Rule::edge_type_key_label_set => {
+            let key_label_set = build_key_label_set(inner)?;
+            let label = match key_label_set.labels.first() {
+                Some(label) => label.clone(),
+                None => selene_core::intern("").map_err(|_err| {
+                    ParserError::syntax(
+                        "could not intern empty key-label-set placeholder name",
+                        descriptor_span,
+                        None,
+                    )
+                })?,
+            };
+            Ok((label, Some(key_label_set)))
+        }
+        _ => Err(unexpected_pair(inner, "unexpected element type descriptor")),
+    }
+}
+
+/// Build a [`KeyLabelSet`] from a `node_type_key_label_set`/
+/// `edge_type_key_label_set` pair (`[ <label set phrase> ] <implies> [ <implied
+/// label set> ]`).
+fn build_key_label_set(pair: Pair<'_, Rule>) -> Result<KeyLabelSet, ParserError> {
+    let key_label_span = span(&pair);
+    let mut labels = Vec::new();
+    let mut implied_labels = Vec::new();
+    for child in pair.into_inner() {
+        match child.as_rule() {
+            Rule::key_label_set_phrase => labels = build_key_label_phrase(child)?,
+            Rule::implies => {}
+            Rule::key_label_implied_labels => implied_labels = build_key_label_phrase(child)?,
+            _ => return Err(unexpected_pair(child, "unexpected key label set child")),
+        }
+    }
+    Ok(KeyLabelSet {
+        labels,
+        implied_labels,
+        span: key_label_span,
+    })
+}
+
+/// Collect the `:Label (& :Label)*` identifiers of a key-label-set phrase.
+fn build_key_label_phrase(pair: Pair<'_, Rule>) -> Result<Vec<IStr>, ParserError> {
+    pair.into_inner()
+        .filter(|child| child.as_rule() == Rule::ident)
+        .map(intern_pair)
+        .collect()
 }
 
 fn build_drop_node_type(pair: Pair<'_, Rule>) -> Result<DdlStatement, ParserError> {

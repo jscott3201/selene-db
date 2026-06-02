@@ -32,6 +32,10 @@ pub enum DdlStatement {
     CreateNodeType {
         /// Node label, stored without the source `:` prefix.
         label: IStr,
+        /// Explicit `<node type key label set>` (Feature GG21), or `None` for the
+        /// bare `:Name` element-type-name form whose key label set is implied
+        /// (Feature GG20).
+        key_label_set: Option<KeyLabelSet>,
         /// `OR REPLACE`.
         or_replace: bool,
         /// `IF NOT EXISTS`.
@@ -51,6 +55,10 @@ pub enum DdlStatement {
     CreateEdgeType {
         /// Edge label, stored without the source `:` prefix.
         label: IStr,
+        /// Explicit `<edge type key label set>` (Feature GG21), or `None` for the
+        /// bare `:Name` element-type-name form whose key label set is implied
+        /// (Feature GG20).
+        key_label_set: Option<KeyLabelSet>,
         /// `OR REPLACE`.
         or_replace: bool,
         /// `IF NOT EXISTS`.
@@ -195,6 +203,34 @@ pub enum ValidationMode {
     Strict,
     /// Warn on violations.
     Warn,
+}
+
+/// Explicitly-written element type key label set (ISO/IEC 39075:2024 §18.2/18.3,
+/// Feature GG21 "Explicit element type key label sets").
+///
+/// Present only when the source contains the explicit `<...type key label set>`
+/// production (`[ <label set phrase> ] <implies>`, i.e. a `=>` marker). The bare
+/// `:Name` element-type-name form (Feature GG20, key label set implied per §18.2
+/// SR5c) leaves the owning statement's `key_label_set` field `None`.
+///
+/// `labels` carries the labels of the explicit `<label set phrase>` in source
+/// order (the key label set per §18.2 SR5a). An empty `labels` is the bare
+/// `<implies>` with no `<label set phrase>` (§18.2 SR5b — the empty key label
+/// set, cardinality 0). `implied_labels` carries any separate post-`<implies>`
+/// `<...type label set>` (the `:Person => :Employee` shape); selene-db defers
+/// the union/containment-identification semantics this requires (§18.2 SR7/SR8)
+/// to a later release and rejects a non-empty `implied_labels` with an honest
+/// `FEATURE_NOT_SUPPORTED` (42N01) at plan time.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct KeyLabelSet {
+    /// Labels of the explicit `<label set phrase>` in source order (empty for a
+    /// bare `<implies>`).
+    pub labels: Vec<IStr>,
+    /// Labels of a separate post-`<implies>` `<...type label set>` (the deferred
+    /// `:Key => :Implied` shape); empty in the supported singleton form.
+    pub implied_labels: Vec<IStr>,
+    /// Source span of the key-label-set production.
+    pub span: SourceSpan,
 }
 
 /// Edge endpoint declaration.

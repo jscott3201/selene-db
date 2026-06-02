@@ -54,6 +54,7 @@ pub(super) fn execute(
         } => drop_graph::execute_drop_graph(name.clone(), *if_exists, *span, table, ctx),
         CatalogOp::CreateNodeType {
             label,
+            key_labels,
             or_replace,
             if_not_exists,
             extends,
@@ -93,7 +94,7 @@ pub(super) fn execute(
                 mutator
                     .create_node_type(
                         label.clone(),
-                        LabelSet::single(label.clone()),
+                        key_label_set(key_labels, label.clone()),
                         properties,
                         graph_validation_mode(*validation_mode),
                     )
@@ -113,6 +114,7 @@ pub(super) fn execute(
         }
         CatalogOp::CreateEdgeType {
             label,
+            key_labels,
             or_replace,
             if_not_exists,
             extends,
@@ -154,7 +156,7 @@ pub(super) fn execute(
             ctx.mutator_with_span("catalog op invoked without write transaction", *span)?
                 .create_edge_type(
                     label.clone(),
-                    label.clone(),
+                    edge_key_label(key_labels, label.clone()),
                     source,
                     target,
                     properties,
@@ -297,6 +299,30 @@ const fn graph_validation_mode(mode: Option<crate::ValidationMode>) -> GraphVali
         Some(crate::ValidationMode::Warn) => GraphValidationMode::Warn,
         Some(crate::ValidationMode::Strict) | None => GraphValidationMode::Strict,
     }
+}
+
+/// Build the node-type key label set from the planned key labels (Feature
+/// GG21), falling back to the implied singleton `:label` when no explicit key
+/// label set was written (Feature GG20, ISO/IEC 39075:2024 §18.2 SR5c).
+///
+/// The planner has already enforced the IL003 cardinality cap, so a non-empty
+/// `key_labels` is a validated singleton equal to the type-name label; the
+/// resulting `LabelSet` is byte-identical to the pre-GG21 `LabelSet::single`
+/// (no snapshot/WAL format change — content only).
+fn key_label_set(key_labels: &[IStr], label: IStr) -> LabelSet {
+    if key_labels.is_empty() {
+        LabelSet::single(label)
+    } else {
+        LabelSet::from_iter(key_labels.iter().cloned())
+    }
+}
+
+/// Pick the edge-type key label (the single `EdgeTypeDef.label` discriminator)
+/// from the planned key labels, falling back to the implied type-name label.
+/// Under the IL003 singleton cap a non-empty `key_labels` carries exactly one
+/// label equal to the type name.
+fn edge_key_label(key_labels: &[IStr], label: IStr) -> IStr {
+    key_labels.first().cloned().unwrap_or(label)
 }
 
 fn node_type_exists(graph_type: Option<&GraphTypeDef>, label: IStr) -> bool {

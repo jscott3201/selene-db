@@ -651,6 +651,26 @@ pub struct ImplDefinedCaps {
     pub set_op_key_cap: NonZeroUsize,
     /// Maximum distinct groups a `GROUP BY` may materialize.
     pub group_by_key_cap: NonZeroUsize,
+    // The four key-label-set cardinality bounds (IL003) are `pub(crate)`, NOT
+    // `pub` like the other caps: the runtime can only represent a *singleton*
+    // key label set, so these are a fixed internal invariant (min = max = 1),
+    // not an embedder knob. Keeping them crate-private prevents an external
+    // caller from mutating `ImplDefinedCaps::DEFAULT.node_key_label_set_max` past
+    // 1 (which `#[non_exhaustive]` alone does NOT stop for public fields) and
+    // committing an unrepresentable multi-label set. They become `pub` +
+    // builder-configurable with multi-label runtime support (v1.3).
+    /// Minimum cardinality of an explicit node-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.2 SR10). Fixed at 1.
+    pub(crate) node_key_label_set_min: u32,
+    /// Maximum cardinality of an explicit node-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.2 SR11). Fixed at 1 (singleton).
+    pub(crate) node_key_label_set_max: u32,
+    /// Minimum cardinality of an explicit edge-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.3 SR11). Fixed at 1.
+    pub(crate) edge_key_label_set_min: u32,
+    /// Maximum cardinality of an explicit edge-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.3 SR12). Fixed at 1 (singleton).
+    pub(crate) edge_key_label_set_max: u32,
 }
 
 impl ImplDefinedCaps {
@@ -674,6 +694,15 @@ impl ImplDefinedCaps {
             .expect("default set-op key cap is non-zero"),
         group_by_key_cap: NonZeroUsize::new(Self::DEFAULT_GROUP_BY_KEY_CAP)
             .expect("default group-by key cap is non-zero"),
+        // IL003: singleton key label sets only. Multi-label is a deferred
+        // feature (KeyLabelSetPolicy + containment identification), so the
+        // default min == max == 1 rejects every non-singleton explicit key
+        // label set with the spec-defined GQLSTATUS (§18.2 SR10/SR11, §18.3
+        // SR11/SR12).
+        node_key_label_set_min: 1,
+        node_key_label_set_max: 1,
+        edge_key_label_set_min: 1,
+        edge_key_label_set_max: 1,
     };
 
     /// Return a copy with a different variable-length quantifier upper-bound
@@ -709,6 +738,20 @@ impl ImplDefinedCaps {
         self.group_by_key_cap = group_by_key_cap;
         self
     }
+
+    // NOTE: the node/edge key-label-set cardinality bounds (IL003) are
+    // deliberately NOT embedder-tunable in this release — unlike `max_quantifier`
+    // / the key caps (which the runtime honors at any value), the runtime can
+    // only represent a *singleton* key label set: `EdgeTypeDef.label` is a single
+    // discriminator, and an empty explicit set has no element-type name. A
+    // configurable bound would let `> 1` silently drop labels or `0` synthesize a
+    // placeholder name. So the bounds are fixed at min = max = 1 via `DEFAULT` and
+    // their fields are `pub(crate)` (not `pub`) — `#[non_exhaustive]` blocks only
+    // struct-literal construction, not field mutation of a `DEFAULT`-derived
+    // instance, so crate-private visibility is what actually keeps an embedder
+    // from setting them. Configurable bounds land *with* multi-label runtime
+    // support (v1.3); adding `with_{node,edge}_key_label_set_bounds` + making the
+    // fields `pub` then is the atomic place to re-expose them.
 }
 
 impl Default for ImplDefinedCaps {

@@ -65,8 +65,7 @@ pub fn plan_with_caps(
     registry: &dyn ProcedureRegistry,
     caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
-    let mut plan =
-        lower_statement_kind(&analyzed.statement, registry, analyzed, caps.max_quantifier)?;
+    let mut plan = lower_statement_kind(&analyzed.statement, registry, analyzed, caps)?;
     plan.category = analyzed.category;
     plan.expr_ids = analyzed.expr_ids.clone();
     expr::populate_plan_subqueries(&mut plan, analyzed, registry, caps.max_quantifier)?;
@@ -84,8 +83,12 @@ fn lower_statement_kind(
     statement: &AnalyzedStatementKind,
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
-    max_quantifier: u32,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
+    // The quantifier gate is the only cap threaded recursively mid-lowering; the
+    // DDL key-label-set IL003 gate needs the full caps, so `lower_ddl` receives
+    // `caps` directly.
+    let max_quantifier = caps.max_quantifier;
     match statement {
         AnalyzedStatementKind::Query(pipeline) => {
             lower_query_pipeline(pipeline, registry, analyzed, max_quantifier)
@@ -116,10 +119,10 @@ fn lower_statement_kind(
         AnalyzedStatementKind::Mutate(pipeline) => {
             mutation::lower_mutation(pipeline, analyzed, max_quantifier)
         }
-        AnalyzedStatementKind::Ddl(statement) => catalog::lower_ddl(statement, analyzed),
+        AnalyzedStatementKind::Ddl(statement) => catalog::lower_ddl(statement, analyzed, caps),
         AnalyzedStatementKind::Call(call) => call::lower_top_level_call(call, registry, analyzed),
         AnalyzedStatementKind::Explain { inner, span } => {
-            lower_explain(inner, *span, registry, analyzed, max_quantifier)
+            lower_explain(inner, *span, registry, analyzed, caps)
         }
         AnalyzedStatementKind::StartTransaction(span) => Ok(tx_plan(TxOp::Start { span: *span })),
         AnalyzedStatementKind::Commit(span) => Ok(tx_plan(TxOp::Commit { span: *span })),
@@ -168,9 +171,9 @@ fn lower_explain(
     span: SourceSpan,
     registry: &dyn ProcedureRegistry,
     analyzed: &AnalyzedStatement,
-    max_quantifier: u32,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
-    let inner = lower_statement_kind(inner, registry, analyzed, max_quantifier)?;
+    let inner = lower_statement_kind(inner, registry, analyzed, caps)?;
     Ok(ExecutionPlan {
         category: StatementCategory::ReadOnly,
         pattern_plan: None,

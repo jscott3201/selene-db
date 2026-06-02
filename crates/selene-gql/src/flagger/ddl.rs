@@ -37,6 +37,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::IM_DROP_GRAPH, *span);
         }
         DdlStatement::CreateNodeType {
+            key_label_set,
             extends,
             or_replace,
             if_not_exists,
@@ -45,7 +46,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             ..
         } => {
             let _ = or_replace;
-            type_ddl(*span, uses);
+            type_ddl(*span, key_label_set.is_some(), uses);
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC03, *span);
             }
@@ -55,6 +56,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             property_defs(properties, uses);
         }
         DdlStatement::CreateEdgeType {
+            key_label_set,
             extends,
             or_replace,
             if_not_exists,
@@ -63,7 +65,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             ..
         } => {
             let _ = or_replace;
-            type_ddl(*span, uses);
+            type_ddl(*span, key_label_set.is_some(), uses);
             if *if_not_exists {
                 record_feature(uses, FeatureId::GC03, *span);
             }
@@ -84,7 +86,7 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             span,
             ..
         } => {
-            type_ddl(*span, uses);
+            type_ddl(*span, false, uses);
             if *if_exists {
                 record_feature(uses, FeatureId::GC03, *span);
             }
@@ -105,22 +107,26 @@ pub(crate) fn statement(statement: &DdlStatement, uses: &mut Vec<FeatureUse>) {
             record_feature(uses, FeatureId::IM_TRUNCATE, *span);
         }
         DdlStatement::ShowNodeTypes(span) | DdlStatement::ShowEdgeTypes(span) => {
-            type_ddl(*span, uses);
+            type_ddl(*span, false, uses);
         }
         DdlStatement::ShowIndexes(_) | DdlStatement::ShowProcedures(_) => {}
     }
 }
 
-fn type_ddl(span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
+fn type_ddl(span: crate::SourceSpan, explicit_key_label_set: bool, uses: &mut Vec<FeatureUse>) {
     // ISO/IEC 39075:2024 §18.2/18.3: a closed-graph type-DDL statement uses an
     // explicit `<node/edge type name>` (the `:Name` after `NODE/EDGE TYPE`),
     // which is GG20 "Explicit element type names" under a closed graph type
-    // (GG02). GG21 "Explicit element type key label sets" is NOT flagged: it
-    // requires a `<node/edge type key label set>` (`[ <label set phrase> ]
-    // <implies>`), and the grammar has no `<implies>` token — the key label
-    // set is *implied* from `:Name` per §18.2 SR 3c, not explicitly stated.
+    // (GG02).
     record_feature(uses, FeatureId::GG02, span);
     record_feature(uses, FeatureId::GG20, span);
+    // GG21 "Explicit element type key label sets" flags only when the source
+    // contains the explicit `<node/edge type key label set>` production (`[
+    // <label set phrase> ] <implies>`, the `=>` marker). The bare `:Name` form
+    // keeps the key label set *implied* per §18.2 SR5c — GG20-only, no GG21.
+    if explicit_key_label_set {
+        record_feature(uses, FeatureId::GG21, span);
+    }
 }
 
 fn property_defs(properties: &[TypePropertyDef], uses: &mut Vec<FeatureUse>) {

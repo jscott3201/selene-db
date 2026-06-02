@@ -3,7 +3,8 @@
 use selene_core::{IStr, intern};
 
 use crate::{
-    DdlStatement, GqlType, TypePropertyConstraint, TypePropertyDef,
+    DdlStatement, GqlStatus, GqlType, KeyLabelSet, SourceSpan, TypePropertyConstraint,
+    TypePropertyDef,
     analyze::{AnalyzedStatement, AnalyzedType},
     plan::{
         BindingTableColumn, BindingTableSchema, CatalogOp, ExecutionPlan, ImplDefinedCaps,
@@ -17,6 +18,7 @@ use super::expr;
 pub(crate) fn lower_ddl(
     statement: &DdlStatement,
     analyzed: &AnalyzedStatement,
+    caps: &ImplDefinedCaps,
 ) -> Result<ExecutionPlan, PlannerError> {
     let op = match statement {
         DdlStatement::CreateGraph {
@@ -41,6 +43,7 @@ pub(crate) fn lower_ddl(
         },
         DdlStatement::CreateNodeType {
             label,
+            key_label_set,
             or_replace,
             if_not_exists,
             extends,
@@ -49,6 +52,7 @@ pub(crate) fn lower_ddl(
             span,
         } => CatalogOp::CreateNodeType {
             label: label.clone(),
+            key_labels: resolve_key_labels(key_label_set.as_ref(), Element::Node, caps, *span)?,
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
             extends: extends.clone(),
@@ -58,6 +62,7 @@ pub(crate) fn lower_ddl(
         },
         DdlStatement::CreateEdgeType {
             label,
+            key_label_set,
             or_replace,
             if_not_exists,
             extends,
@@ -67,6 +72,7 @@ pub(crate) fn lower_ddl(
             span,
         } => CatalogOp::CreateEdgeType {
             label: label.clone(),
+            key_labels: resolve_key_labels(key_label_set.as_ref(), Element::Edge, caps, *span)?,
             or_replace: *or_replace,
             if_not_exists: *if_not_exists,
             extends: extends.clone(),
@@ -145,6 +151,111 @@ pub(crate) fn lower_ddl(
         next_expr_id: super::next_expr_id(analyzed),
         next_pipeline_op_id,
     })
+}
+
+/// Node-vs-edge element-type discriminator for IL003 key-label-set diagnostics.
+#[derive(Clone, Copy)]
+enum Element {
+    Node,
+    Edge,
+}
+
+impl Element {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Edge => "edge",
+        }
+    }
+
+    /// IL003 key-label-set cardinality bounds for this element kind.
+    const fn bounds(self, caps: &ImplDefinedCaps) -> (u32, u32) {
+        match self {
+            Self::Node => (caps.node_key_label_set_min, caps.node_key_label_set_max),
+            Self::Edge => (caps.edge_key_label_set_min, caps.edge_key_label_set_max),
+        }
+    }
+
+    /// Spec-defined GQLSTATUS for a below-minimum cardinality (§18.2 SR10 /
+    /// §18.3 SR11).
+    const fn below_minimum_status(self) -> GqlStatus {
+        match self {
+            Self::Node => GqlStatus::NODE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+            Self::Edge => GqlStatus::EDGE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+        }
+    }
+
+    /// Spec-defined GQLSTATUS for an above-maximum cardinality (§18.2 SR11 /
+    /// §18.3 SR12).
+    const fn above_maximum_status(self) -> GqlStatus {
+        match self {
+            Self::Node => GqlStatus::NODE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+            Self::Edge => GqlStatus::EDGE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+        }
+    }
+}
+
+/// Resolve an explicit `<...type key label set>` (Feature GG21) into the catalog
+/// key-label-set vector, enforcing the IL003 cardinality cap (ISO/IEC
+/// 39075:2024 §18.2 SR10/SR11 for nodes, §18.3 SR11/SR12 for edges) and
+/// rejecting the deferred separate-implied-label-set shape.
+///
+/// Returns an empty vector for the bare `:Name` element-type-name form
+/// (`key_label_set == None`): the executor then keys on the singleton
+/// `LabelSet::single(label)` (the implied key label set per §18.2 SR5c), exactly
+/// as before GG21.
+fn resolve_key_labels(
+    key_label_set: Option<&KeyLabelSet>,
+    element: Element,
+    caps: &ImplDefinedCaps,
+    fallback_span: SourceSpan,
+) -> Result<Vec<IStr>, PlannerError> {
+    let Some(key_label_set) = key_label_set else {
+        return Ok(Vec::new());
+    };
+    let span = if key_label_set.span == SourceSpan::default() {
+        fallback_span
+    } else {
+        key_label_set.span
+    };
+
+    // The separate-implied-label-set shape (`:Key => :Implied`) needs the
+    // §18.2 SR7/SR8 union + containment identification, which is deferred.
+    if !key_label_set.implied_labels.is_empty() {
+        return Err(PlannerError::SeparateImpliedLabelSet {
+            element: element.name(),
+            span,
+        });
+    }
+
+    // IL003: the effective key-label-set cardinality must fall in [min, max].
+    // selene-db's default min == max == 1 (singleton), so the empty bare
+    // `<implies>` (cardinality 0) and any multi-label phrase (cardinality > 1)
+    // are rejected here with the spec-defined GQLSTATUS.
+    let cardinality = key_label_set.labels.len();
+    let (min, max) = element.bounds(caps);
+    if cardinality < min as usize {
+        return Err(PlannerError::KeyLabelSetCardinality {
+            element: element.name(),
+            actual: cardinality,
+            min,
+            max,
+            status: element.below_minimum_status(),
+            span,
+        });
+    }
+    if cardinality > max as usize {
+        return Err(PlannerError::KeyLabelSetCardinality {
+            element: element.name(),
+            actual: cardinality,
+            min,
+            max,
+            status: element.above_maximum_status(),
+            span,
+        });
+    }
+
+    Ok(key_label_set.labels.clone())
 }
 
 fn lower_property_defs(
