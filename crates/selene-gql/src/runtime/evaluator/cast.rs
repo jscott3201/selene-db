@@ -1,18 +1,26 @@
-//! ISO/IEC 39075:2024 §22 explicit `CAST(<value> AS <target>)` dispatch matrix.
+//! ISO/IEC 39075:2024 §20.8 explicit `CAST(<value> AS <target>)` dispatch matrix.
 //!
 //! Each `Value` x `GqlType` pair routes through this module. The matrix is
-//! split into helpers per source family (numeric, string, boolean, list) so
-//! the dispatch stays linear and walker-friendly. Failure modes:
+//! split into helpers per source family (numeric, string, boolean, list,
+//! decimal) so the dispatch stays linear and walker-friendly. The numeric
+//! family is `Table 4`'s signed-/unsigned-exact + approximate base types
+//! (`EN`/`UN`/`AN`); every `EN/UN/AN ↔ EN/UN/AN/C` cell is mandated `Y`, so a
+//! `Uint`/`Int128`/`Uint128`/`Float32`/`Decimal` source widens to its target
+//! the same as `Int`/`Float`. Failure modes:
 //!
 //! - `22018` (`InvalidCharacterValueForCast`) — strict-parse failure
-//!   (string→numeric/boolean) and NaN→integer (per ISO §22, NaN has no
-//!   representable integer image).
-//! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric or
-//!   float→integer that exceeds the target's range (the truncated integer
-//!   would not fit).
+//!   (string→numeric/boolean/decimal) and NaN→integer/decimal (per ISO §20.8,
+//!   NaN has no representable exact image).
+//! - `22003` (`NumericValueOutOfRange`) — overflow on numeric→numeric,
+//!   float→integer, or any widening/Decimal conversion that loses a leading
+//!   significant digit (the value does not fit the target's range).
+//! - `22G03` (`InvalidValueType`, datatype mismatch) — an invalid Table-4
+//!   source/target combination, e.g. boolean ↔ numeric (Table 4 `N`), which
+//!   ISO does not define a `CAST` for.
 //! - `42N01` (`FEATURE_NOT_SUPPORTED`) — source or target outside the
-//!   currently implemented explicit-cast scope (NODE / EDGE / PATH / RECORD
-//!   source, or any cast whose target is `NULL` / `NOTHING`).
+//!   currently implemented explicit-cast scope (NODE / EDGE / PATH source, the
+//!   temporal / bytes families, or any cast whose target is `NULL` /
+//!   `NOTHING`).
 
 use selene_core::{Record, Value};
 use smallvec::SmallVec;
@@ -23,6 +31,8 @@ use crate::{
 };
 
 use super::uuid_fns::parse_uuid_string;
+
+mod decimal;
 
 /// Evaluate an explicit CAST.
 ///
@@ -108,6 +118,7 @@ pub(super) fn eval_cast(
         | GqlType::Int32
         | GqlType::SmallInt => cast_to_integer(value, span),
         GqlType::Float | GqlType::Float64 | GqlType::Float32 => cast_to_float(value, span),
+        GqlType::Decimal => decimal::numeric_to_decimal(value, span),
         GqlType::Boolean => cast_to_boolean(value, span),
         GqlType::String => cast_to_string(value, span),
         GqlType::Uuid => cast_to_uuid(value, span),
@@ -120,11 +131,25 @@ pub(super) fn eval_cast(
 }
 
 fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Per ISO §20.8 Table 4 the integer target is `EN`; every numeric source
+    // family (`EN`/`UN`/`AN`) is a `Y` cell. Exact-integer sources widen to
+    // their natural intermediate (`u64`/`i128`/`u128`) with an explicit i64
+    // range check — never a silent narrow-through-`i64` (which would corrupt
+    // `Uint(u64::MAX)`/`Int128`/`Uint128` out-of-range values). A boolean
+    // source is Table-4 `N` (no boolean→numeric cast) → 22G03.
     match value {
         Value::Int(v) => Ok(Value::Int(v)),
-        Value::Bool(b) => Ok(Value::Int(i64::from(b))),
+        Value::Uint(v) => decimal::u64_to_int(v, span),
+        Value::Int128(v) => decimal::i128_to_int(v, span),
+        Value::Uint128(v) => decimal::u128_to_int(v, span),
         Value::Float(f) => float_to_integer(f, span),
+        Value::Float32(f) => float_to_integer(f64::from(f), span),
+        Value::Decimal(d) => decimal::decimal_to_int(d, span),
         Value::String(s) => string_to_integer(s.as_str(), span),
+        Value::Bool(_) => Err(non_iso_combination(
+            "CAST from BOOLEAN to a numeric type is not a valid type combination",
+            span,
+        )),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for INTEGER target",
             span,
@@ -133,16 +158,31 @@ fn cast_to_integer(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
 }
 
 fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Per ISO §20.8 Table 4 the float target is `AN`; every numeric source is
+    // a `Y` cell (GR4i). An `AN` target spans the whole exact-numeric range, so
+    // no widening overflows — loss of least-significant precision is permitted
+    // (round/truncate, IA005), and the conversion never raises 22003 (a
+    // boolean source is Table-4 `N` → 22G03).
     match value {
         Value::Float(f) => Ok(Value::Float(f)),
-        Value::Int(v) => {
-            // i64 → f64 is lossy for values exceeding 2^53, but ISO §22 does
-            // not require lossless guarantees here. Convert directly.
-            #[allow(clippy::cast_precision_loss)]
-            Ok(Value::Float(v as f64))
-        }
-        Value::Bool(b) => Ok(Value::Float(if b { 1.0 } else { 0.0 })),
+        // Exact-integer → f64 is lossy above 2^53, but ISO §20.8 GR4i does not
+        // require a lossless guarantee here (IA005 round/truncate). Convert
+        // directly through the widest intermediate.
+        #[allow(clippy::cast_precision_loss)]
+        Value::Int(v) => Ok(Value::Float(v as f64)),
+        #[allow(clippy::cast_precision_loss)]
+        Value::Uint(v) => Ok(Value::Float(v as f64)),
+        #[allow(clippy::cast_precision_loss)]
+        Value::Int128(v) => Ok(Value::Float(v as f64)),
+        #[allow(clippy::cast_precision_loss)]
+        Value::Uint128(v) => Ok(Value::Float(v as f64)),
+        Value::Float32(f) => Ok(Value::Float(f64::from(f))),
+        Value::Decimal(d) => decimal::decimal_to_float(d, span),
         Value::String(s) => string_to_float(s.as_str(), span),
+        Value::Bool(_) => Err(non_iso_combination(
+            "CAST from BOOLEAN to a numeric type is not a valid type combination",
+            span,
+        )),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for FLOAT target",
             span,
@@ -151,16 +191,24 @@ fn cast_to_float(value: Value, span: SourceSpan) -> Result<Value, ExecutorError>
 }
 
 fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
+    // Per ISO §20.8 Table 4 the only valid sources for a boolean target are
+    // `BO` (identity, GR4 boolean-source rule) and `C` (string, GR4q). Every
+    // numeric source (`EN`/`UN`/`AN`, including DECIMAL) is a `N` cell — ISO
+    // has no numeric→boolean cast — so it is a 22G03 datatype mismatch, not a
+    // 0/1-truthiness extension.
     match value {
         Value::Bool(b) => Ok(Value::Bool(b)),
-        Value::Int(0) => Ok(Value::Bool(false)),
-        Value::Int(1) => Ok(Value::Bool(true)),
-        Value::Int(_) => Err(ExecutorError::data_exception(
-            DataExceptionSubclass::DataException,
-            "CAST to BOOLEAN accepts only 0 or 1",
+        Value::String(s) => string_to_boolean(s.as_str(), span),
+        Value::Int(_)
+        | Value::Uint(_)
+        | Value::Int128(_)
+        | Value::Uint128(_)
+        | Value::Float(_)
+        | Value::Float32(_)
+        | Value::Decimal(_) => Err(non_iso_combination(
+            "CAST from a numeric type to BOOLEAN is not a valid type combination",
             span,
         )),
-        Value::String(s) => string_to_boolean(s.as_str(), span),
         _ => Err(ExecutorError::FeatureNotSupportedYet {
             feature: "CAST source not supported for BOOLEAN target",
             span,
@@ -170,9 +218,18 @@ fn cast_to_boolean(value: Value, span: SourceSpan) -> Result<Value, ExecutorErro
 
 fn cast_to_string(value: Value, span: SourceSpan) -> Result<Value, ExecutorError> {
     let rendered: String = match value {
-        Value::Bool(b) => if b { "true" } else { "false" }.to_owned(),
+        // ISO §20.8 GR4(j)(v)(1): boolean→string renders the UPPERCASE literal
+        // `'TRUE'`/`'FALSE'` (GR4v), not lowercase.
+        Value::Bool(b) => if b { "TRUE" } else { "FALSE" }.to_owned(),
+        // Numeric → C (GR4j): the shortest conforming literal. Every numeric
+        // family is a Table-4 `Y` source, rendered through its own `Display`.
         Value::Int(v) => v.to_string(),
+        Value::Uint(v) => v.to_string(),
+        Value::Int128(v) => v.to_string(),
+        Value::Uint128(v) => v.to_string(),
         Value::Float(f) => format_float(f),
+        Value::Float32(f) => format_float(f64::from(f)),
+        Value::Decimal(d) => decimal::decimal_to_string(&d),
         Value::String(s) => s.as_str().to_owned(),
         Value::Uuid(v) => v.to_string(),
         _ => {
@@ -296,6 +353,13 @@ fn cast_to_record(
     }
 }
 
+/// An invalid ISO §20.8 Table-4 source/target combination (a `N` cell) →
+/// `22G03` datatype mismatch. Used for the boolean↔numeric cells ISO does not
+/// define a `CAST` for.
+fn non_iso_combination(message: &'static str, span: SourceSpan) -> ExecutorError {
+    ExecutorError::data_exception(DataExceptionSubclass::InvalidValueType, message, span)
+}
+
 fn non_record_source_cast(span: SourceSpan) -> ExecutorError {
     // ISO §20.8 Table 4: a non-record source to a record target is an invalid type
     // combination (`N`) → 22G03 datatype mismatch.
@@ -362,9 +426,11 @@ fn string_to_float(text: &str, span: SourceSpan) -> Result<Value, ExecutorError>
 }
 
 fn string_to_boolean(text: &str, span: SourceSpan) -> Result<Value, ExecutorError> {
-    // ISO §22 — strict lowercase only (Q3 fold). "TRUE"/"True" are not
-    // accepted; tests pin this.
-    match text {
+    // ISO §20.8 GR4(q) defers C→BO to the §21.2 boolean-literal rules, which
+    // are case-insensitive (`TRUE`/`True`/`true`, `FALSE`/`False`/`false`).
+    // Trim leading/trailing whitespace consistent with the numeric GR4(g)(ii)
+    // truncating-whitespace rule already applied by `string_to_integer`.
+    match text.trim().to_ascii_lowercase().as_str() {
         "true" => Ok(Value::Bool(true)),
         "false" => Ok(Value::Bool(false)),
         _ => Err(invalid_character(text, "BOOLEAN", span)),
@@ -391,7 +457,6 @@ fn format_float(f: f64) -> String {
 
 fn cast_to_type_feature(target: &GqlType) -> &'static str {
     match target {
-        GqlType::Decimal => "CAST to DECIMAL",
         GqlType::Bytes => "CAST to BYTES",
         GqlType::ZonedDateTime => "CAST to ZONED DATETIME",
         GqlType::LocalDateTime => "CAST to LOCAL DATETIME",
@@ -500,5 +565,236 @@ mod tests {
             "expected FeatureNotSupportedYet, got {err:?}"
         );
         assert_eq!(err.gqlstatus().as_str(), "42N01");
+    }
+
+    // -----------------------------------------------------------------------
+    // 810 — DECIMAL arms + numeric-family source widening + strict-ISO bool.
+    // The widened numeric source variants (Uint/Int128/Uint128/Float32/Decimal)
+    // have no GQL literal, so each new cell is pinned here at the `eval_cast`
+    // seam; the grammar-reachable behavior changes (bool↔string case,
+    // bool→numeric reject) are additionally covered in tests/cast.rs.
+    // -----------------------------------------------------------------------
+
+    use rust_decimal::Decimal;
+    use rust_decimal::prelude::FromPrimitive;
+
+    fn cast(value: Value, target: &GqlType) -> Value {
+        eval_cast(value, target, span()).expect("cast succeeds")
+    }
+
+    fn cast_status(value: Value, target: &GqlType) -> String {
+        eval_cast(value, target, span())
+            .expect_err("cast rejected")
+            .gqlstatus()
+            .as_str()
+            .to_owned()
+    }
+
+    fn as_str(value: Value) -> String {
+        match value {
+            Value::String(istr) => istr.as_str().to_owned(),
+            other => panic!("expected string, got {other:?}"),
+        }
+    }
+
+    // The DECIMAL-arm cells (→ DECIMAL and DECIMAL → integer/float/string) are
+    // pinned in the `cast::decimal` submodule's own `#[cfg(test)]`, where the
+    // conversion helpers live. The widened-numeric + strict-bool cells below
+    // route through the full `eval_cast` dispatch.
+
+    // --- numeric-family source widening into i64 integer target ---
+
+    #[test]
+    fn uint_in_range_to_integer() {
+        assert_eq!(cast(Value::Uint(7), &GqlType::Integer), Value::Int(7));
+    }
+
+    #[test]
+    fn uint_above_i64_max_to_integer_returns_22003() {
+        // u64::MAX must NOT silently narrow to -1; it is out of i64 range.
+        assert_eq!(
+            cast_status(Value::Uint(u64::MAX), &GqlType::Integer),
+            "22003"
+        );
+    }
+
+    #[test]
+    fn int128_in_range_to_integer() {
+        assert_eq!(cast(Value::Int128(-9), &GqlType::Integer), Value::Int(-9));
+    }
+
+    #[test]
+    fn int128_above_i64_max_to_integer_returns_22003() {
+        assert_eq!(
+            cast_status(Value::Int128(i128::from(i64::MAX) + 1), &GqlType::Integer),
+            "22003"
+        );
+    }
+
+    #[test]
+    fn uint128_in_range_to_integer() {
+        assert_eq!(cast(Value::Uint128(9), &GqlType::Integer), Value::Int(9));
+    }
+
+    #[test]
+    fn uint128_above_i64_max_to_integer_returns_22003() {
+        assert_eq!(
+            cast_status(Value::Uint128(u128::MAX), &GqlType::Integer),
+            "22003"
+        );
+    }
+
+    #[test]
+    fn float32_to_integer_truncates() {
+        assert_eq!(
+            cast(Value::Float32(3.7_f32), &GqlType::Integer),
+            Value::Int(3)
+        );
+    }
+
+    // --- numeric-family source widening into f64 float target ---
+
+    #[test]
+    fn uint_to_float() {
+        assert_eq!(cast(Value::Uint(42), &GqlType::Float), Value::Float(42.0));
+    }
+
+    #[test]
+    fn int128_to_float() {
+        assert_eq!(
+            cast(Value::Int128(-42), &GqlType::Float),
+            Value::Float(-42.0)
+        );
+    }
+
+    #[test]
+    fn uint128_to_float() {
+        assert_eq!(
+            cast(Value::Uint128(42), &GqlType::Float),
+            Value::Float(42.0)
+        );
+    }
+
+    #[test]
+    fn float32_to_float() {
+        assert_eq!(
+            cast(Value::Float32(0.5_f32), &GqlType::Float),
+            Value::Float(0.5)
+        );
+    }
+
+    // --- numeric-family source widening into string target ---
+
+    #[test]
+    fn uint_to_string() {
+        assert_eq!(as_str(cast(Value::Uint(42), &GqlType::String)), "42");
+    }
+
+    #[test]
+    fn int128_to_string() {
+        assert_eq!(as_str(cast(Value::Int128(-42), &GqlType::String)), "-42");
+    }
+
+    #[test]
+    fn uint128_to_string() {
+        assert_eq!(as_str(cast(Value::Uint128(42), &GqlType::String)), "42");
+    }
+
+    #[test]
+    fn float32_to_string() {
+        assert_eq!(
+            as_str(cast(Value::Float32(0.5_f32), &GqlType::String)),
+            "0.5"
+        );
+    }
+
+    // --- strict-ISO boolean surface (3a) — every numeric source → 22G03 ---
+
+    #[test]
+    fn bool_to_integer_returns_22g03() {
+        assert_eq!(cast_status(Value::Bool(true), &GqlType::Integer), "22G03");
+    }
+
+    #[test]
+    fn bool_to_float_returns_22g03() {
+        assert_eq!(cast_status(Value::Bool(true), &GqlType::Float), "22G03");
+    }
+
+    #[test]
+    fn bool_to_decimal_returns_22g03() {
+        // DECIMAL is signed-exact numeric (Table-4 `EN`); BO→EN is `N`, so a
+        // boolean→DECIMAL cast is a 22G03 datatype mismatch, NOT a 42N01
+        // unimplemented feature (the DECIMAL target's source fallthrough must
+        // match the INTEGER/FLOAT bool arms — Codex P2 on PR #240).
+        assert_eq!(cast_status(Value::Bool(true), &GqlType::Decimal), "22G03");
+        assert_eq!(cast_status(Value::Bool(false), &GqlType::Decimal), "22G03");
+    }
+
+    #[test]
+    fn int_to_boolean_returns_22g03() {
+        assert_eq!(cast_status(Value::Int(1), &GqlType::Boolean), "22G03");
+        assert_eq!(cast_status(Value::Int(0), &GqlType::Boolean), "22G03");
+        assert_eq!(cast_status(Value::Int(2), &GqlType::Boolean), "22G03");
+    }
+
+    #[test]
+    fn numeric_family_to_boolean_returns_22g03() {
+        for value in [
+            Value::Uint(1),
+            Value::Int128(1),
+            Value::Uint128(1),
+            Value::Float(1.0),
+            Value::Float32(1.0_f32),
+            Value::Decimal(Decimal::from_f64(1.0).unwrap()),
+        ] {
+            assert_eq!(
+                cast_status(value.clone(), &GqlType::Boolean),
+                "22G03",
+                "expected 22G03 for {value:?} -> BOOLEAN"
+            );
+        }
+    }
+
+    // --- bool→string uppercase (3b) + string→bool case-insensitive (3c) ---
+
+    #[test]
+    fn bool_to_string_is_uppercase() {
+        assert_eq!(as_str(cast(Value::Bool(true), &GqlType::String)), "TRUE");
+        assert_eq!(as_str(cast(Value::Bool(false), &GqlType::String)), "FALSE");
+    }
+
+    #[test]
+    fn string_to_boolean_is_case_insensitive() {
+        for text in ["true", "True", "TRUE", "tRuE", "  true  "] {
+            assert_eq!(
+                cast(
+                    Value::String(selene_core::intern(text).unwrap()),
+                    &GqlType::Boolean
+                ),
+                Value::Bool(true),
+                "`{text}` must parse to TRUE"
+            );
+        }
+        for text in ["false", "False", "FALSE", "fAlSe", " FALSE "] {
+            assert_eq!(
+                cast(
+                    Value::String(selene_core::intern(text).unwrap()),
+                    &GqlType::Boolean
+                ),
+                Value::Bool(false),
+                "`{text}` must parse to FALSE"
+            );
+        }
+    }
+
+    #[test]
+    fn string_to_boolean_garbage_still_returns_22018() {
+        assert_eq!(
+            cast_status(
+                Value::String(selene_core::intern("yes").unwrap()),
+                &GqlType::Boolean
+            ),
+            "22018"
+        );
     }
 }
