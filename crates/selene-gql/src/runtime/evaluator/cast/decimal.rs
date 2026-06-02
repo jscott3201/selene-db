@@ -83,6 +83,17 @@ pub(super) fn numeric_to_decimal(value: Value, span: SourceSpan) -> Result<Value
             .trim()
             .parse::<Decimal>()
             .map_err(|_| invalid_decimal_text(s.as_str(), span))?,
+        // DECIMAL is signed-exact numeric (Table-4 `EN`), so a BOOLEAN source
+        // is a Table-4 `N` cell exactly like BOOL→INTEGER/FLOAT — an invalid
+        // type combination (22G03), not an unimplemented feature (42N01).
+        // Reuse `cast`'s shared 22G03 constructor so the message + subclass stay
+        // identical to the other numeric targets.
+        Value::Bool(_) => {
+            return Err(super::non_iso_combination(
+                "CAST from BOOLEAN to a numeric type is not a valid type combination",
+                span,
+            ));
+        }
         _ => {
             return Err(ExecutorError::FeatureNotSupportedYet {
                 feature: "CAST source not supported for DECIMAL target",

@@ -505,6 +505,19 @@ fn cast_float_to_boolean_returns_22g03() {
     );
 }
 
+#[test]
+fn cast_boolean_to_decimal_returns_22g03() {
+    // ISO §20.8 Table 4 marks BO→EN `N`; DECIMAL is signed-exact (EN), so a
+    // boolean→DECIMAL cast is a 22G03 datatype mismatch, not a 42N01
+    // unimplemented feature — the DECIMAL target's source fallthrough must
+    // classify BOOLEAN identically to the INTEGER/FLOAT targets (Codex P2 on
+    // PR #240).
+    assert_eq!(
+        execute_first_status("RETURN CAST(true AS DECIMAL) AS v"),
+        "22G03"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // 810 — DECIMAL CAST arms + numeric-family source widening (end-to-end).
 // These thread the widened/decimal source variants through the full

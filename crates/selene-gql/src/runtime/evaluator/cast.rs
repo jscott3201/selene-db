@@ -721,6 +721,16 @@ mod tests {
     }
 
     #[test]
+    fn bool_to_decimal_returns_22g03() {
+        // DECIMAL is signed-exact numeric (Table-4 `EN`); BO→EN is `N`, so a
+        // boolean→DECIMAL cast is a 22G03 datatype mismatch, NOT a 42N01
+        // unimplemented feature (the DECIMAL target's source fallthrough must
+        // match the INTEGER/FLOAT bool arms — Codex P2 on PR #240).
+        assert_eq!(cast_status(Value::Bool(true), &GqlType::Decimal), "22G03");
+        assert_eq!(cast_status(Value::Bool(false), &GqlType::Decimal), "22G03");
+    }
+
+    #[test]
     fn int_to_boolean_returns_22g03() {
         assert_eq!(cast_status(Value::Int(1), &GqlType::Boolean), "22G03");
         assert_eq!(cast_status(Value::Int(0), &GqlType::Boolean), "22G03");
