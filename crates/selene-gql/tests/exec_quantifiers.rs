@@ -374,3 +374,31 @@ fn different_edges_makes_counted_shortest_finite_on_cycle() {
         vec![Some(vec![1]), Some(vec![1, 2])]
     );
 }
+
+#[test]
+fn lower_bounded_shortest_over_cycle_is_deferred_not_wrong() {
+    // Codex (PR #245, P2): the WALK->TRAIL downshift is only result-equivalent when
+    // the quantifier lower bound is <= 1. With `min >= 2`, removing a cycle would
+    // drop below the bound, so the shortest WALK satisfying the bound can legitimately
+    // REUSE an edge (e.g. on the A<->B cycle the shortest >=2-hop walk to B is the
+    // edge-reusing A->B->A->B [1,2,1]). A TRAIL downshift would drop those rows and
+    // return a WRONG (under-)result. So `min >= 2` shortest is NOT downshifted: it
+    // stays WALK and, over a cyclic graph, is DEFERRED (5GQL1, ProgramLimitExceeded) —
+    // the same posture as plain counted-shortest (both need ordered length-enumeration
+    // over an infinite WALK candidate set). The point is that the engine never returns
+    // a silently-truncated result here.
+    let graph = cycle_graph();
+    let plan = planned("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K*2..]->(b:N) RETURN r");
+
+    let err = execute_on_graph(&graph, &plan)
+        .expect_err("lower-bounded shortest over a cycle is deferred, not wrongly truncated");
+
+    assert!(matches!(
+        err,
+        ExecutorError::ProgramLimitExceeded {
+            detail: "max_quantifier",
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "5GQL1");
+}
