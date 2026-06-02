@@ -156,10 +156,18 @@ fn parse_counted_uint(pair: &Pair<'_, Rule>) -> Result<u32, ParserError> {
 }
 
 fn build_match_mode(pair: &Pair<'_, Rule>) -> Result<MatchMode, ParserError> {
+    // The grammar (`^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS"`)
+    // already guarantees the full two-keyword sequence matched. The `~` skips
+    // implicit WHITESPACE *and* COMMENTs between the keywords, so `as_str()` may
+    // contain newlines, runs of spaces/tabs, or comments (e.g. "DIFFERENT\n
+    // EDGES", "DIFFERENT /*x*/ EDGES"). Comparing the whole raw span to a
+    // single-space literal would wrongly reject those legal spellings, so
+    // dispatch on the leading keyword token — which the grammar makes
+    // unambiguous — instead.
     let text = pair.as_str().to_ascii_uppercase();
-    match text.as_str() {
-        "DIFFERENT EDGES" => Ok(MatchMode::DifferentEdges),
-        "REPEATABLE ELEMENTS" => Ok(MatchMode::RepeatableElements),
+    match text.split_whitespace().next() {
+        Some("DIFFERENT") => Ok(MatchMode::DifferentEdges),
+        Some("REPEATABLE") => Ok(MatchMode::RepeatableElements),
         _ => Err(ParserError::syntax("unknown match mode", span(pair), None)),
     }
 }

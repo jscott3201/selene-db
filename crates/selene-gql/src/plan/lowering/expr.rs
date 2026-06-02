@@ -359,7 +359,9 @@ fn collect_subqueries_in_join_tree(
                 )?;
             }
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => {
             collect_subqueries_in_join_tree(child, analyzed, registry, entries, max_quantifier)?;
         }
         JoinTree::HashJoin { left, right, .. } => {

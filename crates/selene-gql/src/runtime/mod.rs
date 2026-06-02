@@ -20,6 +20,7 @@ mod error;
 pub(crate) mod evaluator;
 mod expand;
 mod hash_join;
+mod match_mode;
 mod native_algorithms;
 mod outer;
 mod parameter_type;

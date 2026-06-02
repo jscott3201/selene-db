@@ -183,6 +183,11 @@ pub(crate) fn walk_expand_nodes(
             let changed_child = walk_expand_nodes(child, visit);
             visit(edge) | changed_child
         }
+        // MatchModeFilter wraps the whole graph pattern (the join-tree root for
+        // DIFFERENT EDGES). Descend so edge-filter pushdown still reaches the
+        // Expand nodes beneath it; the pattern-wide filter runs afterward on the
+        // surviving rows, so narrowing edge candidates first is safe.
+        JoinTree::MatchModeFilter { child, .. } => walk_expand_nodes(child, visit),
         JoinTree::HashJoin { left, right, .. } => {
             walk_expand_nodes(left, visit) | walk_expand_nodes(right, visit)
         }
@@ -202,7 +207,8 @@ fn recurse_join_tree_subplans(
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
         | JoinTree::PathSearch { child, .. }
-        | JoinTree::PathModeFilter { child, .. } => recurse_join_tree_subplans(child, visit),
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => recurse_join_tree_subplans(child, visit),
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             recurse_join_tree_subplans(left, visit) | recurse_join_tree_subplans(right, visit)
         }
@@ -264,9 +270,9 @@ fn walk_join_tree_exprs(
                 | walk_predicates(&mut edge.final_property_predicates, bindings, visit);
             changed_child | changed_edge
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            walk_join_tree_exprs(child, bindings, visit)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => walk_join_tree_exprs(child, bindings, visit),
         JoinTree::HashJoin { left, right, .. } => {
             walk_join_tree_exprs(left, bindings, visit)
                 | walk_join_tree_exprs(right, bindings, visit)

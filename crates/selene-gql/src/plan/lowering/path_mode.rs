@@ -22,7 +22,14 @@ pub(super) fn wrap_in_path_mode_filter(
     })
 }
 
-fn collect_path_contributors(
+/// Collect ordered node and edge contributors over a complete pattern tree.
+///
+/// Shared by per-path-pattern path-mode lowering ([`wrap_in_path_mode_filter`])
+/// and pattern-wide match-mode lowering (`match_mode::wrap_in_match_mode_filter`).
+/// Recursing through `HashJoin`/`Outer` left+right yields the union of every
+/// path pattern's contributors, which is the pattern-wide edge set ISO §16.4 GR4
+/// requires for DIFFERENT EDGES.
+pub(super) fn collect_path_contributors(
     tree: &JoinTree,
     span: SourceSpan,
     contributors: &mut Vec<PathContributor>,
@@ -62,7 +69,9 @@ fn collect_path_contributors(
             collect_path_contributors(child, span, contributors)?;
             contributors.push(repeat_contributor(edge, *direction, span)?);
         }
-        JoinTree::PathModeFilter { child, .. } | JoinTree::PathSearch { child, .. } => {
+        JoinTree::PathModeFilter { child, .. }
+        | JoinTree::PathSearch { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => {
             collect_path_contributors(child, span, contributors)?;
         }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {

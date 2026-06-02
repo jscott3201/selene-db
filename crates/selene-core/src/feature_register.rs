@@ -201,6 +201,8 @@ feature_ids! {
 /// ISO sources: Annex A numbered pp. 522-554; Annex D Table D.1 numbered
 /// pp. 577-586. Implication closure is handled by the flagger/planner.
 pub const SUPPORTED_FEATURES: &[FeatureId] = &[
+    FeatureId::G002,
+    FeatureId::G003,
     FeatureId::G010,
     FeatureId::G011,
     FeatureId::G012,
@@ -320,14 +322,6 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 /// is instead CLAIMED in `SUPPORTED_FEATURES`: CAST is gated behind GA05 per
 /// ISO Annex A item 52 and selene-db implements the cast construct.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
-    (
-        FeatureId::G002,
-        "DIFFERENT EDGES match mode is a graph-pattern-wide traversal policy deferred to a future release",
-    ),
-    (
-        FeatureId::G003,
-        "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred to a future release",
-    ),
     (
         FeatureId::GP05,
         "procedure-local definitions require the procedure body parser; not yet supported",

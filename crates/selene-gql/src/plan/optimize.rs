@@ -242,7 +242,8 @@ mod tests {
             | JoinTree::Repeat { child, .. }
             | JoinTree::Questioned { child, .. }
             | JoinTree::PathSearch { child, .. }
-            | JoinTree::PathModeFilter { child, .. } => leading_scan_access(child),
+            | JoinTree::PathModeFilter { child, .. }
+            | JoinTree::MatchModeFilter { child, .. } => leading_scan_access(child),
             _ => None,
         }
     }
@@ -371,7 +372,8 @@ mod tests {
                 | JoinTree::Repeat { child, .. }
                 | JoinTree::Questioned { child, .. }
                 | JoinTree::PathSearch { child, .. }
-                | JoinTree::PathModeFilter { child, .. } => tree = child,
+                | JoinTree::PathModeFilter { child, .. }
+                | JoinTree::MatchModeFilter { child, .. } => tree = child,
                 _ => break,
             }
         }

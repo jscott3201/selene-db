@@ -103,7 +103,7 @@ fn path_mode_features_are_supported_and_recorded() {
 }
 
 #[test]
-fn quantifier_features_are_recorded_and_match_modes_rejected() {
+fn quantifier_and_match_mode_features_are_recorded() {
     let bounded = parse("MATCH (a)-[r:K*1..2]->(b) RETURN r").expect("bounded parses");
     let unbounded =
         parse("MATCH TRAIL (a)-[r:K+]->(b)-[q?]->(c) RETURN r, q").expect("unbounded parses");
@@ -129,14 +129,72 @@ fn quantifier_features_are_recorded_and_match_modes_rejected() {
         );
     }
 
-    assert_feature(
-        parse("MATCH DIFFERENT EDGES (n) RETURN n").expect_err("G002 unsupported"),
-        FeatureId::G002,
+    // ISO 39075:2024 §16.4 CR1/CR2: the two `<match mode>` features are claimed
+    // (G002 = DIFFERENT EDGES, G003 = REPEATABLE ELEMENTS). Each parses cleanly
+    // and the flagger RECORDS its feature-use (a capability claim, not a
+    // rejection trigger), then both plan and execute.
+    let different =
+        feature_walk(&parse("MATCH DIFFERENT EDGES (n) RETURN n").expect("G002 parses"))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+    assert!(
+        different.contains(&FeatureId::G002),
+        "DIFFERENT EDGES must record G002; observed {different:?}"
     );
-    assert_feature(
-        parse("MATCH REPEATABLE ELEMENTS (n) RETURN n").expect_err("G003 unsupported"),
-        FeatureId::G003,
+    let repeatable =
+        feature_walk(&parse("MATCH REPEATABLE ELEMENTS (n) RETURN n").expect("G003 parses"))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>();
+    assert!(
+        repeatable.contains(&FeatureId::G003),
+        "REPEATABLE ELEMENTS must record G003; observed {repeatable:?}"
     );
+
+    for source in [
+        "MATCH DIFFERENT EDGES (n) RETURN n",
+        "MATCH REPEATABLE ELEMENTS (n) RETURN n",
+    ] {
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+}
+
+#[test]
+fn match_mode_keywords_tolerate_whitespace_and_comments() {
+    // ISO §16.4 grammar `^"DIFFERENT" ~ ^"EDGES"` (and the REPEATABLE form) skip
+    // implicit WHITESPACE *and* COMMENTs between the two keywords, so every
+    // separator spelling is a legal G002/G003 form. `build_match_mode` must
+    // accept them — it dispatches on the leading keyword token, not a
+    // single-space string compare against the raw span.
+    let records = |source: &str| {
+        feature_walk(&parse(source).unwrap_or_else(|e| panic!("{source:?} must parse: {e:?}")))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+    for source in [
+        "MATCH DIFFERENT  EDGES (n) RETURN n",        // two spaces
+        "MATCH DIFFERENT\nEDGES (n) RETURN n",        // newline
+        "MATCH DIFFERENT\tEDGES (n) RETURN n",        // tab
+        "MATCH DIFFERENT /* c */ EDGES (n) RETURN n", // block comment
+    ] {
+        assert!(
+            records(source).contains(&FeatureId::G002),
+            "DIFFERENT EDGES with a non-single-space separator must record G002: {source:?}"
+        );
+    }
+    for source in [
+        "MATCH REPEATABLE  ELEMENTS (n) RETURN n",
+        "MATCH REPEATABLE\nELEMENTS (n) RETURN n",
+        "MATCH REPEATABLE // c\nELEMENTS (n) RETURN n", // line comment
+    ] {
+        assert!(
+            records(source).contains(&FeatureId::G003),
+            "REPEATABLE ELEMENTS with a non-single-space separator must record G003: {source:?}"
+        );
+    }
 }
 
 #[test]

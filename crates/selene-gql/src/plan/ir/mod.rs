@@ -12,7 +12,7 @@ mod tx;
 use std::num::NonZeroUsize;
 
 use crate::{
-    EdgeDirection, LabelExpr, PathMode, PathSelector, SetOp, SourceSpan,
+    EdgeDirection, LabelExpr, MatchMode, PathMode, PathSelector, SetOp, SourceSpan,
     analyze::{AnalyzedType, BindingId, ExprId, ExprIdLookup, StatementCategory},
 };
 
@@ -109,7 +109,10 @@ fn refresh_join_tree_pipeline_op_high_water(tree: &mut JoinTree) {
         | JoinTree::Questioned { child, .. }
         | JoinTree::Repeat { child, .. }
         | JoinTree::PathSearch { child, .. }
-        | JoinTree::PathModeFilter { child, .. } => refresh_join_tree_pipeline_op_high_water(child),
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => {
+            refresh_join_tree_pipeline_op_high_water(child)
+        }
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             refresh_join_tree_pipeline_op_high_water(left);
             refresh_join_tree_pipeline_op_high_water(right);
@@ -335,6 +338,27 @@ pub enum JoinTree {
         /// Complete path-pattern child.
         child: Box<JoinTree>,
         /// Ordered node and edge contributors in binding-path order.
+        path_contributors: Vec<PathContributor>,
+    },
+    /// Pattern-wide match-mode wrapper over a whole `<graph pattern>`.
+    ///
+    /// Per ISO/IEC 39075:2024 §16.4, a `<match mode>` is a prefix on the entire
+    /// comma-separated path-pattern list of one MATCH (not a per-path-pattern
+    /// modifier like [`Self::PathModeFilter`]). The child materializes every
+    /// candidate row across all path patterns; this wrapper then applies the
+    /// pattern-wide edge-uniqueness filter for `DIFFERENT EDGES` (§16.4 GR4 /
+    /// GR8(a)) over the union of every edge column in the row. `REPEATABLE
+    /// ELEMENTS` installs no filter (GR8(b): BINDINGS = INNER), so the lowering
+    /// never constructs this variant for that mode.
+    MatchModeFilter {
+        /// Match mode to enforce. Only [`MatchMode::DifferentEdges`] reaches a
+        /// constructed wrapper; the variant is kept mode-tagged for EXPLAIN and
+        /// for an exhaustive runtime match.
+        match_mode: MatchMode,
+        /// Complete graph-pattern child spanning all path patterns of the MATCH.
+        child: Box<JoinTree>,
+        /// Every edge contributor across all path patterns, in binding-path
+        /// order. The union enables pattern-wide deduplication per §16.4 GR4.
         path_contributors: Vec<PathContributor>,
     },
     /// Binary join between two pattern fragments.

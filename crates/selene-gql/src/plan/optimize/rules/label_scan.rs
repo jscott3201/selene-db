@@ -81,9 +81,9 @@ fn rewrite_tree(tree: &mut JoinTree, catalog: &dyn crate::IndexCatalog) -> bool 
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, catalog) | rewrite_tree(right, catalog)
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            rewrite_tree(child, catalog)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Each per-label branch (post disjunctive_label_expansion) is a leaf
         // single-label scan; promote each independently.

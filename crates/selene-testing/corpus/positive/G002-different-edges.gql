@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: G002
+// expects: parse-ok
+MATCH DIFFERENT EDGES (n) RETURN n

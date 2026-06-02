@@ -64,9 +64,9 @@ fn rewrite_tree(
         JoinTree::HashJoin { left, right, .. } | JoinTree::Outer { left, right, .. } => {
             rewrite_tree(left, bindings, catalog) | rewrite_tree(right, bindings, catalog)
         }
-        JoinTree::PathSearch { child, .. } | JoinTree::PathModeFilter { child, .. } => {
-            rewrite_tree(child, bindings, catalog)
-        }
+        JoinTree::PathSearch { child, .. }
+        | JoinTree::PathModeFilter { child, .. }
+        | JoinTree::MatchModeFilter { child, .. } => rewrite_tree(child, bindings, catalog),
         JoinTree::WorstCaseOptimal { .. } | JoinTree::Subplan(_) => false,
         // Walk each per-label branch; downstream index rules apply
         // independently per branch (the rule that emits DisjunctiveScan

@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use selene_core::IStr;
 
 use crate::{
-    EdgePattern, GraphPattern, LabelExpr, MatchClause, NodePattern, PathMode, PathSelector,
-    PatternElement, Quantifier,
+    EdgePattern, GraphPattern, LabelExpr, MatchClause, MatchMode, NodePattern, PathMode,
+    PathSelector, PatternElement, Quantifier,
     analyze::{AnalyzedStatement, BindingDecl, BindingDeclKind, BindingId, BindingUseKind},
     plan::{
         BindingDef, BindingElement, BuildSide, EdgeMatch, FilterPredicate, HiddenBindingId,
@@ -32,6 +32,13 @@ struct GraphLoweringContext<'a, 's> {
     /// Embedder-configured variable-length quantifier upper-bound cap
     /// (`ImplDefinedCaps::max_quantifier`), threaded to the plan-time gate.
     max_quantifier: u32,
+    /// True when this MATCH carries a DIFFERENT EDGES (`G002`) match mode. Per
+    /// ISO 39075:2024 §16.4 NOTE 222, DIFFERENT EDGES imparts the effect of
+    /// TRAIL to each path pattern, so every quantified edge must (a) carry an
+    /// edge-identity group slot the pattern-wide filter can read and (b) prune
+    /// repeated edges *during* an unbounded repeat — otherwise the post-walk
+    /// filter never runs because the WALK traversal first hits `max_quantifier`.
+    different_edges: bool,
 }
 
 /// Predicates collected from the syntactic right-side node of an edge
@@ -65,7 +72,7 @@ impl HiddenAllocator {
     }
 }
 
-use super::{expr, path_mode, path_search, repeat};
+use super::{expr, match_mode, path_mode, path_search, repeat};
 
 /// Lower leading MATCH clauses into one pattern plan.
 pub(crate) fn lower_match_prefix(
@@ -208,6 +215,7 @@ fn lower_match_clause(
             binding_ids,
             hidden,
             max_quantifier,
+            different_edges: clause.match_mode == Some(MatchMode::DifferentEdges),
         };
         let (tree, names) = lower_graph_pattern(pattern, &mut ctx)?;
         current = Some(match current {
@@ -235,6 +243,12 @@ fn lower_match_clause(
         feature: "empty graph pattern",
         span: clause.span,
     })?;
+    // Per ISO 39075:2024 §16.4: the `<match mode>` is pattern-wide, so it wraps
+    // the join of every comma-separated path pattern in this MATCH clause (the
+    // `current` tree above). DIFFERENT EDGES installs the pattern-wide
+    // edge-uniqueness filter here; REPEATABLE ELEMENTS and the ID086 default
+    // install nothing.
+    let tree = match_mode::wrap_in_match_mode_filter(tree, clause.match_mode, clause.span)?;
     Ok(LoweredClause {
         tree,
         names,
@@ -281,6 +295,22 @@ fn lower_graph_pattern(
     // a path *selector*, so it is deferred to the `if let Some(selector)` block
     // below — a non-selector pattern over a bindingless source is legal.
     let source_binding = chain_tail_binding(&current);
+    // Per ISO 39075:2024 §16.4 NOTE 222, DIFFERENT EDGES imparts TRAIL to each
+    // path pattern. When a path SELECTOR (ANY/SHORTEST) is present it ranks/picks
+    // paths BEFORE the outer pattern-wide `MatchModeFilter` runs, so a bare-WALK
+    // repeat could surface an edge-reusing path that the selector chooses and the
+    // filter then drops — losing a valid edge-distinct binding. Bumping the
+    // effective path mode to TRAIL installs the per-path trail filter
+    // (`wrap_in_path_mode_filter`) BENEATH the selector, so the selector only
+    // ever ranks edge-distinct paths. Non-selector patterns keep their declared
+    // mode: the pattern-wide filter is then the sole, correct authority
+    // (result-equivalent, and it avoids a redundant per-path trail pass).
+    let effective_path_mode =
+        if ctx.different_edges && ctx.selector.is_some() && ctx.path_mode == PathMode::Walk {
+            PathMode::Trail
+        } else {
+            ctx.path_mode
+        };
     while let Some(element) = elements.next() {
         let PatternElement::Edge(edge) = element else {
             return Err(PlannerError::NotImplemented {
@@ -303,9 +333,10 @@ fn lower_graph_pattern(
             ctx.binding_ids,
             ctx.hidden,
         )?;
-        let path_mode = ctx.path_mode;
+        let path_mode = effective_path_mode;
         let selector = ctx.selector;
         let max_quantifier = ctx.max_quantifier;
+        let different_edges = ctx.different_edges;
         let mut edge_ctx = EdgeLoweringContext {
             analyzed: ctx.analyzed,
             filters: ctx.filters,
@@ -321,7 +352,7 @@ fn lower_graph_pattern(
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;
                 if repeat_edge.group_binding.is_none()
-                    && repeat_needs_hidden_group(selector, path_mode, *min, *max)
+                    && repeat_needs_hidden_group(selector, path_mode, *min, *max, different_edges)
                 {
                     repeat_edge.group_hidden_binding = Some(ctx.hidden.next());
                 }
@@ -331,7 +362,7 @@ fn lower_graph_pattern(
                     edge: repeat_edge,
                     min: *min,
                     max: *max,
-                    path_mode: repeat_path_mode_under_filter(path_mode, *max),
+                    path_mode: repeat_path_mode_under_filter(path_mode, *max, different_edges),
                 }
             }
             Some(Quantifier::Questioned) => {
@@ -366,7 +397,7 @@ fn lower_graph_pattern(
             }
         };
     }
-    current = path_mode::wrap_in_path_mode_filter(current, ctx.path_mode, pattern.span)?;
+    current = path_mode::wrap_in_path_mode_filter(current, effective_path_mode, pattern.span)?;
     if let Some(selector) = ctx.selector {
         let source_binding = source_binding.ok_or(PlannerError::NotImplemented {
             feature: "path selector over bindingless source node",
@@ -636,19 +667,20 @@ fn binding_defs(
 }
 
 fn reject_unsupported_clause(clause: &MatchClause) -> Result<(), PlannerError> {
-    // Why: unreachable-by-flagger defense. G002 (REPEATABLE ELEMENTS) and G003
-    // (DIFFERENT EDGES) are absent from `SUPPORTED_FEATURES`, so the GQL flagger
-    // (clause 24.6) rejects them at parse time, before the planner ever sees a
-    // populated `match_mode`. This guard is kept as defense-in-depth so that a
-    // future feature-register change (registering G002/G003 without wiring the
-    // runtime visited-set contract) cannot silently lower an unsupported mode.
-    if clause.match_mode.is_some() {
-        return Err(PlannerError::NotImplemented {
-            feature: "MATCH mode (REPEATABLE ELEMENTS / DIFFERENT EDGES)",
-            span: clause.span,
-        });
+    // Why: true backstop against any future `<match mode>` (ISO 39075:2024
+    // §16.4) that reaches the planner without a lowering arm. Per the §16.4
+    // Conformance Rules, G002 (DIFFERENT EDGES) and G003 (REPEATABLE ELEMENTS)
+    // are both claimed and lowered, so this guard lets them pass; it errors only
+    // on an unhandled mode so a future register change (registering a new mode
+    // without wiring its runtime contract) cannot silently lower it. The match
+    // is exhaustive so the compiler forces an explicit decision for any added
+    // `MatchMode` variant.
+    match clause.match_mode {
+        // Per ISO 39075:2024 §16.4 GR8: DIFFERENT EDGES installs the pattern-wide
+        // edge-uniqueness filter at lowering; REPEATABLE ELEMENTS installs none
+        // (GR8(b): BINDINGS = INNER). Both are handled — no rejection.
+        None | Some(MatchMode::DifferentEdges) | Some(MatchMode::RepeatableElements) => Ok(()),
     }
-    Ok(())
 }
 
 fn repeat_needs_hidden_group(
@@ -656,8 +688,16 @@ fn repeat_needs_hidden_group(
     path_mode: PathMode,
     min: u32,
     max: Option<u32>,
+    different_edges: bool,
 ) -> bool {
-    path_mode != PathMode::Walk
+    // Per ISO 39075:2024 §16.4 NOTE 222: a DIFFERENT EDGES match mode imparts
+    // TRAIL to every path pattern, so an *anonymous* quantified edge still needs
+    // an edge-identity group slot — the pattern-wide `MatchModeFilter` reads it
+    // via `collect_path_contributors`/`repeat_contributor`. Without this, a
+    // legal G002 pattern such as `MATCH DIFFERENT EDGES (a)-[:K*2]->(b)` would
+    // fail to plan ("path mode over quantified edge without edge group slot").
+    different_edges
+        || path_mode != PathMode::Walk
         || selector.is_some_and(|selector| selector_needs_repeat_group(selector, min, max))
 }
 
@@ -675,10 +715,31 @@ fn selector_needs_repeat_group(selector: PathSelector, min: u32, max: Option<u32
         )
 }
 
-fn repeat_path_mode_under_filter(path_mode: PathMode, max: Option<u32>) -> PathMode {
+fn repeat_path_mode_under_filter(
+    path_mode: PathMode,
+    max: Option<u32>,
+    different_edges: bool,
+) -> PathMode {
     if max.is_none() {
-        path_mode
+        // An unbounded repeat must prune *during* traversal or it never
+        // terminates on a cyclic graph. Per ISO 39075:2024 §16.4 NOTE 222, a
+        // DIFFERENT EDGES match mode imparts TRAIL to each path pattern, so a
+        // bare WALK quantifier under DIFFERENT EDGES traverses as TRAIL — this
+        // is exactly the finiteness guarantee the analyzer relies on when it
+        // admits an unbounded quantifier gated only by DIFFERENT EDGES
+        // (`analyze::bind::pattern::validate_unbounded_legality`). A more
+        // restrictive declared path mode (TRAIL/ACYCLIC/SIMPLE) already prunes
+        // and is the user's explicit per-path choice, so it is left intact; the
+        // pattern-wide post-walk filter then enforces the broader G002
+        // cross-path-pattern edge-uniqueness on top.
+        if different_edges && path_mode == PathMode::Walk {
+            PathMode::Trail
+        } else {
+            path_mode
+        }
     } else {
+        // Bounded repeats are finite under WALK; the post-walk filter (path-mode
+        // or pattern-wide match-mode) prunes the surviving rows.
         PathMode::Walk
     }
 }
@@ -705,7 +766,9 @@ fn chain_tail_binding(tree: &JoinTree) -> Option<TailBinding> {
             .final_binding
             .map(TailBinding::Named)
             .or_else(|| edge.final_hidden_binding.map(TailBinding::Hidden)),
-        JoinTree::PathModeFilter { child, .. } => chain_tail_binding(child),
+        JoinTree::PathModeFilter { child, .. } | JoinTree::MatchModeFilter { child, .. } => {
+            chain_tail_binding(child)
+        }
         JoinTree::PathSearch { final_binding, .. } => Some(*final_binding),
         JoinTree::HashJoin { right, .. } | JoinTree::Outer { right, .. } => {
             chain_tail_binding(right)
