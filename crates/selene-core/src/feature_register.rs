@@ -50,6 +50,7 @@ feature_ids! {
     G011 = "G011" => "Advanced path modes: TRAIL";
     G012 = "G012" => "Advanced path modes: SIMPLE";
     G013 = "G013" => "Advanced path modes: ACYCLIC";
+    G014 = "G014" => "Explicit PATH/PATHS keywords";
     G015 = "G015" => "All path search: explicit ALL keyword";
     G016 = "G016" => "Any path search";
     G017 = "G017" => "All shortest path search";
@@ -207,6 +208,12 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G011,
     FeatureId::G012,
     FeatureId::G013,
+    // G014 "Explicit PATH/PATHS keywords" (ISO §16.6 <path or paths>, Annex A
+    // §16.6 CR5). The match-prefix grammar parses the optional PATH/PATHS sugar
+    // and the flagger stamps G014 iff it is present. Pure surface sugar per
+    // §1.2.4 — inert at runtime. G014 has NO ISO §24.7 implied-feature
+    // relationship (it appears in neither column of Table 10).
+    FeatureId::G014,
     FeatureId::G015,
     FeatureId::G016,
     FeatureId::G017,

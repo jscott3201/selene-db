@@ -1,0 +1,7 @@
+// corpus: positive
+// feature: G014
+// expects: parse-ok
+// ISO/IEC 39075:2024 §16.6 <path mode prefix> ::= <path mode> [ <path or paths> ]
+// Explicit WALK PATHS is the §16.6 SR1 implicit form made explicit; the trailing
+// PATHS keyword is Feature G014 ("Explicit PATH/PATHS keywords").
+MATCH WALK PATHS (n:Person) RETURN n

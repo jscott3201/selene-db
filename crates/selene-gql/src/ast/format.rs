@@ -180,6 +180,13 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     {
         write!(out, " {}", fmt_path_mode(clause.path_mode))?;
     }
+    // ISO §16.6 <path or paths> (Feature G014): faithfully reproduce the
+    // explicit PATH/PATHS keyword so a parse->format->parse round trip
+    // preserves the AST `path_or_paths` flag (mirrors the explicit-WALK
+    // handling above). Canonical plural `PATHS` per §16.6 SR1.
+    if clause.path_or_paths {
+        out.push_str(" PATHS");
+    }
     out.push(' ');
     for (index, pattern) in clause.patterns.iter().enumerate() {
         if index > 0 {

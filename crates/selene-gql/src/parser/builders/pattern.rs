@@ -20,6 +20,7 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
     let mut match_mode = None;
     let mut path_mode = PathMode::Walk;
     let mut path_mode_explicit = false;
+    let mut path_or_paths = false;
     let mut patterns = Vec::new();
     let mut where_clause = None;
 
@@ -32,6 +33,11 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
                 path_mode = build_path_mode(&child)?;
                 path_mode_explicit = true;
             }
+            // ISO §16.6 <path or paths> (Feature G014): explicit PATH/PATHS is
+            // surface sugar (§1.2.4) — record its presence so the flagger can
+            // stamp G014; the runtime treats it as inert. Mirrors how
+            // `path_modifier` sets `path_mode_explicit`.
+            Rule::path_or_paths => path_or_paths = true,
             Rule::graph_pattern_list => patterns = build_graph_pattern_list(child)?,
             Rule::where_clause => where_clause = Some(expr_from_child(child)?),
             _ => return Err(unexpected_pair(child, "unexpected MATCH child")),
@@ -46,12 +52,30 @@ pub(super) fn build_match_clause(pair: Pair<'_, Rule>) -> Result<MatchClause, Pa
         ));
     }
 
+    // ISO §16.6: <path or paths> never appears standalone — it is the optional
+    // trailing token of a <path mode prefix> (which REQUIRES a <path mode>) or a
+    // <path search prefix> (ALL / ANY / SHORTEST). A bare `MATCH PATHS (n)` with
+    // neither a path selector nor an explicit path mode is therefore not
+    // conforming. selene's flattened grammar makes the three prefix pieces
+    // independently optional, so this constraint is enforced here at build time
+    // rather than in the PEG. (A <match mode> — §16.4 DIFFERENT EDGES — is not a
+    // §16.6 prefix and does not satisfy the requirement.)
+    if path_or_paths && selector.is_none() && !path_mode_explicit {
+        return Err(ParserError::syntax(
+            "PATH/PATHS must follow a path mode (WALK/TRAIL/SIMPLE/ACYCLIC) or a \
+             path search prefix (ALL/ANY/SHORTEST) per ISO/IEC 39075:2024 §16.6",
+            source_span,
+            None,
+        ));
+    }
+
     Ok(MatchClause {
         optional,
         selector,
         match_mode,
         path_mode,
         path_mode_explicit,
+        path_or_paths,
         patterns,
         where_clause,
         span: source_span,
