@@ -183,9 +183,16 @@ pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
             PathSelector::Any => record_feature(uses, FeatureId::G016, clause.span),
             PathSelector::AllShortest => record_feature(uses, FeatureId::G017, clause.span),
             PathSelector::AnyShortest => record_feature(uses, FeatureId::G018, clause.span),
+            // Per ISO 39075:2024 §16.6 CR10/11: SHORTEST N PATHS is the counted
+            // shortest path search (G019); SHORTEST [N] GROUP[S] is the counted
+            // shortest group search (G020).
+            PathSelector::CountedShortest { .. } => {
+                record_feature(uses, FeatureId::G019, clause.span)
+            }
+            PathSelector::CountedShortestGroup { .. } => {
+                record_feature(uses, FeatureId::G020, clause.span)
+            }
         }
-        // G019/G020 require counted shortest selectors; the current AST has no
-        // reachable variant for those forms, so the Flagger cannot emit them yet.
     }
     for pattern in &clause.patterns {
         graph_pattern(pattern, uses);

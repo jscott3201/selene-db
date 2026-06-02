@@ -221,6 +221,186 @@ fn any_shortest_keeps_one_minimum_hop_row_across_path_shapes() {
 }
 
 #[test]
+fn shortest_one_path_equals_any_shortest_and_one_group_equals_all_shortest() {
+    // ISO §16.6 SR2c: SHORTEST 1 (PATH) == ANY SHORTEST; SHORTEST 1 GROUP ==
+    // ALL SHORTEST. Pin the equivalences on the same multi-length endpoint pair.
+    // Compare the full bound `r` edge-list column (binding identity), not merely
+    // the hop-length multiset, so a future divergence between the SHORTEST-1 and
+    // ANY/ALL-SHORTEST code paths (same edges? same order?) would be caught.
+    let fixture = PathSelectorFixture::build();
+
+    let any_shortest = fixture
+        .execute("MATCH ANY SHORTEST (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r")
+        .expect("ANY SHORTEST executes");
+    let shortest_1 = fixture
+        .execute("MATCH SHORTEST 1 (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r")
+        .expect("SHORTEST 1 executes");
+    assert_eq!(
+        exec_common::column_values(&shortest_1, "r"),
+        exec_common::column_values(&any_shortest, "r"),
+        "SHORTEST 1 must equal ANY SHORTEST at full binding identity"
+    );
+
+    let all_shortest = fixture
+        .execute("MATCH ALL SHORTEST (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r")
+        .expect("ALL SHORTEST executes");
+    let shortest_1_group = fixture
+        .execute("MATCH SHORTEST 1 GROUP (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r")
+        .expect("SHORTEST 1 GROUP executes");
+    assert_eq!(
+        exec_common::column_values(&shortest_1_group, "r"),
+        exec_common::column_values(&all_shortest, "r"),
+        "SHORTEST 1 GROUP must equal ALL SHORTEST at full binding identity"
+    );
+}
+
+#[test]
+fn counted_shortest_paths_and_groups_partition_by_hop_length() {
+    // Endpoint pair (A, C) under [:K*1..3] (TRAIL default) has hop lengths
+    // {1, 1, 2, 2, 3}: two direct A->C edges (len 1), A->B1->C and A->B2->C
+    // (len 2), and A->B1->D->C (len 3).
+    let fixture = PathSelectorFixture::build();
+    let lengths = |source: &str| {
+        let mut got = edge_list_lengths(&fixture.execute(source).expect("query executes"), "r");
+        got.sort_unstable();
+        got
+    };
+
+    // Baseline: ALL keeps every binding of every length.
+    assert_eq!(
+        lengths("MATCH ALL (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r"),
+        vec![1, 1, 2, 2, 3]
+    );
+
+    // §22.4 GR13b-i: SHORTEST 2 PATHS keeps min(2, |PART|) bindings in
+    // increasing-hop order = the two len-1 bindings.
+    assert_eq!(
+        lengths("MATCH SHORTEST 2 (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r"),
+        vec![1, 1]
+    );
+    // SHORTEST 3 PATHS = the two len-1 bindings + ONE len-2 binding (first-N).
+    assert_eq!(
+        lengths("MATCH SHORTEST 3 (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r"),
+        vec![1, 1, 2]
+    );
+
+    // §22.4 GR13b-ii: SHORTEST 2 GROUPS keeps all bindings in the 2 smallest
+    // distinct lengths = both len-1 + both len-2 = 4 bindings.
+    assert_eq!(
+        lengths("MATCH SHORTEST 2 GROUPS (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r"),
+        vec![1, 1, 2, 2]
+    );
+    // SHORTEST 1 GROUP = only the smallest distinct length (len 1).
+    assert_eq!(
+        lengths("MATCH SHORTEST 1 GROUP (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r"),
+        vec![1, 1]
+    );
+}
+
+#[test]
+fn counted_shortest_count_at_or_above_partition_size_keeps_all() {
+    // §22.4 GR13b: when N >= |partition| (paths) or N >= #distinct-lengths
+    // (groups), the whole partition is retained.
+    let fixture = PathSelectorFixture::build();
+    let mut all_lengths = edge_list_lengths(
+        &fixture
+            .execute("MATCH ALL (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r")
+            .expect("query executes"),
+        "r",
+    );
+    all_lengths.sort_unstable();
+
+    for source in [
+        // 99 >= 5 bindings: keep all.
+        "MATCH SHORTEST 99 (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r",
+        // 99 >= 3 distinct lengths: keep all.
+        "MATCH SHORTEST 99 GROUPS (a:N {name: 'A'})-[r:K*1..3]->(c:N {name: 'C'}) RETURN r",
+    ] {
+        let mut got = edge_list_lengths(&fixture.execute(source).expect("query executes"), "r");
+        got.sort_unstable();
+        assert_eq!(got, all_lengths, "{source} must keep the whole partition");
+    }
+}
+
+#[test]
+fn counted_shortest_cutoff_applies_per_endpoint_partition() {
+    // §22.4 GR12-13: the N cutoff is per (source, final) partition. Build two
+    // distinct endpoint pairs and assert each is counted independently.
+    let node = istr("N");
+    // The midpoint carries a distinct label so `(t:N)` excludes it: the only
+    // final-node targets are X and Y, giving exactly two endpoint partitions.
+    let mid_label = istr("M");
+    let edge = istr("K");
+    let name = istr("name");
+    let graph = SharedGraph::new(GraphId::new(6335));
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let src = mutator
+            .create_node(
+                LabelSet::single(node.clone()),
+                props([(name.clone(), Value::String(istr("S")))]),
+            )
+            .expect("S inserts");
+        // Partition (S, X): one len-1 + one len-2 binding.
+        let mid_x = mutator
+            .create_node(
+                LabelSet::single(mid_label),
+                props([(name.clone(), Value::String(istr("MX")))]),
+            )
+            .expect("MX inserts");
+        let x = mutator
+            .create_node(
+                LabelSet::single(node.clone()),
+                props([(name.clone(), Value::String(istr("X")))]),
+            )
+            .expect("X inserts");
+        // Partition (S, Y): two len-1 bindings.
+        let y = mutator
+            .create_node(
+                LabelSet::single(node),
+                props([(name, Value::String(istr("Y")))]),
+            )
+            .expect("Y inserts");
+
+        mutator
+            .create_edge(edge.clone(), src, x, props([]))
+            .expect("S->X");
+        mutator
+            .create_edge(edge.clone(), src, mid_x, props([]))
+            .expect("S->MX");
+        mutator
+            .create_edge(edge.clone(), mid_x, x, props([]))
+            .expect("MX->X");
+        mutator
+            .create_edge(edge.clone(), src, y, props([]))
+            .expect("S->Y a");
+        mutator
+            .create_edge(edge, src, y, props([]))
+            .expect("S->Y b");
+        txn.commit().expect("fixture commits");
+    }
+    let fixture = PathSelectorFixture { graph };
+
+    // SHORTEST 1 PATH: each partition keeps exactly one binding -> 2 rows total.
+    assert_eq!(
+        fixture.row_count("MATCH SHORTEST 1 (s:N {name: 'S'})-[r:K*1..2]->(t:N) RETURN r"),
+        2
+    );
+    // SHORTEST 2 PATHS: (S,X) keeps 2 (its len-1 + len-2), (S,Y) keeps 2 -> 4.
+    assert_eq!(
+        fixture.row_count("MATCH SHORTEST 2 (s:N {name: 'S'})-[r:K*1..2]->(t:N) RETURN r"),
+        4
+    );
+    // SHORTEST 1 GROUP: (S,X) keeps only its len-1 binding (1), (S,Y) keeps both
+    // len-1 bindings (2) -> 3 rows. Distinguishes group from path counting.
+    assert_eq!(
+        fixture.row_count("MATCH SHORTEST 1 GROUP (s:N {name: 'S'})-[r:K*1..2]->(t:N) RETURN r"),
+        3
+    );
+}
+
+#[test]
 fn pure_node_selector_is_zero_hop_noop() {
     let fixture = PathSelectorFixture::build();
     for selector in ["ALL", "ANY", "ALL SHORTEST", "ANY SHORTEST"] {

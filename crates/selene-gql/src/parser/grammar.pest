@@ -143,7 +143,28 @@ with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 
 match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
 match_mode        = { ^"DIFFERENT" ~ ^"EDGES" | ^"REPEATABLE" ~ ^"ELEMENTS" }
-path_selector     = { ^"ANY" ~ ^"SHORTEST"? | ^"ALL" ~ ^"SHORTEST"? }
+path_selector     = {
+    ^"ANY" ~ ^"SHORTEST"?
+  | ^"ALL" ~ ^"SHORTEST"?
+  | ^"SHORTEST" ~ counted_shortest_tail
+}
+// ISO §16.6: counted shortest path (G019) = SHORTEST <n> ; counted shortest
+// group (G020) = SHORTEST [<n>] {GROUP|GROUPS}. selene factors <path mode> as
+// the separate path_modifier (:148) and does not implement the optional
+// <path or paths> sugar (Feature G014, unclaimed), so the tail is just the
+// count and/or the GROUP discriminator.
+// The count is intentionally a literal `uint` only — ISO's <number of paths>/
+// <number of groups> is a <non-negative integer specification> that may in
+// principle be a dynamic parameter, but selene does not expose a parameter in
+// this position. Consequently §16.6 SR2bii (literal positivity, a static
+// violation -> 22G0F at build time) fully covers the reachable surface, and
+// §22.4 GR7 (dynamic non-positive count -> 22G0F at runtime) is not applicable;
+// add a parameter alternative here if a future brief claims the dynamic form.
+counted_shortest_tail = {
+    uint ~ counted_group_kw?   // SHORTEST n -> G019 ; SHORTEST n GROUP[S] -> G020
+  | counted_group_kw           // SHORTEST GROUP[S] -> G020, n defaults to 1
+}
+counted_group_kw = { (^"GROUPS" | ^"GROUP") ~ !(LETTER | NUMBER | "_") }
 optional_modifier = { ^"OPTIONAL" }
 path_modifier     = { ^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL" }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }

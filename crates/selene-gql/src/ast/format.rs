@@ -169,7 +169,8 @@ pub(super) fn fmt_match(out: &mut String, clause: &MatchClause) -> fmt::Result {
     }
     out.push_str("MATCH");
     if let Some(selector) = clause.selector {
-        write!(out, " {}", fmt_path_selector(selector))?;
+        out.push(' ');
+        fmt_path_selector(out, selector)?;
     }
     if let Some(mode) = clause.match_mode {
         write!(out, " {}", fmt_match_mode(mode))?;

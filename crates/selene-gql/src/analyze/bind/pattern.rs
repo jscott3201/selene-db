@@ -56,9 +56,20 @@ fn first_unbounded_edge_span(pattern: &GraphPattern) -> Option<crate::SourceSpan
 }
 
 fn is_selective(selector: Option<PathSelector>) -> bool {
+    // Per ISO 39075:2024 §16.6 SR4: "A <path search prefix> other than <all path
+    // search> is selective." So every selector except `ALL` (which selene models as
+    // `PathSelector::All`, the absence of this arm) is selective — including the
+    // counted shortest path (G019) and counted shortest group (G020) prefixes, which
+    // are the primary reason to write an unbounded variable-length pattern.
     matches!(
         selector,
-        Some(PathSelector::Any | PathSelector::AnyShortest | PathSelector::AllShortest)
+        Some(
+            PathSelector::Any
+                | PathSelector::AnyShortest
+                | PathSelector::AllShortest
+                | PathSelector::CountedShortest { .. }
+                | PathSelector::CountedShortestGroup { .. }
+        )
     )
 }
 

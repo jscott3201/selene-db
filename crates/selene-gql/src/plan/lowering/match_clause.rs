@@ -662,10 +662,16 @@ fn repeat_needs_hidden_group(
 }
 
 fn selector_needs_repeat_group(selector: PathSelector, min: u32, max: Option<u32>) -> bool {
+    // Per ISO 39075:2024 §22.4: every shortest-based selector (ALL/ANY SHORTEST
+    // plus the counted G019/G020 forms) ranks bindings by hop count, so each
+    // needs the hidden hop-count group slot even at a fixed length.
     max != Some(min)
         || matches!(
             selector,
-            PathSelector::AllShortest | PathSelector::AnyShortest
+            PathSelector::AllShortest
+                | PathSelector::AnyShortest
+                | PathSelector::CountedShortest { .. }
+                | PathSelector::CountedShortestGroup { .. }
         )
 }
 

@@ -209,6 +209,8 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G016,
     FeatureId::G017,
     FeatureId::G018,
+    FeatureId::G019,
+    FeatureId::G020,
     FeatureId::G036,
     FeatureId::G037,
     FeatureId::G060,
@@ -325,14 +327,6 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::G003,
         "REPEATABLE ELEMENTS match mode is a graph-pattern-wide traversal policy deferred to a future release",
-    ),
-    (
-        FeatureId::G019,
-        "counted shortest selectors require grammar support and counted-path selector semantics",
-    ),
-    (
-        FeatureId::G020,
-        "counted shortest selectors require grammar support and counted-path selector semantics",
     ),
     (
         FeatureId::GP05,

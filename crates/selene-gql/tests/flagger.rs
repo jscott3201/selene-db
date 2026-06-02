@@ -33,6 +33,54 @@ fn path_selector_features_are_supported() {
 }
 
 #[test]
+fn counted_shortest_selectors_flag_g019_and_g020() {
+    // ISO §16.6 CR10/11: SHORTEST N PATHS is the counted shortest path search
+    // (G019); SHORTEST [N] GROUP[S] is the counted shortest group search (G020).
+    // SHORTEST GROUP / SHORTEST GROUPS default N=1 and still flag G020.
+    let ids = |source: &str| {
+        feature_walk(&parse(source).expect(source))
+            .into_iter()
+            .map(|feature| feature.feature_id)
+            .collect::<Vec<_>>()
+    };
+
+    let counted_path = ids("MATCH SHORTEST 3 (n)-[:K]->(m) RETURN m");
+    assert!(
+        counted_path.contains(&FeatureId::G019),
+        "SHORTEST 3 must flag G019; observed {counted_path:?}"
+    );
+    assert!(
+        !counted_path.contains(&FeatureId::G020),
+        "SHORTEST 3 (no GROUP) must NOT flag G020; observed {counted_path:?}"
+    );
+
+    for source in [
+        "MATCH SHORTEST 2 GROUPS (n)-[:K]->(m) RETURN m",
+        "MATCH SHORTEST GROUP (n)-[:K]->(m) RETURN m",
+        "MATCH SHORTEST GROUPS (n)-[:K]->(m) RETURN m",
+    ] {
+        let observed = ids(source);
+        assert!(
+            observed.contains(&FeatureId::G020),
+            "{source} must flag G020; observed {observed:?}"
+        );
+        assert!(
+            !observed.contains(&FeatureId::G019),
+            "{source} (GROUP form) must NOT flag G019; observed {observed:?}"
+        );
+    }
+
+    // Both counted forms must plan and execute (claimed, not merely flagged).
+    for source in [
+        "MATCH SHORTEST 3 (n)-[:K]->(m) RETURN m",
+        "MATCH SHORTEST 2 GROUPS (n)-[:K]->(m) RETURN m",
+    ] {
+        assert_read_plan(source);
+        assert_read_execution(source);
+    }
+}
+
+#[test]
 fn path_mode_features_are_supported_and_recorded() {
     for (source, expected) in [
         ("MATCH WALK (n) RETURN n", FeatureId::G010),
