@@ -131,6 +131,8 @@ fn path_variable_named_path_or_paths_is_preserved() {
         "MATCH path = (n) RETURN path",
         "MATCH ALL paths = (n) RETURN paths",
         "MATCH WALK path = (n) RETURN path",
+        // The same `!("=")` guard applies to the counted-tail <path or paths> site.
+        "MATCH SHORTEST 2 paths = (n)-[:K]->(m) RETURN paths",
     ] {
         assert!(
             !match_path_or_paths(source),
@@ -140,14 +142,53 @@ fn path_variable_named_path_or_paths_is_preserved() {
 }
 
 #[test]
-fn path_or_paths_rejected_after_counted_group() {
-    // Codex (PR #244, P2): ISO §16.6 places <path or paths> BEFORE the GROUP/GROUPS
-    // discriminator in <counted shortest group search>. selene's flattened trailing
-    // slot would put it AFTER GROUP[S] (wrong ISO order), so the builder rejects it.
+fn counted_group_accepts_path_or_paths_in_iso_order() {
+    // Codex (PR #244, P2): ISO §16.6 <counted shortest group search> is
+    // `SHORTEST [n] [mode] [<path or paths>] {GROUP|GROUPS}` — <path or paths> comes
+    // BEFORE the group discriminator. That conforming spelling is parsed inside
+    // counted_shortest_tail and sets the G014 flag (combining the claimed G014 +
+    // G020 surfaces).
+    for source in [
+        "MATCH SHORTEST 2 PATHS GROUPS (a)-[:K]->(b) RETURN b",
+        "MATCH SHORTEST PATHS GROUPS (a)-[:K]->(b) RETURN b",
+        "MATCH SHORTEST 1 PATH GROUP (a)-[:K]->(b) RETURN b",
+    ] {
+        assert!(
+            match_path_or_paths(source),
+            "{source:?} (ISO order PATHS before GROUP[S]) must parse and set G014"
+        );
+        assert!(observes_g014(source), "{source:?} must flag G014");
+    }
+}
+
+#[test]
+fn path_or_paths_rejected_after_counted_group_in_wrong_order() {
+    // The non-ISO order — <path or paths> AFTER the GROUP/GROUPS discriminator
+    // (`SHORTEST n GROUPS PATHS`) — reaches the trailing slot and is rejected. The
+    // conforming spelling is `SHORTEST n PATHS GROUPS` (see the test above).
     for source in [
         "MATCH SHORTEST 2 GROUPS PATHS (a)-[:K]->(b) RETURN b",
         "MATCH SHORTEST GROUPS PATHS (a)-[:K]->(b) RETURN b",
         "MATCH SHORTEST 1 GROUP PATH (a)-[:K]->(b) RETURN b",
+    ] {
+        let err = parse(source).expect_err(&format!("{source:?} must be rejected"));
+        assert!(
+            matches!(err, ParserError::SyntaxError { .. }),
+            "expected SyntaxError for {source:?}, got {err:?}"
+        );
+    }
+}
+
+#[test]
+fn match_mode_may_not_separate_path_or_paths_from_the_prefix() {
+    // Codex (PR #244, P2): ISO §16.6 binds <path or paths> to the path prefix; the
+    // §16.4 <match mode> (DIFFERENT EDGES / REPEATABLE ELEMENTS) is a separate,
+    // graph-level construct and cannot sit between the prefix and PATH/PATHS.
+    // Both carry a real selector, so the bare-prefix guard does not fire — the
+    // match-mode interposition guard is what rejects them.
+    for source in [
+        "MATCH ALL DIFFERENT EDGES PATHS (n) RETURN n",
+        "MATCH ANY REPEATABLE ELEMENTS PATH (n) RETURN n",
     ] {
         let err = parse(source).expect_err(&format!("{source:?} must be rejected"));
         assert!(
