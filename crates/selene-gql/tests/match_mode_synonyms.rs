@@ -228,3 +228,46 @@ fn match_mode_bindings_defers_to_path_variable_named_bindings() {
         "DIFFERENT EDGE BINDINGS (...) must still parse as the bindings match mode"
     );
 }
+
+#[test]
+fn match_mode_tolerates_comments_flush_against_keywords() {
+    // Codex review (PR #243, P3): pest's `~` consumes implicit COMMENT as well as
+    // whitespace, so a block comment may sit flush against the mode keyword (or the
+    // noun) with NO surrounding space. `build_match_mode` dispatches on the first
+    // child *rule* (`different_mode_kw` / `repeatable_mode_kw`), not a raw
+    // `split_whitespace()` of the source span, so the un-delimited blob no longer
+    // breaks dispatch. This also covers the plural forms, which had the same latent
+    // failure pre-FU-3 (the existing comment test only used space-surrounded comments).
+    for (source, expected) in [
+        (
+            "MATCH DIFFERENT/*x*/EDGE (n) RETURN n",
+            MatchMode::DifferentEdges,
+        ),
+        (
+            "MATCH DIFFERENT/*x*/EDGES (n) RETURN n",
+            MatchMode::DifferentEdges,
+        ),
+        (
+            "MATCH DIFFERENT/*x*/RELATIONSHIP (n) RETURN n",
+            MatchMode::DifferentEdges,
+        ),
+        (
+            "MATCH REPEATABLE/*x*/ELEMENT (n) RETURN n",
+            MatchMode::RepeatableElements,
+        ),
+        (
+            "MATCH REPEATABLE/*x*/ELEMENTS (n) RETURN n",
+            MatchMode::RepeatableElements,
+        ),
+        (
+            "MATCH DIFFERENT EDGE/*y*/BINDINGS (n) RETURN n",
+            MatchMode::DifferentEdges,
+        ),
+    ] {
+        assert_eq!(
+            match_mode_of(source),
+            Some(expected),
+            "{source:?}: a comment flush against the keyword must not break dispatch"
+        );
+    }
+}
