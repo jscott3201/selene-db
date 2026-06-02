@@ -171,6 +171,12 @@ pub(crate) fn match_clause(clause: &MatchClause, uses: &mut Vec<FeatureUse>) {
     if clause.path_mode_explicit && clause.path_mode == PathMode::Walk {
         record_feature(uses, FeatureId::G010, clause.span);
     }
+    // ISO §16.6 <path or paths> (Annex A §16.6 CR5): the explicit PATH/PATHS
+    // keyword is Feature G014. Record it IFF the keyword was written; absent it
+    // is never stamped. Pure surface sugar (§1.2.4) — no runtime effect.
+    if clause.path_or_paths {
+        record_feature(uses, FeatureId::G014, clause.span);
+    }
     match clause.path_mode {
         PathMode::Walk => {}
         PathMode::Trail => record_feature(uses, FeatureId::G011, clause.span),

@@ -165,6 +165,13 @@ pub struct MatchClause {
     pub path_mode: PathMode,
     /// Whether the path mode was written explicitly in source.
     pub path_mode_explicit: bool,
+    /// Whether an explicit `PATH` / `PATHS` keyword was written in source
+    /// (ISO/IEC 39075:2024 §16.6 `<path or paths>`, Feature G014).
+    ///
+    /// Pure surface sugar per ISO §1.2.4: it has no semantic effect over the
+    /// no-keyword spelling. The flagger stamps `FeatureId::G014` iff this is
+    /// `true`; the runtime treats it as inert. `false` when absent.
+    pub path_or_paths: bool,
     /// Graph patterns.
     pub patterns: Vec<GraphPattern>,
     /// Optional statement-level `WHERE`.

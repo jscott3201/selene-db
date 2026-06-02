@@ -165,7 +165,7 @@ with_stmt   = { ^"WITH" ~ distinct_kw? ~ projection_list ~ group_by_clause? ~ ha
 
 // -- MATCH ----------------------------------------------------------
 
-match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ graph_pattern_list ~ where_clause? }
+match_stmt        = { optional_modifier? ~ ^"MATCH" ~ path_selector? ~ match_mode? ~ path_modifier? ~ (path_or_paths ~ !("="))? ~ graph_pattern_list ~ where_clause? }
 // ISO/IEC 39075:2024 §16.4 <match mode>. Verbatim BNF:
 //   <match mode> ::= <repeatable elements match mode> | <different edges match mode>
 //   <repeatable elements match mode> ::= REPEATABLE <element bindings or elements>
@@ -244,16 +244,29 @@ element_synonym     = @{ ^"ELEMENT" ~ !(LETTER | NUMBER | "_") }
 edges_synonym       = @{ (^"EDGES" | ^"RELATIONSHIPS") ~ !(LETTER | NUMBER | "_") }
 edge_synonym        = @{ (^"EDGE" | ^"RELATIONSHIP") ~ !(LETTER | NUMBER | "_") }
 match_mode_bindings = @{ ^"BINDINGS" ~ !(LETTER | NUMBER | "_") }
+// The leading selector keywords are boundary-guarded atomic sub-rules so a
+// run-together spelling like "ALLPATHS" / "ANYSHORTEST" / "SHORTEST5" cannot
+// tokenize as two adjacent tokens (pest's `~` separator is zero-or-more
+// whitespace). Mirrors the match-mode keyword treatment.
 path_selector     = {
-    ^"ANY" ~ ^"SHORTEST"?
-  | ^"ALL" ~ ^"SHORTEST"?
-  | ^"SHORTEST" ~ counted_shortest_tail
+    any_kw ~ shortest_kw?
+  | all_kw ~ shortest_kw?
+  | shortest_kw ~ counted_shortest_tail
 }
-// ISO §16.6: counted shortest path (G019) = SHORTEST <n> ; counted shortest
-// group (G020) = SHORTEST [<n>] {GROUP|GROUPS}. selene factors <path mode> as
-// the separate path_modifier (:148) and does not implement the optional
-// <path or paths> sugar (Feature G014, unclaimed), so the tail is just the
-// count and/or the GROUP discriminator.
+any_kw      = @{ ^"ANY" ~ !(LETTER | NUMBER | "_") }
+all_kw      = @{ ^"ALL" ~ !(LETTER | NUMBER | "_") }
+shortest_kw = @{ ^"SHORTEST" ~ !(LETTER | NUMBER | "_") }
+// ISO §16.6: counted shortest path (G019) = SHORTEST <n> [<path or paths>] ;
+// counted shortest group (G020) = SHORTEST [<n>] [<path or paths>] {GROUP|GROUPS}.
+// The optional <path or paths> (Feature G014) is parsed HERE, in its ISO position:
+// for the counted-PATH form it trails the count; for the counted-GROUP form it sits
+// BEFORE the GROUP/GROUPS discriminator (so `SHORTEST 2 PATHS GROUPS` — not
+// `... GROUPS PATHS` — is the conforming spelling). The non-counted forms
+// (ALL / ANY [SHORTEST], <path mode prefix>) instead use the separate trailing
+// `path_or_paths?` slot in match_stmt, where <path or paths> is the final token.
+// The `!("=")` guard releases a path variable literally named `path`/`paths`
+// (path_var_binding = ident ~ "=") rather than stealing it. build_match_clause sets
+// MatchClause.path_or_paths from whichever site matched.
 // The count is intentionally a literal `uint` only — ISO's <number of paths>/
 // <number of groups> is a <non-negative integer specification> that may in
 // principle be a dynamic parameter, but selene does not expose a parameter in
@@ -262,12 +275,56 @@ path_selector     = {
 // §22.4 GR7 (dynamic non-positive count -> 22G0F at runtime) is not applicable;
 // add a parameter alternative here if a future brief claims the dynamic form.
 counted_shortest_tail = {
-    uint ~ counted_group_kw?   // SHORTEST n -> G019 ; SHORTEST n GROUP[S] -> G020
-  | counted_group_kw           // SHORTEST GROUP[S] -> G020, n defaults to 1
+    uint ~ (path_or_paths ~ !("="))? ~ counted_group_kw?   // SHORTEST n [PATHS] [GROUP[S]]
+  | (path_or_paths ~ !("="))? ~ counted_group_kw           // SHORTEST [PATHS] GROUP[S], n=1
 }
 counted_group_kw = { (^"GROUPS" | ^"GROUP") ~ !(LETTER | NUMBER | "_") }
 optional_modifier = { ^"OPTIONAL" }
-path_modifier     = { ^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL" }
+// Atomic + trailing word boundary so "WALKPATHS" cannot tokenize as WALK + PATHS
+// (and likewise the mode keyword cannot run into a following identifier).
+path_modifier     = @{ (^"WALK" | ^"ACYCLIC" | ^"SIMPLE" | ^"TRAIL") ~ !(LETTER | NUMBER | "_") }
+// ISO/IEC 39075:2024 §16.6 <path pattern prefix>. Verbatim BNF:
+//   <path or paths> ::= PATH | PATHS
+// In EVERY §16.6 form <path or paths> is the TRAILING token of the prefix:
+//   <path mode prefix>          ::= <path mode> [ <path or paths> ]
+//   <all path search>           ::= ALL [ <path mode> ] [ <path or paths> ]
+//   <any path search>           ::= ANY [ <number of paths> ] [ <path mode> ] [ <path or paths> ]
+//   <all shortest path search>  ::= ALL SHORTEST [ <path mode> ] [ <path or paths> ]
+//   <any shortest path search>  ::= ANY SHORTEST [ <path mode> ] [ <path or paths> ]
+//   <counted shortest path search> ::= SHORTEST <number of paths> [ <path mode> ] [ <path or paths> ]
+// selene FLATTENS the prefix into the three separate optionals
+// `path_selector? ~ match_mode? ~ path_modifier?`, so a SINGLE trailing
+// `path_or_paths?` slot placed AFTER `path_modifier?` reaches every position
+// selene can express: ALL PATHS, ANY PATHS, ALL SHORTEST PATHS,
+// ANY SHORTEST PATH, SHORTEST 2 PATHS, WALK PATHS, TRAIL PATH, etc. (Feature
+// G014, "Explicit PATH/PATHS keywords", ISO Annex A §16.6 CR5.)
+//
+// <path or paths> is NEVER standalone in ISO — it always trails a <path mode>
+// (required in <path mode prefix>) or a search prefix (ALL/ANY/SHORTEST). The
+// flattened grammar makes the slot independently optional, so `build_match_clause`
+// rejects a bare `MATCH PATHS (n)` with neither a selector nor an explicit mode
+// (a §16.4 <match mode> does not satisfy the requirement). This is the same
+// match_stmt used in mutation pipelines, so PATH/PATHS in a MATCH that precedes
+// DELETE/SET is conforming (the prefix belongs to the MATCH clause).
+//
+// Per ISO §1.2.4 the explicit PATH/PATHS keyword is pure surface sugar — it
+// carries no semantic effect over the no-keyword spelling; the parser stamps
+// G014 (flagger) and the runtime treats it as inert.
+//
+// Prefix-shadow safety: ^"PATH" is a prefix of ^"PATHS", so the plural spelling
+// is tried FIRST and every token ends in the Unicode word boundary
+// `!(LETTER | NUMBER | "_")` (mirroring counted_group_kw / match_mode), so
+// "PATHS" can never parse as "PATH" + a dangling "S".
+//
+// Deliberate no-keyword-growth decision: PATH / PATHS are NOT added to the
+// global `keyword` rule. They are recognised purely contextually in this
+// trailing match-prefix position, so they remain usable as ordinary
+// identifiers (e.g. `RETURN n.path`, `MATCH (path) RETURN path`). This is a
+// DIFFERENT grammar position than the `PATH` value-type keyword in `type_name`
+// (:629), so there is no conflict. PATH was not previously reserved; keeping it
+// contextual preserves identifier usability and the parser-DoS
+// no-new-reserved-word posture, following the §16.4 / IMPLIES (813) precedent.
+path_or_paths     = @{ (^"PATHS" | ^"PATH") ~ !(LETTER | NUMBER | "_") }
 graph_pattern_list = { graph_pattern ~ ("," ~ graph_pattern)* }
 
 graph_pattern     = { path_var_binding? ~ pattern_chain }
