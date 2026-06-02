@@ -115,7 +115,14 @@ pub enum GraphError {
         /// Indexed node label.
         label: IStr,
         /// Indexed property keys in declaration order.
-        properties: SmallVec<[IStr; 4]>,
+        ///
+        /// Boxed so this variant does not inflate `GraphError` past clippy's
+        /// `result_large_err` byte threshold: an inline `SmallVec<[IStr; 4]>`
+        /// is ~104 B (four owned `CompactString` `IStr`s plus header), and
+        /// since `IStr` became an owned 24-byte type the variant otherwise
+        /// drove every `GraphResult<T>` stack slot over the limit. The `Box`
+        /// pushes the allocation onto the cold error-construction path.
+        properties: Box<SmallVec<[IStr; 4]>>,
     },
 
     /// A closed graph mutation violates its bound graph type.
@@ -308,7 +315,7 @@ mod tests {
             },
             GraphError::CompositePropertyIndexAlreadyExists {
                 label: lbl.clone(),
-                properties: Default::default(),
+                properties: Box::default(),
             },
             GraphError::Durable {
                 reason: "x".to_owned(),

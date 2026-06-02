@@ -284,9 +284,16 @@ pub enum AnalysisError {
         /// Expected target node type name.
         expected_target: String,
         /// Observed source label set.
-        observed_source: LabelSet,
-        /// Observed target label set.
-        observed_target: LabelSet,
+        ///
+        /// Boxed (together with `observed_target`) so this variant does not
+        /// inflate `AnalysisError` past clippy's `result_large_err` threshold:
+        /// `LabelSet` wraps `SmallVec<[IStr; 3]>` (~88 B inline now that `IStr`
+        /// is an owned 24-byte type), so two inline copies dominated the
+        /// variant. The `Box` moves both onto the cold error-construction path.
+        observed_source: Box<LabelSet>,
+        /// Observed target label set. Boxed for the same reason as
+        /// `observed_source`.
+        observed_target: Box<LabelSet>,
         /// Source span of the offending edge pattern.
         #[label("endpoint types do not match edge declaration")]
         span: SourceSpan,

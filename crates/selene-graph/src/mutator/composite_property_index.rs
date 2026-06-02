@@ -28,7 +28,10 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             .composite_property_index
             .contains_key(&(label.clone(), key.clone()))
         {
-            return Err(GraphError::CompositePropertyIndexAlreadyExists { label, properties });
+            return Err(GraphError::CompositePropertyIndexAlreadyExists {
+                label,
+                properties: Box::new(properties),
+            });
         }
         let graph_id = self.txn.read().graph_id();
         let index = crate::composite_property_index::build_composite_property_index(
