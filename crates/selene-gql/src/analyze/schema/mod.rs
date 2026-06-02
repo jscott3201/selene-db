@@ -173,8 +173,8 @@ fn validate_insert_edge(
             label,
             expected_source: endpoint_name(graph_type, &expected.source_node_type),
             expected_target: endpoint_name(graph_type, &expected.target_node_type),
-            observed_source: source_labels,
-            observed_target: target_labels,
+            observed_source: Box::new(source_labels),
+            observed_target: Box::new(target_labels),
             span: edge.span,
         });
     };

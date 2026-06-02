@@ -38,17 +38,6 @@ todo = "deny"
 dbg_macro = "deny"
 print_stderr = "warn"
 print_stdout = "warn"
-# Why: the istr-removal swap of `IStr` from a 4-byte interner handle to an owned
-# 24-byte `CompactString` inflates the graph/GQL error enums
-# (`GraphError`/`ExecutorError`/`PlannerError` carry labels, property keys, and
-# `SmallVec<[IStr; 4]>` payloads) past clippy's `result_large_err` byte
-# threshold. Stage B deleted `IStrCapExceeded`, `InternerBudgetExceeded`, and
-# `IndexAdmissionExhausted`, but `IStr` itself stays 24 bytes so the largest
-# variants are still over threshold (re-checked: removing this allow trips 124
-# errors). Boxing the oversized variants is a tracked, cross-cutting error-API
-# follow-up; allow the lint workspace-wide (lib + integration-test binaries)
-# until then.
-result_large_err = "allow"
 
 # Workspace-level dependency versions go here as crates are added. Keeping
 # them centralized means a single line bumps the version everywhere.
