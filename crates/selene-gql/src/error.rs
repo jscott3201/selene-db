@@ -33,6 +33,30 @@ impl GqlStatus {
     /// Maps to GQLSTATUS 42N10, a selene-db implementation-defined subclass
     /// under standard class 42 per ISO/IEC 39075:2024 section 23.1.
     pub const DUPLICATE_OBJECT: Self = Self(*b"42N10");
+    /// Maps to GQLSTATUS 42012 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of node type key labels below supported minimum"). Raised when
+    /// the cardinality of an explicit `<node type key label set>` effective key
+    /// label set is below the implementation-defined (IL003) node-type key
+    /// label set minimum cardinality (§18.2 SR10).
+    pub const NODE_TYPE_KEY_LABELS_BELOW_MINIMUM: Self = Self(*b"42012");
+    /// Maps to GQLSTATUS 42013 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of node type key labels exceeds supported maximum"). Raised when
+    /// the cardinality of an explicit `<node type key label set>` effective key
+    /// label set exceeds the implementation-defined (IL003) node-type key label
+    /// set maximum cardinality (§18.2 SR11).
+    pub const NODE_TYPE_KEY_LABELS_EXCEED_MAXIMUM: Self = Self(*b"42013");
+    /// Maps to GQLSTATUS 42014 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of edge type key labels below supported minimum"). Raised when
+    /// the cardinality of an explicit `<edge type key label set>` effective key
+    /// label set is below the implementation-defined (IL003) edge-type key label
+    /// set minimum cardinality (§18.3 SR11).
+    pub const EDGE_TYPE_KEY_LABELS_BELOW_MINIMUM: Self = Self(*b"42014");
+    /// Maps to GQLSTATUS 42015 per ISO/IEC 39075:2024 section 23.1 Table 8
+    /// ("number of edge type key labels exceeds supported maximum"). Raised when
+    /// the cardinality of an explicit `<edge type key label set>` effective key
+    /// label set exceeds the implementation-defined (IL003) edge-type key label
+    /// set maximum cardinality (§18.3 SR12).
+    pub const EDGE_TYPE_KEY_LABELS_EXCEED_MAXIMUM: Self = Self(*b"42015");
     /// Maps to GQLSTATUS 22G03 per ISO/IEC 39075:2024 section 23.1 Table 8.
     pub const DATATYPE_MISMATCH: Self = Self(*b"22G03");
     /// Maps to GQLSTATUS 22000 per ISO/IEC 39075:2024 section 23.1 Table 8.
@@ -352,6 +376,26 @@ mod tests {
             (GqlStatus::UNDEFINED_REFERENCE, "42N03", *b"42"),
             (GqlStatus::INVALID_REFERENCE, "42002", *b"42"),
             (GqlStatus::DUPLICATE_OBJECT, "42N10", *b"42"),
+            (
+                GqlStatus::NODE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+                "42012",
+                *b"42",
+            ),
+            (
+                GqlStatus::NODE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+                "42013",
+                *b"42",
+            ),
+            (
+                GqlStatus::EDGE_TYPE_KEY_LABELS_BELOW_MINIMUM,
+                "42014",
+                *b"42",
+            ),
+            (
+                GqlStatus::EDGE_TYPE_KEY_LABELS_EXCEED_MAXIMUM,
+                "42015",
+                *b"42",
+            ),
             (GqlStatus::DATATYPE_MISMATCH, "22G03", *b"22"),
             (GqlStatus::DATA_EXCEPTION, "22000", *b"22"),
             (GqlStatus::NUMERIC_VALUE_OUT_OF_RANGE, "22003", *b"22"),

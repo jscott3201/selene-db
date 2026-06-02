@@ -253,6 +253,16 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::GG01,
     FeatureId::GG02,
     FeatureId::GG20,
+    // GG21 "Explicit element type key label sets" — the type-DDL grammar now
+    // parses the explicit `<...type key label set>` (`[ <label set phrase> ]
+    // <implies>`, the `=>` marker, ISO §18.2/18.3) and the flagger stamps it.
+    // Per the §24.7 implied-feature-relationships table GG21 implies GG02
+    // ("Graph with a closed graph type"), which is already claimed above, so
+    // the claim is implication-consistent. selene-db sets the IL003 key-label-
+    // set cardinality cap to 1 (singleton), rejecting cardinality 0 (42012/
+    // 42014) and > 1 (42013/42015) per §18.2 SR10/SR11 + §18.3 SR11/SR12 — a
+    // conforming impl-defined cap, not a missing feature.
+    FeatureId::GG21,
     FeatureId::GP01,
     FeatureId::GP02,
     FeatureId::GP03,
@@ -316,11 +326,13 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 /// claimed nor rejected — are NOT listed here; they remain in
 /// `REFERENCED_FEATURES` only and surface as the `"referenced"` status in
 /// `selene.feature_status()`. GE08 ("Reference parameters", §17.7 —
-/// unimplemented) and GG21 ("Explicit element type key label sets",
-/// §18.2/18.3 — no `<implies>` grammar) are deliberately in that
-/// referenced-only bucket (CONFORMANCE-00). GA05 ("Cast specification", §20.8)
-/// is instead CLAIMED in `SUPPORTED_FEATURES`: CAST is gated behind GA05 per
-/// ISO Annex A item 52 and selene-db implements the cast construct.
+/// unimplemented) is deliberately in that referenced-only bucket
+/// (CONFORMANCE-00). GA05 ("Cast specification", §20.8) is CLAIMED in
+/// `SUPPORTED_FEATURES`: CAST is gated behind GA05 per ISO Annex A item 52 and
+/// selene-db implements the cast construct. GG21 ("Explicit element type key
+/// label sets", §18.2/18.3) is now CLAIMED as well: the type-DDL grammar parses
+/// the explicit `<...type key label set>` (`=>` marker) and bounds its
+/// cardinality to the IL003 singleton cap.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
         FeatureId::GP05,
@@ -570,23 +582,29 @@ mod tests {
     }
 
     #[test]
-    fn gg21_explicit_key_label_sets_is_destamped() {
-        // CONFORMANCE-00: GG21 "Explicit element type key label sets" is
-        // de-stamped (Option B). The type-DDL grammar has no <implies> token
-        // (ISO §18.2/18.3), so an explicit key label set can be neither
-        // expressed nor rejected — GG21 is referenced-only. GG02/GG20 stay
-        // claimed.
+    fn gg21_explicit_key_label_sets_is_claimed() {
+        // 813: GG21 "Explicit element type key label sets" is now CLAIMED. The
+        // type-DDL grammar parses the explicit `<...type key label set>` (the
+        // `=>` <implies> marker, ISO §18.2/18.3) and the flagger stamps it. A
+        // claimed feature carries no non-supported rationale.
+        assert_eq!(
+            name_of(FeatureId::GG21),
+            Some("Explicit element type key label sets")
+        );
         assert!(
-            !is_supported(FeatureId::GG21),
-            "GG21 is de-stamped until <implies> key-label-set syntax lands"
+            is_supported(FeatureId::GG21),
+            "GG21 is claimed: the explicit key-label-set `=>` syntax is parsed and flagged"
         );
         assert!(
             non_supported_rationale(FeatureId::GG21).is_none(),
-            "GG21 has no parser surface to reject; it is referenced-only"
+            "GG21 is supported, so it has no non-supported rationale"
         );
+        // §24.7 implied-feature-relationships: GG21 implies GG02 ("Graph with a
+        // closed graph type"). The implication is satisfied — GG02 is claimed —
+        // so claiming GG21 is implication-consistent and not a phantom claim.
         assert!(
             is_supported(FeatureId::GG02) && is_supported(FeatureId::GG20),
-            "GG02 (closed graph type) and GG20 (explicit element type names) stay claimed"
+            "GG21 implies GG02 (closed graph type); GG02 + GG20 stay claimed"
         );
     }
 

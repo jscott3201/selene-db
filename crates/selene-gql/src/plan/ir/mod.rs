@@ -651,6 +651,19 @@ pub struct ImplDefinedCaps {
     pub set_op_key_cap: NonZeroUsize,
     /// Maximum distinct groups a `GROUP BY` may materialize.
     pub group_by_key_cap: NonZeroUsize,
+    /// Minimum cardinality of an explicit node-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.2 SR10). Default 1 (singleton).
+    pub node_key_label_set_min: u32,
+    /// Maximum cardinality of an explicit node-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.2 SR11). Default 1 (singleton — multi-label key
+    /// label sets are a deferred feature).
+    pub node_key_label_set_max: u32,
+    /// Minimum cardinality of an explicit edge-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.3 SR11). Default 1 (singleton).
+    pub edge_key_label_set_min: u32,
+    /// Maximum cardinality of an explicit edge-type key label set (ISO/IEC
+    /// 39075:2024 IL003, §18.3 SR12). Default 1 (singleton).
+    pub edge_key_label_set_max: u32,
 }
 
 impl ImplDefinedCaps {
@@ -674,6 +687,15 @@ impl ImplDefinedCaps {
             .expect("default set-op key cap is non-zero"),
         group_by_key_cap: NonZeroUsize::new(Self::DEFAULT_GROUP_BY_KEY_CAP)
             .expect("default group-by key cap is non-zero"),
+        // IL003: singleton key label sets only. Multi-label is a deferred
+        // feature (KeyLabelSetPolicy + containment identification), so the
+        // default min == max == 1 rejects every non-singleton explicit key
+        // label set with the spec-defined GQLSTATUS (§18.2 SR10/SR11, §18.3
+        // SR11/SR12).
+        node_key_label_set_min: 1,
+        node_key_label_set_max: 1,
+        edge_key_label_set_min: 1,
+        edge_key_label_set_max: 1,
     };
 
     /// Return a copy with a different variable-length quantifier upper-bound
@@ -707,6 +729,26 @@ impl ImplDefinedCaps {
     #[must_use]
     pub const fn with_group_by_key_cap(mut self, group_by_key_cap: NonZeroUsize) -> Self {
         self.group_by_key_cap = group_by_key_cap;
+        self
+    }
+
+    /// Return a copy with different node-type key-label-set cardinality bounds
+    /// (ISO/IEC 39075:2024 IL003, §18.2 SR10/SR11). Consulted by the DDL
+    /// lowering gate when an explicit `<node type key label set>` is present.
+    #[must_use]
+    pub const fn with_node_key_label_set_bounds(mut self, min: u32, max: u32) -> Self {
+        self.node_key_label_set_min = min;
+        self.node_key_label_set_max = max;
+        self
+    }
+
+    /// Return a copy with different edge-type key-label-set cardinality bounds
+    /// (ISO/IEC 39075:2024 IL003, §18.3 SR11/SR12). Consulted by the DDL
+    /// lowering gate when an explicit `<edge type key label set>` is present.
+    #[must_use]
+    pub const fn with_edge_key_label_set_bounds(mut self, min: u32, max: u32) -> Self {
+        self.edge_key_label_set_min = min;
+        self.edge_key_label_set_max = max;
         self
     }
 }

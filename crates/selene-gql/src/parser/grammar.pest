@@ -32,16 +32,37 @@ ddl_statement = { create_node_type | drop_node_type | truncate_node_type | show_
 
 create_node_type = {
     ^"CREATE" ~ or_replace? ~ ^"NODE" ~ ^"TYPE" ~ if_not_exists? ~
-    ":" ~ ident ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    node_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
     "(" ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
 create_edge_type = {
     ^"CREATE" ~ or_replace? ~ ^"EDGE" ~ ^"TYPE" ~ if_not_exists? ~
-    ":" ~ ident ~ (^"EXTENDS" ~ ":" ~ ident)? ~
+    edge_type_descriptor ~ (^"EXTENDS" ~ ":" ~ ident)? ~
     "(" ~ edge_endpoint_clause? ~ ","? ~ type_prop_def_list? ~ ")" ~
     validation_mode_clause?
 }
+// ISO/IEC 39075:2024 §18.2/18.3: the element-type descriptor is either the bare
+// `<node/edge type name>` (`:Name` — Feature GG20, key label set *implied* from
+// the name per §18.2 SR5c) or an explicit `<...type key label set>` (Feature
+// GG21). The explicit `node_type_key_label_set` MUST be tried first so `:Name
+// =>` binds the name as the key-label-set phrase rather than a bare type name.
+node_type_descriptor = { node_type_key_label_set | (":" ~ ident) }
+edge_type_descriptor = { edge_type_key_label_set | (":" ~ ident) }
+// `<node/edge type key label set> ::= [ <label set phrase> ] <implies>` (§18.2/
+// §18.3 Format). The optional `<label set phrase>` is an ampersand-joined label
+// set specification (§18.4); the `<implies>` token is `<right double arrow> |
+// IMPLIES` (§21.3) — selene-db uses the symbolic `=>` form only (no reserved
+// keyword growth, see memory project_parser_parse_time_dos). The trailing
+// `key_label_implied_labels` accepts the separate-implied-`<label set>` shape
+// (`:Person => :Employee`) at the grammar level only so the builder can raise an
+// honest NotImplemented reject (the containment-identification case is deferred
+// to v1.3) instead of a confusing syntax error.
+node_type_key_label_set = { key_label_set_phrase? ~ implies ~ key_label_implied_labels? }
+edge_type_key_label_set = { key_label_set_phrase? ~ implies ~ key_label_implied_labels? }
+key_label_set_phrase     = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
+key_label_implied_labels = { ":" ~ ident ~ ("&" ~ ":" ~ ident)* }
+implies                  = { "=>" }
 validation_mode_clause = { ^"STRICT" | ^"WARN" }
 or_replace = { ^"OR" ~ ^"REPLACE" }
 drop_node_type   = { ^"DROP" ~ ^"NODE" ~ ^"TYPE" ~ if_exists? ~ ":" ~ ident ~ drop_behavior? }
