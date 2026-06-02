@@ -330,6 +330,16 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             // id (sections.rs) and STEP 9 encodes that id from this column. Only
             // never-committed aborted-tx hole rows carry NodeId::TOMBSTONE
             // (-> None -> NotFound, the accepted refinement).
+
+            // GRAPH-05: drop this node's own adjacency entries wholesale, O(1)
+            // each. The incident set was already captured above, so the
+            // per-edge cascade (`remove_edge_row`) only has to clear the
+            // *neighbor* side of each incident edge; a `get_mut` on this
+            // now-absent hub key no-ops. This is what turns a degree-`D` hub
+            // delete from O(D^2) (clone + linear-scan the shrinking hub entry
+            // once per incident edge) into O(D).
+            graph.adjacency_out.remove(&id);
+            graph.adjacency_in.remove(&id);
         }
         Ok(incident)
     }
@@ -521,14 +531,13 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         // BRIEF-Item-4a: keep the real id in row_to_id for the dead row (see
         // remove_node_row); only never-committed holes carry EdgeId::TOMBSTONE.
         remove_index_row(&mut graph.idx_edge_label, &label, row as u32);
-        if let Some(mut entry) = graph.adjacency_out.get(&source).cloned() {
-            entry.remove(id);
-            update_or_remove_entry(&mut graph.adjacency_out, source, entry);
-        }
-        if let Some(mut entry) = graph.adjacency_in.get(&target).cloned() {
-            entry.remove(id);
-            update_or_remove_entry(&mut graph.adjacency_in, target, entry);
-        }
+        // GRAPH-05: remove the edge from each endpoint's adjacency entry in
+        // place (no full-`SmallVec` clone), dropping the map key only when the
+        // entry becomes empty. In a node-delete cascade the hub endpoint's
+        // entry has already been dropped wholesale by `remove_node_row`, so its
+        // lookup no-ops and only the neighbor side is touched.
+        remove_edge_from_adjacency(&mut graph.adjacency_out, source, id);
+        remove_edge_from_adjacency(&mut graph.adjacency_in, target, id);
         Ok(())
     }
 
@@ -753,15 +762,30 @@ fn apply_property_diff(map: &mut PropertyMap, diff: &PropertyDiff) -> GraphResul
     Ok(())
 }
 
-fn update_or_remove_entry(
+/// Remove edge `edge_id` from one direction's adjacency `map` in place,
+/// dropping the node's entry only when it becomes empty.
+///
+/// In-place via `imbl::HashMap::get_mut` (no full-`SmallVec` clone), so a
+/// degree-`D` hub-delete cascade is O(D) rather than O(D^2). A missing key is a
+/// no-op — e.g. the hub endpoint whose whole entry `remove_node_row` already
+/// dropped. The empty-key removal preserves the "no present-but-empty entry"
+/// invariant asserted by the consistency checks.
+fn remove_edge_from_adjacency(
     map: &mut imbl::HashMap<NodeId, AdjacencyEntry>,
-    id: NodeId,
-    entry: AdjacencyEntry,
+    node: NodeId,
+    edge_id: EdgeId,
 ) {
-    if entry.is_empty() {
-        map.remove(&id);
-    } else {
-        map.insert(id, entry);
+    // The `get_mut` borrow ends with the match expression (it yields a bool),
+    // so the conditional `remove` below is a fresh, non-overlapping borrow.
+    let now_empty = match map.get_mut(&node) {
+        Some(entry) => {
+            entry.remove(edge_id);
+            entry.is_empty()
+        }
+        None => false,
+    };
+    if now_empty {
+        map.remove(&node);
     }
 }
 
@@ -779,3 +803,6 @@ mod truncate_tests;
 
 #[cfg(test)]
 mod factory_reset_tests;
+
+#[cfg(test)]
+mod hub_delete_tests;

@@ -140,17 +140,18 @@ fixture** (the headline scale); `empty_commit` shows the scale axis.
 | `bound_type_validation/bound_commit_rich` | 10k / 50k / 100k | 1.01 / 1.14 / 1.67 ms | Wider type-graph validation delta. |
 | `bound_type_validation/bound_schema_change` | 10k / 50k / 100k | 2.92 / 18.6 / 39.3 ms | Full graph-state revalidation; scales with N. |
 
-### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05)
+### §3b `graph_hub_delete` — high-degree hub deletion (GRAPH-05 ✓ shipped)
 
-Deleting a node cascades over every incident edge; `adjacency` removal is linear
-(`.position()` + `Vec::remove`) per edge, so deleting a degree-`D` hub is O(D²).
-This sweeps the **degree** axis (not node scale). The current curve is plainly
-quadratic — it should bend to linear once in-place adjacency delete (GRAPH-05)
-lands.
+Deleting a node cascades over every incident edge. GRAPH-05 made adjacency
+removal **in place**: the deleted node's own `adjacency_out`/`adjacency_in`
+entries are dropped wholesale (O(1) each) and each incident edge clears only the
+neighbor side via `imbl::HashMap::get_mut` — no per-edge full-`SmallVec` clone.
+That turned a degree-`D` hub delete from O(D²) to O(D); the curve below is now
+linear (10× degree → ~9× time). This sweeps the **degree** axis (not node scale).
 
 | Bench | degree=100 | degree=1000 | degree=10000 | Notes |
 |---|---:|---:|---:|---|
-| `graph_hub_delete` | 64.3 µs | 1.617 ms | 132.7 ms | 25× then 82× per 10× degree → quadratic. |
+| `graph_hub_delete` | 54.0 µs | 496 µs | 4.54 ms | Linear after GRAPH-05. Was 64.3 µs / 1.62 ms / 132.7 ms (O(D²)) — **30× faster at degree 10k**. |
 
 ### §3c `graph_read_under_write` — lock-free reads under contention (D10)
 
@@ -367,7 +368,7 @@ confirm the win and guard the surrounding rows against regression.
 | Target | Optimization | Watch bench | Current baseline |
 |---|---|---|---|
 | CORE-06 | Box large `Value` time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | 128 B; vec 6.10 µs |
-| GRAPH-05 | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (degree sweep should flatten) | 133 ms @ degree 10k |
+| GRAPH-05 ✓ | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (now linear) | **4.54 ms** @ degree 10k (was 133 ms — 30×) |
 | PERSIST-04 | WAL vectored write | `persist_wal_body_size_no_fsync` (large-body arms) | 13.1 ms @ 50k/entry |
 | ALGO-01/02/05 | CSR dense-`u32` index | `algo/projection_build` + `…_neighbor_iter` | build 36.4 ms / iter 292 µs @100k |
 | GQLRT-05 | Memoize correlated-subquery schema | `gql_correlated_subquery/{exists,count}` | 1.22 s @ 10k |
