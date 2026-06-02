@@ -21,6 +21,7 @@ use super::{expr, match_clause, sequential_match, visible_after_pattern};
 pub(crate) fn lower_mutation(
     pipeline: &MutationPipeline,
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<ExecutionPlan, PlannerError> {
     let write_set = analyzed
         .write_set
@@ -30,7 +31,7 @@ pub(crate) fn lower_mutation(
         })?;
 
     let (mut pattern_plan, prefix_filters, mutation_start) =
-        lower_read_prefix(&pipeline.statements, analyzed)?;
+        lower_read_prefix(&pipeline.statements, analyzed, max_quantifier)?;
     let mut visible = visible_after_pattern(pattern_plan.as_ref());
     let mut ops = Vec::new();
     if let Some(pattern) = pattern_plan.as_mut() {
@@ -44,7 +45,7 @@ pub(crate) fn lower_mutation(
     for statement in &pipeline.statements[mutation_start..] {
         match statement {
             MutationStatement::Match(clause) => {
-                sequential_match::lower(clause, analyzed, &mut ops, &mut visible)?;
+                sequential_match::lower(clause, analyzed, &mut ops, &mut visible, max_quantifier)?;
             }
             MutationStatement::Filter(value) => {
                 ops.push(PipelineOp::Filter(expr::filter_predicate(value, analyzed)?));
@@ -120,6 +121,7 @@ pub(crate) fn lower_mutation(
 fn lower_read_prefix(
     statements: &[MutationStatement],
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<
     (
         Option<crate::plan::PatternPlan>,
@@ -137,12 +139,13 @@ fn lower_read_prefix(
                 filters.push(expr::filter_predicate(value, analyzed)?);
             }
             _ => {
-                let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed)?;
+                let pattern_plan =
+                    match_clause::lower_match_prefix(&matches, analyzed, max_quantifier)?;
                 return Ok((pattern_plan, filters, index));
             }
         }
     }
-    let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed)?;
+    let pattern_plan = match_clause::lower_match_prefix(&matches, analyzed, max_quantifier)?;
     Ok((pattern_plan, filters, statements.len()))
 }
 

@@ -29,6 +29,9 @@ struct GraphLoweringContext<'a, 's> {
     paths: &'s mut Vec<PathPlan>,
     binding_ids: &'s mut BTreeSet<BindingId>,
     hidden: &'s mut HiddenAllocator,
+    /// Embedder-configured variable-length quantifier upper-bound cap
+    /// (`ImplDefinedCaps::max_quantifier`), threaded to the plan-time gate.
+    max_quantifier: u32,
 }
 
 /// Predicates collected from the syntactic right-side node of an edge
@@ -68,6 +71,7 @@ use super::{expr, path_mode, path_search, repeat};
 pub(crate) fn lower_match_prefix(
     clauses: &[&MatchClause],
     analyzed: &AnalyzedStatement,
+    max_quantifier: u32,
 ) -> Result<Option<PatternPlan>, PlannerError> {
     if clauses.is_empty() {
         return Ok(None);
@@ -81,8 +85,14 @@ pub(crate) fn lower_match_prefix(
 
     for clause in clauses {
         reject_unsupported_clause(clause)?;
-        let lowered =
-            lower_match_clause(clause, analyzed, &mut paths, &mut binding_ids, &mut hidden)?;
+        let lowered = lower_match_clause(
+            clause,
+            analyzed,
+            &mut paths,
+            &mut binding_ids,
+            &mut hidden,
+            max_quantifier,
+        )?;
         current = Some(match (current, clause.optional) {
             (None, false) => {
                 filters.extend(lowered.filters);
@@ -148,12 +158,20 @@ pub(super) fn lower_pipeline_match(
     clause: &MatchClause,
     analyzed: &AnalyzedStatement,
     left_names: &BTreeSet<IStr>,
+    max_quantifier: u32,
 ) -> Result<(PatternPlan, Vec<FilterPredicate>), PlannerError> {
     reject_unsupported_clause(clause)?;
     let mut paths = Vec::new();
     let mut binding_ids = BTreeSet::new();
     let mut hidden = HiddenAllocator::default();
-    let lowered = lower_match_clause(clause, analyzed, &mut paths, &mut binding_ids, &mut hidden)?;
+    let lowered = lower_match_clause(
+        clause,
+        analyzed,
+        &mut paths,
+        &mut binding_ids,
+        &mut hidden,
+        max_quantifier,
+    )?;
     let (filters, global_filters) = if clause.optional {
         split_optional_filters(lowered.filters, left_names, analyzed)
     } else {
@@ -176,6 +194,7 @@ fn lower_match_clause(
     paths: &mut Vec<PathPlan>,
     binding_ids: &mut BTreeSet<BindingId>,
     hidden: &mut HiddenAllocator,
+    max_quantifier: u32,
 ) -> Result<LoweredClause, PlannerError> {
     let mut filters = Vec::new();
     let mut current: Option<(JoinTree, BTreeSet<IStr>)> = None;
@@ -188,6 +207,7 @@ fn lower_match_clause(
             paths,
             binding_ids,
             hidden,
+            max_quantifier,
         };
         let (tree, names) = lower_graph_pattern(pattern, &mut ctx)?;
         current = Some(match current {
@@ -285,6 +305,7 @@ fn lower_graph_pattern(
         )?;
         let path_mode = ctx.path_mode;
         let selector = ctx.selector;
+        let max_quantifier = ctx.max_quantifier;
         let mut edge_ctx = EdgeLoweringContext {
             analyzed: ctx.analyzed,
             filters: ctx.filters,
@@ -295,7 +316,7 @@ fn lower_graph_pattern(
         current = match &edge.quantifier {
             Some(Quantifier::GraphPattern { min, max }) => {
                 if let Some(max) = max {
-                    repeat::ensure_within_max_quantifier(*max, edge.span)?;
+                    repeat::ensure_within_max_quantifier(*max, max_quantifier, edge.span)?;
                 }
                 let mut repeat_edge =
                     repeat::edge_match(edge, left_binding, right_node, &mut edge_ctx)?;

@@ -26,7 +26,7 @@ pub use ir::{
     PropertyInit, RepeatEdgeMatch, ScanAccess, ScanKind, SessionOp, SubqueryBody, SubqueryKind,
     SubqueryRegistry, TailBinding, TxOp, TypedIndexBounds, YieldKind,
 };
-pub use lowering::plan;
+pub use lowering::{plan, plan_with_caps};
 pub use optimize::{
     CompositeIndexHandle, EmptyIndexCatalog, IndexCatalog, IndexHandle, IndexKind, IndexTarget,
     LiveIndexCatalog, OptimizeContext, Rule, Transformed, TypedIndexLookup, optimize,
