@@ -224,33 +224,43 @@ fn check_same_dimension(lhs: usize, rhs: usize) -> CoreResult<()> {
 }
 
 fn squared_euclidean(lhs: &[f32], rhs: &[f32]) -> f64 {
-    lhs.iter()
-        .zip(rhs)
-        .map(|(&lhs, &rhs)| {
-            let delta = f64::from(lhs) - f64::from(rhs);
-            delta * delta
-        })
-        .sum()
+    let mut distance = 0.0;
+    for (&lhs, &rhs) in lhs.iter().zip(rhs) {
+        let delta = f64::from(lhs) - f64::from(rhs);
+        distance += delta * delta;
+    }
+    distance
 }
 
 fn cosine_distance(lhs: &[f32], rhs: &[f32]) -> CoreResult<f64> {
-    let lhs_norm = dot(lhs, lhs);
+    let (lhs_norm, rhs_norm, dot) = cosine_components(lhs, rhs);
     if lhs_norm == 0.0 {
         return Err(CoreError::VectorZeroNorm { side: "lhs" });
     }
-    let rhs_norm = dot(rhs, rhs);
     if rhs_norm == 0.0 {
         return Err(CoreError::VectorZeroNorm { side: "rhs" });
     }
-    let similarity = dot(lhs, rhs) / (lhs_norm.sqrt() * rhs_norm.sqrt());
+    let similarity = dot / (lhs_norm.sqrt() * rhs_norm.sqrt());
     Ok(1.0 - similarity.clamp(-1.0, 1.0))
 }
 
+fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
+    lhs.iter().zip(rhs).fold(
+        (0.0, 0.0, 0.0),
+        |(lhs_norm, rhs_norm, dot), (&lhs, &rhs)| {
+            let lhs = f64::from(lhs);
+            let rhs = f64::from(rhs);
+            (lhs_norm + lhs * lhs, rhs_norm + rhs * rhs, dot + lhs * rhs)
+        },
+    )
+}
+
 fn dot(lhs: &[f32], rhs: &[f32]) -> f64 {
-    lhs.iter()
-        .zip(rhs)
-        .map(|(&lhs, &rhs)| f64::from(lhs) * f64::from(rhs))
-        .sum()
+    let mut product = 0.0;
+    for (&lhs, &rhs) in lhs.iter().zip(rhs) {
+        product += f64::from(lhs) * f64::from(rhs);
+    }
+    product
 }
 
 fn canonical_score(score: f64) -> f64 {
