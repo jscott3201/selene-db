@@ -7,6 +7,8 @@ use selene_graph::{
 };
 
 const DISTANCE_TIE_EPSILON: f64 = 1e-9;
+const HNSW_SEARCH_WIDTHS: &[usize] = &[10, 32, 64];
+const IVF_SEARCH_WIDTHS: &[usize] = &[1, 2, 4, 8, 16, 32, 64];
 
 pub(crate) const ANN_RECALL_PROFILES: &[AnnRecallProfile] = &[
     AnnRecallProfile::LineSquaredEuclidean,
@@ -64,6 +66,13 @@ static CLUSTERED_COSINE_ANN_RECALL_VARIANTS: [AnnRecallVariant; 3] = [
 ];
 
 impl AnnRecallVariant {
+    pub(crate) const fn search_widths(self) -> &'static [usize] {
+        match self.index {
+            AnnIndexKind::Hnsw { .. } => HNSW_SEARCH_WIDTHS,
+            AnnIndexKind::Ivf => IVF_SEARCH_WIDTHS,
+        }
+    }
+
     const fn hnsw_config(self) -> Option<HnswIndexConfig> {
         match self.index {
             AnnIndexKind::Hnsw { hnsw_config } => hnsw_config,

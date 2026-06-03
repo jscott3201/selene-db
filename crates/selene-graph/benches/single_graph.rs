@@ -16,7 +16,6 @@ use single_graph_ann_recall::{ANN_RECALL_PROFILES, AnnRecallFixture};
 
 const ANN_RECALL_K: usize = 10;
 const ANN_RECALL_QUERIES: usize = 16;
-const ANN_RECALL_EF_SEARCH: &[usize] = &[10, 32, 64];
 
 fn bench_node_fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_node_fetch");
@@ -191,7 +190,7 @@ fn bench_ann_recall(c: &mut Criterion) {
                 group.throughput(Throughput::Elements(
                     (fixture.scale() * fixture.query_count()) as u64,
                 ));
-                for &ef_search in ANN_RECALL_EF_SEARCH {
+                for &ef_search in variant.search_widths() {
                     let recall = fixture.mean_recall(ef_search);
                     let quality = fixture.mean_distance_quality(ef_search);
                     group.bench_with_input(
