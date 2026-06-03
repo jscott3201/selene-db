@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+use rayon::prelude::*;
+use roaring::RoaringBitmap;
 use selene_core::{
     CancellationCause, CancellationChecker, IStr, NodeId, Value, VectorMetric, VectorTopK,
     VectorValue,
@@ -11,8 +13,15 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
+use crate::vector_index::VectorIndex;
 
 const VECTOR_SEARCH_CANCEL_STRIDE: usize = 1024;
+const VECTOR_SEARCH_PARALLEL_CHUNK_ROWS: usize = 2048;
+
+#[cfg(not(test))]
+const VECTOR_SEARCH_PARALLEL_MIN_ROWS: u64 = 16_384;
+#[cfg(test)]
+const VECTOR_SEARCH_PARALLEL_MIN_ROWS: u64 = 8;
 
 /// Exact vector-search result for a graph node.
 #[derive(Clone, Debug, PartialEq)]
@@ -153,6 +162,10 @@ impl SeleneGraph {
         let rows = vector_index
             .as_ref()
             .map_or(label_rows, |index| index.rows());
+        if should_parallelize_exact_scan(vector_index.as_deref(), rows, k, checker) {
+            return self
+                .exact_vector_search_indexed_parallel(label, property, query, metric, k, rows);
+        }
 
         let mut top_k = VectorTopK::new(k);
         let mut rows_since_check = 0usize;
@@ -199,6 +212,68 @@ impl SeleneGraph {
                 distance: hit.distance,
             })
             .collect())
+    }
+
+    fn exact_vector_search_indexed_parallel(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        metric: VectorMetric,
+        k: usize,
+        rows: &RoaringBitmap,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        let raw_rows: Vec<u32> = rows.iter().collect();
+        let top_k = raw_rows
+            .par_chunks(VECTOR_SEARCH_PARALLEL_CHUNK_ROWS)
+            .map(|chunk| {
+                self.exact_vector_search_indexed_chunk(label, property, query, metric, k, chunk)
+            })
+            .try_reduce(|| VectorTopK::new(k), merge_top_k)?;
+
+        Ok(vector_node_hits(top_k))
+    }
+
+    fn exact_vector_search_indexed_chunk(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        metric: VectorMetric,
+        k: usize,
+        rows: &[u32],
+    ) -> Result<VectorTopK<NodeId>, VectorSearchError> {
+        let mut top_k = VectorTopK::new(k);
+        for &raw_row in rows {
+            if !self.node_store.is_alive(raw_row) {
+                continue;
+            }
+            let row = RowIndex::new(raw_row);
+            let node_id = self
+                .node_id_for_row(row)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "vector index row {raw_row} for {} has no node id",
+                        label.as_str()
+                    ),
+                })?;
+            let properties = self
+                .node_store
+                .properties
+                .get(raw_row as usize)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "vector index row {raw_row} for {} has no property row",
+                        label.as_str()
+                    ),
+                })?;
+            let Some(Value::Vector(vector)) = properties.get(property) else {
+                continue;
+            };
+            let distance = metric.distance(query, vector).map_err(GraphError::from)?;
+            top_k.push_distance(node_id, distance);
+        }
+        Ok(top_k)
     }
 
     /// Approximately rank vector-valued node properties through a HNSW index.
@@ -267,6 +342,39 @@ impl SeleneGraph {
             })
             .collect())
     }
+}
+
+fn should_parallelize_exact_scan(
+    vector_index: Option<&VectorIndex>,
+    rows: &RoaringBitmap,
+    k: usize,
+    checker: CancellationChecker<'_>,
+) -> bool {
+    vector_index.is_some()
+        && checker.is_disabled()
+        && k != 0
+        && rows.len() >= VECTOR_SEARCH_PARALLEL_MIN_ROWS
+}
+
+fn merge_top_k(
+    mut lhs: VectorTopK<NodeId>,
+    rhs: VectorTopK<NodeId>,
+) -> Result<VectorTopK<NodeId>, VectorSearchError> {
+    for hit in rhs.into_hits() {
+        lhs.push_distance(hit.key, hit.distance);
+    }
+    Ok(lhs)
+}
+
+fn vector_node_hits(top_k: VectorTopK<NodeId>) -> Vec<VectorNodeSearchHit> {
+    top_k
+        .into_hits()
+        .into_iter()
+        .map(|hit| VectorNodeSearchHit {
+            node_id: hit.key,
+            distance: hit.distance,
+        })
+        .collect()
 }
 
 impl SharedGraph {

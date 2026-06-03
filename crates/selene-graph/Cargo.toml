@@ -19,6 +19,7 @@ imbl.workspace = true
 rustc-hash.workspace = true
 jiff.workspace = true
 roaring.workspace = true
+rayon.workspace = true
 smallvec.workspace = true
 triomphe.workspace = true
 serde.workspace = true

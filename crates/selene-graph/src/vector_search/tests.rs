@@ -229,6 +229,41 @@ fn exact_vector_search_uses_node_id_tie_breaks() {
 }
 
 #[test]
+fn exact_vector_search_flat_index_parallel_matches_unindexed_ordering() {
+    let shared = SharedGraph::new(GraphId::new(9301));
+    let doc = intern("vector.parallel.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        for idx in 0..16 {
+            let value = ((idx * 7) % 5) as f32;
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[value]))),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+
+    let query = vector(&[0.0]);
+    let unindexed = shared
+        .exact_vector_search_nodes(&doc, &embedding, &query, VectorMetric::SquaredEuclidean, 7)
+        .unwrap();
+    shared
+        .create_vector_index(doc.clone(), embedding.clone(), VectorIndexKind::Flat, 1)
+        .unwrap();
+
+    let indexed = shared
+        .exact_vector_search_nodes(&doc, &embedding, &query, VectorMetric::SquaredEuclidean, 7)
+        .unwrap();
+
+    assert_eq!(indexed, unindexed);
+}
+
+#[test]
 fn exact_vector_search_tracks_update_and_delete_visibility() {
     let shared = SharedGraph::new(GraphId::new(94));
     let doc = intern("vector.visible.doc").unwrap();

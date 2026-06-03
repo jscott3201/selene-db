@@ -8,7 +8,7 @@ mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, intern};
-use selene_graph::{SeleneGraph, SharedGraph};
+use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind};
 use selene_testing::BenchProfile;
 
 fn bench_node_fetch(c: &mut Criterion) {
@@ -127,30 +127,54 @@ fn bench_composite_index_proxy(c: &mut Criterion) {
 
 fn bench_exact_vector_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_exact_vector_scan");
-    for scale in BenchProfile::from_env().scales() {
-        let fixture = VectorFixture::build(*scale, 128);
-        group.throughput(Throughput::Elements(fixture.scale() as u64));
-        group.bench_with_input(
-            BenchmarkId::new("squared_euclidean_dim128_k10", fixture.scale()),
-            &fixture,
-            |b, fixture| {
-                b.iter(|| {
-                    let hits = fixture
-                        .graph()
-                        .exact_vector_search_nodes(
-                            &fixture.label(),
-                            &fixture.embedding_key(),
-                            fixture.query(),
-                            VectorMetric::SquaredEuclidean,
-                            10,
-                        )
-                        .expect("fixture vectors have matching dimensions");
-                    std::hint::black_box(hits.len());
-                });
-            },
-        );
+    for scale in vector_scan_scales() {
+        for &(name, index_kind) in &[
+            ("unindexed_squared_euclidean_dim128_k10", None),
+            (
+                "flat_index_squared_euclidean_dim128_k10",
+                Some(VectorIndexKind::Flat),
+            ),
+        ] {
+            let fixture = VectorFixture::build(scale, 128, index_kind);
+            group.throughput(Throughput::Elements(fixture.scale() as u64));
+            group.bench_with_input(
+                BenchmarkId::new(name, fixture.scale()),
+                &fixture,
+                |b, fixture| {
+                    b.iter(|| {
+                        let hits = fixture
+                            .graph()
+                            .exact_vector_search_nodes(
+                                &fixture.label(),
+                                &fixture.embedding_key(),
+                                fixture.query(),
+                                VectorMetric::SquaredEuclidean,
+                                10,
+                            )
+                            .expect("fixture vectors have matching dimensions");
+                        std::hint::black_box(hits.len());
+                    });
+                },
+            );
+        }
     }
     group.finish();
+}
+
+fn vector_scan_scales() -> Vec<usize> {
+    std::env::var("SELENE_VECTOR_BENCH_SCALES")
+        .ok()
+        .and_then(|raw| {
+            let mut scales: Vec<_> = raw
+                .split(',')
+                .filter_map(|part| part.trim().parse::<usize>().ok())
+                .filter(|scale| *scale > 0)
+                .collect();
+            scales.sort_unstable();
+            scales.dedup();
+            (!scales.is_empty()).then_some(scales)
+        })
+        .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
 }
 
 #[derive(Clone, Debug)]
@@ -163,7 +187,7 @@ struct VectorFixture {
 }
 
 impl VectorFixture {
-    fn build(scale: usize, dimension: usize) -> Self {
+    fn build(scale: usize, dimension: usize, index_kind: Option<VectorIndexKind>) -> Self {
         let scale = scale.max(1);
         let label = intern("VectorDoc").expect("bench label is valid");
         let embedding_key = intern("embedding").expect("bench key is valid");
@@ -178,6 +202,12 @@ impl VectorFixture {
                 mutator
                     .create_node(LabelSet::single(label.clone()), props)
                     .expect("bench vector node insert succeeds");
+            }
+            if let Some(kind) = index_kind {
+                let dimension = u32::try_from(dimension).expect("bench dimension fits u32");
+                mutator
+                    .create_vector_index(label.clone(), embedding_key.clone(), kind, dimension)
+                    .expect("bench vector index build succeeds");
             }
             txn.commit().expect("bench vector fixture commit succeeds");
         }

@@ -1745,6 +1745,7 @@ dependencies = [
  "parking_lot",
  "postcard",
  "proptest",
+ "rayon",
  "rkyv 0.8.16",
  "roaring",
  "rstest",
