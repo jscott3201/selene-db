@@ -20,39 +20,42 @@ const VECTOR_DIMENSION: usize = 128;
 fn bench_vector_index_rebuild(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_vector_index_rebuild");
     for scale in vector_rebuild_scales() {
-        let preview = VectorRebuildFixture::build(scale, VECTOR_DIMENSION);
-        let preview_report = preview
-            .shared
-            .rebuild_vector_indexes()
-            .expect("bench preview rebuild succeeds");
-        preview.validate_report(&preview_report);
-        let id_suffix = preview.format_report_id_suffix(&preview_report);
-        group.throughput(Throughput::Elements(
-            preview_report.entries[0].before.hnsw_entries as u64,
-        ));
-        group.bench_function(
-            BenchmarkId::new(
-                "hnsw_l2_dim128",
-                format!("n{}_{}", compact_usize(scale), id_suffix),
-            ),
-            |b| {
-                b.iter_custom(|iterations| {
-                    let mut elapsed = Duration::ZERO;
-                    for _ in 0..iterations {
-                        let fixture = VectorRebuildFixture::build(scale, VECTOR_DIMENSION);
-                        let started = Instant::now();
-                        let report = fixture
-                            .shared
-                            .rebuild_vector_indexes()
-                            .expect("bench vector-index rebuild succeeds");
-                        elapsed += started.elapsed();
-                        fixture.validate_report(&report);
-                        std::hint::black_box(report.reclaimed_reachable_bytes);
-                    }
-                    elapsed
-                });
-            },
-        );
+        for &(name, kind) in &[
+            ("hnsw_l2_dim128", VectorIndexKind::HnswSquaredEuclidean),
+            ("hnsw_cos_dim128", VectorIndexKind::HnswCosine),
+        ] {
+            let preview = VectorRebuildFixture::build(scale, VECTOR_DIMENSION, kind);
+            let preview_report = preview
+                .shared
+                .rebuild_vector_indexes()
+                .expect("bench preview rebuild succeeds");
+            preview.validate_report(&preview_report);
+            let id_suffix = preview.format_report_id_suffix(&preview_report);
+            group.throughput(Throughput::Elements(
+                preview_report.entries[0].before.hnsw_entries as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(name, format!("n{}_{}", compact_usize(scale), id_suffix)),
+                |b| {
+                    b.iter_custom(|iterations| {
+                        let mut elapsed = Duration::ZERO;
+                        for _ in 0..iterations {
+                            let fixture =
+                                VectorRebuildFixture::build(scale, VECTOR_DIMENSION, kind);
+                            let started = Instant::now();
+                            let report = fixture
+                                .shared
+                                .rebuild_vector_indexes()
+                                .expect("bench vector-index rebuild succeeds");
+                            elapsed += started.elapsed();
+                            fixture.validate_report(&report);
+                            std::hint::black_box(report.reclaimed_reachable_bytes);
+                        }
+                        elapsed
+                    });
+                },
+            );
+        }
     }
     group.finish();
 }
@@ -77,18 +80,19 @@ fn parse_scales(raw: String) -> Option<Vec<usize>> {
 
 struct VectorRebuildFixture {
     shared: SharedGraph,
+    kind: VectorIndexKind,
     scale: usize,
     update_count: usize,
     delete_count: usize,
 }
 
 impl VectorRebuildFixture {
-    fn build(scale: usize, dimension: usize) -> Self {
+    fn build(scale: usize, dimension: usize, kind: VectorIndexKind) -> Self {
         let scale = scale.max(2);
         let label = intern("VectorIndexRebuildDoc").expect("bench label is valid");
         let embedding_key = intern("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(50_000_000 + scale as u64));
-        let ids = seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension);
+        let ids = seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension, kind);
         let (update_count, delete_count) = churn_counts(scale);
         churn_indexed_nodes(
             &shared,
@@ -100,6 +104,7 @@ impl VectorRebuildFixture {
         );
         Self {
             shared,
+            kind,
             scale,
             update_count,
             delete_count,
@@ -118,7 +123,7 @@ impl VectorRebuildFixture {
         let live_rows = self.scale - self.delete_count;
         let live_rows_u64 = u64::try_from(live_rows).expect("bench scale fits u64");
         let entry = &report.entries[0];
-        assert_eq!(entry.kind, VectorIndexKind::HnswSquaredEuclidean);
+        assert_eq!(entry.kind, self.kind);
         assert_eq!(
             usize::try_from(entry.dimension).expect("dimension fits usize"),
             VECTOR_DIMENSION
@@ -158,6 +163,7 @@ fn seed_indexed_nodes(
     embedding_key: &IStr,
     scale: usize,
     dimension: usize,
+    kind: VectorIndexKind,
 ) -> Vec<selene_core::NodeId> {
     let mut txn = shared.begin_write();
     let mut mutator = txn.mutator();
@@ -178,7 +184,7 @@ fn seed_indexed_nodes(
         .create_vector_index(
             label.clone(),
             embedding_key.clone(),
-            VectorIndexKind::HnswSquaredEuclidean,
+            kind,
             u32::try_from(dimension).expect("bench dimension fits u32"),
         )
         .expect("bench HNSW vector index build succeeds");

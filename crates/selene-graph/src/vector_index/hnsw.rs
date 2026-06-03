@@ -79,7 +79,8 @@ impl HnswVectorIndex {
     /// Insert or replace the current vector for a graph row.
     pub(crate) fn insert(&mut self, row: u32, vector: VectorValue) -> CoreResult<()> {
         self.remove(row);
-        self.metric.distance(&vector, &vector)?;
+        let query_vector = vector.clone();
+        let insert_scorer = self.metric.bind_query(&query_vector)?;
 
         let new_id = u32::try_from(self.nodes.len()).expect("node rows cap HNSW entries at u32");
         let new_level = level_for(row, new_id);
@@ -99,16 +100,16 @@ impl HnswVectorIndex {
             return Ok(());
         };
 
-        let mut nearest_distance = self.distance_to_entry(new_id, nearest)?;
+        let mut nearest_distance = self.distance_query_to_entry(insert_scorer, nearest)?;
         for layer in ((new_level + 1)..=old_max_level).rev() {
             (nearest, nearest_distance) =
-                self.greedy_layer_from_entry(new_id, nearest, nearest_distance, layer)?;
+                self.greedy_layer_from_query(insert_scorer, nearest, nearest_distance, layer)?;
         }
 
         let link_top = new_level.min(old_max_level);
         for layer in (0..=link_top).rev() {
             let candidates =
-                self.search_layer_from_entry(new_id, nearest, self.ef_construction, layer)?;
+                self.search_layer_from_query(insert_scorer, nearest, self.ef_construction, layer)?;
             let selected = self.select_neighbors(new_id, candidates, self.max_links(layer))?;
             self.nodes[new_id as usize].links[layer] = selected.clone();
             for neighbor in &selected {
@@ -215,18 +216,6 @@ impl HnswVectorIndex {
         }
     }
 
-    fn greedy_layer_from_entry(
-        &self,
-        query_id: u32,
-        entry: u32,
-        entry_distance: f64,
-        layer: usize,
-    ) -> CoreResult<(u32, f64)> {
-        self.greedy_layer(entry, entry_distance, layer, |candidate| {
-            self.distance_to_entry(query_id, candidate)
-        })
-    }
-
     fn greedy_layer_from_query(
         &self,
         scorer: VectorMetricQuery<'_>,
@@ -263,18 +252,6 @@ impl HnswVectorIndex {
                 return Ok((nearest, nearest_distance));
             }
         }
-    }
-
-    fn search_layer_from_entry(
-        &self,
-        query_id: u32,
-        entry: u32,
-        ef: usize,
-        layer: usize,
-    ) -> CoreResult<Vec<Candidate>> {
-        self.search_layer(entry, ef, layer, |candidate| {
-            self.distance_to_entry(query_id, candidate)
-        })
     }
 
     fn search_layer_from_query(
