@@ -341,6 +341,13 @@ fn schema_change_postcard_round_trip() {
             dimension: 3,
             name: Some(istr("serde.schema.vector.index.name")),
         },
+        SchemaChange::VectorIndexCreated {
+            label: node_label.clone(),
+            property: istr("serde.schema.hnsw.embedding"),
+            kind: SchemaVectorIndexKind::HnswCosine,
+            dimension: 3,
+            name: Some(istr("serde.schema.vector.hnsw.index.name")),
+        },
         SchemaChange::VectorIndexDropped {
             label: node_label.clone(),
             property: istr("serde.schema.embedding"),

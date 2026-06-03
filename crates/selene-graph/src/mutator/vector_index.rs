@@ -95,6 +95,11 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
 const fn schema_kind_from(kind: VectorIndexKind) -> SchemaVectorIndexKind {
     match kind {
         VectorIndexKind::Flat => SchemaVectorIndexKind::Flat,
+        VectorIndexKind::HnswSquaredEuclidean => SchemaVectorIndexKind::HnswSquaredEuclidean,
+        VectorIndexKind::HnswCosine => SchemaVectorIndexKind::HnswCosine,
+        VectorIndexKind::HnswNegativeInnerProduct => {
+            SchemaVectorIndexKind::HnswNegativeInnerProduct
+        }
     }
 }
 

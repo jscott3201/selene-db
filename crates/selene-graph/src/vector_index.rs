@@ -1,22 +1,26 @@
 //! Built-in vector row-set indexes for node properties.
 //!
-//! The first vector index kind is intentionally small: a durable registration
-//! plus an in-memory row bitmap for alive nodes whose `(label, property)` value
-//! is a vector with the declared dimension. Registration and live maintenance
-//! are strict so exact search can use the bitmap without hiding dimensionality
-//! drift; recovery rebuild remains lenient for corrupted/legacy state and is
-//! checked by the debug consistency net. Future ANN structures can hang off the
-//! same catalog identity without changing WAL/snapshot DDL.
+//! Vector indexes are durable registrations plus derived in-memory accelerators
+//! over primary node values. Every kind keeps a row bitmap for alive nodes whose
+//! `(label, property)` value is a vector with the declared dimension; HNSW kinds
+//! also maintain an approximate neighbor graph. Registration and live
+//! maintenance are strict so search cannot hide dimensionality or metric drift;
+//! recovery rebuild remains lenient for corrupted/legacy state and is checked by
+//! the debug consistency net.
 
 use std::collections::BTreeSet;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
-use selene_core::{IStr, LabelSet, PropertyMap, Value};
+#[path = "vector_index/hnsw.rs"]
+mod hnsw;
+
+use selene_core::{IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
+use hnsw::{HnswVectorHit, HnswVectorIndex};
 
 type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
 
@@ -45,14 +49,34 @@ struct VectorIndexRegistration {
 pub enum VectorIndexKind {
     /// Exact row-set index over full-precision vectors stored on graph rows.
     Flat,
+    /// Approximate HNSW index using squared Euclidean distance.
+    HnswSquaredEuclidean,
+    /// Approximate HNSW index using cosine distance.
+    HnswCosine,
+    /// Approximate HNSW index using negative inner product distance.
+    HnswNegativeInnerProduct,
+}
+
+impl VectorIndexKind {
+    /// Return the HNSW metric for approximate vector-index kinds.
+    #[must_use]
+    pub const fn hnsw_metric(self) -> Option<VectorMetric> {
+        match self {
+            Self::Flat => None,
+            Self::HnswSquaredEuclidean => Some(VectorMetric::SquaredEuclidean),
+            Self::HnswCosine => Some(VectorMetric::Cosine),
+            Self::HnswNegativeInnerProduct => Some(VectorMetric::NegativeInnerProduct),
+        }
+    }
 }
 
 /// Built-in vector index state for one `(label, property)` registration.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct VectorIndex {
     kind: VectorIndexKind,
     dimension: u32,
     rows: RoaringBitmap,
+    hnsw: Option<HnswVectorIndex>,
 }
 
 impl VectorIndex {
@@ -64,10 +88,21 @@ impl VectorIndex {
     /// zero.
     pub fn new(kind: VectorIndexKind, dimension: u32) -> GraphResult<Self> {
         ensure_dimension(dimension)?;
+        let hnsw = match kind {
+            VectorIndexKind::Flat => None,
+            VectorIndexKind::HnswSquaredEuclidean => {
+                Some(HnswVectorIndex::new(VectorMetric::SquaredEuclidean))
+            }
+            VectorIndexKind::HnswCosine => Some(HnswVectorIndex::new(VectorMetric::Cosine)),
+            VectorIndexKind::HnswNegativeInnerProduct => {
+                Some(HnswVectorIndex::new(VectorMetric::NegativeInnerProduct))
+            }
+        };
         Ok(Self {
             kind,
             dimension,
             rows: RoaringBitmap::new(),
+            hnsw,
         })
     }
 
@@ -95,18 +130,48 @@ impl VectorIndex {
         &self.rows
     }
 
-    pub(crate) fn insert_row(&mut self, row: u32) {
+    /// Return true when this index has an ANN graph.
+    #[must_use]
+    pub const fn is_hnsw(&self) -> bool {
+        self.kind.hnsw_metric().is_some()
+    }
+
+    /// Return the HNSW metric, if this is an HNSW index.
+    #[must_use]
+    pub const fn hnsw_metric(&self) -> Option<VectorMetric> {
+        self.kind.hnsw_metric()
+    }
+
+    pub(crate) fn insert_value(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
         self.rows.insert(row);
+        if let Some(hnsw) = &mut self.hnsw {
+            hnsw.insert(row, vector.clone())?;
+        }
+        Ok(())
     }
 
     pub(crate) fn remove_row(&mut self, row: u32) {
         self.rows.remove(row);
+        if let Some(hnsw) = &mut self.hnsw {
+            hnsw.remove(row);
+        }
     }
 
     pub(crate) fn rows_eq(&self, reference: &Self) -> bool {
         self.kind == reference.kind
             && self.dimension == reference.dimension
             && self.rows == reference.rows
+    }
+
+    pub(crate) fn hnsw_search(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        ef_search: usize,
+    ) -> Option<selene_core::CoreResult<Vec<HnswVectorHit>>> {
+        self.hnsw
+            .as_ref()
+            .map(|hnsw| hnsw.search(query, k, ef_search))
     }
 }
 
@@ -127,6 +192,12 @@ pub enum VectorIndexValueError {
         /// Observed vector dimensionality.
         observed: usize,
     },
+    /// Vector is structurally valid but invalid for the index metric.
+    #[error("metric rejection: {observed}")]
+    MetricRejected {
+        /// Observed metric rejection reason.
+        observed: String,
+    },
 }
 
 impl VectorIndexValueError {
@@ -134,6 +205,7 @@ impl VectorIndexValueError {
         match self {
             Self::KindMismatch { observed } => (*observed).to_owned(),
             Self::DimensionMismatch { observed, .. } => format!("VECTOR<{observed}>"),
+            Self::MetricRejected { observed } => observed.clone(),
         }
     }
 }
@@ -284,8 +356,21 @@ fn build_vector_index_inner(
         if is_null(value) {
             continue;
         }
-        match admit(value, dimension) {
-            Ok(()) => index.insert_row(row),
+        match admit(value, kind, dimension) {
+            Ok(vector) => {
+                if let Err(err) = index.insert_value(row, vector) {
+                    match policy {
+                        BuildPolicy::Strict => return Err(err),
+                        BuildPolicy::Lenient => {
+                            tracing::warn!(
+                                row,
+                                error = %err,
+                                "skipped vector-index HNSW update during lenient rebuild"
+                            );
+                        }
+                    }
+                }
+            }
             Err(err) => match policy {
                 BuildPolicy::Strict => {
                     return Err(index_rejection(
@@ -360,9 +445,9 @@ fn insert_commit(
     row: u32,
 ) -> GraphResult<()> {
     if let Some(entry) = indexes.get_mut(&(label.clone(), property.clone())) {
-        admit(value, entry.dimension())
+        let vector = admit(value, entry.kind(), entry.dimension())
             .map_err(|err| index_rejection(label, property, entry.dimension(), err))?;
-        std::sync::Arc::make_mut(&mut entry.index).insert_row(row);
+        std::sync::Arc::make_mut(&mut entry.index).insert_value(row, vector)?;
     }
     Ok(())
 }
@@ -375,14 +460,18 @@ fn remove_commit(
     row: u32,
 ) -> GraphResult<()> {
     if let Some(entry) = indexes.get_mut(&(label.clone(), property.clone())) {
-        admit(value, entry.dimension())
+        admit(value, entry.kind(), entry.dimension())
             .map_err(|err| index_rejection(label, property, entry.dimension(), err))?;
         std::sync::Arc::make_mut(&mut entry.index).remove_row(row);
     }
     Ok(())
 }
 
-fn admit(value: &Value, expected_dimension: u32) -> Result<(), VectorIndexValueError> {
+fn admit(
+    value: &Value,
+    kind: VectorIndexKind,
+    expected_dimension: u32,
+) -> Result<&VectorValue, VectorIndexValueError> {
     let Value::Vector(vector) = value else {
         return Err(VectorIndexValueError::KindMismatch {
             observed: value_kind_name(value),
@@ -394,7 +483,14 @@ fn admit(value: &Value, expected_dimension: u32) -> Result<(), VectorIndexValueE
             observed: vector.dimension(),
         });
     }
-    Ok(())
+    if let Some(metric) = kind.hnsw_metric() {
+        metric
+            .distance(vector, vector)
+            .map_err(|err| VectorIndexValueError::MetricRejected {
+                observed: err.to_string(),
+            })?;
+    }
+    Ok(vector)
 }
 
 fn ensure_dimension(dimension: u32) -> GraphResult<()> {

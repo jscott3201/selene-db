@@ -110,7 +110,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 #[test]
-fn show_procedures_lists_all_twenty_seven_procedures() {
+fn show_procedures_lists_all_twenty_eight_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -120,8 +120,8 @@ fn show_procedures_lists_all_twenty_seven_procedures() {
 
     assert_eq!(
         table.row_count(),
-        27,
-        "19 algo procedures + 8 platform built-ins"
+        28,
+        "19 algo procedures + 9 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -130,6 +130,7 @@ fn show_procedures_lists_all_twenty_seven_procedures() {
         "selene.create_index",
         "selene.drop_index",
         "selene.vector_search_nodes",
+        "selene.vector_search_nodes_ann",
         "selene.create_vector_index",
         "selene.drop_vector_index",
         "algo.pagerank",
@@ -320,6 +321,35 @@ fn create_vector_index_commits_through_the_funnel() {
 }
 
 #[test]
+fn create_vector_index_can_register_hnsw_metric_kind() {
+    let graph = graph(330_015);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&embedding, Value::Vector(vector(&[1.0, 0.0, 0.0]))),
+            )
+            .expect("vector node inserts");
+        txn.commit().expect("seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'hnsw', NULL, 'cosine')",
+            &registry,
+        )
+        .expect("hnsw vector index creation executes");
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(string_column(&table, "kind"), vec!["vector_hnsw_cosine(3)"]);
+}
+
+#[test]
 fn drop_vector_index_removes_the_index_through_the_funnel() {
     let graph = graph(330_014);
     let registry = BuiltinProcedureRegistry::new();
@@ -398,6 +428,71 @@ fn vector_search_nodes_returns_exact_matches_from_vector_parameter() {
 }
 
 #[test]
+fn vector_search_nodes_ann_uses_registered_hnsw_index() {
+    let graph = graph(330_016);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            for i in 0..32 {
+                mutator
+                    .create_node(
+                        LabelSet::single(doc.clone()),
+                        props(&embedding, Value::Vector(vector(&[i as f32, 0.0]))),
+                    )
+                    .expect("vector node inserts");
+            }
+        }
+        txn.commit().expect("seed graph commits");
+    }
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 2, 'hnsw')",
+            &registry,
+        )
+        .expect("hnsw vector index creation executes");
+
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[4.1, 0.0])));
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 3, 'squared_euclidean', 32) \
+         YIELD node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(node_column(&table, "node_id")[0], NodeId::new(5));
+    assert_eq!(table.row_count(), 3);
+}
+
+#[test]
+fn vector_search_nodes_ann_requires_hnsw_index() {
+    let graph = graph(330_017);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    let err = session
+        .execute_source(
+            "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10)",
+            &registry,
+        )
+        .expect_err("missing hnsw index must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("requires a matching HNSW vector index")
+    ));
+}
+
+#[test]
 fn vector_search_nodes_query_parameter_must_be_vector() {
     let graph = graph(330_012);
     let registry = BuiltinProcedureRegistry::new();
@@ -417,6 +512,47 @@ fn vector_search_nodes_query_parameter_must_be_vector() {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
         } if detail.contains("query must be a VECTOR")
+    ));
+}
+
+#[test]
+fn vector_search_nodes_ann_reports_metric_mismatch() {
+    let graph = graph(330_018);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&embedding, Value::Vector(vector(&[1.0, 0.0]))),
+            )
+            .expect("vector node inserts");
+        txn.commit().expect("seed commits");
+    }
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 2, 'hnsw', NULL, 'cosine')",
+            &registry,
+        )
+        .expect("hnsw vector index creation executes");
+
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[1.0, 0.0])));
+    let err = session
+        .execute_source(
+            "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean')",
+            &registry,
+        )
+        .expect_err("wrong metric must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("HNSW vector index uses Cosine")
     ));
 }
 

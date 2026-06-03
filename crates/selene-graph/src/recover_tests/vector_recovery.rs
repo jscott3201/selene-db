@@ -74,6 +74,44 @@ fn recover_snapshot_preserves_vector_index_registration() {
 }
 
 #[test]
+fn recover_snapshot_preserves_hnsw_vector_index_registration() {
+    let dir = temp_dir("snapshot-hnsw-vector-index");
+    let label = intern("recover.hnsw.vector.index.node").unwrap();
+    let property = intern("recover.hnsw.vector.index.embedding").unwrap();
+    let shared = SharedGraph::builder(GraphId::new(42)).build().unwrap();
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                prop(
+                    "recover.hnsw.vector.index.embedding",
+                    Value::Vector(VectorValue::new(vec![1.0, 0.0, 0.0]).unwrap()),
+                ),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::HnswCosine,
+            3,
+        )
+        .unwrap();
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(42)).unwrap();
+    let snapshot = recovered.read();
+    let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.kind(), VectorIndexKind::HnswCosine);
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_wal_only_replays_vector_property() {
     let dir = temp_dir("wal-vector");
     append_wal(
@@ -119,7 +157,7 @@ fn recover_wal_only_replays_vector_index_registration() {
                 change: SchemaChange::VectorIndexCreated {
                     label: label.clone(),
                     property: property.clone(),
-                    kind: SchemaVectorIndexKind::Flat,
+                    kind: SchemaVectorIndexKind::HnswSquaredEuclidean,
                     dimension: 3,
                     name: None,
                 },
@@ -130,6 +168,7 @@ fn recover_wal_only_replays_vector_index_registration() {
     let recovered = SharedGraph::recover(&dir, GraphId::new(41)).unwrap();
     let snapshot = recovered.read();
     let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.kind(), VectorIndexKind::HnswSquaredEuclidean);
     assert_eq!(index.dimension(), 3);
     assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
     let _ = fs::remove_dir_all(dir);
