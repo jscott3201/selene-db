@@ -153,6 +153,12 @@ PR-local quick vector baseline:
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 46.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; scalar `f64` L2-squared accumulation; ~21.5 Melem/s. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128` | 145.7 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; 1k quick ID `upd100_del50_b1100-950-150_a950-950-0_rk144` means 150 stale HNSW entries reclaimed and ~144 KiB reachable memory freed. |
 
+PR-local HNSW tuning spot-check:
+
+| Bench | 10k | Notes |
+|---|---:|---|
+| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10` | 153.7 µs (quick) | `M=18` keeps ID-overlap recall at 9875 bp while fixing duplicate-distance quality; 10k row has 372,024 links and `m2647-7647`. Previous `M=16`: 144.2 µs / 330,688 links / `m2485-7485`; `M=24`: 187.7 µs / 496,032 links / `m3131-8131` and 10000 bp ID overlap. |
+
 ## §3 selene-graph — write pipeline & concurrency
 
 Bench bins: `write_txn_lifecycle`, `provider_fanout`, `bound_type_validation`,
