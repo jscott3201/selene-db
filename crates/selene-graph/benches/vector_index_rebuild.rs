@@ -85,9 +85,14 @@ impl VectorRebuildVariant {
 }
 
 fn bench_vector_index_rebuild(c: &mut Criterion) {
+    if !vector_rebuild_group_enabled("rebuild") {
+        return;
+    }
     let mut group = c.benchmark_group("graph_vector_index_rebuild");
+    let variants = vector_rebuild_variants();
     for scale in vector_rebuild_scales() {
-        for variant in VECTOR_REBUILD_VARIANTS {
+        for variant in &variants {
+            let variant = *variant;
             let preview = VectorRebuildFixture::build(scale, VECTOR_DIMENSION, variant);
             let preview_report = preview
                 .shared
@@ -129,9 +134,14 @@ fn bench_vector_index_rebuild(c: &mut Criterion) {
 }
 
 fn bench_vector_index_stale_query(c: &mut Criterion) {
+    if !vector_rebuild_group_enabled("stale_query") {
+        return;
+    }
     let mut group = c.benchmark_group("graph_vector_index_stale_query");
+    let variants = vector_rebuild_variants();
     for scale in vector_rebuild_scales() {
-        for variant in VECTOR_REBUILD_VARIANTS {
+        for variant in &variants {
+            let variant = *variant;
             let stale = VectorRebuildFixture::build(scale, VECTOR_DIMENSION, variant);
             let stale_suffix = format_usage_id_suffix(stale.memory_usage());
             group.bench_function(
@@ -170,6 +180,9 @@ fn bench_vector_index_stale_query(c: &mut Criterion) {
 }
 
 fn bench_vector_index_dimension_projection(c: &mut Criterion) {
+    if !vector_rebuild_group_enabled("dimension_projection") {
+        return;
+    }
     let mut group = c.benchmark_group("graph_vector_index_dimension_projection");
     for scale in vector_rebuild_scales() {
         for dimension in MEMORY_PROJECTION_DIMENSIONS {
@@ -196,6 +209,35 @@ fn vector_rebuild_scales() -> Vec<usize> {
         .ok()
         .and_then(parse_scales)
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
+}
+
+fn vector_rebuild_group_enabled(group: &str) -> bool {
+    match std::env::var("SELENE_VECTOR_REBUILD_GROUP_FILTER").ok() {
+        Some(filter) => filter == group,
+        None => true,
+    }
+}
+
+fn vector_rebuild_variants() -> Vec<VectorRebuildVariant> {
+    let filter = std::env::var("SELENE_VECTOR_REBUILD_VARIANT_FILTER").ok();
+    let variants = VECTOR_REBUILD_VARIANTS
+        .into_iter()
+        .filter(|variant| variant_filter_matches(*variant, filter.as_deref()))
+        .collect::<Vec<_>>();
+    assert!(
+        !variants.is_empty(),
+        "SELENE_VECTOR_REBUILD_VARIANT_FILTER matched no vector rebuild variants"
+    );
+    variants
+}
+
+fn variant_filter_matches(variant: VectorRebuildVariant, filter: Option<&str>) -> bool {
+    match filter {
+        Some("hnsw") => variant.kind.hnsw_metric().is_some(),
+        Some("ivf") => variant.kind.ivf_metric().is_some(),
+        Some(name) => variant.name.contains(name),
+        None => true,
+    }
 }
 
 fn parse_scales(raw: String) -> Option<Vec<usize>> {
