@@ -65,7 +65,7 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
-pub use vector_search::VectorNodeSearchHit;
+pub use vector_search::{VectorNodeSearchHit, VectorSearchError};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]
