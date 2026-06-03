@@ -269,6 +269,7 @@ fn value_kind_label(value: &Value) -> &'static str {
         Value::LocalTime(_) => "LOCAL TIME",
         Value::Duration(_) => "DURATION",
         Value::Uuid(_) => "UUID",
+        Value::Vector(_) => "VECTOR",
         Value::Extended { .. } => "EXTENDED",
         Value::Null => "NULL",
         _ => "UNKNOWN",

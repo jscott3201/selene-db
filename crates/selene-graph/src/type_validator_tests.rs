@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use selene_core::{ExtensionTypeId, GraphId, Record, RecordTypeId, RecordTyped, intern};
+use selene_core::{
+    ExtensionTypeId, GraphId, Record, RecordTypeId, RecordTyped, VectorValue, intern,
+};
 
 use super::*;
 use crate::{GraphError, RecordFieldType, RecordFieldTypeDef, RecordFieldTypes, SharedGraph};
@@ -98,6 +100,44 @@ fn valid_graph() -> SeleneGraph {
 #[test]
 fn validate_entity_state_accepts_valid_graph() {
     validate_entity_state(&valid_graph(), &graph_type()).unwrap();
+}
+
+#[test]
+fn validate_entity_state_accepts_vector_property() {
+    let graph_type = GraphTypeDef {
+        name: istr("validator.vector.graph"),
+        node_types: vec![crate::NodeTypeDef {
+            name: istr("validator.embedding"),
+            key_labels: LabelSet::single(istr("Embedding")),
+            properties: vec![PropertyTypeDef {
+                name: istr("embedding"),
+                value_type: PropertyValueType::Vector,
+                list_element_type: None,
+                required: true,
+                default: None,
+                immutable: false,
+                record_field_types: None,
+            }],
+            validation_mode: ValidationMode::Strict,
+        }],
+        edge_types: Vec::new(),
+    };
+    let shared = SharedGraph::builder(GraphId::new(11)).build().unwrap();
+    let mut txn = shared.begin_write();
+    {
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(istr("Embedding")),
+                prop(
+                    "embedding",
+                    Value::Vector(VectorValue::new(vec![0.1, 0.2, 0.3]).unwrap()),
+                ),
+            )
+            .unwrap();
+    }
+    txn.commit().unwrap();
+    validate_entity_state(shared.read().as_ref(), &graph_type).unwrap();
 }
 
 #[test]
@@ -234,6 +274,28 @@ fn legacy_untyped_list_declaration_accepts_any_list_elements() {
         &Value::List(vec![Value::Int(1), Value::String(istr("two"))])
     ));
     assert!(!property_value_matches(&declaration, &Value::Int(1)));
+}
+
+#[test]
+fn vector_declaration_matches_only_vector_values() {
+    let declaration = PropertyTypeDef {
+        name: istr("embedding"),
+        value_type: PropertyValueType::Vector,
+        list_element_type: None,
+        required: false,
+        default: None,
+        immutable: false,
+        record_field_types: None,
+    };
+
+    assert!(property_value_matches(
+        &declaration,
+        &Value::Vector(VectorValue::new(vec![1.0, 2.0]).unwrap())
+    ));
+    assert!(!property_value_matches(
+        &declaration,
+        &Value::List(vec![Value::Float32(1.0), Value::Float32(2.0)])
+    ));
 }
 
 #[test]

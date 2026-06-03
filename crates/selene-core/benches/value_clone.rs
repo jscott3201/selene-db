@@ -1,5 +1,6 @@
 #![allow(missing_docs)]
-//! CORE-06 gating bench: `Value` clone cost (dominated by the enum size).
+//! CORE-06 gating bench: `Value` clone cost (dominated by the enum size) plus
+//! native vector-value construction and serde baselines.
 //!
 //! `Value` currently inlines `jiff::Span` (`Duration`) and two `jiff::Zoned`
 //! variants (`ZonedDateTime`/`ZonedTime`), so `size_of::<Value>` is large and
@@ -14,10 +15,11 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use std::hint::black_box;
 
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{PropertyMap, Value, intern};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use selene_core::{PropertyMap, Value, VectorValue, intern};
 
 const N: usize = 1_024;
+const VECTOR_DIMS: &[usize] = &[128, 768, 1536];
 
 // Profile-aware criterion config WITHOUT a selene-testing dep (that crate
 // depends on selene-core, so importing BenchProfile here would cycle).
@@ -46,12 +48,13 @@ fn mixed_values() -> Vec<Value> {
     let span = span();
     let zoned = zoned();
     (0..N)
-        .map(|i| match i % 5 {
+        .map(|i| match i % 6 {
             0 => Value::Int(i as i64),
             1 => Value::Float(i as f64 * 1.5),
             2 => Value::String(intern(&format!("v{}", i % 64)).expect("string interns")),
             3 => Value::Duration(Box::new(span)),
-            _ => Value::ZonedDateTime(Box::new(zoned.clone())),
+            4 => Value::ZonedDateTime(Box::new(zoned.clone())),
+            _ => Value::Vector(VectorValue::new(vector_components(32)).expect("vector is valid")),
         })
         .collect()
 }
@@ -118,9 +121,57 @@ fn bench_value_clone(c: &mut Criterion) {
     group.finish();
 }
 
+fn vector_components(dim: usize) -> Vec<f32> {
+    (0..dim)
+        .map(|idx| ((idx % 257) as f32 - 128.0) / 128.0)
+        .collect()
+}
+
+fn bench_vector_value(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_vector_value");
+    for &dim in VECTOR_DIMS {
+        group.throughput(Throughput::Elements(dim as u64));
+        group.bench_with_input(
+            BenchmarkId::new("construct_validate", dim),
+            &dim,
+            |b, &dim| {
+                b.iter_batched(
+                    || vector_components(dim),
+                    |components| VectorValue::new(black_box(components)).expect("vector is valid"),
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+
+        let vector = VectorValue::new(vector_components(dim)).expect("vector is valid");
+        group.bench_with_input(BenchmarkId::new("clone_arc", dim), &vector, |b, vector| {
+            b.iter(|| black_box(black_box(vector).clone()));
+        });
+
+        let value = Value::Vector(vector);
+        group.bench_with_input(
+            BenchmarkId::new("postcard_roundtrip", dim),
+            &value,
+            |b, value| {
+                b.iter_batched(
+                    || value.clone(),
+                    |value| {
+                        let bytes = postcard::to_allocvec(&value).expect("vector serializes");
+                        let decoded: Value =
+                            postcard::from_bytes(&bytes).expect("vector deserializes");
+                        black_box(decoded)
+                    },
+                    BatchSize::SmallInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone
+    targets = bench_value_clone, bench_vector_value
 }
 criterion_main!(value_clone);

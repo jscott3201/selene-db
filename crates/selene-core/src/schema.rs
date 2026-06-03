@@ -538,6 +538,8 @@ pub enum PredefinedValueType {
     Uuid,
     /// Extension-owned value type.
     Extended(ExtensionTypeId),
+    /// Native dense vector.
+    Vector,
 }
 
 /// Minimal v1.0 value cardinality.

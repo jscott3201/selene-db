@@ -93,13 +93,18 @@ boxed the four oversized variants (`Path` 120 B — the real former ceiling, not
 the time variants — plus `Duration`/`ZonedDateTime`/`ZonedTime`), down from 128 B.
 The same bin also covers the wide-map construction path so `from_pairs` stays
 linearithmic rather than repeated-insert quadratic for schema- or record-shaped
-maps with many properties.
+maps with many properties. The `core_vector_value/*` rows are the first native
+vector baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
+round-trip cost at common embedding dimensions.
 
 | Bench | Median | Notes |
 |---|---:|---|
 | `core_value_clone/vec_mixed_1024` | 4.62 µs | Clone a 1024-element mixed-variant `Vec<Value>`. **−25%** vs the 128 B layout (was 6.10 µs). |
 | `core_value_clone/property_map_5` | 53.8 ns | Clone a 5-key `PropertyMap` (Int/Float/String/Duration/ZonedDateTime). **−29%** (was 74.6 ns) — the *worst* case: 2 of 5 keys are now boxed (alloc-on-clone), so non-temporal maps gain more. |
 | `core_value_clone/property_map_from_pairs_256_reverse` | 3.34 µs (quick) | Build a 256-property map from reverse-sorted pairs. PR-local quick A/B: 32.2 µs → 3.34 µs after the sort+dedup constructor rewrite. |
+| `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
+| `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
+| `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
 
 ## §2 selene-graph — read hot paths
 

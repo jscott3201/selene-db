@@ -387,5 +387,6 @@ fn scalar_property_value_type_name(value_type: PropertyValueType) -> &'static st
         PropertyValueType::Duration => "DURATION",
         PropertyValueType::Null => "NULL",
         PropertyValueType::Uuid => "UUID",
+        PropertyValueType::Vector => "VECTOR",
     }
 }

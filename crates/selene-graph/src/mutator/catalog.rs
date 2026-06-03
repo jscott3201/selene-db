@@ -493,6 +493,7 @@ fn core_scalar_value_type(value_type: PropertyValueType) -> ValueType {
         PropertyValueType::LocalTime => Some(PredefinedValueType::LocalTime),
         PropertyValueType::Duration => Some(PredefinedValueType::Duration),
         PropertyValueType::Uuid => Some(PredefinedValueType::Uuid),
+        PropertyValueType::Vector => Some(PredefinedValueType::Vector),
         PropertyValueType::List
         | PropertyValueType::Record
         | PropertyValueType::RecordTyped

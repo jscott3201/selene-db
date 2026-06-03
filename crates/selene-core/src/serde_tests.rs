@@ -124,6 +124,7 @@ fn all_values() -> Vec<Value> {
         },
         Value::Null,
         Value::Uuid(uuid::Uuid::nil()),
+        Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
     ]
 }
 
@@ -464,6 +465,15 @@ fn extended_value_payload_postcard_round_trip() {
     rt(&value);
 }
 
+#[test]
+fn vector_value_postcard_rejects_invalid_payloads() {
+    let empty = postcard::to_allocvec(&Vec::<f32>::new()).unwrap();
+    assert!(postcard::from_bytes::<VectorValue>(&empty).is_err());
+
+    let non_finite = postcard::to_allocvec(&vec![1.0_f32, f32::INFINITY]).unwrap();
+    assert!(postcard::from_bytes::<VectorValue>(&non_finite).is_err());
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(256))]
 
@@ -490,6 +500,11 @@ fn simple_value_strategy() -> impl Strategy<Value = Value> {
         }),
         proptest::collection::vec(any::<u8>(), 0..32)
             .prop_map(|bytes| Value::Bytes(Arc::from(bytes))),
+        proptest::collection::vec(
+            any::<f32>().prop_filter("finite", |value| value.is_finite()),
+            1..32,
+        )
+        .prop_map(|components| Value::Vector(VectorValue::new(components).unwrap())),
         any::<u128>().prop_map(Value::Uint128),
         any::<i128>().prop_map(Value::Int128),
         Just(Value::Null),

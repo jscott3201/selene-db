@@ -190,6 +190,12 @@ fn hash_value_variant_strict<H: Hasher>(value: &Value, state: &mut H) {
         }
         Value::Null => {}
         Value::Uuid(value) => value.hash(state),
+        Value::Vector(value) => {
+            value.dimension().hash(state);
+            for component in value.as_slice() {
+                hash_f32_canonical(*component, state);
+            }
+        }
         _ => format!("{value:?}").hash(state),
     }
 }
@@ -409,7 +415,7 @@ mod tests {
     };
 
     use proptest::{prelude::*, test_runner::Config};
-    use selene_core::{Record, Value, intern};
+    use selene_core::{Record, Value, VectorValue, intern};
     use smallvec::smallvec;
 
     use super::{DistinctRowKey, RuntimeEqKey, runtime_values_equal};
@@ -433,6 +439,19 @@ mod tests {
     fn value_key_hash_eq_invariant_nan() {
         let lhs = DistinctRowKey(vec![Value::Float(f64::from_bits(0x7ff8_0000_0000_0001))]);
         let rhs = DistinctRowKey(vec![Value::Float(f64::from_bits(0x7ff8_0000_0000_0002))]);
+
+        assert_eq!(lhs, rhs);
+        assert_eq!(key_hash(&lhs), key_hash(&rhs));
+    }
+
+    #[test]
+    fn value_key_hash_eq_invariant_vector_signed_zero() {
+        let lhs = DistinctRowKey(vec![Value::Vector(
+            VectorValue::new(vec![0.0, -0.0]).unwrap(),
+        )]);
+        let rhs = DistinctRowKey(vec![Value::Vector(
+            VectorValue::new(vec![-0.0, 0.0]).unwrap(),
+        )]);
 
         assert_eq!(lhs, rhs);
         assert_eq!(key_hash(&lhs), key_hash(&rhs));
@@ -604,6 +623,10 @@ mod tests {
                 .prop_map(|value| { Value::Decimal(rust_decimal::Decimal::new(value, 1)) }),
             prop::sample::select(vec!["a", "b", "same"])
                 .prop_map(|value| { Value::String(intern(value).expect("test string interns")) }),
+            proptest::collection::vec(-1000_i16..1000, 1..8).prop_map(|components| {
+                let components = components.into_iter().map(f32::from).collect::<Vec<_>>();
+                Value::Vector(VectorValue::new(components).expect("test vector is finite"))
+            }),
             permuted_record_strategy(),
         ]
         .boxed()
