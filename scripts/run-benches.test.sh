@@ -24,6 +24,12 @@ if ! grep -q "SELENE_VECTOR_BENCH_SCALES=1000,10000" <<< "$custom_dry_run"; then
   exit 1
 fi
 
+stress_dry_run="$(scripts/run-benches.sh --profile quick --bench single_graph --vector-scales stress --dry-run)"
+if ! grep -q "SELENE_VECTOR_BENCH_SCALES=1000,10000,50000,100000,250000" <<< "$stress_dry_run"; then
+  echo "FAIL: --vector-scales stress did not mirror the stress profile scales" >&2
+  exit 1
+fi
+
 if scripts/run-benches.sh --profile quick --bench single_graph --vector-scales 0,abc --dry-run >/dev/null 2>&1; then
   echo "FAIL: invalid --vector-scales value was accepted" >&2
   exit 1

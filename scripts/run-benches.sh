@@ -140,7 +140,7 @@ resolve_vector_scales() {
   case "$1" in
     quick) echo "1000"; return 0 ;;
     full) echo "10000,50000,100000"; return 0 ;;
-    stress) echo "10000,50000,100000,250000"; return 0 ;;
+    stress) echo "1000,10000,50000,100000,250000"; return 0 ;;
     large) echo "250000,1000000"; return 0 ;;
     million) echo "1000000"; return 0 ;;
   esac

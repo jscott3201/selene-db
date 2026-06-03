@@ -58,7 +58,7 @@ index rebuild sweeps without changing non-vector benches.
 |---|---|---|
 | `quick` | 1k | fast vector smoke |
 | `full` | 10k / 50k / 100k | publish-quality vector sweep |
-| `stress` | 10k / 50k / 100k / 250k | opt-in stress sweep |
+| `stress` | 1k / 10k / 50k / 100k / 250k | opt-in stress sweep |
 | `large` | 250k / 1M | local large-scale validation |
 | `million` | 1M | focused million-vector run |
 | comma list | sorted positive integers | custom A/B scale envelope |
