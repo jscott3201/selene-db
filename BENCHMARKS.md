@@ -160,7 +160,7 @@ PR-local HNSW tuning spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10_idbp9875_dqbp9875` | 153.8 µs (quick) | `M=18` keeps both ID-overlap and distance-quality recall at 9875 bp on this 10k corpus while the separate duplicate-distance regression passes at 10000 bp; 10k row has 372,024 links and `m2647-7647`. Previous `M=16`: 144.2 µs / 330,688 links / `m2485-7485`; `M=24`: 187.7 µs / 496,032 links / `m3131-8131` and 10000 bp ID overlap. |
+| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10_idbp9875_dqbp9875` | 151.1 µs (quick) | `M=18` keeps both ID-overlap and distance-quality recall at 9875 bp on this 10k corpus while the separate duplicate-distance regression passes at 10000 bp; 10k row has 372,024 links and `m2647-7647`. Reserving HNSW search-layer heaps/visited sets moved the same row from 153.8 µs to 151.1 µs. Previous `M=16`: 144.2 µs / 330,688 links / `m2485-7485`; `M=24`: 187.7 µs / 496,032 links / `m3131-8131` and 10000 bp ID overlap. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
