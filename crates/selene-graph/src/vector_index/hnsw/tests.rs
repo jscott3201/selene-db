@@ -6,6 +6,10 @@ fn vector(value: f32) -> VectorValue {
     VectorValue::new(vec![value, 0.0]).expect("test vector is valid")
 }
 
+fn cosine_vector(value: f32) -> VectorValue {
+    VectorValue::new(vec![1.0, value]).expect("test vector is valid")
+}
+
 fn level_zero_links(layers: impl IntoIterator<Item = Vec<u32>>) -> LevelZeroLinks {
     let mut links = LevelZeroLinks::new();
     for layer in layers {
@@ -38,6 +42,7 @@ fn hnsw_insert_with_scratch_retains_reusable_buffers() {
             .unwrap();
     }
 
+    assert!(index.entry_squared_norms.is_empty());
     assert!(scratch.visited.capacity() > 0);
     assert!(scratch.candidates.capacity() > 0);
     assert!(scratch.best.capacity() > 0);
@@ -95,6 +100,7 @@ fn hnsw_search_layer_admits_equal_distance_better_id() {
                 upper_links: empty_upper_link_layers(0),
             },
         ],
+        entry_squared_norms: Vec::new(),
         level_zero_links: level_zero_links([vec![2, 1], Vec::new(), Vec::new()]),
         row_to_entry: FxHashMap::default(),
         entry_point: Some(0),
@@ -118,6 +124,21 @@ fn hnsw_search_layer_admits_equal_distance_better_id() {
         .map(|candidate| candidate.id)
         .collect();
     assert_eq!(ids, vec![0, 1]);
+}
+
+#[test]
+fn hnsw_cosine_replace_keeps_entry_norm_cache_aligned() {
+    let mut index = HnswVectorIndex::with_config(VectorMetric::Cosine, HnswIndexConfig::default());
+    index.insert(1, cosine_vector(0.0)).unwrap();
+    index.insert(2, cosine_vector(1.0)).unwrap();
+
+    index.insert(1, cosine_vector(0.1)).unwrap();
+
+    assert_eq!(index.entry_squared_norms.len(), index.nodes.len());
+    assert!(index.entry_squared_norms.iter().all(|norm| *norm > 0.0));
+    assert_eq!(index.memory_usage().deleted_entries, 1);
+    let hits = index.search(&cosine_vector(0.0), 1, 16).unwrap();
+    assert_eq!(hits[0].row, 1);
 }
 
 #[test]

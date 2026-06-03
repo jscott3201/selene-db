@@ -4,7 +4,7 @@ use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashSet;
 
-use super::{Candidate, MaxCandidate, MinCandidate};
+use super::candidate::{Candidate, MaxCandidate, MinCandidate};
 
 /// Scratch buffers reused while searching, constructing, or repairing HNSW links.
 #[derive(Debug, Default)]
