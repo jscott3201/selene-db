@@ -57,7 +57,9 @@ pub use schema::{
     PropertyDefV1, RecordFieldStructure, RecordFieldStructureDef, RecordFieldStructureType,
     RecordTypeDef, RecordTypeRef, ValidationMode, ValueType, ValueTypeCardinality,
 };
-pub use value::{EdgeDirection, Path, PathSegment, Record, RecordTyped, Value};
+pub use value::{
+    EdgeDirection, MAX_VECTOR_DIMENSION, Path, PathSegment, Record, RecordTyped, Value, VectorValue,
+};
 
 #[cfg(test)]
 mod serde_tests;

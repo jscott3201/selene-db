@@ -42,6 +42,31 @@ pub enum CoreError {
         max: u32,
     },
 
+    /// A native dense vector was constructed without components.
+    #[error("vector must contain at least one component")]
+    #[diagnostic(code(SLENE_C_010))]
+    VectorEmpty,
+
+    /// A native dense vector exceeded the implementation-defined dimension cap.
+    #[error("vector dimension too large: {got} components (max {max})")]
+    #[diagnostic(code(SLENE_C_011))]
+    VectorTooLarge {
+        /// Observed component count.
+        got: usize,
+        /// Maximum component count.
+        max: usize,
+    },
+
+    /// A native dense vector component was NaN or infinite.
+    #[error("vector component {index} is not finite: {value}")]
+    #[diagnostic(code(SLENE_C_012))]
+    VectorComponentNotFinite {
+        /// Zero-based component index.
+        index: usize,
+        /// Rejected component value.
+        value: f32,
+    },
+
     /// Identifier value zero is reserved as the tombstone sentinel.
     #[error("invalid identifier: zero is reserved as tombstone sentinel")]
     #[diagnostic(code(SLENE_C_007))]
@@ -77,7 +102,10 @@ impl CoreError {
     pub const fn gqlstatus(&self) -> &'static str {
         match self {
             Self::StringTooLong { .. } | Self::ConstructedValueTooLarge { .. } => "22G03",
-            Self::DecimalPrecisionExceeded { .. } => "22003",
+            Self::DecimalPrecisionExceeded { .. } | Self::VectorComponentNotFinite { .. } => {
+                "22003"
+            }
+            Self::VectorEmpty | Self::VectorTooLarge { .. } => "22G03",
             Self::ZeroIdentifier => "0G003",
             Self::CompactKeyValueLengthMismatch { .. } => "0G008",
             Self::OverlappingDiff { .. } => "0G009",
@@ -103,6 +131,17 @@ mod tests {
         CoreError::DecimalPrecisionExceeded { got: 29, max: 28 },
         "22003",
         "SLENE_C_004"
+    )]
+    #[case(CoreError::VectorEmpty, "22G03", "SLENE_C_010")]
+    #[case(
+        CoreError::VectorTooLarge { got: 65_536, max: 65_535 },
+        "22G03",
+        "SLENE_C_011"
+    )]
+    #[case(
+        CoreError::VectorComponentNotFinite { index: 1, value: f32::INFINITY },
+        "22003",
+        "SLENE_C_012"
     )]
     #[case(CoreError::ZeroIdentifier, "0G003", "SLENE_C_007")]
     #[case(

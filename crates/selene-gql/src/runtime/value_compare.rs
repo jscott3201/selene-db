@@ -144,6 +144,7 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::RecordTyped(lhs), Value::RecordTyped(rhs)) => {
             return typed_record_compare(lhs, rhs);
         }
+        (Value::Vector(lhs), Value::Vector(rhs)) => vector_compare(lhs.as_slice(), rhs.as_slice()),
         (Value::Decimal(lhs), Value::Decimal(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int128(rhs)) => lhs.cmp(rhs),
         (Value::Int128(lhs), Value::Int(rhs)) => lhs.cmp(&i128::from(*rhs)),
@@ -171,6 +172,16 @@ fn compare_value_pair(lhs: &Value, rhs: &Value) -> Option<Ordering> {
         (Value::Uint128(lhs), Value::Int128(rhs)) => i128_cmp_u128(*rhs, *lhs).reverse(),
         _ => return numeric_compare(lhs, rhs),
     })
+}
+
+fn vector_compare(lhs: &[f32], rhs: &[f32]) -> Ordering {
+    for (&lhs_component, &rhs_component) in lhs.iter().zip(rhs.iter()) {
+        if lhs_component == rhs_component {
+            continue;
+        }
+        return lhs_component.total_cmp(&rhs_component);
+    }
+    lhs.len().cmp(&rhs.len())
 }
 
 fn record_gql_equal(lhs: &Record, rhs: &Record) -> Option<bool> {
@@ -530,9 +541,10 @@ fn value_rank(value: &Value) -> u8 {
         Value::Extended { .. } => 24,
         Value::Null => 25,
         Value::Uuid(_) => 26,
+        Value::Vector(_) => 27,
         // Any future `Value` variant ranks after every enumerated one so it
-        // never silently ties with `Uuid` (26) in the sort fallback.
-        _ => 27,
+        // never silently ties with `Vector` (27) in the sort fallback.
+        _ => 28,
     }
 }
 

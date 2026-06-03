@@ -7,12 +7,19 @@
 
 use std::sync::Arc;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use smallvec::SmallVec;
 
+use crate::error::{CoreError, CoreResult};
 use crate::extension_type_ids::ExtensionTypeId;
 use crate::identity::{BindingTableId, EdgeId, GraphId, NodeId, RecordTypeId};
 use crate::istr::IStr;
+
+/// Maximum component count for a native dense vector value.
+///
+/// The cap keeps dimensions representable in a compact `u16` slot for future
+/// vector-index metadata while allowing common embedding sizes.
+pub const MAX_VECTOR_DIMENSION: usize = u16::MAX as usize;
 
 /// In-memory representation of a GQL value.
 ///
@@ -103,6 +110,8 @@ pub enum Value {
     Null,
     /// UUID value.
     Uuid(uuid::Uuid),
+    /// Native dense vector value.
+    Vector(VectorValue),
 }
 
 /// Compile-time ceiling on `size_of::<Value>` — a zero-cost re-bloat tripwire.
@@ -167,6 +176,7 @@ impl Value {
         },
         || Self::Null,
         || Self::Uuid(uuid::Uuid::nil()),
+        || Self::Vector(VectorValue::new(vec![0.0]).expect("fixture vector is valid")),
     ];
 
     /// Number of known [`Value`] variants in this build.
@@ -206,6 +216,7 @@ impl Value {
             Self::Extended { .. } => "Extended",
             Self::Null => "Null",
             Self::Uuid(_) => "Uuid",
+            Self::Vector(_) => "Vector",
         }
     }
 }
@@ -261,8 +272,87 @@ impl PartialEq for Value {
             ) => lhs_type_id == rhs_type_id && lhs_payload == rhs_payload,
             (Self::Null, Self::Null) => true,
             (Self::Uuid(lhs), Self::Uuid(rhs)) => lhs == rhs,
+            (Self::Vector(lhs), Self::Vector(rhs)) => lhs == rhs,
             _ => false,
         }
+    }
+}
+
+/// Native dense vector payload stored as a first-class [`Value`].
+///
+/// `VectorValue` validates once at construction and deserialization so every
+/// engine layer can assume a non-empty finite `f32` slice. NaN and infinity are
+/// rejected because they make distance metrics, ordering fallbacks, hashing,
+/// and approximate-nearest-neighbor indexes ambiguous.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct VectorValue {
+    components: Arc<[f32]>,
+}
+
+impl VectorValue {
+    /// Build a validated vector from owned components.
+    pub fn new(components: impl Into<Vec<f32>>) -> CoreResult<Self> {
+        let components = components.into();
+        if components.is_empty() {
+            return Err(CoreError::VectorEmpty);
+        }
+        if components.len() > MAX_VECTOR_DIMENSION {
+            return Err(CoreError::VectorTooLarge {
+                got: components.len(),
+                max: MAX_VECTOR_DIMENSION,
+            });
+        }
+        for (index, value) in components.iter().copied().enumerate() {
+            if !value.is_finite() {
+                return Err(CoreError::VectorComponentNotFinite { index, value });
+            }
+        }
+        Ok(Self {
+            components: Arc::from(components),
+        })
+    }
+
+    /// Number of `f32` components in this vector.
+    #[must_use]
+    pub fn dimension(&self) -> usize {
+        self.components.len()
+    }
+
+    /// Borrow the vector components.
+    #[must_use]
+    pub fn as_slice(&self) -> &[f32] {
+        &self.components
+    }
+
+    /// Clone the shared component storage.
+    #[must_use]
+    pub fn as_arc(&self) -> Arc<[f32]> {
+        Arc::clone(&self.components)
+    }
+}
+
+impl TryFrom<Vec<f32>> for VectorValue {
+    type Error = CoreError;
+
+    fn try_from(value: Vec<f32>) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl From<VectorValue> for Vec<f32> {
+    fn from(value: VectorValue) -> Self {
+        value.components.as_ref().to_vec()
+    }
+}
+
+impl<'de> Deserialize<'de> for VectorValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Vec::<f32>::deserialize(deserializer)
+            .and_then(|components| Self::new(components).map_err(serde::de::Error::custom))
     }
 }
 
@@ -400,6 +490,7 @@ mod tests {
             Value::NodeRef(NodeId::new(1)),
             Value::Null,
             Value::Uuid(uuid::Uuid::nil()),
+            Value::Vector(VectorValue::new(vec![1.0, 2.0]).unwrap()),
         ];
         for value in values {
             assert_eq!(value.clone(), value);
@@ -436,7 +527,7 @@ mod tests {
 
     #[test]
     fn value_all_covers_every_variant() {
-        assert_eq!(Value::VARIANT_COUNT, 27);
+        assert_eq!(Value::VARIANT_COUNT, 28);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in Value::ALL {
@@ -477,6 +568,46 @@ mod tests {
         let decoded: PropertyMap = postcard::from_bytes(&bytes).expect("property map deserializes");
 
         assert_eq!(original, decoded);
+    }
+
+    #[test]
+    fn vector_value_exposes_validated_components() {
+        let vector = VectorValue::new(vec![1.0, -0.0, 3.5]).unwrap();
+        assert_eq!(vector.dimension(), 3);
+        assert_eq!(vector.as_slice(), &[1.0, -0.0, 3.5]);
+        assert_eq!(vector.as_arc().as_ref(), &[1.0, -0.0, 3.5]);
+    }
+
+    #[test]
+    fn vector_value_rejects_empty_payload() {
+        assert!(matches!(
+            VectorValue::new(Vec::<f32>::new()),
+            Err(CoreError::VectorEmpty)
+        ));
+    }
+
+    #[test]
+    fn vector_value_rejects_non_finite_component() {
+        assert!(matches!(
+            VectorValue::new(vec![1.0, f32::NAN]),
+            Err(CoreError::VectorComponentNotFinite { index: 1, .. })
+        ));
+        assert!(matches!(
+            VectorValue::new(vec![f32::NEG_INFINITY]),
+            Err(CoreError::VectorComponentNotFinite { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn vector_value_rejects_overlarge_dimension() {
+        let components = vec![0.0; MAX_VECTOR_DIMENSION + 1];
+        assert!(matches!(
+            VectorValue::new(components),
+            Err(CoreError::VectorTooLarge {
+                got,
+                max: MAX_VECTOR_DIMENSION
+            }) if got == MAX_VECTOR_DIMENSION + 1
+        ));
     }
 
     proptest! {

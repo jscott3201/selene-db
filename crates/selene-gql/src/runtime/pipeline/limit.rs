@@ -95,6 +95,7 @@ fn value_type_name(value: &Value) -> &'static str {
         Value::Extended { .. } => "extended",
         Value::Null => "null",
         Value::Uuid(_) => "uuid",
+        Value::Vector(_) => "vector",
         _ => "unknown",
     }
 }

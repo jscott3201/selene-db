@@ -1,7 +1,7 @@
 //! Unit tests for [`super`] GQL value comparison and ordering.
 use std::{cmp::Ordering, sync::Arc};
 
-use selene_core::{EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, intern};
+use selene_core::{EdgeId, NodeId, Record, RecordTypeId, RecordTyped, Value, VectorValue, intern};
 use smallvec::smallvec;
 
 use super::{
@@ -17,6 +17,23 @@ fn string_comparison_is_content_based() {
     assert!(equal_non_null(&same_a, &same_b));
     assert_eq!(compare_non_null(&same_a, &same_b), Some(Ordering::Equal));
     assert_eq!(compare_non_null(&same_a, &later), Some(Ordering::Less));
+}
+
+#[test]
+fn vector_comparison_is_componentwise() {
+    let lhs = Value::Vector(VectorValue::new(vec![1.0, -0.0, 3.0]).unwrap());
+    let same = Value::Vector(VectorValue::new(vec![1.0, 0.0, 3.0]).unwrap());
+    let higher_component = Value::Vector(VectorValue::new(vec![1.0, 0.5, 3.0]).unwrap());
+    let longer = Value::Vector(VectorValue::new(vec![1.0, 0.0, 3.0, 4.0]).unwrap());
+
+    assert!(equal_non_null(&lhs, &same));
+    assert_eq!(gql_equal_non_null(&lhs, &same), Some(true));
+    assert_eq!(compare_non_null(&lhs, &same), Some(Ordering::Equal));
+    assert_eq!(
+        compare_non_null(&lhs, &higher_component),
+        Some(Ordering::Less)
+    );
+    assert_eq!(compare_non_null(&same, &longer), Some(Ordering::Less));
 }
 
 #[test]
@@ -367,6 +384,10 @@ fn compare_for_sort_orders_extended_scalar_payloads() {
     );
     assert_sort_less(Value::Int128(1), Value::Int128(2));
     assert_sort_less(Value::Uint128(1), Value::Uint128(2));
+    assert_sort_less(
+        Value::Vector(VectorValue::new(vec![1.0, 2.0]).unwrap()),
+        Value::Vector(VectorValue::new(vec![1.0, 3.0]).unwrap()),
+    );
 }
 
 // --- GQLRT-14: RECORD equality / ordering is field-name-keyed (ISO §4.15) ---

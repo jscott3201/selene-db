@@ -201,6 +201,14 @@ fn raw_value_key(value: &Value) -> String {
         }
         Value::Null => "null".to_owned(),
         Value::Uuid(value) => format!("uuid:{value}"),
+        Value::Vector(value) => raw_sequence_key(
+            "vector:[",
+            "]",
+            value
+                .as_slice()
+                .iter()
+                .map(|component| format!("{:08x}", canonical_f32_bits(*component))),
+        ),
         _ => "<value::unknown>".to_owned(),
     }
 }
@@ -343,6 +351,15 @@ fn render_value(value: &Value, placeholders: &mut PlaceholderTable) -> String {
         }
         Value::Null => "NULL".to_owned(),
         Value::Uuid(value) => value.to_string(),
+        Value::Vector(value) => format!(
+            "VECTOR[{}]",
+            value
+                .as_slice()
+                .iter()
+                .map(f32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         _ => "<value::unknown>".to_owned(),
     }
 }
@@ -410,7 +427,7 @@ fn hex_bytes(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use selene_core::{NodeId, Value, intern};
+    use selene_core::{NodeId, Value, VectorValue, intern};
 
     use crate::{
         Binding, BindingTable, BindingTableColumn, BindingTableSchema, analyze::AnalyzedType,
@@ -507,6 +524,20 @@ mod tests {
         assert_ne!(
             raw_value_key(&Value::Float(1.0)),
             raw_value_key(&Value::Float(0.0))
+        );
+    }
+
+    #[test]
+    fn raw_vector_key_canonicalizes_signed_zero_components() {
+        let lhs = Value::Vector(VectorValue::new(vec![0.0, -0.0]).unwrap());
+        let rhs = Value::Vector(VectorValue::new(vec![-0.0, 0.0]).unwrap());
+        let different = Value::Vector(VectorValue::new(vec![0.0, 1.0]).unwrap());
+
+        assert_eq!(raw_value_key(&lhs), raw_value_key(&rhs));
+        assert_ne!(raw_value_key(&lhs), raw_value_key(&different));
+        assert_eq!(
+            render_value(&lhs, &mut PlaceholderTable::default()),
+            "VECTOR[0, -0]"
         );
     }
 

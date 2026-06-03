@@ -191,7 +191,7 @@ pub const ANNEX_B_REGISTER: &[(AnnexBId, ImplDefinedChoice)] = &[
     (
         AnnexBId("IV011"),
         ImplDefinedChoice {
-            choice: "Value minus RecordTyped; Value::Extended carries opaque sister-project payloads",
+            choice: "Value minus RecordTyped; Value::Vector is native dense f32; Value::Extended carries opaque sister-project payloads",
             settled_in: "spec 02 section 3.1",
         },
     ),

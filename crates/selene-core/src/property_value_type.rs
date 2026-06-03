@@ -85,6 +85,8 @@ pub enum PropertyValueType {
     Null,
     /// UUID value.
     Uuid,
+    /// Native dense vector value.
+    Vector,
 }
 
 impl PropertyValueType {
@@ -122,6 +124,7 @@ impl PropertyValueType {
             Value::Extended { .. } => None,
             Value::Null => Some(Self::Null),
             Value::Uuid(_) => Some(Self::Uuid),
+            Value::Vector(_) => Some(Self::Vector),
         }
     }
 
@@ -170,6 +173,7 @@ impl PropertyValueType {
             Self::Duration => "Duration",
             Self::Null => "Null",
             Self::Uuid => "Uuid",
+            Self::Vector => "Vector",
         }
     }
 }
@@ -189,7 +193,7 @@ mod tests {
     use super::*;
     use crate::{
         BindingTableId, EdgeDirection, EdgeId, ExtensionTypeId, GraphId, NodeId, Path, PathSegment,
-        Record, RecordTypeId, RecordTyped, intern,
+        Record, RecordTypeId, RecordTyped, VectorValue, intern,
     };
 
     fn sample_values() -> Vec<(PropertyValueType, Value)> {
@@ -286,6 +290,10 @@ mod tests {
             (
                 PropertyValueType::Uuid,
                 Value::Uuid(uuid::Uuid::from_u128(42)),
+            ),
+            (
+                PropertyValueType::Vector,
+                Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
             ),
         ]
     }

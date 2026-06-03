@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use arc_swap::ArcSwap;
 use selene_core::{
     Change, EdgeId, GraphId, HlcTimestamp, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap,
-    PropertyValueType, Value, intern,
+    PropertyValueType, Value, VectorValue, intern,
 };
 use selene_persist::{WalConfig, WalReader, WalWriter};
 
@@ -83,6 +83,10 @@ fn full_value_property_map(prefix: &str) -> PropertyMap {
         (
             intern(&format!("{prefix}.uuid")).unwrap(),
             Value::Uuid(uuid::Uuid::from_u128(42)),
+        ),
+        (
+            intern(&format!("{prefix}.vector")).unwrap(),
+            Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
         ),
         (
             intern(&format!("{prefix}.zoned_datetime")).unwrap(),

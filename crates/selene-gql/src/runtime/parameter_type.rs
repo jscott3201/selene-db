@@ -92,6 +92,7 @@ fn value_gql_type_name(value: &Value) -> &'static str {
         Value::Extended { .. } => "EXTENDED",
         Value::Null => "NULL",
         Value::Uuid(_) => "UUID",
+        Value::Vector(_) => "VECTOR",
         _ => "UNKNOWN",
     }
 }
