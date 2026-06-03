@@ -221,14 +221,16 @@ Bench bins: `wal`, `snapshot`, plus `graph_snapshot_roundtrip` (lives in the
 #### `persist_wal_body_size_no_fsync` — entry-body packing (PERSIST-04)
 
 Fixed total changes (100k), swept changes-per-entry packing — isolates the
-per-byte serialize+write cost (vectored write) from the per-entry overhead the
-count sweeps cover. Per-entry overhead dominates at small bodies; the minimum is
-~10k changes/entry, after which large-`Vec` build/alloc creeps back in. A
-vectored-write win (PERSIST-04) should lower the large-body arms.
+per-byte serialize+write cost from the per-entry overhead the count sweeps
+cover. Per-entry overhead dominates at small bodies; the minimum is ~10k
+changes/entry, after which large-`Vec` build/alloc creeps back in. This was the
+PERSIST-04 measurement surface; the stable manual `write_vectored` candidate was
+measured-rejected on 2026-06-01 because it regressed the WAL append hot path, so
+the contiguous `Vec` + `write_all` path remains the baseline.
 
 | Bench | per-entry=100 | =1000 | =10000 | =50000 | Notes |
 |---|---:|---:|---:|---:|---|
-| `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing. |
+| `persist_wal_body_size_no_fsync` | 12.5 ms | 8.42 ms | 7.22 ms | 13.1 ms | Equal total work; U-shaped in packing; vectored write rejected. |
 
 #### `persist_wal_sync_sweep` — sync-policy sweep
 
@@ -395,7 +397,7 @@ confirm the win and guard the surrounding rows against regression.
 |---|---|---|---|
 | CORE-06 ✓ | Box `Value` `Path` + time variants (shrink `size_of`) | `core_value_clone/*` + `size_of::<Value>` stderr | **32 B** (was 128); vec 4.62 µs / pmap 53.8 ns |
 | GRAPH-05 ✓ | In-place adjacency delete O(D²)→O(D) | `graph_hub_delete` (now linear) | **4.54 ms** @ degree 10k (was 133 ms — 30×) |
-| PERSIST-04 | WAL vectored write | `persist_wal_body_size_no_fsync` (large-body arms) | 13.1 ms @ 50k/entry |
+| PERSIST-04 rejected | WAL vectored write regressed append on Darwin/macOS | `persist_wal_body_size_no_fsync` (large-body arms) | measured-rejected 2026-06-01; keep contiguous `Vec` + `write_all` |
 | ALGO-01/02/05 ✓ | CSR dense-`u32` cache on `ProjNeighbor` | `algo/projection_build` + `…_neighbor_iter` + algo medians | **pagerank −15..31% · louvain −23..26% · apsp −9..52% · triangle −6..11% · iter −4..6%**; build +4–7% one-time (24→32 B/neighbor) |
 | GQLRT-05 ✓ | Memoize correlated-subquery target schema (per statement, by expr id) | `gql_correlated_subquery/{exists,count}` | **−2 to −7%** — memo elides the per-row `schema_for_pattern` walk |
 | D10 (guard) | Lock-free reads stay flat under writes | `graph_read_under_write` | 24.5 ms @100k |
