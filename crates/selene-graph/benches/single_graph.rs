@@ -128,34 +128,39 @@ fn bench_composite_index_proxy(c: &mut Criterion) {
 fn bench_exact_vector_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_exact_vector_scan");
     for scale in vector_scan_scales() {
-        for &(name, index_kind) in &[
-            ("unindexed_squared_euclidean_dim128_k10", None),
-            (
-                "flat_index_squared_euclidean_dim128_k10",
-                Some(VectorIndexKind::Flat),
-            ),
+        for &(metric_name, metric) in &[
+            ("squared_euclidean", VectorMetric::SquaredEuclidean),
+            ("cosine", VectorMetric::Cosine),
         ] {
-            let fixture = VectorFixture::build(scale, 128, index_kind);
-            group.throughput(Throughput::Elements(fixture.scale() as u64));
-            group.bench_with_input(
-                BenchmarkId::new(name, fixture.scale()),
-                &fixture,
-                |b, fixture| {
-                    b.iter(|| {
-                        let hits = fixture
-                            .graph()
-                            .exact_vector_search_nodes(
-                                &fixture.label(),
-                                &fixture.embedding_key(),
-                                fixture.query(),
-                                VectorMetric::SquaredEuclidean,
-                                10,
-                            )
-                            .expect("fixture vectors have matching dimensions");
-                        std::hint::black_box(hits.len());
-                    });
-                },
-            );
+            for &(index_name, index_kind) in &[
+                ("unindexed", None),
+                ("flat_index", Some(VectorIndexKind::Flat)),
+            ] {
+                let fixture = VectorFixture::build(scale, 128, index_kind);
+                group.throughput(Throughput::Elements(fixture.scale() as u64));
+                group.bench_with_input(
+                    BenchmarkId::new(
+                        format!("{index_name}_{metric_name}_dim128_k10"),
+                        fixture.scale(),
+                    ),
+                    &fixture,
+                    |b, fixture| {
+                        b.iter(|| {
+                            let hits = fixture
+                                .graph()
+                                .exact_vector_search_nodes(
+                                    &fixture.label(),
+                                    &fixture.embedding_key(),
+                                    fixture.query(),
+                                    metric,
+                                    10,
+                                )
+                                .expect("fixture vectors have matching dimensions");
+                            std::hint::black_box(hits.len());
+                        });
+                    },
+                );
+            }
         }
     }
     group.finish();

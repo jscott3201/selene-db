@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use rustc_hash::FxHashMap;
-use selene_core::{CoreResult, VectorMetric, VectorValue};
+use selene_core::{CoreResult, VectorMetric, VectorMetricQuery, VectorValue};
 
 const DEFAULT_M: usize = 16;
 const DEFAULT_EF_CONSTRUCTION: usize = 64;
@@ -124,21 +124,21 @@ impl HnswVectorIndex {
         k: usize,
         ef_search: usize,
     ) -> CoreResult<Vec<HnswVectorHit>> {
-        self.metric.distance(query, query)?;
+        let scorer = self.metric.bind_query(query)?;
         if k == 0 || self.row_to_entry.is_empty() {
             return Ok(Vec::new());
         }
         let Some(mut nearest) = self.entry_point else {
             return Ok(Vec::new());
         };
-        let mut nearest_distance = self.distance_query_to_entry(query, nearest)?;
+        let mut nearest_distance = self.distance_query_to_entry(scorer, nearest)?;
         for layer in (1..=self.max_level).rev() {
             (nearest, nearest_distance) =
-                self.greedy_layer_from_query(query, nearest, nearest_distance, layer)?;
+                self.greedy_layer_from_query(scorer, nearest, nearest_distance, layer)?;
         }
 
         let ef = ef_search.max(k).max(1);
-        let candidates = self.search_layer_from_query(query, nearest, ef, 0)?;
+        let candidates = self.search_layer_from_query(scorer, nearest, ef, 0)?;
         let mut hits = Vec::new();
         for candidate in candidates {
             let node = &self.nodes[candidate.id as usize];
@@ -170,13 +170,13 @@ impl HnswVectorIndex {
 
     fn greedy_layer_from_query(
         &self,
-        query: &VectorValue,
+        scorer: VectorMetricQuery<'_>,
         entry: u32,
         entry_distance: f64,
         layer: usize,
     ) -> CoreResult<(u32, f64)> {
         self.greedy_layer(entry, entry_distance, layer, |candidate| {
-            self.distance_query_to_entry(query, candidate)
+            self.distance_query_to_entry(scorer, candidate)
         })
     }
 
@@ -220,13 +220,13 @@ impl HnswVectorIndex {
 
     fn search_layer_from_query(
         &self,
-        query: &VectorValue,
+        scorer: VectorMetricQuery<'_>,
         entry: u32,
         ef: usize,
         layer: usize,
     ) -> CoreResult<Vec<Candidate>> {
         self.search_layer(entry, ef, layer, |candidate| {
-            self.distance_query_to_entry(query, candidate)
+            self.distance_query_to_entry(scorer, candidate)
         })
     }
 
@@ -353,9 +353,12 @@ impl HnswVectorIndex {
         self.metric.distance(lhs, rhs)
     }
 
-    fn distance_query_to_entry(&self, query: &VectorValue, entry: u32) -> CoreResult<f64> {
-        self.metric
-            .distance(query, &self.nodes[entry as usize].vector)
+    fn distance_query_to_entry(
+        &self,
+        scorer: VectorMetricQuery<'_>,
+        entry: u32,
+    ) -> CoreResult<f64> {
+        scorer.distance(&self.nodes[entry as usize].vector)
     }
 }
 

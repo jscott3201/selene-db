@@ -39,6 +39,20 @@ pub enum VectorMetric {
 }
 
 impl VectorMetric {
+    /// Bind this metric to one query vector for repeated candidate scoring.
+    ///
+    /// This precomputes metric-specific query state, such as cosine query norm,
+    /// so exact scans and ANN traversals do not redo invariant work for every
+    /// candidate.
+    ///
+    /// # Errors
+    ///
+    /// [`VectorMetric::Cosine`] returns [`CoreError::VectorZeroNorm`] when the
+    /// query has zero magnitude.
+    pub fn bind_query(self, query: &VectorValue) -> CoreResult<VectorMetricQuery<'_>> {
+        VectorMetricQuery::new(self, query)
+    }
+
     /// Compute this metric for two vectors.
     ///
     /// # Errors
@@ -54,6 +68,73 @@ impl VectorMetric {
             Self::SquaredEuclidean => squared_euclidean(lhs, rhs),
             Self::Cosine => cosine_distance(lhs, rhs)?,
             Self::NegativeInnerProduct => -dot(lhs, rhs),
+        }))
+    }
+}
+
+/// Metric scorer bound to a single query vector.
+///
+/// Use this when ranking many candidates against one query. It preserves the
+/// same scores and error contract as [`VectorMetric::distance`], but avoids
+/// recomputing query-only metric state for every candidate.
+#[derive(Clone, Copy, Debug)]
+pub struct VectorMetricQuery<'a> {
+    metric: VectorMetric,
+    query: &'a VectorValue,
+    query_norm: Option<f64>,
+}
+
+impl<'a> VectorMetricQuery<'a> {
+    fn new(metric: VectorMetric, query: &'a VectorValue) -> CoreResult<Self> {
+        let query_norm = match metric {
+            VectorMetric::SquaredEuclidean | VectorMetric::NegativeInnerProduct => None,
+            VectorMetric::Cosine => {
+                let norm = dot(query.as_slice(), query.as_slice());
+                if norm == 0.0 {
+                    return Err(CoreError::VectorZeroNorm { side: "lhs" });
+                }
+                Some(norm)
+            }
+        };
+        Ok(Self {
+            metric,
+            query,
+            query_norm,
+        })
+    }
+
+    /// Return the metric this scorer uses.
+    #[must_use]
+    pub const fn metric(&self) -> VectorMetric {
+        self.metric
+    }
+
+    /// Return the bound query vector.
+    #[must_use]
+    pub const fn query(&self) -> &'a VectorValue {
+        self.query
+    }
+
+    /// Compute this bound query's lower-is-better distance to `candidate`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::VectorDimensionMismatch`] if dimensions differ.
+    /// [`VectorMetric::Cosine`] also returns [`CoreError::VectorZeroNorm`] when
+    /// `candidate` has zero magnitude.
+    pub fn distance(&self, candidate: &VectorValue) -> CoreResult<f64> {
+        let query = self.query.as_slice();
+        let candidate = candidate.as_slice();
+        check_same_dimension(query.len(), candidate.len())?;
+        Ok(canonical_score(match self.metric {
+            VectorMetric::SquaredEuclidean => squared_euclidean(query, candidate),
+            VectorMetric::Cosine => cosine_distance_with_lhs_norm(
+                query,
+                candidate,
+                self.query_norm
+                    .expect("cosine query scorer stores query norm"),
+            )?,
+            VectorMetric::NegativeInnerProduct => -dot(query, candidate),
         }))
     }
 }
@@ -173,8 +254,9 @@ where
     }
 
     let mut top_k = VectorTopK::new(k);
+    let scorer = metric.bind_query(query)?;
     for (key, vector) in candidates {
-        let distance = metric.distance(query, vector)?;
+        let distance = scorer.distance(vector)?;
         top_k.push_distance(key, distance);
     }
 
@@ -237,6 +319,15 @@ fn cosine_distance(lhs: &[f32], rhs: &[f32]) -> CoreResult<f64> {
     if lhs_norm == 0.0 {
         return Err(CoreError::VectorZeroNorm { side: "lhs" });
     }
+    cosine_distance_with_components(lhs_norm, rhs_norm, dot)
+}
+
+fn cosine_distance_with_lhs_norm(lhs: &[f32], rhs: &[f32], lhs_norm: f64) -> CoreResult<f64> {
+    let (rhs_norm, dot) = norm_and_dot(lhs, rhs);
+    cosine_distance_with_components(lhs_norm, rhs_norm, dot)
+}
+
+fn cosine_distance_with_components(lhs_norm: f64, rhs_norm: f64, dot: f64) -> CoreResult<f64> {
     if rhs_norm == 0.0 {
         return Err(CoreError::VectorZeroNorm { side: "rhs" });
     }
@@ -253,6 +344,16 @@ fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
             (lhs_norm + lhs * lhs, rhs_norm + rhs * rhs, dot + lhs * rhs)
         },
     )
+}
+
+fn norm_and_dot(lhs: &[f32], rhs: &[f32]) -> (f64, f64) {
+    lhs.iter()
+        .zip(rhs)
+        .fold((0.0, 0.0), |(rhs_norm, dot), (&lhs, &rhs)| {
+            let lhs = f64::from(lhs);
+            let rhs = f64::from(rhs);
+            (rhs_norm + rhs * rhs, dot + lhs * rhs)
+        })
 }
 
 fn dot(lhs: &[f32], rhs: &[f32]) -> f64 {
@@ -326,6 +427,39 @@ mod tests {
     }
 
     #[test]
+    fn bound_query_scores_match_one_off_distance() {
+        let query = vector(&[1.0, 2.0, 3.0]);
+        let candidate = vector(&[4.0, 5.0, 6.0]);
+
+        for metric in [
+            VectorMetric::SquaredEuclidean,
+            VectorMetric::Cosine,
+            VectorMetric::NegativeInnerProduct,
+        ] {
+            let scorer = metric.bind_query(&query).unwrap();
+            assert_eq!(scorer.metric(), metric);
+            assert_eq!(scorer.query(), &query);
+            assert_eq!(
+                scorer.distance(&candidate).unwrap(),
+                metric.distance(&query, &candidate).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn bound_cosine_query_preserves_zero_norm_error_sides() {
+        let zero = vector(&[0.0, 0.0]);
+        let rhs = vector(&[1.0, 0.0]);
+
+        let error = VectorMetric::Cosine.bind_query(&zero).unwrap_err();
+        assert!(matches!(error, CoreError::VectorZeroNorm { side: "lhs" }));
+
+        let scorer = VectorMetric::Cosine.bind_query(&rhs).unwrap();
+        let error = scorer.distance(&zero).unwrap_err();
+        assert!(matches!(error, CoreError::VectorZeroNorm { side: "rhs" }));
+    }
+
+    #[test]
     fn cosine_rejects_zero_norm_vectors() {
         let zero = vector(&[0.0, 0.0]);
         let rhs = vector(&[1.0, 0.0]);
@@ -357,7 +491,7 @@ mod tests {
         let candidate = vector(&[1.0]);
         let candidates = [(7_u64, &candidate)];
 
-        let hits = exact_vector_top_k(VectorMetric::SquaredEuclidean, &query, candidates, 0)
+        let hits = exact_vector_top_k(VectorMetric::Cosine, &query, candidates, 0)
             .expect("zero k does not inspect candidates");
 
         assert!(hits.is_empty());

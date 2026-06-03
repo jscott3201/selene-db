@@ -63,7 +63,9 @@ pub use schema::{
 pub use value::{
     EdgeDirection, MAX_VECTOR_DIMENSION, Path, PathSegment, Record, RecordTyped, Value, VectorValue,
 };
-pub use vector::{VectorMetric, VectorSearchHit, VectorTopK, exact_vector_top_k};
+pub use vector::{
+    VectorMetric, VectorMetricQuery, VectorSearchHit, VectorTopK, exact_vector_top_k,
+};
 
 #[cfg(test)]
 mod serde_tests;

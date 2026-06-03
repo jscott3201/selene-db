@@ -96,13 +96,7 @@ fn exact_vector_search_zero_k_and_missing_label_are_empty() {
 
     assert!(
         shared
-            .exact_vector_search_nodes(
-                &doc,
-                &embedding,
-                &vector(&[0.0]),
-                VectorMetric::SquaredEuclidean,
-                0,
-            )
+            .exact_vector_search_nodes(&doc, &embedding, &vector(&[0.0]), VectorMetric::Cosine, 0,)
             .unwrap()
             .is_empty()
     );

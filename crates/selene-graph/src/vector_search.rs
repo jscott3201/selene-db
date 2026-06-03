@@ -5,8 +5,8 @@ use std::time::Duration;
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
-    CancellationCause, CancellationChecker, IStr, NodeId, Value, VectorMetric, VectorTopK,
-    VectorValue,
+    CancellationCause, CancellationChecker, IStr, NodeId, Value, VectorMetric, VectorMetricQuery,
+    VectorTopK, VectorValue,
 };
 
 use crate::error::{GraphError, GraphResult};
@@ -151,6 +151,9 @@ impl SeleneGraph {
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         checker.check()?;
+        if k == 0 {
+            return Ok(Vec::new());
+        }
         let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
@@ -162,9 +165,9 @@ impl SeleneGraph {
         let rows = vector_index
             .as_ref()
             .map_or(label_rows, |index| index.rows());
+        let scorer = metric.bind_query(query).map_err(GraphError::from)?;
         if should_parallelize_exact_scan(vector_index.as_deref(), rows, k, checker) {
-            return self
-                .exact_vector_search_indexed_parallel(label, property, query, metric, k, rows);
+            return self.exact_vector_search_indexed_parallel(label, property, scorer, k, rows);
         }
 
         let mut top_k = VectorTopK::new(k);
@@ -200,7 +203,7 @@ impl SeleneGraph {
             let Some(Value::Vector(vector)) = properties.get(property) else {
                 continue;
             };
-            let distance = metric.distance(query, vector).map_err(GraphError::from)?;
+            let distance = scorer.distance(vector).map_err(GraphError::from)?;
             top_k.push_distance(node_id, distance);
         }
 
@@ -218,17 +221,14 @@ impl SeleneGraph {
         &self,
         label: &IStr,
         property: &IStr,
-        query: &VectorValue,
-        metric: VectorMetric,
+        scorer: VectorMetricQuery<'_>,
         k: usize,
         rows: &RoaringBitmap,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         let raw_rows: Vec<u32> = rows.iter().collect();
         let top_k = raw_rows
             .par_chunks(VECTOR_SEARCH_PARALLEL_CHUNK_ROWS)
-            .map(|chunk| {
-                self.exact_vector_search_indexed_chunk(label, property, query, metric, k, chunk)
-            })
+            .map(|chunk| self.exact_vector_search_indexed_chunk(label, property, scorer, k, chunk))
             .try_reduce(|| VectorTopK::new(k), merge_top_k)?;
 
         Ok(vector_node_hits(top_k))
@@ -238,8 +238,7 @@ impl SeleneGraph {
         &self,
         label: &IStr,
         property: &IStr,
-        query: &VectorValue,
-        metric: VectorMetric,
+        scorer: VectorMetricQuery<'_>,
         k: usize,
         rows: &[u32],
     ) -> Result<VectorTopK<NodeId>, VectorSearchError> {
@@ -270,7 +269,7 @@ impl SeleneGraph {
             let Some(Value::Vector(vector)) = properties.get(property) else {
                 continue;
             };
-            let distance = metric.distance(query, vector).map_err(GraphError::from)?;
+            let distance = scorer.distance(vector).map_err(GraphError::from)?;
             top_k.push_distance(node_id, distance);
         }
         Ok(top_k)

@@ -16,7 +16,9 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{PropertyMap, Value, VectorMetric, VectorValue, exact_vector_top_k, intern};
+use selene_core::{
+    PropertyMap, Value, VectorMetric, VectorTopK, VectorValue, exact_vector_top_k, intern,
+};
 
 const N: usize = 1_024;
 const VECTOR_DIMS: &[usize] = &[128, 768, 1536];
@@ -208,17 +210,38 @@ fn bench_vector_exact_top_k(c: &mut Criterion) {
         .collect();
     let candidate_refs: Vec<(usize, &VectorValue)> = candidates.iter().enumerate().collect();
 
-    group.bench_function("squared_euclidean_2048x128_k10", |b| {
+    for &(name, metric) in &[
+        (
+            "squared_euclidean_2048x128_k10",
+            VectorMetric::SquaredEuclidean,
+        ),
+        ("cosine_2048x128_k10", VectorMetric::Cosine),
+    ] {
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                exact_vector_top_k(
+                    metric,
+                    black_box(&query),
+                    candidate_refs
+                        .iter()
+                        .map(|(key, vector)| (black_box(*key), black_box(*vector))),
+                    black_box(EXACT_TOP_K),
+                )
+                .expect("all dimensions match")
+            });
+        });
+    }
+
+    group.bench_function("cosine_unbound_loop_2048x128_k10", |b| {
         b.iter(|| {
-            exact_vector_top_k(
-                VectorMetric::SquaredEuclidean,
-                black_box(&query),
-                candidate_refs
-                    .iter()
-                    .map(|(key, vector)| (black_box(*key), black_box(*vector))),
-                black_box(EXACT_TOP_K),
-            )
-            .expect("all dimensions match")
+            let mut top_k = VectorTopK::new(black_box(EXACT_TOP_K));
+            for (key, vector) in &candidate_refs {
+                let distance = VectorMetric::Cosine
+                    .distance(black_box(&query), black_box(*vector))
+                    .expect("all dimensions match");
+                top_k.push_distance(black_box(*key), distance);
+            }
+            top_k.into_hits()
         });
     });
 
