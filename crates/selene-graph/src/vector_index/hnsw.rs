@@ -6,17 +6,21 @@
 //! search can continue traversing historical links while excluding obsolete row
 //! versions from results.
 
+#[path = "hnsw/candidate.rs"]
+mod candidate;
 #[path = "hnsw/links.rs"]
 mod links;
 #[path = "hnsw/scratch.rs"]
 mod scratch;
 
-use std::cmp::Ordering;
 use std::mem::size_of;
 
 use rustc_hash::FxHashMap;
-use selene_core::{CoreResult, HnswIndexConfig, VectorMetric, VectorMetricQuery, VectorValue};
+use selene_core::{
+    CoreResult, HnswIndexConfig, VectorMetric, VectorMetricQuery, VectorValue, vector_squared_norm,
+};
 
+use candidate::{Candidate, MaxCandidate, MinCandidate, closer, compare_candidate};
 use links::{HnswUpperLinkLayers, LevelZeroLinks};
 pub(crate) use scratch::HnswSearchScratch;
 
@@ -62,6 +66,7 @@ pub(crate) struct HnswMemoryUsage {
 pub(crate) struct HnswVectorIndex {
     metric: VectorMetric,
     nodes: Vec<HnswNode>,
+    entry_squared_norms: Vec<f64>,
     level_zero_links: LevelZeroLinks,
     row_to_entry: FxHashMap<u32, u32>,
     entry_point: Option<u32>,
@@ -76,6 +81,7 @@ impl HnswVectorIndex {
         Self {
             metric,
             nodes: Vec::new(),
+            entry_squared_norms: Vec::new(),
             level_zero_links: LevelZeroLinks::new(),
             row_to_entry: FxHashMap::default(),
             entry_point: None,
@@ -107,7 +113,14 @@ impl HnswVectorIndex {
     ) -> CoreResult<()> {
         self.remove(row);
         let query_vector = vector.clone();
-        let insert_scorer = self.metric.bind_query(&query_vector)?;
+        let use_cached_norms = self.metric == VectorMetric::Cosine;
+        let query_squared_norm = use_cached_norms.then(|| vector_squared_norm(&query_vector));
+        let insert_scorer = if let Some(query_squared_norm) = query_squared_norm {
+            self.metric
+                .bind_query_with_squared_norm(&query_vector, query_squared_norm)?
+        } else {
+            self.metric.bind_query(&query_vector)?
+        };
 
         let new_id = u32::try_from(self.nodes.len()).expect("node rows cap HNSW entries at u32");
         let new_level = level_for(row, new_id);
@@ -120,6 +133,7 @@ impl HnswVectorIndex {
             deleted: false,
             upper_links: empty_upper_link_layers(new_level),
         });
+        self.record_entry_squared_norm(new_id as usize, query_squared_norm);
 
         let Some(mut nearest) = old_entry_point else {
             self.entry_point = Some(new_id);
@@ -128,21 +142,43 @@ impl HnswVectorIndex {
             return Ok(());
         };
 
-        let mut nearest_distance = self.distance_query_to_entry(insert_scorer, nearest)?;
+        let mut nearest_distance = if use_cached_norms {
+            self.distance_query_to_entry_with_cached_norms(insert_scorer, nearest)?
+        } else {
+            self.distance_query_to_entry(insert_scorer, nearest)?
+        };
         for layer in ((new_level + 1)..=old_max_level).rev() {
-            (nearest, nearest_distance) =
-                self.greedy_layer_from_query(insert_scorer, nearest, nearest_distance, layer)?;
+            (nearest, nearest_distance) = if use_cached_norms {
+                self.greedy_layer_from_query_with_cached_norms(
+                    insert_scorer,
+                    nearest,
+                    nearest_distance,
+                    layer,
+                )?
+            } else {
+                self.greedy_layer_from_query(insert_scorer, nearest, nearest_distance, layer)?
+            };
         }
 
         let link_top = new_level.min(old_max_level);
         for layer in (0..=link_top).rev() {
-            self.search_layer_from_query_into(
-                insert_scorer,
-                nearest,
-                self.ef_construction,
-                layer,
-                scratch,
-            )?;
+            if use_cached_norms {
+                self.search_layer_from_query_with_cached_norms_into(
+                    insert_scorer,
+                    nearest,
+                    self.ef_construction,
+                    layer,
+                    scratch,
+                )?;
+            } else {
+                self.search_layer_from_query_into(
+                    insert_scorer,
+                    nearest,
+                    self.ef_construction,
+                    layer,
+                    scratch,
+                )?;
+            }
             let selected = self.select_neighbors(
                 new_id,
                 &scratch.result,
@@ -195,21 +231,43 @@ impl HnswVectorIndex {
         ef_search: usize,
         scratch: &mut HnswSearchScratch,
     ) -> CoreResult<Vec<HnswVectorHit>> {
-        let scorer = self.metric.bind_query(query)?;
+        let use_cached_norms = self.metric == VectorMetric::Cosine;
+        let scorer = if use_cached_norms {
+            self.metric
+                .bind_query_with_squared_norm(query, vector_squared_norm(query))?
+        } else {
+            self.metric.bind_query(query)?
+        };
         if k == 0 || self.row_to_entry.is_empty() {
             return Ok(Vec::new());
         }
         let Some(mut nearest) = self.entry_point else {
             return Ok(Vec::new());
         };
-        let mut nearest_distance = self.distance_query_to_entry(scorer, nearest)?;
+        let mut nearest_distance = if use_cached_norms {
+            self.distance_query_to_entry_with_cached_norms(scorer, nearest)?
+        } else {
+            self.distance_query_to_entry(scorer, nearest)?
+        };
         for layer in (1..=self.max_level).rev() {
-            (nearest, nearest_distance) =
-                self.greedy_layer_from_query(scorer, nearest, nearest_distance, layer)?;
+            (nearest, nearest_distance) = if use_cached_norms {
+                self.greedy_layer_from_query_with_cached_norms(
+                    scorer,
+                    nearest,
+                    nearest_distance,
+                    layer,
+                )?
+            } else {
+                self.greedy_layer_from_query(scorer, nearest, nearest_distance, layer)?
+            };
         }
 
         let ef = ef_search.max(k).max(1);
-        self.search_layer_from_query_into(scorer, nearest, ef, 0, scratch)?;
+        if use_cached_norms {
+            self.search_layer_from_query_with_cached_norms_into(scorer, nearest, ef, 0, scratch)?;
+        } else {
+            self.search_layer_from_query_into(scorer, nearest, ef, 0, scratch)?;
+        }
         let mut hits = Vec::new();
         for candidate in &scratch.result {
             let node = &self.nodes[candidate.id as usize];
@@ -272,6 +330,11 @@ impl HnswVectorIndex {
             .nodes
             .capacity()
             .saturating_mul(size_of::<HnswNode>())
+            .saturating_add(
+                self.entry_squared_norms
+                    .capacity()
+                    .saturating_mul(size_of::<f64>()),
+            )
             .saturating_add(self.level_zero_links.estimated_heap_bytes())
             .saturating_add(layer_vec_capacity.saturating_mul(size_of::<Vec<u32>>()))
             .saturating_add(upper_link_capacity.saturating_mul(size_of::<u32>()))
@@ -295,6 +358,21 @@ impl HnswVectorIndex {
         }
     }
 
+    fn record_entry_squared_norm(&mut self, entry_id: usize, squared_norm: Option<f64>) {
+        let Some(squared_norm) = squared_norm else {
+            self.entry_squared_norms.clear();
+            return;
+        };
+        if self.entry_squared_norms.len() == entry_id {
+            self.entry_squared_norms.push(squared_norm);
+        } else if let Some(cached) = self.entry_squared_norms.get_mut(entry_id) {
+            *cached = squared_norm;
+        } else {
+            self.entry_squared_norms.resize(entry_id, 0.0);
+            self.entry_squared_norms.push(squared_norm);
+        }
+    }
+
     fn greedy_layer_from_query(
         &self,
         scorer: VectorMetricQuery<'_>,
@@ -304,6 +382,18 @@ impl HnswVectorIndex {
     ) -> CoreResult<(u32, f64)> {
         self.greedy_layer(entry, entry_distance, layer, |candidate| {
             self.distance_query_to_entry(scorer, candidate)
+        })
+    }
+
+    fn greedy_layer_from_query_with_cached_norms(
+        &self,
+        scorer: VectorMetricQuery<'_>,
+        entry: u32,
+        entry_distance: f64,
+        layer: usize,
+    ) -> CoreResult<(u32, f64)> {
+        self.greedy_layer(entry, entry_distance, layer, |candidate| {
+            self.distance_query_to_entry_with_cached_norms(scorer, candidate)
         })
     }
 
@@ -343,6 +433,19 @@ impl HnswVectorIndex {
     ) -> CoreResult<()> {
         self.search_layer_into(entry, ef, layer, scratch, |candidate| {
             self.distance_query_to_entry(scorer, candidate)
+        })
+    }
+
+    fn search_layer_from_query_with_cached_norms_into(
+        &self,
+        scorer: VectorMetricQuery<'_>,
+        entry: u32,
+        ef: usize,
+        layer: usize,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<()> {
+        self.search_layer_into(entry, ef, layer, scratch, |candidate| {
+            self.distance_query_to_entry_with_cached_norms(scorer, candidate)
         })
     }
 
@@ -551,9 +654,20 @@ impl HnswVectorIndex {
     }
 
     fn distance_to_entry(&self, lhs: u32, rhs: u32) -> CoreResult<f64> {
-        let lhs = &self.nodes[lhs as usize].vector;
-        let rhs = &self.nodes[rhs as usize].vector;
-        self.metric.distance(lhs, rhs)
+        let lhs_node = &self.nodes[lhs as usize];
+        let rhs_node = &self.nodes[rhs as usize];
+        if self.metric == VectorMetric::Cosine {
+            let scorer = self.metric.bind_query_with_squared_norm(
+                &lhs_node.vector,
+                self.cached_entry_squared_norm(lhs as usize, &lhs_node.vector),
+            )?;
+            scorer.distance_with_candidate_squared_norm(
+                &rhs_node.vector,
+                self.cached_entry_squared_norm(rhs as usize, &rhs_node.vector),
+            )
+        } else {
+            self.metric.distance(&lhs_node.vector, &rhs_node.vector)
+        }
     }
 
     fn distance_query_to_entry(
@@ -561,7 +675,28 @@ impl HnswVectorIndex {
         scorer: VectorMetricQuery<'_>,
         entry: u32,
     ) -> CoreResult<f64> {
-        scorer.distance(&self.nodes[entry as usize].vector)
+        let node = &self.nodes[entry as usize];
+        scorer.distance(&node.vector)
+    }
+
+    fn distance_query_to_entry_with_cached_norms(
+        &self,
+        scorer: VectorMetricQuery<'_>,
+        entry: u32,
+    ) -> CoreResult<f64> {
+        let node = &self.nodes[entry as usize];
+        scorer.distance_with_candidate_squared_norm(
+            &node.vector,
+            self.cached_entry_squared_norm(entry as usize, &node.vector),
+        )
+    }
+
+    fn cached_entry_squared_norm(&self, entry_id: usize, vector: &VectorValue) -> f64 {
+        self.entry_squared_norms
+            .get(entry_id)
+            .copied()
+            .filter(|norm| *norm != 0.0)
+            .unwrap_or_else(|| vector_squared_norm(vector))
     }
 }
 
@@ -571,93 +706,6 @@ struct HnswNode {
     vector: VectorValue,
     deleted: bool,
     upper_links: HnswUpperLinkLayers,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Candidate {
-    id: u32,
-    distance: f64,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct MinCandidate {
-    id: u32,
-    distance: f64,
-}
-
-impl MinCandidate {
-    const fn new(id: u32, distance: f64) -> Self {
-        Self { id, distance }
-    }
-}
-
-impl Eq for MinCandidate {}
-
-impl PartialEq for MinCandidate {
-    fn eq(&self, rhs: &Self) -> bool {
-        self.id == rhs.id && self.distance.to_bits() == rhs.distance.to_bits()
-    }
-}
-
-impl Ord for MinCandidate {
-    fn cmp(&self, rhs: &Self) -> Ordering {
-        rhs.distance
-            .total_cmp(&self.distance)
-            .then_with(|| rhs.id.cmp(&self.id))
-    }
-}
-
-impl PartialOrd for MinCandidate {
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(self.cmp(rhs))
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-struct MaxCandidate {
-    id: u32,
-    distance: f64,
-}
-
-impl MaxCandidate {
-    const fn new(id: u32, distance: f64) -> Self {
-        Self { id, distance }
-    }
-}
-
-impl Eq for MaxCandidate {}
-
-impl PartialEq for MaxCandidate {
-    fn eq(&self, rhs: &Self) -> bool {
-        self.id == rhs.id && self.distance.to_bits() == rhs.distance.to_bits()
-    }
-}
-
-impl Ord for MaxCandidate {
-    fn cmp(&self, rhs: &Self) -> Ordering {
-        self.distance
-            .total_cmp(&rhs.distance)
-            .then_with(|| self.id.cmp(&rhs.id))
-    }
-}
-
-impl PartialOrd for MaxCandidate {
-    fn partial_cmp(&self, rhs: &Self) -> Option<Ordering> {
-        Some(self.cmp(rhs))
-    }
-}
-
-fn compare_candidate(lhs: &Candidate, rhs: &Candidate) -> Ordering {
-    lhs.distance
-        .total_cmp(&rhs.distance)
-        .then_with(|| lhs.id.cmp(&rhs.id))
-}
-
-fn closer(candidate_distance: f64, candidate: u32, current_distance: f64, current: u32) -> bool {
-    candidate_distance
-        .total_cmp(&current_distance)
-        .then_with(|| candidate.cmp(&current))
-        .is_lt()
 }
 
 fn level_for(row: u32, ordinal: u32) -> usize {
