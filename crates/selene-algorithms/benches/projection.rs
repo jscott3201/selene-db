@@ -11,6 +11,7 @@
 //! - `algo/projection_neighbor_iter` — sweep every node's out-neighbor slice on
 //!   a pre-built projection, summing a field so the slice walk is not elided.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

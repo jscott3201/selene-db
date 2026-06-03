@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 //! Criterion bench for concurrent lock-free snapshot reads.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

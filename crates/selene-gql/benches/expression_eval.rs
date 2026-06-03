@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 //! Criterion benches for scalar expression execution throughput.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

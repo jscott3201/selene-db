@@ -10,6 +10,7 @@
 //! re-bloat tripwire. Boxing the large time variants (CORE-06) should shrink the
 //! size and speed these rows — lower the ceiling when it lands.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

@@ -18,6 +18,7 @@
 //! teardown is kept out of the measured region via `BatchSize::LargeInput`
 //! (Criterion runs setup + drop untimed).
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

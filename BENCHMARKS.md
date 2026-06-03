@@ -35,6 +35,7 @@ run-benches.sh --bench wal --filter body_size   # one criterion group within a b
 run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
 run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
+run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
 ```
 
@@ -95,8 +96,9 @@ quiet machine — background load pollutes the medians.
 | rustc | 1.95.0 (59807616e 2026-04-14) | `rustc --version` |
 | Commit | `3a864ac` | `git rev-parse --short HEAD` |
 
-All bench binaries use `mimalloc` as the global allocator; the library crates
-are allocator-agnostic.
+All committed benchmark rows use `mimalloc` as the global allocator; the library
+crates are allocator-agnostic. For allocator A/B work, run the same scoped bench
+twice with `--allocator mimalloc` (the default) and `--allocator system`.
 
 ## §1 selene-core
 

@@ -15,6 +15,7 @@
 //! Any CORE-06 `Value` reshape or D22 id/row remap changes these numbers; the
 //! synthetic-bytes persist bench cannot see it.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

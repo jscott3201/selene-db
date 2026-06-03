@@ -9,6 +9,7 @@
 //! otherwise be invisible. Runs on an IN-MEMORY graph (no WAL) so the per-row
 //! schema rebuild dominates the sample, not durability.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

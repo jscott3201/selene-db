@@ -10,6 +10,7 @@
 //! `SyncPolicy` is inert — which is exactly why the CPU arms must not be
 //! WAL-backed (one fsync per commit would swamp the CPU sample).
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
