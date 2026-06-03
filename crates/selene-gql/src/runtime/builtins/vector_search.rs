@@ -8,7 +8,7 @@
 use std::num::TryFromIntError;
 
 use selene_core::{CoreError, IStr, Value, VectorMetric, VectorValue};
-use selene_graph::GraphError;
+use selene_graph::{GraphError, VectorSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use crate::procedure_registry::ProcedureError;
@@ -72,8 +72,15 @@ pub(super) fn execute(
 
     let hits = ctx
         .snapshot()
-        .exact_vector_search_nodes(&label, &property, query, metric, k)
-        .map_err(graph_error)?;
+        .exact_vector_search_nodes_checked(
+            &label,
+            &property,
+            query,
+            metric,
+            k,
+            ctx.cancellation_checker(),
+        )
+        .map_err(vector_search_error)?;
     Ok(ProcedureResult {
         rows: hits
             .into_iter()
@@ -144,6 +151,14 @@ fn graph_error(error: GraphError) -> ProcedureError {
         other => ProcedureError::Internal {
             detail: format!("unexpected graph error during vector search: {other}"),
         },
+    }
+}
+
+fn vector_search_error(error: VectorSearchError) -> ProcedureError {
+    match error {
+        VectorSearchError::Graph(error) => graph_error(error),
+        VectorSearchError::Cancelled => ProcedureError::Cancelled,
+        VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
     }
 }
 

@@ -1,11 +1,18 @@
 //! Exact native vector search over graph node properties.
 
-use selene_core::{IStr, NodeId, Value, VectorMetric, VectorTopK, VectorValue};
+use std::time::Duration;
+
+use selene_core::{
+    CancellationCause, CancellationChecker, IStr, NodeId, Value, VectorMetric, VectorTopK,
+    VectorValue,
+};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
+
+const VECTOR_SEARCH_CANCEL_STRIDE: usize = 1024;
 
 /// Exact vector-search result for a graph node.
 #[derive(Clone, Debug, PartialEq)]
@@ -14,6 +21,41 @@ pub struct VectorNodeSearchHit {
     pub node_id: NodeId,
     /// Lower-is-better score under the requested [`VectorMetric`].
     pub distance: f64,
+}
+
+/// Error returned by cancellation-aware vector search.
+#[derive(Debug, thiserror::Error)]
+pub enum VectorSearchError {
+    /// Graph storage or metric error.
+    #[error(transparent)]
+    Graph(#[from] GraphError),
+    /// Caller-requested cancellation was observed.
+    #[error("vector search cancelled")]
+    Cancelled,
+    /// Statement deadline elapsed while vector search was scanning.
+    #[error("vector search deadline exceeded after {elapsed:?}")]
+    Timeout {
+        /// Duration since the deadline elapsed.
+        elapsed: Duration,
+    },
+}
+
+impl VectorSearchError {
+    fn into_graph_error(self) -> GraphError {
+        match self {
+            Self::Graph(error) => error,
+            Self::Cancelled | Self::Timeout { .. } => GraphError::Cancelled,
+        }
+    }
+}
+
+impl From<CancellationCause> for VectorSearchError {
+    fn from(cause: CancellationCause) -> Self {
+        match cause {
+            CancellationCause::Cancelled => Self::Cancelled,
+            CancellationCause::Timeout { elapsed } => Self::Timeout { elapsed },
+        }
+    }
 }
 
 impl SeleneGraph {
@@ -33,12 +75,46 @@ impl SeleneGraph {
         metric: VectorMetric,
         k: usize,
     ) -> GraphResult<Vec<VectorNodeSearchHit>> {
+        self.exact_vector_search_nodes_checked(
+            label,
+            property,
+            query,
+            metric,
+            k,
+            CancellationChecker::disabled(),
+        )
+        .map_err(VectorSearchError::into_graph_error)
+    }
+
+    /// Exhaustively rank vector-valued node properties with cancellation checks.
+    ///
+    /// This preserves the exact ordering and filtering contract of
+    /// [`Self::exact_vector_search_nodes`] while checking `checker` before the
+    /// scan and every 1024 candidate rows thereafter. It is the preferred path
+    /// for GQL procedure execution because a large exact scan should remain
+    /// cooperatively cancellable until ANN indexes take over this surface.
+    pub fn exact_vector_search_nodes_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        checker.check()?;
         let Some(rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
 
         let mut top_k = VectorTopK::new(k);
+        let mut rows_since_check = 0usize;
         for raw_row in rows.iter() {
+            rows_since_check += 1;
+            if rows_since_check >= VECTOR_SEARCH_CANCEL_STRIDE {
+                checker.check()?;
+                rows_since_check = 0;
+            }
             if !self.node_store.is_alive(raw_row) {
                 continue;
             }
@@ -64,7 +140,7 @@ impl SeleneGraph {
             let Some(Value::Vector(vector)) = properties.get(property) else {
                 continue;
             };
-            let distance = metric.distance(query, vector)?;
+            let distance = metric.distance(query, vector).map_err(GraphError::from)?;
             top_k.push_distance(node_id, distance);
         }
 
@@ -96,13 +172,32 @@ impl SharedGraph {
         self.read()
             .exact_vector_search_nodes(label, property, query, metric, k)
     }
+
+    /// Exhaustively rank vector-valued node properties with cancellation checks.
+    ///
+    /// This loads one immutable snapshot and delegates to
+    /// [`SeleneGraph::exact_vector_search_nodes_checked`].
+    pub fn exact_vector_search_nodes_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        metric: VectorMetric,
+        k: usize,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        self.read()
+            .exact_vector_search_nodes_checked(label, property, query, metric, k, checker)
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use selene_core::{
-        CoreError, GraphId, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorValue,
-        intern,
+        CancellationChecker, CancellationToken, CoreError, GraphId, LabelDiff, LabelSet,
+        PropertyDiff, PropertyMap, Value, VectorValue, intern,
     };
 
     use super::*;
@@ -217,6 +312,71 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn exact_vector_search_checked_observes_cancelled_token_before_scan() {
+        let shared = SharedGraph::new(GraphId::new(93));
+        let doc = intern("vector.cancel.doc").unwrap();
+        let embedding = intern("embedding").unwrap();
+        {
+            let mut txn = shared.begin_write();
+            txn.mutator()
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[1.0]))),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        }
+
+        let token = CancellationToken::new();
+        token.cancel();
+        let checker = CancellationChecker::new(Some(&token), None);
+        let err = shared
+            .exact_vector_search_nodes_checked(
+                &doc,
+                &embedding,
+                &vector(&[0.0]),
+                VectorMetric::SquaredEuclidean,
+                10,
+                checker,
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, VectorSearchError::Cancelled));
+    }
+
+    #[test]
+    fn exact_vector_search_checked_observes_elapsed_deadline_before_scan() {
+        let shared = SharedGraph::new(GraphId::new(94));
+        let doc = intern("vector.timeout.doc").unwrap();
+        let embedding = intern("embedding").unwrap();
+        {
+            let mut txn = shared.begin_write();
+            txn.mutator()
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[1.0]))),
+                )
+                .unwrap();
+            txn.commit().unwrap();
+        }
+
+        let checker =
+            CancellationChecker::new(None, Some(Instant::now() - Duration::from_millis(1)));
+        let err = shared
+            .exact_vector_search_nodes_checked(
+                &doc,
+                &embedding,
+                &vector(&[0.0]),
+                VectorMetric::SquaredEuclidean,
+                10,
+                checker,
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, VectorSearchError::Timeout { .. }));
     }
 
     #[test]
