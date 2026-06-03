@@ -122,6 +122,9 @@ medians below predate CORE-06 (measured at the 128 B `Value` layout); now that
 `graph_node_fetch` returns a column ref (no `Value` clone) and is unaffected.
 `graph_exact_vector_scan/*` is the native graph-level exact-vector oracle:
 label-filtered row scan plus scalar metric kernel, returning stable node ids.
+Vector benchmark IDs include a memory/cardinality suffix:
+`m{index KiB}-{reachable KiB}_n{indexed rows}_e{HNSW entries}_l{live}_d{deleted}_g{links}`;
+unindexed rows use `noidx`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
