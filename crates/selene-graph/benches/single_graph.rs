@@ -7,9 +7,18 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 mod common;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, intern};
-use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind};
+use selene_core::{
+    CancellationChecker, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
+    VectorValue, intern,
+};
+use selene_graph::{
+    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind, VectorNodeSearchHit,
+};
 use selene_testing::BenchProfile;
+
+const HNSW_RECALL_K: usize = 10;
+const HNSW_RECALL_QUERIES: usize = 16;
+const HNSW_RECALL_EF_SEARCH: &[usize] = &[10, 32, 64];
 
 fn bench_node_fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_node_fetch");
@@ -166,6 +175,36 @@ fn bench_exact_vector_scan(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_hnsw_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_hnsw_recall_validation");
+    for scale in vector_scan_scales() {
+        let fixture = HnswRecallFixture::build(scale, 128, HNSW_RECALL_QUERIES, HNSW_RECALL_K);
+        group.throughput(Throughput::Elements(
+            (fixture.scale() * fixture.query_count()) as u64,
+        ));
+        for &ef_search in HNSW_RECALL_EF_SEARCH {
+            let recall = fixture.mean_recall(ef_search);
+            group.bench_with_input(
+                BenchmarkId::new(
+                    format!(
+                        "squared_euclidean_dim128_k{HNSW_RECALL_K}_ef{ef_search}_recall_bp{}",
+                        recall_basis_points(recall)
+                    ),
+                    fixture.scale(),
+                ),
+                &fixture,
+                |b, fixture| {
+                    b.iter(|| {
+                        let overlap = fixture.total_overlap(ef_search);
+                        std::hint::black_box(overlap);
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 fn vector_scan_scales() -> Vec<usize> {
     std::env::var("SELENE_VECTOR_BENCH_SCALES")
         .ok()
@@ -180,6 +219,119 @@ fn vector_scan_scales() -> Vec<usize> {
             (!scales.is_empty()).then_some(scales)
         })
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
+}
+
+#[derive(Clone, Debug)]
+struct HnswRecallFixture {
+    scale: usize,
+    graph: SeleneGraph,
+    label: IStr,
+    embedding_key: IStr,
+    queries: Vec<VectorValue>,
+    exact: Vec<Vec<NodeId>>,
+    k: usize,
+}
+
+impl HnswRecallFixture {
+    fn build(scale: usize, dimension: usize, query_count: usize, k: usize) -> Self {
+        let scale = scale.max(1);
+        let label = intern("HnswRecallDoc").expect("bench label is valid");
+        let embedding_key = intern("embedding").expect("bench key is valid");
+        let shared = SharedGraph::new(GraphId::new(10_000 + scale as u64));
+        {
+            let mut txn = shared.begin_write();
+            let mut mutator = txn.mutator();
+            for idx in 0..scale {
+                let vector = Value::Vector(recall_corpus_value(idx, dimension));
+                let props = PropertyMap::from_pairs([(embedding_key.clone(), vector)])
+                    .expect("bench vector properties are valid");
+                mutator
+                    .create_node(LabelSet::single(label.clone()), props)
+                    .expect("bench vector node insert succeeds");
+            }
+            let dimension = u32::try_from(dimension).expect("bench dimension fits u32");
+            mutator
+                .create_vector_index(
+                    label.clone(),
+                    embedding_key.clone(),
+                    VectorIndexKind::HnswSquaredEuclidean,
+                    dimension,
+                )
+                .expect("bench HNSW vector index build succeeds");
+            txn.commit()
+                .expect("bench HNSW recall fixture commit succeeds");
+        }
+        let graph = shared.read().as_ref().clone();
+        let queries: Vec<_> = (0..query_count)
+            .map(|idx| recall_query_value(idx, scale, dimension))
+            .collect();
+        let exact = queries
+            .iter()
+            .map(|query| {
+                graph
+                    .exact_vector_search_nodes(
+                        &label,
+                        &embedding_key,
+                        query,
+                        VectorMetric::SquaredEuclidean,
+                        k,
+                    )
+                    .expect("bench exact vector search succeeds")
+                    .into_iter()
+                    .map(|hit| hit.node_id)
+                    .collect()
+            })
+            .collect();
+        Self {
+            scale,
+            graph,
+            label,
+            embedding_key,
+            queries,
+            exact,
+            k,
+        }
+    }
+
+    const fn scale(&self) -> usize {
+        self.scale
+    }
+
+    const fn query_count(&self) -> usize {
+        self.queries.len()
+    }
+
+    fn mean_recall(&self, ef_search: usize) -> f64 {
+        let expected = self.exact.iter().map(Vec::len).sum::<usize>();
+        if expected == 0 {
+            return 1.0;
+        }
+        self.total_overlap(ef_search) as f64 / expected as f64
+    }
+
+    fn total_overlap(&self, ef_search: usize) -> usize {
+        self.queries
+            .iter()
+            .zip(&self.exact)
+            .map(|(query, exact)| {
+                let approximate = self
+                    .graph
+                    .approximate_vector_search_nodes_checked(
+                        &self.label,
+                        &self.embedding_key,
+                        query,
+                        ApproximateVectorSearchOptions::new(
+                            VectorMetric::SquaredEuclidean,
+                            self.k,
+                            ef_search,
+                        ),
+                        CancellationChecker::disabled(),
+                    )
+                    .expect("bench approximate vector search succeeds");
+                overlap_count(exact, &approximate)
+            })
+            .sum()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -247,19 +399,68 @@ impl VectorFixture {
 }
 
 fn vector_value(seed: usize, dimension: usize) -> VectorValue {
-    let components: Vec<f32> = (0..dimension)
+    VectorValue::new(vector_components(seed, dimension)).expect("bench vector is valid")
+}
+
+fn recall_query_value(query_idx: usize, scale: usize, dimension: usize) -> VectorValue {
+    let seed = query_idx
+        .saturating_mul(scale.max(1))
+        .checked_div(HNSW_RECALL_QUERIES)
+        .unwrap_or(0)
+        .min(scale.saturating_sub(1));
+    let mut components = recall_vector_components(seed, dimension);
+    if let Some(first) = components.first_mut() {
+        *first += 0.37;
+    }
+    VectorValue::new(components).expect("bench recall query is valid")
+}
+
+fn recall_corpus_value(seed: usize, dimension: usize) -> VectorValue {
+    VectorValue::new(recall_vector_components(seed, dimension))
+        .expect("bench recall corpus vector is valid")
+}
+
+fn recall_vector_components(seed: usize, dimension: usize) -> Vec<f32> {
+    (0..dimension)
+        .map(|dim| {
+            if dim == 0 {
+                seed as f32
+            } else {
+                let raw = seed
+                    .wrapping_mul(dim.wrapping_mul(37).wrapping_add(11))
+                    .wrapping_add(dim.wrapping_mul(31))
+                    % 997;
+                raw as f32 / 10_000.0
+            }
+        })
+        .collect()
+}
+
+fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
+    (0..dimension)
         .map(|dim| {
             let raw = (seed.wrapping_mul(31) + dim.wrapping_mul(17)) % 1_000;
             raw as f32 / 1_000.0
         })
-        .collect();
-    VectorValue::new(components).expect("bench vector is valid")
+        .collect()
+}
+
+fn overlap_count(exact: &[NodeId], approximate: &[VectorNodeSearchHit]) -> usize {
+    exact
+        .iter()
+        .filter(|node_id| approximate.iter().any(|hit| hit.node_id == **node_id))
+        .count()
+}
+
+fn recall_basis_points(recall: f64) -> u64 {
+    (recall * 10_000.0).round() as u64
 }
 
 criterion_group! {
     name = graph_reads;
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
-        bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan
+        bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
+        bench_hnsw_recall
 }
 criterion_main!(graph_reads);

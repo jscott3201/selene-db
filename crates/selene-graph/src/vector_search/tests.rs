@@ -489,6 +489,70 @@ fn approximate_vector_search_tracks_update_and_delete_visibility() {
 }
 
 #[test]
+fn approximate_vector_search_meets_recall_floor_against_exact_oracle() {
+    const K: usize = 8;
+    const QUERY_VALUES: &[f32] = &[3.25, 31.4, 72.8, 127.1, 180.6, 244.2];
+
+    let shared = SharedGraph::new(GraphId::new(9701));
+    let doc = intern("vector.ann.recall.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        for idx in 0..256 {
+            let jitter = ((idx * 17) % 23) as f32 / 1_000.0;
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[idx as f32, jitter]))),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(
+            doc.clone(),
+            embedding.clone(),
+            VectorIndexKind::HnswSquaredEuclidean,
+            2,
+        )
+        .unwrap();
+
+    let mut overlap = 0usize;
+    let mut expected = 0usize;
+    for &value in QUERY_VALUES {
+        let query = vector(&[value, 0.0]);
+        let exact = shared
+            .exact_vector_search_nodes(&doc, &embedding, &query, VectorMetric::SquaredEuclidean, K)
+            .unwrap();
+        let approximate = shared
+            .approximate_vector_search_nodes_checked(
+                &doc,
+                &embedding,
+                &query,
+                ApproximateVectorSearchOptions::new(VectorMetric::SquaredEuclidean, K, 64),
+                CancellationChecker::disabled(),
+            )
+            .unwrap();
+        expected += exact.len();
+        overlap += exact
+            .iter()
+            .filter(|exact| {
+                approximate
+                    .iter()
+                    .any(|approximate| approximate.node_id == exact.node_id)
+            })
+            .count();
+    }
+
+    assert!(
+        overlap * 100 >= expected * 95,
+        "HNSW recall {overlap}/{expected} fell below 95%"
+    );
+}
+
+#[test]
 fn approximate_vector_search_rejects_missing_or_wrong_metric_index() {
     let shared = SharedGraph::new(GraphId::new(98));
     let doc = intern("vector.ann.missing.doc").unwrap();
