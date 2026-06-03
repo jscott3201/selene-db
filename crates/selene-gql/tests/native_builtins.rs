@@ -110,7 +110,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 #[test]
-fn show_procedures_lists_all_twenty_eight_procedures() {
+fn show_procedures_lists_all_twenty_nine_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -120,8 +120,8 @@ fn show_procedures_lists_all_twenty_eight_procedures() {
 
     assert_eq!(
         table.row_count(),
-        28,
-        "19 algo procedures + 9 platform built-ins"
+        29,
+        "19 algo procedures + 10 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -131,6 +131,7 @@ fn show_procedures_lists_all_twenty_eight_procedures() {
         "selene.drop_index",
         "selene.vector_search_nodes",
         "selene.vector_search_nodes_ann",
+        "selene.vector_index_stats",
         "selene.create_vector_index",
         "selene.drop_vector_index",
         "algo.pagerank",
@@ -347,6 +348,63 @@ fn create_vector_index_can_register_hnsw_metric_kind() {
 
     let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
     assert_eq!(string_column(&table, "kind"), vec!["vector_hnsw_cosine(3)"]);
+}
+
+#[test]
+fn vector_index_stats_reports_hnsw_memory_and_cardinality() {
+    let graph = graph(330_016);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for components in [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]] {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&components))),
+                )
+                .expect("vector node inserts");
+        }
+        txn.commit().expect("seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'hnsw')",
+            &registry,
+        )
+        .expect("hnsw vector index creation executes");
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_index_stats() YIELD name, label, property, kind, dimension, indexed_rows, hnsw_entries, hnsw_live_entries, hnsw_deleted_entries, hnsw_link_count, estimated_index_bytes, estimated_reachable_bytes",
+        &registry,
+    );
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(string_column(&table, "label"), vec!["VectorDoc"]);
+    assert_eq!(string_column(&table, "property"), vec!["embedding"]);
+    assert_eq!(
+        string_column(&table, "kind"),
+        vec!["vector_hnsw_squared_euclidean(3)"]
+    );
+    assert_eq!(uint_column(&table, "dimension"), vec![3]);
+    assert_eq!(uint_column(&table, "indexed_rows"), vec![2]);
+    assert_eq!(uint_column(&table, "hnsw_entries"), vec![2]);
+    assert_eq!(uint_column(&table, "hnsw_live_entries"), vec![2]);
+    assert_eq!(uint_column(&table, "hnsw_deleted_entries"), vec![0]);
+    assert!(uint_column(&table, "hnsw_link_count")[0] > 0);
+    assert!(uint_column(&table, "estimated_index_bytes")[0] > 0);
+    assert!(
+        uint_column(&table, "estimated_reachable_bytes")[0]
+            > uint_column(&table, "estimated_index_bytes")[0]
+    );
+    assert_eq!(
+        string_column(&table, "name"),
+        vec!["vidx:9:VectorDoc:9:embedding"]
+    );
 }
 
 #[test]
