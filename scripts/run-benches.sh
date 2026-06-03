@@ -20,6 +20,7 @@
 #   run-benches.sh --bench wal --sample-size 50 --measurement-time 5 # A/B fidelity
 #   run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 #   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
+#   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
 #   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
@@ -288,9 +289,20 @@ resolve_args() {
 }
 
 bench_env_prefix() {
+  local bench="${1:-}" filt="${2:-}"
   local prefix="SELENE_BENCH_PROFILE=$PROFILE SELENE_BENCH_ALLOCATOR=$ALLOCATOR"
   if [ -n "$VECTOR_SCALES" ]; then
     prefix+=" SELENE_VECTOR_BENCH_SCALES=$VECTOR_SCALES SELENE_VECTOR_REBUILD_BENCH_SCALES=$VECTOR_SCALES"
+  fi
+  local variant_filter
+  variant_filter="$(vector_rebuild_variant_filter "$bench" "$filt")"
+  if [ -n "$variant_filter" ]; then
+    prefix+=" SELENE_VECTOR_REBUILD_VARIANT_FILTER=$variant_filter"
+  fi
+  local group_filter
+  group_filter="$(vector_rebuild_group_filter "$bench" "$filt")"
+  if [ -n "$group_filter" ]; then
+    prefix+=" SELENE_VECTOR_REBUILD_GROUP_FILTER=$group_filter"
   fi
   if [ "$ALLOCATOR" = "system" ]; then
     prefix+=" RUSTFLAGS='${RUSTFLAGS:+$RUSTFLAGS }--cfg selene_bench_system_alloc'"
@@ -298,12 +310,52 @@ bench_env_prefix() {
   printf '%s' "$prefix"
 }
 
+vector_rebuild_variant_filter() {
+  local bench="$1" filt="$2"
+  if [ "$bench" != "vector_index_rebuild" ] || [ -z "$filt" ]; then
+    return 0
+  fi
+  case "$filt" in
+    *ivf*) echo "ivf" ;;
+    *hnsw*) echo "hnsw" ;;
+  esac
+}
+
+vector_rebuild_group_filter() {
+  local bench="$1" filt="$2"
+  if [ "$bench" != "vector_index_rebuild" ] || [ -z "$filt" ]; then
+    return 0
+  fi
+  case "$filt" in
+    graph_vector_index_rebuild*) echo "rebuild" ;;
+    graph_vector_index_stale_query*) echo "stale_query" ;;
+    graph_vector_index_dimension_projection*) echo "dimension_projection" ;;
+  esac
+}
+
+run_cargo_for_bench() {
+  local bench="$1" filt="$2"
+  local variant_filter
+  variant_filter="$(vector_rebuild_variant_filter "$bench" "$filt")"
+  local group_filter
+  group_filter="$(vector_rebuild_group_filter "$bench" "$filt")"
+  if [ -n "$variant_filter" ] && [ -n "$group_filter" ]; then
+    SELENE_VECTOR_REBUILD_VARIANT_FILTER="$variant_filter" SELENE_VECTOR_REBUILD_GROUP_FILTER="$group_filter" cargo "${RESOLVED[@]}"
+  elif [ -n "$variant_filter" ]; then
+    SELENE_VECTOR_REBUILD_VARIANT_FILTER="$variant_filter" cargo "${RESOLVED[@]}"
+  elif [ -n "$group_filter" ]; then
+    SELENE_VECTOR_REBUILD_GROUP_FILTER="$group_filter" cargo "${RESOLVED[@]}"
+  else
+    cargo "${RESOLVED[@]}"
+  fi
+}
+
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "==> DRY RUN (profile=$PROFILE) — resolved invocations, nothing executed:"
   while IFS='|' read -r crate bench harness filt; do
     [ -n "$crate" ] || continue
     resolve_args "$crate" "$bench" "$harness" "$filt" 0
-    echo "  $(bench_env_prefix) cargo ${RESOLVED[*]}"
+    echo "  $(bench_env_prefix "$bench" "$filt") cargo ${RESOLVED[*]}"
   done <<< "$SELECTED"
   exit 0
 fi
@@ -331,7 +383,7 @@ while IFS='|' read -r crate bench harness filt; do
   [ -n "$crate" ] || continue
   resolve_args "$crate" "$bench" "$harness" "$filt" 1
   echo "  cargo ${RESOLVED[*]}"
-  cargo "${RESOLVED[@]}"
+  run_cargo_for_bench "$bench" "$filt"
 done <<< "$SELECTED"
 
 # Run pass — STRICTLY SEQUENTIAL (no `&`, no --workspace, no xargs -P).
@@ -339,5 +391,5 @@ while IFS='|' read -r crate bench harness filt; do
   [ -n "$crate" ] || continue
   resolve_args "$crate" "$bench" "$harness" "$filt" 0
   echo "==> [criterion] $crate :: $bench (profile=$PROFILE, allocator=$ALLOCATOR)${filt:+ filter=$filt}"
-  cargo "${RESOLVED[@]}"
+  run_cargo_for_bench "$bench" "$filt"
 done <<< "$SELECTED"

@@ -35,6 +35,7 @@ run-benches.sh --bench wal --filter body_size   # one criterion group within a b
 run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
 run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
+run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
 run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
 ```
@@ -54,6 +55,13 @@ Vector benches also accept an independent runner override with
 `--vector-scales`. The flag exports both `SELENE_VECTOR_BENCH_SCALES` and
 `SELENE_VECTOR_REBUILD_BENCH_SCALES`, so it covers exact/ANN query sweeps and
 index rebuild sweeps without changing non-vector benches.
+
+For `vector_index_rebuild`, Criterion's positional `--filter` is mirrored into
+`SELENE_VECTOR_REBUILD_GROUP_FILTER` and
+`SELENE_VECTOR_REBUILD_VARIANT_FILTER=ivf|hnsw` when the filter names a rebuild
+group or ANN family. Those prefilters skip irrelevant fixture construction, so
+focused large-scale IVF or HNSW runs do not pay preview costs for unrelated
+groups or the other family.
 
 | Vector scale selector | Scales | Use |
 |---|---|---|
