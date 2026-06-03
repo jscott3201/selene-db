@@ -95,7 +95,10 @@ The same bin also covers the wide-map construction path so `from_pairs` stays
 linearithmic rather than repeated-insert quadratic for schema- or record-shaped
 maps with many properties. The `core_vector_value/*` rows are the first native
 vector baselines: validation/construction, `Arc<[f32]>` clone cost, and postcard
-round-trip cost at common embedding dimensions.
+round-trip cost at common embedding dimensions. The `core_vector_distance/*`
+and `core_vector_exact_top_k/*` rows are exact-search oracle baselines for the
+future ANN layer; current kernels are safe scalar `f64` accumulators, so these
+rows are the SIMD/Rayon improvement tripwire.
 
 | Bench | Median | Notes |
 |---|---:|---|
@@ -105,6 +108,10 @@ round-trip cost at common embedding dimensions.
 | `core_vector_value/construct_validate/128/768/1536` | 55.4 ns / 276 ns / 528 ns (quick) | Validate finite, non-empty `f32` vectors while constructing `VectorValue`; roughly linear in dimension. |
 | `core_vector_value/clone_arc/128/768/1536` | 3.12 ns / 3.12 ns / 3.13 ns (quick) | Clone `VectorValue` shared component storage; intentionally dimension-independent. |
 | `core_vector_value/postcard_roundtrip/128/768/1536` | 240 ns / 1.04 µs / 2.07 µs (quick) | Serialize and deserialize `Value::Vector`, including deserialize-time invariant checks. |
+| `core_vector_distance/squared_euclidean/128/768/1536` | 39.2 ns / 333 ns / 713 ns (quick) | Exact lower-is-better L2-squared metric, scalar `f64` accumulation. |
+| `core_vector_distance/cosine/128/768/1536` | 88.4 ns / 918 ns / 2.02 µs (quick) | Exact cosine distance with zero-norm checks and clamped similarity. |
+| `core_vector_distance/negative_inner_product/128/768/1536` | 33.8 ns / 326 ns / 706 ns (quick) | Max-inner-product adapter (`-dot`) with lower-is-better ordering. |
+| `core_vector_exact_top_k/squared_euclidean_2048x128_k10` | 84.7 µs (quick) | Exhaustive exact-search oracle over 2,048 candidates using a bounded max-heap (`O(n log k)`). |
 
 ## §2 selene-graph — read hot paths
 

@@ -16,10 +16,12 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{PropertyMap, Value, VectorValue, intern};
+use selene_core::{PropertyMap, Value, VectorMetric, VectorValue, exact_vector_top_k, intern};
 
 const N: usize = 1_024;
 const VECTOR_DIMS: &[usize] = &[128, 768, 1536];
+const EXACT_TOP_K_CANDIDATES: usize = 2_048;
+const EXACT_TOP_K: usize = 10;
 
 // Profile-aware criterion config WITHOUT a selene-testing dep (that crate
 // depends on selene-core, so importing BenchProfile here would cycle).
@@ -122,8 +124,12 @@ fn bench_value_clone(c: &mut Criterion) {
 }
 
 fn vector_components(dim: usize) -> Vec<f32> {
+    vector_components_seeded(dim, 0)
+}
+
+fn vector_components_seeded(dim: usize, seed: usize) -> Vec<f32> {
     (0..dim)
-        .map(|idx| ((idx % 257) as f32 - 128.0) / 128.0)
+        .map(|idx| (((idx * 31 + seed * 17) % 1_021) as f32 - 510.0) / 256.0)
         .collect()
 }
 
@@ -169,9 +175,59 @@ fn bench_vector_value(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_vector_distance(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_vector_distance");
+    for &(name, metric) in &[
+        ("squared_euclidean", VectorMetric::SquaredEuclidean),
+        ("cosine", VectorMetric::Cosine),
+        ("negative_inner_product", VectorMetric::NegativeInnerProduct),
+    ] {
+        for &dim in VECTOR_DIMS {
+            group.throughput(Throughput::Elements(dim as u64));
+            let lhs = VectorValue::new(vector_components_seeded(dim, 1)).expect("vector is valid");
+            let rhs = VectorValue::new(vector_components_seeded(dim, 2)).expect("vector is valid");
+            group.bench_with_input(BenchmarkId::new(name, dim), &dim, |b, _| {
+                b.iter(|| {
+                    metric
+                        .distance(black_box(&lhs), black_box(&rhs))
+                        .expect("same dim")
+                });
+            });
+        }
+    }
+    group.finish();
+}
+
+fn bench_vector_exact_top_k(c: &mut Criterion) {
+    let mut group = c.benchmark_group("core_vector_exact_top_k");
+    group.throughput(Throughput::Elements(EXACT_TOP_K_CANDIDATES as u64));
+
+    let query = VectorValue::new(vector_components_seeded(128, 0)).expect("query is valid");
+    let candidates: Vec<VectorValue> = (0..EXACT_TOP_K_CANDIDATES)
+        .map(|idx| VectorValue::new(vector_components_seeded(128, idx + 1)).expect("valid vector"))
+        .collect();
+    let candidate_refs: Vec<(usize, &VectorValue)> = candidates.iter().enumerate().collect();
+
+    group.bench_function("squared_euclidean_2048x128_k10", |b| {
+        b.iter(|| {
+            exact_vector_top_k(
+                VectorMetric::SquaredEuclidean,
+                black_box(&query),
+                candidate_refs
+                    .iter()
+                    .map(|(key, vector)| (black_box(*key), black_box(*vector))),
+                black_box(EXACT_TOP_K),
+            )
+            .expect("all dimensions match")
+        });
+    });
+
+    group.finish();
+}
+
 criterion_group! {
     name = value_clone;
     config = bench_config();
-    targets = bench_value_clone, bench_vector_value
+    targets = bench_value_clone, bench_vector_value, bench_vector_distance, bench_vector_exact_top_k
 }
 criterion_main!(value_clone);

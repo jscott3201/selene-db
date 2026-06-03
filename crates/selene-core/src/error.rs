@@ -67,6 +67,24 @@ pub enum CoreError {
         value: f32,
     },
 
+    /// Two native dense vectors had incompatible dimensions for metric work.
+    #[error("vector dimensions do not match: lhs has {lhs} components, rhs has {rhs}")]
+    #[diagnostic(code(SLENE_C_013))]
+    VectorDimensionMismatch {
+        /// Left-hand vector dimension.
+        lhs: usize,
+        /// Right-hand vector dimension.
+        rhs: usize,
+    },
+
+    /// A cosine-distance vector had zero magnitude.
+    #[error("cosine distance is undefined for zero-norm vector on {side}")]
+    #[diagnostic(code(SLENE_C_014))]
+    VectorZeroNorm {
+        /// Which side of the comparison was zero magnitude.
+        side: &'static str,
+    },
+
     /// Identifier value zero is reserved as the tombstone sentinel.
     #[error("invalid identifier: zero is reserved as tombstone sentinel")]
     #[diagnostic(code(SLENE_C_007))]
@@ -106,6 +124,8 @@ impl CoreError {
                 "22003"
             }
             Self::VectorEmpty | Self::VectorTooLarge { .. } => "22G03",
+            Self::VectorDimensionMismatch { .. } => "22G04",
+            Self::VectorZeroNorm { .. } => "22012",
             Self::ZeroIdentifier => "0G003",
             Self::CompactKeyValueLengthMismatch { .. } => "0G008",
             Self::OverlappingDiff { .. } => "0G009",
@@ -142,6 +162,16 @@ mod tests {
         CoreError::VectorComponentNotFinite { index: 1, value: f32::INFINITY },
         "22003",
         "SLENE_C_012"
+    )]
+    #[case(
+        CoreError::VectorDimensionMismatch { lhs: 2, rhs: 3 },
+        "22G04",
+        "SLENE_C_013"
+    )]
+    #[case(
+        CoreError::VectorZeroNorm { side: "lhs" },
+        "22012",
+        "SLENE_C_014"
     )]
     #[case(CoreError::ZeroIdentifier, "0G003", "SLENE_C_007")]
     #[case(

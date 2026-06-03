@@ -34,6 +34,7 @@ pub mod property_value_type;
 pub mod reserved;
 pub mod schema;
 pub mod value;
+pub mod vector;
 
 pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use change_kind::ChangeKind;
@@ -60,6 +61,7 @@ pub use schema::{
 pub use value::{
     EdgeDirection, MAX_VECTOR_DIMENSION, Path, PathSegment, Record, RecordTyped, Value, VectorValue,
 };
+pub use vector::{VectorMetric, VectorSearchHit, exact_vector_top_k};
 
 #[cfg(test)]
 mod serde_tests;
