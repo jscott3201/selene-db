@@ -1,4 +1,4 @@
-//! Reusable HNSW construction buffers.
+//! Reusable HNSW search and construction buffers.
 
 use std::collections::BinaryHeap;
 
@@ -6,7 +6,7 @@ use rustc_hash::FxHashSet;
 
 use super::{Candidate, MaxCandidate, MinCandidate};
 
-/// Scratch buffers reused while constructing or repairing HNSW links.
+/// Scratch buffers reused while searching, constructing, or repairing HNSW links.
 #[derive(Debug, Default)]
 pub(crate) struct HnswSearchScratch {
     pub(super) visited: FxHashSet<u32>,

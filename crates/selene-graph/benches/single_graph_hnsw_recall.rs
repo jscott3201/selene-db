@@ -238,13 +238,11 @@ impl HnswRecallFixture {
     }
 
     pub(crate) fn total_overlap(&self, ef_search: usize) -> usize {
-        self.queries
+        let approximate = self.approximate_batch(ef_search);
+        self.exact
             .iter()
-            .zip(&self.exact)
-            .map(|(query, exact)| {
-                let approximate = self.approximate(query, ef_search);
-                overlap_count(exact, &approximate)
-            })
+            .zip(&approximate)
+            .map(|(exact, approximate)| overlap_count(exact, approximate))
             .sum()
     }
 
@@ -253,26 +251,24 @@ impl HnswRecallFixture {
     }
 
     fn total_distance_quality(&self, ef_search: usize) -> usize {
-        self.queries
+        let approximate = self.approximate_batch(ef_search);
+        self.exact
             .iter()
-            .zip(&self.exact)
-            .map(|(query, exact)| {
-                let approximate = self.approximate(query, ef_search);
-                distance_quality_count(exact, &approximate)
-            })
+            .zip(&approximate)
+            .map(|(exact, approximate)| distance_quality_count(exact, approximate))
             .sum()
     }
 
-    fn approximate(&self, query: &VectorValue, ef_search: usize) -> Vec<VectorNodeSearchHit> {
+    fn approximate_batch(&self, ef_search: usize) -> Vec<Vec<VectorNodeSearchHit>> {
         self.graph
-            .approximate_vector_search_nodes_checked(
+            .approximate_vector_search_nodes_batch_checked(
                 &self.label,
                 &self.embedding_key,
-                query,
+                &self.queries,
                 ApproximateVectorSearchOptions::new(self.profile.metric(), self.k, ef_search),
                 CancellationChecker::disabled(),
             )
-            .expect("bench approximate vector search succeeds")
+            .expect("bench approximate vector batch search succeeds")
     }
 }
 
