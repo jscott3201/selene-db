@@ -175,22 +175,24 @@ PR-local quick vector baseline:
 |---|---:|---|
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 35.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x2` L2-squared accumulation; ~28.1 Melem/s. 20k flat-index row: ~267 µs. |
 | `graph_exact_vector_scan/cosine_dim128_k10` | 42.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x2` cosine accumulation; ~23.5 Melem/s. 20k flat-index row: ~280 µs. |
-| `graph_vector_index_rebuild/hnsw_l2_dim128` | 182.4 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; current M=18 1k quick ID `upd100_del50_b1100-950-150_a950-950-0_rk146` means 150 stale HNSW entries reclaimed and ~146 KiB reachable memory freed. |
-| `graph_vector_index_rebuild/hnsw_cos_dim128` | 226.8 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |
-| `graph_vector_index_stale_query/hnsw_l2_dim128_default` | 11.06 µs stale / 10.86 µs rebuilt (quick) | 1k fixture after 10% updates + 5% deletes. Rebuild removes 150 stale HNSW entries and drops reachable bytes from ~841 KiB to ~689 KiB; query latency improves ~1.8%. |
-| `graph_vector_index_stale_query/hnsw_cos_dim128_default` | 11.93 µs stale / 12.51 µs rebuilt (quick) | Same churn shape under cosine. On this small fixture, rebuild reclaims memory but query latency is within topology/noise range rather than strictly faster. |
-| `graph_vector_index_stale_query/hnsw_l2_dim128_m24ef64` | 13.69 µs stale / 13.68 µs rebuilt (quick) | Tuned `M=24, ef_construction=64`; stale-entry query cost is effectively neutral at this churn level while rebuild lowers reachable bytes from ~894 KiB to ~735 KiB. |
-| `graph_vector_index_stale_query/hnsw_cos_dim128_m24ef64` | 14.78 µs stale / 14.88 µs rebuilt (quick) | Tuned cosine row; memory reclamation is visible, latency delta is noise-scale. |
-| `graph_vector_index_dimension_projection/hnsw_l2_default_dim128` | 10.79 µs (quick) | 1k HNSW L2 query row with suffix `m222-722`: ~222 KiB index-owned bytes and ~722 KiB reachable bytes. |
-| `graph_vector_index_dimension_projection/hnsw_l2_default_dim768` | 42.31 µs (quick) | Same HNSW topology/link count as dim128; reachable bytes rise to ~3.15 MiB because full-precision vector components dominate. |
-| `graph_vector_index_dimension_projection/hnsw_l2_default_dim1536` | 81.03 µs (quick) | Reachable bytes rise to ~6.08 MiB at 1k vectors; extrapolation pressure is raw vector storage, not graph-link storage. |
+| `graph_vector_index_rebuild/hnsw_l2_dim128_default` | 118.9 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; compact level-0 links preserve the same link counts while reclaiming 150 stale HNSW entries. |
+| `graph_vector_index_rebuild/hnsw_l2_dim128_m24ef64` | 200.7 ms (quick) | Tuned `M=24, ef_construction=64` rebuild row; keeps the high-recall research config covered with compacted post-rebuild level-0 links. |
+| `graph_vector_index_rebuild/hnsw_cos_dim128_default` | 146.1 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |
+| `graph_vector_index_rebuild/hnsw_cos_dim128_m24ef64` | 247.1 ms (quick) | Tuned cosine rebuild row; link counts and recall shape are unchanged, but level-0 storage compacts after rebuild. |
+| `graph_vector_index_stale_query/hnsw_l2_dim128_default` | 11.24 µs stale / 10.92 µs rebuilt (quick) | 1k fixture after 10% updates + 5% deletes. Stale overlay/mutable state reports `m478-1028`; rebuild compacts to `m212-687`. |
+| `graph_vector_index_stale_query/hnsw_cos_dim128_default` | 12.12 µs stale / 12.59 µs rebuilt (quick) | Same churn shape under cosine. On this small fixture, rebuild is still a memory-control operation more than a strict query-latency win. |
+| `graph_vector_index_stale_query/hnsw_l2_dim128_m24ef64` | 14.02 µs stale / 13.85 µs rebuilt (quick) | Tuned `M=24, ef_construction=64`; stale `m578-*` compacts to rebuilt `m258-*` while latency stays effectively neutral. |
+| `graph_vector_index_stale_query/hnsw_cos_dim128_m24ef64` | 14.90 µs stale / 14.93 µs rebuilt (quick) | Tuned cosine row; memory compaction is visible, latency delta is noise-scale. |
+| `graph_vector_index_dimension_projection/hnsw_l2_default_dim128` | 10.98 µs (quick) | 1k HNSW L2 query row with suffix `m221-721`: ~221 KiB index-owned bytes and ~721 KiB reachable bytes after compact level-0 storage. |
+| `graph_vector_index_dimension_projection/hnsw_l2_default_dim768` | 42.34 µs (quick) | Same HNSW topology/link count as dim128; reachable bytes rise to ~3.15 MiB because full-precision vector components dominate. |
+| `graph_vector_index_dimension_projection/hnsw_l2_default_dim1536` | 81.01 µs (quick) | Reachable bytes rise to ~6.08 MiB at 1k vectors; extrapolation pressure is raw vector storage, not graph-link storage. |
 
 PR-local HNSW tuning spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10_idbp9875_dqbp9875` | 112.2 µs (quick) | Default `M=18, ef_construction=64`; 10k row has 372,024 links and `m2647-7647`. Keeps ID-overlap and distance-quality recall at 9875 bp on this 10k corpus while the separate duplicate-distance regression passes at 10000 bp. |
-| `graph_hnsw_recall_validation/cluster_cos_m24ef64_d128_k10_ef10_idbp10000_dqbp10000` | 135.9 µs (quick) | Configured `M=24, ef_construction=64`; 10k row has 496,032 links and `m3131-8131`. Reaches 10000 bp ID-overlap and distance-quality recall, but costs ~21% slower ef10 search and ~18% more index memory than the default row. |
+| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10_idbp9875_dqbp9875` | 108.4 µs (quick) | Default `M=18, ef_construction=64`; 10k row has 372,024 links and `m2491-7491` after compact level-0 storage with `usize` offsets. Keeps ID-overlap and distance-quality recall at 9875 bp on this 10k corpus while the separate duplicate-distance regression passes at 10000 bp. |
+| `graph_hnsw_recall_validation/cluster_cos_m24ef64_d128_k10_ef10_idbp10000_dqbp10000` | 130.7 µs (quick) | Configured `M=24, ef_construction=64`; 10k row has 496,032 links and `m2975-7975`. Reaches 10000 bp ID-overlap and distance-quality recall, but costs ~21% slower ef10 search and ~19% more index memory than the default row. |
 
 ## §3 selene-graph — write pipeline & concurrency
 

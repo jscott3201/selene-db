@@ -6,8 +6,12 @@ fn vector(value: f32) -> VectorValue {
     VectorValue::new(vec![value, 0.0]).expect("test vector is valid")
 }
 
-fn link_layers(layers: impl IntoIterator<Item = Vec<u32>>) -> HnswLinkLayers {
-    layers.into_iter().collect()
+fn level_zero_links(layers: impl IntoIterator<Item = Vec<u32>>) -> LevelZeroLinks {
+    let mut links = LevelZeroLinks::new();
+    for layer in layers {
+        links.push_for_test(layer);
+    }
+    links
 }
 
 #[test]
@@ -76,21 +80,22 @@ fn hnsw_search_layer_admits_equal_distance_better_id() {
                 row: 0,
                 vector: vector(0.0),
                 deleted: false,
-                links: link_layers([vec![2, 1]]),
+                upper_links: empty_upper_link_layers(0),
             },
             HnswNode {
                 row: 1,
                 vector: vector(1.0),
                 deleted: false,
-                links: link_layers([Vec::new()]),
+                upper_links: empty_upper_link_layers(0),
             },
             HnswNode {
                 row: 2,
                 vector: vector(2.0),
                 deleted: false,
-                links: link_layers([Vec::new()]),
+                upper_links: empty_upper_link_layers(0),
             },
         ],
+        level_zero_links: level_zero_links([vec![2, 1], Vec::new(), Vec::new()]),
         row_to_entry: FxHashMap::default(),
         entry_point: Some(0),
         max_level: 0,
@@ -116,12 +121,46 @@ fn hnsw_search_layer_admits_equal_distance_better_id() {
 }
 
 #[test]
-fn hnsw_level_zero_layer_container_stays_inline() {
-    let links = empty_link_layers(0);
-    assert_eq!(links.len(), 1);
-    assert!(!links.spilled());
+fn hnsw_upper_layer_container_is_empty_for_level_zero_nodes() {
+    let links = empty_upper_link_layers(0);
+    assert_eq!(links.len(), 0);
+    assert_eq!(links.capacity(), 0);
 
-    let promoted_links = empty_link_layers(INLINE_LINK_LAYERS);
-    assert_eq!(promoted_links.len(), INLINE_LINK_LAYERS + 1);
-    assert!(promoted_links.spilled());
+    let promoted_links = empty_upper_link_layers(1);
+    assert_eq!(promoted_links.len(), 1);
+    assert_eq!(promoted_links.capacity(), 1);
+}
+
+#[test]
+fn hnsw_finish_bulk_load_compacts_level_zero_without_changing_search() {
+    let mut index =
+        HnswVectorIndex::with_config(VectorMetric::SquaredEuclidean, HnswIndexConfig::default());
+    for row in 0..64 {
+        index.insert(row, vector(row as f32)).unwrap();
+    }
+    let before = index.memory_usage();
+
+    index.finish_bulk_load();
+    let after = index.memory_usage();
+
+    assert_eq!(after.link_count, before.link_count);
+    assert_eq!(after.level_zero_link_count, before.level_zero_link_count);
+    assert!(after.estimated_heap_bytes < before.estimated_heap_bytes);
+    let hits = index.search(&vector(4.1), 3, 32).unwrap();
+    assert_eq!(hits[0].row, 4);
+}
+
+#[test]
+fn hnsw_compact_level_zero_allows_later_insert_overlay() {
+    let mut index =
+        HnswVectorIndex::with_config(VectorMetric::SquaredEuclidean, HnswIndexConfig::default());
+    for row in 0..64 {
+        index.insert(row, vector(row as f32)).unwrap();
+    }
+    index.finish_bulk_load();
+
+    index.insert(64, vector(64.0)).unwrap();
+
+    let hits = index.search(&vector(64.0), 1, 32).unwrap();
+    assert_eq!(hits[0].row, 64);
 }

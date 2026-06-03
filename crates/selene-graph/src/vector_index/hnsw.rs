@@ -6,6 +6,8 @@
 //! search can continue traversing historical links while excluding obsolete row
 //! versions from results.
 
+#[path = "hnsw/links.rs"]
+mod links;
 #[path = "hnsw/scratch.rs"]
 mod scratch;
 
@@ -14,15 +16,12 @@ use std::mem::size_of;
 
 use rustc_hash::FxHashMap;
 use selene_core::{CoreResult, HnswIndexConfig, VectorMetric, VectorMetricQuery, VectorValue};
-use smallvec::SmallVec;
 
+use links::{HnswUpperLinkLayers, LevelZeroLinks};
 pub(crate) use scratch::HnswSearchScratch;
 
 const MAX_LEVEL: usize = 16;
 const LEVEL_BRANCHING_BITS: u32 = 4;
-const INLINE_LINK_LAYERS: usize = 1;
-
-type HnswLinkLayers = SmallVec<[Vec<u32>; INLINE_LINK_LAYERS]>;
 
 /// One approximate vector-search hit over a graph row.
 #[derive(Clone, Debug, PartialEq)]
@@ -63,6 +62,7 @@ pub(crate) struct HnswMemoryUsage {
 pub(crate) struct HnswVectorIndex {
     metric: VectorMetric,
     nodes: Vec<HnswNode>,
+    level_zero_links: LevelZeroLinks,
     row_to_entry: FxHashMap<u32, u32>,
     entry_point: Option<u32>,
     max_level: usize,
@@ -76,6 +76,7 @@ impl HnswVectorIndex {
         Self {
             metric,
             nodes: Vec::new(),
+            level_zero_links: LevelZeroLinks::new(),
             row_to_entry: FxHashMap::default(),
             entry_point: None,
             max_level: 0,
@@ -112,11 +113,12 @@ impl HnswVectorIndex {
         let new_level = level_for(row, new_id);
         let old_entry_point = self.entry_point;
         let old_max_level = self.max_level;
+        self.level_zero_links.push_empty();
         self.nodes.push(HnswNode {
             row,
             vector,
             deleted: false,
-            links: empty_link_layers(new_level),
+            upper_links: empty_upper_link_layers(new_level),
         });
 
         let Some(mut nearest) = old_entry_point else {
@@ -147,7 +149,7 @@ impl HnswVectorIndex {
                 self.max_links(layer),
                 &mut scratch.fallback,
             )?;
-            self.nodes[new_id as usize].links[layer] = selected.clone();
+            self.set_links(new_id, layer, selected.clone());
             for neighbor in &selected {
                 self.add_backlink(*neighbor, new_id, layer, scratch)?;
             }
@@ -225,6 +227,11 @@ impl HnswVectorIndex {
         Ok(hits)
     }
 
+    /// Compact bulk-built level-0 links after construction or rebuild.
+    pub(crate) fn finish_bulk_load(&mut self) {
+        self.level_zero_links.compact();
+    }
+
     /// Return estimated HNSW memory usage.
     pub(crate) fn memory_usage(&self) -> HnswMemoryUsage {
         let entries = self.nodes.len();
@@ -235,26 +242,26 @@ impl HnswVectorIndex {
         let mut upper_layer_link_count = 0usize;
         let mut max_layer_count = 0usize;
         let mut max_links_per_layer = 0usize;
-        let mut link_capacity = 0usize;
+        let mut upper_link_capacity = 0usize;
         let mut layer_vec_capacity = 0usize;
         let mut referenced_vector_bytes = 0usize;
+        self.level_zero_links.for_each(|layer| {
+            let layer_links = layer.len();
+            link_count = link_count.saturating_add(layer_links);
+            level_zero_link_count = level_zero_link_count.saturating_add(layer_links);
+            max_links_per_layer = max_links_per_layer.max(layer_links);
+        });
         for node in &self.nodes {
             referenced_vector_bytes = referenced_vector_bytes
                 .saturating_add(node.vector.dimension().saturating_mul(size_of::<f32>()));
-            max_layer_count = max_layer_count.max(node.links.len());
-            if node.links.spilled() {
-                layer_vec_capacity = layer_vec_capacity.saturating_add(node.links.capacity());
-            }
-            for (layer_idx, layer) in node.links.iter().enumerate() {
+            max_layer_count = max_layer_count.max(1 + node.upper_links.len());
+            layer_vec_capacity = layer_vec_capacity.saturating_add(node.upper_links.capacity());
+            for layer in &node.upper_links {
                 let layer_links = layer.len();
                 link_count = link_count.saturating_add(layer_links);
                 max_links_per_layer = max_links_per_layer.max(layer_links);
-                if layer_idx == 0 {
-                    level_zero_link_count = level_zero_link_count.saturating_add(layer_links);
-                } else {
-                    upper_layer_link_count = upper_layer_link_count.saturating_add(layer_links);
-                }
-                link_capacity = link_capacity.saturating_add(layer.capacity());
+                upper_layer_link_count = upper_layer_link_count.saturating_add(layer_links);
+                upper_link_capacity = upper_link_capacity.saturating_add(layer.capacity());
             }
         }
         let average_links_per_entry_basis_points = link_count
@@ -265,8 +272,9 @@ impl HnswVectorIndex {
             .nodes
             .capacity()
             .saturating_mul(size_of::<HnswNode>())
+            .saturating_add(self.level_zero_links.estimated_heap_bytes())
             .saturating_add(layer_vec_capacity.saturating_mul(size_of::<Vec<u32>>()))
-            .saturating_add(link_capacity.saturating_mul(size_of::<u32>()))
+            .saturating_add(upper_link_capacity.saturating_mul(size_of::<u32>()))
             .saturating_add(
                 self.row_to_entry
                     .capacity()
@@ -472,9 +480,11 @@ impl HnswVectorIndex {
         scratch: &mut HnswSearchScratch,
     ) -> CoreResult<()> {
         let max_links = self.max_links(layer);
-        let links = &mut self.nodes[node_id as usize].links[layer];
-        if !links.contains(&neighbor) {
-            links.push(neighbor);
+        {
+            let links = self.links_mut(node_id, layer);
+            if !links.contains(&neighbor) {
+                links.push(neighbor);
+            }
         }
         self.prune_links(node_id, layer, max_links, scratch)
     }
@@ -486,7 +496,7 @@ impl HnswVectorIndex {
         max_links: usize,
         scratch: &mut HnswSearchScratch,
     ) -> CoreResult<()> {
-        let links = &self.nodes[node_id as usize].links[layer];
+        let links = self.links_at(node_id, layer);
         scratch.reset_prune(links.len());
         for neighbor in links.iter().copied() {
             scratch.prune_candidates.push(Candidate {
@@ -498,12 +508,13 @@ impl HnswVectorIndex {
         scratch
             .prune_candidates
             .dedup_by_key(|candidate| candidate.id);
-        self.nodes[node_id as usize].links[layer] = self.select_neighbors(
+        let selected = self.select_neighbors(
             node_id,
             &scratch.prune_candidates,
             max_links,
             &mut scratch.fallback,
         )?;
+        self.set_links(node_id, layer, selected);
         Ok(())
     }
 
@@ -512,10 +523,31 @@ impl HnswVectorIndex {
     }
 
     fn links_at(&self, node_id: u32, layer: usize) -> &[u32] {
+        if layer == 0 {
+            return self.level_zero_links.get(node_id);
+        }
         self.nodes
             .get(node_id as usize)
-            .and_then(|node| node.links.get(layer))
+            .and_then(|node| node.upper_links.get(layer - 1))
             .map_or(&[], Vec::as_slice)
+    }
+
+    fn links_mut(&mut self, node_id: u32, layer: usize) -> &mut Vec<u32> {
+        if layer == 0 {
+            return self.level_zero_links.get_mut(node_id);
+        }
+        self.nodes[node_id as usize]
+            .upper_links
+            .get_mut(layer - 1)
+            .expect("HNSW node has requested upper layer")
+    }
+
+    fn set_links(&mut self, node_id: u32, layer: usize, links: Vec<u32>) {
+        if layer == 0 {
+            self.level_zero_links.replace(node_id, links);
+        } else {
+            self.nodes[node_id as usize].upper_links[layer - 1] = links;
+        }
     }
 
     fn distance_to_entry(&self, lhs: u32, rhs: u32) -> CoreResult<f64> {
@@ -538,7 +570,7 @@ struct HnswNode {
     row: u32,
     vector: VectorValue,
     deleted: bool,
-    links: HnswLinkLayers,
+    upper_links: HnswUpperLinkLayers,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -639,9 +671,9 @@ fn level_for(row: u32, ordinal: u32) -> usize {
     level
 }
 
-fn empty_link_layers(level: usize) -> HnswLinkLayers {
-    let mut links = HnswLinkLayers::new();
-    links.resize_with(level + 1, Vec::new);
+fn empty_upper_link_layers(level: usize) -> HnswUpperLinkLayers {
+    let mut links = HnswUpperLinkLayers::with_capacity(level);
+    links.resize_with(level, Vec::new);
     links
 }
 
