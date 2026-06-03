@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::mem::size_of;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{CoreResult, VectorMetric, VectorMetricQuery, VectorValue};
 
 // M=18 is the smallest tested fanout that preserves duplicate-distance cosine
@@ -301,11 +301,13 @@ impl HnswVectorIndex {
     {
         let ef = ef.max(1);
         let entry_distance = distance(entry)?;
-        let mut visited = FxHashMap::default();
-        visited.insert(entry, ());
+        let search_width = ef.min(self.nodes.len()).saturating_add(1);
+        let mut visited = FxHashSet::default();
+        visited.reserve(search_width);
+        visited.insert(entry);
 
-        let mut candidates = BinaryHeap::new();
-        let mut best = BinaryHeap::new();
+        let mut candidates = BinaryHeap::with_capacity(search_width);
+        let mut best = BinaryHeap::with_capacity(search_width);
         candidates.push(MinCandidate::new(entry, entry_distance));
         best.push(MaxCandidate::new(entry, entry_distance));
 
@@ -317,7 +319,7 @@ impl HnswVectorIndex {
                 break;
             }
             for neighbor in self.links_at(current.id, layer) {
-                if visited.insert(*neighbor, ()).is_some() {
+                if !visited.insert(*neighbor) {
                     continue;
                 }
                 let neighbor_distance = distance(*neighbor)?;
@@ -353,7 +355,7 @@ impl HnswVectorIndex {
         max_links: usize,
     ) -> CoreResult<Vec<u32>> {
         let mut selected = Vec::with_capacity(max_links);
-        let mut fallback = Vec::new();
+        let mut fallback = Vec::with_capacity(candidates.len().saturating_sub(max_links));
         for candidate in candidates {
             if candidate.id == query_id {
                 continue;
