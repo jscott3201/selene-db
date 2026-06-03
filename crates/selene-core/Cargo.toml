@@ -20,6 +20,7 @@ smallvec.workspace = true
 bytes.workspace = true
 serde.workspace = true
 rkyv.workspace = true
+wide.workspace = true
 metrics = { workspace = true, optional = true }
 
 [dev-dependencies]

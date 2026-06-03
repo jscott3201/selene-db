@@ -1695,6 +1695,7 @@ dependencies = [
  "smallvec",
  "thiserror",
  "uuid",
+ "wide",
 ]
 
 [[package]]
