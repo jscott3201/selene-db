@@ -25,7 +25,7 @@ fn hnsw_recall_handles_clustered_high_dimensional_cosine_vectors() {
             .collect(),
     );
 
-    assert_recall_at_least(&profile, 70);
+    assert_recall_at_least(&profile, 95);
 }
 
 #[test]
