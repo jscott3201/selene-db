@@ -115,16 +115,20 @@ rows are the SIMD/Rayon improvement tripwire.
 
 ## §2 selene-graph — read hot paths
 
-Bench bins: `single_graph`, `bulk_mutation`, `concurrent_read`, `bfs`. The
-medians below predate CORE-06 (measured at the 128 B `Value` layout); now that
-`Value` is 32 B, the `PropertyMap`-clone-heavy rows (`graph_edge_create_cascade`,
-`graph_mutation_commit_batch`) will tighten at the next full re-baseline.
-`graph_node_fetch` returns a column ref (no `Value` clone) and is unaffected.
-`graph_exact_vector_scan/*` is the native graph-level exact-vector oracle:
-label-filtered row scan plus scalar metric kernel, returning stable node ids.
-Vector benchmark IDs include a memory/cardinality suffix:
+Bench bins: `single_graph`, `vector_index_rebuild`, `bulk_mutation`,
+`concurrent_read`, `bfs`. The medians below predate CORE-06 (measured at the
+128 B `Value` layout); now that `Value` is 32 B, the `PropertyMap`-clone-heavy
+rows (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten
+at the next full re-baseline. `graph_node_fetch` returns a column ref (no
+`Value` clone) and is unaffected. `graph_exact_vector_scan/*` is the native
+graph-level exact-vector oracle: label-filtered row scan plus scalar metric
+kernel, returning stable node ids. `graph_vector_index_rebuild/*` times the
+maintenance rebuild that reclaims stale HNSW entries after vector update/delete
+churn; fixture setup is excluded from the reported Criterion duration. Vector
+benchmark IDs include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_e{HNSW entries}_l{live}_d{deleted}_g{links}`;
-unindexed rows use `noidx`.
+unindexed rows use `noidx`. Rebuild IDs add
+`upd{updates}_del{deletes}_b{entries-live-deleted}_a{entries-live-deleted}_rk{reclaimed reachable KiB}`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
@@ -147,6 +151,7 @@ PR-local quick vector baseline:
 | Bench | 1k | Notes |
 |---|---:|---|
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 46.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; scalar `f64` L2-squared accumulation; ~21.5 Melem/s. |
+| `graph_vector_index_rebuild/hnsw_l2_dim128` | 145.7 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; 1k quick ID `upd100_del50_b1100-950-150_a950-950-0_rk144` means 150 stale HNSW entries reclaimed and ~144 KiB reachable memory freed. |
 
 ## §3 selene-graph — write pipeline & concurrency
 

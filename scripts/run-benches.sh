@@ -19,6 +19,7 @@
 #   run-benches.sh --bench graph_hub_delete --baseline pre-graph05   # %-change diff
 #   run-benches.sh --bench wal --sample-size 50 --measurement-time 5 # A/B fidelity
 #   SELENE_VECTOR_BENCH_SCALES=10000,50000 run-benches.sh --bench single_graph --filter graph_exact_vector_scan
+#   SELENE_VECTOR_REBUILD_BENCH_SCALES=10000 run-benches.sh --bench vector_index_rebuild
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
 # Profiles select the workload envelope via
@@ -41,6 +42,7 @@ set -euo pipefail
 REGISTRY="
 selene-core|value_clone|0
 selene-graph|single_graph|0
+selene-graph|vector_index_rebuild|0
 selene-graph|bulk_mutation|0
 selene-graph|concurrent_read|0
 selene-graph|bfs|0
