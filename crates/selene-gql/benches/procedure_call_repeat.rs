@@ -23,8 +23,10 @@ const REPEATS: usize = 100;
 const VECTOR_SOURCE: &str =
     "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
 const VECTOR_ANN_SOURCE: &str = "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean', 64) YIELD node_id, distance";
+const VECTOR_ANN_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_ann_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean', 64) YIELD query_index, node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
+const VECTOR_BATCH_QUERIES: usize = 8;
 
 struct RepeatRegistry {
     name: Box<[IStr]>,
@@ -100,6 +102,7 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let indexed_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let hnsw_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_vector_cache(&graph, &registry, Arc::clone(&cache), VECTOR_SOURCE);
     warm_vector_cache(
         &indexed_graph,
@@ -112,6 +115,12 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
         &registry,
         Arc::clone(&hnsw_cache),
         VECTOR_ANN_SOURCE,
+    );
+    warm_vector_batch_cache(
+        &hnsw_graph,
+        &registry,
+        Arc::clone(&batch_cache),
+        VECTOR_ANN_BATCH_SOURCE,
     );
 
     let mut group = c.benchmark_group("procedure_vector_search");
@@ -143,6 +152,24 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &registry,
                 Some(Arc::clone(&hnsw_cache)),
                 VECTOR_ANN_SOURCE,
+            ));
+        });
+    });
+    group.bench_function("shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_ann_repeated_batch(
+                &hnsw_graph,
+                &registry,
+                Some(Arc::clone(&hnsw_cache)),
+            ));
+        });
+    });
+    group.bench_function("shared_cache_hnsw_ann_batch_8x_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_ann_batch(
+                &hnsw_graph,
+                &registry,
+                Some(Arc::clone(&batch_cache)),
             ));
         });
     });
@@ -187,6 +214,19 @@ fn warm_vector_cache(
         .expect("warmup vector search executes");
 }
 
+fn warm_vector_batch_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+    source: &str,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    session.bind_parameter(istr("queries"), vector_query_batch());
+    session
+        .execute_source(source, registry)
+        .expect("warmup batched vector search executes");
+}
+
 fn execute_vector_search(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -204,6 +244,51 @@ fn execute_vector_search(
     match session
         .execute_source(source, registry)
         .expect("vector search procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+fn execute_vector_ann_repeated_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut rows = 0;
+    for query_index in 0..VECTOR_BATCH_QUERIES {
+        let mut session = Session::new(graph);
+        if let Some(cache) = cache.as_ref() {
+            session = session.with_call_plan_cache(Arc::clone(cache));
+        }
+        session.bind_parameter(
+            istr("query"),
+            Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
+        );
+        match session
+            .execute_source(VECTOR_ANN_SOURCE, registry)
+            .expect("single ANN vector search procedure executes")
+        {
+            StatementOutput::Rows(table) => rows += table.row_count(),
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+    rows
+}
+
+fn execute_vector_ann_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    session.bind_parameter(istr("queries"), vector_query_batch());
+    match session
+        .execute_source(VECTOR_ANN_BATCH_SOURCE, registry)
+        .expect("batched ANN vector search procedure executes")
     {
         StatementOutput::Rows(table) => table.row_count(),
         other => panic!("unexpected output: {other:?}"),
@@ -258,6 +343,14 @@ fn vector_graph_hnsw_indexed(scale: usize, dimension: usize) -> SharedGraph {
         )
         .expect("bench HNSW vector index builds");
     graph
+}
+
+fn vector_query_batch() -> Value {
+    Value::List(
+        (0..VECTOR_BATCH_QUERIES)
+            .map(|query_index| Value::Vector(vector_value(query_index, VECTOR_DIMENSION)))
+            .collect(),
+    )
 }
 
 fn vector_value(seed: usize, dimension: usize) -> VectorValue {

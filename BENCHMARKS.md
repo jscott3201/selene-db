@@ -353,7 +353,11 @@ PR-local quick vector procedure baseline:
 
 | Bench | Median | Notes |
 |---|---:|---|
-| `procedure_vector_search/shared_cache_squared_euclidean_dim128_k10_1000` | 46.6 µs (quick) | Cached `CALL selene.vector_search_nodes` over 1,000 vector nodes; scalar exact scan, ~21.4 Melem/s. |
+| `procedure_vector_search/shared_cache_squared_euclidean_dim128_k10_1000` | 37.0 µs (quick) | Cached `CALL selene.vector_search_nodes` over 1,000 vector nodes; scalar exact scan. |
+| `procedure_vector_search/shared_cache_flat_index_dim128_k10_1000` | 37.5 µs (quick) | Cached exact search over the flat vector index. |
+| `procedure_vector_search/shared_cache_hnsw_ann_dim128_k10_1000` | 13.4 µs (quick) | Cached single-query `CALL selene.vector_search_nodes_ann` over the HNSW index. |
+| `procedure_vector_search/shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000` | 115.2 µs (quick) | Eight separate cached ANN procedure calls, one short-lived session per query. |
+| `procedure_vector_search/shared_cache_hnsw_ann_batch_8x_dim128_k10_1000` | 109.8 µs (quick) | One cached `CALL selene.vector_search_nodes_ann_batch` over eight query vectors; ~4.5% below repeated single-call latency. |
 
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05)
 
