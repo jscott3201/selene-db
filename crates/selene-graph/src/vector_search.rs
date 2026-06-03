@@ -23,6 +23,29 @@ pub struct VectorNodeSearchHit {
     pub distance: f64,
 }
 
+/// Tunable options for approximate vector search.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ApproximateVectorSearchOptions {
+    /// Distance metric requested by the caller.
+    pub metric: VectorMetric,
+    /// Maximum result count.
+    pub k: usize,
+    /// HNSW layer-zero candidate-list width.
+    pub ef_search: usize,
+}
+
+impl ApproximateVectorSearchOptions {
+    /// Construct approximate vector-search options.
+    #[must_use]
+    pub const fn new(metric: VectorMetric, k: usize, ef_search: usize) -> Self {
+        Self {
+            metric,
+            k,
+            ef_search,
+        }
+    }
+}
+
 /// Error returned by cancellation-aware vector search.
 #[derive(Debug, thiserror::Error)]
 pub enum VectorSearchError {
@@ -38,6 +61,17 @@ pub enum VectorSearchError {
         /// Duration since the deadline elapsed.
         elapsed: Duration,
     },
+    /// Approximate search was requested without a matching HNSW index.
+    #[error("matching HNSW vector index not found")]
+    ApproximateIndexMissing,
+    /// Approximate search metric does not match the HNSW index metric.
+    #[error("HNSW vector index was built for {indexed:?}, not requested {requested:?}")]
+    ApproximateMetricMismatch {
+        /// Metric stored in the HNSW index.
+        indexed: VectorMetric,
+        /// Metric requested by the caller.
+        requested: VectorMetric,
+    },
 }
 
 impl VectorSearchError {
@@ -45,6 +79,11 @@ impl VectorSearchError {
         match self {
             Self::Graph(error) => error,
             Self::Cancelled | Self::Timeout { .. } => GraphError::Cancelled,
+            Self::ApproximateIndexMissing | Self::ApproximateMetricMismatch { .. } => {
+                GraphError::Inconsistent {
+                    reason: self.to_string(),
+                }
+            }
         }
     }
 }
@@ -161,6 +200,73 @@ impl SeleneGraph {
             })
             .collect())
     }
+
+    /// Approximately rank vector-valued node properties through a HNSW index.
+    ///
+    /// This is intentionally separate from [`Self::exact_vector_search_nodes`]:
+    /// it requires a registered HNSW vector index whose dimension and metric
+    /// match the query, then returns the approximate result set produced by that
+    /// derived index. Distances are exact for the candidates HNSW returns, but
+    /// recall is governed by `ef_search`.
+    pub fn approximate_vector_search_nodes_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        checker.check()?;
+        let query_dimension = u32::try_from(query.dimension())
+            .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+        let Some(index) = self
+            .vector_index_for(label, property)
+            .filter(|index| index.dimension() == query_dimension)
+        else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        let Some(indexed_metric) = index.hnsw_metric() else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        if indexed_metric != options.metric {
+            return Err(VectorSearchError::ApproximateMetricMismatch {
+                indexed: indexed_metric,
+                requested: options.metric,
+            });
+        }
+        let row_hits = index
+            .hnsw_search(query, options.k, options.ef_search)
+            .ok_or(VectorSearchError::ApproximateIndexMissing)?
+            .map_err(GraphError::from)?;
+
+        let mut top_k = VectorTopK::new(options.k);
+        for hit in row_hits {
+            checker.check()?;
+            if !self.node_store.is_alive(hit.row) {
+                continue;
+            }
+            let row = RowIndex::new(hit.row);
+            let node_id = self
+                .node_id_for_row(row)
+                .ok_or_else(|| GraphError::Inconsistent {
+                    reason: format!(
+                        "HNSW vector index row {} for {} has no node id",
+                        hit.row,
+                        label.as_str()
+                    ),
+                })?;
+            top_k.push_distance(node_id, hit.distance);
+        }
+
+        Ok(top_k
+            .into_hits()
+            .into_iter()
+            .map(|hit| VectorNodeSearchHit {
+                node_id: hit.key,
+                distance: hit.distance,
+            })
+            .collect())
+    }
 }
 
 impl SharedGraph {
@@ -197,358 +303,24 @@ impl SharedGraph {
         self.read()
             .exact_vector_search_nodes_checked(label, property, query, metric, k, checker)
     }
+
+    /// Approximately rank vector-valued node properties through a HNSW index.
+    ///
+    /// This loads one immutable snapshot and delegates to
+    /// [`SeleneGraph::approximate_vector_search_nodes_checked`].
+    pub fn approximate_vector_search_nodes_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        query: &VectorValue,
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
+        self.read()
+            .approximate_vector_search_nodes_checked(label, property, query, options, checker)
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::{Duration, Instant};
-
-    use selene_core::{
-        CancellationChecker, CancellationToken, CoreError, GraphId, LabelDiff, LabelSet,
-        PropertyDiff, PropertyMap, Value, VectorValue, intern,
-    };
-
-    use super::*;
-
-    fn vector(components: &[f32]) -> VectorValue {
-        VectorValue::new(components.to_vec()).expect("test vector is valid")
-    }
-
-    fn props(key: &IStr, value: Value) -> PropertyMap {
-        PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
-    }
-
-    #[test]
-    fn exact_vector_search_ranks_labelled_vector_nodes() {
-        let shared = SharedGraph::new(GraphId::new(91));
-        let doc = intern("vector.doc").unwrap();
-        let other = intern("vector.other").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            let mut mutator = txn.mutator();
-            mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[2.0, 0.0]))),
-                )
-                .unwrap();
-            mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[1.0, 0.0]))),
-                )
-                .unwrap();
-            mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::String(intern("skip").unwrap())),
-                )
-                .unwrap();
-            mutator
-                .create_node(
-                    LabelSet::single(other),
-                    props(&embedding, Value::Vector(vector(&[0.0, 0.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-        }
-
-        let hits = shared
-            .exact_vector_search_nodes(
-                &doc,
-                &embedding,
-                &vector(&[0.0, 0.0]),
-                VectorMetric::SquaredEuclidean,
-                10,
-            )
-            .unwrap();
-
-        assert_eq!(
-            hits,
-            vec![
-                VectorNodeSearchHit {
-                    node_id: NodeId::new(2),
-                    distance: 1.0,
-                },
-                VectorNodeSearchHit {
-                    node_id: NodeId::new(1),
-                    distance: 4.0,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn exact_vector_search_zero_k_and_missing_label_are_empty() {
-        let shared = SharedGraph::new(GraphId::new(92));
-        let doc = intern("vector.empty.doc").unwrap();
-        let missing = intern("vector.empty.missing").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            txn.mutator()
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[1.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-        }
-
-        assert!(
-            shared
-                .exact_vector_search_nodes(
-                    &doc,
-                    &embedding,
-                    &vector(&[0.0]),
-                    VectorMetric::SquaredEuclidean,
-                    0,
-                )
-                .unwrap()
-                .is_empty()
-        );
-        assert!(
-            shared
-                .exact_vector_search_nodes(
-                    &missing,
-                    &embedding,
-                    &vector(&[0.0]),
-                    VectorMetric::SquaredEuclidean,
-                    10,
-                )
-                .unwrap()
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn exact_vector_search_checked_observes_cancelled_token_before_scan() {
-        let shared = SharedGraph::new(GraphId::new(93));
-        let doc = intern("vector.cancel.doc").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            txn.mutator()
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[1.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-        }
-
-        let token = CancellationToken::new();
-        token.cancel();
-        let checker = CancellationChecker::new(Some(&token), None);
-        let err = shared
-            .exact_vector_search_nodes_checked(
-                &doc,
-                &embedding,
-                &vector(&[0.0]),
-                VectorMetric::SquaredEuclidean,
-                10,
-                checker,
-            )
-            .unwrap_err();
-
-        assert!(matches!(err, VectorSearchError::Cancelled));
-    }
-
-    #[test]
-    fn exact_vector_search_checked_observes_elapsed_deadline_before_scan() {
-        let shared = SharedGraph::new(GraphId::new(94));
-        let doc = intern("vector.timeout.doc").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            txn.mutator()
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[1.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-        }
-
-        let checker =
-            CancellationChecker::new(None, Some(Instant::now() - Duration::from_millis(1)));
-        let err = shared
-            .exact_vector_search_nodes_checked(
-                &doc,
-                &embedding,
-                &vector(&[0.0]),
-                VectorMetric::SquaredEuclidean,
-                10,
-                checker,
-            )
-            .unwrap_err();
-
-        assert!(matches!(err, VectorSearchError::Timeout { .. }));
-    }
-
-    #[test]
-    fn exact_vector_search_uses_node_id_tie_breaks() {
-        let shared = SharedGraph::new(GraphId::new(93));
-        let doc = intern("vector.tie.doc").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            let mut mutator = txn.mutator();
-            for _ in 0..3 {
-                mutator
-                    .create_node(
-                        LabelSet::single(doc.clone()),
-                        props(&embedding, Value::Vector(vector(&[1.0]))),
-                    )
-                    .unwrap();
-            }
-            txn.commit().unwrap();
-        }
-
-        let hits = shared
-            .exact_vector_search_nodes(
-                &doc,
-                &embedding,
-                &vector(&[0.0]),
-                VectorMetric::SquaredEuclidean,
-                2,
-            )
-            .unwrap();
-
-        assert_eq!(
-            hits,
-            vec![
-                VectorNodeSearchHit {
-                    node_id: NodeId::new(1),
-                    distance: 1.0,
-                },
-                VectorNodeSearchHit {
-                    node_id: NodeId::new(2),
-                    distance: 1.0,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn exact_vector_search_tracks_update_and_delete_visibility() {
-        let shared = SharedGraph::new(GraphId::new(94));
-        let doc = intern("vector.visible.doc").unwrap();
-        let embedding = intern("embedding").unwrap();
-        let (first, second) = {
-            let mut txn = shared.begin_write();
-            let mut mutator = txn.mutator();
-            let first = mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[10.0]))),
-                )
-                .unwrap();
-            let second = mutator
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[1.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-            (first, second)
-        };
-        {
-            let mut txn = shared.begin_write();
-            let mut mutator = txn.mutator();
-            mutator
-                .update_node(
-                    first,
-                    LabelDiff::new([], []).unwrap(),
-                    PropertyDiff::new([(embedding.clone(), Value::Vector(vector(&[0.25])))], [])
-                        .unwrap(),
-                )
-                .unwrap();
-            mutator.delete_node(second).unwrap();
-            txn.commit().unwrap();
-        }
-
-        let hits = shared
-            .exact_vector_search_nodes(
-                &doc,
-                &embedding,
-                &vector(&[0.0]),
-                VectorMetric::SquaredEuclidean,
-                10,
-            )
-            .unwrap();
-
-        assert_eq!(
-            hits,
-            vec![VectorNodeSearchHit {
-                node_id: first,
-                distance: 0.0625,
-            }]
-        );
-    }
-
-    #[test]
-    fn exact_vector_search_surfaces_metric_errors() {
-        let shared = SharedGraph::new(GraphId::new(95));
-        let doc = intern("vector.error.doc").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            txn.mutator()
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[1.0, 2.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-        }
-
-        let error = shared
-            .exact_vector_search_nodes(
-                &doc,
-                &embedding,
-                &vector(&[1.0]),
-                VectorMetric::SquaredEuclidean,
-                10,
-            )
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            GraphError::Core(CoreError::VectorDimensionMismatch { lhs: 1, rhs: 2 })
-        ));
-    }
-
-    #[test]
-    fn exact_vector_search_surfaces_cosine_zero_norm() {
-        let shared = SharedGraph::new(GraphId::new(96));
-        let doc = intern("vector.cosine.doc").unwrap();
-        let embedding = intern("embedding").unwrap();
-        {
-            let mut txn = shared.begin_write();
-            txn.mutator()
-                .create_node(
-                    LabelSet::single(doc.clone()),
-                    props(&embedding, Value::Vector(vector(&[0.0, 0.0]))),
-                )
-                .unwrap();
-            txn.commit().unwrap();
-        }
-
-        let error = shared
-            .exact_vector_search_nodes(
-                &doc,
-                &embedding,
-                &vector(&[1.0, 0.0]),
-                VectorMetric::Cosine,
-                10,
-            )
-            .unwrap_err();
-
-        assert!(matches!(
-            error,
-            GraphError::Core(CoreError::VectorZeroNorm { side: "rhs" })
-        ));
-    }
-}
+#[path = "vector_search/tests.rs"]
+mod tests;

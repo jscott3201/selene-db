@@ -6,7 +6,7 @@
 //! (Hard Rule 11). It never bypasses the funnel and never re-enters
 //! `begin_write`.
 
-use selene_core::{IStr, Value};
+use selene_core::{IStr, Value, VectorMetric};
 use selene_graph::{GraphError, VectorIndexKind};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -19,7 +19,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.create_vector_index";
 
-static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 5] = [
+static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 6] = [
     StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
     StaticParameter::new("property", GqlType::String, false).with_description("Vector property."),
     StaticParameter::new("dimension", GqlType::Integer, false)
@@ -30,6 +30,10 @@ static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 5] = [
         .with_default(ProcedureDefaultValue::String("flat")),
     StaticParameter::new("name", GqlType::String, true)
         .with_description("Optional catalog name.")
+        .with_default_doc("NULL")
+        .with_default(ProcedureDefaultValue::Null),
+    StaticParameter::new("metric", GqlType::String, true)
+        .with_description("HNSW distance metric.")
         .with_default_doc("NULL")
         .with_default(ProcedureDefaultValue::Null),
 ];
@@ -56,17 +60,14 @@ pub(super) fn execute(
     ctx: &mut MutationContext<'_, '_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if !(3..=5).contains(&args.len()) {
-        return Err(invalid_arg(format!("{PROC_NAME} expects 3 to 5 arguments")));
+    if !(3..=6).contains(&args.len()) {
+        return Err(invalid_arg(format!("{PROC_NAME} expects 3 to 6 arguments")));
     }
     let label = string_arg(&args[0], "label")?;
     let property = string_arg(&args[1], "property")?;
     let dimension = dimension_arg(&args[2])?;
-    let kind = args
-        .get(3)
-        .map(kind_arg)
-        .transpose()?
-        .unwrap_or(VectorIndexKind::Flat);
+    let metric = args.get(5).map(metric_arg).transpose()?.flatten();
+    let kind = kind_arg(args.get(3), metric)?;
     let name = args.get(4).map(name_arg).transpose()?.flatten();
 
     match ctx.mutator().create_vector_index_named(
@@ -121,12 +122,30 @@ fn dimension_arg(value: &Value) -> Result<u32, ProcedureError> {
     Ok(dimension)
 }
 
-fn kind_arg(value: &Value) -> Result<VectorIndexKind, ProcedureError> {
+fn kind_arg(
+    value: Option<&Value>,
+    metric: Option<VectorMetric>,
+) -> Result<VectorIndexKind, ProcedureError> {
+    let Some(value) = value else {
+        return Ok(VectorIndexKind::Flat);
+    };
     let raw = string_arg(value, "kind")?;
     match raw.as_str().to_ascii_lowercase().as_str() {
-        "flat" => Ok(VectorIndexKind::Flat),
+        "flat" => {
+            if metric.is_some() {
+                return Err(invalid_arg(format!(
+                    "{PROC_NAME} metric is only valid for HNSW vector indexes"
+                )));
+            }
+            Ok(VectorIndexKind::Flat)
+        }
+        "hnsw" => Ok(match metric.unwrap_or(VectorMetric::SquaredEuclidean) {
+            VectorMetric::SquaredEuclidean => VectorIndexKind::HnswSquaredEuclidean,
+            VectorMetric::Cosine => VectorIndexKind::HnswCosine,
+            VectorMetric::NegativeInnerProduct => VectorIndexKind::HnswNegativeInnerProduct,
+        }),
         other => Err(invalid_arg(format!(
-            "unknown vector index kind '{other}'; expected flat"
+            "unknown vector index kind '{other}'; expected flat or hnsw"
         ))),
     }
 }
@@ -140,6 +159,30 @@ fn name_arg(value: &Value) -> Result<Option<IStr>, ProcedureError> {
         ))),
         _ => Err(invalid_arg(format!(
             "{PROC_NAME} name must be NULL or a non-empty STRING"
+        ))),
+    }
+}
+
+fn metric_arg(value: &Value) -> Result<Option<VectorMetric>, ProcedureError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::String(value) => parse_metric(value).map(Some),
+        _ => Err(invalid_arg(format!(
+            "{PROC_NAME} metric must be NULL or a STRING"
+        ))),
+    }
+}
+
+fn parse_metric(value: &IStr) -> Result<VectorMetric, ProcedureError> {
+    let raw = value.as_str();
+    match raw.to_ascii_lowercase().as_str() {
+        "squared_euclidean" | "sq_l2" | "l2" | "euclidean" => Ok(VectorMetric::SquaredEuclidean),
+        "cosine" => Ok(VectorMetric::Cosine),
+        "negative_inner_product" | "inner_product" | "mips" | "dot" => {
+            Ok(VectorMetric::NegativeInnerProduct)
+        }
+        _ => Err(invalid_arg(format!(
+            "unknown vector metric '{raw}'; expected squared_euclidean, cosine, or negative_inner_product"
         ))),
     }
 }

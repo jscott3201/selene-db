@@ -283,5 +283,12 @@ pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
 pub(super) fn render_vector_index_kind(kind: VectorIndexKind, dimension: u32) -> String {
     match kind {
         VectorIndexKind::Flat => format!("vector_flat({dimension})"),
+        VectorIndexKind::HnswSquaredEuclidean => {
+            format!("vector_hnsw_squared_euclidean({dimension})")
+        }
+        VectorIndexKind::HnswCosine => format!("vector_hnsw_cosine({dimension})"),
+        VectorIndexKind::HnswNegativeInnerProduct => {
+            format!("vector_hnsw_negative_inner_product({dimension})")
+        }
     }
 }

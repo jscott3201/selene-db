@@ -287,5 +287,10 @@ pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndex
 pub(super) const fn vector_kind_from(kind: SchemaVectorIndexKind) -> VectorIndexKind {
     match kind {
         SchemaVectorIndexKind::Flat => VectorIndexKind::Flat,
+        SchemaVectorIndexKind::HnswSquaredEuclidean => VectorIndexKind::HnswSquaredEuclidean,
+        SchemaVectorIndexKind::HnswCosine => VectorIndexKind::HnswCosine,
+        SchemaVectorIndexKind::HnswNegativeInnerProduct => {
+            VectorIndexKind::HnswNegativeInnerProduct
+        }
     }
 }

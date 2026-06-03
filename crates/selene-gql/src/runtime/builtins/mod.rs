@@ -9,12 +9,13 @@
 //! concrete dispatch arm, with planner-visible metadata built from static
 //! parameter/output tables (the same `StaticParameter`/`StaticOutputColumn` →
 //! `ProcedureMetadata` conversion the pack registry performed). The vector
-//! search and vector-index procedures are new native engine functionality on the
-//! same concrete built-in dispatch path.
+//! search, approximate vector-search, and vector-index procedures are new
+//! native engine functionality on the same concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
-//!   `selene.vector_search_nodes` are read-only graph-tier
+//!   `selene.vector_search_nodes`, and `selene.vector_search_nodes_ann` are
+//!   read-only graph-tier
 //!   ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they never
 //!   mutate and never re-enter `begin_write`.
 //! - `selene.create_index`, `selene.drop_index`, `selene.create_vector_index`,
@@ -35,6 +36,7 @@ mod feature_status;
 mod health;
 mod meta;
 mod vector_search;
+mod vector_search_ann;
 mod verify;
 
 use selene_core::Value;
@@ -56,6 +58,8 @@ pub(super) enum BuiltinKind {
     Verify,
     /// `selene.vector_search_nodes` — exact vector node search.
     VectorSearchNodes,
+    /// `selene.vector_search_nodes_ann` — HNSW approximate vector node search.
+    VectorSearchNodesAnn,
     /// `selene.create_index` — mutation-tier property-index creation.
     CreateIndex,
     /// `selene.drop_index` — mutation-tier property-index drop.
@@ -83,7 +87,7 @@ pub(super) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(super) const BUILTIN_SPECS: [BuiltinSpec; 8] = [
+pub(super) const BUILTIN_SPECS: [BuiltinSpec; 9] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -119,6 +123,12 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 8] = [
         description: "Exact vector search over node properties.",
         since_version: "1.1.0",
         kind: BuiltinKind::VectorSearchNodes,
+    },
+    BuiltinSpec {
+        name: &["selene", "vector_search_nodes_ann"],
+        description: "Approximate HNSW vector search over node properties.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::VectorSearchNodesAnn,
     },
     BuiltinSpec {
         name: &["selene", "create_vector_index"],
@@ -163,9 +173,11 @@ impl BuiltinKind {
     /// Declared execution tier.
     pub(super) const fn tier(self) -> ProcedureTier {
         match self {
-            Self::Health | Self::FeatureStatus | Self::Verify | Self::VectorSearchNodes => {
-                ProcedureTier::Graph
-            }
+            Self::Health
+            | Self::FeatureStatus
+            | Self::Verify
+            | Self::VectorSearchNodes
+            | Self::VectorSearchNodesAnn => ProcedureTier::Graph,
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -176,9 +188,11 @@ impl BuiltinKind {
     /// Declared mutability.
     pub(super) const fn mutability(self) -> ProcedureMutability {
         match self {
-            Self::Health | Self::FeatureStatus | Self::Verify | Self::VectorSearchNodes => {
-                ProcedureMutability::Read
-            }
+            Self::Health
+            | Self::FeatureStatus
+            | Self::Verify
+            | Self::VectorSearchNodes
+            | Self::VectorSearchNodesAnn => ProcedureMutability::Read,
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -192,6 +206,7 @@ impl BuiltinKind {
             Self::FeatureStatus => feature_status::signature(),
             Self::Verify => verify::signature(),
             Self::VectorSearchNodes => vector_search::signature(),
+            Self::VectorSearchNodesAnn => vector_search_ann::signature(),
             Self::CreateIndex => create_index::signature(),
             Self::DropIndex => drop_index::signature(),
             Self::CreateVectorIndex => create_vector_index::signature(),
@@ -205,6 +220,7 @@ impl BuiltinKind {
             Self::FeatureStatus => feature_status::output_columns(),
             Self::Verify => verify::output_columns(),
             Self::VectorSearchNodes => vector_search::output_columns(),
+            Self::VectorSearchNodesAnn => vector_search_ann::output_columns(),
             Self::CreateIndex => create_index::output_columns(),
             Self::DropIndex => drop_index::output_columns(),
             Self::CreateVectorIndex => create_vector_index::output_columns(),
@@ -230,6 +246,7 @@ impl BuiltinKind {
             Self::FeatureStatus => feature_status::execute(ctx, args),
             Self::Verify => verify::execute(ctx, args),
             Self::VectorSearchNodes => vector_search::execute(ctx, args),
+            Self::VectorSearchNodesAnn => vector_search_ann::execute(ctx, args),
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -252,12 +269,14 @@ impl BuiltinKind {
             Self::DropIndex => drop_index::execute(ctx, args),
             Self::CreateVectorIndex => create_vector_index::execute(ctx, args),
             Self::DropVectorIndex => drop_vector_index::execute(ctx, args),
-            Self::Health | Self::FeatureStatus | Self::Verify | Self::VectorSearchNodes => {
-                Err(ProcedureError::TierMismatch {
-                    expected: ProcedureTier::Graph,
-                    actual: ProcedureTier::Mutation,
-                })
-            }
+            Self::Health
+            | Self::FeatureStatus
+            | Self::Verify
+            | Self::VectorSearchNodes
+            | Self::VectorSearchNodesAnn => Err(ProcedureError::TierMismatch {
+                expected: ProcedureTier::Graph,
+                actual: ProcedureTier::Mutation,
+            }),
         }
     }
 }

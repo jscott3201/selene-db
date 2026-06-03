@@ -1,5 +1,6 @@
 use selene_core::{
-    GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorValue, intern,
+    GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorMetric,
+    VectorValue, intern,
 };
 
 use crate::{GraphError, SharedGraph, VectorIndexKind};
@@ -157,6 +158,44 @@ fn create_vector_index_rejects_existing_dimension_mismatch() {
 }
 
 #[test]
+fn create_hnsw_cosine_index_rejects_existing_zero_norm_vector() {
+    let shared = SharedGraph::new(GraphId::new(8106));
+    let label = istr("vector.index.cosine.zero");
+    let property = istr("embedding");
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[0.0, 0.0]))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let err = shared
+        .create_vector_index(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::HnswCosine,
+            2,
+        )
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::VectorIndexValueRejected {
+            label: err_label,
+            property: err_property,
+            expected_dimension: 2,
+            observed,
+        } if err_label == label
+            && err_property == property
+            && observed.contains("zero-norm vector")
+    ));
+}
+
+#[test]
 fn indexed_vector_property_rejects_later_dimension_drift() {
     let shared = SharedGraph::new(GraphId::new(8104));
     let label = istr("vector.index.strict");
@@ -194,4 +233,42 @@ fn indexed_vector_property_rejects_later_dimension_drift() {
             observed,
         } if err_label == label && err_property == property && observed == "VECTOR<3>"
     ));
+}
+
+#[test]
+fn hnsw_vector_index_tracks_membership_and_metric() {
+    let shared = SharedGraph::new(GraphId::new(8105));
+    let label = istr("vector.index.hnsw");
+    let property = istr("embedding");
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[1.0, 0.0]))]),
+            )
+            .unwrap();
+        mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[2.0, 0.0]))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    shared
+        .create_vector_index(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::HnswSquaredEuclidean,
+            2,
+        )
+        .unwrap();
+
+    let index = shared.read().vector_index_for(&label, &property).unwrap();
+    assert!(index.is_hnsw());
+    assert_eq!(index.hnsw_metric(), Some(VectorMetric::SquaredEuclidean));
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0, 1]);
 }

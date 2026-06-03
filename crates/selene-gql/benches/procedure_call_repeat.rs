@@ -22,6 +22,7 @@ const SOURCE: &str = "CALL bench.repeat() YIELD n";
 const REPEATS: usize = 100;
 const VECTOR_SOURCE: &str =
     "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
+const VECTOR_ANN_SOURCE: &str = "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean', 64) YIELD node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
 const VECTOR_DIMENSION: usize = 128;
 
@@ -95,10 +96,23 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
     let registry = BuiltinProcedureRegistry::new();
     let graph = vector_graph(VECTOR_SCALE, VECTOR_DIMENSION);
     let indexed_graph = vector_graph_indexed(VECTOR_SCALE, VECTOR_DIMENSION);
+    let hnsw_graph = vector_graph_hnsw_indexed(VECTOR_SCALE, VECTOR_DIMENSION);
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let indexed_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
-    warm_vector_cache(&graph, &registry, Arc::clone(&cache));
-    warm_vector_cache(&indexed_graph, &registry, Arc::clone(&indexed_cache));
+    let hnsw_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    warm_vector_cache(&graph, &registry, Arc::clone(&cache), VECTOR_SOURCE);
+    warm_vector_cache(
+        &indexed_graph,
+        &registry,
+        Arc::clone(&indexed_cache),
+        VECTOR_SOURCE,
+    );
+    warm_vector_cache(
+        &hnsw_graph,
+        &registry,
+        Arc::clone(&hnsw_cache),
+        VECTOR_ANN_SOURCE,
+    );
 
     let mut group = c.benchmark_group("procedure_vector_search");
     group.throughput(Throughput::Elements(VECTOR_SCALE as u64));
@@ -108,6 +122,7 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &graph,
                 &registry,
                 Some(Arc::clone(&cache)),
+                VECTOR_SOURCE,
             ));
         });
     });
@@ -117,6 +132,17 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &indexed_graph,
                 &registry,
                 Some(Arc::clone(&indexed_cache)),
+                VECTOR_SOURCE,
+            ));
+        });
+    });
+    group.bench_function("shared_cache_hnsw_ann_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_search(
+                &hnsw_graph,
+                &registry,
+                Some(Arc::clone(&hnsw_cache)),
+                VECTOR_ANN_SOURCE,
             ));
         });
     });
@@ -149,6 +175,7 @@ fn warm_vector_cache(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
     cache: Arc<CallPlanCache>,
+    source: &str,
 ) {
     let mut session = Session::new(graph).with_call_plan_cache(cache);
     session.bind_parameter(
@@ -156,7 +183,7 @@ fn warm_vector_cache(
         Value::Vector(vector_value(0, VECTOR_DIMENSION)),
     );
     session
-        .execute_source(VECTOR_SOURCE, registry)
+        .execute_source(source, registry)
         .expect("warmup vector search executes");
 }
 
@@ -164,6 +191,7 @@ fn execute_vector_search(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
     cache: Option<Arc<CallPlanCache>>,
+    source: &str,
 ) -> usize {
     let mut session = Session::new(graph);
     if let Some(cache) = cache {
@@ -174,7 +202,7 @@ fn execute_vector_search(
         Value::Vector(vector_value(0, VECTOR_DIMENSION)),
     );
     match session
-        .execute_source(VECTOR_SOURCE, registry)
+        .execute_source(source, registry)
         .expect("vector search procedure executes")
     {
         StatementOutput::Rows(table) => table.row_count(),
@@ -216,6 +244,19 @@ fn vector_graph_indexed(scale: usize, dimension: usize) -> SharedGraph {
             u32::try_from(dimension).expect("bench dimension fits u32"),
         )
         .expect("bench vector index builds");
+    graph
+}
+
+fn vector_graph_hnsw_indexed(scale: usize, dimension: usize) -> SharedGraph {
+    let graph = vector_graph(scale, dimension);
+    graph
+        .create_vector_index(
+            istr("VectorDoc"),
+            istr("embedding"),
+            VectorIndexKind::HnswSquaredEuclidean,
+            u32::try_from(dimension).expect("bench dimension fits u32"),
+        )
+        .expect("bench HNSW vector index builds");
     graph
 }
 

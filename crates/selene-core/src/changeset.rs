@@ -516,6 +516,12 @@ pub enum SchemaVectorIndexKind {
     /// Exact in-memory row-set accelerator. ANN algorithms can be added as new
     /// variants without changing the `(label, property)` catalog identity.
     Flat,
+    /// Approximate HNSW index using squared Euclidean distance.
+    HnswSquaredEuclidean,
+    /// Approximate HNSW index using cosine distance.
+    HnswCosine,
+    /// Approximate HNSW index using negative inner product distance.
+    HnswNegativeInnerProduct,
 }
 
 /// Schema-level property index value kind.
