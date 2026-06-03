@@ -33,6 +33,8 @@ run-benches.sh --bench wal                      # one bench bin (scoped compile 
 run-benches.sh --crate selene-graph             # every bench in one crate
 run-benches.sh --bench wal --filter body_size   # one criterion group within a bin
 run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   # A/B fidelity knobs
+run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
+run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
 ```
 
@@ -46,6 +48,20 @@ see `crates/selene-testing/src/bench_profiles.rs`):
 | `quick` | one 1k scale | 10 / 500 ms | fast spot-check / smoke |
 | `full` (default) | 10k / 50k / 100k | 30 / 1500 ms | **publish-quality / this doc** |
 | `stress` | adds 250k | 30 / 1500 ms | opt-in larger envelope |
+
+Vector benches also accept an independent runner override with
+`--vector-scales`. The flag exports both `SELENE_VECTOR_BENCH_SCALES` and
+`SELENE_VECTOR_REBUILD_BENCH_SCALES`, so it covers exact/HNSW query sweeps and
+index rebuild sweeps without changing non-vector benches.
+
+| Vector scale selector | Scales | Use |
+|---|---|---|
+| `quick` | 1k | fast vector smoke |
+| `full` | 10k / 50k / 100k | publish-quality vector sweep |
+| `stress` | 1k / 10k / 50k / 100k / 250k | opt-in stress sweep |
+| `large` | 250k / 1M | local large-scale validation |
+| `million` | 1M | focused million-vector run |
+| comma list | sorted positive integers | custom A/B scale envelope |
 
 A few benches sweep an independent axis instead of the node-scale envelope (hub
 degree, WAL entry-body packing, WAL sync policy, writer fan-in, correlated-row

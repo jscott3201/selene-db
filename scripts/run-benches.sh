@@ -18,8 +18,8 @@
 #   run-benches.sh --bench graph_hub_delete --save-baseline pre-graph05
 #   run-benches.sh --bench graph_hub_delete --baseline pre-graph05   # %-change diff
 #   run-benches.sh --bench wal --sample-size 50 --measurement-time 5 # A/B fidelity
-#   SELENE_VECTOR_BENCH_SCALES=10000,50000 run-benches.sh --bench single_graph --filter graph_exact_vector_scan
-#   SELENE_VECTOR_REBUILD_BENCH_SCALES=10000 run-benches.sh --bench vector_index_rebuild
+#   run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
+#   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
 # Profiles select the workload envelope via
@@ -27,6 +27,13 @@
 #   quick  => one 1k scale, sample 10   (fast smoke)
 #   full   => 10k/50k/100k, sample 30   (publish-quality / north star)
 #   stress => adds 250k                 (opt-in larger envelope)
+#
+# Vector scale presets set both SELENE_VECTOR_BENCH_SCALES and
+# SELENE_VECTOR_REBUILD_BENCH_SCALES for vector-only sweeps:
+#   quick|full|stress mirror the profile scales
+#   large => 250k/1M
+#   million => 1M
+#   comma-separated positive integers are accepted for custom sweeps
 
 set -euo pipefail
 
@@ -89,11 +96,13 @@ BASELINE=""
 FILTER=""
 SAMPLE_SIZE=""
 MEASUREMENT_TIME=""
+VECTOR_SCALES_ARG=""
+VECTOR_SCALES=""
 SEL_CRATES=()
 SEL_BENCHES=()
 
 usage() {
-  sed -n '2,40p' "$0"
+  sed -n '2,48p' "$0"
 }
 
 while [ "$#" -gt 0 ]; do
@@ -106,6 +115,7 @@ while [ "$#" -gt 0 ]; do
     --baseline)         BASELINE="$2"; shift 2 ;;
     --sample-size|--samples) SAMPLE_SIZE="$2"; shift 2 ;;
     --measurement-time) MEASUREMENT_TIME="$2"; shift 2 ;;
+    --vector-scales)    VECTOR_SCALES_ARG="$2"; shift 2 ;;
     --smoke)            SMOKE_MODE=1; shift ;;
     --list)             LIST_MODE=1; shift ;;
     --dry-run)          DRY_RUN=1; shift ;;
@@ -126,6 +136,59 @@ if [ -n "$PROFILE" ]; then
   esac
 fi
 
+resolve_vector_scales() {
+  case "$1" in
+    quick) echo "1000"; return 0 ;;
+    full) echo "10000,50000,100000"; return 0 ;;
+    stress) echo "1000,10000,50000,100000,250000"; return 0 ;;
+    large) echo "250000,1000000"; return 0 ;;
+    million) echo "1000000"; return 0 ;;
+  esac
+
+  printf '%s\n' "$1" | awk -F',' '
+    BEGIN { ok = 1 }
+    {
+      for (i = 1; i <= NF; i++) {
+        part = $i
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", part)
+        if (part !~ /^[1-9][0-9]*$/) {
+          ok = 0
+          exit
+        }
+        if (!(part in seen)) {
+          seen[part] = 1
+          vals[++n] = part + 0
+        }
+      }
+    }
+    END {
+      if (!ok || n == 0) {
+        exit 1
+      }
+      for (i = 1; i <= n; i++) {
+        for (j = i + 1; j <= n; j++) {
+          if (vals[j] < vals[i]) {
+            tmp = vals[i]
+            vals[i] = vals[j]
+            vals[j] = tmp
+          }
+        }
+      }
+      for (i = 1; i <= n; i++) {
+        printf "%s%d", (i == 1 ? "" : ","), vals[i]
+      }
+      printf "\n"
+    }
+  '
+}
+
+if [ -n "$VECTOR_SCALES_ARG" ]; then
+  if ! VECTOR_SCALES="$(resolve_vector_scales "$VECTOR_SCALES_ARG")"; then
+    echo "ERROR: --vector-scales must be quick, full, stress, large, million, or a comma-separated list of positive integers" >&2
+    exit 2
+  fi
+fi
+
 # crate for a bench name (first registry match); empty if unknown.
 crate_for_bench() {
   printf '%s\n' "$REGISTRY" | awk -F'|' -v b="$1" '$2==b {print $1; exit}'
@@ -143,6 +206,8 @@ if [ "$LIST_MODE" -eq 1 ]; then
     [ -n "$crate" ] || continue
     echo "  $crate :: $bench${filt:+  (filter: $filt)}"
   done
+  echo ""
+  echo "Vector scale presets (--vector-scales): quick, full, stress, large, million, or a comma list"
   exit 0
 fi
 
@@ -210,12 +275,20 @@ resolve_args() {
   fi
 }
 
+bench_env_prefix() {
+  local prefix="SELENE_BENCH_PROFILE=$PROFILE"
+  if [ -n "$VECTOR_SCALES" ]; then
+    prefix+=" SELENE_VECTOR_BENCH_SCALES=$VECTOR_SCALES SELENE_VECTOR_REBUILD_BENCH_SCALES=$VECTOR_SCALES"
+  fi
+  printf '%s' "$prefix"
+}
+
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "==> DRY RUN (profile=$PROFILE) — resolved invocations, nothing executed:"
   while IFS='|' read -r crate bench harness filt; do
     [ -n "$crate" ] || continue
     resolve_args "$crate" "$bench" "$harness" "$filt" 0
-    echo "  SELENE_BENCH_PROFILE=$PROFILE cargo ${RESOLVED[*]}"
+    echo "  $(bench_env_prefix) cargo ${RESOLVED[*]}"
   done <<< "$SELECTED"
   exit 0
 fi
@@ -227,6 +300,10 @@ if [ "${SELENE_BENCH_FORCE_CONFLICT:-0}" = "1" ] || pgrep -f "cargo bench" 2>/de
 fi
 
 export SELENE_BENCH_PROFILE="$PROFILE"
+if [ -n "$VECTOR_SCALES" ]; then
+  export SELENE_VECTOR_BENCH_SCALES="$VECTOR_SCALES"
+  export SELENE_VECTOR_REBUILD_BENCH_SCALES="$VECTOR_SCALES"
+fi
 
 # Compile pre-pass (parallel compilation WITHIN each invocation is allowed;
 # done up front so cold-compile time never pollutes the first measurement).
