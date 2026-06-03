@@ -66,7 +66,9 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
-pub use vector_index::{VectorIndex, VectorIndexKind, VectorIndexValueError};
+pub use vector_index::{
+    VectorIndex, VectorIndexKind, VectorIndexMemoryUsage, VectorIndexValueError,
+};
 pub use vector_search::{ApproximateVectorSearchOptions, VectorNodeSearchHit, VectorSearchError};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
