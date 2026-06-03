@@ -12,7 +12,8 @@ use selene_core::{
     VectorValue, intern,
 };
 use selene_graph::{
-    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind, VectorNodeSearchHit,
+    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind,
+    VectorIndexMemoryUsage, VectorNodeSearchHit,
 };
 use selene_testing::BenchProfile;
 
@@ -151,10 +152,11 @@ fn bench_exact_vector_scan(c: &mut Criterion) {
                 ("flat_index", Some(VectorIndexKind::Flat)),
             ] {
                 let fixture = VectorFixture::build(scale, 128, index_kind);
+                let memory_suffix = fixture.memory_id_suffix();
                 group.throughput(Throughput::Elements(fixture.scale() as u64));
                 group.bench_with_input(
                     BenchmarkId::new(
-                        format!("{index_name}_{metric_name}_dim128_k10"),
+                        format!("{index_name}_{metric_name}_dim128_k10_{memory_suffix}"),
                         fixture.scale(),
                     ),
                     &fixture,
@@ -186,21 +188,20 @@ fn bench_hnsw_recall(c: &mut Criterion) {
         for &profile in HNSW_RECALL_PROFILES {
             let fixture =
                 HnswRecallFixture::build(profile, scale, HNSW_RECALL_QUERIES, HNSW_RECALL_K);
+            let memory_suffix = fixture.memory_id_suffix();
             group.throughput(Throughput::Elements(
                 (fixture.scale() * fixture.query_count()) as u64,
             ));
             for &ef_search in HNSW_RECALL_EF_SEARCH {
                 let recall = fixture.mean_recall(ef_search);
-                let (index_kib, reachable_kib) = fixture.estimated_memory_kib();
                 group.bench_with_input(
                     BenchmarkId::new(
                         format!(
-                            "{}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_bp{}_idx{}_reach{}",
+                            "{}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_bp{}_{}",
                             fixture.profile().name(),
                             fixture.dimension(),
                             recall_basis_points(recall),
-                            index_kib,
-                            reachable_kib
+                            memory_suffix
                         ),
                         fixture.scale(),
                     ),
@@ -431,18 +432,8 @@ impl HnswRecallFixture {
             .sum()
     }
 
-    fn estimated_memory_kib(&self) -> (usize, usize) {
-        let Some(usage) = self
-            .graph
-            .vector_index_for(&self.label, &self.embedding_key)
-            .map(|index| index.memory_usage())
-        else {
-            return (0, 0);
-        };
-        (
-            usage.estimated_index_bytes / 1024,
-            usage.estimated_reachable_bytes / 1024,
-        )
+    fn memory_id_suffix(&self) -> String {
+        vector_index_memory_id_suffix(&self.graph, &self.label, &self.embedding_key)
     }
 }
 
@@ -507,6 +498,42 @@ impl VectorFixture {
 
     const fn query(&self) -> &VectorValue {
         &self.query
+    }
+
+    fn memory_id_suffix(&self) -> String {
+        vector_index_memory_id_suffix(&self.graph, &self.label, &self.embedding_key)
+    }
+}
+
+fn vector_index_memory_id_suffix(graph: &SeleneGraph, label: &IStr, property: &IStr) -> String {
+    graph
+        .vector_index_for(label, property)
+        .map(|index| format_vector_memory_id_suffix(index.memory_usage()))
+        .unwrap_or_else(|| "noidx".to_owned())
+}
+
+fn format_vector_memory_id_suffix(usage: VectorIndexMemoryUsage) -> String {
+    format!(
+        "m{}-{}_n{}_e{}_l{}_d{}_g{}",
+        usage.estimated_index_bytes / 1024,
+        usage.estimated_reachable_bytes / 1024,
+        compact_count(usage.indexed_rows),
+        compact_usize(usage.hnsw_entries),
+        compact_usize(usage.hnsw_live_entries),
+        compact_usize(usage.hnsw_deleted_entries),
+        compact_usize(usage.hnsw_link_count)
+    )
+}
+
+fn compact_usize(value: usize) -> String {
+    compact_count(u64::try_from(value).unwrap_or(u64::MAX))
+}
+
+fn compact_count(value: u64) -> String {
+    if value >= 1_000 && value.is_multiple_of(1_000) {
+        format!("{}k", value / 1_000)
+    } else {
+        value.to_string()
     }
 }
 
