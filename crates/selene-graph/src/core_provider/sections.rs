@@ -32,7 +32,7 @@ use rkyv::{
     vec::{ArchivedVec, VecResolver},
     with::{ArchiveWith, DeserializeWith, SerializeWith},
 };
-use selene_core::{EdgeId, IStr, LabelSet, NodeId, PropertyMap};
+use selene_core::{EdgeId, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap};
 use serde::{Deserialize, Serialize};
 
 use crate::core_provider::{inconsistent, invalid_payload};
@@ -328,6 +328,8 @@ pub struct VectorSchemaEntry {
     pub kind: VectorIndexKind,
     /// Required vector dimensionality.
     pub dimension: u32,
+    /// HNSW construction config for approximate vector indexes.
+    pub hnsw_config: Option<HnswIndexConfig>,
     /// Optional explicit catalog name for the vector index.
     pub name: Option<IStr>,
 }
@@ -575,6 +577,7 @@ pub(super) fn encode_vector_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crat
                 VectorSchemaEntry {
                     kind: entry.kind(),
                     dimension: entry.dimension(),
+                    hnsw_config: entry.hnsw_config(),
                     name: entry.name.clone(),
                 },
             )
@@ -646,6 +649,22 @@ fn validate_vector_schema_rows(
         if entry.dimension == 0 {
             return Err(invalid_payload(format!(
                 "CORE/VIDX row for ({}, {}) has zero vector dimension",
+                key.label, key.property
+            )));
+        }
+        if entry.kind.hnsw_metric().is_some() != entry.hnsw_config.is_some() {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has inconsistent HNSW config",
+                key.label, key.property
+            )));
+        }
+        if let Some(config) = entry.hnsw_config
+            && (config.max_neighbors == 0
+                || config.ef_construction == 0
+                || config.ef_construction < config.max_neighbors)
+        {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has invalid HNSW config",
                 key.label, key.property
             )));
         }

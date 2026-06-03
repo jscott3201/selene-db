@@ -1,6 +1,6 @@
 use selene_core::{
-    Change, GraphId, IStr, LabelSet, PropertyMap, SchemaChange, SchemaVectorIndexKind, Value,
-    VectorValue, intern,
+    Change, GraphId, HnswIndexConfig, IStr, LabelSet, PropertyMap, SchemaChange,
+    SchemaVectorIndexKind, Value, VectorValue, intern,
 };
 
 use crate::{GraphError, SharedGraph, VectorIndexKind};
@@ -65,11 +65,69 @@ fn create_vector_index_updates_working_graph_and_emits_schema_change() {
                 kind: SchemaVectorIndexKind::Flat,
                 dimension: 3,
                 name: Some(changed_name),
+                hnsw_config: None,
             },
         }] if *graph == GraphId::new(8201)
             && *changed_label == label
             && *changed_property == property
             && *changed_name == name
+    ));
+}
+
+#[test]
+fn create_hnsw_vector_index_emits_explicit_config_in_schema_change() {
+    let shared = SharedGraph::new(GraphId::new(8206));
+    let label = istr("mutator.vector.hnsw.config");
+    let property = istr("embedding");
+    let config = HnswIndexConfig::new(24, 128);
+    let outcome = {
+        let mut txn = shared.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    props([(property.clone(), vector(&[1.0, 0.0]))]),
+                )
+                .unwrap();
+            mutator
+                .create_vector_index_named_with_config(
+                    label.clone(),
+                    property.clone(),
+                    VectorIndexKind::HnswCosine,
+                    2,
+                    None,
+                    Some(config),
+                )
+                .unwrap();
+            assert_eq!(
+                mutator
+                    .read()
+                    .vector_index_for(&label, &property)
+                    .unwrap()
+                    .hnsw_config(),
+                Some(config)
+            );
+        }
+        txn.commit().unwrap()
+    };
+
+    assert!(matches!(
+        outcome.changes.as_slice(),
+        [Change::NodeCreated { .. }, Change::SchemaChanged {
+            graph,
+            change: SchemaChange::VectorIndexCreated {
+                label: changed_label,
+                property: changed_property,
+                kind: SchemaVectorIndexKind::HnswCosine,
+                dimension: 2,
+                name: None,
+                hnsw_config: Some(changed_config),
+            },
+        }] if *graph == GraphId::new(8206)
+            && *changed_label == label
+            && *changed_property == property
+            && *changed_config == config
     ));
 }
 

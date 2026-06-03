@@ -472,10 +472,10 @@ mod tests {
             .expect("create_vector_index resolves");
         let arity = metadata.signature.arity();
         assert_eq!(arity.minimum, 3);
-        assert_eq!(arity.maximum, 6);
+        assert_eq!(arity.maximum, 8);
 
         let parameters = &metadata.signature.parameters;
-        assert_eq!(parameters.len(), 6);
+        assert_eq!(parameters.len(), 8);
         assert_eq!(parameters[0].name.as_str(), "label");
         assert_eq!(parameters[0].ty, crate::GqlType::String);
         assert_eq!(parameters[1].name.as_str(), "property");
@@ -496,6 +496,16 @@ mod tests {
         assert!(parameters[5].nullable);
         assert_eq!(parameters[5].default_doc, Some("NULL"));
         assert!(parameters[5].default.is_some());
+        assert_eq!(parameters[6].name.as_str(), "hnsw_max_neighbors");
+        assert_eq!(parameters[6].ty, crate::GqlType::Integer);
+        assert!(parameters[6].nullable);
+        assert_eq!(parameters[6].default_doc, Some("NULL"));
+        assert!(parameters[6].default.is_some());
+        assert_eq!(parameters[7].name.as_str(), "hnsw_ef_construction");
+        assert_eq!(parameters[7].ty, crate::GqlType::Integer);
+        assert!(parameters[7].nullable);
+        assert_eq!(parameters[7].default_doc, Some("NULL"));
+        assert!(parameters[7].default.is_some());
         assert!(metadata.output_schema.columns.is_empty());
     }
 

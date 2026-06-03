@@ -5,7 +5,9 @@
 //! treating it as schema DDL or data mutation.
 
 use selene_core::{CancellationCause, IStr, Value, intern};
-use selene_graph::{VectorIndexKind, VectorIndexMemoryUsage, VectorIndexRebuildEntry};
+use selene_graph::{
+    HnswIndexConfig, VectorIndexKind, VectorIndexMemoryUsage, VectorIndexRebuildEntry,
+};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use crate::procedure_registry::ProcedureError;
@@ -142,7 +144,7 @@ impl RebuildRow {
             entry.property.clone(),
             entry.name.clone(),
         );
-        let kind = render_vector_index_kind(entry.kind, entry.dimension);
+        let kind = render_vector_index_kind(entry.kind, entry.dimension, entry.hnsw_config);
         Self {
             label: entry.label,
             property: entry.property,
@@ -223,16 +225,38 @@ fn render_vector_index_name(label: IStr, property: IStr, explicit: Option<IStr>)
         })
 }
 
-fn render_vector_index_kind(kind: VectorIndexKind, dimension: u32) -> String {
+fn render_vector_index_kind(
+    kind: VectorIndexKind,
+    dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
+) -> String {
     match kind {
         VectorIndexKind::Flat => format!("vector_flat({dimension})"),
         VectorIndexKind::HnswSquaredEuclidean => {
-            format!("vector_hnsw_squared_euclidean({dimension})")
+            render_hnsw_kind("vector_hnsw_squared_euclidean", dimension, hnsw_config)
         }
-        VectorIndexKind::HnswCosine => format!("vector_hnsw_cosine({dimension})"),
+        VectorIndexKind::HnswCosine => {
+            render_hnsw_kind("vector_hnsw_cosine", dimension, hnsw_config)
+        }
         VectorIndexKind::HnswNegativeInnerProduct => {
-            format!("vector_hnsw_negative_inner_product({dimension})")
+            render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
         }
+    }
+}
+
+fn render_hnsw_kind(
+    name: &'static str,
+    dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
+) -> String {
+    let config = hnsw_config.unwrap_or_default();
+    if config.is_default() {
+        format!("{name}({dimension})")
+    } else {
+        format!(
+            "{name}({dimension},m={},ef_construction={})",
+            config.max_neighbors, config.ef_construction
+        )
     }
 }
 

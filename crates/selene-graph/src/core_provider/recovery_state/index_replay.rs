@@ -7,7 +7,9 @@
 //! single bitmap rebuild runs downstream in
 //! `SharedGraph::from_graph_parts_and_snapshot` (GRAPH-06 dedup).
 
-use selene_core::{IStr, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind};
+use selene_core::{
+    HnswIndexConfig, IStr, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
+};
 use smallvec::SmallVec;
 
 use crate::graph::{
@@ -76,6 +78,8 @@ pub(super) enum PendingVectorIndex {
         kind: VectorIndexKind,
         /// Required vector dimensionality.
         dimension: u32,
+        /// Optional HNSW construction config.
+        hnsw_config: Option<HnswIndexConfig>,
         /// Optional explicit catalog name.
         name: Option<IStr>,
     },
@@ -226,11 +230,13 @@ pub(super) fn pending_vector_index_change(change: &SchemaChange) -> Option<Pendi
             kind,
             dimension,
             name,
+            hnsw_config,
         } => Some(PendingVectorIndex::Create {
             label: label.clone(),
             property: property.clone(),
             kind: vector_kind_from(*kind),
             dimension: *dimension,
+            hnsw_config: *hnsw_config,
             name: name.clone(),
         }),
         SchemaChange::VectorIndexDropped { label, property } => Some(PendingVectorIndex::Drop {
@@ -254,11 +260,15 @@ pub(super) fn replay_vector_index_changes(
                 property,
                 kind,
                 dimension,
+                hnsw_config,
                 name,
             } => {
                 graph.vector_index.insert(
                     (label.clone(), property.clone()),
-                    VectorIndexEntry::new(VectorIndex::new(*kind, *dimension)?, name.clone()),
+                    VectorIndexEntry::new(
+                        VectorIndex::new_with_hnsw_config(*kind, *dimension, *hnsw_config)?,
+                        name.clone(),
+                    ),
                 );
             }
             PendingVectorIndex::Drop { label, property } => {

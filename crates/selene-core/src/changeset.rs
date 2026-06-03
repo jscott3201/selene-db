@@ -15,7 +15,8 @@ use smallvec::SmallVec;
 
 use crate::{
     CoreError, CoreResult, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId,
-    IStr, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyMap, RecordTypeDef, Value,
+    HnswIndexConfig, IStr, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, PropertyMap,
+    RecordTypeDef, Value,
 };
 
 /// A graph or schema change carried by the WAL.
@@ -494,6 +495,8 @@ pub enum SchemaChange {
         dimension: u32,
         /// Optional explicit catalog name.
         name: Option<IStr>,
+        /// Optional HNSW construction parameters.
+        hnsw_config: Option<HnswIndexConfig>,
     },
     /// Vector property index deletion.
     ///

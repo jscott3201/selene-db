@@ -11,12 +11,8 @@ use std::collections::BinaryHeap;
 use std::mem::size_of;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use selene_core::{CoreResult, VectorMetric, VectorMetricQuery, VectorValue};
+use selene_core::{CoreResult, HnswIndexConfig, VectorMetric, VectorMetricQuery, VectorValue};
 
-// M=18 is the smallest tested fanout that preserves duplicate-distance cosine
-// recall quality without taking the M=24 memory/latency cost.
-const DEFAULT_M: usize = 18;
-const DEFAULT_EF_CONSTRUCTION: usize = 64;
 const MAX_LEVEL: usize = 16;
 const LEVEL_BRANCHING_BITS: u32 = 4;
 
@@ -57,16 +53,16 @@ pub(crate) struct HnswVectorIndex {
 }
 
 impl HnswVectorIndex {
-    /// Construct an empty HNSW graph.
-    pub(crate) fn new(metric: VectorMetric) -> Self {
+    /// Construct an empty HNSW graph with explicit construction parameters.
+    pub(crate) fn with_config(metric: VectorMetric, config: HnswIndexConfig) -> Self {
         Self {
             metric,
             nodes: Vec::new(),
             row_to_entry: FxHashMap::default(),
             entry_point: None,
             max_level: 0,
-            m: DEFAULT_M,
-            ef_construction: DEFAULT_EF_CONSTRUCTION,
+            m: usize::from(config.max_neighbors),
+            ef_construction: usize::from(config.ef_construction),
         }
     }
 
@@ -550,7 +546,10 @@ mod tests {
 
     #[test]
     fn hnsw_search_finds_near_rows() {
-        let mut index = HnswVectorIndex::new(VectorMetric::SquaredEuclidean);
+        let mut index = HnswVectorIndex::with_config(
+            VectorMetric::SquaredEuclidean,
+            HnswIndexConfig::default(),
+        );
         for row in 0..64 {
             index.insert(row, vector(row as f32)).unwrap();
         }
@@ -562,7 +561,10 @@ mod tests {
 
     #[test]
     fn hnsw_replace_marks_old_row_version_stale() {
-        let mut index = HnswVectorIndex::new(VectorMetric::SquaredEuclidean);
+        let mut index = HnswVectorIndex::with_config(
+            VectorMetric::SquaredEuclidean,
+            HnswIndexConfig::default(),
+        );
         index.insert(1, vector(100.0)).unwrap();
         index.insert(2, vector(2.0)).unwrap();
         index.insert(1, vector(1.0)).unwrap();
@@ -574,7 +576,10 @@ mod tests {
 
     #[test]
     fn hnsw_remove_excludes_row_from_results() {
-        let mut index = HnswVectorIndex::new(VectorMetric::SquaredEuclidean);
+        let mut index = HnswVectorIndex::with_config(
+            VectorMetric::SquaredEuclidean,
+            HnswIndexConfig::default(),
+        );
         index.insert(1, vector(1.0)).unwrap();
         index.insert(2, vector(2.0)).unwrap();
         index.remove(1);
@@ -611,8 +616,8 @@ mod tests {
             row_to_entry: FxHashMap::default(),
             entry_point: Some(0),
             max_level: 0,
-            m: DEFAULT_M,
-            ef_construction: DEFAULT_EF_CONSTRUCTION,
+            m: usize::from(HnswIndexConfig::DEFAULT_MAX_NEIGHBORS),
+            ef_construction: usize::from(HnswIndexConfig::DEFAULT_EF_CONSTRUCTION),
         };
 
         let candidates = index

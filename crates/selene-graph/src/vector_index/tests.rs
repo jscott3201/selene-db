@@ -1,6 +1,6 @@
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value,
-    VectorMetric, VectorValue, intern,
+    CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelDiff, LabelSet, PropertyDiff,
+    PropertyMap, Value, VectorMetric, VectorValue, intern,
 };
 
 use super::VectorIndex;
@@ -272,6 +272,92 @@ fn hnsw_vector_index_tracks_membership_and_metric() {
     assert!(index.is_hnsw());
     assert_eq!(index.hnsw_metric(), Some(VectorMetric::SquaredEuclidean));
     assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0, 1]);
+}
+
+#[test]
+fn hnsw_vector_index_stores_explicit_construction_config() {
+    let shared = SharedGraph::new(GraphId::new(8108));
+    let label = istr("vector.index.hnsw.config");
+    let property = istr("embedding");
+    let config = HnswIndexConfig::new(24, 128);
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[1.0, 0.0]))]),
+            )
+            .unwrap();
+        mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[0.0, 1.0]))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    shared
+        .create_vector_index_named_with_config(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::HnswCosine,
+            2,
+            None,
+            Some(config),
+        )
+        .unwrap();
+
+    let index = shared.read().vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.hnsw_config(), Some(config));
+    assert_eq!(index.hnsw_metric(), Some(VectorMetric::Cosine));
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0, 1]);
+}
+
+#[test]
+fn hnsw_config_is_rejected_for_flat_or_invalid_hnsw_shapes() {
+    let shared = SharedGraph::new(GraphId::new(8109));
+    let label = istr("vector.index.hnsw.config.reject");
+    let property = istr("embedding");
+
+    let flat_err = shared
+        .create_vector_index_named_with_config(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::Flat,
+            2,
+            None,
+            Some(HnswIndexConfig::new(24, 128)),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        flat_err,
+        GraphError::VectorIndexInvalidHnswConfig {
+            max_neighbors: 24,
+            ef_construction: 128,
+            reason: "flat vector indexes do not accept HNSW config",
+        }
+    ));
+
+    let invalid_err = shared
+        .create_vector_index_named_with_config(
+            label,
+            property,
+            VectorIndexKind::HnswSquaredEuclidean,
+            2,
+            None,
+            Some(HnswIndexConfig::new(24, 8)),
+        )
+        .unwrap_err();
+    assert!(matches!(
+        invalid_err,
+        GraphError::VectorIndexInvalidHnswConfig {
+            max_neighbors: 24,
+            ef_construction: 8,
+            reason: "ef_construction must be at least max_neighbors",
+        }
+    ));
 }
 
 #[test]

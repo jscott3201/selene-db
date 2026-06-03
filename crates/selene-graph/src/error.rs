@@ -143,6 +143,20 @@ pub enum GraphError {
         dimension: u32,
     },
 
+    /// A vector index was declared with invalid HNSW construction parameters.
+    #[error(
+        "invalid HNSW vector index config max_neighbors={max_neighbors}, ef_construction={ef_construction}: {reason}"
+    )]
+    #[diagnostic(code(SLENE_G_024))]
+    VectorIndexInvalidHnswConfig {
+        /// Declared HNSW `M` fanout.
+        max_neighbors: u16,
+        /// Declared HNSW construction beam width.
+        ef_construction: u16,
+        /// Reason the configuration is rejected.
+        reason: &'static str,
+    },
+
     /// A value cannot be admitted to a vector index.
     #[error(
         "vector index ({label}, {property}) expected VECTOR<{expected_dimension}> but observed {observed}"
@@ -213,6 +227,7 @@ impl GraphError {
             | Self::CompositePropertyIndexAlreadyExists { .. }
             | Self::VectorIndexAlreadyExists { .. }
             | Self::VectorIndexInvalidDimension { .. }
+            | Self::VectorIndexInvalidHnswConfig { .. }
             | Self::VectorIndexValueRejected { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
@@ -275,6 +290,14 @@ mod tests {
         "22G03"
     )]
     #[case(GraphError::VectorIndexInvalidDimension { dimension: 0 }, "22G03")]
+    #[case(
+        GraphError::VectorIndexInvalidHnswConfig {
+            max_neighbors: 24,
+            ef_construction: 8,
+            reason: "ef_construction must be at least max_neighbors",
+        },
+        "22G03"
+    )]
     #[case(
         GraphError::VectorIndexValueRejected {
             label: intern("err.label.vector.rejected").unwrap(),
@@ -376,6 +399,11 @@ mod tests {
                 property: prop.clone(),
             },
             GraphError::VectorIndexInvalidDimension { dimension: 0 },
+            GraphError::VectorIndexInvalidHnswConfig {
+                max_neighbors: 24,
+                ef_construction: 8,
+                reason: "ef_construction must be at least max_neighbors",
+            },
             GraphError::VectorIndexValueRejected {
                 label: lbl.clone(),
                 property: prop.clone(),

@@ -340,6 +340,7 @@ fn schema_change_postcard_round_trip() {
             kind: SchemaVectorIndexKind::Flat,
             dimension: 3,
             name: Some(istr("serde.schema.vector.index.name")),
+            hnsw_config: None,
         },
         SchemaChange::VectorIndexCreated {
             label: node_label.clone(),
@@ -347,6 +348,7 @@ fn schema_change_postcard_round_trip() {
             kind: SchemaVectorIndexKind::HnswCosine,
             dimension: 3,
             name: Some(istr("serde.schema.vector.hnsw.index.name")),
+            hnsw_config: Some(crate::HnswIndexConfig::new(24, 128)),
         },
         SchemaChange::VectorIndexDropped {
             label: node_label.clone(),

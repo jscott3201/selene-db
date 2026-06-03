@@ -35,6 +35,7 @@ pub mod reserved;
 pub mod schema;
 pub mod value;
 pub mod vector;
+pub mod vector_index;
 
 pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use change_kind::ChangeKind;
@@ -66,6 +67,7 @@ pub use value::{
 pub use vector::{
     VectorMetric, VectorMetricQuery, VectorSearchHit, VectorTopK, exact_vector_top_k,
 };
+pub use vector_index::HnswIndexConfig;
 
 #[cfg(test)]
 mod serde_tests;

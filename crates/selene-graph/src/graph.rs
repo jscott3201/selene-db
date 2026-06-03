@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
-use selene_core::{EdgeId, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value};
+use selene_core::{EdgeId, GraphId, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value};
 
 use crate::adjacency::AdjacencyEntry;
 use crate::composite_typed_index::CompositeTypedIndex;
@@ -109,6 +109,12 @@ impl VectorIndexEntry {
         self.index.dimension()
     }
 
+    /// Return the registered HNSW construction config, if this is an HNSW index.
+    #[must_use]
+    pub fn hnsw_config(&self) -> Option<HnswIndexConfig> {
+        self.index.hnsw_config()
+    }
+
     /// Return an estimated memory usage snapshot for this vector index.
     #[must_use]
     pub fn memory_usage(&self) -> VectorIndexMemoryUsage {
@@ -121,6 +127,16 @@ pub type CompositePropertyIndexEntryRow = (
     IStr,
     SmallVec<[IStr; 4]>,
     SmallVec<[TypedIndexKind; 4]>,
+    Option<IStr>,
+);
+
+/// Owned row returned when iterating vector-index registrations.
+pub type VectorIndexEntryRow = (
+    IStr,
+    IStr,
+    VectorIndexKind,
+    u32,
+    Option<HnswIndexConfig>,
     Option<IStr>,
 );
 
@@ -492,15 +508,14 @@ impl SeleneGraph {
     }
 
     /// Iterate built-in vector indexes with optional explicit catalog names.
-    pub fn iter_vector_index_entries(
-        &self,
-    ) -> impl Iterator<Item = (IStr, IStr, VectorIndexKind, u32, Option<IStr>)> + '_ {
+    pub fn iter_vector_index_entries(&self) -> impl Iterator<Item = VectorIndexEntryRow> + '_ {
         self.vector_index.iter().map(|((label, property), entry)| {
             (
                 label.clone(),
                 property.clone(),
                 entry.kind(),
                 entry.dimension(),
+                entry.hnsw_config(),
                 entry.name.clone(),
             )
         })

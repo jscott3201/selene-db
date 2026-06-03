@@ -1,6 +1,6 @@
 //! Vector-index mutation methods for the transaction mutator.
 
-use selene_core::{Change, IStr, SchemaChange, SchemaVectorIndexKind};
+use selene_core::{Change, HnswIndexConfig, IStr, SchemaChange, SchemaVectorIndexKind};
 
 use crate::graph::VectorIndexEntry;
 use crate::{GraphError, GraphResult, Mutator, VectorIndexKind};
@@ -33,6 +33,19 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         dimension: u32,
         name: Option<IStr>,
     ) -> GraphResult<()> {
+        self.create_vector_index_named_with_config(label, property, kind, dimension, name, None)
+    }
+
+    /// Register a durable node vector index with optional HNSW construction config.
+    pub fn create_vector_index_named_with_config(
+        &mut self,
+        label: IStr,
+        property: IStr,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<IStr>,
+        hnsw_config: Option<HnswIndexConfig>,
+    ) -> GraphResult<()> {
         if self
             .txn
             .read()
@@ -41,13 +54,15 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
         {
             return Err(GraphError::VectorIndexAlreadyExists { label, property });
         }
-        let index = crate::vector_index::build_vector_index(
+        let index = crate::vector_index::build_vector_index_with_hnsw_config(
             self.txn.read(),
             label.clone(),
             property.clone(),
             kind,
             dimension,
+            hnsw_config,
         )?;
+        let hnsw_config = index.hnsw_config();
         let graph_id = self.txn.read().graph_id();
         self.txn.guard_mut().vector_index.insert(
             (label.clone(), property.clone()),
@@ -61,6 +76,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 kind: schema_kind_from(kind),
                 dimension,
                 name,
+                hnsw_config,
             },
         });
         Ok(())
