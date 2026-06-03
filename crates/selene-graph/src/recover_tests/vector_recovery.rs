@@ -116,6 +116,46 @@ fn recover_snapshot_preserves_hnsw_vector_index_registration() {
 }
 
 #[test]
+fn recover_snapshot_preserves_ivf_vector_index_registration() {
+    let dir = temp_dir("snapshot-ivf-vector-index");
+    let label = intern("recover.ivf.vector.index.node").unwrap();
+    let property = intern("recover.ivf.vector.index.embedding").unwrap();
+    let shared = SharedGraph::builder(GraphId::new(43)).build().unwrap();
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                prop(
+                    "recover.ivf.vector.index.embedding",
+                    Value::Vector(VectorValue::new(vec![1.0, 0.0, 0.0]).unwrap()),
+                ),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(
+            label.clone(),
+            property.clone(),
+            VectorIndexKind::IvfCosine,
+            3,
+        )
+        .unwrap();
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(43)).unwrap();
+    let snapshot = recovered.read();
+    let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.kind(), VectorIndexKind::IvfCosine);
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.hnsw_config(), None);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    assert_eq!(index.memory_usage().ivf_live_entries, 1);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_wal_only_replays_vector_property() {
     let dir = temp_dir("wal-vector");
     append_wal(
@@ -178,6 +218,48 @@ fn recover_wal_only_replays_vector_index_registration() {
     assert_eq!(index.dimension(), 3);
     assert_eq!(index.hnsw_config(), Some(config));
     assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_wal_only_replays_ivf_vector_index_registration() {
+    let dir = temp_dir("wal-ivf-vector-index");
+    let label = intern("recover.wal.ivf.vector.index.node").unwrap();
+    let property = intern("recover.wal.ivf.vector.index.embedding").unwrap();
+    append_wal(
+        &dir,
+        0,
+        &[
+            Change::NodeCreated {
+                id: NodeId::new(1),
+                labels: LabelSet::single(label.clone()),
+                properties: prop(
+                    "recover.wal.ivf.vector.index.embedding",
+                    Value::Vector(VectorValue::new(vec![0.25, 0.5, 0.75]).unwrap()),
+                ),
+            },
+            Change::SchemaChanged {
+                graph: GraphId::new(44),
+                change: SchemaChange::VectorIndexCreated {
+                    label: label.clone(),
+                    property: property.clone(),
+                    kind: SchemaVectorIndexKind::IvfSquaredEuclidean,
+                    dimension: 3,
+                    name: None,
+                    hnsw_config: None,
+                },
+            },
+        ],
+    );
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(44)).unwrap();
+    let snapshot = recovered.read();
+    let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.kind(), VectorIndexKind::IvfSquaredEuclidean);
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.hnsw_config(), None);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    assert_eq!(index.memory_usage().ivf_live_entries, 1);
     let _ = fs::remove_dir_all(dir);
 }
 

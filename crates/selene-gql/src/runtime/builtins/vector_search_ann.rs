@@ -1,7 +1,7 @@
 //! `selene.vector_search_nodes_ann` native built-in.
 //!
 //! Read-only graph-tier procedure exposing approximate vector node search over
-//! a registered HNSW vector index. This surface is separate from
+//! a registered ANN vector index. This surface is separate from
 //! `selene.vector_search_nodes` so exact search remains the correctness oracle
 //! and approximate recall is an explicit caller choice.
 
@@ -30,7 +30,7 @@ static VECTOR_SEARCH_ANN_PARAMS: [StaticParameter; 6] = [
         .with_default_doc("squared_euclidean")
         .with_default(ProcedureDefaultValue::String("squared_euclidean")),
     StaticParameter::new("ef_search", GqlType::Integer, false)
-        .with_description("HNSW candidate-list width.")
+        .with_description("ANN search-width hint.")
         .with_default_doc("64")
         .with_default(ProcedureDefaultValue::Integer(64)),
 ];
@@ -171,11 +171,11 @@ fn vector_search_error(error: VectorSearchError) -> ProcedureError {
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
         VectorSearchError::ApproximateIndexMissing => {
-            invalid_arg(format!("{PROC_NAME} requires a matching HNSW vector index"))
+            invalid_arg(format!("{PROC_NAME} requires a matching ANN vector index"))
         }
         VectorSearchError::ApproximateMetricMismatch { indexed, requested } => {
             invalid_arg(format!(
-                "{PROC_NAME} requested {requested:?}, but the HNSW vector index uses {indexed:?}"
+                "{PROC_NAME} requested {requested:?}, but the ANN vector index uses {indexed:?}"
             ))
         }
     }

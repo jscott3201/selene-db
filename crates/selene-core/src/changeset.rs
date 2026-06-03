@@ -525,6 +525,12 @@ pub enum SchemaVectorIndexKind {
     HnswCosine,
     /// Approximate HNSW index using negative inner product distance.
     HnswNegativeInnerProduct,
+    /// Approximate IVF index using squared Euclidean distance.
+    IvfSquaredEuclidean,
+    /// Approximate IVF index using cosine distance.
+    IvfCosine,
+    /// Approximate IVF index using negative inner product distance.
+    IvfNegativeInnerProduct,
 }
 
 /// Schema-level property index value kind.

@@ -26,7 +26,7 @@ const STALE_QUERY_EF_SEARCH: usize = 64;
 const MEMORY_PROJECTION_K: usize = 10;
 const MEMORY_PROJECTION_EF_SEARCH: usize = 64;
 const MEMORY_PROJECTION_DIMENSIONS: [usize; 3] = [128, 768, 1536];
-const VECTOR_REBUILD_VARIANTS: [VectorRebuildVariant; 4] = [
+const VECTOR_REBUILD_VARIANTS: [VectorRebuildVariant; 6] = [
     VectorRebuildVariant {
         name: "hnsw_l2_dim128_default",
         kind: VectorIndexKind::HnswSquaredEuclidean,
@@ -47,6 +47,16 @@ const VECTOR_REBUILD_VARIANTS: [VectorRebuildVariant; 4] = [
         kind: VectorIndexKind::HnswCosine,
         hnsw_config: Some(HnswIndexConfig::new(24, 64)),
     },
+    VectorRebuildVariant {
+        name: "ivf_l2_dim128",
+        kind: VectorIndexKind::IvfSquaredEuclidean,
+        hnsw_config: None,
+    },
+    VectorRebuildVariant {
+        name: "ivf_cos_dim128",
+        kind: VectorIndexKind::IvfCosine,
+        hnsw_config: None,
+    },
 ];
 
 #[derive(Clone, Copy)]
@@ -54,6 +64,24 @@ struct VectorRebuildVariant {
     name: &'static str,
     kind: VectorIndexKind,
     hnsw_config: Option<HnswIndexConfig>,
+}
+
+impl VectorRebuildVariant {
+    fn metric(self) -> selene_core::VectorMetric {
+        self.kind
+            .ann_metric()
+            .expect("bench variants are ANN indexes")
+    }
+
+    fn expected_hnsw_config(self) -> Option<HnswIndexConfig> {
+        self.kind
+            .hnsw_metric()
+            .map(|_| self.hnsw_config.unwrap_or_default())
+    }
+
+    fn is_hnsw(self) -> bool {
+        self.kind.hnsw_metric().is_some()
+    }
 }
 
 fn bench_vector_index_rebuild(c: &mut Criterion) {
@@ -68,7 +96,8 @@ fn bench_vector_index_rebuild(c: &mut Criterion) {
             preview.validate_report(&preview_report);
             let id_suffix = preview.format_report_id_suffix(&preview_report);
             group.throughput(Throughput::Elements(
-                preview_report.entries[0].before.hnsw_entries as u64,
+                u64::try_from(usage_entries(preview_report.entries[0].before, variant))
+                    .unwrap_or(u64::MAX),
             ));
             group.bench_function(
                 BenchmarkId::new(
@@ -223,7 +252,7 @@ impl VectorRebuildFixture {
         assert_eq!(report.indexes_rebuilt, 1);
         assert_eq!(report.entries.len(), 1);
         assert_eq!(
-            report.reclaimed_hnsw_deleted_entries,
+            reclaimed_deleted_entries(report, self.variant),
             self.update_count + self.delete_count
         );
         assert!(report.reclaimed_reachable_bytes > 0);
@@ -232,58 +261,51 @@ impl VectorRebuildFixture {
         let live_rows_u64 = u64::try_from(live_rows).expect("bench scale fits u64");
         let entry = &report.entries[0];
         assert_eq!(entry.kind, self.variant.kind);
-        assert_eq!(
-            entry.hnsw_config,
-            Some(self.variant.hnsw_config.unwrap_or_default())
-        );
+        assert_eq!(entry.hnsw_config, self.variant.expected_hnsw_config());
         assert_eq!(
             usize::try_from(entry.dimension).expect("dimension fits usize"),
             VECTOR_DIMENSION
         );
         assert_eq!(entry.before.indexed_rows, live_rows_u64);
-        assert_eq!(entry.before.hnsw_live_entries, live_rows);
+        assert_eq!(usage_live_entries(entry.before, self.variant), live_rows);
         assert_eq!(
-            entry.before.hnsw_deleted_entries,
+            usage_deleted_entries(entry.before, self.variant),
             self.update_count + self.delete_count
         );
         assert_eq!(entry.after.indexed_rows, live_rows_u64);
-        assert_eq!(entry.after.hnsw_entries, live_rows);
-        assert_eq!(entry.after.hnsw_live_entries, live_rows);
-        assert_eq!(entry.after.hnsw_deleted_entries, 0);
-        assert_eq!(
-            entry
-                .before
-                .hnsw_level_zero_link_count
-                .saturating_add(entry.before.hnsw_upper_layer_link_count),
-            entry.before.hnsw_link_count
-        );
-        assert_eq!(
-            entry
-                .after
-                .hnsw_level_zero_link_count
-                .saturating_add(entry.after.hnsw_upper_layer_link_count),
-            entry.after.hnsw_link_count
-        );
+        assert_eq!(usage_entries(entry.after, self.variant), live_rows);
+        assert_eq!(usage_live_entries(entry.after, self.variant), live_rows);
+        assert_eq!(usage_deleted_entries(entry.after, self.variant), 0);
+        if self.variant.is_hnsw() {
+            assert_eq!(
+                entry
+                    .before
+                    .hnsw_level_zero_link_count
+                    .saturating_add(entry.before.hnsw_upper_layer_link_count),
+                entry.before.hnsw_link_count
+            );
+            assert_eq!(
+                entry
+                    .after
+                    .hnsw_level_zero_link_count
+                    .saturating_add(entry.after.hnsw_upper_layer_link_count),
+                entry.after.hnsw_link_count
+            );
+        }
     }
 
     fn format_report_id_suffix(&self, report: &VectorIndexRebuildReport) -> String {
         let entry = &report.entries[0];
         format!(
-            "upd{}_del{}_b{}-{}-{}g{}z{}u{}_a{}-{}-{}g{}z{}u{}_rk{}",
+            "upd{}_del{}_b{}-{}-{}_a{}-{}-{}_rk{}",
             compact_usize(self.update_count),
             compact_usize(self.delete_count),
-            compact_usize(entry.before.hnsw_entries),
-            compact_usize(entry.before.hnsw_live_entries),
-            compact_usize(entry.before.hnsw_deleted_entries),
-            compact_usize(entry.before.hnsw_link_count),
-            compact_usize(entry.before.hnsw_level_zero_link_count),
-            compact_usize(entry.before.hnsw_upper_layer_link_count),
-            compact_usize(entry.after.hnsw_entries),
-            compact_usize(entry.after.hnsw_live_entries),
-            compact_usize(entry.after.hnsw_deleted_entries),
-            compact_usize(entry.after.hnsw_link_count),
-            compact_usize(entry.after.hnsw_level_zero_link_count),
-            compact_usize(entry.after.hnsw_upper_layer_link_count),
+            compact_usize(usage_entries(entry.before, self.variant)),
+            compact_usize(usage_live_entries(entry.before, self.variant)),
+            compact_usize(usage_deleted_entries(entry.before, self.variant)),
+            compact_usize(usage_entries(entry.after, self.variant)),
+            compact_usize(usage_live_entries(entry.after, self.variant)),
+            compact_usize(usage_deleted_entries(entry.after, self.variant)),
             report.reclaimed_reachable_bytes / 1024
         )
     }
@@ -297,20 +319,19 @@ impl VectorRebuildFixture {
     }
 
     fn approximate_query_hit_count(&self) -> usize {
-        let metric = self
-            .variant
-            .kind
-            .hnsw_metric()
-            .expect("bench variants are HNSW");
         self.shared
             .approximate_vector_search_nodes_checked(
                 &self.label,
                 &self.embedding_key,
                 &self.query,
-                ApproximateVectorSearchOptions::new(metric, STALE_QUERY_K, STALE_QUERY_EF_SEARCH),
+                ApproximateVectorSearchOptions::new(
+                    self.variant.metric(),
+                    STALE_QUERY_K,
+                    STALE_QUERY_EF_SEARCH,
+                ),
                 CancellationChecker::disabled(),
             )
-            .expect("bench HNSW query succeeds")
+            .expect("bench ANN query succeeds")
             .len()
     }
 }
@@ -402,7 +423,7 @@ fn seed_indexed_nodes(
             None,
             variant.hnsw_config,
         )
-        .expect("bench HNSW vector index build succeeds");
+        .expect("bench vector index build succeeds");
     txn.commit().expect("bench seed commit succeeds");
     ids
 }
@@ -452,17 +473,62 @@ fn compact_usize(value: usize) -> String {
 }
 
 fn format_usage_id_suffix(usage: VectorIndexMemoryUsage) -> String {
+    let prefix = if usage.hnsw_entries > 0 { "h" } else { "v" };
     format!(
-        "e{}l{}d{}g{}z{}u{}_m{}-{}",
-        compact_usize(usage.hnsw_entries),
-        compact_usize(usage.hnsw_live_entries),
-        compact_usize(usage.hnsw_deleted_entries),
-        compact_usize(usage.hnsw_link_count),
-        compact_usize(usage.hnsw_level_zero_link_count),
-        compact_usize(usage.hnsw_upper_layer_link_count),
+        "{prefix}e{}l{}d{}_m{}-{}",
+        compact_usize(if usage.hnsw_entries > 0 {
+            usage.hnsw_entries
+        } else {
+            usage.ivf_entries
+        }),
+        compact_usize(if usage.hnsw_entries > 0 {
+            usage.hnsw_live_entries
+        } else {
+            usage.ivf_live_entries
+        }),
+        compact_usize(if usage.hnsw_entries > 0 {
+            usage.hnsw_deleted_entries
+        } else {
+            usage.ivf_deleted_entries
+        }),
         usage.estimated_index_bytes / 1024,
         usage.estimated_reachable_bytes / 1024,
     )
+}
+
+fn usage_entries(usage: VectorIndexMemoryUsage, variant: VectorRebuildVariant) -> usize {
+    if variant.is_hnsw() {
+        usage.hnsw_entries
+    } else {
+        usage.ivf_entries
+    }
+}
+
+fn usage_live_entries(usage: VectorIndexMemoryUsage, variant: VectorRebuildVariant) -> usize {
+    if variant.is_hnsw() {
+        usage.hnsw_live_entries
+    } else {
+        usage.ivf_live_entries
+    }
+}
+
+fn usage_deleted_entries(usage: VectorIndexMemoryUsage, variant: VectorRebuildVariant) -> usize {
+    if variant.is_hnsw() {
+        usage.hnsw_deleted_entries
+    } else {
+        usage.ivf_deleted_entries
+    }
+}
+
+fn reclaimed_deleted_entries(
+    report: &VectorIndexRebuildReport,
+    variant: VectorRebuildVariant,
+) -> usize {
+    if variant.is_hnsw() {
+        report.reclaimed_hnsw_deleted_entries
+    } else {
+        report.reclaimed_ivf_deleted_entries
+    }
 }
 
 fn compact_count(value: u64) -> String {

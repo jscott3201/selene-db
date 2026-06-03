@@ -33,7 +33,7 @@ static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 8] = [
         .with_default_doc("NULL")
         .with_default(ProcedureDefaultValue::Null),
     StaticParameter::new("metric", GqlType::String, true)
-        .with_description("HNSW distance metric.")
+        .with_description("ANN distance metric.")
         .with_default_doc("NULL")
         .with_default(ProcedureDefaultValue::Null),
     StaticParameter::new("hnsw_max_neighbors", GqlType::Integer, true)
@@ -147,7 +147,7 @@ fn kind_arg(
         "flat" => {
             if metric.is_some() {
                 return Err(invalid_arg(format!(
-                    "{PROC_NAME} metric is only valid for HNSW vector indexes"
+                    "{PROC_NAME} metric is only valid for ANN vector indexes"
                 )));
             }
             Ok(VectorIndexKind::Flat)
@@ -157,8 +157,13 @@ fn kind_arg(
             VectorMetric::Cosine => VectorIndexKind::HnswCosine,
             VectorMetric::NegativeInnerProduct => VectorIndexKind::HnswNegativeInnerProduct,
         }),
+        "ivf" => Ok(match metric.unwrap_or(VectorMetric::SquaredEuclidean) {
+            VectorMetric::SquaredEuclidean => VectorIndexKind::IvfSquaredEuclidean,
+            VectorMetric::Cosine => VectorIndexKind::IvfCosine,
+            VectorMetric::NegativeInnerProduct => VectorIndexKind::IvfNegativeInnerProduct,
+        }),
         other => Err(invalid_arg(format!(
-            "unknown vector index kind '{other}'; expected flat or hnsw"
+            "unknown vector index kind '{other}'; expected flat, hnsw, or ivf"
         ))),
     }
 }

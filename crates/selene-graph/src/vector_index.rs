@@ -2,8 +2,8 @@
 //!
 //! Vector indexes are durable registrations plus derived in-memory accelerators
 //! over primary node values. Every kind keeps a row bitmap for alive nodes whose
-//! `(label, property)` value is a vector with the declared dimension; HNSW kinds
-//! also maintain an approximate neighbor graph. Registration and live
+//! `(label, property)` value is a vector with the declared dimension; ANN kinds
+//! also maintain a derived search accelerator. Registration and live
 //! maintenance are strict so search cannot hide dimensionality or metric drift;
 //! recovery rebuild remains lenient for corrupted/legacy state and is checked by
 //! the debug consistency net.
@@ -19,8 +19,12 @@ mod build;
 mod config;
 #[path = "vector_index/hnsw.rs"]
 mod hnsw;
+#[path = "vector_index/ivf.rs"]
+mod ivf;
 #[path = "vector_index/rebuild.rs"]
 mod rebuild;
+#[path = "vector_index/search_hit.rs"]
+mod search_hit;
 
 use selene_core::{HnswIndexConfig, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue};
 use serde::{Deserialize, Serialize};
@@ -33,8 +37,11 @@ pub(crate) use build::{
 };
 use config::hnsw_config_for_kind;
 pub(crate) use hnsw::HnswSearchScratch;
-use hnsw::{HnswVectorHit, HnswVectorIndex};
+use hnsw::HnswVectorIndex;
+use ivf::IvfVectorIndex;
 pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
+pub(crate) use search_hit::VectorIndexSearchHit;
+use search_hit::{hnsw_hits, ivf_hits};
 
 type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
 
@@ -61,6 +68,12 @@ pub enum VectorIndexKind {
     HnswCosine,
     /// Approximate HNSW index using negative inner product distance.
     HnswNegativeInnerProduct,
+    /// Approximate IVF index using squared Euclidean distance.
+    IvfSquaredEuclidean,
+    /// Approximate IVF index using cosine distance.
+    IvfCosine,
+    /// Approximate IVF index using negative inner product distance.
+    IvfNegativeInnerProduct,
 }
 
 impl VectorIndexKind {
@@ -72,6 +85,36 @@ impl VectorIndexKind {
             Self::HnswSquaredEuclidean => Some(VectorMetric::SquaredEuclidean),
             Self::HnswCosine => Some(VectorMetric::Cosine),
             Self::HnswNegativeInnerProduct => Some(VectorMetric::NegativeInnerProduct),
+            Self::IvfSquaredEuclidean | Self::IvfCosine | Self::IvfNegativeInnerProduct => None,
+        }
+    }
+
+    /// Return the IVF metric for inverted-file vector-index kinds.
+    #[must_use]
+    pub const fn ivf_metric(self) -> Option<VectorMetric> {
+        match self {
+            Self::Flat
+            | Self::HnswSquaredEuclidean
+            | Self::HnswCosine
+            | Self::HnswNegativeInnerProduct => None,
+            Self::IvfSquaredEuclidean => Some(VectorMetric::SquaredEuclidean),
+            Self::IvfCosine => Some(VectorMetric::Cosine),
+            Self::IvfNegativeInnerProduct => Some(VectorMetric::NegativeInnerProduct),
+        }
+    }
+
+    /// Return the ANN metric for approximate vector-index kinds.
+    #[must_use]
+    pub const fn ann_metric(self) -> Option<VectorMetric> {
+        match self {
+            Self::Flat => None,
+            Self::HnswSquaredEuclidean | Self::IvfSquaredEuclidean => {
+                Some(VectorMetric::SquaredEuclidean)
+            }
+            Self::HnswCosine | Self::IvfCosine => Some(VectorMetric::Cosine),
+            Self::HnswNegativeInnerProduct | Self::IvfNegativeInnerProduct => {
+                Some(VectorMetric::NegativeInnerProduct)
+            }
         }
     }
 }
@@ -80,10 +123,10 @@ impl VectorIndexKind {
 ///
 /// This is intentionally an estimate rather than allocator-exact accounting.
 /// `estimated_index_bytes` counts index-owned structures and excludes primary
-/// graph vector component allocations that HNSW may share through `Arc` handles.
-/// `estimated_reachable_bytes` adds the component bytes referenced by HNSW
-/// entries as an upper-bound view; deleted HNSW entries can retain old component
-/// storage until the derived index is rebuilt.
+/// graph vector component allocations that ANN indexes may share through `Arc`
+/// handles. `estimated_reachable_bytes` adds the component bytes referenced by
+/// derived entries and centroids as an upper-bound view; deleted ANN entries can
+/// retain old component storage until the derived index is rebuilt.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct VectorIndexMemoryUsage {
     /// Number of live rows currently admitted to the index.
@@ -114,9 +157,25 @@ pub struct VectorIndexMemoryUsage {
     pub hnsw_max_links_per_layer: usize,
     /// Average directed HNSW links per entry, scaled by 10,000.
     pub hnsw_average_links_per_entry_basis_points: usize,
+    /// Estimated heap bytes owned by the IVF derived index, excluding vector components.
+    pub ivf_index_bytes: usize,
+    /// Component bytes reachable through IVF vector handles.
+    pub ivf_referenced_vector_bytes: usize,
+    /// Total IVF entries, including stale deleted row versions.
+    pub ivf_entries: usize,
+    /// Live IVF entries reachable from row membership.
+    pub ivf_live_entries: usize,
+    /// Stale IVF entries retained until the derived index is rebuilt.
+    pub ivf_deleted_entries: usize,
+    /// Number of trained IVF centroids.
+    pub ivf_centroids: usize,
+    /// Number of IVF inverted lists.
+    pub ivf_list_count: usize,
+    /// Non-stale IVF entries assigned to inverted lists.
+    pub ivf_assigned_entries: usize,
     /// Estimated bytes for index-owned structures, excluding referenced vector components.
     pub estimated_index_bytes: usize,
-    /// Estimated upper-bound bytes reachable from the index including HNSW vector components.
+    /// Estimated upper-bound bytes reachable from the index including ANN vector components.
     pub estimated_reachable_bytes: usize,
 }
 
@@ -128,6 +187,7 @@ pub struct VectorIndex {
     hnsw_config: Option<HnswIndexConfig>,
     rows: RoaringBitmap,
     hnsw: Option<HnswVectorIndex>,
+    ivf: Option<IvfVectorIndex>,
 }
 
 impl VectorIndex {
@@ -158,12 +218,14 @@ impl VectorIndex {
         let hnsw = kind.hnsw_metric().map(|metric| {
             HnswVectorIndex::with_config(metric, hnsw_config.expect("HNSW kind stores config"))
         });
+        let ivf = kind.ivf_metric().map(IvfVectorIndex::new);
         Ok(Self {
             kind,
             dimension,
             hnsw_config,
             rows: RoaringBitmap::new(),
             hnsw,
+            ivf,
         })
     }
 
@@ -203,10 +265,22 @@ impl VectorIndex {
         self.kind.hnsw_metric().is_some()
     }
 
+    /// Return true when this index has an IVF accelerator.
+    #[must_use]
+    pub const fn is_ivf(&self) -> bool {
+        self.kind.ivf_metric().is_some()
+    }
+
     /// Return the HNSW metric, if this is an HNSW index.
     #[must_use]
     pub const fn hnsw_metric(&self) -> Option<VectorMetric> {
         self.kind.hnsw_metric()
+    }
+
+    /// Return the ANN metric, if this is an approximate index.
+    #[must_use]
+    pub const fn ann_metric(&self) -> Option<VectorMetric> {
+        self.kind.ann_metric()
     }
 
     /// Return an estimated memory usage snapshot for this index.
@@ -219,9 +293,15 @@ impl VectorIndex {
             .as_ref()
             .map(HnswVectorIndex::memory_usage)
             .unwrap_or_default();
+        let ivf = self
+            .ivf
+            .as_ref()
+            .map(IvfVectorIndex::memory_usage)
+            .unwrap_or_default();
         let estimated_index_bytes = size_of::<Self>()
             .saturating_add(row_bitmap_bytes)
-            .saturating_add(hnsw.estimated_heap_bytes);
+            .saturating_add(hnsw.estimated_heap_bytes)
+            .saturating_add(ivf.estimated_heap_bytes);
         VectorIndexMemoryUsage {
             indexed_rows: self.cardinality(),
             row_bitmap_bytes,
@@ -237,9 +317,18 @@ impl VectorIndex {
             hnsw_max_layer_count: hnsw.max_layer_count,
             hnsw_max_links_per_layer: hnsw.max_links_per_layer,
             hnsw_average_links_per_entry_basis_points: hnsw.average_links_per_entry_basis_points,
+            ivf_index_bytes: ivf.estimated_heap_bytes,
+            ivf_referenced_vector_bytes: ivf.referenced_vector_bytes,
+            ivf_entries: ivf.entries,
+            ivf_live_entries: ivf.live_entries,
+            ivf_deleted_entries: ivf.deleted_entries,
+            ivf_centroids: ivf.centroids,
+            ivf_list_count: ivf.list_count,
+            ivf_assigned_entries: ivf.assigned_entries,
             estimated_index_bytes,
             estimated_reachable_bytes: estimated_index_bytes
-                .saturating_add(hnsw.referenced_vector_bytes),
+                .saturating_add(hnsw.referenced_vector_bytes)
+                .saturating_add(ivf.referenced_vector_bytes),
         }
     }
 
@@ -258,19 +347,29 @@ impl VectorIndex {
         if let Some(hnsw) = &mut self.hnsw {
             hnsw.insert_with_scratch(row, vector.clone(), scratch)?;
         }
+        if let Some(ivf) = &mut self.ivf {
+            ivf.insert(row, vector.clone())?;
+        }
         Ok(())
     }
 
-    pub(crate) fn finish_bulk_load(&mut self) {
+    pub(crate) fn finish_bulk_load(&mut self) -> GraphResult<()> {
         if let Some(hnsw) = &mut self.hnsw {
             hnsw.finish_bulk_load();
         }
+        if let Some(ivf) = &mut self.ivf {
+            ivf.finish_bulk_load()?;
+        }
+        Ok(())
     }
 
     pub(crate) fn remove_row(&mut self, row: u32) {
         self.rows.remove(row);
         if let Some(hnsw) = &mut self.hnsw {
             hnsw.remove(row);
+        }
+        if let Some(ivf) = &mut self.ivf {
+            ivf.remove(row);
         }
     }
 
@@ -281,27 +380,36 @@ impl VectorIndex {
             && self.rows == reference.rows
     }
 
-    pub(crate) fn hnsw_search(
+    pub(crate) fn ann_search(
         &self,
         query: &VectorValue,
         k: usize,
-        ef_search: usize,
-    ) -> Option<selene_core::CoreResult<Vec<HnswVectorHit>>> {
-        self.hnsw
+        search_width: usize,
+    ) -> Option<selene_core::CoreResult<Vec<VectorIndexSearchHit>>> {
+        if let Some(hnsw) = &self.hnsw {
+            return Some(hnsw.search(query, k, search_width).map(hnsw_hits));
+        }
+        self.ivf
             .as_ref()
-            .map(|hnsw| hnsw.search(query, k, ef_search))
+            .map(|ivf| ivf.search(query, k, search_width).map(ivf_hits))
     }
 
-    pub(crate) fn hnsw_search_with_scratch(
+    pub(crate) fn ann_search_with_scratch(
         &self,
         query: &VectorValue,
         k: usize,
-        ef_search: usize,
+        search_width: usize,
         scratch: &mut HnswSearchScratch,
-    ) -> Option<selene_core::CoreResult<Vec<HnswVectorHit>>> {
-        self.hnsw
+    ) -> Option<selene_core::CoreResult<Vec<VectorIndexSearchHit>>> {
+        if let Some(hnsw) = &self.hnsw {
+            return Some(
+                hnsw.search_with_scratch(query, k, search_width, scratch)
+                    .map(hnsw_hits),
+            );
+        }
+        self.ivf
             .as_ref()
-            .map(|hnsw| hnsw.search_with_scratch(query, k, ef_search, scratch))
+            .map(|ivf| ivf.search(query, k, search_width).map(ivf_hits))
     }
 }
 
@@ -492,7 +600,7 @@ fn admit(
             observed: vector.dimension(),
         });
     }
-    if let Some(metric) = kind.hnsw_metric() {
+    if let Some(metric) = kind.ann_metric() {
         metric
             .distance(vector, vector)
             .map_err(|err| VectorIndexValueError::MetricRejected {

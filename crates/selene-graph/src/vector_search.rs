@@ -39,7 +39,7 @@ pub struct ApproximateVectorSearchOptions {
     pub metric: VectorMetric,
     /// Maximum result count.
     pub k: usize,
-    /// HNSW layer-zero candidate-list width.
+    /// ANN search-width hint.
     pub ef_search: usize,
 }
 
@@ -70,13 +70,13 @@ pub enum VectorSearchError {
         /// Duration since the deadline elapsed.
         elapsed: Duration,
     },
-    /// Approximate search was requested without a matching HNSW index.
-    #[error("matching HNSW vector index not found")]
+    /// Approximate search was requested without a matching ANN index.
+    #[error("matching ANN vector index not found")]
     ApproximateIndexMissing,
-    /// Approximate search metric does not match the HNSW index metric.
-    #[error("HNSW vector index was built for {indexed:?}, not requested {requested:?}")]
+    /// Approximate search metric does not match the ANN index metric.
+    #[error("ANN vector index was built for {indexed:?}, not requested {requested:?}")]
     ApproximateMetricMismatch {
-        /// Metric stored in the HNSW index.
+        /// Metric stored in the ANN index.
         indexed: VectorMetric,
         /// Metric requested by the caller.
         requested: VectorMetric,
@@ -275,13 +275,13 @@ impl SeleneGraph {
         Ok(top_k)
     }
 
-    /// Approximately rank vector-valued node properties through a HNSW index.
+    /// Approximately rank vector-valued node properties through an ANN index.
     ///
     /// This is intentionally separate from [`Self::exact_vector_search_nodes`]:
-    /// it requires a registered HNSW vector index whose dimension and metric
+    /// it requires a registered ANN vector index whose dimension and metric
     /// match the query, then returns the approximate result set produced by that
-    /// derived index. Distances are exact for the candidates HNSW returns, but
-    /// recall is governed by `ef_search`.
+    /// derived index. Distances are exact for the candidates the ANN index
+    /// returns, but recall is governed by `ef_search`.
     pub fn approximate_vector_search_nodes_checked(
         &self,
         label: &IStr,
@@ -299,7 +299,7 @@ impl SeleneGraph {
         else {
             return Err(VectorSearchError::ApproximateIndexMissing);
         };
-        let Some(indexed_metric) = index.hnsw_metric() else {
+        let Some(indexed_metric) = index.ann_metric() else {
             return Err(VectorSearchError::ApproximateIndexMissing);
         };
         if indexed_metric != options.metric {
@@ -309,7 +309,7 @@ impl SeleneGraph {
             });
         }
         let row_hits = index
-            .hnsw_search(query, options.k, options.ef_search)
+            .ann_search(query, options.k, options.ef_search)
             .ok_or(VectorSearchError::ApproximateIndexMissing)?
             .map_err(GraphError::from)?;
 
@@ -324,7 +324,7 @@ impl SeleneGraph {
                 .node_id_for_row(row)
                 .ok_or_else(|| GraphError::Inconsistent {
                     reason: format!(
-                        "HNSW vector index row {} for {} has no node id",
+                        "ANN vector index row {} for {} has no node id",
                         hit.row,
                         label.as_str()
                     ),
@@ -342,13 +342,13 @@ impl SeleneGraph {
             .collect())
     }
 
-    /// Run approximate HNSW vector search for a batch of queries.
+    /// Run approximate ANN vector search for a batch of queries.
     ///
     /// The result at each output position corresponds to the query at the same
     /// input position and follows the same ordering, visibility, and error
     /// contract as [`Self::approximate_vector_search_nodes_checked`]. The batch
-    /// path resolves the HNSW index once and reuses HNSW scratch buffers across
-    /// queries, making it the preferred native API when a caller has several
+    /// path resolves the ANN index once and reuses scratch buffers where the
+    /// algorithm supports them, making it the preferred native API when a caller has several
     /// independent embedding lookups over the same `(label, property)` index.
     pub fn approximate_vector_search_nodes_batch_checked(
         &self,
@@ -370,7 +370,7 @@ impl SeleneGraph {
         else {
             return Err(VectorSearchError::ApproximateIndexMissing);
         };
-        let Some(indexed_metric) = index.hnsw_metric() else {
+        let Some(indexed_metric) = index.ann_metric() else {
             return Err(VectorSearchError::ApproximateIndexMissing);
         };
         if indexed_metric != options.metric {
@@ -390,7 +390,7 @@ impl SeleneGraph {
                 return Err(VectorSearchError::ApproximateIndexMissing);
             }
             let row_hits = index
-                .hnsw_search_with_scratch(query, options.k, options.ef_search, &mut scratch)
+                .ann_search_with_scratch(query, options.k, options.ef_search, &mut scratch)
                 .ok_or(VectorSearchError::ApproximateIndexMissing)?
                 .map_err(GraphError::from)?;
 
@@ -405,7 +405,7 @@ impl SeleneGraph {
                     self.node_id_for_row(row)
                         .ok_or_else(|| GraphError::Inconsistent {
                             reason: format!(
-                                "HNSW vector index row {} for {} has no node id",
+                                "ANN vector index row {} for {} has no node id",
                                 hit.row,
                                 label.as_str()
                             ),
@@ -497,7 +497,7 @@ impl SharedGraph {
             .exact_vector_search_nodes_checked(label, property, query, metric, k, checker)
     }
 
-    /// Approximately rank vector-valued node properties through a HNSW index.
+    /// Approximately rank vector-valued node properties through an ANN index.
     ///
     /// This loads one immutable snapshot and delegates to
     /// [`SeleneGraph::approximate_vector_search_nodes_checked`].

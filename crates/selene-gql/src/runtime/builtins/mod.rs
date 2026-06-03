@@ -70,9 +70,9 @@ pub(super) enum BuiltinKind {
     Verify,
     /// `selene.vector_search_nodes` — exact vector node search.
     VectorSearchNodes,
-    /// `selene.vector_search_nodes_ann` — HNSW approximate vector node search.
+    /// `selene.vector_search_nodes_ann` — approximate vector node search.
     VectorSearchNodesAnn,
-    /// `selene.vector_search_nodes_ann_batch` — batched HNSW vector node search.
+    /// `selene.vector_search_nodes_ann_batch` — batched approximate vector node search.
     VectorSearchNodesAnnBatch,
     /// `selene.vector_index_stats` — vector index memory/cardinality stats.
     VectorIndexStats,
@@ -144,7 +144,7 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 12] = [
     },
     BuiltinSpec {
         name: &["selene", "vector_search_nodes_ann"],
-        description: "Approximate HNSW vector search over node properties.",
+        description: "Approximate vector search over node properties.",
         since_version: "1.1.0",
         kind: BuiltinKind::VectorSearchNodesAnn,
     },
@@ -174,7 +174,7 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 12] = [
     },
     BuiltinSpec {
         name: &["selene", "vector_search_nodes_ann_batch"],
-        description: "Batched approximate HNSW vector search over node properties.",
+        description: "Batched approximate vector search over node properties.",
         since_version: "1.1.0",
         kind: BuiltinKind::VectorSearchNodesAnnBatch,
     },

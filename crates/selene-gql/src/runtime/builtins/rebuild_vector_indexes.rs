@@ -17,7 +17,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
 
-static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 41] = [
+static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 59] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -86,6 +86,38 @@ static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 41] = [
         GqlType::Uint64,
     )
     .with_description("Average HNSW links per entry after rebuild scaled by 10,000."),
+    StaticOutputColumn::new("before_ivf_index_bytes", GqlType::Uint64)
+        .with_description("Estimated IVF-owned heap bytes before rebuild."),
+    StaticOutputColumn::new("after_ivf_index_bytes", GqlType::Uint64)
+        .with_description("Estimated IVF-owned heap bytes after rebuild."),
+    StaticOutputColumn::new("before_ivf_referenced_vector_bytes", GqlType::Uint64)
+        .with_description("Vector bytes reachable through IVF before rebuild."),
+    StaticOutputColumn::new("after_ivf_referenced_vector_bytes", GqlType::Uint64)
+        .with_description("Vector bytes reachable through IVF after rebuild."),
+    StaticOutputColumn::new("before_ivf_entries", GqlType::Uint64)
+        .with_description("Total IVF entries before rebuild."),
+    StaticOutputColumn::new("after_ivf_entries", GqlType::Uint64)
+        .with_description("Total IVF entries after rebuild."),
+    StaticOutputColumn::new("before_ivf_live_entries", GqlType::Uint64)
+        .with_description("Live IVF entries before rebuild."),
+    StaticOutputColumn::new("after_ivf_live_entries", GqlType::Uint64)
+        .with_description("Live IVF entries after rebuild."),
+    StaticOutputColumn::new("before_ivf_deleted_entries", GqlType::Uint64)
+        .with_description("Stale deleted IVF entries before rebuild."),
+    StaticOutputColumn::new("after_ivf_deleted_entries", GqlType::Uint64)
+        .with_description("Stale deleted IVF entries after rebuild."),
+    StaticOutputColumn::new("before_ivf_centroids", GqlType::Uint64)
+        .with_description("IVF centroids before rebuild."),
+    StaticOutputColumn::new("after_ivf_centroids", GqlType::Uint64)
+        .with_description("IVF centroids after rebuild."),
+    StaticOutputColumn::new("before_ivf_list_count", GqlType::Uint64)
+        .with_description("IVF inverted-list count before rebuild."),
+    StaticOutputColumn::new("after_ivf_list_count", GqlType::Uint64)
+        .with_description("IVF inverted-list count after rebuild."),
+    StaticOutputColumn::new("before_ivf_assigned_entries", GqlType::Uint64)
+        .with_description("Live IVF entries assigned to lists before rebuild."),
+    StaticOutputColumn::new("after_ivf_assigned_entries", GqlType::Uint64)
+        .with_description("Live IVF entries assigned to lists after rebuild."),
     StaticOutputColumn::new("before_estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes before rebuild."),
     StaticOutputColumn::new("after_estimated_index_bytes", GqlType::Uint64)
@@ -98,6 +130,10 @@ static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 41] = [
         .with_description("HNSW entries reclaimed by this index rebuild."),
     StaticOutputColumn::new("reclaimed_hnsw_deleted_entries", GqlType::Uint64)
         .with_description("Stale HNSW deleted entries reclaimed by this index rebuild."),
+    StaticOutputColumn::new("reclaimed_ivf_entries", GqlType::Uint64)
+        .with_description("IVF entries reclaimed by this index rebuild."),
+    StaticOutputColumn::new("reclaimed_ivf_deleted_entries", GqlType::Uint64)
+        .with_description("Stale IVF deleted entries reclaimed by this index rebuild."),
     StaticOutputColumn::new("reclaimed_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes reclaimed by this index rebuild."),
     StaticOutputColumn::new("reclaimed_reachable_bytes", GqlType::Uint64)
@@ -217,6 +253,22 @@ impl RebuildRow {
             bytes(self.after.hnsw_max_links_per_layer),
             bytes(self.before.hnsw_average_links_per_entry_basis_points),
             bytes(self.after.hnsw_average_links_per_entry_basis_points),
+            bytes(self.before.ivf_index_bytes),
+            bytes(self.after.ivf_index_bytes),
+            bytes(self.before.ivf_referenced_vector_bytes),
+            bytes(self.after.ivf_referenced_vector_bytes),
+            bytes(self.before.ivf_entries),
+            bytes(self.after.ivf_entries),
+            bytes(self.before.ivf_live_entries),
+            bytes(self.after.ivf_live_entries),
+            bytes(self.before.ivf_deleted_entries),
+            bytes(self.after.ivf_deleted_entries),
+            bytes(self.before.ivf_centroids),
+            bytes(self.after.ivf_centroids),
+            bytes(self.before.ivf_list_count),
+            bytes(self.after.ivf_list_count),
+            bytes(self.before.ivf_assigned_entries),
+            bytes(self.after.ivf_assigned_entries),
             bytes(self.before.estimated_index_bytes),
             bytes(self.after.estimated_index_bytes),
             bytes(self.before.estimated_reachable_bytes),
@@ -230,6 +282,16 @@ impl RebuildRow {
                 self.before
                     .hnsw_deleted_entries
                     .saturating_sub(self.after.hnsw_deleted_entries),
+            ),
+            bytes(
+                self.before
+                    .ivf_entries
+                    .saturating_sub(self.after.ivf_entries),
+            ),
+            bytes(
+                self.before
+                    .ivf_deleted_entries
+                    .saturating_sub(self.after.ivf_deleted_entries),
             ),
             bytes(
                 self.before
@@ -276,6 +338,13 @@ fn render_vector_index_kind(
         }
         VectorIndexKind::HnswNegativeInnerProduct => {
             render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
+        }
+        VectorIndexKind::IvfSquaredEuclidean => {
+            format!("vector_ivf_squared_euclidean({dimension})")
+        }
+        VectorIndexKind::IvfCosine => format!("vector_ivf_cosine({dimension})"),
+        VectorIndexKind::IvfNegativeInnerProduct => {
+            format!("vector_ivf_negative_inner_product({dimension})")
         }
     }
 }

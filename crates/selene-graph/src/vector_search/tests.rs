@@ -424,6 +424,50 @@ fn approximate_vector_search_uses_hnsw_index() {
 }
 
 #[test]
+fn approximate_vector_search_uses_ivf_index() {
+    let shared = SharedGraph::new(GraphId::new(972));
+    let doc = intern("vector.ann.ivf.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        for value in 0..64 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[value as f32, 0.0]))),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(
+            doc.clone(),
+            embedding.clone(),
+            VectorIndexKind::IvfSquaredEuclidean,
+            2,
+        )
+        .unwrap();
+
+    let query = vector(&[4.1, 0.0]);
+    let exact = shared
+        .exact_vector_search_nodes(&doc, &embedding, &query, VectorMetric::SquaredEuclidean, 3)
+        .unwrap();
+    let approx = shared
+        .approximate_vector_search_nodes_checked(
+            &doc,
+            &embedding,
+            &query,
+            ApproximateVectorSearchOptions::new(VectorMetric::SquaredEuclidean, 3, usize::MAX),
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+
+    assert_eq!(approx, exact);
+}
+
+#[test]
 fn approximate_vector_search_batch_matches_single_queries() {
     let shared = SharedGraph::new(GraphId::new(971));
     let doc = intern("vector.ann.batch.doc").unwrap();

@@ -302,5 +302,8 @@ pub(super) const fn vector_kind_from(kind: SchemaVectorIndexKind) -> VectorIndex
         SchemaVectorIndexKind::HnswNegativeInnerProduct => {
             VectorIndexKind::HnswNegativeInnerProduct
         }
+        SchemaVectorIndexKind::IvfSquaredEuclidean => VectorIndexKind::IvfSquaredEuclidean,
+        SchemaVectorIndexKind::IvfCosine => VectorIndexKind::IvfCosine,
+        SchemaVectorIndexKind::IvfNegativeInnerProduct => VectorIndexKind::IvfNegativeInnerProduct,
     }
 }
