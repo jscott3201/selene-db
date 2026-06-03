@@ -54,6 +54,7 @@ pub(crate) struct IvfVectorIndex {
     entries: Vec<IvfEntry>,
     row_to_entry: FxHashMap<u32, u32>,
     centroids: Vec<VectorValue>,
+    centroid_squared_norms: Vec<f64>,
     lists: Vec<Vec<u32>>,
 }
 
@@ -65,6 +66,7 @@ impl IvfVectorIndex {
             entries: Vec::new(),
             row_to_entry: FxHashMap::default(),
             centroids: Vec::new(),
+            centroid_squared_norms: Vec::new(),
             lists: Vec::new(),
         }
     }
@@ -97,12 +99,14 @@ impl IvfVectorIndex {
         let live_entries = self.live_entry_ids();
         if live_entries.is_empty() {
             self.centroids.clear();
+            self.centroid_squared_norms.clear();
             self.lists.clear();
             return Ok(());
         }
         let centroid_count = target_centroid_count(live_entries.len());
         self.centroids = self.seed_centroids(&live_entries, centroid_count);
         self.refine_centroids(&live_entries)?;
+        self.refresh_centroid_squared_norms();
         self.rebuild_lists(&live_entries)?;
         Ok(())
     }
@@ -132,9 +136,19 @@ impl IvfVectorIndex {
 
         let probe_count = search_width.max(1).min(self.centroids.len());
         let mut centroid_top_k = VectorTopK::new(probe_count);
-        for (centroid_id, centroid) in self.centroids.iter().enumerate() {
-            let distance = scorer.distance(centroid)?;
-            centroid_top_k.push_distance(centroid_id, distance);
+        if self.metric == VectorMetric::Cosine {
+            for (centroid_id, centroid) in self.centroids.iter().enumerate() {
+                let distance = scorer.distance_with_candidate_squared_norm(
+                    centroid,
+                    self.cached_centroid_squared_norm(centroid_id, centroid),
+                )?;
+                centroid_top_k.push_distance(centroid_id, distance);
+            }
+        } else {
+            for (centroid_id, centroid) in self.centroids.iter().enumerate() {
+                let distance = scorer.distance(centroid)?;
+                centroid_top_k.push_distance(centroid_id, distance);
+            }
         }
         for centroid in centroid_top_k.into_hits() {
             let Some(list) = self.lists.get(centroid.key) else {
@@ -182,6 +196,11 @@ impl IvfVectorIndex {
                 self.centroids
                     .capacity()
                     .saturating_mul(size_of::<VectorValue>()),
+            )
+            .saturating_add(
+                self.centroid_squared_norms
+                    .capacity()
+                    .saturating_mul(size_of::<f64>()),
             )
             .saturating_add(self.lists.capacity().saturating_mul(size_of::<Vec<u32>>()))
             .saturating_add(list_capacity.saturating_mul(size_of::<u32>()));
@@ -233,6 +252,9 @@ impl IvfVectorIndex {
 
     fn refine_centroids(&mut self, live_entries: &[u32]) -> CoreResult<()> {
         for _ in 0..TRAINING_ITERATIONS {
+            if self.metric == VectorMetric::Cosine {
+                self.refresh_centroid_squared_norms();
+            }
             let assignments = self.assignments(live_entries)?;
             let Some(dimension) = self
                 .centroids
@@ -270,6 +292,14 @@ impl IvfVectorIndex {
         Ok(())
     }
 
+    fn refresh_centroid_squared_norms(&mut self) {
+        if self.metric != VectorMetric::Cosine {
+            self.centroid_squared_norms.clear();
+            return;
+        }
+        self.centroid_squared_norms = self.centroids.iter().map(squared_norm).collect::<Vec<_>>();
+    }
+
     fn assignments(&self, live_entries: &[u32]) -> CoreResult<Vec<usize>> {
         if should_parallelize_assignments(live_entries.len(), self.centroids.len()) {
             return live_entries
@@ -300,18 +330,42 @@ impl IvfVectorIndex {
         let scorer = self.metric.bind_query(vector)?;
         let mut best_id = 0usize;
         let mut best_distance = f64::INFINITY;
-        for (centroid_id, centroid) in self.centroids.iter().enumerate() {
-            let distance = scorer.distance(centroid)?;
-            if distance
-                .total_cmp(&best_distance)
-                .then_with(|| centroid_id.cmp(&best_id))
-                .is_lt()
-            {
-                best_id = centroid_id;
-                best_distance = distance;
+        if self.metric == VectorMetric::Cosine {
+            for (centroid_id, centroid) in self.centroids.iter().enumerate() {
+                let centroid_squared_norm =
+                    self.cached_centroid_squared_norm(centroid_id, centroid);
+                let distance =
+                    scorer.distance_with_candidate_squared_norm(centroid, centroid_squared_norm)?;
+                if distance
+                    .total_cmp(&best_distance)
+                    .then_with(|| centroid_id.cmp(&best_id))
+                    .is_lt()
+                {
+                    best_id = centroid_id;
+                    best_distance = distance;
+                }
+            }
+        } else {
+            for (centroid_id, centroid) in self.centroids.iter().enumerate() {
+                let distance = scorer.distance(centroid)?;
+                if distance
+                    .total_cmp(&best_distance)
+                    .then_with(|| centroid_id.cmp(&best_id))
+                    .is_lt()
+                {
+                    best_id = centroid_id;
+                    best_distance = distance;
+                }
             }
         }
         Ok(best_id)
+    }
+
+    fn cached_centroid_squared_norm(&self, centroid_id: usize, centroid: &VectorValue) -> f64 {
+        self.centroid_squared_norms
+            .get(centroid_id)
+            .copied()
+            .unwrap_or_else(|| squared_norm(centroid))
     }
 }
 
@@ -328,6 +382,17 @@ fn target_centroid_count(live_len: usize) -> usize {
 
 fn should_parallelize_assignments(live_len: usize, centroid_count: usize) -> bool {
     live_len >= PARALLEL_ASSIGNMENT_MIN_ENTRIES && centroid_count > 1
+}
+
+fn squared_norm(vector: &VectorValue) -> f64 {
+    vector
+        .as_slice()
+        .iter()
+        .map(|component| {
+            let component = f64::from(*component);
+            component * component
+        })
+        .sum()
 }
 
 fn ceil_sqrt(value: usize) -> usize {
