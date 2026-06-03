@@ -35,6 +35,7 @@ pub mod shared;
 pub mod store;
 pub mod type_validator;
 pub mod typed_index;
+pub mod vector_search;
 pub mod write_txn;
 
 pub use adjacency::{AdjacencyEdge, AdjacencyEntry};
@@ -64,6 +65,7 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
+pub use vector_search::VectorNodeSearchHit;
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 
 #[cfg(test)]

@@ -120,6 +120,8 @@ medians below predate CORE-06 (measured at the 128 B `Value` layout); now that
 `Value` is 32 B, the `PropertyMap`-clone-heavy rows (`graph_edge_create_cascade`,
 `graph_mutation_commit_batch`) will tighten at the next full re-baseline.
 `graph_node_fetch` returns a column ref (no `Value` clone) and is unaffected.
+`graph_exact_vector_scan/*` is the native graph-level exact-vector oracle:
+label-filtered row scan plus scalar metric kernel, returning stable node ids.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
@@ -136,6 +138,12 @@ medians below predate CORE-06 (measured at the 128 B `Value` layout); now that
 | `graph_bfs` (depth=1) | 106.3 ns | 109.0 ns | 109.6 ns | Depth-1 independent of N. |
 | `graph_bfs` (depth=10) | 11.34 µs | 12.09 µs | 12.18 µs | Mostly traversal cost. |
 | `graph_bfs` (depth=50) | 101.1 µs | 111.1 µs | 113.1 µs | Saturates ~110 µs. |
+
+PR-local quick vector baseline:
+
+| Bench | 1k | Notes |
+|---|---:|---|
+| `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 46.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; scalar `f64` L2-squared accumulation; ~21.5 Melem/s. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
