@@ -150,6 +150,8 @@ tie-tolerant nearest-distance quality as `dqbp{basis points}` before that
 memory suffix.
 unindexed rows use `noidx`. Rebuild IDs add
 `upd{updates}_del{deletes}_b{entries-live-deleted}_a{entries-live-deleted}_rk{reclaimed reachable KiB}`.
+Stale-query IDs use
+`{stale|rebuilt}_n{rows}_e{entries}l{live}d{deleted}g{links}z{level0}u{upper}_m{index KiB}-{reachable KiB}`.
 
 | Bench | 10k | 50k | 100k | Notes |
 |---|---:|---:|---:|---|
@@ -175,6 +177,10 @@ PR-local quick vector baseline:
 | `graph_exact_vector_scan/cosine_dim128_k10` | 42.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; safe `f64x2` cosine accumulation; ~23.5 Melem/s. 20k flat-index row: ~280 µs. |
 | `graph_vector_index_rebuild/hnsw_l2_dim128` | 182.4 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; current M=18 1k quick ID `upd100_del50_b1100-950-150_a950-950-0_rk146` means 150 stale HNSW entries reclaimed and ~146 KiB reachable memory freed. |
 | `graph_vector_index_rebuild/hnsw_cos_dim128` | 226.8 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |
+| `graph_vector_index_stale_query/hnsw_l2_dim128_default` | 11.06 µs stale / 10.86 µs rebuilt (quick) | 1k fixture after 10% updates + 5% deletes. Rebuild removes 150 stale HNSW entries and drops reachable bytes from ~841 KiB to ~689 KiB; query latency improves ~1.8%. |
+| `graph_vector_index_stale_query/hnsw_cos_dim128_default` | 11.93 µs stale / 12.51 µs rebuilt (quick) | Same churn shape under cosine. On this small fixture, rebuild reclaims memory but query latency is within topology/noise range rather than strictly faster. |
+| `graph_vector_index_stale_query/hnsw_l2_dim128_m24ef64` | 13.69 µs stale / 13.68 µs rebuilt (quick) | Tuned `M=24, ef_construction=64`; stale-entry query cost is effectively neutral at this churn level while rebuild lowers reachable bytes from ~894 KiB to ~735 KiB. |
+| `graph_vector_index_stale_query/hnsw_cos_dim128_m24ef64` | 14.78 µs stale / 14.88 µs rebuilt (quick) | Tuned cosine row; memory reclamation is visible, latency delta is noise-scale. |
 
 PR-local HNSW tuning spot-check:
 

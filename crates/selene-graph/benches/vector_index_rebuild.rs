@@ -10,12 +10,18 @@ use std::time::{Duration, Instant};
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{
-    GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorValue, intern,
+    CancellationChecker, GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value,
+    VectorValue, intern,
 };
-use selene_graph::{HnswIndexConfig, SharedGraph, VectorIndexKind, VectorIndexRebuildReport};
+use selene_graph::{
+    ApproximateVectorSearchOptions, HnswIndexConfig, SharedGraph, VectorIndexKind,
+    VectorIndexMemoryUsage, VectorIndexRebuildReport,
+};
 use selene_testing::BenchProfile;
 
 const VECTOR_DIMENSION: usize = 128;
+const STALE_QUERY_K: usize = 10;
+const STALE_QUERY_EF_SEARCH: usize = 64;
 const VECTOR_REBUILD_VARIANTS: [VectorRebuildVariant; 4] = [
     VectorRebuildVariant {
         name: "hnsw_l2_dim128_default",
@@ -89,6 +95,47 @@ fn bench_vector_index_rebuild(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_vector_index_stale_query(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_index_stale_query");
+    for scale in vector_rebuild_scales() {
+        for variant in VECTOR_REBUILD_VARIANTS {
+            let stale = VectorRebuildFixture::build(scale, VECTOR_DIMENSION, variant);
+            let stale_suffix = format_usage_id_suffix(stale.memory_usage());
+            group.bench_function(
+                BenchmarkId::new(
+                    variant.name,
+                    format!("stale_n{}_{}", compact_usize(scale), stale_suffix),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(stale.approximate_query_hit_count());
+                    });
+                },
+            );
+
+            let rebuilt = VectorRebuildFixture::build(scale, VECTOR_DIMENSION, variant);
+            let report = rebuilt
+                .shared
+                .rebuild_vector_indexes()
+                .expect("bench query rebuild succeeds");
+            rebuilt.validate_report(&report);
+            let rebuilt_suffix = format_usage_id_suffix(rebuilt.memory_usage());
+            group.bench_function(
+                BenchmarkId::new(
+                    variant.name,
+                    format!("rebuilt_n{}_{}", compact_usize(scale), rebuilt_suffix),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(rebuilt.approximate_query_hit_count());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 fn vector_rebuild_scales() -> Vec<usize> {
     std::env::var("SELENE_VECTOR_REBUILD_BENCH_SCALES")
         .ok()
@@ -110,6 +157,9 @@ fn parse_scales(raw: String) -> Option<Vec<usize>> {
 struct VectorRebuildFixture {
     shared: SharedGraph,
     variant: VectorRebuildVariant,
+    label: IStr,
+    embedding_key: IStr,
+    query: VectorValue,
     scale: usize,
     update_count: usize,
     delete_count: usize,
@@ -134,6 +184,9 @@ impl VectorRebuildFixture {
         Self {
             shared,
             variant,
+            label,
+            embedding_key,
+            query: vector_value(scale - 1, dimension),
             scale,
             update_count,
             delete_count,
@@ -207,6 +260,32 @@ impl VectorRebuildFixture {
             compact_usize(entry.after.hnsw_upper_layer_link_count),
             report.reclaimed_reachable_bytes / 1024
         )
+    }
+
+    fn memory_usage(&self) -> VectorIndexMemoryUsage {
+        self.shared
+            .read()
+            .vector_index_for(&self.label, &self.embedding_key)
+            .expect("bench fixture has vector index")
+            .memory_usage()
+    }
+
+    fn approximate_query_hit_count(&self) -> usize {
+        let metric = self
+            .variant
+            .kind
+            .hnsw_metric()
+            .expect("bench variants are HNSW");
+        self.shared
+            .approximate_vector_search_nodes_checked(
+                &self.label,
+                &self.embedding_key,
+                &self.query,
+                ApproximateVectorSearchOptions::new(metric, STALE_QUERY_K, STALE_QUERY_EF_SEARCH),
+                CancellationChecker::disabled(),
+            )
+            .expect("bench HNSW query succeeds")
+            .len()
     }
 }
 
@@ -291,6 +370,20 @@ fn compact_usize(value: usize) -> String {
     compact_count(u64::try_from(value).unwrap_or(u64::MAX))
 }
 
+fn format_usage_id_suffix(usage: VectorIndexMemoryUsage) -> String {
+    format!(
+        "e{}l{}d{}g{}z{}u{}_m{}-{}",
+        compact_usize(usage.hnsw_entries),
+        compact_usize(usage.hnsw_live_entries),
+        compact_usize(usage.hnsw_deleted_entries),
+        compact_usize(usage.hnsw_link_count),
+        compact_usize(usage.hnsw_level_zero_link_count),
+        compact_usize(usage.hnsw_upper_layer_link_count),
+        usage.estimated_index_bytes / 1024,
+        usage.estimated_reachable_bytes / 1024,
+    )
+}
+
 fn compact_count(value: u64) -> String {
     if value >= 1_000 && value.is_multiple_of(1_000) {
         format!("{}k", value / 1_000)
@@ -315,6 +408,6 @@ fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
 criterion_group! {
     name = vector_index_maintenance;
     config = common::criterion_config();
-    targets = bench_vector_index_rebuild
+    targets = bench_vector_index_rebuild, bench_vector_index_stale_query
 }
 criterion_main!(vector_index_maintenance);
