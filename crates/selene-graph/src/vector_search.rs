@@ -429,5 +429,8 @@ impl SharedGraph {
 }
 
 #[cfg(test)]
+#[path = "vector_search/recall_tests.rs"]
+mod recall_tests;
+#[cfg(test)]
 #[path = "vector_search/tests.rs"]
 mod tests;
