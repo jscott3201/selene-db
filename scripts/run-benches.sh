@@ -18,6 +18,7 @@
 #   run-benches.sh --bench graph_hub_delete --save-baseline pre-graph05
 #   run-benches.sh --bench graph_hub_delete --baseline pre-graph05   # %-change diff
 #   run-benches.sh --bench wal --sample-size 50 --measurement-time 5 # A/B fidelity
+#   SELENE_VECTOR_BENCH_SCALES=10000,50000 run-benches.sh --bench single_graph --filter graph_exact_vector_scan
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
 # Profiles select the workload envelope via
