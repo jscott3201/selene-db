@@ -17,7 +17,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
 
-static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 31] = [
+static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 41] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -60,6 +60,32 @@ static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 31] = [
         .with_description("Stored directed HNSW links before rebuild."),
     StaticOutputColumn::new("after_hnsw_link_count", GqlType::Uint64)
         .with_description("Stored directed HNSW links after rebuild."),
+    StaticOutputColumn::new("before_hnsw_level_zero_link_count", GqlType::Uint64)
+        .with_description("Stored level-0 HNSW links before rebuild."),
+    StaticOutputColumn::new("after_hnsw_level_zero_link_count", GqlType::Uint64)
+        .with_description("Stored level-0 HNSW links after rebuild."),
+    StaticOutputColumn::new("before_hnsw_upper_layer_link_count", GqlType::Uint64)
+        .with_description("Stored upper-layer HNSW links before rebuild."),
+    StaticOutputColumn::new("after_hnsw_upper_layer_link_count", GqlType::Uint64)
+        .with_description("Stored upper-layer HNSW links after rebuild."),
+    StaticOutputColumn::new("before_hnsw_max_layer_count", GqlType::Uint64)
+        .with_description("Maximum HNSW layer count before rebuild."),
+    StaticOutputColumn::new("after_hnsw_max_layer_count", GqlType::Uint64)
+        .with_description("Maximum HNSW layer count after rebuild."),
+    StaticOutputColumn::new("before_hnsw_max_links_per_layer", GqlType::Uint64)
+        .with_description("Maximum HNSW links in one layer before rebuild."),
+    StaticOutputColumn::new("after_hnsw_max_links_per_layer", GqlType::Uint64)
+        .with_description("Maximum HNSW links in one layer after rebuild."),
+    StaticOutputColumn::new(
+        "before_hnsw_average_links_per_entry_basis_points",
+        GqlType::Uint64,
+    )
+    .with_description("Average HNSW links per entry before rebuild scaled by 10,000."),
+    StaticOutputColumn::new(
+        "after_hnsw_average_links_per_entry_basis_points",
+        GqlType::Uint64,
+    )
+    .with_description("Average HNSW links per entry after rebuild scaled by 10,000."),
     StaticOutputColumn::new("before_estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes before rebuild."),
     StaticOutputColumn::new("after_estimated_index_bytes", GqlType::Uint64)
@@ -181,6 +207,16 @@ impl RebuildRow {
             bytes(self.after.hnsw_deleted_entries),
             bytes(self.before.hnsw_link_count),
             bytes(self.after.hnsw_link_count),
+            bytes(self.before.hnsw_level_zero_link_count),
+            bytes(self.after.hnsw_level_zero_link_count),
+            bytes(self.before.hnsw_upper_layer_link_count),
+            bytes(self.after.hnsw_upper_layer_link_count),
+            bytes(self.before.hnsw_max_layer_count),
+            bytes(self.after.hnsw_max_layer_count),
+            bytes(self.before.hnsw_max_links_per_layer),
+            bytes(self.after.hnsw_max_links_per_layer),
+            bytes(self.before.hnsw_average_links_per_entry_basis_points),
+            bytes(self.after.hnsw_average_links_per_entry_basis_points),
             bytes(self.before.estimated_index_bytes),
             bytes(self.after.estimated_index_bytes),
             bytes(self.before.estimated_reachable_bytes),

@@ -375,6 +375,12 @@ fn flat_vector_index_memory_usage_reports_row_bitmap_only() {
     assert_eq!(usage.hnsw_entries, 0);
     assert_eq!(usage.hnsw_index_bytes, 0);
     assert_eq!(usage.hnsw_referenced_vector_bytes, 0);
+    assert_eq!(usage.hnsw_link_count, 0);
+    assert_eq!(usage.hnsw_level_zero_link_count, 0);
+    assert_eq!(usage.hnsw_upper_layer_link_count, 0);
+    assert_eq!(usage.hnsw_max_layer_count, 0);
+    assert_eq!(usage.hnsw_max_links_per_layer, 0);
+    assert_eq!(usage.hnsw_average_links_per_entry_basis_points, 0);
     assert_eq!(usage.estimated_reachable_bytes, usage.estimated_index_bytes);
     assert!(usage.estimated_index_bytes >= usage.row_bitmap_bytes);
 }
@@ -397,6 +403,16 @@ fn hnsw_vector_index_memory_usage_reports_links_and_stale_entries() {
     assert_eq!(usage.hnsw_live_entries, 31);
     assert_eq!(usage.hnsw_deleted_entries, 1);
     assert!(usage.hnsw_link_count > 0);
+    assert!(usage.hnsw_level_zero_link_count > 0);
+    assert_eq!(
+        usage
+            .hnsw_level_zero_link_count
+            .saturating_add(usage.hnsw_upper_layer_link_count),
+        usage.hnsw_link_count
+    );
+    assert!(usage.hnsw_max_layer_count > 0);
+    assert!(usage.hnsw_max_links_per_layer > 0);
+    assert!(usage.hnsw_average_links_per_entry_basis_points > 0);
     assert!(usage.hnsw_index_bytes > 0);
     assert!(usage.hnsw_referenced_vector_bytes >= 32 * 2 * std::mem::size_of::<f32>());
     assert_eq!(
@@ -486,6 +502,23 @@ fn shared_rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
     assert_eq!(entry.after.hnsw_entries, 44);
     assert_eq!(entry.after.hnsw_live_entries, 44);
     assert_eq!(entry.after.hnsw_deleted_entries, 0);
+    assert_eq!(
+        before
+            .hnsw_level_zero_link_count
+            .saturating_add(before.hnsw_upper_layer_link_count),
+        before.hnsw_link_count
+    );
+    assert_eq!(
+        entry
+            .after
+            .hnsw_level_zero_link_count
+            .saturating_add(entry.after.hnsw_upper_layer_link_count),
+        entry.after.hnsw_link_count
+    );
+    assert!(entry.after.hnsw_level_zero_link_count > 0);
+    assert!(entry.after.hnsw_max_layer_count > 0);
+    assert!(entry.after.hnsw_max_links_per_layer > 0);
+    assert!(entry.after.hnsw_average_links_per_entry_basis_points > 0);
 
     let after = shared
         .read()

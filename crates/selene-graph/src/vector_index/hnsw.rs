@@ -42,6 +42,16 @@ pub(crate) struct HnswMemoryUsage {
     pub(crate) deleted_entries: usize,
     /// Stored directed links across every layer.
     pub(crate) link_count: usize,
+    /// Stored directed links in the level-0 layer.
+    pub(crate) level_zero_link_count: usize,
+    /// Stored directed links above the level-0 layer.
+    pub(crate) upper_layer_link_count: usize,
+    /// Maximum layer count attached to any HNSW node.
+    pub(crate) max_layer_count: usize,
+    /// Maximum directed links stored in a single layer for any HNSW node.
+    pub(crate) max_links_per_layer: usize,
+    /// Average directed links per HNSW entry, scaled by 10,000.
+    pub(crate) average_links_per_entry_basis_points: usize,
     /// Estimated heap bytes owned by HNSW structures, excluding vector components.
     pub(crate) estimated_heap_bytes: usize,
     /// Component bytes reachable through HNSW vector handles.
@@ -210,20 +220,36 @@ impl HnswVectorIndex {
         let live_entries = self.row_to_entry.len();
         let deleted_entries = self.nodes.iter().filter(|node| node.deleted).count();
         let mut link_count = 0usize;
+        let mut level_zero_link_count = 0usize;
+        let mut upper_layer_link_count = 0usize;
+        let mut max_layer_count = 0usize;
+        let mut max_links_per_layer = 0usize;
         let mut link_capacity = 0usize;
         let mut layer_vec_capacity = 0usize;
         let mut referenced_vector_bytes = 0usize;
         for node in &self.nodes {
             referenced_vector_bytes = referenced_vector_bytes
                 .saturating_add(node.vector.dimension().saturating_mul(size_of::<f32>()));
+            max_layer_count = max_layer_count.max(node.links.len());
             if node.links.spilled() {
                 layer_vec_capacity = layer_vec_capacity.saturating_add(node.links.capacity());
             }
-            for layer in &node.links {
-                link_count = link_count.saturating_add(layer.len());
+            for (layer_idx, layer) in node.links.iter().enumerate() {
+                let layer_links = layer.len();
+                link_count = link_count.saturating_add(layer_links);
+                max_links_per_layer = max_links_per_layer.max(layer_links);
+                if layer_idx == 0 {
+                    level_zero_link_count = level_zero_link_count.saturating_add(layer_links);
+                } else {
+                    upper_layer_link_count = upper_layer_link_count.saturating_add(layer_links);
+                }
                 link_capacity = link_capacity.saturating_add(layer.capacity());
             }
         }
+        let average_links_per_entry_basis_points = link_count
+            .saturating_mul(10_000)
+            .checked_div(entries)
+            .unwrap_or(0);
         let estimated_heap_bytes = self
             .nodes
             .capacity()
@@ -240,6 +266,11 @@ impl HnswVectorIndex {
             live_entries,
             deleted_entries,
             link_count,
+            level_zero_link_count,
+            upper_layer_link_count,
+            max_layer_count,
+            max_links_per_layer,
+            average_links_per_entry_basis_points,
             estimated_heap_bytes,
             referenced_vector_bytes,
         }
