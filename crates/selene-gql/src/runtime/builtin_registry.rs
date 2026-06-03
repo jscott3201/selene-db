@@ -10,12 +10,12 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 10 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 11 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
 //! `selene.vector_search_nodes_ann`, `selene.vector_index_stats`,
-//! `selene.create_vector_index`, `selene.drop_vector_index`) are registered
-//! here, bringing the total to 29;
+//! `selene.rebuild_vector_indexes`, `selene.create_vector_index`,
+//! `selene.drop_vector_index`) are registered here, bringing the total to 30;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -78,8 +78,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 10 `selene.*`
-        // platform built-ins (handles 20..=29), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 11 `selene.*`
+        // platform built-ins (handles 20..=30), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -195,6 +195,10 @@ impl ProcedureRegistry for BuiltinProcedureRegistry {
                     (crate::ProcedureTier::Mutation, ProcedureContext::Mutation(mut_ctx)) => {
                         kind.execute_mutation(mut_ctx, args)
                     }
+                    (
+                        crate::ProcedureTier::Maintenance,
+                        ProcedureContext::Maintenance(maintenance_ctx),
+                    ) => kind.execute_maintenance(maintenance_ctx, args),
                     (expected, ctx) => Err(ProcedureError::TierMismatch {
                         expected,
                         actual: ctx.tier(),
@@ -242,18 +246,18 @@ mod tests {
     }
 
     #[test]
-    fn registers_all_twenty_nine_procedures() {
+    fn registers_all_thirty_procedures() {
         let registry = BuiltinProcedureRegistry::new();
         let handles: Vec<_> = registry.iter_handles().collect();
         assert_eq!(
             handles.len(),
-            29,
-            "expected 19 algo procedures + 10 platform built-ins"
+            30,
+            "expected 19 algo procedures + 11 platform built-ins"
         );
     }
 
     #[test]
-    fn iter_handles_yields_all_ten_platform_builtins() {
+    fn iter_handles_yields_all_eleven_platform_builtins() {
         let registry = BuiltinProcedureRegistry::new();
         let names: Vec<Vec<String>> = registry
             .iter_handles()
@@ -272,6 +276,7 @@ mod tests {
             ["selene", "vector_search_nodes"],
             ["selene", "vector_search_nodes_ann"],
             ["selene", "vector_index_stats"],
+            ["selene", "rebuild_vector_indexes"],
             ["selene", "create_vector_index"],
             ["selene", "drop_vector_index"],
         ] {
@@ -318,6 +323,11 @@ mod tests {
                 "{builtin:?}"
             );
         }
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_vector_indexes"]))
+            .expect("rebuild_vector_indexes resolves");
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
     }
 
     #[test]
@@ -434,6 +444,27 @@ mod tests {
     }
 
     #[test]
+    fn rebuild_vector_indexes_signature_is_zero_arg_maintenance() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_vector_indexes"]))
+            .expect("rebuild_vector_indexes resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 0);
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 31);
+        assert_eq!(columns[0].name.as_str(), "name");
+        assert_eq!(columns[0].ty, crate::GqlType::String);
+        assert_eq!(columns[19].name.as_str(), "before_hnsw_deleted_entries");
+        assert_eq!(columns[19].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[30].name.as_str(), "reclaimed_reachable_bytes");
+        assert_eq!(columns[30].ty, crate::GqlType::Uint64);
+    }
+
+    #[test]
     fn create_vector_index_signature_has_optional_kind_and_name_args() {
         let registry = BuiltinProcedureRegistry::new();
         let metadata = registry
@@ -509,7 +540,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=29).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=30).collect::<Vec<_>>());
     }
 
     #[test]

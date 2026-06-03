@@ -14,7 +14,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{
     BindingTableId, CancellationCause, CancellationChecker, CancellationToken, IStr, Value, metrics,
 };
-use selene_graph::{IndexProvider, Mutator, SeleneGraph, WriteTxn};
+use selene_graph::{IndexProvider, Mutator, SeleneGraph, SharedGraph, WriteTxn};
 
 use crate::{
     GqlStatus, ProcedureRegistry, SourceSpan,
@@ -62,6 +62,7 @@ pub struct TxContext<'a, 'g> {
     emitted_warnings: RefCell<FxHashSet<(GqlStatus, SourceSpan)>>,
     result_rows_emitted: Cell<usize>,
     write_txn: Option<&'a mut WriteTxn<'g>>,
+    maintenance_graph: Option<&'g SharedGraph>,
     session_time_zone: jiff::tz::TimeZone,
     /// GQLRT-05 per-statement memo of correlated-subquery target schemas, keyed
     /// by the subquery expression id. Within one statement an EXISTS/COUNT
@@ -152,6 +153,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
@@ -201,6 +203,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
@@ -250,6 +253,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
@@ -280,6 +284,7 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: None,
+            maintenance_graph: None,
             session_time_zone: jiff::tz::TimeZone::UTC,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
@@ -311,6 +316,39 @@ impl<'a, 'g> TxContext<'a, 'g> {
             emitted_warnings: RefCell::new(FxHashSet::default()),
             result_rows_emitted: Cell::new(0),
             write_txn: Some(txn),
+            maintenance_graph: None,
+            session_time_zone: jiff::tz::TimeZone::UTC,
+            subquery_target_schema: RefCell::new(FxHashMap::default()),
+        }
+    }
+
+    pub(crate) fn maintenance_with_owned_parameters_and_registry(
+        snapshot: Arc<SeleneGraph>,
+        impl_defined_caps: &'a ImplDefinedCaps,
+        registry: &'a dyn ProcedureRegistry,
+        graph: &'g SharedGraph,
+        providers: &'a [Arc<dyn IndexProvider>],
+        parameters: Cow<'a, BTreeMap<IStr, Value>>,
+        binding_tables: Rc<BindingTableRegistry>,
+    ) -> Self {
+        Self {
+            snapshot,
+            impl_defined_caps,
+            registry,
+            providers,
+            parameters,
+            binding_tables,
+            reopt_hook: None,
+            plan_expr_ids: None,
+            plan_subqueries: None,
+            cancellation: None,
+            deadline: None,
+            row_cap: None,
+            warning_sink: None,
+            emitted_warnings: RefCell::new(FxHashSet::default()),
+            result_rows_emitted: Cell::new(0),
+            write_txn: None,
+            maintenance_graph: Some(graph),
             session_time_zone: jiff::tz::TimeZone::UTC,
             subquery_target_schema: RefCell::new(FxHashMap::default()),
         }
@@ -551,6 +589,21 @@ impl<'a, 'g> TxContext<'a, 'g> {
         }
     }
 
+    /// Borrow the shared graph attached to a maintenance statement context.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecutorError::InvalidTransactionState`] when the current
+    /// context is not a top-level maintenance statement context.
+    pub fn maintenance_graph_with_span(
+        &self,
+        detail: &'static str,
+        span: SourceSpan,
+    ) -> Result<&'g SharedGraph, ExecutorError> {
+        self.maintenance_graph
+            .ok_or(ExecutorError::InvalidTransactionState { detail, span })
+    }
+
     /// Borrow the planner/executor implementation-defined caps.
     #[must_use]
     pub const fn impl_defined_caps(&self) -> &'a ImplDefinedCaps {
@@ -622,6 +675,7 @@ impl fmt::Debug for TxContext<'_, '_> {
             .field("row_cap", &self.row_cap)
             .field("result_rows_emitted", &self.result_rows_emitted.get())
             .field("write_txn", &self.write_txn.is_some())
+            .field("maintenance_graph", &self.maintenance_graph.is_some())
             .finish()
     }
 }

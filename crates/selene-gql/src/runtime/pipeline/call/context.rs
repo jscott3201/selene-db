@@ -4,7 +4,10 @@ use selene_core::metrics;
 
 use crate::{
     PlannedCall, ProcedureError, ProcedureMutability, ProcedureTier,
-    runtime::{ExecutorError, GraphContext, MutationContext, ProcedureContext, TxContext},
+    runtime::{
+        ExecutorError, GraphContext, MaintenanceContext, MutationContext, ProcedureContext,
+        TxContext,
+    },
 };
 
 pub(super) fn validate_call_tier(call: &PlannedCall) -> Result<(), ExecutorError> {
@@ -52,6 +55,18 @@ where
                 binding_tables,
             )))
         }
+        ProcedureTier::Maintenance => {
+            let graph = ctx.maintenance_graph_with_span(
+                "maintenance-tier procedure requires a maintenance statement context",
+                call.span,
+            )?;
+            Ok(ProcedureContext::Maintenance(MaintenanceContext::new(
+                graph,
+                ctx.impl_defined_caps(),
+                ctx.cancellation_checker(),
+                ctx.binding_table_registry(),
+            )))
+        }
     }
 }
 
@@ -74,6 +89,18 @@ where
             detail: "mutation-tier procedure requires a write transaction",
             span: call.span,
         }),
+        ProcedureTier::Maintenance => {
+            let graph = ctx.maintenance_graph_with_span(
+                "maintenance-tier procedure requires a maintenance statement context",
+                call.span,
+            )?;
+            Ok(ProcedureContext::Maintenance(MaintenanceContext::new(
+                graph,
+                ctx.impl_defined_caps(),
+                ctx.cancellation_checker(),
+                ctx.binding_table_registry(),
+            )))
+        }
     }
 }
 
@@ -81,6 +108,7 @@ pub(super) const fn tier_for_mutability(mutability: ProcedureMutability) -> Proc
     match mutability {
         ProcedureMutability::Read => ProcedureTier::Graph,
         ProcedureMutability::SchemaWrite => ProcedureTier::Mutation,
+        ProcedureMutability::MaintenanceWrite => ProcedureTier::Maintenance,
     }
 }
 

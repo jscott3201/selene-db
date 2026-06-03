@@ -5,6 +5,7 @@ mod drop_cascade;
 mod drop_graph;
 mod endpoints;
 mod index_ddl;
+mod procedure;
 mod property;
 
 use selene_core::{IStr, LabelSet, Value, intern};
@@ -18,6 +19,7 @@ use self::{
     compose::{compose_edge_properties, compose_node_properties},
     endpoints::resolve_endpoints,
     index_ddl::{IndexPath, create_index_plan, resolve_drop_index},
+    procedure::{procedure_row, render_procedure_name},
     property::{property_defs, render_property_value_type},
 };
 use super::catalog_index::{
@@ -25,8 +27,7 @@ use super::catalog_index::{
     render_vector_index_name, validate_index_name_collisions,
 };
 use crate::{
-    AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, GqlType, ProcedureMetadata,
-    ProcedureMutability, ProcedureSignature, ProcedureTier, SourceSpan,
+    AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, GqlType, SourceSpan,
     runtime::{Binding, BindingTable, ExecutorError, TxContext},
 };
 
@@ -520,60 +521,6 @@ pub(super) fn intern_runtime(value: &str) -> Result<IStr, ExecutorError> {
     intern(value).map_err(|_err| ExecutorError::ImplementationDefined {
         detail: "interner cap exhausted during catalog rendering",
     })
-}
-
-fn procedure_row(name: &[IStr], metadata: &ProcedureMetadata) -> Result<Binding, ExecutorError> {
-    let name = render_procedure_name(name);
-    Ok(Binding::new([
-        Value::String(intern_runtime(&name)?),
-        Value::String(intern_runtime(render_tier(metadata.tier))?),
-        Value::String(intern_runtime(render_mutability(metadata.mutability))?),
-        Value::String(intern_runtime(&render_signature(
-            &name,
-            &metadata.signature,
-        ))?),
-        Value::String(intern_runtime(metadata.description)?),
-        Value::String(intern_runtime(metadata.signature.since_version)?),
-    ]))
-}
-
-fn render_procedure_name(name: &[IStr]) -> String {
-    name.iter()
-        .map(|part| part.as_str())
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
-fn render_tier(tier: ProcedureTier) -> &'static str {
-    match tier {
-        ProcedureTier::Graph => "graph",
-        ProcedureTier::Mutation => "mutation",
-    }
-}
-
-fn render_mutability(mutability: ProcedureMutability) -> &'static str {
-    match mutability {
-        ProcedureMutability::Read => "read",
-        ProcedureMutability::SchemaWrite => "schema_write",
-    }
-}
-
-fn render_signature(name: &str, signature: &ProcedureSignature) -> String {
-    let params = signature
-        .parameters
-        .iter()
-        .map(|parameter| {
-            let nullable = if parameter.nullable { "?" } else { "" };
-            format!(
-                "{}: {}{}",
-                parameter.name,
-                render_gql_type(&parameter.ty),
-                nullable
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!("{name}({params})")
 }
 
 fn render_gql_type(ty: &GqlType) -> String {

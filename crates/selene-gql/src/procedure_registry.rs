@@ -318,6 +318,8 @@ pub enum ProcedureTier {
     Graph,
     /// Mutation-tier procedure running inside a write transaction.
     Mutation,
+    /// Engine-maintenance procedure running against the shared graph.
+    Maintenance,
 }
 
 /// Side-effect class declared by the registered procedure.
@@ -327,6 +329,8 @@ pub enum ProcedureMutability {
     Read,
     /// Procedure may mutate catalog/schema state.
     SchemaWrite,
+    /// Procedure may rebuild derived engine state without emitting graph changes.
+    MaintenanceWrite,
 }
 
 /// Result returned by procedure execution.

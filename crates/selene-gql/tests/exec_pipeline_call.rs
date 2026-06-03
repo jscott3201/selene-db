@@ -447,6 +447,82 @@ fn mutation_tier_procedure_in_auto_commit_commits_on_success() {
 }
 
 #[test]
+fn maintenance_tier_procedure_runs_without_write_commit() {
+    let registry = registry_one(
+        &["pkg", "maintain"],
+        ProcedureMutability::MaintenanceWrite,
+        ProcedureTier::Maintenance,
+        vec![output("out", GqlType::Integer)],
+        Behavior::Return(vec![vec![Value::Int(11)]]),
+    );
+    let graph = graph(3926);
+
+    let table = rows(execute("CALL pkg.maintain() YIELD out", &graph, &registry).unwrap());
+
+    assert_eq!(column_values(&table, "out"), vec![Value::Int(11)]);
+    assert_eq!(graph.read().node_count(), 0);
+    assert_eq!(registry.records()[0].tier, ProcedureTier::Maintenance);
+}
+
+#[test]
+fn maintenance_tier_procedure_in_explicit_tx_is_rejected() {
+    let registry = registry_one(
+        &["pkg", "maintain"],
+        ProcedureMutability::MaintenanceWrite,
+        ProcedureTier::Maintenance,
+        Vec::new(),
+        Behavior::Return(vec![vec![]]),
+    );
+    let graph = graph(3927);
+    let mut session = Session::new(&graph);
+
+    execute_with_session("START TRANSACTION", &mut session, &registry).unwrap();
+    let err = execute_with_session("CALL pkg.maintain()", &mut session, &registry)
+        .expect_err("maintenance rejects explicit transaction");
+
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidTransactionState {
+            detail: "maintenance procedure cannot run inside an explicit transaction",
+            ..
+        }
+    ));
+    assert!(registry.records().is_empty());
+    assert!(session.is_aborted());
+    session.abort();
+}
+
+#[test]
+fn maintenance_tier_procedure_in_plain_read_context_is_rejected() {
+    let registry = registry_one(
+        &["pkg", "maintain"],
+        ProcedureMutability::MaintenanceWrite,
+        ProcedureTier::Maintenance,
+        Vec::new(),
+        Behavior::Return(vec![vec![]]),
+    );
+    let plan = planned("CALL pkg.maintain()", &registry);
+    let graph = graph(3928);
+    let mut ctx = TxContext::read_only(
+        graph.read(),
+        &plan.impl_defined_caps,
+        &registry,
+        graph.index_providers(),
+    );
+
+    let err = execute_pipeline(&plan.pipeline, seed_table(), &mut ctx)
+        .expect_err("maintenance context is absent");
+
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidTransactionState {
+            detail: "maintenance-tier procedure requires a maintenance statement context",
+            ..
+        }
+    ));
+}
+
+#[test]
 fn mutation_tier_procedure_in_explicit_tx_sees_pending_state() {
     let registry = registry_one(
         &["pkg", "count"],

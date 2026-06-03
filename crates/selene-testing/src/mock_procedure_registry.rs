@@ -174,6 +174,7 @@ const fn tier_for_mutability(mutability: ProcedureMutability) -> ProcedureTier {
     match mutability {
         ProcedureMutability::Read => ProcedureTier::Graph,
         ProcedureMutability::SchemaWrite => ProcedureTier::Mutation,
+        ProcedureMutability::MaintenanceWrite => ProcedureTier::Maintenance,
     }
 }
 

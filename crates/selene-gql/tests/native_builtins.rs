@@ -10,7 +10,10 @@
 //! the `ProcedureRegistry` trait, plus coverage for new native platform
 //! built-ins added after the pack teardown.
 
-use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
+use selene_core::{
+    GraphId, IStr, LabelDiff, LabelSet, NodeId, PropertyDiff, PropertyMap, Value, VectorValue,
+    intern,
+};
 use selene_gql::{
     BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
     Session, StatementOutput,
@@ -110,7 +113,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 #[test]
-fn show_procedures_lists_all_twenty_nine_procedures() {
+fn show_procedures_lists_all_thirty_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -120,8 +123,8 @@ fn show_procedures_lists_all_twenty_nine_procedures() {
 
     assert_eq!(
         table.row_count(),
-        29,
-        "19 algo procedures + 10 platform built-ins"
+        30,
+        "19 algo procedures + 11 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -132,6 +135,7 @@ fn show_procedures_lists_all_twenty_nine_procedures() {
         "selene.vector_search_nodes",
         "selene.vector_search_nodes_ann",
         "selene.vector_index_stats",
+        "selene.rebuild_vector_indexes",
         "selene.create_vector_index",
         "selene.drop_vector_index",
         "algo.pagerank",
@@ -405,6 +409,113 @@ fn vector_index_stats_reports_hnsw_memory_and_cardinality() {
         string_column(&table, "name"),
         vec!["vidx:9:VectorDoc:9:embedding"]
     );
+}
+
+#[test]
+fn rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
+    let graph = graph(330_019);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    let ids = {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        let mut ids = Vec::new();
+        for row in 0..48 {
+            ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(doc.clone()),
+                        props(&embedding, Value::Vector(vector(&[row as f32, 0.0]))),
+                    )
+                    .expect("vector node inserts"),
+            );
+        }
+        txn.commit().expect("seed commits");
+        ids
+    };
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 2, 'hnsw')",
+            &registry,
+        )
+        .expect("hnsw vector index creation executes");
+
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for (offset, id) in ids.iter().copied().take(8).enumerate() {
+            mutator
+                .update_node(
+                    id,
+                    LabelDiff::new([], []).expect("empty label diff"),
+                    PropertyDiff::new(
+                        [(
+                            embedding.clone(),
+                            Value::Vector(vector(&[1_000.0 + offset as f32, 0.0])),
+                        )],
+                        [],
+                    )
+                    .expect("property diff"),
+                )
+                .expect("vector update succeeds");
+        }
+        for id in ids.iter().copied().skip(8).take(4) {
+            mutator.delete_node(id).expect("delete succeeds");
+        }
+        txn.commit().expect("churn commits");
+    }
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.rebuild_vector_indexes() \
+         YIELD label, property, before_indexed_rows, after_indexed_rows, \
+               before_hnsw_entries, after_hnsw_entries, \
+               before_hnsw_deleted_entries, after_hnsw_deleted_entries, \
+               reclaimed_hnsw_entries, reclaimed_hnsw_deleted_entries, \
+               reclaimed_reachable_bytes",
+        &registry,
+    );
+
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(string_column(&table, "label"), vec!["VectorDoc"]);
+    assert_eq!(string_column(&table, "property"), vec!["embedding"]);
+    assert_eq!(uint_column(&table, "before_indexed_rows"), vec![44]);
+    assert_eq!(uint_column(&table, "after_indexed_rows"), vec![44]);
+    assert_eq!(uint_column(&table, "before_hnsw_entries"), vec![56]);
+    assert_eq!(uint_column(&table, "after_hnsw_entries"), vec![44]);
+    assert_eq!(uint_column(&table, "before_hnsw_deleted_entries"), vec![12]);
+    assert_eq!(uint_column(&table, "after_hnsw_deleted_entries"), vec![0]);
+    assert_eq!(uint_column(&table, "reclaimed_hnsw_entries"), vec![12]);
+    assert_eq!(
+        uint_column(&table, "reclaimed_hnsw_deleted_entries"),
+        vec![12]
+    );
+    assert!(uint_column(&table, "reclaimed_reachable_bytes")[0] > 0);
+}
+
+#[test]
+fn rebuild_vector_indexes_is_rejected_inside_explicit_tx() {
+    let graph = graph(330_020);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source("START TRANSACTION", &registry)
+        .expect("transaction starts");
+    let err = session
+        .execute_source("CALL selene.rebuild_vector_indexes()", &registry)
+        .expect_err("maintenance call inside explicit transaction is rejected");
+
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidTransactionState { detail, .. }
+            if detail.contains("maintenance procedure cannot run inside an explicit transaction")
+    ));
+    assert!(session.is_aborted());
+    session.abort();
 }
 
 #[test]
