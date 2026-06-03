@@ -5,26 +5,17 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
+mod single_graph_hnsw_recall;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
-    VectorValue, intern,
-};
-use selene_graph::{
-    ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind,
-    VectorIndexMemoryUsage, VectorNodeSearchHit,
-};
+use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, intern};
+use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
+use single_graph_hnsw_recall::{HNSW_RECALL_PROFILES, HnswRecallFixture};
 
 const HNSW_RECALL_K: usize = 10;
 const HNSW_RECALL_QUERIES: usize = 16;
 const HNSW_RECALL_EF_SEARCH: &[usize] = &[10, 32, 64];
-const HNSW_RECALL_PROFILES: &[HnswRecallProfile] = &[
-    HnswRecallProfile::LineSquaredEuclidean,
-    HnswRecallProfile::ClusteredCosine,
-    HnswRecallProfile::NegativeInnerProduct,
-];
 
 fn bench_node_fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_node_fetch");
@@ -194,13 +185,15 @@ fn bench_hnsw_recall(c: &mut Criterion) {
             ));
             for &ef_search in HNSW_RECALL_EF_SEARCH {
                 let recall = fixture.mean_recall(ef_search);
+                let quality = fixture.mean_distance_quality(ef_search);
                 group.bench_with_input(
                     BenchmarkId::new(
                         format!(
-                            "{}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_bp{}_{}",
+                            "{}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_idbp{}_dqbp{}_{}",
                             fixture.profile().name(),
                             fixture.dimension(),
                             recall_basis_points(recall),
+                            recall_basis_points(quality),
                             memory_suffix
                         ),
                         fixture.scale(),
@@ -233,208 +226,6 @@ fn vector_scan_scales() -> Vec<usize> {
             (!scales.is_empty()).then_some(scales)
         })
         .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
-}
-
-#[derive(Clone, Copy, Debug)]
-enum HnswRecallProfile {
-    LineSquaredEuclidean,
-    ClusteredCosine,
-    NegativeInnerProduct,
-}
-
-impl HnswRecallProfile {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::LineSquaredEuclidean => "line_l2",
-            Self::ClusteredCosine => "cluster_cos",
-            Self::NegativeInnerProduct => "mips",
-        }
-    }
-
-    const fn dimension(self) -> usize {
-        match self {
-            Self::LineSquaredEuclidean | Self::ClusteredCosine => 128,
-            Self::NegativeInnerProduct => 64,
-        }
-    }
-
-    const fn metric(self) -> VectorMetric {
-        match self {
-            Self::LineSquaredEuclidean => VectorMetric::SquaredEuclidean,
-            Self::ClusteredCosine => VectorMetric::Cosine,
-            Self::NegativeInnerProduct => VectorMetric::NegativeInnerProduct,
-        }
-    }
-
-    const fn index_kind(self) -> VectorIndexKind {
-        match self {
-            Self::LineSquaredEuclidean => VectorIndexKind::HnswSquaredEuclidean,
-            Self::ClusteredCosine => VectorIndexKind::HnswCosine,
-            Self::NegativeInnerProduct => VectorIndexKind::HnswNegativeInnerProduct,
-        }
-    }
-
-    const fn graph_id_offset(self) -> u64 {
-        match self {
-            Self::LineSquaredEuclidean => 0,
-            Self::ClusteredCosine => 1_000_000,
-            Self::NegativeInnerProduct => 2_000_000,
-        }
-    }
-
-    fn corpus_value(self, seed: usize, scale: usize) -> VectorValue {
-        match self {
-            Self::LineSquaredEuclidean => recall_corpus_value(seed, self.dimension()),
-            Self::ClusteredCosine => clustered_cosine_value(seed, scale, self.dimension(), 0.0),
-            Self::NegativeInnerProduct => mips_corpus_value(seed, scale, self.dimension()),
-        }
-    }
-
-    fn query_value(self, query_idx: usize, scale: usize, query_count: usize) -> VectorValue {
-        match self {
-            Self::LineSquaredEuclidean => {
-                recall_query_value(query_idx, scale, query_count, self.dimension())
-            }
-            Self::ClusteredCosine => {
-                let cluster_count = recall_cluster_count(scale);
-                let cluster = query_idx % cluster_count;
-                let seed = cluster + (scale / cluster_count / 2) * cluster_count;
-                clustered_cosine_value(
-                    seed.min(scale.saturating_sub(1)),
-                    scale,
-                    self.dimension(),
-                    0.0003,
-                )
-            }
-            Self::NegativeInnerProduct => mips_query_value(query_idx, self.dimension()),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-struct HnswRecallFixture {
-    profile: HnswRecallProfile,
-    dimension: usize,
-    scale: usize,
-    graph: SeleneGraph,
-    label: IStr,
-    embedding_key: IStr,
-    queries: Vec<VectorValue>,
-    exact: Vec<Vec<NodeId>>,
-    k: usize,
-}
-
-impl HnswRecallFixture {
-    fn build(profile: HnswRecallProfile, scale: usize, query_count: usize, k: usize) -> Self {
-        let scale = scale.max(1);
-        let dimension = profile.dimension();
-        let label = intern("HnswRecallDoc").expect("bench label is valid");
-        let embedding_key = intern("embedding").expect("bench key is valid");
-        let shared = SharedGraph::new(GraphId::new(
-            10_000 + scale as u64 + profile.graph_id_offset(),
-        ));
-        {
-            let mut txn = shared.begin_write();
-            let mut mutator = txn.mutator();
-            for idx in 0..scale {
-                let vector = Value::Vector(profile.corpus_value(idx, scale));
-                let props = PropertyMap::from_pairs([(embedding_key.clone(), vector)])
-                    .expect("bench vector properties are valid");
-                mutator
-                    .create_node(LabelSet::single(label.clone()), props)
-                    .expect("bench vector node insert succeeds");
-            }
-            let dimension = u32::try_from(dimension).expect("bench dimension fits u32");
-            mutator
-                .create_vector_index(
-                    label.clone(),
-                    embedding_key.clone(),
-                    profile.index_kind(),
-                    dimension,
-                )
-                .expect("bench HNSW vector index build succeeds");
-            txn.commit()
-                .expect("bench HNSW recall fixture commit succeeds");
-        }
-        let graph = shared.read().as_ref().clone();
-        let queries: Vec<_> = (0..query_count)
-            .map(|idx| profile.query_value(idx, scale, query_count))
-            .collect();
-        let exact = queries
-            .iter()
-            .map(|query| {
-                graph
-                    .exact_vector_search_nodes(&label, &embedding_key, query, profile.metric(), k)
-                    .expect("bench exact vector search succeeds")
-                    .into_iter()
-                    .map(|hit| hit.node_id)
-                    .collect()
-            })
-            .collect();
-        Self {
-            profile,
-            dimension,
-            scale,
-            graph,
-            label,
-            embedding_key,
-            queries,
-            exact,
-            k,
-        }
-    }
-
-    const fn profile(&self) -> HnswRecallProfile {
-        self.profile
-    }
-
-    const fn dimension(&self) -> usize {
-        self.dimension
-    }
-
-    const fn scale(&self) -> usize {
-        self.scale
-    }
-
-    const fn query_count(&self) -> usize {
-        self.queries.len()
-    }
-
-    fn mean_recall(&self, ef_search: usize) -> f64 {
-        let expected = self.exact.iter().map(Vec::len).sum::<usize>();
-        if expected == 0 {
-            return 1.0;
-        }
-        self.total_overlap(ef_search) as f64 / expected as f64
-    }
-
-    fn total_overlap(&self, ef_search: usize) -> usize {
-        self.queries
-            .iter()
-            .zip(&self.exact)
-            .map(|(query, exact)| {
-                let approximate = self
-                    .graph
-                    .approximate_vector_search_nodes_checked(
-                        &self.label,
-                        &self.embedding_key,
-                        query,
-                        ApproximateVectorSearchOptions::new(
-                            self.profile.metric(),
-                            self.k,
-                            ef_search,
-                        ),
-                        CancellationChecker::disabled(),
-                    )
-                    .expect("bench approximate vector search succeeds");
-                overlap_count(exact, &approximate)
-            })
-            .sum()
-    }
-
-    fn memory_id_suffix(&self) -> String {
-        vector_index_memory_id_suffix(&self.graph, &self.label, &self.embedding_key)
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -541,94 +332,6 @@ fn vector_value(seed: usize, dimension: usize) -> VectorValue {
     VectorValue::new(vector_components(seed, dimension)).expect("bench vector is valid")
 }
 
-fn recall_query_value(
-    query_idx: usize,
-    scale: usize,
-    query_count: usize,
-    dimension: usize,
-) -> VectorValue {
-    let seed = query_idx
-        .saturating_mul(scale.max(1))
-        .checked_div(query_count.max(1))
-        .unwrap_or(0)
-        .min(scale.saturating_sub(1));
-    let mut components = recall_vector_components(seed, dimension);
-    if let Some(first) = components.first_mut() {
-        *first += 0.37;
-    }
-    VectorValue::new(components).expect("bench recall query is valid")
-}
-
-fn recall_corpus_value(seed: usize, dimension: usize) -> VectorValue {
-    VectorValue::new(recall_vector_components(seed, dimension))
-        .expect("bench recall corpus vector is valid")
-}
-
-fn clustered_cosine_value(
-    seed: usize,
-    scale: usize,
-    dimension: usize,
-    query_shift: f32,
-) -> VectorValue {
-    let cluster_count = recall_cluster_count(scale);
-    let cluster = seed % cluster_count;
-    let ordinal = seed / cluster_count;
-    let center = cluster % dimension;
-    let second = cluster.wrapping_mul(5).wrapping_add(3) % dimension;
-    let spread = ordinal as f32 - (scale / cluster_count / 2) as f32;
-    let components: Vec<f32> = (0..dimension)
-        .map(|dim| {
-            let base = (((cluster + 3) * (dim + 11)) % 17) as f32 / 200.0;
-            let primary = if dim == center { 1.0 } else { 0.0 };
-            let secondary = if dim == second { 0.25 } else { 0.0 };
-            base + primary + secondary + spread * 0.0002 + query_shift
-        })
-        .collect();
-    VectorValue::new(components).expect("bench clustered cosine vector is valid")
-}
-
-fn recall_cluster_count(scale: usize) -> usize {
-    scale.clamp(1, 16)
-}
-
-fn mips_corpus_value(seed: usize, scale: usize, dimension: usize) -> VectorValue {
-    let components: Vec<f32> = (0..dimension)
-        .map(|dim| {
-            let trend = seed as f32 / scale.max(1) as f32;
-            let local = ((seed * (dim + 13) + dim * 29) % 101) as f32 / 5_000.0;
-            trend * (1.0 + dim as f32 / dimension as f32) + local + 0.01
-        })
-        .collect();
-    VectorValue::new(components).expect("bench MIPS corpus vector is valid")
-}
-
-fn mips_query_value(query_idx: usize, dimension: usize) -> VectorValue {
-    let components: Vec<f32> = (0..dimension)
-        .map(|dim| {
-            let weight = 1.0 + dim as f32 / dimension as f32;
-            let tilt = ((query_idx + dim * 7) % 23) as f32 / 1_000.0;
-            weight + tilt
-        })
-        .collect();
-    VectorValue::new(components).expect("bench MIPS query vector is valid")
-}
-
-fn recall_vector_components(seed: usize, dimension: usize) -> Vec<f32> {
-    (0..dimension)
-        .map(|dim| {
-            if dim == 0 {
-                seed as f32
-            } else {
-                let raw = seed
-                    .wrapping_mul(dim.wrapping_mul(37).wrapping_add(11))
-                    .wrapping_add(dim.wrapping_mul(31))
-                    % 997;
-                raw as f32 / 10_000.0
-            }
-        })
-        .collect()
-}
-
 fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
     (0..dimension)
         .map(|dim| {
@@ -636,13 +339,6 @@ fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
             raw as f32 / 1_000.0
         })
         .collect()
-}
-
-fn overlap_count(exact: &[NodeId], approximate: &[VectorNodeSearchHit]) -> usize {
-    exact
-        .iter()
-        .filter(|node_id| approximate.iter().any(|hit| hit.node_id == **node_id))
-        .count()
 }
 
 fn recall_basis_points(recall: f64) -> u64 {

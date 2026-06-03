@@ -127,6 +127,9 @@ maintenance rebuild that reclaims stale HNSW entries after vector update/delete
 churn; fixture setup is excluded from the reported Criterion duration. Vector
 benchmark IDs include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_e{HNSW entries}_l{live}_d{deleted}_g{links}`;
+HNSW recall IDs encode exact-ID recall as `idbp{basis points}` and
+tie-tolerant nearest-distance quality as `dqbp{basis points}` before that
+memory suffix.
 unindexed rows use `noidx`. Rebuild IDs add
 `upd{updates}_del{deletes}_b{entries-live-deleted}_a{entries-live-deleted}_rk{reclaimed reachable KiB}`.
 
@@ -157,7 +160,7 @@ PR-local HNSW tuning spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10` | 153.7 µs (quick) | `M=18` keeps ID-overlap recall at 9875 bp while fixing duplicate-distance quality; 10k row has 372,024 links and `m2647-7647`. Previous `M=16`: 144.2 µs / 330,688 links / `m2485-7485`; `M=24`: 187.7 µs / 496,032 links / `m3131-8131` and 10000 bp ID overlap. |
+| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10_idbp9875_dqbp9875` | 153.8 µs (quick) | `M=18` keeps both ID-overlap and distance-quality recall at 9875 bp on this 10k corpus while the separate duplicate-distance regression passes at 10000 bp; 10k row has 372,024 links and `m2647-7647`. Previous `M=16`: 144.2 µs / 330,688 links / `m2485-7485`; `M=24`: 187.7 µs / 496,032 links / `m3131-8131` and 10000 bp ID overlap. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
