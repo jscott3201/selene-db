@@ -11,6 +11,10 @@ use selene_core::{CoreError, IStr, Value, VectorMetric, VectorValue};
 use selene_graph::{ApproximateVectorSearchOptions, GraphError, VectorSearchError};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
+use super::vector_search_ann_defaults::{
+    DEFAULT_HNSW_SEARCH_WIDTH, SEARCH_WIDTH_DEFAULT_DOC, default_search_width,
+    optional_search_width_arg,
+};
 use crate::procedure_registry::ProcedureError;
 use crate::{
     GqlType, GraphContext, ProcedureDefaultValue, ProcedureOutputColumn, ProcedureParameter,
@@ -18,7 +22,6 @@ use crate::{
 };
 
 const PROC_NAME: &str = "selene.vector_search_nodes_ann_batch";
-const DEFAULT_EF_SEARCH: usize = 64;
 
 static VECTOR_SEARCH_ANN_BATCH_OUTPUTS: [StaticOutputColumn; 3] = [
     StaticOutputColumn::new("query_index", GqlType::Uint64)
@@ -40,10 +43,10 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
             .with_description("Distance metric.")
             .with_default_doc("squared_euclidean")
             .with_default(ProcedureDefaultValue::String("squared_euclidean")),
-        StaticParameter::new("ef_search", GqlType::Integer, false)
-            .with_description("ANN search-width hint.")
-            .with_default_doc("64")
-            .with_default(ProcedureDefaultValue::Integer(64)),
+        StaticParameter::new("ef_search", GqlType::Integer, true)
+            .with_description("ANN search-width hint; NULL uses the index-kind default.")
+            .with_default_doc(SEARCH_WIDTH_DEFAULT_DOC)
+            .with_default(ProcedureDefaultValue::Null),
     ]
     .into_iter()
     .map(StaticParameter::into_parameter)
@@ -77,9 +80,14 @@ pub(super) fn execute(
         .unwrap_or(VectorMetric::SquaredEuclidean);
     let ef_search = args
         .get(5)
-        .map(|value| cardinality_arg(value, "ef_search"))
+        .map(|value| optional_search_width_arg(PROC_NAME, value))
         .transpose()?
-        .unwrap_or(DEFAULT_EF_SEARCH);
+        .flatten()
+        .unwrap_or_else(|| {
+            queries.first().map_or(DEFAULT_HNSW_SEARCH_WIDTH, |query| {
+                default_search_width(ctx.snapshot(), &label, &property, query.dimension(), metric)
+            })
+        });
 
     let batch_hits = ctx
         .snapshot()
