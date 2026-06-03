@@ -322,3 +322,104 @@ fn vector_search_nodes_ann_uses_registered_ivf_index() {
     assert!(distances[0] < distances[1]);
     assert!(distances[1] < distances[2]);
 }
+
+#[test]
+fn vector_search_nodes_ann_uses_ivf_default_when_width_is_omitted_or_null() {
+    let graph = graph(330_155);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for i in 0..32 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[i as f32, 0.0]))),
+                )
+                .expect("vector node inserts");
+        }
+        txn.commit().expect("seed graph commits");
+    }
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 2, 'ivf')",
+            &registry,
+        )
+        .expect("ivf vector index creation executes");
+
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[4.1, 0.0])));
+    let omitted = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 3) \
+         YIELD node_id, distance",
+        &registry,
+    );
+    let null_width = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 3, 'squared_euclidean', NULL) \
+         YIELD node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(node_column(&omitted, "node_id")[0], NodeId::new(5));
+    assert_eq!(
+        node_column(&omitted, "node_id"),
+        node_column(&null_width, "node_id")
+    );
+    assert_eq!(
+        float_column(&omitted, "distance"),
+        float_column(&null_width, "distance")
+    );
+}
+
+#[test]
+fn vector_search_nodes_ann_batch_uses_ivf_default_when_width_is_omitted() {
+    let graph = graph(330_156);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+
+    {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for i in 0..32 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[i as f32, 0.0]))),
+                )
+                .expect("vector node inserts");
+        }
+        txn.commit().expect("seed graph commits");
+    }
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 2, 'ivf')",
+            &registry,
+        )
+        .expect("ivf vector index creation executes");
+    session.bind_parameter(
+        istr("queries"),
+        Value::List(vec![
+            Value::Vector(vector(&[4.1, 0.0])),
+            Value::Vector(vector(&[12.2, 0.0])),
+        ]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes_ann_batch('VectorDoc', 'embedding', $queries, 2) \
+         YIELD query_index, node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(uint_column(&table, "query_index"), vec![0, 0, 1, 1]);
+    let nodes = node_column(&table, "node_id");
+    assert_eq!(nodes[0], NodeId::new(5));
+    assert_eq!(nodes[2], NodeId::new(13));
+}

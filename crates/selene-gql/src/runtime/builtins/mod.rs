@@ -48,6 +48,7 @@ mod vector_index_stats;
 mod vector_search;
 mod vector_search_ann;
 mod vector_search_ann_batch;
+mod vector_search_ann_defaults;
 mod verify;
 
 use selene_core::Value;

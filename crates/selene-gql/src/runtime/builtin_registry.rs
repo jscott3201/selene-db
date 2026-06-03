@@ -421,8 +421,12 @@ mod tests {
         assert!(parameters[4].default.is_some());
         assert_eq!(parameters[5].name.as_str(), "ef_search");
         assert_eq!(parameters[5].ty, crate::GqlType::Integer);
-        assert_eq!(parameters[5].default_doc, Some("64"));
-        assert!(parameters[5].default.is_some());
+        assert!(parameters[5].nullable);
+        assert_eq!(parameters[5].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+        assert_eq!(
+            parameters[5].default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
     }
 
     #[test]
@@ -455,8 +459,12 @@ mod tests {
         assert!(parameters[4].default.is_some());
         assert_eq!(parameters[5].name.as_str(), "ef_search");
         assert_eq!(parameters[5].ty, crate::GqlType::Integer);
-        assert_eq!(parameters[5].default_doc, Some("64"));
-        assert!(parameters[5].default.is_some());
+        assert!(parameters[5].nullable);
+        assert_eq!(parameters[5].default_doc, Some("NULL (HNSW 64, IVF 2)"));
+        assert_eq!(
+            parameters[5].default,
+            Some(crate::ProcedureDefaultValue::Null)
+        );
 
         let columns = &metadata.output_schema.columns;
         assert_eq!(columns.len(), 3);
