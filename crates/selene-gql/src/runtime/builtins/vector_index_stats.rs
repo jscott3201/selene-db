@@ -1,0 +1,189 @@
+//! `selene.vector_index_stats` native built-in.
+//!
+//! Read-only graph-tier procedure exposing vector-index cardinality and memory
+//! accounting. This stays on the implementation-defined `CALL selene.*` surface
+//! instead of changing ISO catalog statement row shapes.
+
+use selene_core::{IStr, Value, intern};
+use selene_graph::{VectorIndexKind, VectorIndexMemoryUsage};
+
+use super::meta::{StaticOutputColumn, StaticParameter};
+use crate::procedure_registry::ProcedureError;
+use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, ProcedureResult};
+
+const PROC_NAME: &str = "selene.vector_index_stats";
+
+static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 16] = [
+    StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
+    StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
+    StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
+    StaticOutputColumn::new("kind", GqlType::String).with_description("Vector index kind."),
+    StaticOutputColumn::new("dimension", GqlType::Uint64)
+        .with_description("Required vector dimensionality."),
+    StaticOutputColumn::new("indexed_rows", GqlType::Uint64)
+        .with_description("Live indexed row count."),
+    StaticOutputColumn::new("row_bitmap_bytes", GqlType::Uint64)
+        .with_description("Estimated row-bitmap heap bytes."),
+    StaticOutputColumn::new("row_bitmap_serialized_bytes", GqlType::Uint64)
+        .with_description("Serialized row-bitmap bytes."),
+    StaticOutputColumn::new("hnsw_index_bytes", GqlType::Uint64)
+        .with_description("Estimated HNSW-owned heap bytes."),
+    StaticOutputColumn::new("hnsw_referenced_vector_bytes", GqlType::Uint64)
+        .with_description("Vector component bytes reachable through HNSW entries."),
+    StaticOutputColumn::new("hnsw_entries", GqlType::Uint64)
+        .with_description("Total HNSW entries including stale entries."),
+    StaticOutputColumn::new("hnsw_live_entries", GqlType::Uint64)
+        .with_description("Live HNSW row entries."),
+    StaticOutputColumn::new("hnsw_deleted_entries", GqlType::Uint64)
+        .with_description("Stale deleted HNSW entries."),
+    StaticOutputColumn::new("hnsw_link_count", GqlType::Uint64)
+        .with_description("Stored directed HNSW links."),
+    StaticOutputColumn::new("estimated_index_bytes", GqlType::Uint64)
+        .with_description("Estimated index-owned bytes."),
+    StaticOutputColumn::new("estimated_reachable_bytes", GqlType::Uint64)
+        .with_description("Estimated bytes reachable from the index."),
+];
+
+pub(super) fn signature() -> Vec<ProcedureParameter> {
+    let params: [StaticParameter; 0] = [];
+    params
+        .into_iter()
+        .map(StaticParameter::into_parameter)
+        .collect()
+}
+
+pub(super) fn output_columns() -> Vec<ProcedureOutputColumn> {
+    VECTOR_INDEX_STATS_OUTPUTS
+        .iter()
+        .cloned()
+        .map(StaticOutputColumn::into_output_column)
+        .collect()
+}
+
+pub(super) fn execute(
+    ctx: &GraphContext<'_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    if !args.is_empty() {
+        return Err(ProcedureError::InvalidArgument {
+            detail: format!("{PROC_NAME} expects zero arguments"),
+        });
+    }
+
+    let snapshot = ctx.snapshot();
+    let mut rows = snapshot
+        .iter_vector_index_entries()
+        .map(|(label, property, kind, dimension, explicit_name)| {
+            let index = snapshot
+                .vector_index_for(&label, &property)
+                .ok_or_else(|| ProcedureError::Internal {
+                    detail: format!(
+                        "vector index registration for ({label}, {property}) had no index"
+                    ),
+                })?;
+            let usage = index.memory_usage();
+            let name = render_vector_index_name(label.clone(), property.clone(), explicit_name);
+            let kind = render_vector_index_kind(kind, dimension);
+            Ok(StatsRow {
+                label,
+                property,
+                name,
+                kind,
+                dimension,
+                usage,
+            })
+        })
+        .collect::<Result<Vec<_>, ProcedureError>>()?;
+    rows.sort_by(|left, right| {
+        left.label
+            .as_str()
+            .cmp(right.label.as_str())
+            .then_with(|| left.property.as_str().cmp(right.property.as_str()))
+            .then_with(|| left.kind.cmp(&right.kind))
+    });
+
+    let rows = rows
+        .into_iter()
+        .map(StatsRow::into_values)
+        .collect::<Result<Vec<_>, ProcedureError>>()?;
+    Ok(ProcedureResult { rows })
+}
+
+struct StatsRow {
+    label: IStr,
+    property: IStr,
+    name: String,
+    kind: String,
+    dimension: u32,
+    usage: VectorIndexMemoryUsage,
+}
+
+impl StatsRow {
+    fn into_values(self) -> Result<Vec<Value>, ProcedureError> {
+        Ok(vec![
+            string(&self.name)?,
+            Value::String(self.label),
+            Value::String(self.property),
+            string(&self.kind)?,
+            Value::Uint(u64::from(self.dimension)),
+            Value::Uint(self.usage.indexed_rows),
+            Value::Uint(usize_to_u64_saturating(self.usage.row_bitmap_bytes)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.row_bitmap_serialized_bytes,
+            )),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_index_bytes)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.hnsw_referenced_vector_bytes,
+            )),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_live_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_deleted_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_link_count)),
+            Value::Uint(usize_to_u64_saturating(self.usage.estimated_index_bytes)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.estimated_reachable_bytes,
+            )),
+        ])
+    }
+}
+
+fn render_vector_index_name(label: IStr, property: IStr, explicit: Option<IStr>) -> String {
+    explicit
+        .map(|name| name.as_str().to_owned())
+        .unwrap_or_else(|| {
+            let label = label.as_str();
+            let property = property.as_str();
+            format!(
+                "vidx:{}:{}:{}:{}",
+                label.len(),
+                label,
+                property.len(),
+                property
+            )
+        })
+}
+
+fn render_vector_index_kind(kind: VectorIndexKind, dimension: u32) -> String {
+    match kind {
+        VectorIndexKind::Flat => format!("vector_flat({dimension})"),
+        VectorIndexKind::HnswSquaredEuclidean => {
+            format!("vector_hnsw_squared_euclidean({dimension})")
+        }
+        VectorIndexKind::HnswCosine => format!("vector_hnsw_cosine({dimension})"),
+        VectorIndexKind::HnswNegativeInnerProduct => {
+            format!("vector_hnsw_negative_inner_product({dimension})")
+        }
+    }
+}
+
+fn usize_to_u64_saturating(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn string(value: &str) -> Result<Value, ProcedureError> {
+    intern(value)
+        .map(Value::String)
+        .map_err(|_err| ProcedureError::Internal {
+            detail: "interner cap exhausted during selene.vector_index_stats".to_owned(),
+        })
+}

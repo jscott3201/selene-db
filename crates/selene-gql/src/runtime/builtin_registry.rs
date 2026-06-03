@@ -10,11 +10,12 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 9 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 10 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
-//! `selene.vector_search_nodes_ann`, `selene.create_vector_index`,
-//! `selene.drop_vector_index`) are registered here, bringing the total to 28;
+//! `selene.vector_search_nodes_ann`, `selene.vector_index_stats`,
+//! `selene.create_vector_index`, `selene.drop_vector_index`) are registered
+//! here, bringing the total to 29;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -77,8 +78,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 9 `selene.*`
-        // platform built-ins (handles 20..=28), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 10 `selene.*`
+        // platform built-ins (handles 20..=29), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -241,18 +242,18 @@ mod tests {
     }
 
     #[test]
-    fn registers_all_twenty_eight_procedures() {
+    fn registers_all_twenty_nine_procedures() {
         let registry = BuiltinProcedureRegistry::new();
         let handles: Vec<_> = registry.iter_handles().collect();
         assert_eq!(
             handles.len(),
-            28,
-            "expected 19 algo procedures + 9 platform built-ins"
+            29,
+            "expected 19 algo procedures + 10 platform built-ins"
         );
     }
 
     #[test]
-    fn iter_handles_yields_all_nine_platform_builtins() {
+    fn iter_handles_yields_all_ten_platform_builtins() {
         let registry = BuiltinProcedureRegistry::new();
         let names: Vec<Vec<String>> = registry
             .iter_handles()
@@ -270,6 +271,7 @@ mod tests {
             ["selene", "drop_index"],
             ["selene", "vector_search_nodes"],
             ["selene", "vector_search_nodes_ann"],
+            ["selene", "vector_index_stats"],
             ["selene", "create_vector_index"],
             ["selene", "drop_vector_index"],
         ] {
@@ -291,6 +293,7 @@ mod tests {
             &["selene", "verify"][..],
             &["selene", "vector_search_nodes"][..],
             &["selene", "vector_search_nodes_ann"][..],
+            &["selene", "vector_index_stats"][..],
         ] {
             let metadata = registry.lookup(&name(builtin)).expect("resolves");
             assert_eq!(metadata.tier, ProcedureTier::Graph, "{builtin:?}");
@@ -410,6 +413,27 @@ mod tests {
     }
 
     #[test]
+    fn vector_index_stats_signature_is_zero_arg_read() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "vector_index_stats"]))
+            .expect("vector_index_stats resolves");
+        let arity = metadata.signature.arity();
+        assert_eq!(arity.minimum, 0);
+        assert_eq!(arity.maximum, 0);
+        assert_eq!(metadata.tier, ProcedureTier::Graph);
+        assert_eq!(metadata.mutability, ProcedureMutability::Read);
+        let columns = &metadata.output_schema.columns;
+        assert_eq!(columns.len(), 16);
+        assert_eq!(columns[0].name.as_str(), "name");
+        assert_eq!(columns[0].ty, crate::GqlType::String);
+        assert_eq!(columns[4].name.as_str(), "dimension");
+        assert_eq!(columns[4].ty, crate::GqlType::Uint64);
+        assert_eq!(columns[15].name.as_str(), "estimated_reachable_bytes");
+        assert_eq!(columns[15].ty, crate::GqlType::Uint64);
+    }
+
+    #[test]
     fn create_vector_index_signature_has_optional_kind_and_name_args() {
         let registry = BuiltinProcedureRegistry::new();
         let metadata = registry
@@ -485,7 +509,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=28).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=29).collect::<Vec<_>>());
     }
 
     #[test]
