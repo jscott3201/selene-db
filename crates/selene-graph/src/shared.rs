@@ -9,7 +9,7 @@ use std::sync::{
 use arc_swap::ArcSwap;
 use parking_lot::{Mutex, RwLock};
 
-use selene_core::{Change, GraphId, IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{Change, GraphId, HnswIndexConfig, IStr, SchemaChange, SchemaPropertyIndexKind};
 use selene_persist::{AuditLog, SyncPolicy, WalConfig, WalWriter};
 
 use crate::adjacency::AdjacencyEdge;
@@ -528,9 +528,28 @@ impl SharedGraph {
         dimension: u32,
         name: Option<IStr>,
     ) -> GraphResult<()> {
+        self.create_vector_index_named_with_config(label, property, kind, dimension, name, None)
+    }
+
+    /// Register a built-in node vector index with optional HNSW construction config.
+    pub fn create_vector_index_named_with_config(
+        &self,
+        label: IStr,
+        property: IStr,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<IStr>,
+        hnsw_config: Option<HnswIndexConfig>,
+    ) -> GraphResult<()> {
         let mut txn = self.begin_write();
-        txn.mutator()
-            .create_vector_index_named(label, property, kind, dimension, name)?;
+        txn.mutator().create_vector_index_named_with_config(
+            label,
+            property,
+            kind,
+            dimension,
+            name,
+            hnsw_config,
+        )?;
         txn.commit()?;
         Ok(())
     }

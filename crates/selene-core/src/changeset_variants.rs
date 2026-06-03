@@ -1,9 +1,10 @@
 use smallvec::SmallVec;
 
 use crate::{
-    Change, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, IStr, LabelDiff,
-    LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PropertyDiff, PropertyMap,
-    RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
+    Change, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, HnswIndexConfig,
+    IStr, LabelDiff, LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PropertyDiff,
+    PropertyMap, RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    SchemaVectorIndexKind,
 };
 
 impl Change {
@@ -189,9 +190,10 @@ impl SchemaChange {
         || Self::VectorIndexCreated {
             label: changeset_variant_istr("schema.all.node"),
             property: changeset_variant_istr("schema.all.vector"),
-            kind: SchemaVectorIndexKind::Flat,
-            dimension: 3,
+            kind: SchemaVectorIndexKind::HnswCosine,
+            dimension: 128,
             name: Some(changeset_variant_istr("schema.all.vector.index")),
+            hnsw_config: Some(HnswIndexConfig::new(24, 128)),
         },
         || Self::VectorIndexDropped {
             label: changeset_variant_istr("schema.all.node"),

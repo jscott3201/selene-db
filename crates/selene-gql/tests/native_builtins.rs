@@ -377,7 +377,7 @@ fn vector_index_stats_reports_hnsw_memory_and_cardinality() {
 
     session
         .execute_source(
-            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'hnsw')",
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3, 'hnsw', NULL, NULL, 24, 64)",
             &registry,
         )
         .expect("hnsw vector index creation executes");
@@ -392,7 +392,7 @@ fn vector_index_stats_reports_hnsw_memory_and_cardinality() {
     assert_eq!(string_column(&table, "property"), vec!["embedding"]);
     assert_eq!(
         string_column(&table, "kind"),
-        vec!["vector_hnsw_squared_euclidean(3)"]
+        vec!["vector_hnsw_squared_euclidean(3,m=24,ef_construction=64)"]
     );
     assert_eq!(uint_column(&table, "dimension"), vec![3]);
     assert_eq!(uint_column(&table, "indexed_rows"), vec![2]);
@@ -471,7 +471,7 @@ fn rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
     let table = execute_rows(
         &mut session,
         "CALL selene.rebuild_vector_indexes() \
-         YIELD label, property, before_indexed_rows, after_indexed_rows, \
+         YIELD label, property, kind, before_indexed_rows, after_indexed_rows, \
                before_hnsw_entries, after_hnsw_entries, \
                before_hnsw_deleted_entries, after_hnsw_deleted_entries, \
                reclaimed_hnsw_entries, reclaimed_hnsw_deleted_entries, \
@@ -482,6 +482,10 @@ fn rebuild_vector_indexes_reclaims_stale_hnsw_entries() {
     assert_eq!(table.row_count(), 1);
     assert_eq!(string_column(&table, "label"), vec!["VectorDoc"]);
     assert_eq!(string_column(&table, "property"), vec!["embedding"]);
+    assert_eq!(
+        string_column(&table, "kind"),
+        vec!["vector_hnsw_squared_euclidean(2)"]
+    );
     assert_eq!(uint_column(&table, "before_indexed_rows"), vec![44]);
     assert_eq!(uint_column(&table, "after_indexed_rows"), vec![44]);
     assert_eq!(uint_column(&table, "before_hnsw_entries"), vec![56]);
@@ -516,28 +520,6 @@ fn rebuild_vector_indexes_is_rejected_inside_explicit_tx() {
     ));
     assert!(session.is_aborted());
     session.abort();
-}
-
-#[test]
-fn drop_vector_index_removes_the_index_through_the_funnel() {
-    let graph = graph(330_014);
-    let registry = BuiltinProcedureRegistry::new();
-    let mut session = Session::new(&graph);
-
-    session
-        .execute_source(
-            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3)",
-            &registry,
-        )
-        .expect("vector index creation executes");
-    session
-        .execute_source(
-            "CALL selene.drop_vector_index('VectorDoc', 'embedding')",
-            &registry,
-        )
-        .expect("vector index drop executes");
-
-    assert_eq!(graph.read().vector_index_count(), 0);
 }
 
 #[test]

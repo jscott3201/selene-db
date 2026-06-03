@@ -207,12 +207,13 @@ impl SeleneGraph {
     /// Family (4): vector row-set indexes.
     fn check_vector_indexes(&self) -> Result<(), String> {
         for ((label, property), entry) in &self.vector_index {
-            let reference = crate::vector_index::build_vector_index_lenient(
+            let reference = crate::vector_index::build_vector_index_lenient_with_hnsw_config(
                 self,
                 label.clone(),
                 property.clone(),
                 entry.kind(),
                 entry.dimension(),
+                entry.hnsw_config(),
             )
             .map_err(|err| {
                 format!("failed to re-derive vector index ({label}, {property}): {err}")

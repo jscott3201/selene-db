@@ -13,29 +13,29 @@ use std::mem::size_of;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
+#[path = "vector_index/build.rs"]
+mod build;
+#[path = "vector_index/config.rs"]
+mod config;
 #[path = "vector_index/hnsw.rs"]
 mod hnsw;
 #[path = "vector_index/rebuild.rs"]
 mod rebuild;
 
-use selene_core::{IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue};
+use selene_core::{HnswIndexConfig, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
+pub(crate) use build::{
+    build_vector_index_lenient_with_hnsw_config, build_vector_index_with_hnsw_config,
+    rebuild_vector_indexes, rebuild_vector_indexes_strict,
+};
+use config::hnsw_config_for_kind;
 use hnsw::{HnswVectorHit, HnswVectorIndex};
 pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
 
 type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
-
-struct VectorIndexRegistration {
-    label: IStr,
-    property: IStr,
-    kind: VectorIndexKind,
-    dimension: u32,
-    name: Option<IStr>,
-    before: VectorIndexMemoryUsage,
-}
 
 /// Vector index algorithm kind.
 #[derive(
@@ -114,6 +114,7 @@ pub struct VectorIndexMemoryUsage {
 pub struct VectorIndex {
     kind: VectorIndexKind,
     dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
     rows: RoaringBitmap,
     hnsw: Option<HnswVectorIndex>,
 }
@@ -126,20 +127,30 @@ impl VectorIndex {
     /// Returns [`GraphError::VectorIndexInvalidDimension`] when `dimension` is
     /// zero.
     pub fn new(kind: VectorIndexKind, dimension: u32) -> GraphResult<Self> {
+        Self::new_with_hnsw_config(kind, dimension, None)
+    }
+
+    /// Construct an empty vector index with optional HNSW configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::VectorIndexInvalidDimension`] when `dimension` is
+    /// zero, or [`GraphError::VectorIndexInvalidHnswConfig`] when the supplied
+    /// HNSW parameters are invalid for the chosen kind.
+    pub fn new_with_hnsw_config(
+        kind: VectorIndexKind,
+        dimension: u32,
+        hnsw_config: Option<HnswIndexConfig>,
+    ) -> GraphResult<Self> {
         ensure_dimension(dimension)?;
-        let hnsw = match kind {
-            VectorIndexKind::Flat => None,
-            VectorIndexKind::HnswSquaredEuclidean => {
-                Some(HnswVectorIndex::new(VectorMetric::SquaredEuclidean))
-            }
-            VectorIndexKind::HnswCosine => Some(HnswVectorIndex::new(VectorMetric::Cosine)),
-            VectorIndexKind::HnswNegativeInnerProduct => {
-                Some(HnswVectorIndex::new(VectorMetric::NegativeInnerProduct))
-            }
-        };
+        let hnsw_config = hnsw_config_for_kind(kind, hnsw_config)?;
+        let hnsw = kind.hnsw_metric().map(|metric| {
+            HnswVectorIndex::with_config(metric, hnsw_config.expect("HNSW kind stores config"))
+        });
         Ok(Self {
             kind,
             dimension,
+            hnsw_config,
             rows: RoaringBitmap::new(),
             hnsw,
         })
@@ -155,6 +166,12 @@ impl VectorIndex {
     #[must_use]
     pub const fn dimension(&self) -> u32 {
         self.dimension
+    }
+
+    /// Return the HNSW construction config, if this is an HNSW index.
+    #[must_use]
+    pub const fn hnsw_config(&self) -> Option<HnswIndexConfig> {
+        self.hnsw_config
     }
 
     /// Return the number of indexed rows.
@@ -228,6 +245,7 @@ impl VectorIndex {
     pub(crate) fn rows_eq(&self, reference: &Self) -> bool {
         self.kind == reference.kind
             && self.dimension == reference.dimension
+            && self.hnsw_config == reference.hnsw_config
             && self.rows == reference.rows
     }
 
@@ -340,163 +358,6 @@ pub(crate) fn apply_node_update(
         }
     }
     Ok(())
-}
-
-/// Build a vector index strictly at registration time.
-pub(crate) fn build_vector_index(
-    graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
-    kind: VectorIndexKind,
-    dimension: u32,
-) -> GraphResult<VectorIndex> {
-    build_vector_index_inner(graph, label, property, kind, dimension, BuildPolicy::Strict)
-}
-
-/// Build a vector index leniently for recovery/snapshot rebuild.
-pub(crate) fn build_vector_index_lenient(
-    graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
-    kind: VectorIndexKind,
-    dimension: u32,
-) -> GraphResult<VectorIndex> {
-    build_vector_index_inner(
-        graph,
-        label,
-        property,
-        kind,
-        dimension,
-        BuildPolicy::Lenient,
-    )
-}
-
-/// Rebuild every registered vector index from node columns.
-pub(crate) fn rebuild_vector_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
-    rebuild_vector_indexes_inner(graph, BuildPolicy::Lenient).map(|_| ())
-}
-
-/// Strictly rebuild every registered vector index from node columns.
-pub(crate) fn rebuild_vector_indexes_strict(
-    graph: &mut crate::SeleneGraph,
-) -> GraphResult<VectorIndexRebuildReport> {
-    rebuild_vector_indexes_inner(graph, BuildPolicy::Strict)
-}
-
-fn rebuild_vector_indexes_inner(
-    graph: &mut crate::SeleneGraph,
-    policy: BuildPolicy,
-) -> GraphResult<VectorIndexRebuildReport> {
-    let registrations: Vec<VectorIndexRegistration> = graph
-        .vector_index
-        .iter()
-        .map(|((label, property), entry)| VectorIndexRegistration {
-            label: label.clone(),
-            property: property.clone(),
-            kind: entry.kind(),
-            dimension: entry.dimension(),
-            name: entry.name.clone(),
-            before: entry.memory_usage(),
-        })
-        .collect();
-    let mut rebuilt = VectorIndexMap::default();
-    let mut entries = Vec::with_capacity(registrations.len());
-    for registration in registrations {
-        let index = build_vector_index_inner(
-            graph,
-            registration.label.clone(),
-            registration.property.clone(),
-            registration.kind,
-            registration.dimension,
-            policy,
-        )?;
-        let after = index.memory_usage();
-        let key = (registration.label.clone(), registration.property.clone());
-        rebuilt.insert(key, VectorIndexEntry::new(index, registration.name.clone()));
-        entries.push(VectorIndexRebuildEntry {
-            label: registration.label,
-            property: registration.property,
-            name: registration.name,
-            kind: registration.kind,
-            dimension: registration.dimension,
-            before: registration.before,
-            after,
-        });
-    }
-    graph.vector_index = rebuilt;
-    Ok(VectorIndexRebuildReport::new(entries))
-}
-
-fn build_vector_index_inner(
-    graph: &crate::SeleneGraph,
-    label: IStr,
-    property: IStr,
-    kind: VectorIndexKind,
-    dimension: u32,
-    policy: BuildPolicy,
-) -> GraphResult<VectorIndex> {
-    let mut index = VectorIndex::new(kind, dimension)?;
-    for row_index in 0..graph.node_store.labels.len() {
-        let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
-            reason: format!(
-                "node store row index {row_index} exceeds u32::MAX; selene-graph caps rows at u32::MAX"
-            ),
-        })?;
-        if !graph.node_store.is_alive(row) {
-            continue;
-        }
-        let Some(labels) = graph.node_store.labels.get(row_index) else {
-            continue;
-        };
-        if !labels.contains(&label) {
-            continue;
-        }
-        let Some(props) = graph.node_store.properties.get(row_index) else {
-            continue;
-        };
-        let Some(value) = props.get(&property) else {
-            continue;
-        };
-        if is_null(value) {
-            continue;
-        }
-        match admit(value, kind, dimension) {
-            Ok(vector) => {
-                if let Err(err) = index.insert_value(row, vector) {
-                    match policy {
-                        BuildPolicy::Strict => return Err(err),
-                        BuildPolicy::Lenient => {
-                            tracing::warn!(
-                                row,
-                                error = %err,
-                                "skipped vector-index HNSW update during lenient rebuild"
-                            );
-                        }
-                    }
-                }
-            }
-            Err(err) => match policy {
-                BuildPolicy::Strict => {
-                    return Err(index_rejection(
-                        label.clone(),
-                        property.clone(),
-                        dimension,
-                        err,
-                    ));
-                }
-                BuildPolicy::Lenient => {
-                    warn_rejected("rebuild", label.clone(), property.clone(), row, &err);
-                }
-            },
-        }
-    }
-    Ok(index)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum BuildPolicy {
-    Strict,
-    Lenient,
 }
 
 fn candidate_keys(

@@ -1,6 +1,6 @@
 //! Vector-index rebuild reporting.
 
-use selene_core::IStr;
+use selene_core::{HnswIndexConfig, IStr};
 
 use super::{VectorIndexKind, VectorIndexMemoryUsage};
 
@@ -17,6 +17,8 @@ pub struct VectorIndexRebuildEntry {
     pub kind: VectorIndexKind,
     /// Rebuilt vector dimensionality.
     pub dimension: u32,
+    /// HNSW construction config for approximate indexes.
+    pub hnsw_config: Option<HnswIndexConfig>,
     /// Memory and cardinality before the rebuild.
     pub before: VectorIndexMemoryUsage,
     /// Memory and cardinality after the rebuild.

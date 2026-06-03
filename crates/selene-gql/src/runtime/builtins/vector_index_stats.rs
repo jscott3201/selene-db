@@ -5,7 +5,7 @@
 //! instead of changing ISO catalog statement row shapes.
 
 use selene_core::{IStr, Value, intern};
-use selene_graph::{VectorIndexKind, VectorIndexMemoryUsage};
+use selene_graph::{HnswIndexConfig, VectorIndexKind, VectorIndexMemoryUsage};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
 use crate::procedure_registry::ProcedureError;
@@ -73,26 +73,28 @@ pub(super) fn execute(
     let snapshot = ctx.snapshot();
     let mut rows = snapshot
         .iter_vector_index_entries()
-        .map(|(label, property, kind, dimension, explicit_name)| {
-            let index = snapshot
-                .vector_index_for(&label, &property)
-                .ok_or_else(|| ProcedureError::Internal {
-                    detail: format!(
-                        "vector index registration for ({label}, {property}) had no index"
-                    ),
-                })?;
-            let usage = index.memory_usage();
-            let name = render_vector_index_name(label.clone(), property.clone(), explicit_name);
-            let kind = render_vector_index_kind(kind, dimension);
-            Ok(StatsRow {
-                label,
-                property,
-                name,
-                kind,
-                dimension,
-                usage,
-            })
-        })
+        .map(
+            |(label, property, kind, dimension, hnsw_config, explicit_name)| {
+                let index = snapshot
+                    .vector_index_for(&label, &property)
+                    .ok_or_else(|| ProcedureError::Internal {
+                        detail: format!(
+                            "vector index registration for ({label}, {property}) had no index"
+                        ),
+                    })?;
+                let usage = index.memory_usage();
+                let name = render_vector_index_name(label.clone(), property.clone(), explicit_name);
+                let kind = render_vector_index_kind(kind, dimension, hnsw_config);
+                Ok(StatsRow {
+                    label,
+                    property,
+                    name,
+                    kind,
+                    dimension,
+                    usage,
+                })
+            },
+        )
         .collect::<Result<Vec<_>, ProcedureError>>()?;
     rows.sort_by(|left, right| {
         left.label
@@ -163,16 +165,38 @@ fn render_vector_index_name(label: IStr, property: IStr, explicit: Option<IStr>)
         })
 }
 
-fn render_vector_index_kind(kind: VectorIndexKind, dimension: u32) -> String {
+fn render_vector_index_kind(
+    kind: VectorIndexKind,
+    dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
+) -> String {
     match kind {
         VectorIndexKind::Flat => format!("vector_flat({dimension})"),
         VectorIndexKind::HnswSquaredEuclidean => {
-            format!("vector_hnsw_squared_euclidean({dimension})")
+            render_hnsw_kind("vector_hnsw_squared_euclidean", dimension, hnsw_config)
         }
-        VectorIndexKind::HnswCosine => format!("vector_hnsw_cosine({dimension})"),
+        VectorIndexKind::HnswCosine => {
+            render_hnsw_kind("vector_hnsw_cosine", dimension, hnsw_config)
+        }
         VectorIndexKind::HnswNegativeInnerProduct => {
-            format!("vector_hnsw_negative_inner_product({dimension})")
+            render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
         }
+    }
+}
+
+fn render_hnsw_kind(
+    name: &'static str,
+    dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
+) -> String {
+    let config = hnsw_config.unwrap_or_default();
+    if config.is_default() {
+        format!("{name}({dimension})")
+    } else {
+        format!(
+            "{name}({dimension},m={},ef_construction={})",
+            config.max_neighbors, config.ef_construction
+        )
     }
 }
 

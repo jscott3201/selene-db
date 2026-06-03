@@ -1,6 +1,6 @@
 use selene_core::{
-    CancellationChecker, GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue,
-    intern,
+    CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelSet, PropertyMap, Value,
+    VectorMetric, VectorValue, intern,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexKind, VectorNodeSearchHit,
@@ -21,6 +21,28 @@ pub(crate) enum HnswRecallProfile {
     NegativeInnerProduct,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HnswRecallVariant {
+    pub(crate) name_suffix: &'static str,
+    pub(crate) hnsw_config: Option<HnswIndexConfig>,
+}
+
+static DEFAULT_HNSW_RECALL_VARIANTS: [HnswRecallVariant; 1] = [HnswRecallVariant {
+    name_suffix: "",
+    hnsw_config: None,
+}];
+
+static CLUSTERED_COSINE_HNSW_RECALL_VARIANTS: [HnswRecallVariant; 2] = [
+    HnswRecallVariant {
+        name_suffix: "",
+        hnsw_config: None,
+    },
+    HnswRecallVariant {
+        name_suffix: "m24ef64",
+        hnsw_config: Some(HnswIndexConfig::new(24, 64)),
+    },
+];
+
 impl HnswRecallProfile {
     pub(crate) const fn name(self) -> &'static str {
         match self {
@@ -34,6 +56,15 @@ impl HnswRecallProfile {
         match self {
             Self::LineSquaredEuclidean | Self::ClusteredCosine => 128,
             Self::NegativeInnerProduct => 64,
+        }
+    }
+
+    pub(crate) fn variants(self) -> &'static [HnswRecallVariant] {
+        match self {
+            Self::ClusteredCosine => &CLUSTERED_COSINE_HNSW_RECALL_VARIANTS,
+            Self::LineSquaredEuclidean | Self::NegativeInnerProduct => {
+                &DEFAULT_HNSW_RECALL_VARIANTS
+            }
         }
     }
 
@@ -93,6 +124,7 @@ impl HnswRecallProfile {
 #[derive(Clone, Debug)]
 pub(crate) struct HnswRecallFixture {
     profile: HnswRecallProfile,
+    variant_name_suffix: &'static str,
     dimension: usize,
     scale: usize,
     graph: SeleneGraph,
@@ -106,6 +138,7 @@ pub(crate) struct HnswRecallFixture {
 impl HnswRecallFixture {
     pub(crate) fn build(
         profile: HnswRecallProfile,
+        variant: HnswRecallVariant,
         scale: usize,
         query_count: usize,
         k: usize,
@@ -130,11 +163,13 @@ impl HnswRecallFixture {
             }
             let dimension = u32::try_from(dimension).expect("bench dimension fits u32");
             mutator
-                .create_vector_index(
+                .create_vector_index_named_with_config(
                     label.clone(),
                     embedding_key.clone(),
                     profile.index_kind(),
                     dimension,
+                    None,
+                    variant.hnsw_config,
                 )
                 .expect("bench HNSW vector index build succeeds");
             txn.commit()
@@ -154,6 +189,7 @@ impl HnswRecallFixture {
             .collect();
         Self {
             profile,
+            variant_name_suffix: variant.name_suffix,
             dimension,
             scale,
             graph,
@@ -167,6 +203,10 @@ impl HnswRecallFixture {
 
     pub(crate) const fn profile(&self) -> HnswRecallProfile {
         self.profile
+    }
+
+    pub(crate) const fn variant_name_suffix(&self) -> &'static str {
+        self.variant_name_suffix
     }
 
     pub(crate) const fn dimension(&self) -> usize {

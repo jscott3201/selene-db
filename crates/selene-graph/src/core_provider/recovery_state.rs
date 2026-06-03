@@ -528,7 +528,11 @@ impl RecoveryState {
             graph.vector_index.insert(
                 (key.label, key.property),
                 VectorIndexEntry::new(
-                    crate::VectorIndex::new(entry.kind, entry.dimension)?,
+                    crate::VectorIndex::new_with_hnsw_config(
+                        entry.kind,
+                        entry.dimension,
+                        entry.hnsw_config,
+                    )?,
                     entry.name,
                 ),
             );

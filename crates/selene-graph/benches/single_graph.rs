@@ -177,39 +177,58 @@ fn bench_hnsw_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_hnsw_recall_validation");
     for scale in vector_scan_scales() {
         for &profile in HNSW_RECALL_PROFILES {
-            let fixture =
-                HnswRecallFixture::build(profile, scale, HNSW_RECALL_QUERIES, HNSW_RECALL_K);
-            let memory_suffix = fixture.memory_id_suffix();
-            group.throughput(Throughput::Elements(
-                (fixture.scale() * fixture.query_count()) as u64,
-            ));
-            for &ef_search in HNSW_RECALL_EF_SEARCH {
-                let recall = fixture.mean_recall(ef_search);
-                let quality = fixture.mean_distance_quality(ef_search);
-                group.bench_with_input(
-                    BenchmarkId::new(
-                        format!(
-                            "{}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_idbp{}_dqbp{}_{}",
-                            fixture.profile().name(),
-                            fixture.dimension(),
-                            recall_basis_points(recall),
-                            recall_basis_points(quality),
-                            memory_suffix
-                        ),
-                        fixture.scale(),
-                    ),
-                    &fixture,
-                    |b, fixture| {
-                        b.iter(|| {
-                            let overlap = fixture.total_overlap(ef_search);
-                            std::hint::black_box(overlap);
-                        });
-                    },
+            for &variant in profile.variants() {
+                let fixture = HnswRecallFixture::build(
+                    profile,
+                    variant,
+                    scale,
+                    HNSW_RECALL_QUERIES,
+                    HNSW_RECALL_K,
                 );
+                let memory_suffix = fixture.memory_id_suffix();
+                let profile_name = hnsw_recall_benchmark_name(&fixture);
+                group.throughput(Throughput::Elements(
+                    (fixture.scale() * fixture.query_count()) as u64,
+                ));
+                for &ef_search in HNSW_RECALL_EF_SEARCH {
+                    let recall = fixture.mean_recall(ef_search);
+                    let quality = fixture.mean_distance_quality(ef_search);
+                    group.bench_with_input(
+                        BenchmarkId::new(
+                            format!(
+                                "{profile_name}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_idbp{}_dqbp{}_{}",
+                                fixture.dimension(),
+                                recall_basis_points(recall),
+                                recall_basis_points(quality),
+                                memory_suffix
+                            ),
+                            fixture.scale(),
+                        ),
+                        &fixture,
+                        |b, fixture| {
+                            b.iter(|| {
+                                let overlap = fixture.total_overlap(ef_search);
+                                std::hint::black_box(overlap);
+                            });
+                        },
+                    );
+                }
             }
         }
     }
     group.finish();
+}
+
+fn hnsw_recall_benchmark_name(fixture: &HnswRecallFixture) -> String {
+    if fixture.variant_name_suffix().is_empty() {
+        fixture.profile().name().to_owned()
+    } else {
+        format!(
+            "{}_{}",
+            fixture.profile().name(),
+            fixture.variant_name_suffix()
+        )
+    }
 }
 
 fn vector_scan_scales() -> Vec<usize> {

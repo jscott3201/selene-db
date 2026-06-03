@@ -6,7 +6,7 @@
 //! (Hard Rule 11). It never bypasses the funnel and never re-enters
 //! `begin_write`.
 
-use selene_core::{IStr, Value, VectorMetric};
+use selene_core::{HnswIndexConfig, IStr, Value, VectorMetric};
 use selene_graph::{GraphError, VectorIndexKind};
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -19,7 +19,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.create_vector_index";
 
-static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 6] = [
+static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 8] = [
     StaticParameter::new("label", GqlType::String, false).with_description("Node label."),
     StaticParameter::new("property", GqlType::String, false).with_description("Vector property."),
     StaticParameter::new("dimension", GqlType::Integer, false)
@@ -34,6 +34,14 @@ static CREATE_VECTOR_INDEX_PARAMS: [StaticParameter; 6] = [
         .with_default(ProcedureDefaultValue::Null),
     StaticParameter::new("metric", GqlType::String, true)
         .with_description("HNSW distance metric.")
+        .with_default_doc("NULL")
+        .with_default(ProcedureDefaultValue::Null),
+    StaticParameter::new("hnsw_max_neighbors", GqlType::Integer, true)
+        .with_description("Optional HNSW M fanout.")
+        .with_default_doc("NULL")
+        .with_default(ProcedureDefaultValue::Null),
+    StaticParameter::new("hnsw_ef_construction", GqlType::Integer, true)
+        .with_description("Optional HNSW construction beam width.")
         .with_default_doc("NULL")
         .with_default(ProcedureDefaultValue::Null),
 ];
@@ -60,8 +68,8 @@ pub(super) fn execute(
     ctx: &mut MutationContext<'_, '_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
-    if !(3..=6).contains(&args.len()) {
-        return Err(invalid_arg(format!("{PROC_NAME} expects 3 to 6 arguments")));
+    if !(3..=8).contains(&args.len()) {
+        return Err(invalid_arg(format!("{PROC_NAME} expects 3 to 8 arguments")));
     }
     let label = string_arg(&args[0], "label")?;
     let property = string_arg(&args[1], "property")?;
@@ -69,13 +77,15 @@ pub(super) fn execute(
     let metric = args.get(5).map(metric_arg).transpose()?.flatten();
     let kind = kind_arg(args.get(3), metric)?;
     let name = args.get(4).map(name_arg).transpose()?.flatten();
+    let hnsw_config = hnsw_config_arg(args.get(6), args.get(7))?;
 
-    match ctx.mutator().create_vector_index_named(
+    match ctx.mutator().create_vector_index_named_with_config(
         label.clone(),
         property.clone(),
         kind,
         dimension,
         name,
+        hnsw_config,
     ) {
         Ok(()) => Ok(unit_result()),
         Err(GraphError::VectorIndexAlreadyExists { .. }) => Err(invalid_arg(format!(
@@ -84,6 +94,9 @@ pub(super) fn execute(
         Err(GraphError::VectorIndexInvalidDimension { .. }) => Err(invalid_arg(
             "vector index dimension must be greater than zero",
         )),
+        Err(GraphError::VectorIndexInvalidHnswConfig { reason, .. }) => Err(invalid_arg(format!(
+            "invalid HNSW vector index config: {reason}"
+        ))),
         Err(GraphError::VectorIndexValueRejected { observed, .. }) => Err(invalid_arg(format!(
             "existing nodes contain values incompatible with the requested vector index: {observed}"
         ))),
@@ -169,6 +182,47 @@ fn metric_arg(value: &Value) -> Result<Option<VectorMetric>, ProcedureError> {
         Value::String(value) => parse_metric(value).map(Some),
         _ => Err(invalid_arg(format!(
             "{PROC_NAME} metric must be NULL or a STRING"
+        ))),
+    }
+}
+
+fn hnsw_config_arg(
+    max_neighbors: Option<&Value>,
+    ef_construction: Option<&Value>,
+) -> Result<Option<HnswIndexConfig>, ProcedureError> {
+    let max_neighbors = max_neighbors
+        .map(|value| optional_u16_arg(value, "hnsw_max_neighbors"))
+        .transpose()?
+        .flatten();
+    let ef_construction = ef_construction
+        .map(|value| optional_u16_arg(value, "hnsw_ef_construction"))
+        .transpose()?
+        .flatten();
+    if max_neighbors.is_none() && ef_construction.is_none() {
+        return Ok(None);
+    }
+    let default = HnswIndexConfig::default();
+    Ok(Some(HnswIndexConfig::new(
+        max_neighbors.unwrap_or(default.max_neighbors),
+        ef_construction.unwrap_or(default.ef_construction),
+    )))
+}
+
+fn optional_u16_arg(value: &Value, name: &'static str) -> Result<Option<u16>, ProcedureError> {
+    match value {
+        Value::Null => Ok(None),
+        Value::Int(value) => u16::try_from(*value)
+            .ok()
+            .filter(|value| *value > 0)
+            .map(Some)
+            .ok_or_else(|| invalid_arg(format!("{PROC_NAME} {name} must be a positive INTEGER"))),
+        Value::Uint(value) => u16::try_from(*value)
+            .ok()
+            .filter(|value| *value > 0)
+            .map(Some)
+            .ok_or_else(|| invalid_arg(format!("{PROC_NAME} {name} must be a positive INTEGER"))),
+        _ => Err(invalid_arg(format!(
+            "{PROC_NAME} {name} must be NULL or a positive INTEGER"
         ))),
     }
 }

@@ -1,6 +1,6 @@
 //! Inline property-index helpers for catalog DDL.
 
-use selene_core::IStr;
+use selene_core::{HnswIndexConfig, IStr};
 use selene_graph::{TypedIndexKind, VectorIndexKind};
 use smallvec::SmallVec;
 
@@ -71,7 +71,9 @@ pub(super) fn validate_index_name_collisions(
     used.extend(
         graph
             .iter_vector_index_entries()
-            .map(|(label, property, _, _, name)| render_vector_index_name(label, property, name)),
+            .map(|(label, property, _, _, _, name)| {
+                render_vector_index_name(label, property, name)
+            }),
     );
     for index in indexes {
         let rendered = render_index_name(label.clone(), index.property.clone(), index.name.clone());
@@ -280,15 +282,37 @@ pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
     }
 }
 
-pub(super) fn render_vector_index_kind(kind: VectorIndexKind, dimension: u32) -> String {
+pub(super) fn render_vector_index_kind(
+    kind: VectorIndexKind,
+    dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
+) -> String {
     match kind {
         VectorIndexKind::Flat => format!("vector_flat({dimension})"),
         VectorIndexKind::HnswSquaredEuclidean => {
-            format!("vector_hnsw_squared_euclidean({dimension})")
+            render_hnsw_kind("vector_hnsw_squared_euclidean", dimension, hnsw_config)
         }
-        VectorIndexKind::HnswCosine => format!("vector_hnsw_cosine({dimension})"),
+        VectorIndexKind::HnswCosine => {
+            render_hnsw_kind("vector_hnsw_cosine", dimension, hnsw_config)
+        }
         VectorIndexKind::HnswNegativeInnerProduct => {
-            format!("vector_hnsw_negative_inner_product({dimension})")
+            render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
         }
+    }
+}
+
+fn render_hnsw_kind(
+    name: &'static str,
+    dimension: u32,
+    hnsw_config: Option<HnswIndexConfig>,
+) -> String {
+    let config = hnsw_config.unwrap_or_default();
+    if config.is_default() {
+        format!("{name}({dimension})")
+    } else {
+        format!(
+            "{name}({dimension},m={},ef_construction={})",
+            config.max_neighbors, config.ef_construction
+        )
     }
 }

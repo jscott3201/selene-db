@@ -61,6 +61,7 @@ pub use graph_types::{
 pub use id_allocator::IdAllocator;
 pub use index_provider::{IndexProvider, ProviderError, ProviderTag, SubTag};
 pub use mutator::Mutator;
+pub use selene_core::HnswIndexConfig;
 pub use selene_persist::{DEFAULT_WAL_FILE_NAME, SyncPolicy, WalConfig};
 pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
