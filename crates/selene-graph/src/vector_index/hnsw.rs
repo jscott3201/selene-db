@@ -6,13 +6,17 @@
 //! search can continue traversing historical links while excluding obsolete row
 //! versions from results.
 
+#[path = "hnsw/scratch.rs"]
+mod scratch;
+
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
 use std::mem::size_of;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use selene_core::{CoreResult, HnswIndexConfig, VectorMetric, VectorMetricQuery, VectorValue};
 use smallvec::SmallVec;
+
+pub(crate) use scratch::HnswSearchScratch;
 
 const MAX_LEVEL: usize = 16;
 const LEVEL_BRANCHING_BITS: u32 = 4;
@@ -77,7 +81,19 @@ impl HnswVectorIndex {
     }
 
     /// Insert or replace the current vector for a graph row.
+    #[cfg(test)]
     pub(crate) fn insert(&mut self, row: u32, vector: VectorValue) -> CoreResult<()> {
+        let mut scratch = HnswSearchScratch::default();
+        self.insert_with_scratch(row, vector, &mut scratch)
+    }
+
+    /// Insert or replace the current vector while reusing caller-owned buffers.
+    pub(crate) fn insert_with_scratch(
+        &mut self,
+        row: u32,
+        vector: VectorValue,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<()> {
         self.remove(row);
         let query_vector = vector.clone();
         let insert_scorer = self.metric.bind_query(&query_vector)?;
@@ -108,12 +124,22 @@ impl HnswVectorIndex {
 
         let link_top = new_level.min(old_max_level);
         for layer in (0..=link_top).rev() {
-            let candidates =
-                self.search_layer_from_query(insert_scorer, nearest, self.ef_construction, layer)?;
-            let selected = self.select_neighbors(new_id, candidates, self.max_links(layer))?;
+            self.search_layer_from_query_into(
+                insert_scorer,
+                nearest,
+                self.ef_construction,
+                layer,
+                scratch,
+            )?;
+            let selected = self.select_neighbors(
+                new_id,
+                &scratch.result,
+                self.max_links(layer),
+                &mut scratch.fallback,
+            )?;
             self.nodes[new_id as usize].links[layer] = selected.clone();
             for neighbor in &selected {
-                self.add_backlink(*neighbor, new_id, layer)?;
+                self.add_backlink(*neighbor, new_id, layer, scratch)?;
             }
             if let Some(first) = selected.first() {
                 nearest = *first;
@@ -159,9 +185,10 @@ impl HnswVectorIndex {
         }
 
         let ef = ef_search.max(k).max(1);
-        let candidates = self.search_layer_from_query(scorer, nearest, ef, 0)?;
+        let mut scratch = HnswSearchScratch::default();
+        self.search_layer_from_query_into(scorer, nearest, ef, 0, &mut scratch)?;
         let mut hits = Vec::new();
-        for candidate in candidates {
+        for candidate in &scratch.result {
             let node = &self.nodes[candidate.id as usize];
             if node.deleted || self.row_to_entry.get(&node.row) != Some(&candidate.id) {
                 continue;
@@ -256,85 +283,106 @@ impl HnswVectorIndex {
         }
     }
 
-    fn search_layer_from_query(
+    fn search_layer_from_query_into(
         &self,
         scorer: VectorMetricQuery<'_>,
         entry: u32,
         ef: usize,
         layer: usize,
-    ) -> CoreResult<Vec<Candidate>> {
-        self.search_layer(entry, ef, layer, |candidate| {
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<()> {
+        self.search_layer_into(entry, ef, layer, scratch, |candidate| {
             self.distance_query_to_entry(scorer, candidate)
         })
     }
 
+    #[cfg(test)]
     fn search_layer<F>(
         &self,
         entry: u32,
         ef: usize,
         layer: usize,
-        mut distance: F,
+        distance: F,
     ) -> CoreResult<Vec<Candidate>>
+    where
+        F: FnMut(u32) -> CoreResult<f64>,
+    {
+        let mut scratch = HnswSearchScratch::default();
+        self.search_layer_into(entry, ef, layer, &mut scratch, distance)?;
+        Ok(scratch.result.clone())
+    }
+
+    fn search_layer_into<F>(
+        &self,
+        entry: u32,
+        ef: usize,
+        layer: usize,
+        scratch: &mut HnswSearchScratch,
+        mut distance: F,
+    ) -> CoreResult<()>
     where
         F: FnMut(u32) -> CoreResult<f64>,
     {
         let ef = ef.max(1);
         let entry_distance = distance(entry)?;
         let search_width = ef.min(self.nodes.len()).saturating_add(1);
-        let mut visited = FxHashSet::default();
-        visited.reserve(search_width);
-        visited.insert(entry);
+        scratch.reset_layer(search_width);
+        scratch.visited.insert(entry);
+        scratch
+            .candidates
+            .push(MinCandidate::new(entry, entry_distance));
+        scratch.best.push(MaxCandidate::new(entry, entry_distance));
 
-        let mut candidates = BinaryHeap::with_capacity(search_width);
-        let mut best = BinaryHeap::with_capacity(search_width);
-        candidates.push(MinCandidate::new(entry, entry_distance));
-        best.push(MaxCandidate::new(entry, entry_distance));
-
-        while let Some(current) = candidates.pop() {
-            let Some(worst) = best.peek() else {
+        while let Some(current) = scratch.candidates.pop() {
+            let Some(worst) = scratch.best.peek() else {
                 break;
             };
             if current.distance > worst.distance {
                 break;
             }
             for neighbor in self.links_at(current.id, layer) {
-                if !visited.insert(*neighbor) {
+                if !scratch.visited.insert(*neighbor) {
                     continue;
                 }
                 let neighbor_distance = distance(*neighbor)?;
-                let admit = best.len() < ef
-                    || best.peek().is_some_and(|worst| {
+                let admit = scratch.best.len() < ef
+                    || scratch.best.peek().is_some_and(|worst| {
                         closer(neighbor_distance, *neighbor, worst.distance, worst.id)
                     });
                 if admit {
-                    candidates.push(MinCandidate::new(*neighbor, neighbor_distance));
-                    best.push(MaxCandidate::new(*neighbor, neighbor_distance));
-                    if best.len() > ef {
-                        best.pop();
+                    scratch
+                        .candidates
+                        .push(MinCandidate::new(*neighbor, neighbor_distance));
+                    scratch
+                        .best
+                        .push(MaxCandidate::new(*neighbor, neighbor_distance));
+                    if scratch.best.len() > ef {
+                        scratch.best.pop();
                     }
                 }
             }
         }
 
-        let mut result: Vec<_> = best
-            .into_iter()
-            .map(|candidate| Candidate {
+        while let Some(candidate) = scratch.best.pop() {
+            scratch.result.push(Candidate {
                 id: candidate.id,
                 distance: candidate.distance,
-            })
-            .collect();
-        result.sort_by(compare_candidate);
-        Ok(result)
+            });
+        }
+        scratch.result.sort_by(compare_candidate);
+        Ok(())
     }
 
     fn select_neighbors(
         &self,
         query_id: u32,
-        candidates: Vec<Candidate>,
+        candidates: &[Candidate],
         max_links: usize,
+        fallback: &mut Vec<u32>,
     ) -> CoreResult<Vec<u32>> {
         let mut selected = Vec::with_capacity(max_links);
-        let mut fallback = Vec::with_capacity(candidates.len().saturating_sub(max_links));
+        fallback.clear();
+        fallback.reserve(candidates.len().saturating_sub(max_links));
         for candidate in candidates {
             if candidate.id == query_id {
                 continue;
@@ -348,7 +396,7 @@ impl HnswVectorIndex {
                 fallback.push(candidate.id);
             }
         }
-        for candidate in fallback {
+        for candidate in fallback.iter().copied() {
             if selected.len() == max_links {
                 break;
             }
@@ -374,30 +422,46 @@ impl HnswVectorIndex {
         Ok(true)
     }
 
-    fn add_backlink(&mut self, node_id: u32, neighbor: u32, layer: usize) -> CoreResult<()> {
+    fn add_backlink(
+        &mut self,
+        node_id: u32,
+        neighbor: u32,
+        layer: usize,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<()> {
         let max_links = self.max_links(layer);
         let links = &mut self.nodes[node_id as usize].links[layer];
         if !links.contains(&neighbor) {
             links.push(neighbor);
         }
-        self.prune_links(node_id, layer, max_links)
+        self.prune_links(node_id, layer, max_links, scratch)
     }
 
-    fn prune_links(&mut self, node_id: u32, layer: usize, max_links: usize) -> CoreResult<()> {
-        let mut candidates: Vec<_> = self.nodes[node_id as usize].links[layer]
-            .iter()
-            .copied()
-            .map(|neighbor| {
-                Ok(Candidate {
-                    id: neighbor,
-                    distance: self.distance_to_entry(node_id, neighbor)?,
-                })
-            })
-            .collect::<CoreResult<_>>()?;
-        candidates.sort_by(compare_candidate);
-        candidates.dedup_by_key(|candidate| candidate.id);
-        self.nodes[node_id as usize].links[layer] =
-            self.select_neighbors(node_id, candidates, max_links)?;
+    fn prune_links(
+        &mut self,
+        node_id: u32,
+        layer: usize,
+        max_links: usize,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<()> {
+        let links = &self.nodes[node_id as usize].links[layer];
+        scratch.reset_prune(links.len());
+        for neighbor in links.iter().copied() {
+            scratch.prune_candidates.push(Candidate {
+                id: neighbor,
+                distance: self.distance_to_entry(node_id, neighbor)?,
+            });
+        }
+        scratch.prune_candidates.sort_by(compare_candidate);
+        scratch
+            .prune_candidates
+            .dedup_by_key(|candidate| candidate.id);
+        self.nodes[node_id as usize].links[layer] = self.select_neighbors(
+            node_id,
+            &scratch.prune_candidates,
+            max_links,
+            &mut scratch.fallback,
+        )?;
         Ok(())
     }
 
@@ -547,120 +611,5 @@ fn splitmix64(mut value: u64) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use selene_core::VectorMetric;
-
-    use super::*;
-
-    fn vector(value: f32) -> VectorValue {
-        VectorValue::new(vec![value, 0.0]).expect("test vector is valid")
-    }
-
-    fn link_layers(layers: impl IntoIterator<Item = Vec<u32>>) -> HnswLinkLayers {
-        layers.into_iter().collect()
-    }
-
-    #[test]
-    fn hnsw_search_finds_near_rows() {
-        let mut index = HnswVectorIndex::with_config(
-            VectorMetric::SquaredEuclidean,
-            HnswIndexConfig::default(),
-        );
-        for row in 0..64 {
-            index.insert(row, vector(row as f32)).unwrap();
-        }
-
-        let hits = index.search(&vector(4.1), 3, 32).unwrap();
-        assert_eq!(hits[0].row, 4);
-        assert!(hits.iter().any(|hit| hit.row == 5));
-    }
-
-    #[test]
-    fn hnsw_replace_marks_old_row_version_stale() {
-        let mut index = HnswVectorIndex::with_config(
-            VectorMetric::SquaredEuclidean,
-            HnswIndexConfig::default(),
-        );
-        index.insert(1, vector(100.0)).unwrap();
-        index.insert(2, vector(2.0)).unwrap();
-        index.insert(1, vector(1.0)).unwrap();
-
-        let hits = index.search(&vector(1.1), 2, 16).unwrap();
-        assert_eq!(hits[0].row, 1);
-        assert_eq!(index.live_len(), 2);
-    }
-
-    #[test]
-    fn hnsw_remove_excludes_row_from_results() {
-        let mut index = HnswVectorIndex::with_config(
-            VectorMetric::SquaredEuclidean,
-            HnswIndexConfig::default(),
-        );
-        index.insert(1, vector(1.0)).unwrap();
-        index.insert(2, vector(2.0)).unwrap();
-        index.remove(1);
-
-        let hits = index.search(&vector(1.0), 2, 16).unwrap();
-        assert_eq!(hits[0].row, 2);
-        assert_eq!(index.live_len(), 1);
-    }
-
-    #[test]
-    fn hnsw_search_layer_admits_equal_distance_better_id() {
-        let index = HnswVectorIndex {
-            metric: VectorMetric::SquaredEuclidean,
-            nodes: vec![
-                HnswNode {
-                    row: 0,
-                    vector: vector(0.0),
-                    deleted: false,
-                    links: link_layers([vec![2, 1]]),
-                },
-                HnswNode {
-                    row: 1,
-                    vector: vector(1.0),
-                    deleted: false,
-                    links: link_layers([Vec::new()]),
-                },
-                HnswNode {
-                    row: 2,
-                    vector: vector(2.0),
-                    deleted: false,
-                    links: link_layers([Vec::new()]),
-                },
-            ],
-            row_to_entry: FxHashMap::default(),
-            entry_point: Some(0),
-            max_level: 0,
-            m: usize::from(HnswIndexConfig::DEFAULT_MAX_NEIGHBORS),
-            ef_construction: usize::from(HnswIndexConfig::DEFAULT_EF_CONSTRUCTION),
-        };
-
-        let candidates = index
-            .search_layer(0, 2, 0, |candidate| {
-                Ok(match candidate {
-                    0 => 0.0,
-                    1 | 2 => 1.0,
-                    _ => unreachable!("test graph only has three candidates"),
-                })
-            })
-            .unwrap();
-
-        let ids: Vec<_> = candidates
-            .into_iter()
-            .map(|candidate| candidate.id)
-            .collect();
-        assert_eq!(ids, vec![0, 1]);
-    }
-
-    #[test]
-    fn hnsw_level_zero_layer_container_stays_inline() {
-        let links = empty_link_layers(0);
-        assert_eq!(links.len(), 1);
-        assert!(!links.spilled());
-
-        let promoted_links = empty_link_layers(INLINE_LINK_LAYERS);
-        assert_eq!(promoted_links.len(), INLINE_LINK_LAYERS + 1);
-        assert!(promoted_links.spilled());
-    }
-}
+#[path = "hnsw/tests.rs"]
+mod tests;

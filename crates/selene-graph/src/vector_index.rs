@@ -32,7 +32,7 @@ pub(crate) use build::{
     rebuild_vector_indexes, rebuild_vector_indexes_strict,
 };
 use config::hnsw_config_for_kind;
-use hnsw::{HnswVectorHit, HnswVectorIndex};
+use hnsw::{HnswSearchScratch, HnswVectorHit, HnswVectorIndex};
 pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
 
 type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
@@ -228,9 +228,19 @@ impl VectorIndex {
     }
 
     pub(crate) fn insert_value(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
+        let mut scratch = HnswSearchScratch::default();
+        self.insert_value_with_scratch(row, vector, &mut scratch)
+    }
+
+    pub(crate) fn insert_value_with_scratch(
+        &mut self,
+        row: u32,
+        vector: &VectorValue,
+        scratch: &mut HnswSearchScratch,
+    ) -> GraphResult<()> {
         self.rows.insert(row);
         if let Some(hnsw) = &mut self.hnsw {
-            hnsw.insert(row, vector.clone())?;
+            hnsw.insert_with_scratch(row, vector.clone(), scratch)?;
         }
         Ok(())
     }

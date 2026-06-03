@@ -7,7 +7,8 @@ use crate::graph::VectorIndexEntry;
 
 use super::{
     VectorIndex, VectorIndexKind, VectorIndexMap, VectorIndexMemoryUsage, VectorIndexRebuildEntry,
-    VectorIndexRebuildReport, admit, index_rejection, is_null, warn_rejected,
+    VectorIndexRebuildReport, admit, hnsw::HnswSearchScratch, index_rejection, is_null,
+    warn_rejected,
 };
 
 struct VectorIndexRegistration {
@@ -129,6 +130,7 @@ fn build_vector_index_inner(
     policy: BuildPolicy,
 ) -> GraphResult<VectorIndex> {
     let mut index = VectorIndex::new_with_hnsw_config(kind, dimension, hnsw_config)?;
+    let mut hnsw_scratch = HnswSearchScratch::default();
     for row_index in 0..graph.node_store.labels.len() {
         let row = u32::try_from(row_index).map_err(|_| GraphError::Inconsistent {
             reason: format!(
@@ -155,7 +157,7 @@ fn build_vector_index_inner(
         }
         match admit(value, kind, dimension) {
             Ok(vector) => {
-                if let Err(err) = index.insert_value(row, vector) {
+                if let Err(err) = index.insert_value_with_scratch(row, vector, &mut hnsw_scratch) {
                     match policy {
                         BuildPolicy::Strict => return Err(err),
                         BuildPolicy::Lenient => {
