@@ -138,20 +138,40 @@ impl VectorRebuildFixture {
         assert_eq!(entry.after.hnsw_entries, live_rows);
         assert_eq!(entry.after.hnsw_live_entries, live_rows);
         assert_eq!(entry.after.hnsw_deleted_entries, 0);
+        assert_eq!(
+            entry
+                .before
+                .hnsw_level_zero_link_count
+                .saturating_add(entry.before.hnsw_upper_layer_link_count),
+            entry.before.hnsw_link_count
+        );
+        assert_eq!(
+            entry
+                .after
+                .hnsw_level_zero_link_count
+                .saturating_add(entry.after.hnsw_upper_layer_link_count),
+            entry.after.hnsw_link_count
+        );
     }
 
     fn format_report_id_suffix(&self, report: &VectorIndexRebuildReport) -> String {
         let entry = &report.entries[0];
         format!(
-            "upd{}_del{}_b{}-{}-{}_a{}-{}-{}_rk{}",
+            "upd{}_del{}_b{}-{}-{}g{}z{}u{}_a{}-{}-{}g{}z{}u{}_rk{}",
             compact_usize(self.update_count),
             compact_usize(self.delete_count),
             compact_usize(entry.before.hnsw_entries),
             compact_usize(entry.before.hnsw_live_entries),
             compact_usize(entry.before.hnsw_deleted_entries),
+            compact_usize(entry.before.hnsw_link_count),
+            compact_usize(entry.before.hnsw_level_zero_link_count),
+            compact_usize(entry.before.hnsw_upper_layer_link_count),
             compact_usize(entry.after.hnsw_entries),
             compact_usize(entry.after.hnsw_live_entries),
             compact_usize(entry.after.hnsw_deleted_entries),
+            compact_usize(entry.after.hnsw_link_count),
+            compact_usize(entry.after.hnsw_level_zero_link_count),
+            compact_usize(entry.after.hnsw_upper_layer_link_count),
             report.reclaimed_reachable_bytes / 1024
         )
     }

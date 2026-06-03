@@ -103,6 +103,16 @@ pub struct VectorIndexMemoryUsage {
     pub hnsw_deleted_entries: usize,
     /// Stored directed HNSW links across all layers.
     pub hnsw_link_count: usize,
+    /// Stored directed HNSW links in the level-0 layer.
+    pub hnsw_level_zero_link_count: usize,
+    /// Stored directed HNSW links above the level-0 layer.
+    pub hnsw_upper_layer_link_count: usize,
+    /// Maximum HNSW layer count attached to any indexed entry.
+    pub hnsw_max_layer_count: usize,
+    /// Maximum directed HNSW links stored in a single entry layer.
+    pub hnsw_max_links_per_layer: usize,
+    /// Average directed HNSW links per entry, scaled by 10,000.
+    pub hnsw_average_links_per_entry_basis_points: usize,
     /// Estimated bytes for index-owned structures, excluding referenced vector components.
     pub estimated_index_bytes: usize,
     /// Estimated upper-bound bytes reachable from the index including HNSW vector components.
@@ -221,6 +231,11 @@ impl VectorIndex {
             hnsw_live_entries: hnsw.live_entries,
             hnsw_deleted_entries: hnsw.deleted_entries,
             hnsw_link_count: hnsw.link_count,
+            hnsw_level_zero_link_count: hnsw.level_zero_link_count,
+            hnsw_upper_layer_link_count: hnsw.upper_layer_link_count,
+            hnsw_max_layer_count: hnsw.max_layer_count,
+            hnsw_max_links_per_layer: hnsw.max_links_per_layer,
+            hnsw_average_links_per_entry_basis_points: hnsw.average_links_per_entry_basis_points,
             estimated_index_bytes,
             estimated_reachable_bytes: estimated_index_bytes
                 .saturating_add(hnsw.referenced_vector_bytes),

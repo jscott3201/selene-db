@@ -13,7 +13,7 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 
 const PROC_NAME: &str = "selene.vector_index_stats";
 
-static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 16] = [
+static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 21] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -38,6 +38,16 @@ static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 16] = [
         .with_description("Stale deleted HNSW entries."),
     StaticOutputColumn::new("hnsw_link_count", GqlType::Uint64)
         .with_description("Stored directed HNSW links."),
+    StaticOutputColumn::new("hnsw_level_zero_link_count", GqlType::Uint64)
+        .with_description("Stored directed HNSW links in the level-0 layer."),
+    StaticOutputColumn::new("hnsw_upper_layer_link_count", GqlType::Uint64)
+        .with_description("Stored directed HNSW links above level 0."),
+    StaticOutputColumn::new("hnsw_max_layer_count", GqlType::Uint64)
+        .with_description("Maximum HNSW layer count attached to an entry."),
+    StaticOutputColumn::new("hnsw_max_links_per_layer", GqlType::Uint64)
+        .with_description("Maximum directed HNSW links stored in one entry layer."),
+    StaticOutputColumn::new("hnsw_average_links_per_entry_basis_points", GqlType::Uint64)
+        .with_description("Average directed HNSW links per entry scaled by 10,000."),
     StaticOutputColumn::new("estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes."),
     StaticOutputColumn::new("estimated_reachable_bytes", GqlType::Uint64)
@@ -141,6 +151,17 @@ impl StatsRow {
             Value::Uint(usize_to_u64_saturating(self.usage.hnsw_live_entries)),
             Value::Uint(usize_to_u64_saturating(self.usage.hnsw_deleted_entries)),
             Value::Uint(usize_to_u64_saturating(self.usage.hnsw_link_count)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.hnsw_level_zero_link_count,
+            )),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.hnsw_upper_layer_link_count,
+            )),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_max_layer_count)),
+            Value::Uint(usize_to_u64_saturating(self.usage.hnsw_max_links_per_layer)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.hnsw_average_links_per_entry_basis_points,
+            )),
             Value::Uint(usize_to_u64_saturating(self.usage.estimated_index_bytes)),
             Value::Uint(usize_to_u64_saturating(
                 self.usage.estimated_reachable_bytes,

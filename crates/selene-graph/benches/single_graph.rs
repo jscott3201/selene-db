@@ -324,14 +324,19 @@ fn vector_index_memory_id_suffix(graph: &SeleneGraph, label: &IStr, property: &I
 
 fn format_vector_memory_id_suffix(usage: VectorIndexMemoryUsage) -> String {
     format!(
-        "m{}-{}_n{}_e{}_l{}_d{}_g{}",
+        "m{}-{}_n{}_e{}_l{}_d{}_g{}z{}u{}p{}x{}a{}",
         usage.estimated_index_bytes / 1024,
         usage.estimated_reachable_bytes / 1024,
         compact_count(usage.indexed_rows),
         compact_usize(usage.hnsw_entries),
         compact_usize(usage.hnsw_live_entries),
         compact_usize(usage.hnsw_deleted_entries),
-        compact_usize(usage.hnsw_link_count)
+        compact_usize(usage.hnsw_link_count),
+        compact_usize(usage.hnsw_level_zero_link_count),
+        compact_usize(usage.hnsw_upper_layer_link_count),
+        compact_usize(usage.hnsw_max_layer_count),
+        compact_usize(usage.hnsw_max_links_per_layer),
+        compact_usize(usage.hnsw_average_links_per_entry_basis_points)
     )
 }
 
