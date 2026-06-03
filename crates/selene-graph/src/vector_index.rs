@@ -261,6 +261,12 @@ impl VectorIndex {
         Ok(())
     }
 
+    pub(crate) fn finish_bulk_load(&mut self) {
+        if let Some(hnsw) = &mut self.hnsw {
+            hnsw.finish_bulk_load();
+        }
+    }
+
     pub(crate) fn remove_row(&mut self, row: u32) {
         self.rows.remove(row);
         if let Some(hnsw) = &mut self.hnsw {
