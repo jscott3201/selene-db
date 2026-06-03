@@ -595,7 +595,7 @@ fn named_procedure_call_feature_is_supported() {
 }
 
 #[test]
-fn real_type_spelling_is_rejected_before_canonicalization() {
+fn real_type_spelling_rejects_as_gv23_synonym() {
     let error = parse("RETURN n IS TYPED REAL").expect_err("REAL spelling is unclaimed");
     let ParserError::UnsupportedFeature {
         feature_id,
@@ -605,8 +605,8 @@ fn real_type_spelling_is_rejected_before_canonicalization() {
     else {
         panic!("expected UnsupportedFeature");
     };
-    assert_eq!(feature_id, FeatureId::GV20);
-    assert_eq!(display_name, "Approximate value type: REAL");
+    assert_eq!(feature_id, FeatureId::GV23);
+    assert_eq!(display_name, "Floating point type name synonyms");
 }
 
 #[test]

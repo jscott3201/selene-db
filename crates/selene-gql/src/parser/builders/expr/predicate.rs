@@ -211,10 +211,10 @@ fn build_type_name_with_depth(pair: Pair<'_, Rule>, depth: u32) -> Result<GqlTyp
     let text = pair.as_str();
     if keyword_tokens_eq(text, &["REAL"]) {
         return Err(ParserError::UnsupportedFeature {
-            feature_id: FeatureId::GV20,
-            display_name: "Approximate value type: REAL",
+            feature_id: FeatureId::GV23,
+            display_name: "Floating point type name synonyms",
             span: source_span,
-            hint: "REAL type spelling is outside the selene-db v1.0 claim list; use FLOAT32 or FLOAT64",
+            hint: "REAL spelling is outside the selene-db claim list; use FLOAT32 or FLOAT64",
         });
     }
     if keyword_tokens_eq(text, &["FLOAT16"]) {
