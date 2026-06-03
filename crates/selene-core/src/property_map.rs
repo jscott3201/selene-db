@@ -49,11 +49,23 @@ impl PropertyMap {
     /// Returns [`CoreError::ConstructedValueTooLarge`] if the final distinct
     /// key count exceeds the implementation-defined cardinality cap.
     pub fn from_pairs(pairs: impl IntoIterator<Item = (IStr, Value)>) -> CoreResult<Self> {
-        let mut map = Self::new();
-        for (key, value) in pairs {
-            map.set(key, value)?;
+        let mut entries = pairs.into_iter().collect::<SmallVec<[(IStr, Value); 6]>>();
+        // `sort_by` is stable: equal keys keep source order, so the collapse
+        // loop below preserves the documented "later duplicate wins" contract.
+        entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+
+        let mut deduped = SmallVec::new();
+        for (key, value) in entries {
+            if let Some((last_key, last_value)) = deduped.last_mut()
+                && last_key == &key
+            {
+                *last_value = value;
+                continue;
+            }
+            deduped.push((key, value));
         }
-        Ok(map)
+        ensure_within_cap(deduped.len())?;
+        Ok(Self::Standard(deduped))
     }
 
     /// Construct a compact property map from a fixed schema key set.
@@ -438,6 +450,27 @@ mod tests {
         for name in ["pm.c", "pm.a", "pm.b"] {
             map.set(key(name), Value::String(key(name))).unwrap();
         }
+        assert!(map.sorted_invariant_holds());
+    }
+
+    #[test]
+    fn from_pairs_sorts_and_keeps_last_duplicate_value() {
+        let a = key("pm.from_pairs.a");
+        let b = key("pm.from_pairs.b");
+        let map = PropertyMap::from_pairs([
+            (b.clone(), int(10)),
+            (a.clone(), int(1)),
+            (b.clone(), int(20)),
+            (a.clone(), int(2)),
+        ])
+        .unwrap();
+
+        assert_eq!(map.get(&a), Some(&int(2)));
+        assert_eq!(map.get(&b), Some(&int(20)));
+        assert_eq!(
+            map.keys().cloned().collect::<Vec<_>>(),
+            vec![a.clone(), b.clone()]
+        );
         assert!(map.sorted_invariant_holds());
     }
 

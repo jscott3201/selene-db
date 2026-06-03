@@ -73,6 +73,18 @@ fn mixed_property_map() -> PropertyMap {
     .expect("property map fits core caps")
 }
 
+fn wide_property_pairs(width: usize) -> Vec<(selene_core::IStr, Value)> {
+    (0..width)
+        .rev()
+        .map(|idx| {
+            (
+                intern(&format!("wide_property_{idx:04}")).expect("key interns"),
+                Value::Int(idx as i64),
+            )
+        })
+        .collect()
+}
+
 // `print_stderr` deny is locally relaxed to surface the current `Value` size
 // in bench output (so the CORE-06 shrink is visible run-to-run).
 #[allow(clippy::print_stderr)]
@@ -92,6 +104,15 @@ fn bench_value_clone(c: &mut Criterion) {
     let map = mixed_property_map();
     group.bench_function("property_map_5", |b| {
         b.iter(|| black_box(black_box(&map).clone()));
+    });
+
+    let pairs = wide_property_pairs(256);
+    group.throughput(Throughput::Elements(pairs.len() as u64));
+    group.bench_function("property_map_from_pairs_256_reverse", |b| {
+        b.iter(|| {
+            PropertyMap::from_pairs(black_box(pairs.iter().cloned()))
+                .expect("property map fits core caps")
+        });
     });
 
     group.finish();
