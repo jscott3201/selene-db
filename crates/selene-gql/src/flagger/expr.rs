@@ -171,7 +171,13 @@ fn literal(value: &Literal, uses: &mut Vec<FeatureUse>) {
 fn is_check(kind: &IsCheckKind, span: crate::SourceSpan, uses: &mut Vec<FeatureUse>) {
     match kind {
         IsCheckKind::Null | IsCheckKind::TruthValue(_) => {}
-        IsCheckKind::Typed(ty) => gql_type(ty, span, uses),
+        IsCheckKind::Typed(ty) => {
+            // ISO/IEC 39075:2024 §19.6 `<value type predicate>` is optional feature
+            // GA06. The construct stamp is emitted before the target type features,
+            // mirroring the `CAST` GA05 ordering above.
+            record_feature(uses, FeatureId::GA06, span);
+            gql_type(ty, span, uses);
+        }
         IsCheckKind::Normalized(_) => {}
         IsCheckKind::Directed => record_feature(uses, FeatureId::G110, span),
         IsCheckKind::Labeled(_) => {

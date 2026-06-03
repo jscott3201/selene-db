@@ -86,9 +86,12 @@ feature_ids! {
     // (Feature GA05), without GA05 "conforming GQL language shall not contain a
     // <cast specification>" — CAST is gated behind GA05, NOT baseline. selene-db
     // implements the cast construct, so it claims GA05 in SUPPORTED_FEATURES and
-    // stamps it on every `ValueExpr::Cast`.
+    // stamps it on every `ValueExpr::Cast`. GA06 is the sibling construct-level
+    // feature for `IS [NOT] TYPED <value type>` (§19.6); selene-db implements that
+    // value type predicate and stamps it on every typed `IsCheckKind`.
     GE08 = "GE08" => "Reference parameters";
     GA05 = "GA05" => "Cast specification";
+    GA06 = "GA06" => "Value type predicate";
     GF01 = "GF01" => "Enhanced numeric functions";
     GF02 = "GF02" => "Trigonometric functions";
     GF03 = "GF03" => "Logarithmic functions";
@@ -233,6 +236,7 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
     FeatureId::G115,
     FeatureId::GA01,
     FeatureId::GA05,
+    FeatureId::GA06,
     FeatureId::GA07,
     FeatureId::GC03,
     FeatureId::GD01,
@@ -334,11 +338,11 @@ pub const SUPPORTED_FEATURES: &[FeatureId] = &[
 /// `REFERENCED_FEATURES` only and surface as the `"referenced"` status in
 /// `selene.feature_status()`. GE08 ("Reference parameters", §17.7 —
 /// unimplemented) is deliberately in that referenced-only bucket
-/// (CONFORMANCE-00). GA05 ("Cast specification", §20.8) is CLAIMED in
-/// `SUPPORTED_FEATURES`: CAST is gated behind GA05 per ISO Annex A item 52 and
-/// selene-db implements the cast construct. GG21 ("Explicit element type key
-/// label sets", §18.2/18.3) is now CLAIMED as well: the type-DDL grammar parses
-/// the explicit `<...type key label set>` (`=>` marker) and bounds its
+/// (CONFORMANCE-00). GA05 ("Cast specification", §20.8) and GA06 ("Value type
+/// predicate", §19.6) are CLAIMED in `SUPPORTED_FEATURES`: CAST is gated behind
+/// GA05, and `IS [NOT] TYPED` is gated behind GA06. GG21 ("Explicit element type
+/// key label sets", §18.2/18.3) is now CLAIMED as well: the type-DDL grammar
+/// parses the explicit `<...type key label set>` (`=>` marker) and bounds its
 /// cardinality to the IL003 singleton cap.
 pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
     (
@@ -582,6 +586,23 @@ mod tests {
         assert!(
             non_supported_rationale(FeatureId::GA05).is_none(),
             "GA05 is supported, so it has no non-supported rationale"
+        );
+    }
+
+    #[test]
+    fn ga06_value_type_predicate_is_supported() {
+        // CONFORMANCE-00 follow-up: GA06 "Value type predicate" (Annex A item 53 /
+        // ISO §19.6) is the construct-level feature for `IS [NOT] TYPED <value
+        // type>`. selene-db implements the typed predicate, so it CLAIMS GA06 and
+        // carries no non-supported rationale.
+        assert_eq!(name_of(FeatureId::GA06), Some("Value type predicate"));
+        assert!(
+            is_supported(FeatureId::GA06),
+            "GA06 is claimed: selene-db implements <value type predicate>"
+        );
+        assert!(
+            non_supported_rationale(FeatureId::GA06).is_none(),
+            "GA06 is supported, so it has no non-supported rationale"
         );
     }
 
