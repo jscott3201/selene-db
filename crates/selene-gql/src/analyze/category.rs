@@ -12,6 +12,8 @@ pub enum StatementCategory {
     DataModifying,
     /// Statement that may modify graph/catalog metadata.
     CatalogModifying,
+    /// Statement that may rebuild derived engine state.
+    Maintenance,
     /// Transaction-control statement.
     TransactionControl,
     /// Session-control statement (ISO/IEC 39075:2024 section 7).
@@ -71,5 +73,6 @@ const fn classify_mutability(mutability: ProcedureMutability) -> StatementCatego
     match mutability {
         ProcedureMutability::Read => StatementCategory::ReadOnly,
         ProcedureMutability::SchemaWrite => StatementCategory::CatalogModifying,
+        ProcedureMutability::MaintenanceWrite => StatementCategory::Maintenance,
     }
 }

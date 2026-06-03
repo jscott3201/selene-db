@@ -47,7 +47,10 @@ pub(crate) fn bind_pipeline_statement(
         PipelineStatement::With(clause) => bind_with_clause(ctx, clause),
         PipelineStatement::Call(call) => {
             let metadata = call::lookup_metadata(ctx, call)?;
-            if matches!(metadata.mutability, ProcedureMutability::SchemaWrite) {
+            if matches!(
+                metadata.mutability,
+                ProcedureMutability::SchemaWrite | ProcedureMutability::MaintenanceWrite
+            ) {
                 return Err(AnalysisError::MutatingProcedureInReadPipeline {
                     procedure: call.name.clone().into_vec().into_boxed_slice(),
                     mutability: metadata.mutability,

@@ -50,7 +50,7 @@ pub use binding_table_registry::BindingTableRegistry;
 pub use builtin_registry::BuiltinProcedureRegistry;
 pub use call_plan_cache::{CallPlanCache, CallPlanCacheStats, CallPlanKey};
 pub use context::{AdaptiveOptimizer, EvalCtx, TxContext};
-pub use context_tiers::{GraphContext, MutationContext, ProcedureContext};
+pub use context_tiers::{GraphContext, MaintenanceContext, MutationContext, ProcedureContext};
 pub use error::{DataExceptionSubclass, ExecutorError, ExecutorWarning, WarningSink};
 pub use pattern::execute_pattern;
 pub use pipeline::execute_pipeline;

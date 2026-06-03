@@ -3,7 +3,10 @@
 use std::{rc::Rc, sync::Arc};
 
 use selene_core::{BindingTableId, CancellationChecker};
-use selene_graph::{IndexProvider, Mutator, ProviderTag, SeleneGraph};
+use selene_graph::{
+    GraphResult, IndexProvider, Mutator, ProviderTag, SeleneGraph, SharedGraph,
+    VectorIndexRebuildReport,
+};
 
 use crate::{BindingTable, BindingTableRegistry, ImplDefinedCaps, ProcedureTier};
 
@@ -136,6 +139,56 @@ impl<'a, 'g> MutationContext<'a, 'g> {
     }
 }
 
+/// Engine-maintenance procedure context.
+pub struct MaintenanceContext<'a, 'g> {
+    graph: &'g SharedGraph,
+    caps: &'a ImplDefinedCaps,
+    cancellation: CancellationChecker<'a>,
+    binding_tables: Rc<BindingTableRegistry>,
+}
+
+impl<'a, 'g> MaintenanceContext<'a, 'g> {
+    pub(crate) fn new(
+        graph: &'g SharedGraph,
+        caps: &'a ImplDefinedCaps,
+        cancellation: CancellationChecker<'a>,
+        binding_tables: Rc<BindingTableRegistry>,
+    ) -> Self {
+        Self {
+            graph,
+            caps,
+            cancellation,
+            binding_tables,
+        }
+    }
+
+    /// Borrow implementation-defined executor caps.
+    #[must_use]
+    pub const fn impl_defined_caps(&self) -> &'a ImplDefinedCaps {
+        self.caps
+    }
+
+    /// Build the cancellation checker visible to this procedure call.
+    #[must_use]
+    pub const fn cancellation_checker(&self) -> CancellationChecker<'a> {
+        self.cancellation
+    }
+
+    /// Rebuild all registered vector indexes from primary graph values.
+    ///
+    /// # Errors
+    ///
+    /// Returns graph errors raised by strict rebuild validation.
+    pub fn rebuild_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        self.graph.rebuild_vector_indexes()
+    }
+
+    /// Register a binding table for this procedure call's statement.
+    pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
+        self.binding_tables.register(table)
+    }
+}
+
 /// Tier-tagged procedure context passed through [`crate::ProcedureRegistry`].
 #[non_exhaustive]
 pub enum ProcedureContext<'a, 'g> {
@@ -143,6 +196,8 @@ pub enum ProcedureContext<'a, 'g> {
     Graph(GraphContext<'a>),
     /// Mutation-tier context.
     Mutation(MutationContext<'a, 'g>),
+    /// Engine-maintenance context.
+    Maintenance(MaintenanceContext<'a, 'g>),
 }
 
 impl ProcedureContext<'_, '_> {
@@ -152,6 +207,7 @@ impl ProcedureContext<'_, '_> {
         match self {
             Self::Graph(_) => ProcedureTier::Graph,
             Self::Mutation(_) => ProcedureTier::Mutation,
+            Self::Maintenance(_) => ProcedureTier::Maintenance,
         }
     }
 
@@ -160,6 +216,7 @@ impl ProcedureContext<'_, '_> {
         match self {
             Self::Graph(ctx) => ctx.register_binding_table(table),
             Self::Mutation(ctx) => ctx.register_binding_table(table),
+            Self::Maintenance(ctx) => ctx.register_binding_table(table),
         }
     }
 }

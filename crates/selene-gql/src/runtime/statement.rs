@@ -101,6 +101,7 @@ pub fn execute_statement(
         plan.category != StatementCategory::TransactionControl && session.active_txn.is_some();
     let result = match plan.category {
         StatementCategory::ReadOnly => execute_read_only(plan, session, registry),
+        StatementCategory::Maintenance => execute_maintenance(plan, session, registry),
         StatementCategory::DataModifying | StatementCategory::CatalogModifying => {
             execute_write(plan, session, registry)
         }
@@ -353,6 +354,46 @@ fn execute_write(
     execute_auto_commit(plan, session, registry)
 }
 
+fn execute_maintenance(
+    plan: &ExecutionPlan,
+    session: &mut Session<'_>,
+    registry: &dyn ProcedureRegistry,
+) -> Result<StatementOutput, ExecutorError> {
+    if session.active_txn.is_some() {
+        return Err(ExecutorError::InvalidTransactionState {
+            detail: "maintenance procedure cannot run inside an explicit transaction",
+            span: SourceSpan::default(),
+        });
+    }
+    let providers = session.graph().index_providers();
+    let snapshot = session.graph().read();
+    let session_tz = session.effective_time_zone();
+    let binding_tables = Rc::new(BindingTableRegistry::new());
+    let parameters = materialize_parameter_values(
+        &session.parameters,
+        &session.scalar_parameters,
+        &binding_tables,
+    );
+    let (cancellation, deadline, row_cap) = resource_limits(session);
+    let warning_sink = session.warning_sink.as_ref();
+    let mut ctx = TxContext::maintenance_with_owned_parameters_and_registry(
+        snapshot,
+        &plan.impl_defined_caps,
+        registry,
+        session.graph(),
+        providers,
+        parameters,
+        Rc::clone(&binding_tables),
+    )
+    .with_resource_limits(cancellation.as_ref(), deadline, row_cap)
+    .with_warning_sink(warning_sink)
+    .with_session_time_zone(session_tz);
+    ctx.check_cancellation()?;
+    let table = execute_plan(plan, &mut ctx)?;
+    note_output_rows(plan, &ctx, table.row_count())?;
+    Ok(output_from_table(plan, table))
+}
+
 fn execute_inside_explicit_tx(
     plan: &ExecutionPlan,
     session: &mut Session<'_>,
@@ -558,6 +599,7 @@ fn statement_kind(plan: &ExecutionPlan) -> &'static str {
         StatementCategory::ReadOnly => "query",
         StatementCategory::DataModifying => "mutation",
         StatementCategory::CatalogModifying => "catalog",
+        StatementCategory::Maintenance => "maintenance",
         StatementCategory::TransactionControl => "transaction",
         StatementCategory::SessionControl => "session",
     }

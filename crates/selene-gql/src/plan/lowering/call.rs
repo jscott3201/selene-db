@@ -293,6 +293,7 @@ const fn classify_mutability(mutability: ProcedureMutability) -> StatementCatego
     match mutability {
         ProcedureMutability::Read => StatementCategory::ReadOnly,
         ProcedureMutability::SchemaWrite => StatementCategory::CatalogModifying,
+        ProcedureMutability::MaintenanceWrite => StatementCategory::Maintenance,
     }
 }
 

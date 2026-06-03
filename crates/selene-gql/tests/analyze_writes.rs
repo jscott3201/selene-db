@@ -424,6 +424,10 @@ fn top_level_call_classification_follows_procedure_mutability() {
             ProcedureMutability::SchemaWrite,
             StatementCategory::CatalogModifying,
         ),
+        (
+            ProcedureMutability::MaintenanceWrite,
+            StatementCategory::Maintenance,
+        ),
     ] {
         let registry = registry_with_mutability(mutability);
         let analyzed = analyze_with("CALL pkg.proc() YIELD result", &registry).expect("analyzes");
@@ -444,6 +448,24 @@ fn query_pipeline_calling_schema_write_procedure_errors() {
         err,
         AnalysisError::MutatingProcedureInReadPipeline {
             mutability: ProcedureMutability::SchemaWrite,
+            ..
+        }
+    ));
+    assert_eq!(err.gqlstatus().as_str(), "25G02");
+}
+
+#[test]
+fn query_pipeline_calling_maintenance_write_procedure_errors() {
+    let registry = registry_with_mutability(ProcedureMutability::MaintenanceWrite);
+    let err = analyze_with(
+        "MATCH (n) CALL pkg.proc() YIELD result RETURN result",
+        &registry,
+    )
+    .expect_err("maintenance CALL in read pipeline errors");
+    assert!(matches!(
+        err,
+        AnalysisError::MutatingProcedureInReadPipeline {
+            mutability: ProcedureMutability::MaintenanceWrite,
             ..
         }
     ));
