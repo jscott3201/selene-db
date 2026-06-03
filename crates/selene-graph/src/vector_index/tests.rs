@@ -3,6 +3,7 @@ use selene_core::{
     VectorValue, intern,
 };
 
+use super::VectorIndex;
 use crate::{GraphError, SharedGraph, VectorIndexKind};
 
 fn istr(value: &str) -> IStr {
@@ -271,4 +272,51 @@ fn hnsw_vector_index_tracks_membership_and_metric() {
     assert!(index.is_hnsw());
     assert_eq!(index.hnsw_metric(), Some(VectorMetric::SquaredEuclidean));
     assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0, 1]);
+}
+
+#[test]
+fn flat_vector_index_memory_usage_reports_row_bitmap_only() {
+    let mut index = VectorIndex::new(VectorIndexKind::Flat, 2).unwrap();
+    let first = VectorValue::new(vec![1.0, 0.0]).unwrap();
+    let second = VectorValue::new(vec![2.0, 0.0]).unwrap();
+
+    index.insert_value(0, &first).unwrap();
+    index.insert_value(70_000, &second).unwrap();
+
+    let usage = index.memory_usage();
+    assert_eq!(usage.indexed_rows, 2);
+    assert!(usage.row_bitmap_serialized_bytes > 0);
+    assert_eq!(usage.hnsw_entries, 0);
+    assert_eq!(usage.hnsw_index_bytes, 0);
+    assert_eq!(usage.hnsw_referenced_vector_bytes, 0);
+    assert_eq!(usage.estimated_reachable_bytes, usage.estimated_index_bytes);
+    assert!(usage.estimated_index_bytes >= usage.row_bitmap_bytes);
+}
+
+#[test]
+fn hnsw_vector_index_memory_usage_reports_links_and_stale_entries() {
+    let mut index = VectorIndex::new(VectorIndexKind::HnswSquaredEuclidean, 2).unwrap();
+    let vectors: Vec<_> = (0..32)
+        .map(|row| VectorValue::new(vec![row as f32, 0.0]).unwrap())
+        .collect();
+    for (row, vector) in vectors.iter().enumerate() {
+        index.insert_value(row as u32, vector).unwrap();
+    }
+
+    index.remove_row(7);
+
+    let usage = index.memory_usage();
+    assert_eq!(usage.indexed_rows, 31);
+    assert_eq!(usage.hnsw_entries, 32);
+    assert_eq!(usage.hnsw_live_entries, 31);
+    assert_eq!(usage.hnsw_deleted_entries, 1);
+    assert!(usage.hnsw_link_count > 0);
+    assert!(usage.hnsw_index_bytes > 0);
+    assert!(usage.hnsw_referenced_vector_bytes >= 32 * 2 * std::mem::size_of::<f32>());
+    assert_eq!(
+        usage.estimated_reachable_bytes,
+        usage
+            .estimated_index_bytes
+            .saturating_add(usage.hnsw_referenced_vector_bytes)
+    );
 }

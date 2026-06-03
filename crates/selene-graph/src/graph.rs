@@ -17,7 +17,7 @@ use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
-use crate::vector_index::{VectorIndex, VectorIndexKind};
+use crate::vector_index::{VectorIndex, VectorIndexKind, VectorIndexMemoryUsage};
 
 /// Registered built-in property-index metadata.
 #[derive(Clone, Debug)]
@@ -107,6 +107,12 @@ impl VectorIndexEntry {
     #[must_use]
     pub fn dimension(&self) -> u32 {
         self.index.dimension()
+    }
+
+    /// Return an estimated memory usage snapshot for this vector index.
+    #[must_use]
+    pub fn memory_usage(&self) -> VectorIndexMemoryUsage {
+        self.index.memory_usage()
     }
 }
 

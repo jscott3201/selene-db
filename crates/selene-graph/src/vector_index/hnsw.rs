@@ -8,6 +8,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
+use std::mem::size_of;
 
 use rustc_hash::FxHashMap;
 use selene_core::{CoreResult, VectorMetric, VectorMetricQuery, VectorValue};
@@ -22,6 +23,23 @@ const LEVEL_BRANCHING_BITS: u32 = 4;
 pub(crate) struct HnswVectorHit {
     pub(crate) row: u32,
     pub(crate) distance: f64,
+}
+
+/// Estimated HNSW resident memory and structural counters.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct HnswMemoryUsage {
+    /// Total HNSW entries, including stale deleted row versions.
+    pub(crate) entries: usize,
+    /// Live entries currently reachable from row membership.
+    pub(crate) live_entries: usize,
+    /// Stale entries retained to keep historical links traversable.
+    pub(crate) deleted_entries: usize,
+    /// Stored directed links across every layer.
+    pub(crate) link_count: usize,
+    /// Estimated heap bytes owned by HNSW structures, excluding vector components.
+    pub(crate) estimated_heap_bytes: usize,
+    /// Component bytes reachable through HNSW vector handles.
+    pub(crate) referenced_vector_bytes: usize,
 }
 
 /// Derived HNSW graph for one vector-index registration.
@@ -154,6 +172,45 @@ impl HnswVectorIndex {
             }
         }
         Ok(hits)
+    }
+
+    /// Return estimated HNSW memory usage.
+    pub(crate) fn memory_usage(&self) -> HnswMemoryUsage {
+        let entries = self.nodes.len();
+        let live_entries = self.row_to_entry.len();
+        let deleted_entries = self.nodes.iter().filter(|node| node.deleted).count();
+        let mut link_count = 0usize;
+        let mut link_capacity = 0usize;
+        let mut layer_vec_capacity = 0usize;
+        let mut referenced_vector_bytes = 0usize;
+        for node in &self.nodes {
+            referenced_vector_bytes = referenced_vector_bytes
+                .saturating_add(node.vector.dimension().saturating_mul(size_of::<f32>()));
+            layer_vec_capacity = layer_vec_capacity.saturating_add(node.links.capacity());
+            for layer in &node.links {
+                link_count = link_count.saturating_add(layer.len());
+                link_capacity = link_capacity.saturating_add(layer.capacity());
+            }
+        }
+        let estimated_heap_bytes = self
+            .nodes
+            .capacity()
+            .saturating_mul(size_of::<HnswNode>())
+            .saturating_add(layer_vec_capacity.saturating_mul(size_of::<Vec<u32>>()))
+            .saturating_add(link_capacity.saturating_mul(size_of::<u32>()))
+            .saturating_add(
+                self.row_to_entry
+                    .capacity()
+                    .saturating_mul(size_of::<(u32, u32)>()),
+            );
+        HnswMemoryUsage {
+            entries,
+            live_entries,
+            deleted_entries,
+            link_count,
+            estimated_heap_bytes,
+            referenced_vector_bytes,
+        }
     }
 
     fn greedy_layer_from_entry(

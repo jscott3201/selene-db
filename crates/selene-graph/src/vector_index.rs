@@ -9,6 +9,7 @@
 //! the debug consistency net.
 
 use std::collections::BTreeSet;
+use std::mem::size_of;
 
 use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
@@ -68,6 +69,40 @@ impl VectorIndexKind {
             Self::HnswNegativeInnerProduct => Some(VectorMetric::NegativeInnerProduct),
         }
     }
+}
+
+/// Estimated resident memory and cardinality details for one vector index.
+///
+/// This is intentionally an estimate rather than allocator-exact accounting.
+/// `estimated_index_bytes` counts index-owned structures and excludes primary
+/// graph vector component allocations that HNSW may share through `Arc` handles.
+/// `estimated_reachable_bytes` adds the component bytes referenced by HNSW
+/// entries as an upper-bound view; deleted HNSW entries can retain old component
+/// storage until the derived index is rebuilt.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct VectorIndexMemoryUsage {
+    /// Number of live rows currently admitted to the index.
+    pub indexed_rows: u64,
+    /// Estimated heap bytes owned by the row bitmap.
+    pub row_bitmap_bytes: usize,
+    /// Roaring serialized size for the row bitmap.
+    pub row_bitmap_serialized_bytes: usize,
+    /// Estimated heap bytes owned by the HNSW derived index, excluding vector components.
+    pub hnsw_index_bytes: usize,
+    /// Component bytes reachable through HNSW vector handles.
+    pub hnsw_referenced_vector_bytes: usize,
+    /// Total HNSW entries, including stale deleted row versions.
+    pub hnsw_entries: usize,
+    /// Live HNSW entries reachable from row membership.
+    pub hnsw_live_entries: usize,
+    /// Stale HNSW entries retained for traversability after update/delete.
+    pub hnsw_deleted_entries: usize,
+    /// Stored directed HNSW links across all layers.
+    pub hnsw_link_count: usize,
+    /// Estimated bytes for index-owned structures, excluding referenced vector components.
+    pub estimated_index_bytes: usize,
+    /// Estimated upper-bound bytes reachable from the index including HNSW vector components.
+    pub estimated_reachable_bytes: usize,
 }
 
 /// Built-in vector index state for one `(label, property)` registration.
@@ -142,6 +177,35 @@ impl VectorIndex {
         self.kind.hnsw_metric()
     }
 
+    /// Return an estimated memory usage snapshot for this index.
+    #[must_use]
+    pub fn memory_usage(&self) -> VectorIndexMemoryUsage {
+        let row_bitmap_bytes = roaring_heap_bytes(&self.rows);
+        let row_bitmap_serialized_bytes = self.rows.serialized_size();
+        let hnsw = self
+            .hnsw
+            .as_ref()
+            .map(HnswVectorIndex::memory_usage)
+            .unwrap_or_default();
+        let estimated_index_bytes = size_of::<Self>()
+            .saturating_add(row_bitmap_bytes)
+            .saturating_add(hnsw.estimated_heap_bytes);
+        VectorIndexMemoryUsage {
+            indexed_rows: self.cardinality(),
+            row_bitmap_bytes,
+            row_bitmap_serialized_bytes,
+            hnsw_index_bytes: hnsw.estimated_heap_bytes,
+            hnsw_referenced_vector_bytes: hnsw.referenced_vector_bytes,
+            hnsw_entries: hnsw.entries,
+            hnsw_live_entries: hnsw.live_entries,
+            hnsw_deleted_entries: hnsw.deleted_entries,
+            hnsw_link_count: hnsw.link_count,
+            estimated_index_bytes,
+            estimated_reachable_bytes: estimated_index_bytes
+                .saturating_add(hnsw.referenced_vector_bytes),
+        }
+    }
+
     pub(crate) fn insert_value(&mut self, row: u32, vector: &VectorValue) -> GraphResult<()> {
         self.rows.insert(row);
         if let Some(hnsw) = &mut self.hnsw {
@@ -173,6 +237,16 @@ impl VectorIndex {
             .as_ref()
             .map(|hnsw| hnsw.search(query, k, ef_search))
     }
+}
+
+fn roaring_heap_bytes(rows: &RoaringBitmap) -> usize {
+    let statistics = rows.statistics();
+    u64_to_usize_saturating(
+        statistics
+            .n_bytes_array_containers
+            .saturating_add(statistics.n_bytes_run_containers)
+            .saturating_add(statistics.n_bytes_bitset_containers),
+    )
 }
 
 /// Error returned when a value cannot be admitted to a vector index.
@@ -499,6 +573,10 @@ fn ensure_dimension(dimension: u32) -> GraphResult<()> {
     } else {
         Ok(())
     }
+}
+
+fn u64_to_usize_saturating(value: u64) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
 }
 
 fn index_rejection(
