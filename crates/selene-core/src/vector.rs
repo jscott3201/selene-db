@@ -138,6 +138,40 @@ impl<'a> VectorMetricQuery<'a> {
             VectorMetric::NegativeInnerProduct => -dot(query, candidate),
         }))
     }
+
+    /// Compute distance using a precomputed candidate squared norm.
+    ///
+    /// When `candidate_squared_norm` is the candidate's actual squared norm,
+    /// this is equivalent to [`Self::distance`]. It lets ANN indexes cache
+    /// centroid norms for cosine scoring while still using the canonical metric
+    /// kernels and error behavior. Non-cosine metrics ignore
+    /// `candidate_squared_norm`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`CoreError::VectorDimensionMismatch`] if dimensions differ.
+    /// [`VectorMetric::Cosine`] returns [`CoreError::VectorZeroNorm`] when the
+    /// supplied candidate squared norm is zero.
+    pub fn distance_with_candidate_squared_norm(
+        &self,
+        candidate: &VectorValue,
+        candidate_squared_norm: f64,
+    ) -> CoreResult<f64> {
+        let query = self.query.as_slice();
+        let candidate = candidate.as_slice();
+        check_same_dimension(query.len(), candidate.len())?;
+        Ok(canonical_score(match self.metric {
+            VectorMetric::SquaredEuclidean => squared_euclidean(query, candidate),
+            VectorMetric::Cosine => cosine_distance_with_norms(
+                query,
+                candidate,
+                self.query_norm
+                    .expect("cosine query scorer stores query norm"),
+                candidate_squared_norm,
+            )?,
+            VectorMetric::NegativeInnerProduct => -dot(query, candidate),
+        }))
+    }
 }
 
 /// A single exact vector-search result.
@@ -338,6 +372,15 @@ fn cosine_distance(lhs: &[f32], rhs: &[f32]) -> CoreResult<f64> {
 fn cosine_distance_with_lhs_norm(lhs: &[f32], rhs: &[f32], lhs_norm: f64) -> CoreResult<f64> {
     let (rhs_norm, dot) = norm_and_dot(lhs, rhs);
     cosine_distance_with_components(lhs_norm, rhs_norm, dot)
+}
+
+fn cosine_distance_with_norms(
+    lhs: &[f32],
+    rhs: &[f32],
+    lhs_norm: f64,
+    rhs_norm: f64,
+) -> CoreResult<f64> {
+    cosine_distance_with_components(lhs_norm, rhs_norm, dot(lhs, rhs))
 }
 
 fn cosine_distance_with_components(lhs_norm: f64, rhs_norm: f64, dot: f64) -> CoreResult<f64> {
@@ -549,6 +592,22 @@ mod tests {
     }
 
     #[test]
+    fn bound_query_accepts_precomputed_candidate_norm() {
+        let query = vector(&[1.0, 2.0, 3.0]);
+        let candidate = vector(&[4.0, 5.0, 6.0]);
+        let candidate_norm = dot(candidate.as_slice(), candidate.as_slice());
+
+        let scorer = VectorMetric::Cosine.bind_query(&query).unwrap();
+
+        assert_eq!(
+            scorer
+                .distance_with_candidate_squared_norm(&candidate, candidate_norm)
+                .unwrap(),
+            scorer.distance(&candidate).unwrap()
+        );
+    }
+
+    #[test]
     fn bound_cosine_query_preserves_zero_norm_error_sides() {
         let zero = vector(&[0.0, 0.0]);
         let rhs = vector(&[1.0, 0.0]);
@@ -558,6 +617,11 @@ mod tests {
 
         let scorer = VectorMetric::Cosine.bind_query(&rhs).unwrap();
         let error = scorer.distance(&zero).unwrap_err();
+        assert!(matches!(error, CoreError::VectorZeroNorm { side: "rhs" }));
+
+        let error = scorer
+            .distance_with_candidate_squared_norm(&rhs, 0.0)
+            .unwrap_err();
         assert!(matches!(error, CoreError::VectorZeroNorm { side: "rhs" }));
     }
 

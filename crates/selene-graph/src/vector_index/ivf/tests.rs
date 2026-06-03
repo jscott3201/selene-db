@@ -91,6 +91,7 @@ fn ivf_parallel_assignment_path_keeps_exact_full_probe_results() {
         usage.live_entries,
         usage.centroids
     ));
+    assert!(index.centroid_squared_norms.is_empty());
     assert_eq!(usage.assigned_entries, 16);
     assert_eq!(index.lists.iter().map(Vec::capacity).sum::<usize>(), 16);
 
@@ -101,6 +102,23 @@ fn ivf_parallel_assignment_path_keeps_exact_full_probe_results() {
         hits.iter().map(|hit| hit.row).collect::<Vec<_>>(),
         [9, 10, 8]
     );
+}
+
+#[test]
+fn ivf_cosine_bulk_load_refreshes_centroid_norm_cache() {
+    let mut index = IvfVectorIndex::new(VectorMetric::Cosine);
+    for row in 0..16 {
+        index.insert(row, vector(&[1.0, row as f32 + 1.0])).unwrap();
+    }
+
+    index.finish_bulk_load().unwrap();
+
+    assert_eq!(index.centroid_squared_norms.len(), index.centroids.len());
+    assert!(index.centroid_squared_norms.iter().all(|norm| *norm > 0.0));
+    let hits = index
+        .search(&vector(&[1.0, 9.1]), 1, index.lists.len())
+        .unwrap();
+    assert_eq!(hits[0].row, 8);
 }
 
 #[test]
