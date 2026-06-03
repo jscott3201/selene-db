@@ -6,17 +6,17 @@
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 mod common;
-mod single_graph_hnsw_recall;
+mod single_graph_ann_recall;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue, intern};
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexKind, VectorIndexMemoryUsage};
 use selene_testing::BenchProfile;
-use single_graph_hnsw_recall::{HNSW_RECALL_PROFILES, HnswRecallFixture};
+use single_graph_ann_recall::{ANN_RECALL_PROFILES, AnnRecallFixture};
 
-const HNSW_RECALL_K: usize = 10;
-const HNSW_RECALL_QUERIES: usize = 16;
-const HNSW_RECALL_EF_SEARCH: &[usize] = &[10, 32, 64];
+const ANN_RECALL_K: usize = 10;
+const ANN_RECALL_QUERIES: usize = 16;
+const ANN_RECALL_EF_SEARCH: &[usize] = &[10, 32, 64];
 
 fn bench_node_fetch(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_node_fetch");
@@ -174,30 +174,30 @@ fn bench_exact_vector_scan(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_hnsw_recall(c: &mut Criterion) {
-    let mut group = c.benchmark_group("graph_hnsw_recall_validation");
+fn bench_ann_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_ann_recall_validation");
     for scale in vector_scan_scales() {
-        for &profile in HNSW_RECALL_PROFILES {
+        for &profile in ANN_RECALL_PROFILES {
             for &variant in profile.variants() {
-                let fixture = HnswRecallFixture::build(
+                let fixture = AnnRecallFixture::build(
                     profile,
                     variant,
                     scale,
-                    HNSW_RECALL_QUERIES,
-                    HNSW_RECALL_K,
+                    ANN_RECALL_QUERIES,
+                    ANN_RECALL_K,
                 );
                 let memory_suffix = fixture.memory_id_suffix();
-                let profile_name = hnsw_recall_benchmark_name(&fixture);
+                let profile_name = ann_recall_benchmark_name(&fixture);
                 group.throughput(Throughput::Elements(
                     (fixture.scale() * fixture.query_count()) as u64,
                 ));
-                for &ef_search in HNSW_RECALL_EF_SEARCH {
+                for &ef_search in ANN_RECALL_EF_SEARCH {
                     let recall = fixture.mean_recall(ef_search);
                     let quality = fixture.mean_distance_quality(ef_search);
                     group.bench_with_input(
                         BenchmarkId::new(
                             format!(
-                                "{profile_name}_d{}_k{HNSW_RECALL_K}_ef{ef_search}_idbp{}_dqbp{}_{}",
+                                "{profile_name}_d{}_k{ANN_RECALL_K}_ef{ef_search}_idbp{}_dqbp{}_{}",
                                 fixture.dimension(),
                                 recall_basis_points(recall),
                                 recall_basis_points(quality),
@@ -220,7 +220,7 @@ fn bench_hnsw_recall(c: &mut Criterion) {
     group.finish();
 }
 
-fn hnsw_recall_benchmark_name(fixture: &HnswRecallFixture) -> String {
+fn ann_recall_benchmark_name(fixture: &AnnRecallFixture) -> String {
     if fixture.variant_name_suffix().is_empty() {
         fixture.profile().name().to_owned()
     } else {
@@ -324,20 +324,38 @@ fn vector_index_memory_id_suffix(graph: &SeleneGraph, label: &IStr, property: &I
 }
 
 fn format_vector_memory_id_suffix(usage: VectorIndexMemoryUsage) -> String {
+    let ann_suffix = if usage.hnsw_entries > 0 {
+        format!(
+            "he{}l{}d{}g{}z{}u{}p{}x{}a{}",
+            compact_usize(usage.hnsw_entries),
+            compact_usize(usage.hnsw_live_entries),
+            compact_usize(usage.hnsw_deleted_entries),
+            compact_usize(usage.hnsw_link_count),
+            compact_usize(usage.hnsw_level_zero_link_count),
+            compact_usize(usage.hnsw_upper_layer_link_count),
+            compact_usize(usage.hnsw_max_layer_count),
+            compact_usize(usage.hnsw_max_links_per_layer),
+            compact_usize(usage.hnsw_average_links_per_entry_basis_points)
+        )
+    } else if usage.ivf_entries > 0 {
+        format!(
+            "ve{}l{}d{}c{}q{}a{}",
+            compact_usize(usage.ivf_entries),
+            compact_usize(usage.ivf_live_entries),
+            compact_usize(usage.ivf_deleted_entries),
+            compact_usize(usage.ivf_centroids),
+            compact_usize(usage.ivf_list_count),
+            compact_usize(usage.ivf_assigned_entries)
+        )
+    } else {
+        "flat".to_owned()
+    };
     format!(
-        "m{}-{}_n{}_e{}_l{}_d{}_g{}z{}u{}p{}x{}a{}",
+        "m{}-{}_n{}_{}",
         usage.estimated_index_bytes / 1024,
         usage.estimated_reachable_bytes / 1024,
         compact_count(usage.indexed_rows),
-        compact_usize(usage.hnsw_entries),
-        compact_usize(usage.hnsw_live_entries),
-        compact_usize(usage.hnsw_deleted_entries),
-        compact_usize(usage.hnsw_link_count),
-        compact_usize(usage.hnsw_level_zero_link_count),
-        compact_usize(usage.hnsw_upper_layer_link_count),
-        compact_usize(usage.hnsw_max_layer_count),
-        compact_usize(usage.hnsw_max_links_per_layer),
-        compact_usize(usage.hnsw_average_links_per_entry_basis_points)
+        ann_suffix,
     )
 }
 
@@ -375,6 +393,6 @@ criterion_group! {
     config = common::criterion_config();
     targets = bench_node_fetch, bench_label_index, bench_typed_index_point,
         bench_typed_index_range, bench_composite_index_proxy, bench_exact_vector_scan,
-        bench_hnsw_recall
+        bench_ann_recall
 }
 criterion_main!(graph_reads);

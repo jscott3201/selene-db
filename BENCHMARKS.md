@@ -146,8 +146,10 @@ metric kernels, returning stable node ids. `graph_vector_index_rebuild/*` times 
 maintenance rebuild that reclaims stale ANN entries after vector update/delete
 churn; fixture setup is excluded from the reported Criterion duration. Vector
 benchmark IDs include a memory/cardinality suffix:
-`m{index KiB}-{reachable KiB}_n{indexed rows}_e{HNSW entries}_l{live}_d{deleted}_g{links}`;
-HNSW recall IDs encode exact-ID recall as `idbp{basis points}` and
+`m{index KiB}-{reachable KiB}_n{indexed rows}_{flat|he...|ve...}`. The
+`he...` form carries HNSW entries/live/deleted entries plus link counters; the
+`ve...` form carries IVF entries/live/deleted entries plus centroid/list
+counters. ANN recall IDs encode exact-ID recall as `idbp{basis points}` and
 tie-tolerant nearest-distance quality as `dqbp{basis points}` before that
 memory suffix.
 unindexed rows use `noidx`. Rebuild IDs add
@@ -194,12 +196,13 @@ PR-local quick vector baseline:
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim768` | 42.34 µs (quick) | Same HNSW topology/link count as dim128; reachable bytes rise to ~3.15 MiB because full-precision vector components dominate. |
 | `graph_vector_index_dimension_projection/hnsw_l2_default_dim1536` | 81.01 µs (quick) | Reachable bytes rise to ~6.08 MiB at 1k vectors; extrapolation pressure is raw vector storage, not graph-link storage. |
 
-PR-local HNSW tuning spot-check:
+PR-local ANN recall spot-check:
 
 | Bench | 10k | Notes |
 |---|---:|---|
-| `graph_hnsw_recall_validation/cluster_cos_d128_k10_ef10_idbp9875_dqbp9875` | 108.4 µs (quick) | Default `M=18, ef_construction=64`; 10k row has 372,024 links and `m2491-7491` after compact level-0 storage with `usize` offsets. Keeps ID-overlap and distance-quality recall at 9875 bp on this 10k corpus while the separate duplicate-distance regression passes at 10000 bp. |
-| `graph_hnsw_recall_validation/cluster_cos_m24ef64_d128_k10_ef10_idbp10000_dqbp10000` | 130.7 µs (quick) | Configured `M=24, ef_construction=64`; 10k row has 496,032 links and `m2975-7975`. Reaches 10000 bp ID-overlap and distance-quality recall, but costs ~21% slower ef10 search and ~19% more index memory than the default row. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_d128_k10_ef10_idbp9875_dqbp9875` | 108.25 µs (quick) | Default `M=18, ef_construction=64`; suffix starts `m2491-7491_n10k_he10k...`, so compact HNSW level-0 storage keeps index-owned memory around 2.43 MiB while ID-overlap and distance-quality recall stay at 9875 bp on this 10k corpus. |
+| `graph_ann_recall_validation/cluster_cos_hnsw_m24ef64_d128_k10_ef10_idbp10000_dqbp10000` | 130.78 µs (quick) | Configured `M=24, ef_construction=64`; suffix starts `m2975-7975_n10k_he10k...`. Reaches 10000 bp ID-overlap and distance-quality recall, but costs ~21% slower ef10 search and ~19% more index memory than the default HNSW row. |
+| `graph_ann_recall_validation/cluster_cos_ivf_d128_k10_ef10_idbp10000_dqbp10000` | 768.18 µs (quick) | First IVF recall row for the same 10k corpus; suffix starts `m615-5665_n10k_ve10k...c100q100a10k`, so IVF uses far less index-owned memory than HNSW and reaches 10000 bp recall/quality, but current probe/rerank defaults are much slower. |
 
 ## §3 selene-graph — write pipeline & concurrency
 
