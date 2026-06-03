@@ -8,42 +8,71 @@ use selene_graph::{
 
 const DISTANCE_TIE_EPSILON: f64 = 1e-9;
 
-pub(crate) const HNSW_RECALL_PROFILES: &[HnswRecallProfile] = &[
-    HnswRecallProfile::LineSquaredEuclidean,
-    HnswRecallProfile::ClusteredCosine,
-    HnswRecallProfile::NegativeInnerProduct,
+pub(crate) const ANN_RECALL_PROFILES: &[AnnRecallProfile] = &[
+    AnnRecallProfile::LineSquaredEuclidean,
+    AnnRecallProfile::ClusteredCosine,
+    AnnRecallProfile::NegativeInnerProduct,
 ];
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) enum HnswRecallProfile {
+pub(crate) enum AnnRecallProfile {
     LineSquaredEuclidean,
     ClusteredCosine,
     NegativeInnerProduct,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct HnswRecallVariant {
+pub(crate) struct AnnRecallVariant {
     pub(crate) name_suffix: &'static str,
-    pub(crate) hnsw_config: Option<HnswIndexConfig>,
+    index: AnnIndexKind,
 }
 
-static DEFAULT_HNSW_RECALL_VARIANTS: [HnswRecallVariant; 1] = [HnswRecallVariant {
-    name_suffix: "",
-    hnsw_config: None,
-}];
-
-static CLUSTERED_COSINE_HNSW_RECALL_VARIANTS: [HnswRecallVariant; 2] = [
-    HnswRecallVariant {
-        name_suffix: "",
-        hnsw_config: None,
+#[derive(Clone, Copy, Debug)]
+enum AnnIndexKind {
+    Hnsw {
+        hnsw_config: Option<HnswIndexConfig>,
     },
-    HnswRecallVariant {
-        name_suffix: "m24ef64",
-        hnsw_config: Some(HnswIndexConfig::new(24, 64)),
+    Ivf,
+}
+
+static DEFAULT_ANN_RECALL_VARIANTS: [AnnRecallVariant; 2] = [
+    AnnRecallVariant {
+        name_suffix: "hnsw",
+        index: AnnIndexKind::Hnsw { hnsw_config: None },
+    },
+    AnnRecallVariant {
+        name_suffix: "ivf",
+        index: AnnIndexKind::Ivf,
     },
 ];
 
-impl HnswRecallProfile {
+static CLUSTERED_COSINE_ANN_RECALL_VARIANTS: [AnnRecallVariant; 3] = [
+    AnnRecallVariant {
+        name_suffix: "hnsw",
+        index: AnnIndexKind::Hnsw { hnsw_config: None },
+    },
+    AnnRecallVariant {
+        name_suffix: "hnsw_m24ef64",
+        index: AnnIndexKind::Hnsw {
+            hnsw_config: Some(HnswIndexConfig::new(24, 64)),
+        },
+    },
+    AnnRecallVariant {
+        name_suffix: "ivf",
+        index: AnnIndexKind::Ivf,
+    },
+];
+
+impl AnnRecallVariant {
+    const fn hnsw_config(self) -> Option<HnswIndexConfig> {
+        match self.index {
+            AnnIndexKind::Hnsw { hnsw_config } => hnsw_config,
+            AnnIndexKind::Ivf => None,
+        }
+    }
+}
+
+impl AnnRecallProfile {
     pub(crate) const fn name(self) -> &'static str {
         match self {
             Self::LineSquaredEuclidean => "line_l2",
@@ -59,12 +88,10 @@ impl HnswRecallProfile {
         }
     }
 
-    pub(crate) fn variants(self) -> &'static [HnswRecallVariant] {
+    pub(crate) fn variants(self) -> &'static [AnnRecallVariant] {
         match self {
-            Self::ClusteredCosine => &CLUSTERED_COSINE_HNSW_RECALL_VARIANTS,
-            Self::LineSquaredEuclidean | Self::NegativeInnerProduct => {
-                &DEFAULT_HNSW_RECALL_VARIANTS
-            }
+            Self::ClusteredCosine => &CLUSTERED_COSINE_ANN_RECALL_VARIANTS,
+            Self::LineSquaredEuclidean | Self::NegativeInnerProduct => &DEFAULT_ANN_RECALL_VARIANTS,
         }
     }
 
@@ -76,11 +103,22 @@ impl HnswRecallProfile {
         }
     }
 
-    const fn index_kind(self) -> VectorIndexKind {
-        match self {
-            Self::LineSquaredEuclidean => VectorIndexKind::HnswSquaredEuclidean,
-            Self::ClusteredCosine => VectorIndexKind::HnswCosine,
-            Self::NegativeInnerProduct => VectorIndexKind::HnswNegativeInnerProduct,
+    const fn index_kind(self, variant: AnnRecallVariant) -> VectorIndexKind {
+        match (self.metric(), variant.index) {
+            (VectorMetric::SquaredEuclidean, AnnIndexKind::Hnsw { .. }) => {
+                VectorIndexKind::HnswSquaredEuclidean
+            }
+            (VectorMetric::Cosine, AnnIndexKind::Hnsw { .. }) => VectorIndexKind::HnswCosine,
+            (VectorMetric::NegativeInnerProduct, AnnIndexKind::Hnsw { .. }) => {
+                VectorIndexKind::HnswNegativeInnerProduct
+            }
+            (VectorMetric::SquaredEuclidean, AnnIndexKind::Ivf) => {
+                VectorIndexKind::IvfSquaredEuclidean
+            }
+            (VectorMetric::Cosine, AnnIndexKind::Ivf) => VectorIndexKind::IvfCosine,
+            (VectorMetric::NegativeInnerProduct, AnnIndexKind::Ivf) => {
+                VectorIndexKind::IvfNegativeInnerProduct
+            }
         }
     }
 
@@ -122,8 +160,8 @@ impl HnswRecallProfile {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct HnswRecallFixture {
-    profile: HnswRecallProfile,
+pub(crate) struct AnnRecallFixture {
+    profile: AnnRecallProfile,
     variant_name_suffix: &'static str,
     dimension: usize,
     scale: usize,
@@ -135,17 +173,17 @@ pub(crate) struct HnswRecallFixture {
     k: usize,
 }
 
-impl HnswRecallFixture {
+impl AnnRecallFixture {
     pub(crate) fn build(
-        profile: HnswRecallProfile,
-        variant: HnswRecallVariant,
+        profile: AnnRecallProfile,
+        variant: AnnRecallVariant,
         scale: usize,
         query_count: usize,
         k: usize,
     ) -> Self {
         let scale = scale.max(1);
         let dimension = profile.dimension();
-        let label = intern("HnswRecallDoc").expect("bench label is valid");
+        let label = intern("AnnRecallDoc").expect("bench label is valid");
         let embedding_key = intern("embedding").expect("bench key is valid");
         let shared = SharedGraph::new(GraphId::new(
             10_000 + scale as u64 + profile.graph_id_offset(),
@@ -166,14 +204,14 @@ impl HnswRecallFixture {
                 .create_vector_index_named_with_config(
                     label.clone(),
                     embedding_key.clone(),
-                    profile.index_kind(),
+                    profile.index_kind(variant),
                     dimension,
                     None,
-                    variant.hnsw_config,
+                    variant.hnsw_config(),
                 )
-                .expect("bench HNSW vector index build succeeds");
+                .expect("bench ANN vector index build succeeds");
             txn.commit()
-                .expect("bench HNSW recall fixture commit succeeds");
+                .expect("bench ANN recall fixture commit succeeds");
         }
         let graph = shared.read().as_ref().clone();
         let queries: Vec<_> = (0..query_count)
@@ -201,7 +239,7 @@ impl HnswRecallFixture {
         }
     }
 
-    pub(crate) const fn profile(&self) -> HnswRecallProfile {
+    pub(crate) const fn profile(&self) -> AnnRecallProfile {
         self.profile
     }
 
