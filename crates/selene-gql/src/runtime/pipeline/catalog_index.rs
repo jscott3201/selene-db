@@ -298,6 +298,13 @@ pub(super) fn render_vector_index_kind(
         VectorIndexKind::HnswNegativeInnerProduct => {
             render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
         }
+        VectorIndexKind::IvfSquaredEuclidean => {
+            format!("vector_ivf_squared_euclidean({dimension})")
+        }
+        VectorIndexKind::IvfCosine => format!("vector_ivf_cosine({dimension})"),
+        VectorIndexKind::IvfNegativeInnerProduct => {
+            format!("vector_ivf_negative_inner_product({dimension})")
+        }
     }
 }
 

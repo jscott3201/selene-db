@@ -185,7 +185,7 @@ fn build_vector_index_inner(
             },
         }
     }
-    index.finish_bulk_load();
+    index.finish_bulk_load()?;
     Ok(index)
 }
 

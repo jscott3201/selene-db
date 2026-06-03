@@ -19,7 +19,7 @@ pub(crate) fn hnsw_config_for_kind(
         (None, None) => Ok(None),
         (None, Some(config)) => Err(invalid_config(
             config,
-            "flat vector indexes do not accept HNSW config",
+            "only HNSW vector indexes accept HNSW config",
         )),
         (Some(_), None) => Ok(Some(HnswIndexConfig::default())),
         (Some(_), Some(config)) => {

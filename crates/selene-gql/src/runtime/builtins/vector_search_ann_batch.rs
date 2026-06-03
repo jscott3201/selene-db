@@ -1,7 +1,7 @@
 //! `selene.vector_search_nodes_ann_batch` native built-in.
 //!
 //! Read-only graph-tier procedure exposing batched approximate vector node
-//! search over one registered HNSW vector index. The procedure accepts
+//! search over one registered ANN vector index. The procedure accepts
 //! `LIST<VECTOR>` query parameters and emits a `query_index` column so callers
 //! can regroup hits without issuing one `CALL` per embedding.
 
@@ -41,7 +41,7 @@ pub(super) fn signature() -> Vec<ProcedureParameter> {
             .with_default_doc("squared_euclidean")
             .with_default(ProcedureDefaultValue::String("squared_euclidean")),
         StaticParameter::new("ef_search", GqlType::Integer, false)
-            .with_description("HNSW candidate-list width.")
+            .with_description("ANN search-width hint.")
             .with_default_doc("64")
             .with_default(ProcedureDefaultValue::Integer(64)),
     ]
@@ -210,11 +210,11 @@ fn vector_search_error(error: VectorSearchError) -> ProcedureError {
         VectorSearchError::Cancelled => ProcedureError::Cancelled,
         VectorSearchError::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
         VectorSearchError::ApproximateIndexMissing => {
-            invalid_arg(format!("{PROC_NAME} requires a matching HNSW vector index"))
+            invalid_arg(format!("{PROC_NAME} requires a matching ANN vector index"))
         }
         VectorSearchError::ApproximateMetricMismatch { indexed, requested } => {
             invalid_arg(format!(
-                "{PROC_NAME} requested {requested:?}, but the HNSW vector index uses {indexed:?}"
+                "{PROC_NAME} requested {requested:?}, but the ANN vector index uses {indexed:?}"
             ))
         }
     }

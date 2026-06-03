@@ -465,7 +465,7 @@ fn vector_search_nodes_ann_uses_registered_hnsw_index() {
 }
 
 #[test]
-fn vector_search_nodes_ann_requires_hnsw_index() {
+fn vector_search_nodes_ann_requires_ann_index() {
     let graph = graph(330_017);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -476,14 +476,14 @@ fn vector_search_nodes_ann_requires_hnsw_index() {
             "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10)",
             &registry,
         )
-        .expect_err("missing hnsw index must error");
+        .expect_err("missing ann index must error");
 
     assert!(matches!(
         err,
         ExecutorError::Procedure {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
-        } if detail.contains("requires a matching HNSW vector index")
+        } if detail.contains("requires a matching ANN vector index")
     ));
 }
 
@@ -547,6 +547,6 @@ fn vector_search_nodes_ann_reports_metric_mismatch() {
         ExecutorError::Procedure {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
-        } if detail.contains("HNSW vector index uses Cosine")
+        } if detail.contains("ANN vector index uses Cosine")
     ));
 }

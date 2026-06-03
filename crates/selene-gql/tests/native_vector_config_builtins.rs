@@ -141,6 +141,6 @@ fn create_vector_index_rejects_hnsw_config_for_flat_indexes() {
         ExecutorError::Procedure {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
-        } if detail.contains("flat vector indexes do not accept HNSW config")
+        } if detail.contains("only HNSW vector indexes accept HNSW config")
     ));
 }

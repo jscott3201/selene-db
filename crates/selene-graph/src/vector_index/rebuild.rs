@@ -17,7 +17,7 @@ pub struct VectorIndexRebuildEntry {
     pub kind: VectorIndexKind,
     /// Rebuilt vector dimensionality.
     pub dimension: u32,
-    /// HNSW construction config for approximate indexes.
+    /// HNSW construction config for HNSW indexes.
     pub hnsw_config: Option<HnswIndexConfig>,
     /// Memory and cardinality before the rebuild.
     pub before: VectorIndexMemoryUsage,
@@ -36,9 +36,13 @@ pub struct VectorIndexRebuildReport {
     pub reclaimed_hnsw_entries: usize,
     /// Stale HNSW deleted entries removed by the rebuild.
     pub reclaimed_hnsw_deleted_entries: usize,
+    /// IVF entries removed by the rebuild, including stale deleted versions.
+    pub reclaimed_ivf_entries: usize,
+    /// Stale IVF deleted entries removed by the rebuild.
+    pub reclaimed_ivf_deleted_entries: usize,
     /// Estimated index-owned bytes reclaimed by the rebuild.
     pub reclaimed_index_bytes: usize,
-    /// Estimated reachable bytes reclaimed, including HNSW vector components.
+    /// Estimated reachable bytes reclaimed, including ANN vector components.
     pub reclaimed_reachable_bytes: usize,
 }
 
@@ -62,6 +66,19 @@ impl VectorIndexRebuildReport {
                         .before
                         .hnsw_deleted_entries
                         .saturating_sub(entry.after.hnsw_deleted_entries),
+                );
+            report.reclaimed_ivf_entries = report.reclaimed_ivf_entries.saturating_add(
+                entry
+                    .before
+                    .ivf_entries
+                    .saturating_sub(entry.after.ivf_entries),
+            );
+            report.reclaimed_ivf_deleted_entries =
+                report.reclaimed_ivf_deleted_entries.saturating_add(
+                    entry
+                        .before
+                        .ivf_deleted_entries
+                        .saturating_sub(entry.after.ivf_deleted_entries),
                 );
             report.reclaimed_index_bytes = report.reclaimed_index_bytes.saturating_add(
                 entry

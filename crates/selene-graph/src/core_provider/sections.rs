@@ -328,7 +328,7 @@ pub struct VectorSchemaEntry {
     pub kind: VectorIndexKind,
     /// Required vector dimensionality.
     pub dimension: u32,
-    /// HNSW construction config for approximate vector indexes.
+    /// HNSW construction config for HNSW vector indexes.
     pub hnsw_config: Option<HnswIndexConfig>,
     /// Optional explicit catalog name for the vector index.
     pub name: Option<IStr>,

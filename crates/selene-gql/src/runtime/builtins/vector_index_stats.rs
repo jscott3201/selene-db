@@ -13,7 +13,7 @@ use crate::{GqlType, GraphContext, ProcedureOutputColumn, ProcedureParameter, Pr
 
 const PROC_NAME: &str = "selene.vector_index_stats";
 
-static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 21] = [
+static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 29] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -48,6 +48,22 @@ static VECTOR_INDEX_STATS_OUTPUTS: [StaticOutputColumn; 21] = [
         .with_description("Maximum directed HNSW links stored in one entry layer."),
     StaticOutputColumn::new("hnsw_average_links_per_entry_basis_points", GqlType::Uint64)
         .with_description("Average directed HNSW links per entry scaled by 10,000."),
+    StaticOutputColumn::new("ivf_index_bytes", GqlType::Uint64)
+        .with_description("Estimated IVF-owned heap bytes."),
+    StaticOutputColumn::new("ivf_referenced_vector_bytes", GqlType::Uint64)
+        .with_description("Vector component bytes reachable through IVF entries."),
+    StaticOutputColumn::new("ivf_entries", GqlType::Uint64)
+        .with_description("Total IVF entries including stale entries."),
+    StaticOutputColumn::new("ivf_live_entries", GqlType::Uint64)
+        .with_description("Live IVF row entries."),
+    StaticOutputColumn::new("ivf_deleted_entries", GqlType::Uint64)
+        .with_description("Stale deleted IVF entries."),
+    StaticOutputColumn::new("ivf_centroids", GqlType::Uint64)
+        .with_description("Trained IVF centroid count."),
+    StaticOutputColumn::new("ivf_list_count", GqlType::Uint64)
+        .with_description("IVF inverted-list count."),
+    StaticOutputColumn::new("ivf_assigned_entries", GqlType::Uint64)
+        .with_description("Live IVF entries assigned to inverted lists."),
     StaticOutputColumn::new("estimated_index_bytes", GqlType::Uint64)
         .with_description("Estimated index-owned bytes."),
     StaticOutputColumn::new("estimated_reachable_bytes", GqlType::Uint64)
@@ -162,6 +178,16 @@ impl StatsRow {
             Value::Uint(usize_to_u64_saturating(
                 self.usage.hnsw_average_links_per_entry_basis_points,
             )),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_index_bytes)),
+            Value::Uint(usize_to_u64_saturating(
+                self.usage.ivf_referenced_vector_bytes,
+            )),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_live_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_deleted_entries)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_centroids)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_list_count)),
+            Value::Uint(usize_to_u64_saturating(self.usage.ivf_assigned_entries)),
             Value::Uint(usize_to_u64_saturating(self.usage.estimated_index_bytes)),
             Value::Uint(usize_to_u64_saturating(
                 self.usage.estimated_reachable_bytes,
@@ -201,6 +227,13 @@ fn render_vector_index_kind(
         }
         VectorIndexKind::HnswNegativeInnerProduct => {
             render_hnsw_kind("vector_hnsw_negative_inner_product", dimension, hnsw_config)
+        }
+        VectorIndexKind::IvfSquaredEuclidean => {
+            format!("vector_ivf_squared_euclidean({dimension})")
+        }
+        VectorIndexKind::IvfCosine => format!("vector_ivf_cosine({dimension})"),
+        VectorIndexKind::IvfNegativeInnerProduct => {
+            format!("vector_ivf_negative_inner_product({dimension})")
         }
     }
 }
