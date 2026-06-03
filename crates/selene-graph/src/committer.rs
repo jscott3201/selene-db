@@ -21,15 +21,15 @@
 //! returns — *before* the caller enqueues the bundle. Two sessions can seal in
 //! lock order (A then B) yet `send()` in the opposite order, so raw channel
 //! arrival order is **not** seal order. To publish in the correct total order
-//! anyway, each publishable unit ([`Work::Commit`] and [`Work::Compact`]) is
-//! stamped with a strictly-monotonic `seal_seq` **under the write lock**, and
-//! the committer publishes strictly in ascending `seal_seq` via a reorder
-//! buffer ([`run_committer`]). Channel arrival order only governs *when* an item
-//! reaches the buffer, never the order it publishes. **This is a new,
-//! load-bearing, NOT type-enforced invariant** — a second committer or a second
-//! `ArcSwap` writer anywhere would silently break serializability (see the v1.2
-//! design §4 "the one honest shift"). Every snapshot publisher routes here; the
-//! rerouting completeness is grep-gated and load-bearing.
+//! anyway, each publishable unit is stamped with a strictly-monotonic `seal_seq`
+//! **under the write lock**, and the committer publishes strictly in ascending
+//! `seal_seq` via a reorder buffer ([`run_committer`]). Channel arrival order
+//! only governs *when* an item reaches the buffer, never the order it publishes.
+//! **This is a new, load-bearing, NOT type-enforced invariant** — a second
+//! committer or a second `ArcSwap` writer anywhere would silently break
+//! serializability (see the v1.2 design §4 "the one honest shift"). Every
+//! snapshot publisher routes here; the rerouting completeness is grep-gated and
+//! load-bearing.
 //!
 //! # No committer-held write lock (deadlock surface removed)
 //!
@@ -55,10 +55,10 @@
 //! N when [`CommitBatching::On`], so **OFF is the degenerate `N=1` case of the
 //! identical batched code** — one append + one fsync + one publish + one ack,
 //! the same syscalls in the same order as BRIEF 1's `EveryN(1)`. A
-//! [`Work::Compact`] is a hard flush boundary: it is never co-batched (F2 — its
-//! dense snapshot already contains every lower-`seal_seq` commit's mutation, so
-//! the pending commit run must be flushed + published first to keep
-//! durable-before-visible).
+//! Snapshot-maintenance work is a hard flush boundary: it is never co-batched
+//! (F2 — its replacement snapshot already contains every lower-`seal_seq`
+//! commit's mutation, so the pending commit run must be flushed + published
+//! first to keep durable-before-visible).
 //!
 //! [`SyncPolicy::OnFlushOnly`]: crate::SyncPolicy::OnFlushOnly
 
@@ -91,9 +91,9 @@ const WORK_CHANNEL_CAPACITY: usize = 1024;
 ///
 /// `Commit` carries a fully-built, frozen [`SealedCommit`] (no lock, no graph
 /// reference): the committer never re-validates, re-allocates ids, or re-applies
-/// a change list. `Compact` carries a *pre-built* dense snapshot (built on the
-/// caller thread under the lock, like a commit) — the committer never touches
-/// the write lock.
+/// a change list. Snapshot-maintenance variants carry a *pre-built* replacement
+/// snapshot (built on the caller thread under the lock, like a commit) — the
+/// committer never touches the write lock.
 ///
 /// Index DDL is **not** a distinct variant: `create_property_index_named` /
 /// `drop_property_index` build + `seal()` their `WriteTxn` on the caller thread
@@ -115,6 +115,15 @@ pub(crate) enum Work {
         report: crate::CompactionReport,
         reply: SyncSender<GraphResult<crate::CompactionReport>>,
     },
+    /// Publish a pre-built snapshot with rebuilt vector indexes. This is pure
+    /// derived-state reclamation: no WAL append, no schema bump, no provider
+    /// fan-out.
+    VectorIndexRebuild {
+        seal_seq: u64,
+        rebuilt: Arc<SeleneGraph>,
+        report: crate::VectorIndexRebuildReport,
+        reply: SyncSender<GraphResult<crate::VectorIndexRebuildReport>>,
+    },
 }
 
 impl Work {
@@ -123,7 +132,13 @@ impl Work {
         match self {
             Work::Commit { sealed, .. } => sealed.seal_seq,
             Work::Compact { seal_seq, .. } => *seal_seq,
+            Work::VectorIndexRebuild { seal_seq, .. } => *seal_seq,
         }
+    }
+
+    /// Return true for WAL-free snapshot replacement work.
+    pub(crate) fn is_snapshot_maintenance(&self) -> bool {
+        matches!(self, Work::Compact { .. } | Work::VectorIndexRebuild { .. })
     }
 }
 
@@ -296,6 +311,28 @@ impl Committer {
             .map_err(|_| committer_dead())?;
         reply_rx.recv().map_err(|_| committer_dead())?
     }
+
+    /// Submit a pre-built snapshot with rebuilt vector indexes.
+    pub(crate) fn submit_vector_index_rebuild(
+        &self,
+        seal_seq: u64,
+        rebuilt: Arc<SeleneGraph>,
+        report: crate::VectorIndexRebuildReport,
+    ) -> GraphResult<crate::VectorIndexRebuildReport> {
+        if self.poisoned.load(Ordering::Acquire) {
+            return Err(committer_dead());
+        }
+        let (reply_tx, reply_rx) = sync_channel::<GraphResult<crate::VectorIndexRebuildReport>>(1);
+        self.sender
+            .send(Work::VectorIndexRebuild {
+                seal_seq,
+                rebuilt,
+                report,
+                reply: reply_tx,
+            })
+            .map_err(|_| committer_dead())?;
+        reply_rx.recv().map_err(|_| committer_dead())?
+    }
 }
 
 /// Error returned to every waiter when the committer thread is gone (panicked
@@ -317,8 +354,9 @@ pub(crate) fn committer_dead() -> GraphError {
 /// channel arrival order — the P0 publish-ordering invariant.
 ///
 /// Each contiguous-run pass:
-/// 1. If the head is a [`Work::Compact`], publish it **solo** (store the dense
-///    Arc, no append/flush/schema-bump/fan-out) — a hard flush boundary (F2).
+/// 1. If the head is snapshot-maintenance work, publish it **solo** (store the
+///    replacement Arc, no append/flush/schema-bump/fan-out) — a hard flush
+///    boundary (F2).
 /// 2. Otherwise form the contiguous commit run
 ///    ([`drain_contiguous_batch`] — append, fsync deferred), then
 ///    [`flush_and_publish_batch`] (ONE group flush == the R1 barrier, then
@@ -354,14 +392,17 @@ fn run_committer(
 
         // Drain every contiguous run now available, in seal_seq order.
         while reorder.contains_key(&next_publish_seq) {
-            // F2: a Compact at head publishes solo (empty batch by
+            // F2: snapshot maintenance at head publishes solo (empty batch by
             // construction — all lower seqs are already durable + visible, so
             // this needs zero flush calls). It is never co-batched with commits.
-            if matches!(reorder.get(&next_publish_seq), Some(Work::Compact { .. })) {
+            if reorder
+                .get(&next_publish_seq)
+                .is_some_and(Work::is_snapshot_maintenance)
+            {
                 let Some(work) = reorder.remove(&next_publish_seq) else {
-                    unreachable!("checked Compact at next_publish_seq above");
+                    unreachable!("checked maintenance work at next_publish_seq above");
                 };
-                publish_compact(work, poisoned, &handles);
+                publish_snapshot_maintenance(work, poisoned, &handles);
                 next_publish_seq += 1;
                 if poisoned.load(Ordering::Acquire) {
                     drain_buffer_with_error(&mut reorder);
@@ -401,51 +442,61 @@ fn run_committer(
     }
 }
 
-/// Publish a pre-built dense compaction (F2 hard flush boundary): store the
-/// dense Arc only — no append, no flush, no schema-bump, no fan-out. Wrapped in
-/// `catch_unwind`; a `store` panic poisons (see [`unwrap_protected`]). All lower
-/// `seal_seq` commits are already durable + visible by the time a compact
-/// reaches head, so it needs zero flush calls.
-fn publish_compact(
+/// Publish WAL-free snapshot maintenance (F2 hard flush boundary): store the
+/// replacement Arc only — no append, no flush, no schema-bump, no fan-out.
+/// Wrapped in `catch_unwind`; a `store` panic poisons (see
+/// [`unwrap_protected`]). All lower `seal_seq` commits are already durable +
+/// visible by the time maintenance reaches head, so it needs zero flush calls.
+fn publish_snapshot_maintenance(
     work: Work,
     poisoned: &Arc<std::sync::atomic::AtomicBool>,
     handles: &CommitterHandles,
 ) {
-    let Work::Compact {
-        seal_seq: _,
-        dense,
-        report,
-        reply,
-    } = work
-    else {
-        unreachable!("publish_compact is only called with Work::Compact");
-    };
-    // The dense graph was already built + written into `*shared` on the caller
-    // thread under the lock; the committer only swaps the cell, in seal_seq
-    // order, so it can never clobber a later commit nor be clobbered by an
-    // earlier one (P1 fix). Wrapped in catch_unwind for symmetry (store + the
-    // debug assert can panic on drift).
-    let result = run_protected(|| publish_dense(&dense, &handles.snapshot, report));
-    let result = unwrap_protected(result, poisoned);
-    let _ = reply.send(result);
+    match work {
+        Work::Compact {
+            seal_seq: _,
+            dense,
+            report,
+            reply,
+        } => {
+            let result =
+                run_protected(|| publish_replacement_snapshot(&dense, &handles.snapshot, report));
+            let result = unwrap_protected(result, poisoned);
+            let _ = reply.send(result);
+        }
+        Work::VectorIndexRebuild {
+            seal_seq: _,
+            rebuilt,
+            report,
+            reply,
+        } => {
+            let result =
+                run_protected(|| publish_replacement_snapshot(&rebuilt, &handles.snapshot, report));
+            let result = unwrap_protected(result, poisoned);
+            let _ = reply.send(result);
+        }
+        Work::Commit { .. } => {
+            unreachable!("publish_snapshot_maintenance is never called with Work::Commit");
+        }
+    }
 }
 
-/// Publish a pre-built dense snapshot (compaction). Pure space reclamation: no
-/// WAL append, no schema bump, no fan-out — only the `ArcSwap` swap.
+/// Publish a pre-built replacement snapshot. Pure space reclamation: no WAL
+/// append, no schema bump, no fan-out — only the `ArcSwap` swap.
 ///
-/// The dense graph's structural consistency was already verified inside
-/// [`crate::compaction::compact_core`] (debug-only), on the caller thread,
-/// **before** it was written into `*shared` — so a broken dense graph never
-/// reaches this point. Re-asserting here, after the store, would risk the same
-/// "returns-Err-but-actually-published" inversion the commit path avoids (P2),
-/// for zero added coverage. Wrapped in `catch_unwind` by the caller only so a
-/// `store` panic still poisons rather than aborts the committer thread.
-fn publish_dense(
-    dense: &Arc<SeleneGraph>,
+/// The replacement graph's structural consistency was already verified or
+/// rebuilt on the caller thread, **before** it was written into `*shared` — so a
+/// broken replacement never reaches this point. Re-asserting here, after the
+/// store, would risk the same "returns-Err-but-actually-published" inversion
+/// the commit path avoids (P2), for zero added coverage. Wrapped in
+/// `catch_unwind` by the caller only so a `store` panic still poisons rather
+/// than aborts the committer thread.
+fn publish_replacement_snapshot<T>(
+    replacement: &Arc<SeleneGraph>,
     snapshot: &ArcSwap<SeleneGraph>,
-    report: crate::CompactionReport,
-) -> GraphResult<crate::CompactionReport> {
-    snapshot.store(Arc::clone(dense));
+    report: T,
+) -> GraphResult<T> {
+    snapshot.store(Arc::clone(replacement));
     Ok(report)
 }
 
@@ -459,6 +510,9 @@ pub(crate) fn drain_buffer_with_error(reorder: &mut BTreeMap<u64, Work>) {
                 let _ = reply.send(Err(committer_dead()));
             }
             Work::Compact { reply, .. } => {
+                let _ = reply.send(Err(committer_dead()));
+            }
+            Work::VectorIndexRebuild { reply, .. } => {
                 let _ = reply.send(Err(committer_dead()));
             }
         }

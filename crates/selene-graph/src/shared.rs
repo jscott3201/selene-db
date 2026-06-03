@@ -23,7 +23,7 @@ use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
 use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
-use crate::vector_index::VectorIndexKind;
+use crate::vector_index::{VectorIndexKind, VectorIndexRebuildReport};
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
@@ -281,7 +281,7 @@ impl SharedGraph {
     ///
     /// This is pure space reclamation: it changes only the internal row layout,
     /// never external `NodeId`/`EdgeId`, properties, or labels, so it emits **no**
-    /// [`Change`](selene_core::Change) and writes **no** WAL entry. Durability
+    /// [`Change`] and writes **no** WAL entry. Durability
     /// comes from the next snapshot, which encodes the now-dense live graph (the
     /// CORE provider reads the same `snapshot` cell this method publishes into). A
     /// crash before that snapshot simply reloads the pre-compaction state and
@@ -339,6 +339,34 @@ impl SharedGraph {
             // committer.
         };
         committer.submit_compact(seal_seq, dense, report)
+    }
+
+    /// Rebuild every registered vector index from primary node values.
+    ///
+    /// HNSW indexes retain stale deleted entries after vector update/delete so
+    /// in-flight search can still traverse the neighbor graph safely. This
+    /// maintenance path reclaims those stale entries by rebuilding only the
+    /// derived vector-index state; it does not change graph data, emit
+    /// [`Change`], write a WAL entry, bump schema epoch, or
+    /// notify providers. The HNSW graph is derived, not durable: snapshots and
+    /// recovery persist only vector-index registrations plus primary values, so
+    /// a reopen rebuilds the index from that authoritative state.
+    ///
+    /// The rebuild is strict on live data: if an indexed row no longer satisfies
+    /// the registered vector dimension/metric invariant, this method returns an
+    /// error instead of silently dropping the row from the index.
+    pub fn rebuild_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        let committer = self.committer.handle();
+        let (seal_seq, rebuilt, report) = {
+            let mut guard = self.shared.write();
+            let mut rebuilt = guard.as_ref().clone();
+            let report = crate::vector_index::rebuild_vector_indexes_strict(&mut rebuilt)?;
+            let rebuilt = Arc::new(rebuilt);
+            let seal_seq = committer.next_seal_seq();
+            *guard = Arc::clone(&rebuilt);
+            (seal_seq, rebuilt, report)
+        };
+        committer.submit_vector_index_rebuild(seal_seq, rebuilt, report)
     }
 
     /// Return the runtime schema-version epoch used for plan-cache invalidation.
