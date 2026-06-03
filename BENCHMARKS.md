@@ -154,7 +154,8 @@ PR-local quick vector baseline:
 | Bench | 1k | Notes |
 |---|---:|---|
 | `graph_exact_vector_scan/squared_euclidean_dim128_k10` | 46.6 µs (quick) | Exhaustive label-filtered scan over 1,000 vector nodes; scalar `f64` L2-squared accumulation; ~21.5 Melem/s. |
-| `graph_vector_index_rebuild/hnsw_l2_dim128` | 145.7 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; 1k quick ID `upd100_del50_b1100-950-150_a950-950-0_rk144` means 150 stale HNSW entries reclaimed and ~144 KiB reachable memory freed. |
+| `graph_vector_index_rebuild/hnsw_l2_dim128` | 182.4 ms (quick) | Rebuilds a 128-dim HNSW L2 index after 10% vector updates + 5% deletes; current M=18 1k quick ID `upd100_del50_b1100-950-150_a950-950-0_rk146` means 150 stale HNSW entries reclaimed and ~146 KiB reachable memory freed. |
+| `graph_vector_index_rebuild/hnsw_cos_dim128` | 226.8 ms (quick) | Same rebuild fixture for 128-dim HNSW cosine, covering construction-side scorer reuse for metrics with bound query state. |
 
 PR-local HNSW tuning spot-check:
 
