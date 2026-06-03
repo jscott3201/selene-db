@@ -139,8 +139,8 @@ Bench bins: `single_graph`, `vector_index_rebuild`, `bulk_mutation`,
 rows (`graph_edge_create_cascade`, `graph_mutation_commit_batch`) will tighten
 at the next full re-baseline. `graph_node_fetch` returns a column ref (no
 `Value` clone) and is unaffected. `graph_exact_vector_scan/*` is the native
-graph-level exact-vector oracle: label-filtered row scan plus scalar metric
-kernel, returning stable node ids. `graph_vector_index_rebuild/*` times the
+graph-level exact-vector oracle: label-filtered row scan plus the core vector
+metric kernels, returning stable node ids. `graph_vector_index_rebuild/*` times the
 maintenance rebuild that reclaims stale HNSW entries after vector update/delete
 churn; fixture setup is excluded from the reported Criterion duration. Vector
 benchmark IDs include a memory/cardinality suffix:
