@@ -7,11 +7,17 @@
 
 use std::mem::size_of;
 
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use selene_core::{CoreResult, VectorMetric, VectorTopK, VectorValue};
 
 const MAX_CENTROIDS: usize = 256;
 const TRAINING_ITERATIONS: usize = 2;
+
+#[cfg(not(test))]
+const PARALLEL_ASSIGNMENT_MIN_ENTRIES: usize = 4_096;
+#[cfg(test)]
+const PARALLEL_ASSIGNMENT_MIN_ENTRIES: usize = 8;
 
 /// One approximate vector-search hit over a graph row.
 #[derive(Clone, Debug, PartialEq)]
@@ -265,17 +271,26 @@ impl IvfVectorIndex {
     }
 
     fn assignments(&self, live_entries: &[u32]) -> CoreResult<Vec<usize>> {
-        let mut assignments = Vec::with_capacity(live_entries.len());
-        for &entry_id in live_entries {
-            assignments.push(self.nearest_centroid(&self.entries[entry_id as usize].vector)?);
+        if should_parallelize_assignments(live_entries.len(), self.centroids.len()) {
+            return live_entries
+                .par_iter()
+                .map(|&entry_id| self.nearest_centroid(&self.entries[entry_id as usize].vector))
+                .collect();
         }
-        Ok(assignments)
+        live_entries
+            .iter()
+            .map(|&entry_id| self.nearest_centroid(&self.entries[entry_id as usize].vector))
+            .collect()
     }
 
     fn rebuild_lists(&mut self, live_entries: &[u32]) -> CoreResult<()> {
-        self.lists = vec![Vec::new(); self.centroids.len()];
-        for &entry_id in live_entries {
-            let list = self.nearest_centroid(&self.entries[entry_id as usize].vector)?;
+        let assignments = self.assignments(live_entries)?;
+        let mut list_lengths = vec![0usize; self.centroids.len()];
+        for &list in &assignments {
+            list_lengths[list] += 1;
+        }
+        self.lists = list_lengths.into_iter().map(Vec::with_capacity).collect();
+        for (&entry_id, list) in live_entries.iter().zip(assignments) {
             self.lists[list].push(entry_id);
         }
         Ok(())
@@ -309,6 +324,10 @@ struct IvfEntry {
 
 fn target_centroid_count(live_len: usize) -> usize {
     ceil_sqrt(live_len).clamp(1, MAX_CENTROIDS)
+}
+
+fn should_parallelize_assignments(live_len: usize, centroid_count: usize) -> bool {
+    live_len >= PARALLEL_ASSIGNMENT_MIN_ENTRIES && centroid_count > 1
 }
 
 fn ceil_sqrt(value: usize) -> usize {
