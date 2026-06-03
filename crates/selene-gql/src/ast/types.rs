@@ -64,6 +64,12 @@ pub enum GqlType {
     LocalTime,
     /// `DURATION`.
     Duration,
+    /// Native dense-vector value.
+    ///
+    /// This internal type is used by procedure metadata and typed parameter
+    /// validation. It is not parsed as a GQL type name; vector syntax remains
+    /// outside the ISO grammar surface.
+    Vector,
     /// `RECORD`.
     Record(RecordType),
     /// `LIST<T>`.

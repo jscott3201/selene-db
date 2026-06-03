@@ -267,6 +267,7 @@ fn ast_only_type_variant(ty: &GqlType) -> Option<&'static str> {
         GqlType::NodeRef => Some("NodeRef"),
         GqlType::EdgeRef => Some("EdgeRef"),
         GqlType::TableRef => Some("TableRef"),
+        GqlType::Vector => Some("Vector"),
         _ => None,
     }
 }

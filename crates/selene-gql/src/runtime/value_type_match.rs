@@ -45,6 +45,7 @@ pub(crate) fn value_matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
         GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
         GqlType::Duration => matches!(value, Value::Duration(_)),
+        GqlType::Vector => matches!(value, Value::Vector(_)),
         GqlType::Record(record) => value_matches_record_type(value, record),
         GqlType::List(inner) => match value {
             Value::List(values) => values

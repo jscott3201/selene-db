@@ -52,6 +52,7 @@ fn render_gql_type(ty: &GqlType) -> Cow<'static, str> {
         GqlType::ZonedTime => "ZONED TIME".into(),
         GqlType::LocalTime => "LOCAL TIME".into(),
         GqlType::Duration => "DURATION".into(),
+        GqlType::Vector => "VECTOR".into(),
         GqlType::Record(_) => "RECORD".into(),
         GqlType::List(inner) => format!("LIST<{}>", render_gql_type(inner)).into(),
         GqlType::Path => "PATH".into(),

@@ -292,6 +292,7 @@ pub(super) fn property_type_compatible(declared: PropertyValueType, found: &GqlT
             | (P::ZonedTime, G::ZonedTime)
             | (P::LocalTime, G::LocalTime)
             | (P::Duration, G::Duration)
+            | (P::Vector, G::Vector)
             | (P::Null, G::Null)
             | (P::Path, G::Path)
             | (P::NodeRef, G::NodeRef)

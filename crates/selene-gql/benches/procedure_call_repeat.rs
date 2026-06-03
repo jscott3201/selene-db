@@ -9,16 +9,21 @@ mod common;
 use std::{num::NonZeroUsize, sync::Arc};
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{GraphId, IStr, LabelSet, PropertyMap, Value, VectorValue, intern};
 use selene_gql::{
-    CallPlanCache, GqlType, ProcedureContext, ProcedureError, ProcedureHandle, ProcedureMetadata,
-    ProcedureMutability, ProcedureOutputColumn, ProcedureOutputSchema, ProcedureRegistry,
-    ProcedureResult, ProcedureSignature, ProcedureTier, Session, StatementOutput,
+    BuiltinProcedureRegistry, CallPlanCache, GqlType, ProcedureContext, ProcedureError,
+    ProcedureHandle, ProcedureMetadata, ProcedureMutability, ProcedureOutputColumn,
+    ProcedureOutputSchema, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
+    Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
 const SOURCE: &str = "CALL bench.repeat() YIELD n";
 const REPEATS: usize = 100;
+const VECTOR_SOURCE: &str =
+    "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
+const VECTOR_SCALE: usize = 1_000;
+const VECTOR_DIMENSION: usize = 128;
 
 struct RepeatRegistry {
     name: Box<[IStr]>,
@@ -86,6 +91,26 @@ fn bench_procedure_call_repeat(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_vector_search_procedure(c: &mut Criterion) {
+    let registry = BuiltinProcedureRegistry::new();
+    let graph = vector_graph(VECTOR_SCALE, VECTOR_DIMENSION);
+    let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    warm_vector_cache(&graph, &registry, Arc::clone(&cache));
+
+    let mut group = c.benchmark_group("procedure_vector_search");
+    group.throughput(Throughput::Elements(VECTOR_SCALE as u64));
+    group.bench_function("shared_cache_squared_euclidean_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_search(
+                &graph,
+                &registry,
+                Some(Arc::clone(&cache)),
+            ));
+        });
+    });
+    group.finish();
+}
+
 fn execute_repeated(
     graph: &SharedGraph,
     registry: &dyn ProcedureRegistry,
@@ -108,6 +133,77 @@ fn execute_repeated(
     rows
 }
 
+fn warm_vector_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    session.bind_parameter(
+        istr("query"),
+        Value::Vector(vector_value(0, VECTOR_DIMENSION)),
+    );
+    session
+        .execute_source(VECTOR_SOURCE, registry)
+        .expect("warmup vector search executes");
+}
+
+fn execute_vector_search(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    session.bind_parameter(
+        istr("query"),
+        Value::Vector(vector_value(0, VECTOR_DIMENSION)),
+    );
+    match session
+        .execute_source(VECTOR_SOURCE, registry)
+        .expect("vector search procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+fn vector_graph(scale: usize, dimension: usize) -> SharedGraph {
+    let graph = SharedGraph::new(GraphId::new(71_002));
+    let label = istr("VectorDoc");
+    let embedding_key = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            for idx in 0..scale {
+                let props = PropertyMap::from_pairs([(
+                    embedding_key.clone(),
+                    Value::Vector(vector_value(idx, dimension)),
+                )])
+                .expect("bench vector properties are valid");
+                mutator
+                    .create_node(LabelSet::single(label.clone()), props)
+                    .expect("bench vector node insert succeeds");
+            }
+        }
+        txn.commit().expect("bench vector fixture commits");
+    }
+    graph
+}
+
+fn vector_value(seed: usize, dimension: usize) -> VectorValue {
+    let components: Vec<f32> = (0..dimension)
+        .map(|dim| {
+            let raw = (seed.wrapping_mul(31) + dim.wrapping_mul(17)) % 1_000;
+            raw as f32 / 1_000.0
+        })
+        .collect();
+    VectorValue::new(components).expect("bench vector is valid")
+}
+
 fn istr(value: &str) -> IStr {
     intern(value).expect("bench string interns")
 }
@@ -115,6 +211,6 @@ fn istr(value: &str) -> IStr {
 criterion_group! {
     name = procedure_call_repeat_group;
     config = common::criterion_config();
-    targets = bench_procedure_call_repeat
+    targets = bench_procedure_call_repeat, bench_vector_search_procedure
 }
 criterion_main!(procedure_call_repeat_group);

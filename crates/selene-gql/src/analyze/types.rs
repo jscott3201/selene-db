@@ -614,6 +614,7 @@ fn hash_gql_type<H: Hasher>(ty: &GqlType, state: &mut H) {
         GqlType::Null => 35u8.hash(state),
         GqlType::Nothing => 36u8.hash(state),
         GqlType::Uuid => 37u8.hash(state),
+        GqlType::Vector => 38u8.hash(state),
     }
 }
 

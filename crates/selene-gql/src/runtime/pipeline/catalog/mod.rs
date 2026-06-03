@@ -586,6 +586,7 @@ fn render_gql_type(ty: &GqlType) -> String {
         GqlType::ZonedTime => "ZONED TIME".to_owned(),
         GqlType::LocalTime => "LOCAL TIME".to_owned(),
         GqlType::Duration => "DURATION".to_owned(),
+        GqlType::Vector => "VECTOR".to_owned(),
         // An open/bare RECORD stays "RECORD"; a closed RECORD renders its field
         // structure so introspection can distinguish open vs closed.
         GqlType::Record(crate::RecordType::Open) => "RECORD".to_owned(),
