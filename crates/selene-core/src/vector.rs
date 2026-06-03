@@ -8,6 +8,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use serde::{Deserialize, Serialize};
+use wide::f64x2;
 
 use crate::{CoreError, CoreResult, VectorValue};
 
@@ -306,8 +307,20 @@ fn check_same_dimension(lhs: usize, rhs: usize) -> CoreResult<()> {
 }
 
 fn squared_euclidean(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut distance = 0.0;
-    for (&lhs, &rhs) in lhs.iter().zip(rhs) {
+    let mut chunks_lhs = lhs.chunks_exact(2);
+    let mut chunks_rhs = rhs.chunks_exact(2);
+    let mut distance = f64x2::ZERO;
+    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
+        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
+        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        let delta = lhs - rhs;
+        distance += delta * delta;
+    }
+    let mut distance = distance.reduce_add();
+    if let (Some(&lhs), Some(&rhs)) = (
+        chunks_lhs.remainder().first(),
+        chunks_rhs.remainder().first(),
+    ) {
         let delta = f64::from(lhs) - f64::from(rhs);
         distance += delta * delta;
     }
@@ -336,29 +349,73 @@ fn cosine_distance_with_components(lhs_norm: f64, rhs_norm: f64, dot: f64) -> Co
 }
 
 fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
-    lhs.iter().zip(rhs).fold(
-        (0.0, 0.0, 0.0),
-        |(lhs_norm, rhs_norm, dot), (&lhs, &rhs)| {
-            let lhs = f64::from(lhs);
-            let rhs = f64::from(rhs);
-            (lhs_norm + lhs * lhs, rhs_norm + rhs * rhs, dot + lhs * rhs)
-        },
-    )
+    let mut chunks_lhs = lhs.chunks_exact(2);
+    let mut chunks_rhs = rhs.chunks_exact(2);
+    let mut lhs_norm = f64x2::ZERO;
+    let mut rhs_norm = f64x2::ZERO;
+    let mut dot = f64x2::ZERO;
+    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
+        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
+        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        lhs_norm += lhs * lhs;
+        rhs_norm += rhs * rhs;
+        dot += lhs * rhs;
+    }
+    let mut lhs_norm = lhs_norm.reduce_add();
+    let mut rhs_norm = rhs_norm.reduce_add();
+    let mut dot = dot.reduce_add();
+    if let (Some(&lhs), Some(&rhs)) = (
+        chunks_lhs.remainder().first(),
+        chunks_rhs.remainder().first(),
+    ) {
+        let lhs = f64::from(lhs);
+        let rhs = f64::from(rhs);
+        lhs_norm += lhs * lhs;
+        rhs_norm += rhs * rhs;
+        dot += lhs * rhs;
+    }
+    (lhs_norm, rhs_norm, dot)
 }
 
 fn norm_and_dot(lhs: &[f32], rhs: &[f32]) -> (f64, f64) {
-    lhs.iter()
-        .zip(rhs)
-        .fold((0.0, 0.0), |(rhs_norm, dot), (&lhs, &rhs)| {
-            let lhs = f64::from(lhs);
-            let rhs = f64::from(rhs);
-            (rhs_norm + rhs * rhs, dot + lhs * rhs)
-        })
+    let mut chunks_lhs = lhs.chunks_exact(2);
+    let mut chunks_rhs = rhs.chunks_exact(2);
+    let mut rhs_norm = f64x2::ZERO;
+    let mut dot = f64x2::ZERO;
+    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
+        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
+        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        rhs_norm += rhs * rhs;
+        dot += lhs * rhs;
+    }
+    let mut rhs_norm = rhs_norm.reduce_add();
+    let mut dot = dot.reduce_add();
+    if let (Some(&lhs), Some(&rhs)) = (
+        chunks_lhs.remainder().first(),
+        chunks_rhs.remainder().first(),
+    ) {
+        let lhs = f64::from(lhs);
+        let rhs = f64::from(rhs);
+        rhs_norm += rhs * rhs;
+        dot += lhs * rhs;
+    }
+    (rhs_norm, dot)
 }
 
 fn dot(lhs: &[f32], rhs: &[f32]) -> f64 {
-    let mut product = 0.0;
-    for (&lhs, &rhs) in lhs.iter().zip(rhs) {
+    let mut chunks_lhs = lhs.chunks_exact(2);
+    let mut chunks_rhs = rhs.chunks_exact(2);
+    let mut product = f64x2::ZERO;
+    for (lhs, rhs) in chunks_lhs.by_ref().zip(chunks_rhs.by_ref()) {
+        let lhs = f64x2::from([f64::from(lhs[0]), f64::from(lhs[1])]);
+        let rhs = f64x2::from([f64::from(rhs[0]), f64::from(rhs[1])]);
+        product += lhs * rhs;
+    }
+    let mut product = product.reduce_add();
+    if let (Some(&lhs), Some(&rhs)) = (
+        chunks_lhs.remainder().first(),
+        chunks_rhs.remainder().first(),
+    ) {
         product += f64::from(lhs) * f64::from(rhs);
     }
     product
@@ -374,6 +431,51 @@ mod tests {
 
     fn vector(components: &[f32]) -> VectorValue {
         VectorValue::new(components.to_vec()).expect("test vector is valid")
+    }
+
+    fn scalar_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64, f64) {
+        lhs.iter().zip(rhs).fold(
+            (0.0, 0.0, 0.0, 0.0),
+            |(distance, lhs_norm, rhs_norm, product), (&lhs, &rhs)| {
+                let lhs = f64::from(lhs);
+                let rhs = f64::from(rhs);
+                let delta = lhs - rhs;
+                (
+                    distance + delta * delta,
+                    lhs_norm + lhs * lhs,
+                    rhs_norm + rhs * rhs,
+                    product + lhs * rhs,
+                )
+            },
+        )
+    }
+
+    fn assert_close(lhs: f64, rhs: f64) {
+        assert!((lhs - rhs).abs() <= 1e-12, "{lhs} != {rhs}");
+    }
+
+    #[test]
+    fn wide_metric_kernels_match_scalar_reference_for_even_and_odd_dimensions() {
+        let even_lhs = [1.25, -2.0, 3.5, 4.25];
+        let even_rhs = [-0.5, 2.75, 3.0, -1.25];
+        let odd_lhs = [1.0, -3.0, 0.25, 7.5, -2.25];
+        let odd_rhs = [4.0, -1.5, 2.0, -6.0, 0.75];
+
+        for (lhs, rhs) in [(&even_lhs[..], &even_rhs[..]), (&odd_lhs[..], &odd_rhs[..])] {
+            let (distance, lhs_norm, rhs_norm, product) = scalar_components(lhs, rhs);
+
+            assert_close(squared_euclidean(lhs, rhs), distance);
+            assert_close(dot(lhs, rhs), product);
+
+            let (wide_lhs_norm, wide_rhs_norm, wide_product) = cosine_components(lhs, rhs);
+            assert_close(wide_lhs_norm, lhs_norm);
+            assert_close(wide_rhs_norm, rhs_norm);
+            assert_close(wide_product, product);
+
+            let (wide_rhs_norm, wide_product) = norm_and_dot(lhs, rhs);
+            assert_close(wide_rhs_norm, rhs_norm);
+            assert_close(wide_product, product);
+        }
     }
 
     #[test]
