@@ -78,6 +78,32 @@ fn ivf_finish_bulk_load_rebuilds_lists_after_updates() {
 }
 
 #[test]
+fn ivf_parallel_assignment_path_keeps_exact_full_probe_results() {
+    let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
+    for row in 0..16 {
+        index.insert(row, vector(&[row as f32, 0.0])).unwrap();
+    }
+
+    index.finish_bulk_load().unwrap();
+
+    let usage = index.memory_usage();
+    assert!(should_parallelize_assignments(
+        usage.live_entries,
+        usage.centroids
+    ));
+    assert_eq!(usage.assigned_entries, 16);
+    assert_eq!(index.lists.iter().map(Vec::capacity).sum::<usize>(), 16);
+
+    let hits = index
+        .search(&vector(&[9.2, 0.0]), 3, usage.list_count)
+        .unwrap();
+    assert_eq!(
+        hits.iter().map(|hit| hit.row).collect::<Vec<_>>(),
+        [9, 10, 8]
+    );
+}
+
+#[test]
 fn ivf_cosine_rejects_zero_norm_query() {
     let mut index = IvfVectorIndex::new(VectorMetric::Cosine);
     index.insert(1, vector(&[1.0, 0.0])).unwrap();
