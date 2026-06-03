@@ -1,0 +1,4 @@
+// corpus: positive
+// feature: GA06
+// expects: parse-ok
+RETURN 1 IS TYPED INTEGER AS ok

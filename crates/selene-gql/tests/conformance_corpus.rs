@@ -143,6 +143,7 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         ("G114-same.gql", &["G114"]),
         ("G115-property-exists.gql", &["G115"]),
         ("GA01-ieee754-arithmetic.gql", &["GA01"]),
+        ("GA06-value-type-predicate.gql", &["GA06"]),
         ("GE07-xor.gql", &["GE07"]),
         ("GH02-undirected-edge-pattern.gql", &["GH02"]),
         ("GQ03-union.gql", &["GQ03"]),
@@ -158,8 +159,11 @@ fn canonical_cases_observe_exactly_their_curated_feature_set() {
         ("GP01-inline-procedure.gql", &["GP01", "GP02"]),
         ("GQ18-value-subquery.gql", &["GQ13", "GQ18"]),
         ("GV45-record-literal.gql", &["GV45", "GV50"]),
-        ("GV46-closed-record-type.gql", &["GV45", "GV46"]),
-        ("GV48-nested-record-type.gql", &["GV45", "GV46", "GV48"]),
+        ("GV46-closed-record-type.gql", &["GA06", "GV45", "GV46"]),
+        (
+            "GV48-nested-record-type.gql",
+            &["GA06", "GV45", "GV46", "GV48"],
+        ),
         // CONFORMANCE-00 (Codex follow-up): CAST records GA05 "Cast
         // specification" (ISO Annex A item 52 / §20.8 — GE08 is "Reference
         // parameters" per §17.7, not CAST), and the UUID target type records

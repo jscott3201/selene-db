@@ -43,6 +43,10 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   case-insensitive `STRING`→`BOOLEAN`. Builds on the `GA05` claim (see **Changed**
   / CONFORMANCE-00 below). (§20.8 is the `<cast specification>` clause; §22.10 is
   the distinct store-assignment clause.)
+- **Value type predicates (GA06, ISO §19.6).** `IS [NOT] TYPED <value type>` is
+  now advertised as the implemented `GA06` optional feature and the flagger stamps
+  GA06 before any target value-type features. This is conformance accounting for
+  the already-implemented typed predicate surface; runtime behavior is unchanged.
 - **Counted shortest paths — `SHORTEST n PATH(S)` / `SHORTEST n GROUP(S)`
   (G019/G020, ISO §16.6).** The path-pattern grammar accepts the ISO counted
   forms, and the planner/executor return the `n` lowest-cost paths (PATHS) or the
