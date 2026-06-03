@@ -1,8 +1,12 @@
 use std::fs;
 
-use selene_core::{Change, LabelSet, NodeId, PropertyValueType, Value, VectorValue, intern};
+use selene_core::{
+    Change, LabelSet, NodeId, PropertyValueType, SchemaChange, SchemaVectorIndexKind, Value,
+    VectorValue, intern,
+};
 
 use super::*;
+use crate::VectorIndexKind;
 
 fn vector_value() -> Value {
     Value::Vector(VectorValue::new(vec![0.25, 0.5, 0.75]).unwrap())
@@ -37,6 +41,39 @@ fn recover_snapshot_preserves_vector_property() {
 }
 
 #[test]
+fn recover_snapshot_preserves_vector_index_registration() {
+    let dir = temp_dir("snapshot-vector-index");
+    let label = intern("recover.vector.index.node").unwrap();
+    let property = intern("recover.vector.index.embedding").unwrap();
+    let shared = SharedGraph::builder(GraphId::new(40)).build().unwrap();
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                prop(
+                    "recover.vector.index.embedding",
+                    Value::Vector(VectorValue::new(vec![1.0, 2.0, 3.0]).unwrap()),
+                ),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
+        .unwrap();
+    write_snapshot(&dir, &shared, 1);
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(40)).unwrap();
+    let snapshot = recovered.read();
+    let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.kind(), VectorIndexKind::Flat);
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
 fn recover_wal_only_replays_vector_property() {
     let dir = temp_dir("wal-vector");
     append_wal(
@@ -57,6 +94,44 @@ fn recover_wal_only_replays_vector_property() {
         "recover.wal.vector",
         &vector_value(),
     );
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn recover_wal_only_replays_vector_index_registration() {
+    let dir = temp_dir("wal-vector-index");
+    let label = intern("recover.wal.vector.index.node").unwrap();
+    let property = intern("recover.wal.vector.index.embedding").unwrap();
+    append_wal(
+        &dir,
+        0,
+        &[
+            Change::NodeCreated {
+                id: NodeId::new(1),
+                labels: LabelSet::single(label.clone()),
+                properties: prop(
+                    "recover.wal.vector.index.embedding",
+                    Value::Vector(VectorValue::new(vec![0.25, 0.5, 0.75]).unwrap()),
+                ),
+            },
+            Change::SchemaChanged {
+                graph: GraphId::new(41),
+                change: SchemaChange::VectorIndexCreated {
+                    label: label.clone(),
+                    property: property.clone(),
+                    kind: SchemaVectorIndexKind::Flat,
+                    dimension: 3,
+                    name: None,
+                },
+            },
+        ],
+    );
+
+    let recovered = SharedGraph::recover(&dir, GraphId::new(41)).unwrap();
+    let snapshot = recovered.read();
+    let index = snapshot.vector_index_for(&label, &property).unwrap();
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
     let _ = fs::remove_dir_all(dir);
 }
 

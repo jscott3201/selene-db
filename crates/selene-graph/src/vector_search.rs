@@ -103,9 +103,17 @@ impl SeleneGraph {
         checker: CancellationChecker<'_>,
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         checker.check()?;
-        let Some(rows) = self.nodes_with_label(label) else {
+        let Some(label_rows) = self.nodes_with_label(label) else {
             return Ok(Vec::new());
         };
+        let query_dimension = u32::try_from(query.dimension()).ok();
+        let vector_index = query_dimension.and_then(|dimension| {
+            self.vector_index_for(label, property)
+                .filter(|index| index.dimension() == dimension)
+        });
+        let rows = vector_index
+            .as_ref()
+            .map_or(label_rows, |index| index.rows());
 
         let mut top_k = VectorTopK::new(k);
         let mut rows_since_check = 0usize;

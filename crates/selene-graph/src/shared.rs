@@ -23,6 +23,7 @@ use crate::id_allocator::IdAllocator;
 use crate::index_provider::{IndexProvider, ProviderError, ProviderTag};
 use crate::store::{EdgeStore, RowIndex};
 use crate::typed_index::TypedIndexKind;
+use crate::vector_index::VectorIndexKind;
 use crate::write_txn::WriteTxn;
 
 /// Per-graph shared runtime state.
@@ -214,6 +215,7 @@ impl SharedGraph {
         rebuild_derived_state(&mut graph)?;
         crate::property_index::rebuild_property_indexes(&mut graph)?;
         crate::composite_property_index::rebuild_composite_property_indexes(&mut graph)?;
+        crate::vector_index::rebuild_vector_indexes(&mut graph)?;
         if let Some(type_def) = graph.meta.bound_type.as_deref() {
             // Why: GraphMeta is publicly constructible, so SharedGraph::from_graph
             // can land a malformed bound_type that bypassed builder().bound_to()'s
@@ -463,6 +465,55 @@ impl SharedGraph {
             graph,
             change: SchemaChange::PropertyIndexDropped { label, property },
         });
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Register a built-in node vector index for `(label, property)`.
+    ///
+    /// The current node columns are scanned under the write lock and the
+    /// published snapshot is updated in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GraphError::VectorIndexAlreadyExists`] if the pair is already
+    /// registered, [`GraphError::VectorIndexInvalidDimension`] when `dimension`
+    /// is zero, or [`GraphError::VectorIndexValueRejected`] if any existing
+    /// node with `label` has a non-null value for `property` that is not a
+    /// vector with the declared dimension.
+    pub fn create_vector_index(
+        &self,
+        label: IStr,
+        property: IStr,
+        kind: VectorIndexKind,
+        dimension: u32,
+    ) -> GraphResult<()> {
+        self.create_vector_index_named(label, property, kind, dimension, None)
+    }
+
+    /// Register a built-in node vector index with optional catalog name.
+    pub fn create_vector_index_named(
+        &self,
+        label: IStr,
+        property: IStr,
+        kind: VectorIndexKind,
+        dimension: u32,
+        name: Option<IStr>,
+    ) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator()
+            .create_vector_index_named(label, property, kind, dimension, name)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Drop a built-in node vector index.
+    ///
+    /// The operation is idempotent; dropping an absent index succeeds without
+    /// publishing a new snapshot.
+    pub fn drop_vector_index(&self, label: IStr, property: IStr) -> GraphResult<()> {
+        let mut txn = self.begin_write();
+        txn.mutator().drop_vector_index(label, property)?;
         txn.commit()?;
         Ok(())
     }

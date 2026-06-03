@@ -17,6 +17,7 @@ use crate::composite_typed_index::CompositeTypedIndex;
 use crate::graph_types::GraphTypeDef;
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::{TypedIndex, TypedIndexKind};
+use crate::vector_index::{VectorIndex, VectorIndexKind};
 
 /// Registered built-in property-index metadata.
 #[derive(Clone, Debug)]
@@ -77,6 +78,38 @@ impl CompositePropertyIndexEntry {
     }
 }
 
+/// Registered built-in vector-index metadata.
+#[derive(Clone, Debug)]
+pub struct VectorIndexEntry {
+    /// Index data for the `(label, property)` registration.
+    pub index: Arc<VectorIndex>,
+    /// Optional explicit catalog name. `None` means the name is derived at render time.
+    pub name: Option<IStr>,
+}
+
+impl VectorIndexEntry {
+    /// Construct a vector index entry from the built index and optional name.
+    #[must_use]
+    pub fn new(index: VectorIndex, name: Option<IStr>) -> Self {
+        Self {
+            index: Arc::new(index),
+            name,
+        }
+    }
+
+    /// Return the registered vector index kind.
+    #[must_use]
+    pub fn kind(&self) -> VectorIndexKind {
+        self.index.kind()
+    }
+
+    /// Return the registered vector dimensionality.
+    #[must_use]
+    pub fn dimension(&self) -> u32 {
+        self.index.dimension()
+    }
+}
+
 /// Owned row returned when iterating composite property-index registrations.
 pub type CompositePropertyIndexEntryRow = (
     IStr,
@@ -131,6 +164,8 @@ pub struct SeleneGraph {
     /// Per-`(label, properties...)` node composite value indexes.
     pub composite_property_index:
         FxHashMap<(IStr, SmallVec<[IStr; 4]>), CompositePropertyIndexEntry>,
+    /// Per-`(label, property)` node vector indexes.
+    pub vector_index: FxHashMap<(IStr, IStr), VectorIndexEntry>,
     /// External `NodeId -> RowIndex` lookup (the inverse of
     /// [`NodeStore::row_to_id`]). Replaces the `id.get() - 1` arithmetic so the
     /// external id can stay stable while the row is remapped by compaction
@@ -160,6 +195,7 @@ impl SeleneGraph {
             idx_edge_label: HashMap::new(),
             property_index: FxHashMap::default(),
             composite_property_index: FxHashMap::default(),
+            vector_index: FxHashMap::default(),
             node_id_to_row: HashMap::new(),
             edge_id_to_row: HashMap::new(),
         }
@@ -380,6 +416,14 @@ impl SeleneGraph {
         self.composite_property_index.get(&(label.clone(), key))
     }
 
+    /// Return a clone of the registered vector index.
+    #[must_use]
+    pub fn vector_index_for(&self, label: &IStr, property: &IStr) -> Option<Arc<VectorIndex>> {
+        self.vector_index
+            .get(&(label.clone(), property.clone()))
+            .map(|entry| Arc::clone(&entry.index))
+    }
+
     /// Number of distinct `(label, property)` indexes currently registered.
     #[must_use]
     pub fn property_index_count(&self) -> usize {
@@ -390,6 +434,12 @@ impl SeleneGraph {
     #[must_use]
     pub fn composite_property_index_count(&self) -> usize {
         self.composite_property_index.len()
+    }
+
+    /// Number of distinct `(label, property)` vector indexes currently registered.
+    #[must_use]
+    pub fn vector_index_count(&self) -> usize {
+        self.vector_index.len()
     }
 
     /// Iterate built-in property indexes as owned `(label, property, kind)` tuples.
@@ -433,6 +483,21 @@ impl SeleneGraph {
                     entry.name.clone(),
                 )
             })
+    }
+
+    /// Iterate built-in vector indexes with optional explicit catalog names.
+    pub fn iter_vector_index_entries(
+        &self,
+    ) -> impl Iterator<Item = (IStr, IStr, VectorIndexKind, u32, Option<IStr>)> + '_ {
+        self.vector_index.iter().map(|((label, property), entry)| {
+            (
+                label.clone(),
+                property.clone(),
+                entry.kind(),
+                entry.dimension(),
+                entry.name.clone(),
+            )
+        })
     }
 
     /// Return rows matching `value` under a registered property index.

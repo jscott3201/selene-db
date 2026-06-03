@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 use crate::{
     Change, EdgeId, EdgeTypeDef, EdgeTypeDefV1, GraphId, GraphType, GraphTypeId, IStr, LabelDiff,
     LabelSet, NodeId, NodeTypeDef, NodeTypeDefV1, NodeTypeRef, PropertyDiff, PropertyMap,
-    RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind,
+    RecordTypeDef, RecordTypeId, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
 };
 
 impl Change {
@@ -186,6 +186,17 @@ impl SchemaChange {
                 changeset_variant_istr("schema.all.property.b"),
             ]),
         },
+        || Self::VectorIndexCreated {
+            label: changeset_variant_istr("schema.all.node"),
+            property: changeset_variant_istr("schema.all.vector"),
+            kind: SchemaVectorIndexKind::Flat,
+            dimension: 3,
+            name: Some(changeset_variant_istr("schema.all.vector.index")),
+        },
+        || Self::VectorIndexDropped {
+            label: changeset_variant_istr("schema.all.node"),
+            property: changeset_variant_istr("schema.all.vector"),
+        },
     ];
 
     /// Number of known [`SchemaChange`] variants in this build.
@@ -211,6 +222,8 @@ impl SchemaChange {
             Self::EdgeTypeAddedV2 { .. } => "EdgeTypeAddedV2",
             Self::CompositePropertyIndexCreated { .. } => "CompositePropertyIndexCreated",
             Self::CompositePropertyIndexDropped { .. } => "CompositePropertyIndexDropped",
+            Self::VectorIndexCreated { .. } => "VectorIndexCreated",
+            Self::VectorIndexDropped { .. } => "VectorIndexDropped",
         }
     }
 }

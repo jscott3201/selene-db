@@ -5,6 +5,7 @@ mod composite_property_index;
 mod factory_reset;
 mod property_index;
 mod remove;
+mod vector_index;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -78,6 +79,7 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &props,
                 row,
             )?;
+            crate::vector_index::apply_node_create(&mut graph.vector_index, &labels, &props, row)?;
             graph.node_store.labels.push(labels.clone());
             graph.node_store.properties.push(props.clone());
             graph.node_store.row_to_id.push(id);
@@ -224,6 +226,14 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
                 &new_props,
                 row as u32,
             )?;
+            crate::vector_index::apply_node_update(
+                &mut graph.vector_index,
+                &old_labels,
+                &old_props,
+                &new_labels,
+                &new_props,
+                row as u32,
+            )?;
             graph.node_store.labels.set(row, labels);
             graph.node_store.properties.set(row, props);
             for label in labels_diff.added.iter().cloned() {
@@ -318,6 +328,12 @@ impl<'tx, 'g> Mutator<'tx, 'g> {
             )?;
             crate::composite_property_index::apply_node_delete(
                 &mut graph.composite_property_index,
+                &labels,
+                &props,
+                row as u32,
+            )?;
+            crate::vector_index::apply_node_delete(
+                &mut graph.vector_index,
                 &labels,
                 &props,
                 row as u32,

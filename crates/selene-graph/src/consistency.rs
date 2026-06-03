@@ -6,7 +6,8 @@
 //! (`crate::mutator`) and rebuilt wholesale on the snapshot-load /
 //! recovery path (`crate::shared::rebuild_derived_state` +
 //! `crate::property_index::rebuild_property_indexes` +
-//! `crate::composite_property_index::rebuild_composite_property_indexes`). A
+//! `crate::composite_property_index::rebuild_composite_property_indexes` +
+//! `crate::vector_index::rebuild_vector_indexes`). A
 //! bug in either path corrupts query results silently — the engine keeps
 //! answering, just with wrong rows.
 //!
@@ -44,7 +45,9 @@ impl SeleneGraph {
     ///    skips — do not false-positive.
     /// 3. **Composite typed indexes** match a fresh lenient re-build, same
     ///    skip-aware policy.
-    /// 4. **Store integrity / alive-set parity**: per-store columns share one
+    /// 4. **Vector row-set indexes** match a fresh lenient re-build, same
+    ///    skip-aware policy.
+    /// 5. **Store integrity / alive-set parity**: per-store columns share one
     ///    length and every alive row index is in range. Dead rows are
     ///    permitted holes (D11) and are only asserted absent from derived
     ///    state, never from the columns. The snapshot's `meta.next_*_id`
@@ -53,7 +56,7 @@ impl SeleneGraph {
     ///    fields after a `from_graph` / recovery load (the real allocator
     ///    floor is enforced separately by `IdAllocator::from_meta_with_floors`),
     ///    so they are not a derived-index invariant.
-    /// 5. **Adjacency** matches a re-derivation from alive edges in both
+    /// 6. **Adjacency** matches a re-derivation from alive edges in both
     ///    directions, with no present-but-empty entry.
     ///
     /// # Errors
@@ -65,6 +68,7 @@ impl SeleneGraph {
         self.check_edge_label_index()?;
         self.check_property_indexes()?;
         self.check_composite_property_indexes()?;
+        self.check_vector_indexes()?;
         self.check_adjacency()?;
         Ok(())
     }
@@ -200,7 +204,32 @@ impl SeleneGraph {
         Ok(())
     }
 
-    /// Family (5): in/out adjacency.
+    /// Family (4): vector row-set indexes.
+    fn check_vector_indexes(&self) -> Result<(), String> {
+        for ((label, property), entry) in &self.vector_index {
+            let reference = crate::vector_index::build_vector_index_lenient(
+                self,
+                label.clone(),
+                property.clone(),
+                entry.kind(),
+                entry.dimension(),
+            )
+            .map_err(|err| {
+                format!("failed to re-derive vector index ({label}, {property}): {err}")
+            })?;
+            if !entry.index.rows_eq(&reference) {
+                return Err(format!(
+                    "vector index ({label}, {property}) drifted from a fresh re-derivation \
+                     (maintained cardinality {}, reference cardinality {})",
+                    entry.index.cardinality(),
+                    reference.cardinality(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Family (6): in/out adjacency.
     fn check_adjacency(&self) -> Result<(), String> {
         let mut out_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();
         let mut in_reference: imbl::HashMap<NodeId, Vec<AdjacencyEdge>> = imbl::HashMap::new();

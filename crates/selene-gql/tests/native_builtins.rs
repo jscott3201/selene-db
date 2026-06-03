@@ -110,7 +110,7 @@ fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
 }
 
 #[test]
-fn show_procedures_lists_all_twenty_five_procedures() {
+fn show_procedures_lists_all_twenty_seven_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -120,8 +120,8 @@ fn show_procedures_lists_all_twenty_five_procedures() {
 
     assert_eq!(
         table.row_count(),
-        25,
-        "19 algo procedures + 6 platform built-ins"
+        27,
+        "19 algo procedures + 8 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -130,6 +130,8 @@ fn show_procedures_lists_all_twenty_five_procedures() {
         "selene.create_index",
         "selene.drop_index",
         "selene.vector_search_nodes",
+        "selene.create_vector_index",
+        "selene.drop_vector_index",
         "algo.pagerank",
     ] {
         assert!(
@@ -276,6 +278,67 @@ fn drop_index_removes_the_index_through_the_funnel() {
 
     let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
     assert_eq!(table.row_count(), 0, "dropped index must not be listed");
+}
+
+#[test]
+fn create_vector_index_commits_through_the_funnel() {
+    let graph = graph(330_013);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    {
+        let mut txn = graph.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(doc.clone()),
+                props(&embedding, Value::Vector(vector(&[1.0, 2.0, 3.0]))),
+            )
+            .expect("vector node inserts");
+        txn.commit().expect("seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3)",
+            &registry,
+        )
+        .expect("vector index creation executes");
+
+    let snapshot = graph.read();
+    let index = snapshot
+        .vector_index_for(&doc, &embedding)
+        .expect("vector index is committed");
+    assert_eq!(index.dimension(), 3);
+    assert_eq!(index.rows().iter().collect::<Vec<_>>(), vec![0]);
+    drop(snapshot);
+
+    let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
+    assert_eq!(string_column(&table, "label"), vec!["VectorDoc"]);
+    assert_eq!(string_column(&table, "property"), vec!["embedding"]);
+    assert_eq!(string_column(&table, "kind"), vec!["vector_flat(3)"]);
+}
+
+#[test]
+fn drop_vector_index_removes_the_index_through_the_funnel() {
+    let graph = graph(330_014);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('VectorDoc', 'embedding', 3)",
+            &registry,
+        )
+        .expect("vector index creation executes");
+    session
+        .execute_source(
+            "CALL selene.drop_vector_index('VectorDoc', 'embedding')",
+            &registry,
+        )
+        .expect("vector index drop executes");
+
+    assert_eq!(graph.read().vector_index_count(), 0);
 }
 
 #[test]

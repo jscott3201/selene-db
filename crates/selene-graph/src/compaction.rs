@@ -41,7 +41,9 @@ use std::collections::HashSet;
 use selene_core::NodeId;
 
 use crate::error::{GraphError, GraphResult};
-use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
+use crate::graph::{
+    CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
+};
 use crate::store::{EdgeStore, NodeStore, RowIndex};
 use crate::typed_index::TypedIndex;
 
@@ -203,12 +205,22 @@ pub fn compact_core(graph: &SeleneGraph) -> GraphResult<CompactedCore> {
             ),
         );
     }
+    for ((label, property), entry) in &graph.vector_index {
+        dense.vector_index.insert(
+            (label.clone(), property.clone()),
+            VectorIndexEntry::new(
+                crate::VectorIndex::new(entry.kind(), entry.dimension())?,
+                entry.name.clone(),
+            ),
+        );
+    }
 
     // Rebuild every derived structure from the dense columns — the same chain
     // SharedGraph::from_graph_parts_and_snapshot uses on the recovery path.
     crate::shared::rebuild_derived_state(&mut dense)?;
     crate::property_index::rebuild_property_indexes(&mut dense)?;
     crate::composite_property_index::rebuild_composite_property_indexes(&mut dense)?;
+    crate::vector_index::rebuild_vector_indexes(&mut dense)?;
 
     // Debug-only structural net (matches the snapshot-load publication seam):
     // re-derive every index from the compacted columns and confirm agreement.

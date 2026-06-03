@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use crate::core_provider::{inconsistent, invalid_payload};
 use crate::graph::{GraphMeta, SeleneGraph};
 use crate::typed_index::TypedIndexKind;
+use crate::vector_index::VectorIndexKind;
 
 mod codec;
 mod gtyp;
@@ -289,6 +290,48 @@ pub struct CompositeSchemaEntry {
     pub name: Option<IStr>,
 }
 
+/// Identity for an entry in the vector-index snapshot section.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct VectorSchemaKey {
+    /// Node label the vector registration applies to.
+    pub label: IStr,
+    /// Vector property the registration applies to.
+    pub property: IStr,
+}
+
+/// Persisted shape of a vector-index registration.
+#[derive(
+    Clone,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    rkyv::Archive,
+    rkyv::Deserialize,
+    rkyv::Serialize,
+    Serialize,
+)]
+pub struct VectorSchemaEntry {
+    /// Vector index algorithm kind.
+    pub kind: VectorIndexKind,
+    /// Required vector dimensionality.
+    pub dimension: u32,
+    /// Optional explicit catalog name for the vector index.
+    pub name: Option<IStr>,
+}
+
 pub(super) fn encode_meta(
     meta: &GraphMeta,
     sequence: u64,
@@ -519,6 +562,45 @@ fn composite_schema_wire_cmp(
         })
 }
 
+pub(super) fn encode_vector_schemas(graph: &SeleneGraph) -> Result<Vec<u8>, crate::ProviderError> {
+    let mut rows: Vec<(VectorSchemaKey, VectorSchemaEntry)> = graph
+        .vector_index
+        .iter()
+        .map(|((label, property), entry)| {
+            (
+                VectorSchemaKey {
+                    label: label.clone(),
+                    property: property.clone(),
+                },
+                VectorSchemaEntry {
+                    kind: entry.kind(),
+                    dimension: entry.dimension(),
+                    name: entry.name.clone(),
+                },
+            )
+        })
+        .collect();
+    rows.sort_by(vector_schema_wire_cmp);
+    encode_rkyv(&rows, "CORE/VIDX")
+}
+
+pub(super) fn decode_vector_schemas(
+    bytes: &[u8],
+) -> Result<Vec<(VectorSchemaKey, VectorSchemaEntry)>, crate::ProviderError> {
+    let mut rows: Vec<(VectorSchemaKey, VectorSchemaEntry)> = decode_rkyv(bytes, "CORE/VIDX")?;
+    rows.sort_unstable_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
+    validate_vector_schema_rows(&rows)?;
+    Ok(rows)
+}
+
+fn vector_schema_wire_cmp(
+    lhs: &(VectorSchemaKey, VectorSchemaEntry),
+    rhs: &(VectorSchemaKey, VectorSchemaEntry),
+) -> std::cmp::Ordering {
+    (lhs.0.label.as_str(), lhs.0.property.as_str())
+        .cmp(&(rhs.0.label.as_str(), rhs.0.property.as_str()))
+}
+
 fn validate_composite_schema_rows(
     rows: &[(CompositeSchemaKey, CompositeSchemaEntry)],
 ) -> Result<(), crate::ProviderError> {
@@ -550,6 +632,21 @@ fn validate_composite_schema_rows(
             return Err(invalid_payload(format!(
                 "CORE/CPIX rows contain duplicate composite registration for label {}",
                 key.label
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_vector_schema_rows(
+    rows: &[(VectorSchemaKey, VectorSchemaEntry)],
+) -> Result<(), crate::ProviderError> {
+    validate_sorted_unique(rows, "CORE/VIDX")?;
+    for (key, entry) in rows {
+        if entry.dimension == 0 {
+            return Err(invalid_payload(format!(
+                "CORE/VIDX row for ({}, {}) has zero vector dimension",
+                key.label, key.property
             )));
         }
     }
