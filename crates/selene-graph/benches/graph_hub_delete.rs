@@ -9,6 +9,7 @@
 //! ~degree-6 `BenchFixture` and the edgeless-node `write_txn_lifecycle`
 //! `delete_only` bench cannot surface this.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

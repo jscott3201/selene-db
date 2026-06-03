@@ -20,6 +20,7 @@
 #   run-benches.sh --bench wal --sample-size 50 --measurement-time 5 # A/B fidelity
 #   run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 #   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
+#   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
 # Profiles select the workload envelope via
@@ -34,6 +35,10 @@
 #   large => 250k/1M
 #   million => 1M
 #   comma-separated positive integers are accepted for custom sweeps
+#
+# Allocator:
+#   mimalloc (default) => bench binaries install mimalloc as global allocator
+#   system             => bench binaries compile without that global allocator
 
 set -euo pipefail
 
@@ -98,6 +103,7 @@ SAMPLE_SIZE=""
 MEASUREMENT_TIME=""
 VECTOR_SCALES_ARG=""
 VECTOR_SCALES=""
+ALLOCATOR="mimalloc"
 SEL_CRATES=()
 SEL_BENCHES=()
 
@@ -116,6 +122,7 @@ while [ "$#" -gt 0 ]; do
     --sample-size|--samples) SAMPLE_SIZE="$2"; shift 2 ;;
     --measurement-time) MEASUREMENT_TIME="$2"; shift 2 ;;
     --vector-scales)    VECTOR_SCALES_ARG="$2"; shift 2 ;;
+    --allocator)        ALLOCATOR="$2"; shift 2 ;;
     --smoke)            SMOKE_MODE=1; shift ;;
     --list)             LIST_MODE=1; shift ;;
     --dry-run)          DRY_RUN=1; shift ;;
@@ -135,6 +142,11 @@ if [ -n "$PROFILE" ]; then
     *) echo "ERROR: --profile must be quick, full, or stress" >&2; exit 2 ;;
   esac
 fi
+
+case "$ALLOCATOR" in
+  mimalloc|system) ;;
+  *) echo "ERROR: --allocator must be mimalloc or system" >&2; exit 2 ;;
+esac
 
 resolve_vector_scales() {
   case "$1" in
@@ -276,9 +288,12 @@ resolve_args() {
 }
 
 bench_env_prefix() {
-  local prefix="SELENE_BENCH_PROFILE=$PROFILE"
+  local prefix="SELENE_BENCH_PROFILE=$PROFILE SELENE_BENCH_ALLOCATOR=$ALLOCATOR"
   if [ -n "$VECTOR_SCALES" ]; then
     prefix+=" SELENE_VECTOR_BENCH_SCALES=$VECTOR_SCALES SELENE_VECTOR_REBUILD_BENCH_SCALES=$VECTOR_SCALES"
+  fi
+  if [ "$ALLOCATOR" = "system" ]; then
+    prefix+=" RUSTFLAGS='${RUSTFLAGS:+$RUSTFLAGS }--cfg selene_bench_system_alloc'"
   fi
   printf '%s' "$prefix"
 }
@@ -300,14 +315,18 @@ if [ "${SELENE_BENCH_FORCE_CONFLICT:-0}" = "1" ] || pgrep -f "cargo bench" 2>/de
 fi
 
 export SELENE_BENCH_PROFILE="$PROFILE"
+export SELENE_BENCH_ALLOCATOR="$ALLOCATOR"
 if [ -n "$VECTOR_SCALES" ]; then
   export SELENE_VECTOR_BENCH_SCALES="$VECTOR_SCALES"
   export SELENE_VECTOR_REBUILD_BENCH_SCALES="$VECTOR_SCALES"
 fi
+if [ "$ALLOCATOR" = "system" ]; then
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg selene_bench_system_alloc"
+fi
 
 # Compile pre-pass (parallel compilation WITHIN each invocation is allowed;
 # done up front so cold-compile time never pollutes the first measurement).
-echo "==> Compiling selected bench binaries (profile=$PROFILE)"
+echo "==> Compiling selected bench binaries (profile=$PROFILE, allocator=$ALLOCATOR)"
 while IFS='|' read -r crate bench harness filt; do
   [ -n "$crate" ] || continue
   resolve_args "$crate" "$bench" "$harness" "$filt" 1
@@ -319,6 +338,6 @@ done <<< "$SELECTED"
 while IFS='|' read -r crate bench harness filt; do
   [ -n "$crate" ] || continue
   resolve_args "$crate" "$bench" "$harness" "$filt" 0
-  echo "==> [criterion] $crate :: $bench (profile=$PROFILE)${filt:+ filter=$filt}"
+  echo "==> [criterion] $crate :: $bench (profile=$PROFILE, allocator=$ALLOCATOR)${filt:+ filter=$filt}"
   cargo "${RESOLVED[@]}"
 done <<< "$SELECTED"

@@ -10,6 +10,7 @@
 //! a loop, so a regression that accidentally puts reads behind the write lock
 //! (or adds reader-side contention) shows up as collapsed read throughput.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 //! Criterion benches for WAL append and replay.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

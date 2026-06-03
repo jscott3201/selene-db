@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 //! Criterion benches for commit-time index-provider fanout.
 
+#[cfg(not(selene_bench_system_alloc))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
