@@ -13,7 +13,7 @@ use selene_core::{
     CoreResult, VectorMetric, VectorMetricQuery, VectorTopK, VectorValue, vector_squared_norm,
 };
 
-const MAX_CENTROIDS: usize = 256;
+const MAX_CENTROIDS: usize = 1024;
 const TRAINING_ITERATIONS: usize = 2;
 
 #[cfg(not(test))]

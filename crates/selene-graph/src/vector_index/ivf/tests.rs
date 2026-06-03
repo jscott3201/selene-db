@@ -7,6 +7,13 @@ fn vector(values: &[f32]) -> VectorValue {
 }
 
 #[test]
+fn ivf_target_centroid_count_scales_until_cap() {
+    assert_eq!(target_centroid_count(0), 1);
+    assert_eq!(target_centroid_count(100_000), 317);
+    assert_eq!(target_centroid_count(10_000_000), MAX_CENTROIDS);
+}
+
+#[test]
 fn ivf_search_finds_near_rows_when_all_lists_are_probed() {
     let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
     for row in 0..32 {
