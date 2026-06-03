@@ -12,9 +12,13 @@ use std::mem::size_of;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use selene_core::{CoreResult, HnswIndexConfig, VectorMetric, VectorMetricQuery, VectorValue};
+use smallvec::SmallVec;
 
 const MAX_LEVEL: usize = 16;
 const LEVEL_BRANCHING_BITS: u32 = 4;
+const INLINE_LINK_LAYERS: usize = 1;
+
+type HnswLinkLayers = SmallVec<[Vec<u32>; INLINE_LINK_LAYERS]>;
 
 /// One approximate vector-search hit over a graph row.
 #[derive(Clone, Debug, PartialEq)]
@@ -86,7 +90,7 @@ impl HnswVectorIndex {
             row,
             vector,
             deleted: false,
-            links: vec![Vec::new(); new_level + 1],
+            links: empty_link_layers(new_level),
         });
 
         let Some(mut nearest) = old_entry_point else {
@@ -185,7 +189,9 @@ impl HnswVectorIndex {
         for node in &self.nodes {
             referenced_vector_bytes = referenced_vector_bytes
                 .saturating_add(node.vector.dimension().saturating_mul(size_of::<f32>()));
-            layer_vec_capacity = layer_vec_capacity.saturating_add(node.links.capacity());
+            if node.links.spilled() {
+                layer_vec_capacity = layer_vec_capacity.saturating_add(node.links.capacity());
+            }
             for layer in &node.links {
                 link_count = link_count.saturating_add(layer.len());
                 link_capacity = link_capacity.saturating_add(layer.capacity());
@@ -426,7 +432,7 @@ struct HnswNode {
     row: u32,
     vector: VectorValue,
     deleted: bool,
-    links: Vec<Vec<u32>>,
+    links: HnswLinkLayers,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -527,6 +533,12 @@ fn level_for(row: u32, ordinal: u32) -> usize {
     level
 }
 
+fn empty_link_layers(level: usize) -> HnswLinkLayers {
+    let mut links = HnswLinkLayers::new();
+    links.resize_with(level + 1, Vec::new);
+    links
+}
+
 fn splitmix64(mut value: u64) -> u64 {
     value = value.wrapping_add(0x9E37_79B9_7F4A_7C15);
     value = (value ^ (value >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -542,6 +554,10 @@ mod tests {
 
     fn vector(value: f32) -> VectorValue {
         VectorValue::new(vec![value, 0.0]).expect("test vector is valid")
+    }
+
+    fn link_layers(layers: impl IntoIterator<Item = Vec<u32>>) -> HnswLinkLayers {
+        layers.into_iter().collect()
     }
 
     #[test]
@@ -598,19 +614,19 @@ mod tests {
                     row: 0,
                     vector: vector(0.0),
                     deleted: false,
-                    links: vec![vec![2, 1]],
+                    links: link_layers([vec![2, 1]]),
                 },
                 HnswNode {
                     row: 1,
                     vector: vector(1.0),
                     deleted: false,
-                    links: vec![Vec::new()],
+                    links: link_layers([Vec::new()]),
                 },
                 HnswNode {
                     row: 2,
                     vector: vector(2.0),
                     deleted: false,
-                    links: vec![Vec::new()],
+                    links: link_layers([Vec::new()]),
                 },
             ],
             row_to_entry: FxHashMap::default(),
@@ -635,5 +651,16 @@ mod tests {
             .map(|candidate| candidate.id)
             .collect();
         assert_eq!(ids, vec![0, 1]);
+    }
+
+    #[test]
+    fn hnsw_level_zero_layer_container_stays_inline() {
+        let links = empty_link_layers(0);
+        assert_eq!(links.len(), 1);
+        assert!(!links.spilled());
+
+        let promoted_links = empty_link_layers(INLINE_LINK_LAYERS);
+        assert_eq!(promoted_links.len(), INLINE_LINK_LAYERS + 1);
+        assert!(promoted_links.spilled());
     }
 }
