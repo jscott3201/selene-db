@@ -301,9 +301,9 @@ impl HnswVectorIndex {
                 }
                 let neighbor_distance = distance(*neighbor)?;
                 let admit = best.len() < ef
-                    || best
-                        .peek()
-                        .is_some_and(|worst| neighbor_distance < worst.distance);
+                    || best.peek().is_some_and(|worst| {
+                        closer(neighbor_distance, *neighbor, worst.distance, worst.id)
+                    });
                 if admit {
                     candidates.push(MinCandidate::new(*neighbor, neighbor_distance));
                     best.push(MaxCandidate::new(*neighbor, neighbor_distance));
@@ -582,5 +582,53 @@ mod tests {
         let hits = index.search(&vector(1.0), 2, 16).unwrap();
         assert_eq!(hits[0].row, 2);
         assert_eq!(index.live_len(), 1);
+    }
+
+    #[test]
+    fn hnsw_search_layer_admits_equal_distance_better_id() {
+        let index = HnswVectorIndex {
+            metric: VectorMetric::SquaredEuclidean,
+            nodes: vec![
+                HnswNode {
+                    row: 0,
+                    vector: vector(0.0),
+                    deleted: false,
+                    links: vec![vec![2, 1]],
+                },
+                HnswNode {
+                    row: 1,
+                    vector: vector(1.0),
+                    deleted: false,
+                    links: vec![Vec::new()],
+                },
+                HnswNode {
+                    row: 2,
+                    vector: vector(2.0),
+                    deleted: false,
+                    links: vec![Vec::new()],
+                },
+            ],
+            row_to_entry: FxHashMap::default(),
+            entry_point: Some(0),
+            max_level: 0,
+            m: DEFAULT_M,
+            ef_construction: DEFAULT_EF_CONSTRUCTION,
+        };
+
+        let candidates = index
+            .search_layer(0, 2, 0, |candidate| {
+                Ok(match candidate {
+                    0 => 0.0,
+                    1 | 2 => 1.0,
+                    _ => unreachable!("test graph only has three candidates"),
+                })
+            })
+            .unwrap();
+
+        let ids: Vec<_> = candidates
+            .into_iter()
+            .map(|candidate| candidate.id)
+            .collect();
+        assert_eq!(ids, vec![0, 1]);
     }
 }
