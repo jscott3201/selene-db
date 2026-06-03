@@ -67,6 +67,85 @@ pub struct VectorSearchHit<K> {
     pub distance: f64,
 }
 
+/// Bounded deterministic lower-is-better vector hit accumulator.
+///
+/// This is the streaming form of [`exact_vector_top_k`]. It keeps only the
+/// current best `k` hits in memory, so graph-layer exact scans can avoid
+/// materializing every candidate before ranking.
+#[derive(Debug)]
+pub struct VectorTopK<K> {
+    k: usize,
+    heap: BinaryHeap<HeapEntry<K>>,
+}
+
+impl<K: Ord> VectorTopK<K> {
+    /// Construct an empty accumulator that will retain at most `k` hits.
+    #[must_use]
+    pub fn new(k: usize) -> Self {
+        Self {
+            k,
+            heap: BinaryHeap::new(),
+        }
+    }
+
+    /// Return the configured result cap.
+    #[must_use]
+    pub const fn k(&self) -> usize {
+        self.k
+    }
+
+    /// Return the number of retained hits.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    /// Return true when no hits are retained.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.heap.is_empty()
+    }
+
+    /// Push one candidate distance into the accumulator.
+    ///
+    /// `distance` must be a finite lower-is-better score produced by
+    /// [`VectorMetric::distance`] or an equivalent metric kernel. Ties are
+    /// deterministic: lower distance wins, then lower `key` wins.
+    pub fn push_distance(&mut self, key: K, distance: f64) {
+        debug_assert!(distance.is_finite(), "VectorTopK distances must be finite");
+        if self.k == 0 {
+            return;
+        }
+        let entry = HeapEntry { distance, key };
+        if self.heap.len() < self.k {
+            self.heap.push(entry);
+            return;
+        }
+        let Some(worst) = self.heap.peek() else {
+            return;
+        };
+        if entry.cmp(worst).is_lt() {
+            self.heap.pop();
+            self.heap.push(entry);
+        }
+    }
+
+    /// Return retained hits sorted best-first.
+    #[must_use]
+    pub fn into_hits(self) -> Vec<VectorSearchHit<K>> {
+        let mut hits: Vec<_> = self
+            .heap
+            .into_iter()
+            .map(|entry| VectorSearchHit {
+                key: entry.key,
+                distance: entry.distance,
+            })
+            .collect();
+        hits.sort_by(compare_hit);
+        hits
+    }
+}
+
 /// Return the exact top-`k` nearest vector candidates.
 ///
 /// This is intentionally a small exhaustive oracle, not an ANN index. Future
@@ -93,32 +172,13 @@ where
         return Ok(Vec::new());
     }
 
-    let mut heap = BinaryHeap::new();
+    let mut top_k = VectorTopK::new(k);
     for (key, vector) in candidates {
         let distance = metric.distance(query, vector)?;
-        let entry = HeapEntry { distance, key };
-        if heap.len() < k {
-            heap.push(entry);
-            continue;
-        }
-        let Some(worst) = heap.peek() else {
-            continue;
-        };
-        if entry.cmp(worst).is_lt() {
-            heap.pop();
-            heap.push(entry);
-        }
+        top_k.push_distance(key, distance);
     }
 
-    let mut hits: Vec<_> = heap
-        .into_iter()
-        .map(|entry| VectorSearchHit {
-            key: entry.key,
-            distance: entry.distance,
-        })
-        .collect();
-    hits.sort_by(compare_hit);
-    Ok(hits)
+    Ok(top_k.into_hits())
 }
 
 #[derive(Debug)]
@@ -291,6 +351,40 @@ mod tests {
             .expect("zero k does not inspect candidates");
 
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn vector_top_k_streams_and_orders_hits() {
+        let mut top_k = VectorTopK::new(2);
+        top_k.push_distance(3_u64, 0.25);
+        top_k.push_distance(1, 0.25);
+        top_k.push_distance(2, 0.5);
+        top_k.push_distance(4, 0.1);
+
+        assert_eq!(top_k.k(), 2);
+        assert_eq!(top_k.len(), 2);
+        assert_eq!(
+            top_k.into_hits(),
+            vec![
+                VectorSearchHit {
+                    key: 4,
+                    distance: 0.1
+                },
+                VectorSearchHit {
+                    key: 1,
+                    distance: 0.25
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn vector_top_k_zero_k_retains_nothing() {
+        let mut top_k = VectorTopK::new(0);
+        top_k.push_distance(1_u64, 0.0);
+
+        assert!(top_k.is_empty());
+        assert!(top_k.into_hits().is_empty());
     }
 
     #[test]
