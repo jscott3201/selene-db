@@ -10,6 +10,7 @@ use crate::{SharedGraph, VectorIndexKind, VectorNodeSearchHit};
 
 const K: usize = 8;
 const EF_SEARCH: usize = 128;
+const DISTANCE_TIE_EPSILON: f64 = 1e-9;
 
 #[test]
 fn hnsw_recall_handles_clustered_high_dimensional_cosine_vectors() {
@@ -26,6 +27,7 @@ fn hnsw_recall_handles_clustered_high_dimensional_cosine_vectors() {
     );
 
     assert_recall_at_least(&profile, 95);
+    assert_distance_quality_at_least(&profile, 100);
 }
 
 #[test]
@@ -112,13 +114,34 @@ fn hnsw_recall_survives_update_delete_churn() {
     }
 }
 
+#[test]
+fn hnsw_recall_quality_accepts_duplicate_distance_ties() {
+    let profile = RecallProfile::build(
+        9804,
+        "vector.ann.recall.tie.heavy.cosine",
+        VectorIndexKind::HnswCosine,
+        VectorMetric::Cosine,
+        16,
+        duplicate_cosine_corpus(8, 32, 16),
+        (0..8)
+            .map(|cluster| duplicate_cosine_vector(cluster, 16))
+            .collect(),
+    );
+
+    assert_distance_quality_at_least(&profile, 100);
+    for query in &profile.queries {
+        let approximate = profile.approximate(query);
+        assert_unique_hits(&approximate);
+    }
+}
+
 struct RecallProfile {
     graph: SharedGraph,
     label: IStr,
     property: IStr,
     metric: VectorMetric,
     queries: Vec<VectorValue>,
-    exact: Vec<Vec<NodeId>>,
+    exact: Vec<Vec<VectorNodeSearchHit>>,
 }
 
 impl RecallProfile {
@@ -166,9 +189,6 @@ impl RecallProfile {
                 graph
                     .exact_vector_search_nodes(&label, &property, query, metric, K)
                     .unwrap()
-                    .into_iter()
-                    .map(|hit| hit.node_id)
-                    .collect()
             })
             .collect();
         Self {
@@ -194,6 +214,21 @@ impl RecallProfile {
     }
 }
 
+fn assert_distance_quality_at_least(profile: &RecallProfile, floor_percent: usize) {
+    let mut quality = 0usize;
+    let mut expected = 0usize;
+    for (query, exact) in profile.queries.iter().zip(&profile.exact) {
+        let approximate = profile.approximate(query);
+        expected += exact.len();
+        quality += distance_quality_count(exact, &approximate);
+    }
+
+    assert!(
+        quality * 100 >= expected * floor_percent,
+        "HNSW distance quality {quality}/{expected} fell below {floor_percent}%"
+    );
+}
+
 fn assert_recall_at_least(profile: &RecallProfile, floor_percent: usize) {
     let mut overlap = 0usize;
     let mut expected = 0usize;
@@ -216,10 +251,28 @@ fn assert_unique_hits(hits: &[VectorNodeSearchHit]) {
     }
 }
 
-fn overlap_count(exact: &[NodeId], approximate: &[VectorNodeSearchHit]) -> usize {
+fn distance_quality_count(
+    exact: &[VectorNodeSearchHit],
+    approximate: &[VectorNodeSearchHit],
+) -> usize {
+    let Some(threshold) = exact.last().map(|hit| hit.distance + DISTANCE_TIE_EPSILON) else {
+        return 0;
+    };
+    approximate
+        .iter()
+        .take(exact.len())
+        .filter(|hit| hit.distance <= threshold)
+        .count()
+}
+
+fn overlap_count(exact: &[VectorNodeSearchHit], approximate: &[VectorNodeSearchHit]) -> usize {
     exact
         .iter()
-        .filter(|node_id| approximate.iter().any(|hit| hit.node_id == **node_id))
+        .filter(|expected| {
+            approximate
+                .iter()
+                .any(|hit| hit.node_id == expected.node_id)
+        })
         .count()
 }
 
@@ -257,6 +310,36 @@ fn clustered_cosine_vector(
             let primary = if dim == center { 1.0 } else { 0.0 };
             let secondary = if dim == second { 0.25 } else { 0.0 };
             base + primary + secondary + spread * 0.0002 + query_shift
+        })
+        .collect();
+    VectorValue::new(components).unwrap()
+}
+
+fn duplicate_cosine_corpus(
+    clusters: usize,
+    per_cluster: usize,
+    dimension: usize,
+) -> Vec<VectorValue> {
+    (0..clusters)
+        .flat_map(|cluster| {
+            let vector = duplicate_cosine_vector(cluster, dimension);
+            std::iter::repeat_n(vector, per_cluster)
+        })
+        .collect()
+}
+
+fn duplicate_cosine_vector(cluster: usize, dimension: usize) -> VectorValue {
+    let center = cluster % dimension;
+    let second = cluster.wrapping_mul(5).wrapping_add(3) % dimension;
+    let components: Vec<f32> = (0..dimension)
+        .map(|dim| {
+            if dim == center {
+                1.0
+            } else if dim == second {
+                0.25
+            } else {
+                0.0
+            }
         })
         .collect();
     VectorValue::new(components).unwrap()

@@ -13,7 +13,9 @@ use std::mem::size_of;
 use rustc_hash::FxHashMap;
 use selene_core::{CoreResult, VectorMetric, VectorMetricQuery, VectorValue};
 
-const DEFAULT_M: usize = 16;
+// M=18 is the smallest tested fanout that preserves duplicate-distance cosine
+// recall quality without taking the M=24 memory/latency cost.
+const DEFAULT_M: usize = 18;
 const DEFAULT_EF_CONSTRUCTION: usize = 64;
 const MAX_LEVEL: usize = 16;
 const LEVEL_BRANCHING_BITS: u32 = 4;
