@@ -449,17 +449,14 @@ pub const NOT_SUPPORTED_RATIONALE: &[(FeatureId, &str)] = &[
         FeatureId::GV16,
         "256-bit signed integers are not represented in Value v1",
     ),
-    (
-        FeatureId::GV20,
-        "REAL spelling is outside the current claim; FLOAT16 remains deferred",
-    ),
+    (FeatureId::GV20, "FLOAT16 remains deferred"),
     (
         FeatureId::GV22,
         "specified floating precision syntax is deferred",
     ),
     (
         FeatureId::GV23,
-        "REAL/DOUBLE synonyms are deferred until parser coverage is explicit",
+        "REAL/DOUBLE synonyms require preserving original type spelling through the flagger before claiming",
     ),
     (FeatureId::GV25, "FLOAT128 is deferred"),
     (FeatureId::GV26, "FLOAT256 is deferred"),

@@ -95,12 +95,11 @@ parsing or analysis, never at runtime.
 through every Boolean operator (`AND`, `OR`, `XOR`, `NOT`) and through
 the comparison family.
 
-### Optional types deliberately not claimed in v1.0
+### Optional type surfaces deliberately not claimed
 
-`RECORD` (open / closed / nested, `GV45`-`GV48`), graph and binding-table
-reference types (`GV60`-`GV61`), explicit value-type nullability syntax
-(`GV90`), `FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit integers, and the
-`REAL` synonym all carry rationale entries in
+Graph and binding-table reference types (`GV60`-`GV61`), explicit value-type
+nullability syntax (`GV90`), `FLOAT16` / `FLOAT128` / `FLOAT256`, 256-bit
+integers, and the `REAL`/`DOUBLE` synonyms all carry rationale entries in
 `feature_register::NOT_SUPPORTED_RATIONALE`. Query that mentions one of
 these types is rejected at parse or analyze time.
 
@@ -787,10 +786,9 @@ explicitly absent. The canonical rationale is
 | Procedure-local variables | Not claimed (features `GP05`-`GP15`). |
 | Mixed catalog/data transactions | Not claimed (feature `GP18`). |
 | Multi-graph transactions | Not claimed (feature `GT03`). |
-| `RECORD` type expressions | Not claimed (features `GV45`-`GV48`). The `Value::Record` variant exists in core but is not exposed in the type grammar. |
 | Graph / table reference type spellings (`GRAPH`, `TABLE` as types) | Not claimed (features `GV60`-`GV61`). |
 | Explicit value-type nullability syntax (`STRING NOT NULL` in type expressions) | Not claimed (feature `GV90`). The DDL `NOT NULL` property constraint is supported separately. |
-| `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL` synonym | Not claimed. |
+| `FLOAT16`, `FLOAT128`, `FLOAT256`, `REAL`/`DOUBLE` synonyms | Not claimed. |
 | 256-bit integers (`INT256`, `UINT256`) | Not claimed. |
 | Time-series query syntax | Out of scope. Future first-party extension allocation `TIMS`. |
 | RDF / SPARQL bridge syntax | Out of scope. Future first-party extension allocation `GRPR`. |

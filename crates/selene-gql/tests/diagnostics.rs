@@ -24,10 +24,10 @@ fn parse_with_source_reports_unsupported_feature() {
     let ParserError::UnsupportedFeature { feature_id, .. } = error.error() else {
         panic!("expected UnsupportedFeature");
     };
-    assert_eq!(*feature_id, FeatureId::GV20);
+    assert_eq!(*feature_id, FeatureId::GV23);
 
     let rendered = render(&error);
-    assert!(rendered.contains("GV20"));
+    assert!(rendered.contains("GV23"));
 }
 
 #[test]
