@@ -22,6 +22,9 @@ use selene_testing::BenchProfile;
 const VECTOR_DIMENSION: usize = 128;
 const STALE_QUERY_K: usize = 10;
 const STALE_QUERY_EF_SEARCH: usize = 64;
+const MEMORY_PROJECTION_K: usize = 10;
+const MEMORY_PROJECTION_EF_SEARCH: usize = 64;
+const MEMORY_PROJECTION_DIMENSIONS: [usize; 3] = [128, 768, 1536];
 const VECTOR_REBUILD_VARIANTS: [VectorRebuildVariant; 4] = [
     VectorRebuildVariant {
         name: "hnsw_l2_dim128_default",
@@ -128,6 +131,28 @@ fn bench_vector_index_stale_query(c: &mut Criterion) {
                 |b| {
                     b.iter(|| {
                         std::hint::black_box(rebuilt.approximate_query_hit_count());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_vector_index_dimension_projection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_index_dimension_projection");
+    for scale in vector_rebuild_scales() {
+        for dimension in MEMORY_PROJECTION_DIMENSIONS {
+            let fixture = VectorMemoryProjectionFixture::build(scale, dimension);
+            let memory_suffix = format_usage_id_suffix(fixture.memory_usage());
+            group.bench_function(
+                BenchmarkId::new(
+                    format!("hnsw_l2_default_dim{dimension}"),
+                    format!("n{}_{}", compact_usize(scale), memory_suffix),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.approximate_query_hit_count());
                     });
                 },
             );
@@ -289,6 +314,61 @@ impl VectorRebuildFixture {
     }
 }
 
+struct VectorMemoryProjectionFixture {
+    shared: SharedGraph,
+    label: IStr,
+    embedding_key: IStr,
+    query: VectorValue,
+}
+
+impl VectorMemoryProjectionFixture {
+    fn build(scale: usize, dimension: usize) -> Self {
+        let scale = scale.max(1);
+        let label = intern("VectorMemoryProjectionDoc").expect("bench label is valid");
+        let embedding_key = intern("embedding").expect("bench key is valid");
+        let shared = SharedGraph::new(GraphId::new(60_000_000 + scale as u64 + dimension as u64));
+        let variant = VectorRebuildVariant {
+            name: "hnsw_l2_default",
+            kind: VectorIndexKind::HnswSquaredEuclidean,
+            hnsw_config: None,
+        };
+        let _ids = seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension, variant);
+        Self {
+            shared,
+            label,
+            embedding_key,
+            query: vector_value(scale - 1, dimension),
+        }
+    }
+
+    fn memory_usage(&self) -> VectorIndexMemoryUsage {
+        self.shared
+            .read()
+            .vector_index_for(&self.label, &self.embedding_key)
+            .expect("bench fixture has vector index")
+            .memory_usage()
+    }
+
+    fn approximate_query_hit_count(&self) -> usize {
+        self.shared
+            .approximate_vector_search_nodes_checked(
+                &self.label,
+                &self.embedding_key,
+                &self.query,
+                ApproximateVectorSearchOptions::new(
+                    VectorIndexKind::HnswSquaredEuclidean
+                        .hnsw_metric()
+                        .expect("HNSW L2 has metric"),
+                    MEMORY_PROJECTION_K,
+                    MEMORY_PROJECTION_EF_SEARCH,
+                ),
+                CancellationChecker::disabled(),
+            )
+            .expect("bench HNSW query succeeds")
+            .len()
+    }
+}
+
 fn seed_indexed_nodes(
     shared: &SharedGraph,
     label: &IStr,
@@ -408,6 +488,7 @@ fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
 criterion_group! {
     name = vector_index_maintenance;
     config = common::criterion_config();
-    targets = bench_vector_index_rebuild, bench_vector_index_stale_query
+    targets = bench_vector_index_rebuild, bench_vector_index_stale_query,
+        bench_vector_index_dimension_projection
 }
 criterion_main!(vector_index_maintenance);

@@ -181,6 +181,9 @@ PR-local quick vector baseline:
 | `graph_vector_index_stale_query/hnsw_cos_dim128_default` | 11.93 µs stale / 12.51 µs rebuilt (quick) | Same churn shape under cosine. On this small fixture, rebuild reclaims memory but query latency is within topology/noise range rather than strictly faster. |
 | `graph_vector_index_stale_query/hnsw_l2_dim128_m24ef64` | 13.69 µs stale / 13.68 µs rebuilt (quick) | Tuned `M=24, ef_construction=64`; stale-entry query cost is effectively neutral at this churn level while rebuild lowers reachable bytes from ~894 KiB to ~735 KiB. |
 | `graph_vector_index_stale_query/hnsw_cos_dim128_m24ef64` | 14.78 µs stale / 14.88 µs rebuilt (quick) | Tuned cosine row; memory reclamation is visible, latency delta is noise-scale. |
+| `graph_vector_index_dimension_projection/hnsw_l2_default_dim128` | 10.79 µs (quick) | 1k HNSW L2 query row with suffix `m222-722`: ~222 KiB index-owned bytes and ~722 KiB reachable bytes. |
+| `graph_vector_index_dimension_projection/hnsw_l2_default_dim768` | 42.31 µs (quick) | Same HNSW topology/link count as dim128; reachable bytes rise to ~3.15 MiB because full-precision vector components dominate. |
+| `graph_vector_index_dimension_projection/hnsw_l2_default_dim1536` | 81.03 µs (quick) | Reachable bytes rise to ~6.08 MiB at 1k vectors; extrapolation pressure is raw vector storage, not graph-link storage. |
 
 PR-local HNSW tuning spot-check:
 
