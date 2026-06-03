@@ -350,17 +350,45 @@ impl HnswVectorIndex {
         candidates: Vec<Candidate>,
         max_links: usize,
     ) -> CoreResult<Vec<u32>> {
-        let mut selected = Vec::new();
+        let mut selected = Vec::with_capacity(max_links);
+        let mut fallback = Vec::new();
         for candidate in candidates {
             if candidate.id == query_id {
                 continue;
             }
-            selected.push(candidate.id);
+            if self.is_diverse_neighbor(candidate.id, candidate.distance, &selected)? {
+                selected.push(candidate.id);
+                if selected.len() == max_links {
+                    return Ok(selected);
+                }
+            } else {
+                fallback.push(candidate.id);
+            }
+        }
+        for candidate in fallback {
             if selected.len() == max_links {
                 break;
             }
+            if !selected.contains(&candidate) {
+                selected.push(candidate);
+            }
         }
         Ok(selected)
+    }
+
+    fn is_diverse_neighbor(
+        &self,
+        candidate_id: u32,
+        query_distance: f64,
+        selected: &[u32],
+    ) -> CoreResult<bool> {
+        for selected_id in selected {
+            let neighbor_distance = self.distance_to_entry(candidate_id, *selected_id)?;
+            if neighbor_distance < query_distance {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn add_backlink(&mut self, node_id: u32, neighbor: u32, layer: usize) -> CoreResult<()> {
@@ -385,11 +413,8 @@ impl HnswVectorIndex {
             .collect::<CoreResult<_>>()?;
         candidates.sort_by(compare_candidate);
         candidates.dedup_by_key(|candidate| candidate.id);
-        candidates.truncate(max_links);
-        self.nodes[node_id as usize].links[layer] = candidates
-            .into_iter()
-            .map(|candidate| candidate.id)
-            .collect();
+        self.nodes[node_id as usize].links[layer] =
+            self.select_neighbors(node_id, candidates, max_links)?;
         Ok(())
     }
 
