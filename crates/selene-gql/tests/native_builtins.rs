@@ -5,13 +5,15 @@
 //! machinery), exercising plan-time lookup, tier-checked dispatch, and — for the
 //! mutation-tier built-ins — the single mutation funnel (`SHOW INDEXES` reads
 //! the committed `property_index`, which the procedure populated through
-//! `MutationContext::mutator`). They are the parity guard that the five built-ins
-//! behave identically to the pack era with the registry swapped behind the
-//! `ProcedureRegistry` trait.
+//! `MutationContext::mutator`). They are the parity guard that the relocated
+//! built-ins behave identically to the pack era with the registry swapped behind
+//! the `ProcedureRegistry` trait, plus coverage for new native platform
+//! built-ins added after the pack teardown.
 
-use selene_core::{GraphId, IStr, Value, intern};
+use selene_core::{GraphId, IStr, LabelSet, NodeId, PropertyMap, Value, VectorValue, intern};
 use selene_gql::{
-    BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
+    BindingTable, BuiltinProcedureRegistry, ExecutorError, ProcedureError, ProcedureRegistry,
+    Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
@@ -21,6 +23,14 @@ fn istr(value: &str) -> IStr {
 
 fn graph(id: u64) -> SharedGraph {
     SharedGraph::new(GraphId::new(id))
+}
+
+fn vector(components: &[f32]) -> VectorValue {
+    VectorValue::new(components.to_vec()).expect("test vector is valid")
+}
+
+fn props(key: &IStr, value: Value) -> PropertyMap {
+    PropertyMap::from_pairs([(key.clone(), value)]).expect("test property map is valid")
 }
 
 fn rows(output: StatementOutput) -> BindingTable {
@@ -71,8 +81,36 @@ fn uint_column(table: &BindingTable, name: &str) -> Vec<u64> {
         .collect()
 }
 
+fn float_column(table: &BindingTable, name: &str) -> Vec<f64> {
+    let index = table
+        .column_index(istr(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::Float(value)) => *value,
+            other => panic!("expected float in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
+fn node_column(table: &BindingTable, name: &str) -> Vec<NodeId> {
+    let index = table
+        .column_index(istr(name))
+        .unwrap_or_else(|| panic!("missing column {name}"));
+    table
+        .rows()
+        .iter()
+        .map(|row| match row.values().get(index) {
+            Some(Value::NodeRef(value)) => *value,
+            other => panic!("expected node ref in {name}, got {other:?}"),
+        })
+        .collect()
+}
+
 #[test]
-fn show_procedures_lists_all_twenty_four_procedures() {
+fn show_procedures_lists_all_twenty_five_procedures() {
     let graph = graph(330_001);
     let registry = BuiltinProcedureRegistry::new();
     let mut session = Session::new(&graph);
@@ -82,8 +120,8 @@ fn show_procedures_lists_all_twenty_four_procedures() {
 
     assert_eq!(
         table.row_count(),
-        24,
-        "19 algo procedures + 5 platform built-ins"
+        25,
+        "19 algo procedures + 6 platform built-ins"
     );
     for expected in [
         "selene.health",
@@ -91,6 +129,7 @@ fn show_procedures_lists_all_twenty_four_procedures() {
         "selene.verify",
         "selene.create_index",
         "selene.drop_index",
+        "selene.vector_search_nodes",
         "algo.pagerank",
     ] {
         assert!(
@@ -237,6 +276,85 @@ fn drop_index_removes_the_index_through_the_funnel() {
 
     let table = execute_rows(&mut session, "SHOW INDEXES", &registry);
     assert_eq!(table.row_count(), 0, "dropped index must not be listed");
+}
+
+#[test]
+fn vector_search_nodes_returns_exact_matches_from_vector_parameter() {
+    let graph = graph(330_011);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let doc = istr("VectorDoc");
+    let other = istr("VectorOther");
+    let embedding = istr("embedding");
+
+    {
+        let mut txn = graph.begin_write();
+        {
+            let mut mutator = txn.mutator();
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[2.0, 0.0]))),
+                )
+                .expect("first vector node inserts");
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[1.0, 0.0]))),
+                )
+                .expect("second vector node inserts");
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::String(istr("skip"))),
+                )
+                .expect("non-vector property node inserts");
+            mutator
+                .create_node(
+                    LabelSet::single(other),
+                    props(&embedding, Value::Vector(vector(&[0.0, 0.0]))),
+                )
+                .expect("other label vector node inserts");
+        }
+        txn.commit().expect("seed graph commits");
+    }
+
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) \
+         YIELD node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![NodeId::new(2), NodeId::new(1)]
+    );
+    assert_eq!(float_column(&table, "distance"), vec![1.0, 4.0]);
+}
+
+#[test]
+fn vector_search_nodes_query_parameter_must_be_vector() {
+    let graph = graph(330_012);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+
+    session.bind_parameter(istr("query"), Value::List(vec![Value::Float(0.0)]));
+    let err = session
+        .execute_source(
+            "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10)",
+            &registry,
+        )
+        .expect_err("non-vector query parameter must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("query must be a VECTOR")
+    ));
 }
 
 #[test]

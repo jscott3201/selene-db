@@ -91,9 +91,10 @@ fn show_procedures_lists_default_registry() {
     let table = execute_rows(&mut session, "SHOW PROCEDURES", &registry);
     let names = column_strings(&table, "name");
 
-    assert_eq!(table.row_count(), 24);
+    assert_eq!(table.row_count(), 25);
     assert!(names.contains(&"selene.feature_status".to_owned()));
     assert!(names.contains(&"selene.verify".to_owned()));
+    assert!(names.contains(&"selene.vector_search_nodes".to_owned()));
     assert!(names.contains(&"algo.pagerank".to_owned()));
 }
 

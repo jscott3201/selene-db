@@ -1,6 +1,6 @@
 //! Typed parameter runtime validation regressions.
 
-use selene_core::{GraphId, IStr, Record, Value, intern};
+use selene_core::{GraphId, IStr, Record, Value, VectorValue, intern};
 use selene_gql::{
     EmptyProcedureRegistry, ExecutorError, GqlType, PipelineStatement, QueryPipeline, RecordType,
     ReturnClause, ReturnItem, Session, SourceSpan, Statement, ValueExpr, analyze,
@@ -11,6 +11,29 @@ use smallvec::smallvec;
 
 fn istr(value: &str) -> IStr {
     intern(value).expect("test string interns")
+}
+
+fn typed_parameter_statement(name: IStr, declared_type: GqlType) -> Statement {
+    let span = SourceSpan::new(0, 4);
+    Statement::Query(QueryPipeline {
+        statements: vec![PipelineStatement::Return(ReturnClause {
+            distinct: false,
+            star: false,
+            items: vec![ReturnItem {
+                expr: ValueExpr::Parameter {
+                    name: name.clone(),
+                    declared_type: Some(declared_type),
+                    span,
+                },
+                alias: Some(name),
+                span,
+            }],
+            group_by: None,
+            having: None,
+            span,
+        })],
+        span,
+    })
 }
 
 #[test]
@@ -33,6 +56,46 @@ fn typed_parameter_runtime_rejects_mismatched_list_elements() {
             actual: "LIST",
             ..
         } if name.as_str() == "vals" && expected == "LIST<INTEGER>"
+    ));
+}
+
+#[test]
+fn typed_parameter_runtime_accepts_vector() {
+    let name = istr("vec");
+    let statement = typed_parameter_statement(name.clone(), GqlType::Vector);
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("statement analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("statement plans");
+    let graph = SharedGraph::new(GraphId::new(4125));
+    let mut session = Session::new(&graph);
+
+    session.bind_parameter(
+        name,
+        Value::Vector(VectorValue::new(vec![1.0, 2.0]).expect("test vector is valid")),
+    );
+    execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+        .expect("vector parameter accepts matching value");
+}
+
+#[test]
+fn typed_parameter_runtime_rejects_non_vector() {
+    let name = istr("vec");
+    let statement = typed_parameter_statement(name.clone(), GqlType::Vector);
+    let analyzed = analyze(statement, &EmptyProcedureRegistry, None).expect("statement analyzes");
+    let plan = plan(&analyzed, &EmptyProcedureRegistry).expect("statement plans");
+    let graph = SharedGraph::new(GraphId::new(4126));
+    let mut session = Session::new(&graph);
+
+    session.bind_parameter(name.clone(), Value::List(vec![Value::Float(1.0)]));
+    let err = execute_statement(&plan, &mut session, &EmptyProcedureRegistry)
+        .expect_err("vector parameter rejects mismatched value");
+    assert!(matches!(
+        err,
+        ExecutorError::InvalidParameterType {
+            name: err_name,
+            ref expected,
+            actual: "LIST",
+            ..
+        } if err_name == name && expected == "VECTOR"
     ));
 }
 

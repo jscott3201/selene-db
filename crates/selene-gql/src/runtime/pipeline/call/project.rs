@@ -106,6 +106,7 @@ fn matches_gql_type(value: &Value, ty: &GqlType) -> bool {
         GqlType::ZonedTime => matches!(value, Value::ZonedTime(_)),
         GqlType::LocalTime => matches!(value, Value::LocalTime(_)),
         GqlType::Duration => matches!(value, Value::Duration(_)),
+        GqlType::Vector => matches!(value, Value::Vector(_)),
         GqlType::Record(_) => matches!(value, Value::Record(_) | Value::RecordTyped(_)),
         GqlType::List(inner) => {
             let Value::List(values) = value else {

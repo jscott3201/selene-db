@@ -1,20 +1,22 @@
 //! Native platform built-in procedures (`selene.*`).
 //!
-//! These five procedures are relocated verbatim from the historical
-//! procedure-pack built-ins into `selene-gql` and registered directly in the native
-//! [`BuiltinProcedureRegistry`](crate::BuiltinProcedureRegistry) (STEP 3). The
-//! historical `BuiltInMetadata` / `GraphProcedureBuiltIn` /
+//! The first five procedures were relocated verbatim from the historical
+//! procedure-pack built-ins into `selene-gql` and registered directly in the
+//! native [`BuiltinProcedureRegistry`](crate::BuiltinProcedureRegistry) (STEP 3).
+//! The historical `BuiltInMetadata` / `GraphProcedureBuiltIn` /
 //! `MutationProcedureBuiltIn` trait indirection and the
 //! `UNSTABLE_BUILTIN_CONTENT_HASH` sentinel are dropped — each procedure is a
 //! concrete dispatch arm, with planner-visible metadata built from static
 //! parameter/output tables (the same `StaticParameter`/`StaticOutputColumn` →
-//! `ProcedureMetadata` conversion the pack registry performed, so `SHOW
-//! PROCEDURES` introspection is byte-identical).
+//! `ProcedureMetadata` conversion the pack registry performed). The vector
+//! search procedure is new native engine functionality on the same concrete
+//! built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
-//! - `selene.health`, `selene.feature_status`, `selene.verify` are read-only
-//!   graph-tier ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they
-//!   never mutate and never re-enter `begin_write`.
+//! - `selene.health`, `selene.feature_status`, `selene.verify`, and
+//!   `selene.vector_search_nodes` are read-only graph-tier
+//!   ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they never
+//!   mutate and never re-enter `begin_write`.
 //! - `selene.create_index`, `selene.drop_index` are mutation-tier
 //!   ([`ProcedureTier::Mutation`] + [`ProcedureMutability::SchemaWrite`]); they
 //!   route every write through [`MutationContext::mutator`] — emitting
@@ -30,6 +32,7 @@ mod drop_index;
 mod feature_status;
 mod health;
 mod meta;
+mod vector_search;
 mod verify;
 
 use selene_core::Value;
@@ -49,6 +52,8 @@ pub(super) enum BuiltinKind {
     FeatureStatus,
     /// `selene.verify` — read-only graph integrity check.
     Verify,
+    /// `selene.vector_search_nodes` — exact vector node search.
+    VectorSearchNodes,
     /// `selene.create_index` — mutation-tier property-index creation.
     CreateIndex,
     /// `selene.drop_index` — mutation-tier property-index drop.
@@ -67,10 +72,12 @@ pub(super) struct BuiltinSpec {
     pub(super) kind: BuiltinKind,
 }
 
-/// The five surviving platform built-ins, in the historical pack registration
-/// order (`health`, `feature_status`, `verify`, `create_index`, `drop_index`;
-/// the former `pack_history` built-in is not relocated).
-pub(super) const BUILTIN_SPECS: [BuiltinSpec; 5] = [
+/// The native platform built-ins in registration order. The first five entries
+/// preserve the historical pack registration order (`health`,
+/// `feature_status`, `verify`, `create_index`, `drop_index`; the former
+/// `pack_history` built-in is not relocated). `vector_search_nodes` is appended
+/// so legacy handles keep their relative ordering.
+pub(super) const BUILTIN_SPECS: [BuiltinSpec; 6] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -100,6 +107,12 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 5] = [
         description: "Drop a property index.",
         since_version: "1.0.0",
         kind: BuiltinKind::DropIndex,
+    },
+    BuiltinSpec {
+        name: &["selene", "vector_search_nodes"],
+        description: "Exact vector search over node properties.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::VectorSearchNodes,
     },
 ];
 
@@ -132,7 +145,9 @@ impl BuiltinKind {
     /// Declared execution tier.
     pub(super) const fn tier(self) -> ProcedureTier {
         match self {
-            Self::Health | Self::FeatureStatus | Self::Verify => ProcedureTier::Graph,
+            Self::Health | Self::FeatureStatus | Self::Verify | Self::VectorSearchNodes => {
+                ProcedureTier::Graph
+            }
             Self::CreateIndex | Self::DropIndex => ProcedureTier::Mutation,
         }
     }
@@ -140,7 +155,9 @@ impl BuiltinKind {
     /// Declared mutability.
     pub(super) const fn mutability(self) -> ProcedureMutability {
         match self {
-            Self::Health | Self::FeatureStatus | Self::Verify => ProcedureMutability::Read,
+            Self::Health | Self::FeatureStatus | Self::Verify | Self::VectorSearchNodes => {
+                ProcedureMutability::Read
+            }
             Self::CreateIndex | Self::DropIndex => ProcedureMutability::SchemaWrite,
         }
     }
@@ -150,6 +167,7 @@ impl BuiltinKind {
             Self::Health => health::signature(),
             Self::FeatureStatus => feature_status::signature(),
             Self::Verify => verify::signature(),
+            Self::VectorSearchNodes => vector_search::signature(),
             Self::CreateIndex => create_index::signature(),
             Self::DropIndex => drop_index::signature(),
         }
@@ -160,6 +178,7 @@ impl BuiltinKind {
             Self::Health => health::output_columns(),
             Self::FeatureStatus => feature_status::output_columns(),
             Self::Verify => verify::output_columns(),
+            Self::VectorSearchNodes => vector_search::output_columns(),
             Self::CreateIndex => create_index::output_columns(),
             Self::DropIndex => drop_index::output_columns(),
         }
@@ -182,6 +201,7 @@ impl BuiltinKind {
             Self::Health => health::execute(ctx, args),
             Self::FeatureStatus => feature_status::execute(ctx, args),
             Self::Verify => verify::execute(ctx, args),
+            Self::VectorSearchNodes => vector_search::execute(ctx, args),
             Self::CreateIndex | Self::DropIndex => Err(ProcedureError::TierMismatch {
                 expected: ProcedureTier::Mutation,
                 actual: ProcedureTier::Graph,
@@ -199,7 +219,7 @@ impl BuiltinKind {
         match self {
             Self::CreateIndex => create_index::execute(ctx, args),
             Self::DropIndex => drop_index::execute(ctx, args),
-            Self::Health | Self::FeatureStatus | Self::Verify => {
+            Self::Health | Self::FeatureStatus | Self::Verify | Self::VectorSearchNodes => {
                 Err(ProcedureError::TierMismatch {
                     expected: ProcedureTier::Graph,
                     actual: ProcedureTier::Mutation,

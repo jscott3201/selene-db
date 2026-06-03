@@ -464,6 +464,7 @@ fn cast_to_type_feature(target: &GqlType) -> &'static str {
         GqlType::ZonedTime => "CAST to ZONED TIME",
         GqlType::LocalTime => "CAST to LOCAL TIME",
         GqlType::Duration => "CAST to DURATION",
+        GqlType::Vector => "CAST to VECTOR",
         GqlType::Record(_) => "CAST to RECORD",
         GqlType::Path => "CAST to PATH",
         GqlType::GraphRef => "CAST to GRAPH",

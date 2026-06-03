@@ -285,6 +285,7 @@ fn gql_type_to_scalar_property_value_type(
         GqlType::ZonedTime => PropertyValueType::ZonedTime,
         GqlType::LocalTime => PropertyValueType::LocalTime,
         GqlType::Duration => PropertyValueType::Duration,
+        GqlType::Vector => PropertyValueType::Vector,
         GqlType::Path => PropertyValueType::Path,
         GqlType::GraphRef => PropertyValueType::GraphRef,
         GqlType::NodeRef => PropertyValueType::NodeRef,

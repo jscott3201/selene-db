@@ -311,6 +311,12 @@ scale-independent (single-query CPU).
 | `procedure_call_repeat/no_cache` | 2.958 ms | 100 short-lived sessions, parse/analyze/plan each. |
 | `procedure_call_repeat/shared_cache` | 27.49 µs | Shared `Arc<CallPlanCache>` warm-hit — **99.1% lower**. |
 
+PR-local quick vector procedure baseline:
+
+| Bench | Median | Notes |
+|---|---:|---|
+| `procedure_vector_search/shared_cache_squared_euclidean_dim128_k10_1000` | 46.6 µs (quick) | Cached `CALL selene.vector_search_nodes` over 1,000 vector nodes; scalar exact scan, ~21.4 Melem/s. |
+
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05)
 
 The only read-query **execution** bench in the suite (`expression_eval` is

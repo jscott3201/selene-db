@@ -610,6 +610,7 @@ fn is_supported_typed_target(ty: &GqlType) -> bool {
         | GqlType::ZonedTime
         | GqlType::LocalTime
         | GqlType::Duration
+        | GqlType::Vector
         | GqlType::Path
         | GqlType::Null
         | GqlType::Nothing => true,
