@@ -479,6 +479,43 @@ pub enum SchemaChange {
         /// Indexed property keys in declaration order.
         properties: SmallVec<[IStr; 4]>,
     },
+    /// Vector property index creation with optional explicit catalog name.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable.
+    VectorIndexCreated {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed vector property key.
+        property: IStr,
+        /// Declared vector index algorithm.
+        kind: SchemaVectorIndexKind,
+        /// Required vector dimensionality for indexed rows.
+        dimension: u32,
+        /// Optional explicit catalog name.
+        name: Option<IStr>,
+    },
+    /// Vector property index deletion.
+    ///
+    /// Declared after every existing v1.1 variant so the `postcard`
+    /// discriminants of all earlier variants remain stable.
+    VectorIndexDropped {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed vector property key.
+        property: IStr,
+    },
+}
+
+/// Schema-level vector index algorithm kind.
+///
+/// This mirrors storage-level vector index algorithm selection without making
+/// `selene-core` depend on graph storage internals.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum SchemaVectorIndexKind {
+    /// Exact in-memory row-set accelerator. ANN algorithms can be added as new
+    /// variants without changing the `(label, property)` catalog identity.
+    Flat,
 }
 
 /// Schema-level property index value kind.
@@ -887,12 +924,12 @@ mod tests {
     fn schema_change_variants_construct() {
         let variants: Vec<_> = SchemaChange::ALL.iter().map(|factory| factory()).collect();
         assert_eq!(variants.len(), SchemaChange::VARIANT_COUNT);
-        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 18);
     }
 
     #[test]
     fn schema_change_all_covers_every_variant() {
-        assert_eq!(SchemaChange::VARIANT_COUNT, 16);
+        assert_eq!(SchemaChange::VARIANT_COUNT, 18);
         let mut discriminants = std::collections::HashSet::new();
         let mut names = std::collections::HashSet::new();
         for factory in SchemaChange::ALL {

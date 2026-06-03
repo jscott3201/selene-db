@@ -35,6 +35,7 @@ pub mod shared;
 pub mod store;
 pub mod type_validator;
 pub mod typed_index;
+pub mod vector_index;
 pub mod vector_search;
 pub mod write_txn;
 
@@ -47,11 +48,11 @@ pub use composite_typed_index::{
 };
 pub use core_provider::{
     CORE_EDGE_SUB, CORE_GTYP_SUB, CORE_META_SUB, CORE_NODE_SUB, CORE_PROVIDER_TAG, CORE_SCMA_SUB,
-    CoreProvider, DurableState,
+    CORE_VIDX_SUB, CoreProvider, DurableState,
 };
 pub use durable_provider::DurableProvider;
 pub use error::{GraphError, GraphResult};
-pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph};
+pub use graph::{CompositePropertyIndexEntry, GraphMeta, SeleneGraph, VectorIndexEntry};
 pub use graph_types::{
     DropBehavior, EdgeEndpointDef, EdgeTypeDef, GraphTypeDef, MAX_RECORD_TYPE_NESTING, NodeTypeDef,
     PropertyDefaultValue, PropertyElementType, PropertyTypeDef, RecordFieldType,
@@ -65,6 +66,7 @@ pub use shared::{SharedGraph, SharedGraphBuilder};
 pub use store::{EdgeStore, NodeStore, RowIndex};
 pub use type_validator::{EntityId, TypeViolation, validate_change, validate_entity_state};
 pub use typed_index::{NotNanError, NotNanF64, TypedIndex, TypedIndexKind};
+pub use vector_index::{VectorIndex, VectorIndexKind, VectorIndexValueError};
 pub use vector_search::{VectorNodeSearchHit, VectorSearchError};
 pub use write_txn::{CommitOutcome, CommitWarning, WriteTxn};
 

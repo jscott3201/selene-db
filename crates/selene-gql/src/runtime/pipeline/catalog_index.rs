@@ -1,7 +1,7 @@
 //! Inline property-index helpers for catalog DDL.
 
 use selene_core::IStr;
-use selene_graph::TypedIndexKind;
+use selene_graph::{TypedIndexKind, VectorIndexKind};
 use smallvec::SmallVec;
 
 use super::catalog::intern_runtime;
@@ -67,6 +67,11 @@ pub(super) fn validate_index_name_collisions(
             .map(|(label, properties, _, name)| {
                 render_composite_index_name(label, &properties, name)
             }),
+    );
+    used.extend(
+        graph
+            .iter_vector_index_entries()
+            .map(|(label, property, _, _, name)| render_vector_index_name(label, property, name)),
     );
     for index in indexes {
         let rendered = render_index_name(label.clone(), index.property.clone(), index.name.clone());
@@ -192,11 +197,33 @@ pub(super) fn render_composite_index_name(
         .unwrap_or_else(|| render_composite_auto_index_name(label, properties))
 }
 
+pub(super) fn render_vector_index_name(
+    label: IStr,
+    property: IStr,
+    explicit: Option<IStr>,
+) -> String {
+    explicit
+        .map(|name| name.as_str().to_owned())
+        .unwrap_or_else(|| render_vector_auto_index_name(label, property))
+}
+
 fn render_auto_index_name(label: IStr, property: IStr) -> String {
     let label = label.as_str();
     let property = property.as_str();
     format!(
         "idx:{}:{}:{}:{}",
+        label.len(),
+        label,
+        property.len(),
+        property
+    )
+}
+
+fn render_vector_auto_index_name(label: IStr, property: IStr) -> String {
+    let label = label.as_str();
+    let property = property.as_str();
+    format!(
+        "vidx:{}:{}:{}:{}",
         label.len(),
         label,
         property.len(),
@@ -250,5 +277,11 @@ pub(super) fn render_index_kind(kind: TypedIndexKind) -> &'static str {
         TypedIndexKind::Date => "date",
         TypedIndexKind::LocalDateTime => "local_datetime",
         TypedIndexKind::Uuid => "uuid",
+    }
+}
+
+pub(super) fn render_vector_index_kind(kind: VectorIndexKind, dimension: u32) -> String {
+    match kind {
+        VectorIndexKind::Flat => format!("vector_flat({dimension})"),
     }
 }

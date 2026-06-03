@@ -7,12 +7,15 @@
 //! single bitmap rebuild runs downstream in
 //! `SharedGraph::from_graph_parts_and_snapshot` (GRAPH-06 dedup).
 
-use selene_core::{IStr, SchemaChange, SchemaPropertyIndexKind};
+use selene_core::{IStr, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind};
 use smallvec::SmallVec;
 
-use crate::graph::{CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph};
+use crate::graph::{
+    CompositePropertyIndexEntry, PropertyIndexEntry, SeleneGraph, VectorIndexEntry,
+};
 use crate::typed_index::TypedIndex;
 use crate::typed_index::TypedIndexKind;
+use crate::vector_index::{VectorIndex, VectorIndexKind};
 
 /// A distilled, replayable property-index intent from the WAL.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -57,6 +60,31 @@ pub(super) enum PendingCompositeIndex {
         label: IStr,
         /// Indexed property keys in declaration order.
         properties: SmallVec<[IStr; 4]>,
+    },
+}
+
+/// A distilled, replayable vector-index intent from the WAL.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum PendingVectorIndex {
+    /// Register a vector index for `(label, property)`.
+    Create {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed vector property key.
+        property: IStr,
+        /// Declared vector index kind.
+        kind: VectorIndexKind,
+        /// Required vector dimensionality.
+        dimension: u32,
+        /// Optional explicit catalog name.
+        name: Option<IStr>,
+    },
+    /// Drop the vector index registration for `(label, property)`.
+    Drop {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed vector property key.
+        property: IStr,
     },
 }
 
@@ -188,6 +216,61 @@ pub(super) fn replay_composite_property_index_changes(
     Ok(())
 }
 
+/// Distill a vector-index `SchemaChange` into a replayable intent, or `None`
+/// when the change is not a vector-index change.
+pub(super) fn pending_vector_index_change(change: &SchemaChange) -> Option<PendingVectorIndex> {
+    match change {
+        SchemaChange::VectorIndexCreated {
+            label,
+            property,
+            kind,
+            dimension,
+            name,
+        } => Some(PendingVectorIndex::Create {
+            label: label.clone(),
+            property: property.clone(),
+            kind: vector_kind_from(*kind),
+            dimension: *dimension,
+            name: name.clone(),
+        }),
+        SchemaChange::VectorIndexDropped { label, property } => Some(PendingVectorIndex::Drop {
+            label: label.clone(),
+            property: property.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// Replay post-snapshot WAL vector-index intents against the registration set
+/// only; the downstream `rebuild_vector_indexes` pass fills row membership.
+pub(super) fn replay_vector_index_changes(
+    graph: &mut SeleneGraph,
+    changes: &[PendingVectorIndex],
+) -> crate::GraphResult<()> {
+    for change in changes {
+        match change {
+            PendingVectorIndex::Create {
+                label,
+                property,
+                kind,
+                dimension,
+                name,
+            } => {
+                graph.vector_index.insert(
+                    (label.clone(), property.clone()),
+                    VectorIndexEntry::new(VectorIndex::new(*kind, *dimension)?, name.clone()),
+                );
+            }
+            PendingVectorIndex::Drop { label, property } => {
+                graph
+                    .vector_index
+                    .remove(&(label.clone(), property.clone()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Map a persisted `SchemaPropertyIndexKind` to the in-memory `TypedIndexKind`.
 pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndexKind {
     match kind {
@@ -197,5 +280,12 @@ pub(super) const fn typed_kind_from(kind: SchemaPropertyIndexKind) -> TypedIndex
         SchemaPropertyIndexKind::Date => TypedIndexKind::Date,
         SchemaPropertyIndexKind::LocalDateTime => TypedIndexKind::LocalDateTime,
         SchemaPropertyIndexKind::Uuid => TypedIndexKind::Uuid,
+    }
+}
+
+/// Map a persisted `SchemaVectorIndexKind` to the in-memory `VectorIndexKind`.
+pub(super) const fn vector_kind_from(kind: SchemaVectorIndexKind) -> VectorIndexKind {
+    match kind {
+        SchemaVectorIndexKind::Flat => VectorIndexKind::Flat,
     }
 }

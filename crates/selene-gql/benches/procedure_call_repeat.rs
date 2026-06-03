@@ -16,7 +16,7 @@ use selene_gql::{
     ProcedureOutputSchema, ProcedureRegistry, ProcedureResult, ProcedureSignature, ProcedureTier,
     Session, StatementOutput,
 };
-use selene_graph::SharedGraph;
+use selene_graph::{SharedGraph, VectorIndexKind};
 
 const SOURCE: &str = "CALL bench.repeat() YIELD n";
 const REPEATS: usize = 100;
@@ -94,8 +94,11 @@ fn bench_procedure_call_repeat(c: &mut Criterion) {
 fn bench_vector_search_procedure(c: &mut Criterion) {
     let registry = BuiltinProcedureRegistry::new();
     let graph = vector_graph(VECTOR_SCALE, VECTOR_DIMENSION);
+    let indexed_graph = vector_graph_indexed(VECTOR_SCALE, VECTOR_DIMENSION);
     let cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let indexed_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_vector_cache(&graph, &registry, Arc::clone(&cache));
+    warm_vector_cache(&indexed_graph, &registry, Arc::clone(&indexed_cache));
 
     let mut group = c.benchmark_group("procedure_vector_search");
     group.throughput(Throughput::Elements(VECTOR_SCALE as u64));
@@ -105,6 +108,15 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &graph,
                 &registry,
                 Some(Arc::clone(&cache)),
+            ));
+        });
+    });
+    group.bench_function("shared_cache_flat_index_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_search(
+                &indexed_graph,
+                &registry,
+                Some(Arc::clone(&indexed_cache)),
             ));
         });
     });
@@ -191,6 +203,19 @@ fn vector_graph(scale: usize, dimension: usize) -> SharedGraph {
         }
         txn.commit().expect("bench vector fixture commits");
     }
+    graph
+}
+
+fn vector_graph_indexed(scale: usize, dimension: usize) -> SharedGraph {
+    let graph = vector_graph(scale, dimension);
+    graph
+        .create_vector_index(
+            istr("VectorDoc"),
+            istr("embedding"),
+            VectorIndexKind::Flat,
+            u32::try_from(dimension).expect("bench dimension fits u32"),
+        )
+        .expect("bench vector index builds");
     graph
 }
 

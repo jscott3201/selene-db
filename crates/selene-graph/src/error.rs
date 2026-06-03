@@ -125,6 +125,40 @@ pub enum GraphError {
         properties: Box<SmallVec<[IStr; 4]>>,
     },
 
+    /// A vector property index already exists for this `(label, property)`.
+    #[error("vector index already exists for ({label}, {property})")]
+    #[diagnostic(code(SLENE_G_021))]
+    VectorIndexAlreadyExists {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed vector property key.
+        property: IStr,
+    },
+
+    /// A vector index was declared with an invalid dimensionality.
+    #[error("vector index dimension must be non-zero, observed {dimension}")]
+    #[diagnostic(code(SLENE_G_022))]
+    VectorIndexInvalidDimension {
+        /// Declared vector dimensionality.
+        dimension: u32,
+    },
+
+    /// A value cannot be admitted to a vector index.
+    #[error(
+        "vector index ({label}, {property}) expected VECTOR<{expected_dimension}> but observed {observed}"
+    )]
+    #[diagnostic(code(SLENE_G_023))]
+    VectorIndexValueRejected {
+        /// Indexed node label.
+        label: IStr,
+        /// Indexed vector property key.
+        property: IStr,
+        /// Registered vector dimensionality.
+        expected_dimension: u32,
+        /// Observed value kind or dimensionality.
+        observed: String,
+    },
+
     /// A closed graph mutation violates its bound graph type.
     #[error(transparent)]
     #[diagnostic(transparent)]
@@ -176,7 +210,10 @@ impl GraphError {
             Self::PropertyIndexAlreadyExists { .. }
             | Self::PropertyIndexNotFound { .. }
             | Self::IndexValueRejected { .. }
-            | Self::CompositePropertyIndexAlreadyExists { .. } => "22G03",
+            | Self::CompositePropertyIndexAlreadyExists { .. }
+            | Self::VectorIndexAlreadyExists { .. }
+            | Self::VectorIndexInvalidDimension { .. }
+            | Self::VectorIndexValueRejected { .. } => "22G03",
             Self::TypeViolation(_) => "G2000",
             Self::Core(source) => source.gqlstatus(),
             Self::Durable { .. } => "5GQL0",
@@ -227,6 +264,23 @@ mod tests {
             property: intern("err.property.rejected").unwrap(),
             expected_kind: TypedIndexKind::I64,
             observed: "String",
+        },
+        "22G03"
+    )]
+    #[case(
+        GraphError::VectorIndexAlreadyExists {
+            label: intern("err.label.vector.exists").unwrap(),
+            property: intern("err.property.vector.exists").unwrap(),
+        },
+        "22G03"
+    )]
+    #[case(GraphError::VectorIndexInvalidDimension { dimension: 0 }, "22G03")]
+    #[case(
+        GraphError::VectorIndexValueRejected {
+            label: intern("err.label.vector.rejected").unwrap(),
+            property: intern("err.property.vector.rejected").unwrap(),
+            expected_dimension: 3,
+            observed: "VECTOR<4>".to_owned(),
         },
         "22G03"
     )]
@@ -316,6 +370,17 @@ mod tests {
             GraphError::CompositePropertyIndexAlreadyExists {
                 label: lbl.clone(),
                 properties: Box::default(),
+            },
+            GraphError::VectorIndexAlreadyExists {
+                label: lbl.clone(),
+                property: prop.clone(),
+            },
+            GraphError::VectorIndexInvalidDimension { dimension: 0 },
+            GraphError::VectorIndexValueRejected {
+                label: lbl.clone(),
+                property: prop.clone(),
+                expected_dimension: 3,
+                observed: "VECTOR<4>".to_owned(),
             },
             GraphError::Durable {
                 reason: "x".to_owned(),

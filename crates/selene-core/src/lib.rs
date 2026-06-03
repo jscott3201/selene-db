@@ -38,7 +38,9 @@ pub mod vector;
 
 pub use cancellation::{CancellationCause, CancellationChecker, CancellationToken};
 pub use change_kind::ChangeKind;
-pub use changeset::{Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind};
+pub use changeset::{
+    Change, LabelDiff, PropertyDiff, SchemaChange, SchemaPropertyIndexKind, SchemaVectorIndexKind,
+};
 pub use error::{CoreError, CoreResult};
 pub use extension_type_ids::{
     ExtensionTypeId, FIRST_PARTY_EXTENSION_TYPE_IDS, SELENE_RDF, SELENE_TIMESERIES,

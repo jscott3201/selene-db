@@ -21,8 +21,8 @@ use self::{
     property::{property_defs, render_property_value_type},
 };
 use super::catalog_index::{
-    DropTarget, inline_index_specs, render_index_kind, render_index_name,
-    validate_index_name_collisions,
+    DropTarget, inline_index_specs, render_index_kind, render_index_name, render_vector_index_kind,
+    render_vector_index_name, validate_index_name_collisions,
 };
 use crate::{
     AnalyzedType, BindingTableColumn, BindingTableSchema, CatalogOp, GqlType, ProcedureMetadata,
@@ -410,24 +410,43 @@ fn show_indexes(ctx: &TxContext<'_, '_>) -> Result<BindingTable, ExecutorError> 
     let mut indexes = ctx
         .snapshot()
         .iter_property_index_entries()
+        .map(|(label, property, kind, name)| {
+            (
+                render_index_name(label.clone(), property.clone(), name),
+                label,
+                property,
+                render_index_kind(kind).to_owned(),
+            )
+        })
         .collect::<Vec<_>>();
+    indexes.extend(ctx.snapshot().iter_vector_index_entries().map(
+        |(label, property, kind, dimension, name)| {
+            (
+                render_vector_index_name(label.clone(), property.clone(), name),
+                label,
+                property,
+                render_vector_index_kind(kind, dimension),
+            )
+        },
+    ));
     indexes.sort_by(
-        |(left_label, left_property, _, _), (right_label, right_property, _, _)| {
+        |(_, left_label, left_property, left_kind),
+         (_, right_label, right_property, right_kind)| {
             left_label
                 .as_str()
                 .cmp(right_label.as_str())
                 .then_with(|| left_property.as_str().cmp(right_property.as_str()))
+                .then_with(|| left_kind.cmp(right_kind))
         },
     );
     let rows = indexes
         .into_iter()
-        .map(|(label, property, kind, name)| {
-            let name = render_index_name(label.clone(), property.clone(), name);
+        .map(|(name, label, property, kind)| {
             Ok(Binding::new([
                 Value::String(intern_runtime(&name)?),
                 Value::String(label),
                 Value::String(property),
-                Value::String(intern_runtime(render_index_kind(kind))?),
+                Value::String(intern_runtime(&kind)?),
             ]))
         })
         .collect::<Result<Vec<_>, ExecutorError>>()?;

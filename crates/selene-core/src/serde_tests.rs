@@ -334,6 +334,17 @@ fn schema_change_postcard_round_trip() {
                 istr("serde.schema.indexed.b")
             ],
         },
+        SchemaChange::VectorIndexCreated {
+            label: node_label.clone(),
+            property: istr("serde.schema.embedding"),
+            kind: SchemaVectorIndexKind::Flat,
+            dimension: 3,
+            name: Some(istr("serde.schema.vector.index.name")),
+        },
+        SchemaChange::VectorIndexDropped {
+            label: node_label.clone(),
+            property: istr("serde.schema.embedding"),
+        },
         SchemaChange::NodeTypeAddedV2 {
             graph_type: graph_type_id,
             label: istr("serde.schema.node.v2"),

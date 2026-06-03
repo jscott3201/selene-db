@@ -1,0 +1,197 @@
+use selene_core::{
+    GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorValue, intern,
+};
+
+use crate::{GraphError, SharedGraph, VectorIndexKind};
+
+fn istr(value: &str) -> IStr {
+    intern(value).unwrap()
+}
+
+fn vector(components: &[f32]) -> Value {
+    Value::Vector(VectorValue::new(components.to_vec()).unwrap())
+}
+
+fn props(pairs: impl IntoIterator<Item = (IStr, Value)>) -> PropertyMap {
+    PropertyMap::from_pairs(pairs).unwrap()
+}
+
+#[test]
+fn vector_index_tracks_create_update_and_delete_membership() {
+    let shared = SharedGraph::new(GraphId::new(8101));
+    let label = istr("vector.index.doc");
+    let property = istr("embedding");
+    let other = istr("vector.index.other");
+    let (doc_a, doc_b) = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let doc_a = mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[1.0, 0.0]))]),
+            )
+            .unwrap();
+        let doc_b = mutator
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(other, Value::Int(9))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+        (doc_a, doc_b)
+    };
+
+    shared
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 2)
+        .unwrap();
+    assert_eq!(
+        shared
+            .read()
+            .vector_index_for(&label, &property)
+            .unwrap()
+            .rows()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![0]
+    );
+
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .update_node(
+                doc_b,
+                LabelDiff::new([], []).unwrap(),
+                PropertyDiff::new([(property.clone(), vector(&[0.0, 1.0]))], []).unwrap(),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+    assert_eq!(
+        shared
+            .read()
+            .vector_index_for(&label, &property)
+            .unwrap()
+            .rows()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator().delete_node(doc_a).unwrap();
+        txn.commit().unwrap();
+    }
+    assert_eq!(
+        shared
+            .read()
+            .vector_index_for(&label, &property)
+            .unwrap()
+            .rows()
+            .iter()
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+}
+
+#[test]
+fn create_vector_index_rejects_existing_wrong_kind() {
+    let shared = SharedGraph::new(GraphId::new(8102));
+    let label = istr("vector.index.kind");
+    let property = istr("embedding");
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), Value::String(istr("not-vector")))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let err = shared
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::VectorIndexValueRejected {
+            label: err_label,
+            property: err_property,
+            expected_dimension: 3,
+            observed,
+        } if err_label == label && err_property == property && observed == "String"
+    ));
+}
+
+#[test]
+fn create_vector_index_rejects_existing_dimension_mismatch() {
+    let shared = SharedGraph::new(GraphId::new(8103));
+    let label = istr("vector.index.dimension");
+    let property = istr("embedding");
+    {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .create_node(
+                LabelSet::single(label.clone()),
+                props([(property.clone(), vector(&[1.0, 2.0]))]),
+            )
+            .unwrap();
+        txn.commit().unwrap();
+    }
+
+    let err = shared
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 3)
+        .unwrap_err();
+
+    assert!(matches!(
+        err,
+        GraphError::VectorIndexValueRejected {
+            label: err_label,
+            property: err_property,
+            expected_dimension: 3,
+            observed,
+        } if err_label == label && err_property == property && observed == "VECTOR<2>"
+    ));
+}
+
+#[test]
+fn indexed_vector_property_rejects_later_dimension_drift() {
+    let shared = SharedGraph::new(GraphId::new(8104));
+    let label = istr("vector.index.strict");
+    let property = istr("embedding");
+    let doc = {
+        let mut txn = shared.begin_write();
+        let doc = txn
+            .mutator()
+            .create_node(LabelSet::single(label.clone()), PropertyMap::new())
+            .unwrap();
+        txn.commit().unwrap();
+        doc
+    };
+    shared
+        .create_vector_index(label.clone(), property.clone(), VectorIndexKind::Flat, 2)
+        .unwrap();
+
+    let err = {
+        let mut txn = shared.begin_write();
+        txn.mutator()
+            .update_node(
+                doc,
+                LabelDiff::new([], []).unwrap(),
+                PropertyDiff::new([(property.clone(), vector(&[1.0, 2.0, 3.0]))], []).unwrap(),
+            )
+            .unwrap_err()
+    };
+
+    assert!(matches!(
+        err,
+        GraphError::VectorIndexValueRejected {
+            label: err_label,
+            property: err_property,
+            expected_dimension: 2,
+            observed,
+        } if err_label == label && err_property == property && observed == "VECTOR<3>"
+    ));
+}
