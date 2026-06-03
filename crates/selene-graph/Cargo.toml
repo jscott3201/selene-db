@@ -46,6 +46,10 @@ name = "single_graph"
 harness = false
 
 [[bench]]
+name = "vector_index_rebuild"
+harness = false
+
+[[bench]]
 name = "bulk_mutation"
 harness = false
 

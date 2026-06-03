@@ -1,0 +1,259 @@
+#![allow(missing_docs)]
+//! Criterion benches for vector-index maintenance rebuilds.
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+mod common;
+
+use std::time::{Duration, Instant};
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use selene_core::{
+    GraphId, IStr, LabelDiff, LabelSet, PropertyDiff, PropertyMap, Value, VectorValue, intern,
+};
+use selene_graph::{SharedGraph, VectorIndexKind, VectorIndexRebuildReport};
+use selene_testing::BenchProfile;
+
+const VECTOR_DIMENSION: usize = 128;
+
+fn bench_vector_index_rebuild(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_index_rebuild");
+    for scale in vector_rebuild_scales() {
+        let preview = VectorRebuildFixture::build(scale, VECTOR_DIMENSION);
+        let preview_report = preview
+            .shared
+            .rebuild_vector_indexes()
+            .expect("bench preview rebuild succeeds");
+        preview.validate_report(&preview_report);
+        let id_suffix = preview.format_report_id_suffix(&preview_report);
+        group.throughput(Throughput::Elements(
+            preview_report.entries[0].before.hnsw_entries as u64,
+        ));
+        group.bench_function(
+            BenchmarkId::new(
+                "hnsw_l2_dim128",
+                format!("n{}_{}", compact_usize(scale), id_suffix),
+            ),
+            |b| {
+                b.iter_custom(|iterations| {
+                    let mut elapsed = Duration::ZERO;
+                    for _ in 0..iterations {
+                        let fixture = VectorRebuildFixture::build(scale, VECTOR_DIMENSION);
+                        let started = Instant::now();
+                        let report = fixture
+                            .shared
+                            .rebuild_vector_indexes()
+                            .expect("bench vector-index rebuild succeeds");
+                        elapsed += started.elapsed();
+                        fixture.validate_report(&report);
+                        std::hint::black_box(report.reclaimed_reachable_bytes);
+                    }
+                    elapsed
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+fn vector_rebuild_scales() -> Vec<usize> {
+    std::env::var("SELENE_VECTOR_REBUILD_BENCH_SCALES")
+        .ok()
+        .and_then(parse_scales)
+        .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
+}
+
+fn parse_scales(raw: String) -> Option<Vec<usize>> {
+    let mut scales: Vec<_> = raw
+        .split(',')
+        .filter_map(|part| part.trim().parse::<usize>().ok())
+        .filter(|scale| *scale > 0)
+        .collect();
+    scales.sort_unstable();
+    scales.dedup();
+    (!scales.is_empty()).then_some(scales)
+}
+
+struct VectorRebuildFixture {
+    shared: SharedGraph,
+    scale: usize,
+    update_count: usize,
+    delete_count: usize,
+}
+
+impl VectorRebuildFixture {
+    fn build(scale: usize, dimension: usize) -> Self {
+        let scale = scale.max(2);
+        let label = intern("VectorIndexRebuildDoc").expect("bench label is valid");
+        let embedding_key = intern("embedding").expect("bench key is valid");
+        let shared = SharedGraph::new(GraphId::new(50_000_000 + scale as u64));
+        let ids = seed_indexed_nodes(&shared, &label, &embedding_key, scale, dimension);
+        let (update_count, delete_count) = churn_counts(scale);
+        churn_indexed_nodes(
+            &shared,
+            &embedding_key,
+            &ids,
+            update_count,
+            delete_count,
+            dimension,
+        );
+        Self {
+            shared,
+            scale,
+            update_count,
+            delete_count,
+        }
+    }
+
+    fn validate_report(&self, report: &VectorIndexRebuildReport) {
+        assert_eq!(report.indexes_rebuilt, 1);
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(
+            report.reclaimed_hnsw_deleted_entries,
+            self.update_count + self.delete_count
+        );
+        assert!(report.reclaimed_reachable_bytes > 0);
+
+        let live_rows = self.scale - self.delete_count;
+        let live_rows_u64 = u64::try_from(live_rows).expect("bench scale fits u64");
+        let entry = &report.entries[0];
+        assert_eq!(entry.kind, VectorIndexKind::HnswSquaredEuclidean);
+        assert_eq!(
+            usize::try_from(entry.dimension).expect("dimension fits usize"),
+            VECTOR_DIMENSION
+        );
+        assert_eq!(entry.before.indexed_rows, live_rows_u64);
+        assert_eq!(entry.before.hnsw_live_entries, live_rows);
+        assert_eq!(
+            entry.before.hnsw_deleted_entries,
+            self.update_count + self.delete_count
+        );
+        assert_eq!(entry.after.indexed_rows, live_rows_u64);
+        assert_eq!(entry.after.hnsw_entries, live_rows);
+        assert_eq!(entry.after.hnsw_live_entries, live_rows);
+        assert_eq!(entry.after.hnsw_deleted_entries, 0);
+    }
+
+    fn format_report_id_suffix(&self, report: &VectorIndexRebuildReport) -> String {
+        let entry = &report.entries[0];
+        format!(
+            "upd{}_del{}_b{}-{}-{}_a{}-{}-{}_rk{}",
+            compact_usize(self.update_count),
+            compact_usize(self.delete_count),
+            compact_usize(entry.before.hnsw_entries),
+            compact_usize(entry.before.hnsw_live_entries),
+            compact_usize(entry.before.hnsw_deleted_entries),
+            compact_usize(entry.after.hnsw_entries),
+            compact_usize(entry.after.hnsw_live_entries),
+            compact_usize(entry.after.hnsw_deleted_entries),
+            report.reclaimed_reachable_bytes / 1024
+        )
+    }
+}
+
+fn seed_indexed_nodes(
+    shared: &SharedGraph,
+    label: &IStr,
+    embedding_key: &IStr,
+    scale: usize,
+    dimension: usize,
+) -> Vec<selene_core::NodeId> {
+    let mut txn = shared.begin_write();
+    let mut mutator = txn.mutator();
+    let mut ids = Vec::with_capacity(scale);
+    for idx in 0..scale {
+        let props = PropertyMap::from_pairs([(
+            embedding_key.clone(),
+            Value::Vector(vector_value(idx, dimension)),
+        )])
+        .expect("bench vector properties are valid");
+        ids.push(
+            mutator
+                .create_node(LabelSet::single(label.clone()), props)
+                .expect("bench vector node insert succeeds"),
+        );
+    }
+    mutator
+        .create_vector_index(
+            label.clone(),
+            embedding_key.clone(),
+            VectorIndexKind::HnswSquaredEuclidean,
+            u32::try_from(dimension).expect("bench dimension fits u32"),
+        )
+        .expect("bench HNSW vector index build succeeds");
+    txn.commit().expect("bench seed commit succeeds");
+    ids
+}
+
+fn churn_indexed_nodes(
+    shared: &SharedGraph,
+    embedding_key: &IStr,
+    ids: &[selene_core::NodeId],
+    update_count: usize,
+    delete_count: usize,
+    dimension: usize,
+) {
+    let mut txn = shared.begin_write();
+    let mut mutator = txn.mutator();
+    for (offset, id) in ids.iter().copied().take(update_count).enumerate() {
+        mutator
+            .update_node(
+                id,
+                LabelDiff::new([], []).expect("empty label diff is valid"),
+                PropertyDiff::new(
+                    [(
+                        embedding_key.clone(),
+                        Value::Vector(vector_value(ids.len() + offset, dimension)),
+                    )],
+                    [],
+                )
+                .expect("bench property diff is valid"),
+            )
+            .expect("bench vector update succeeds");
+    }
+    for id in ids.iter().copied().skip(update_count).take(delete_count) {
+        mutator
+            .delete_node(id)
+            .expect("bench vector delete succeeds");
+    }
+    txn.commit().expect("bench churn commit succeeds");
+}
+
+fn churn_counts(scale: usize) -> (usize, usize) {
+    let update_count = (scale / 10).max(1).min(scale / 2);
+    let delete_count = (scale / 20).max(1).min(scale - update_count);
+    (update_count, delete_count)
+}
+
+fn compact_usize(value: usize) -> String {
+    compact_count(u64::try_from(value).unwrap_or(u64::MAX))
+}
+
+fn compact_count(value: u64) -> String {
+    if value >= 1_000 && value.is_multiple_of(1_000) {
+        format!("{}k", value / 1_000)
+    } else {
+        value.to_string()
+    }
+}
+
+fn vector_value(seed: usize, dimension: usize) -> VectorValue {
+    VectorValue::new(vector_components(seed, dimension)).expect("bench vector is valid")
+}
+
+fn vector_components(seed: usize, dimension: usize) -> Vec<f32> {
+    (0..dimension)
+        .map(|dim| {
+            let raw = (seed.wrapping_mul(31) + dim.wrapping_mul(17)) % 1_000;
+            raw as f32 / 1_000.0
+        })
+        .collect()
+}
+
+criterion_group! {
+    name = vector_index_maintenance;
+    config = common::criterion_config();
+    targets = bench_vector_index_rebuild
+}
+criterion_main!(vector_index_maintenance);
