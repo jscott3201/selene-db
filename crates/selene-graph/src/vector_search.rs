@@ -13,7 +13,7 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
-use crate::vector_index::VectorIndex;
+use crate::vector_index::{HnswSearchScratch, VectorIndex};
 
 const VECTOR_SEARCH_CANCEL_STRIDE: usize = 1024;
 const VECTOR_SEARCH_PARALLEL_CHUNK_ROWS: usize = 2048;
@@ -341,6 +341,92 @@ impl SeleneGraph {
             })
             .collect())
     }
+
+    /// Run approximate HNSW vector search for a batch of queries.
+    ///
+    /// The result at each output position corresponds to the query at the same
+    /// input position and follows the same ordering, visibility, and error
+    /// contract as [`Self::approximate_vector_search_nodes_checked`]. The batch
+    /// path resolves the HNSW index once and reuses HNSW scratch buffers across
+    /// queries, making it the preferred native API when a caller has several
+    /// independent embedding lookups over the same `(label, property)` index.
+    pub fn approximate_vector_search_nodes_batch_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        queries: &[VectorValue],
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        checker.check()?;
+        let Some(first_query) = queries.first() else {
+            return Ok(Vec::new());
+        };
+        let query_dimension = u32::try_from(first_query.dimension())
+            .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+        let Some(index) = self
+            .vector_index_for(label, property)
+            .filter(|index| index.dimension() == query_dimension)
+        else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        let Some(indexed_metric) = index.hnsw_metric() else {
+            return Err(VectorSearchError::ApproximateIndexMissing);
+        };
+        if indexed_metric != options.metric {
+            return Err(VectorSearchError::ApproximateMetricMismatch {
+                indexed: indexed_metric,
+                requested: options.metric,
+            });
+        }
+
+        let mut scratch = HnswSearchScratch::default();
+        let mut batch_hits = Vec::with_capacity(queries.len());
+        for query in queries {
+            checker.check()?;
+            let dimension = u32::try_from(query.dimension())
+                .map_err(|_| VectorSearchError::ApproximateIndexMissing)?;
+            if dimension != query_dimension {
+                return Err(VectorSearchError::ApproximateIndexMissing);
+            }
+            let row_hits = index
+                .hnsw_search_with_scratch(query, options.k, options.ef_search, &mut scratch)
+                .ok_or(VectorSearchError::ApproximateIndexMissing)?
+                .map_err(GraphError::from)?;
+
+            let mut top_k = VectorTopK::new(options.k);
+            for hit in row_hits {
+                checker.check()?;
+                if !self.node_store.is_alive(hit.row) {
+                    continue;
+                }
+                let row = RowIndex::new(hit.row);
+                let node_id =
+                    self.node_id_for_row(row)
+                        .ok_or_else(|| GraphError::Inconsistent {
+                            reason: format!(
+                                "HNSW vector index row {} for {} has no node id",
+                                hit.row,
+                                label.as_str()
+                            ),
+                        })?;
+                top_k.push_distance(node_id, hit.distance);
+            }
+
+            batch_hits.push(
+                top_k
+                    .into_hits()
+                    .into_iter()
+                    .map(|hit| VectorNodeSearchHit {
+                        node_id: hit.key,
+                        distance: hit.distance,
+                    })
+                    .collect(),
+            );
+        }
+
+        Ok(batch_hits)
+    }
 }
 
 fn should_parallelize_exact_scan(
@@ -425,6 +511,21 @@ impl SharedGraph {
     ) -> Result<Vec<VectorNodeSearchHit>, VectorSearchError> {
         self.read()
             .approximate_vector_search_nodes_checked(label, property, query, options, checker)
+    }
+
+    /// Lock-free read snapshot wrapper for
+    /// [`SeleneGraph::approximate_vector_search_nodes_batch_checked`].
+    pub fn approximate_vector_search_nodes_batch_checked(
+        &self,
+        label: &IStr,
+        property: &IStr,
+        queries: &[VectorValue],
+        options: ApproximateVectorSearchOptions,
+        checker: CancellationChecker<'_>,
+    ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
+        self.read().approximate_vector_search_nodes_batch_checked(
+            label, property, queries, options, checker,
+        )
     }
 }
 

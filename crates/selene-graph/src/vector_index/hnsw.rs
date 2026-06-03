@@ -181,6 +181,18 @@ impl HnswVectorIndex {
         k: usize,
         ef_search: usize,
     ) -> CoreResult<Vec<HnswVectorHit>> {
+        let mut scratch = HnswSearchScratch::default();
+        self.search_with_scratch(query, k, ef_search, &mut scratch)
+    }
+
+    /// Approximate top-k search while reusing caller-owned buffers.
+    pub(crate) fn search_with_scratch(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        ef_search: usize,
+        scratch: &mut HnswSearchScratch,
+    ) -> CoreResult<Vec<HnswVectorHit>> {
         let scorer = self.metric.bind_query(query)?;
         if k == 0 || self.row_to_entry.is_empty() {
             return Ok(Vec::new());
@@ -195,8 +207,7 @@ impl HnswVectorIndex {
         }
 
         let ef = ef_search.max(k).max(1);
-        let mut scratch = HnswSearchScratch::default();
-        self.search_layer_from_query_into(scorer, nearest, ef, 0, &mut scratch)?;
+        self.search_layer_from_query_into(scorer, nearest, ef, 0, scratch)?;
         let mut hits = Vec::new();
         for candidate in &scratch.result {
             let node = &self.nodes[candidate.id as usize];

@@ -32,7 +32,8 @@ pub(crate) use build::{
     rebuild_vector_indexes, rebuild_vector_indexes_strict,
 };
 use config::hnsw_config_for_kind;
-use hnsw::{HnswSearchScratch, HnswVectorHit, HnswVectorIndex};
+pub(crate) use hnsw::HnswSearchScratch;
+use hnsw::{HnswVectorHit, HnswVectorIndex};
 pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
 
 type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
@@ -283,6 +284,18 @@ impl VectorIndex {
         self.hnsw
             .as_ref()
             .map(|hnsw| hnsw.search(query, k, ef_search))
+    }
+
+    pub(crate) fn hnsw_search_with_scratch(
+        &self,
+        query: &VectorValue,
+        k: usize,
+        ef_search: usize,
+        scratch: &mut HnswSearchScratch,
+    ) -> Option<selene_core::CoreResult<Vec<HnswVectorHit>>> {
+        self.hnsw
+            .as_ref()
+            .map(|hnsw| hnsw.search_with_scratch(query, k, ef_search, scratch))
     }
 }
 

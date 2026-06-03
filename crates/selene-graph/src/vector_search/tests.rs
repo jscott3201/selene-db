@@ -424,6 +424,66 @@ fn approximate_vector_search_uses_hnsw_index() {
 }
 
 #[test]
+fn approximate_vector_search_batch_matches_single_queries() {
+    let shared = SharedGraph::new(GraphId::new(971));
+    let doc = intern("vector.ann.batch.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        for value in 0..96 {
+            mutator
+                .create_node(
+                    LabelSet::single(doc.clone()),
+                    props(&embedding, Value::Vector(vector(&[value as f32, 0.0]))),
+                )
+                .unwrap();
+        }
+        txn.commit().unwrap();
+    }
+    shared
+        .create_vector_index(
+            doc.clone(),
+            embedding.clone(),
+            VectorIndexKind::HnswSquaredEuclidean,
+            2,
+        )
+        .unwrap();
+
+    let queries = vec![
+        vector(&[4.1, 0.0]),
+        vector(&[31.7, 0.0]),
+        vector(&[74.3, 0.0]),
+    ];
+    let options = ApproximateVectorSearchOptions::new(VectorMetric::SquaredEuclidean, 4, 32);
+    let batched = shared
+        .approximate_vector_search_nodes_batch_checked(
+            &doc,
+            &embedding,
+            &queries,
+            options,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let singles: Vec<_> = queries
+        .iter()
+        .map(|query| {
+            shared
+                .approximate_vector_search_nodes_checked(
+                    &doc,
+                    &embedding,
+                    query,
+                    options,
+                    CancellationChecker::disabled(),
+                )
+                .unwrap()
+        })
+        .collect();
+
+    assert_eq!(batched, singles);
+}
+
+#[test]
 fn approximate_vector_search_tracks_update_and_delete_visibility() {
     let shared = SharedGraph::new(GraphId::new(99));
     let doc = intern("vector.ann.visible.doc").unwrap();
