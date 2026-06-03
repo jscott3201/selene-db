@@ -9,7 +9,9 @@ use std::mem::size_of;
 
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
-use selene_core::{CoreResult, VectorMetric, VectorTopK, VectorValue};
+use selene_core::{
+    CoreResult, VectorMetric, VectorMetricQuery, VectorTopK, VectorValue, vector_squared_norm,
+};
 
 const MAX_CENTROIDS: usize = 256;
 const TRAINING_ITERATIONS: usize = 2;
@@ -52,6 +54,7 @@ pub(crate) struct IvfMemoryUsage {
 pub(crate) struct IvfVectorIndex {
     metric: VectorMetric,
     entries: Vec<IvfEntry>,
+    entry_squared_norms: Vec<f64>,
     row_to_entry: FxHashMap<u32, u32>,
     centroids: Vec<VectorValue>,
     centroid_squared_norms: Vec<f64>,
@@ -64,6 +67,7 @@ impl IvfVectorIndex {
         Self {
             metric,
             entries: Vec::new(),
+            entry_squared_norms: Vec::new(),
             row_to_entry: FxHashMap::default(),
             centroids: Vec::new(),
             centroid_squared_norms: Vec::new(),
@@ -80,6 +84,7 @@ impl IvfVectorIndex {
             vector,
             deleted: false,
         });
+        self.record_entry_squared_norm(entry_id as usize);
         self.row_to_entry.insert(row, entry_id);
         self.assign_entry(entry_id)
     }
@@ -124,12 +129,25 @@ impl IvfVectorIndex {
         let scorer = self.metric.bind_query(query)?;
         let mut top_k = VectorTopK::new(k);
         if self.centroids.is_empty() || self.lists.is_empty() {
-            for entry in &self.entries {
-                if entry.deleted || !self.row_to_entry.contains_key(&entry.row) {
-                    continue;
+            if self.metric == VectorMetric::Cosine {
+                for (entry_id, entry) in self.entries.iter().enumerate() {
+                    if entry.deleted || !self.row_to_entry.contains_key(&entry.row) {
+                        continue;
+                    }
+                    let distance = scorer.distance_with_candidate_squared_norm(
+                        &entry.vector,
+                        self.cached_entry_squared_norm(entry_id, &entry.vector),
+                    )?;
+                    top_k.push_distance(entry.row, distance);
                 }
-                let distance = scorer.distance(&entry.vector)?;
-                top_k.push_distance(entry.row, distance);
+            } else {
+                for entry in &self.entries {
+                    if entry.deleted || !self.row_to_entry.contains_key(&entry.row) {
+                        continue;
+                    }
+                    let distance = scorer.distance(&entry.vector)?;
+                    top_k.push_distance(entry.row, distance);
+                }
             }
             return Ok(vector_hits(top_k));
         }
@@ -150,17 +168,36 @@ impl IvfVectorIndex {
                 centroid_top_k.push_distance(centroid_id, distance);
             }
         }
-        for centroid in centroid_top_k.into_hits() {
-            let Some(list) = self.lists.get(centroid.key) else {
-                continue;
-            };
-            for &entry_id in list {
-                let entry = &self.entries[entry_id as usize];
-                if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&entry_id) {
+        if self.metric == VectorMetric::Cosine {
+            for centroid in centroid_top_k.into_hits() {
+                let Some(list) = self.lists.get(centroid.key) else {
                     continue;
+                };
+                for &entry_id in list {
+                    let entry = &self.entries[entry_id as usize];
+                    if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&entry_id) {
+                        continue;
+                    }
+                    let distance = scorer.distance_with_candidate_squared_norm(
+                        &entry.vector,
+                        self.cached_entry_squared_norm(entry_id as usize, &entry.vector),
+                    )?;
+                    top_k.push_distance(entry.row, distance);
                 }
-                let distance = scorer.distance(&entry.vector)?;
-                top_k.push_distance(entry.row, distance);
+            }
+        } else {
+            for centroid in centroid_top_k.into_hits() {
+                let Some(list) = self.lists.get(centroid.key) else {
+                    continue;
+                };
+                for &entry_id in list {
+                    let entry = &self.entries[entry_id as usize];
+                    if entry.deleted || self.row_to_entry.get(&entry.row) != Some(&entry_id) {
+                        continue;
+                    }
+                    let distance = scorer.distance(&entry.vector)?;
+                    top_k.push_distance(entry.row, distance);
+                }
             }
         }
         Ok(vector_hits(top_k))
@@ -187,6 +224,11 @@ impl IvfVectorIndex {
             .entries
             .capacity()
             .saturating_mul(size_of::<IvfEntry>())
+            .saturating_add(
+                self.entry_squared_norms
+                    .capacity()
+                    .saturating_mul(size_of::<f64>()),
+            )
             .saturating_add(
                 self.row_to_entry
                     .capacity()
@@ -220,9 +262,25 @@ impl IvfVectorIndex {
         if self.centroids.is_empty() || self.lists.is_empty() {
             return Ok(());
         }
-        let list = self.nearest_centroid(&self.entries[entry_id as usize].vector)?;
+        let list = self.nearest_centroid_for_entry(entry_id)?;
         self.lists[list].push(entry_id);
         Ok(())
+    }
+
+    fn record_entry_squared_norm(&mut self, entry_id: usize) {
+        if self.metric != VectorMetric::Cosine {
+            self.entry_squared_norms.clear();
+            return;
+        }
+        let squared_norm = vector_squared_norm(&self.entries[entry_id].vector);
+        if self.entry_squared_norms.len() == entry_id {
+            self.entry_squared_norms.push(squared_norm);
+        } else if let Some(cached) = self.entry_squared_norms.get_mut(entry_id) {
+            *cached = squared_norm;
+        } else {
+            self.entry_squared_norms.resize(entry_id, 0.0);
+            self.entry_squared_norms.push(squared_norm);
+        }
     }
 
     fn live_entry_ids(&self) -> Vec<u32> {
@@ -297,19 +355,23 @@ impl IvfVectorIndex {
             self.centroid_squared_norms.clear();
             return;
         }
-        self.centroid_squared_norms = self.centroids.iter().map(squared_norm).collect::<Vec<_>>();
+        self.centroid_squared_norms = self
+            .centroids
+            .iter()
+            .map(vector_squared_norm)
+            .collect::<Vec<_>>();
     }
 
     fn assignments(&self, live_entries: &[u32]) -> CoreResult<Vec<usize>> {
         if should_parallelize_assignments(live_entries.len(), self.centroids.len()) {
             return live_entries
                 .par_iter()
-                .map(|&entry_id| self.nearest_centroid(&self.entries[entry_id as usize].vector))
+                .map(|&entry_id| self.nearest_centroid_for_entry(entry_id))
                 .collect();
         }
         live_entries
             .iter()
-            .map(|&entry_id| self.nearest_centroid(&self.entries[entry_id as usize].vector))
+            .map(|&entry_id| self.nearest_centroid_for_entry(entry_id))
             .collect()
     }
 
@@ -326,8 +388,20 @@ impl IvfVectorIndex {
         Ok(())
     }
 
-    fn nearest_centroid(&self, vector: &VectorValue) -> CoreResult<usize> {
-        let scorer = self.metric.bind_query(vector)?;
+    fn nearest_centroid_for_entry(&self, entry_id: u32) -> CoreResult<usize> {
+        let entry = &self.entries[entry_id as usize];
+        let scorer = if self.metric == VectorMetric::Cosine {
+            self.metric.bind_query_with_squared_norm(
+                &entry.vector,
+                self.cached_entry_squared_norm(entry_id as usize, &entry.vector),
+            )?
+        } else {
+            self.metric.bind_query(&entry.vector)?
+        };
+        self.nearest_centroid(scorer)
+    }
+
+    fn nearest_centroid(&self, scorer: VectorMetricQuery<'_>) -> CoreResult<usize> {
         let mut best_id = 0usize;
         let mut best_distance = f64::INFINITY;
         if self.metric == VectorMetric::Cosine {
@@ -365,7 +439,16 @@ impl IvfVectorIndex {
         self.centroid_squared_norms
             .get(centroid_id)
             .copied()
-            .unwrap_or_else(|| squared_norm(centroid))
+            .filter(|norm| *norm != 0.0)
+            .unwrap_or_else(|| vector_squared_norm(centroid))
+    }
+
+    fn cached_entry_squared_norm(&self, entry_id: usize, vector: &VectorValue) -> f64 {
+        self.entry_squared_norms
+            .get(entry_id)
+            .copied()
+            .filter(|norm| *norm != 0.0)
+            .unwrap_or_else(|| vector_squared_norm(vector))
     }
 }
 
@@ -382,17 +465,6 @@ fn target_centroid_count(live_len: usize) -> usize {
 
 fn should_parallelize_assignments(live_len: usize, centroid_count: usize) -> bool {
     live_len >= PARALLEL_ASSIGNMENT_MIN_ENTRIES && centroid_count > 1
-}
-
-fn squared_norm(vector: &VectorValue) -> f64 {
-    vector
-        .as_slice()
-        .iter()
-        .map(|component| {
-            let component = f64::from(*component);
-            component * component
-        })
-        .sum()
 }
 
 fn ceil_sqrt(value: usize) -> usize {

@@ -54,6 +54,26 @@ impl VectorMetric {
         VectorMetricQuery::new(self, query)
     }
 
+    /// Bind this metric to one query vector with a precomputed query squared norm.
+    ///
+    /// When `query_squared_norm` is the query's actual squared norm, this is
+    /// equivalent to [`Self::bind_query`]. It lets ANN indexes cache entry
+    /// norms for cosine centroid assignment while preserving the canonical
+    /// metric kernels and error behavior. Non-cosine metrics ignore
+    /// `query_squared_norm`.
+    ///
+    /// # Errors
+    ///
+    /// [`VectorMetric::Cosine`] returns [`CoreError::VectorZeroNorm`] when the
+    /// supplied query squared norm is not positive and finite.
+    pub fn bind_query_with_squared_norm(
+        self,
+        query: &VectorValue,
+        query_squared_norm: f64,
+    ) -> CoreResult<VectorMetricQuery<'_>> {
+        VectorMetricQuery::new_with_squared_norm(self, query, query_squared_norm)
+    }
+
     /// Compute this metric for two vectors.
     ///
     /// # Errors
@@ -96,6 +116,25 @@ impl<'a> VectorMetricQuery<'a> {
                 }
                 Some(norm)
             }
+        };
+        Ok(Self {
+            metric,
+            query,
+            query_norm,
+        })
+    }
+
+    fn new_with_squared_norm(
+        metric: VectorMetric,
+        query: &'a VectorValue,
+        query_squared_norm: f64,
+    ) -> CoreResult<Self> {
+        let query_norm = match metric {
+            VectorMetric::SquaredEuclidean | VectorMetric::NegativeInnerProduct => None,
+            VectorMetric::Cosine => Some(validate_precomputed_squared_norm(
+                query_squared_norm,
+                "lhs",
+            )?),
         };
         Ok(Self {
             metric,
@@ -151,7 +190,7 @@ impl<'a> VectorMetricQuery<'a> {
     ///
     /// Returns [`CoreError::VectorDimensionMismatch`] if dimensions differ.
     /// [`VectorMetric::Cosine`] returns [`CoreError::VectorZeroNorm`] when the
-    /// supplied candidate squared norm is zero.
+    /// supplied candidate squared norm is not positive and finite.
     pub fn distance_with_candidate_squared_norm(
         &self,
         candidate: &VectorValue,
@@ -298,6 +337,16 @@ where
     Ok(top_k.into_hits())
 }
 
+/// Return `sum(component * component)` for a validated vector.
+///
+/// This is the shared squared-norm helper for ANN indexes that cache cosine
+/// query or candidate norms. It intentionally uses the same chunked dot-product
+/// kernel as the vector metric scorer.
+#[must_use]
+pub fn vector_squared_norm(vector: &VectorValue) -> f64 {
+    dot(vector.as_slice(), vector.as_slice())
+}
+
 #[derive(Debug)]
 struct HeapEntry<K> {
     distance: f64,
@@ -380,6 +429,7 @@ fn cosine_distance_with_norms(
     lhs_norm: f64,
     rhs_norm: f64,
 ) -> CoreResult<f64> {
+    let rhs_norm = validate_precomputed_squared_norm(rhs_norm, "rhs")?;
     cosine_distance_with_components(lhs_norm, rhs_norm, dot(lhs, rhs))
 }
 
@@ -389,6 +439,14 @@ fn cosine_distance_with_components(lhs_norm: f64, rhs_norm: f64, dot: f64) -> Co
     }
     let similarity = dot / (lhs_norm.sqrt() * rhs_norm.sqrt());
     Ok(1.0 - similarity.clamp(-1.0, 1.0))
+}
+
+fn validate_precomputed_squared_norm(norm: f64, side: &'static str) -> CoreResult<f64> {
+    if norm > 0.0 && norm.is_finite() {
+        Ok(norm)
+    } else {
+        Err(CoreError::VectorZeroNorm { side })
+    }
 }
 
 fn cosine_components(lhs: &[f32], rhs: &[f32]) -> (f64, f64, f64) {
@@ -608,11 +666,46 @@ mod tests {
     }
 
     #[test]
+    fn bind_query_accepts_precomputed_query_norm() {
+        let query = vector(&[1.0, 2.0, 3.0]);
+        let candidate = vector(&[4.0, 5.0, 6.0]);
+        let query_norm = dot(query.as_slice(), query.as_slice());
+
+        let scorer = VectorMetric::Cosine
+            .bind_query_with_squared_norm(&query, query_norm)
+            .unwrap();
+
+        assert_eq!(
+            scorer.distance(&candidate).unwrap(),
+            VectorMetric::Cosine
+                .bind_query(&query)
+                .unwrap()
+                .distance(&candidate)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn vector_squared_norm_matches_component_sum() {
+        let vector = vector(&[1.0, -2.0, 3.5]);
+
+        assert_eq!(vector_squared_norm(&vector), 17.25);
+    }
+
+    #[test]
     fn bound_cosine_query_preserves_zero_norm_error_sides() {
         let zero = vector(&[0.0, 0.0]);
         let rhs = vector(&[1.0, 0.0]);
 
         let error = VectorMetric::Cosine.bind_query(&zero).unwrap_err();
+        assert!(matches!(error, CoreError::VectorZeroNorm { side: "lhs" }));
+        let error = VectorMetric::Cosine
+            .bind_query_with_squared_norm(&rhs, 0.0)
+            .unwrap_err();
+        assert!(matches!(error, CoreError::VectorZeroNorm { side: "lhs" }));
+        let error = VectorMetric::Cosine
+            .bind_query_with_squared_norm(&rhs, f64::NAN)
+            .unwrap_err();
         assert!(matches!(error, CoreError::VectorZeroNorm { side: "lhs" }));
 
         let scorer = VectorMetric::Cosine.bind_query(&rhs).unwrap();
@@ -621,6 +714,10 @@ mod tests {
 
         let error = scorer
             .distance_with_candidate_squared_norm(&rhs, 0.0)
+            .unwrap_err();
+        assert!(matches!(error, CoreError::VectorZeroNorm { side: "rhs" }));
+        let error = scorer
+            .distance_with_candidate_squared_norm(&rhs, -1.0)
             .unwrap_err();
         assert!(matches!(error, CoreError::VectorZeroNorm { side: "rhs" }));
     }
