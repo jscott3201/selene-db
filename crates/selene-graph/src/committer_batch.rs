@@ -173,8 +173,9 @@ pub(crate) enum BatchDrain {
 /// `max_bytes` is still taken alone). It ends at:
 /// - a **gap** (the next `seal_seq` is absent after a non-blocking `try_recv`
 ///   refill) — the caller blocks on `recv()` for it;
-/// - a **[`Work::Compact`]** at head — a hard flush boundary (F2): the pending
-///   commit run is flushed/published first, then the compact publishes solo.
+/// - **snapshot-maintenance work** at head — a hard flush boundary (F2): the
+///   pending commit run is flushed/published first, then the maintenance item
+///   publishes solo.
 ///
 /// `next_publish_seq` is advanced past every commit appended here. On an
 /// [`append_sealed`] error the already-appended members are returned in
@@ -205,10 +206,13 @@ pub(crate) fn drain_contiguous_batch(
             // blocks on recv() for it (no deadlock — see the module + committer
             // docs).
             None => return BatchDrain::Run { batch },
-            // Compact at head is a hard flush boundary (F2): never co-batched.
-            // Flush/publish the pending commit run first; the caller re-iterates
-            // with the compact now at head + an empty batch.
-            Some(Work::Compact { .. }) => return BatchDrain::Run { batch },
+            // Snapshot maintenance at head is a hard flush boundary (F2):
+            // never co-batched. Flush/publish the pending commit run first; the
+            // caller re-iterates with the maintenance item now at head + an
+            // empty batch.
+            Some(Work::Compact { .. } | Work::VectorIndexRebuild { .. }) => {
+                return BatchDrain::Run { batch };
+            }
             Some(Work::Commit { sealed, .. }) => {
                 let estimate = encoded_estimate(sealed);
                 // Cap check with the >= 1 progress rule: only stop if the batch

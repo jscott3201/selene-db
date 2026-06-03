@@ -15,6 +15,8 @@ use roaring::RoaringBitmap;
 use rustc_hash::FxHashMap;
 #[path = "vector_index/hnsw.rs"]
 mod hnsw;
+#[path = "vector_index/rebuild.rs"]
+mod rebuild;
 
 use selene_core::{IStr, LabelSet, PropertyMap, Value, VectorMetric, VectorValue};
 use serde::{Deserialize, Serialize};
@@ -22,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
 use hnsw::{HnswVectorHit, HnswVectorIndex};
+pub use rebuild::{VectorIndexRebuildEntry, VectorIndexRebuildReport};
 
 type VectorIndexMap = FxHashMap<(IStr, IStr), VectorIndexEntry>;
 
@@ -31,6 +34,7 @@ struct VectorIndexRegistration {
     kind: VectorIndexKind,
     dimension: u32,
     name: Option<IStr>,
+    before: VectorIndexMemoryUsage,
 }
 
 /// Vector index algorithm kind.
@@ -369,6 +373,20 @@ pub(crate) fn build_vector_index_lenient(
 
 /// Rebuild every registered vector index from node columns.
 pub(crate) fn rebuild_vector_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
+    rebuild_vector_indexes_inner(graph, BuildPolicy::Lenient).map(|_| ())
+}
+
+/// Strictly rebuild every registered vector index from node columns.
+pub(crate) fn rebuild_vector_indexes_strict(
+    graph: &mut crate::SeleneGraph,
+) -> GraphResult<VectorIndexRebuildReport> {
+    rebuild_vector_indexes_inner(graph, BuildPolicy::Strict)
+}
+
+fn rebuild_vector_indexes_inner(
+    graph: &mut crate::SeleneGraph,
+    policy: BuildPolicy,
+) -> GraphResult<VectorIndexRebuildReport> {
     let registrations: Vec<VectorIndexRegistration> = graph
         .vector_index
         .iter()
@@ -378,23 +396,35 @@ pub(crate) fn rebuild_vector_indexes(graph: &mut crate::SeleneGraph) -> GraphRes
             kind: entry.kind(),
             dimension: entry.dimension(),
             name: entry.name.clone(),
+            before: entry.memory_usage(),
         })
         .collect();
-    graph.vector_index.clear();
+    let mut rebuilt = VectorIndexMap::default();
+    let mut entries = Vec::with_capacity(registrations.len());
     for registration in registrations {
-        let index = build_vector_index_lenient(
+        let index = build_vector_index_inner(
             graph,
             registration.label.clone(),
             registration.property.clone(),
             registration.kind,
             registration.dimension,
+            policy,
         )?;
-        graph.vector_index.insert(
-            (registration.label, registration.property),
-            VectorIndexEntry::new(index, registration.name),
-        );
+        let after = index.memory_usage();
+        let key = (registration.label.clone(), registration.property.clone());
+        rebuilt.insert(key, VectorIndexEntry::new(index, registration.name.clone()));
+        entries.push(VectorIndexRebuildEntry {
+            label: registration.label,
+            property: registration.property,
+            name: registration.name,
+            kind: registration.kind,
+            dimension: registration.dimension,
+            before: registration.before,
+            after,
+        });
     }
-    Ok(())
+    graph.vector_index = rebuilt;
+    Ok(VectorIndexRebuildReport::new(entries))
 }
 
 fn build_vector_index_inner(
