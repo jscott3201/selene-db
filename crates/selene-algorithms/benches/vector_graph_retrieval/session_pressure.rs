@@ -10,6 +10,7 @@ use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, WIDE_SEED_K, basis_point
 use super::{MemoryRetrievalFixture, TopologyNoise};
 
 mod maintenance;
+mod neighbor_scoring;
 mod selection;
 
 const SESSION_STRATEGIES: &[SessionStrategy] = &[
@@ -155,12 +156,22 @@ const ACTIVE_HINT_BATCH_STRATEGIES: &[(SessionStrategy, CandidateScoringMode)] =
         SessionStrategy::GraphSessionDependencyActiveFilter,
         CandidateScoringMode::Batch,
     ),
+    (
+        SessionStrategy::GraphSessionDependencyActiveFilter,
+        CandidateScoringMode::NeighborSingle,
+    ),
+    (
+        SessionStrategy::GraphSessionDependencyActiveFilter,
+        CandidateScoringMode::NeighborBatch,
+    ),
 ];
 
 #[derive(Clone, Copy, Debug)]
 enum CandidateScoringMode {
     RepeatedSingle,
     Batch,
+    NeighborSingle,
+    NeighborBatch,
 }
 
 impl CandidateScoringMode {
@@ -168,6 +179,8 @@ impl CandidateScoringMode {
         match self {
             Self::RepeatedSingle => "repeated_score",
             Self::Batch => "batch_score",
+            Self::NeighborSingle => "neighbor_score",
+            Self::NeighborBatch => "neighbor_batch_score",
         }
     }
 }
@@ -534,6 +547,12 @@ fn bench_active_hint_batch_pressure(c: &mut Criterion) {
             let quality = match mode {
                 CandidateScoringMode::RepeatedSingle => fixture.session_quality(strategy),
                 CandidateScoringMode::Batch => fixture.session_batch_scoring_quality(strategy),
+                CandidateScoringMode::NeighborSingle => {
+                    fixture.session_neighbor_scoring_quality(strategy)
+                }
+                CandidateScoringMode::NeighborBatch => {
+                    fixture.session_neighbor_batch_scoring_quality(strategy)
+                }
             };
             group.throughput(Throughput::Elements(
                 (fixture.query_count() * avg_candidates) as u64,
@@ -561,6 +580,14 @@ fn bench_active_hint_batch_pressure(c: &mut Criterion) {
                         }
                         CandidateScoringMode::Batch => {
                             black_box(fixture.session_batch_scoring_total_coverage(strategy));
+                        }
+                        CandidateScoringMode::NeighborSingle => {
+                            black_box(fixture.session_neighbor_scoring_total_coverage(strategy));
+                        }
+                        CandidateScoringMode::NeighborBatch => {
+                            black_box(
+                                fixture.session_neighbor_batch_scoring_total_coverage(strategy),
+                            );
                         }
                     });
                 },
