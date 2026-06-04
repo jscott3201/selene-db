@@ -101,7 +101,9 @@ impl MemoryRetrievalFixture {
                 }
                 if matches!(
                     topology,
-                    TopologyNoise::NoisySparseSupport | TopologyNoise::NoisyMultiHopSupport
+                    TopologyNoise::NoisySparseSupport
+                        | TopologyNoise::NoisyMultiHopSupport
+                        | TopologyNoise::NoisySparseMultiHopSupport
                 ) {
                     for topic in 0..topic_count {
                         let next_topic = (topic + 1) % topic_count;
@@ -132,6 +134,7 @@ impl MemoryRetrievalFixture {
                                 topology,
                                 TopologyNoise::MultiHopSupport
                                     | TopologyNoise::NoisyMultiHopSupport
+                                    | TopologyNoise::NoisySparseMultiHopSupport
                             ) && fact >= SEED_K
                             {
                                 let bridge = mutator
@@ -327,9 +330,9 @@ impl MemoryRetrievalFixture {
 
 fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize) -> bool {
     match topology {
-        TopologyNoise::SparseSupport | TopologyNoise::NoisySparseSupport => {
-            (fact - 1) % SEED_K == duplicate % SEED_K
-        }
+        TopologyNoise::SparseSupport
+        | TopologyNoise::NoisySparseSupport
+        | TopologyNoise::NoisySparseMultiHopSupport => (fact - 1) % SEED_K == duplicate % SEED_K,
         TopologyNoise::Clean
         | TopologyNoise::CrossTopicSupportRing
         | TopologyNoise::MultiHopSupport
