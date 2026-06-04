@@ -366,6 +366,15 @@ impl OmlxVectorFixture {
         self.candidate_sets_total_precision_from_sets(&self.expanded_hint_sets)
     }
 
+    pub(super) fn topic_hint_expansion_refresh_total_candidates(&self) -> usize {
+        let refreshed = self.refresh_expanded_hint_sets();
+        assert_eq!(
+            refreshed, self.expanded_hint_sets,
+            "oMLX refreshed support candidates match cached candidates"
+        );
+        refreshed.iter().map(VectorCandidateSet::len).sum()
+    }
+
     pub(super) fn topic_candidate_count(&self) -> usize {
         self.topic_candidate_set(Topic::Gql).len()
     }
@@ -408,6 +417,12 @@ impl OmlxVectorFixture {
 
     pub(super) fn topic_hint_expansion_cached_count(&self) -> usize {
         self.expanded_hint_sets
+            .first()
+            .map_or(0, VectorCandidateSet::len)
+    }
+
+    pub(super) fn topic_hint_expansion_refresh_count(&self) -> usize {
+        self.refresh_expanded_hint_sets()
             .first()
             .map_or(0, VectorCandidateSet::len)
     }
@@ -479,6 +494,13 @@ impl OmlxVectorFixture {
             &self.support_edge,
             query.anchor,
         )
+    }
+
+    fn refresh_expanded_hint_sets(&self) -> Vec<VectorCandidateSet> {
+        self.queries
+            .iter()
+            .map(|query| self.topic_hint_expansion_set(query))
+            .collect()
     }
 
     fn ann_hit_set(&self, query: &QueryVector, k: usize) -> VectorCandidateSet {
