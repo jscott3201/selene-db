@@ -244,6 +244,12 @@ PR-local production IVF candidate-pressure spot-check:
 | `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w4_idbp10000_dqbp10000_lists100ne100max137avg100avgq400maxq548...` | 254.74 µs (quick) | Keeps perfect recall but doubles candidate pressure versus width 2; useful as the first guardrail for less separable future fixtures. |
 | `graph_ivf_candidate_pressure/cluster_cos/d128_k10_w64_idbp10000_dqbp10000_lists100ne100max137avg100avgq6400maxq8768...` | 2.9860 ms (quick) | Width 64 is excessive on this corpus: it scans about 64% of the corpus per query on average and mainly bounds the high-probe tail. |
 
+After graph-level ANN row-hit conversion stopped re-heaping already bounded index
+hits, the same quick run measured width 1 / 2 / 4 / 64 at 92.38 µs / 140.91 µs /
+254.37 µs / 2.997 ms. The delta is intentionally treated as noise-scale at
+`k=10`; the value is avoiding redundant heap work on the read path while
+preserving dead-row filtering and deterministic `NodeId` tie ordering.
+
 PR-local ANN recall spot-check:
 
 | Bench | 10k | Notes |
@@ -432,9 +438,9 @@ PR-local quick vector procedure baseline:
 |---|---:|---|
 | `procedure_vector_search/shared_cache_squared_euclidean_dim128_k10_1000` | 37.0 µs (quick) | Cached `CALL selene.vector_search_nodes` over 1,000 vector nodes; scalar exact scan. |
 | `procedure_vector_search/shared_cache_flat_index_dim128_k10_1000` | 37.5 µs (quick) | Cached exact search over the flat vector index. |
-| `procedure_vector_search/shared_cache_hnsw_ann_dim128_k10_1000` | 13.4 µs (quick) | Cached single-query `CALL selene.vector_search_nodes_ann` over the HNSW index. |
-| `procedure_vector_search/shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000` | 115.2 µs (quick) | Eight separate cached ANN procedure calls, one short-lived session per query. |
-| `procedure_vector_search/shared_cache_hnsw_ann_batch_8x_dim128_k10_1000` | 109.8 µs (quick) | One cached `CALL selene.vector_search_nodes_ann_batch` over eight query vectors; ~4.5% below repeated single-call latency. |
+| `procedure_vector_search/shared_cache_hnsw_ann_dim128_k10_1000` | 13.46 µs (quick) | Cached single-query `CALL selene.vector_search_nodes_ann` over the HNSW index; graph-level ANN hit conversion no longer re-heaps index results. |
+| `procedure_vector_search/shared_cache_hnsw_ann_repeated_8x_dim128_k10_1000` | 114.4 µs (quick) | Eight separate cached ANN procedure calls, one short-lived session per query. |
+| `procedure_vector_search/shared_cache_hnsw_ann_batch_8x_dim128_k10_1000` | 108.9 µs (quick) | One cached `CALL selene.vector_search_nodes_ann_batch` over eight query vectors; ~4.5% below repeated single-call latency. |
 
 ### §5a `gql_correlated_subquery` — correlated EXISTS/COUNT execution (GQLRT-05)
 
