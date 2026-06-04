@@ -167,19 +167,20 @@ reported Criterion duration.
 The focused `graph_vector_index_ivf_target_centroid_rebuild/*` group sweeps
 explicit IVF list-count targets on the same rebuild fixture so read-side
 candidate pressure can be compared against write-side retrain/reassignment cost.
-`vector_pq` is a benchmark-only product-quantization candidate generator for
-compression/recall research: PQ codes produce a short candidate set, then
-full-fidelity vectors are exact reranked. `vector_ivf_pq` adds a coarse
-synthetic IVF-style partition ahead of the same PQ scorer so future work can
-compare standalone full-code scans against candidate-producer plus compression
-layering. `vector_ivf_pressure` uses the production graph IVF index and records
-list-skew plus candidate-pressure suffixes so future IVF/PQ layering work is
-grounded against real index fanout under the expected 60% read / 40% write
-workload. It also includes the `graph_ivf_target_centroids` sweep for explicit
-IVF list-count tuning. `vector_mixed_workload` includes capped-maintenance
-cadence rows that compare rebuilding one recommended IVF index per maintenance
-pass against rebuilding every recommended IVF index after repeated 60/40 cycles. Vector
-benchmark IDs include a memory/cardinality suffix:
+`vector_pq` is a benchmark-only quantized candidate generator for
+compression/recall research: PQ, scalar u8, and packed binary sign codes
+produce short candidate sets, then full-fidelity vectors are exact reranked.
+`vector_ivf_pq` adds a coarse synthetic IVF-style partition ahead of the same
+PQ scorer so future work can compare standalone full-code scans against
+candidate-producer plus compression layering. `vector_ivf_pressure` uses the
+production graph IVF index and records list-skew plus candidate-pressure
+suffixes so future IVF/PQ layering work is grounded against real index fanout
+under the expected 60% read / 40% write workload. It also includes the
+`graph_ivf_target_centroids` sweep for explicit IVF list-count tuning.
+`vector_mixed_workload` includes capped-maintenance cadence rows that compare
+rebuilding one recommended IVF index per maintenance pass against rebuilding
+every recommended IVF index after repeated 60/40 cycles. Vector benchmark IDs
+include a memory/cardinality suffix:
 `m{index KiB}-{reachable KiB}_n{indexed rows}_{flat|he...|ve...}`. The
 `he...` form carries HNSW entries/live/deleted entries plus link counters; the
 `ve...` form carries IVF entries/live/deleted entries plus centroid/list
@@ -260,6 +261,15 @@ PR-local scalar quantization spot-check:
 | `graph_scalar_quant_candidate_recall/cluster_l2/u8_c64_d128_k10_recallbp10000_m12501-full50000` | 79.90 ms (quick) | Benchmark-only per-dimension u8 scalar quantization over 100k 128-dim vectors and 16 queries. Compressed storage is ~12.2 MiB vs ~48.8 MiB full vectors, and 64 exact-rerank candidates reach 10000 bp recall on this clustered fixture. |
 | `graph_scalar_quant_candidate_recall/cluster_l2/u8_c256_d128_k10_recallbp10000_m12501-full50000` | 81.00 ms (quick) | Wider rerank has no recall upside on this corpus and adds a small exact-rerank cost. The full compressed scan remains the dominant cost. |
 | `graph_scalar_quant_candidate_recall/cluster_l2/u8_c1024_d128_k10_recallbp10000_m12501-full50000` | 85.35 ms (quick) | High-candidate anchor for comparison with PQ. Scalar quantization is simple and training-free, but standalone row-wise dequantized scoring is much slower than PQ and IVF+PQ candidate generation without SIMD/block scoring. |
+
+PR-local binary quantization spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_binary_quant_candidate_recall/cluster_l2/sign_c32_d128_k10_recallbp3375_m1562-full50000` | 3.35 ms (quick) | Benchmark-only packed sign-bit quantization over 100k 128-dim vectors and 16 queries. Memory is ~1.53 MiB vs ~48.8 MiB full vectors, but 32 candidates is too narrow. |
+| `graph_binary_quant_candidate_recall/cluster_l2/sign_c64_d128_k10_recallbp6625_m1562-full50000` | 3.46 ms (quick) | Hamming prefilter plus exact rerank remains fast, but 64 candidates still loses material recall on this clustered L2 fixture. |
+| `graph_binary_quant_candidate_recall/cluster_l2/sign_c256_d128_k10_recallbp10000_m1562-full50000` | 4.10 ms (quick) | First full-recall binary row: same compressed footprint as narrow binary rows, roughly 3x faster than standalone PQ full-recall rows and much smaller/faster than scalar u8. |
+| `graph_binary_quant_candidate_recall/cluster_l2/sign_c1024_d128_k10_recallbp10000_m1562-full50000` | 7.15 ms (quick) | Wider exact rerank has no recall upside on this fixture and doubles latency versus the c256 knee. |
 
 PR-local IVF+PQ layering spot-check:
 

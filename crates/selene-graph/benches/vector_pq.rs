@@ -68,6 +68,25 @@ const SCALAR_VARIANTS: [ScalarQuantVariant; 3] = [
     },
 ];
 
+const BINARY_VARIANTS: [BinaryQuantVariant; 4] = [
+    BinaryQuantVariant {
+        name: "sign_c32",
+        candidates: 32,
+    },
+    BinaryQuantVariant {
+        name: "sign_c64",
+        candidates: 64,
+    },
+    BinaryQuantVariant {
+        name: "sign_c256",
+        candidates: 256,
+    },
+    BinaryQuantVariant {
+        name: "sign_c1024",
+        candidates: 1024,
+    },
+];
+
 fn bench_pq_candidate_recall(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_pq_candidate_recall");
     for scale in vector_scales() {
@@ -102,6 +121,35 @@ fn bench_scalar_quant_candidate_recall(c: &mut Criterion) {
     for scale in vector_scales() {
         for variant in SCALAR_VARIANTS {
             let fixture = ScalarQuantFixture::build(scale, variant);
+            group.throughput(Throughput::Elements(
+                (fixture.corpus.scale * fixture.corpus.queries.len()) as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    "cluster_l2",
+                    format!(
+                        "{}_d{DIMENSION}_k{K}_recallbp{}_{}",
+                        variant.name,
+                        fixture.recall_basis_points(),
+                        fixture.memory_suffix()
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        std::hint::black_box(fixture.total_overlap());
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_binary_quant_candidate_recall(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_binary_quant_candidate_recall");
+    for scale in vector_scales() {
+        for variant in BINARY_VARIANTS {
+            let fixture = BinaryQuantFixture::build(scale, variant);
             group.throughput(Throughput::Elements(
                 (fixture.corpus.scale * fixture.corpus.queries.len()) as u64,
             ));
@@ -189,6 +237,116 @@ impl ScalarQuantFixture {
             self.index.estimated_bytes(),
             self.corpus.full_vector_bytes(),
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct BinaryQuantVariant {
+    name: &'static str,
+    candidates: usize,
+}
+
+#[derive(Debug)]
+struct BinaryQuantFixture {
+    corpus: PqCorpus,
+    index: BinaryQuantIndex,
+}
+
+impl BinaryQuantFixture {
+    fn build(scale: usize, variant: BinaryQuantVariant) -> Self {
+        let corpus = PqCorpus::build(scale);
+        let index = BinaryQuantIndex::build(&corpus.vectors, variant);
+        Self { corpus, index }
+    }
+
+    fn total_overlap(&self) -> usize {
+        self.corpus
+            .total_overlap(|query| self.index.search_all(&self.corpus.vectors, query, K))
+    }
+
+    fn recall_basis_points(&self) -> usize {
+        self.corpus.recall_basis_points(self.total_overlap())
+    }
+
+    fn memory_suffix(&self) -> String {
+        memory_suffix(
+            self.index.estimated_bytes(),
+            self.corpus.full_vector_bytes(),
+        )
+    }
+}
+
+#[derive(Debug)]
+struct BinaryQuantIndex {
+    variant: BinaryQuantVariant,
+    words_per_vector: usize,
+    codes: Vec<u64>,
+}
+
+impl BinaryQuantIndex {
+    fn build(vectors: &[VectorValue], variant: BinaryQuantVariant) -> Self {
+        let words_per_vector = DIMENSION.div_ceil(u64::BITS as usize);
+        let mut codes = vec![0; vectors.len() * words_per_vector];
+        for (row, vector) in vectors.iter().enumerate() {
+            encode_binary_vector(
+                vector,
+                &mut codes[row * words_per_vector..(row + 1) * words_per_vector],
+            );
+        }
+        Self {
+            variant,
+            words_per_vector,
+            codes,
+        }
+    }
+
+    fn search_all(&self, vectors: &[VectorValue], query: &VectorValue, k: usize) -> Vec<usize> {
+        let query_code = binary_code(query, self.words_per_vector);
+        let mut candidates = VectorTopK::new(self.variant.candidates.max(k));
+        for row in 0..vectors.len() {
+            candidates.push_distance(row, f64::from(self.hamming_distance(row, &query_code)));
+        }
+        let candidate_ids = candidates
+            .into_hits()
+            .into_iter()
+            .map(|hit| hit.key)
+            .collect::<Vec<_>>();
+        let hits = exact_vector_top_k(
+            VectorMetric::SquaredEuclidean,
+            query,
+            candidate_ids.iter().map(|&row| (row, &vectors[row])),
+            k,
+        )
+        .expect("binary-quant benchmark vectors have matching dimensions");
+        hits.into_iter().map(|hit| hit.key).collect()
+    }
+
+    fn estimated_bytes(&self) -> usize {
+        self.codes.len().saturating_mul(size_of::<u64>())
+    }
+
+    fn hamming_distance(&self, row: usize, query_code: &[u64]) -> u32 {
+        let offset = row * self.words_per_vector;
+        self.codes[offset..offset + self.words_per_vector]
+            .iter()
+            .zip(query_code)
+            .map(|(left, right)| (left ^ right).count_ones())
+            .sum()
+    }
+}
+
+fn binary_code(vector: &VectorValue, words_per_vector: usize) -> Vec<u64> {
+    let mut words = vec![0; words_per_vector];
+    encode_binary_vector(vector, &mut words);
+    words
+}
+
+fn encode_binary_vector(vector: &VectorValue, words: &mut [u64]) {
+    words.fill(0);
+    for (dim, value) in vector.as_slice().iter().enumerate() {
+        if *value >= 0.0 {
+            words[dim / u64::BITS as usize] |= 1_u64 << (dim % u64::BITS as usize);
+        }
     }
 }
 
@@ -291,6 +449,9 @@ fn encode_scalar_vectors(vectors: &[VectorValue], mins: &[f32], scales: &[f32]) 
 criterion_group! {
     name = vector_pq;
     config = common::criterion_config();
-    targets = bench_pq_candidate_recall, bench_scalar_quant_candidate_recall
+    targets =
+        bench_pq_candidate_recall,
+        bench_scalar_quant_candidate_recall,
+        bench_binary_quant_candidate_recall
 }
 criterion_main!(vector_pq);
