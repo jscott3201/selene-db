@@ -81,6 +81,16 @@ pub enum VectorSearchError {
         /// Metric requested by the caller.
         requested: VectorMetric,
     },
+    /// Batched vector input lists do not align one-to-one.
+    #[error(
+        "batched vector input length mismatch: {queries} queries, {candidate_sets} candidate sets"
+    )]
+    BatchLengthMismatch {
+        /// Query vector count.
+        queries: usize,
+        /// Candidate-set count.
+        candidate_sets: usize,
+    },
 }
 
 impl VectorSearchError {
@@ -88,11 +98,11 @@ impl VectorSearchError {
         match self {
             Self::Graph(error) => error,
             Self::Cancelled | Self::Timeout { .. } => GraphError::Cancelled,
-            Self::ApproximateIndexMissing | Self::ApproximateMetricMismatch { .. } => {
-                GraphError::Inconsistent {
-                    reason: self.to_string(),
-                }
-            }
+            Self::ApproximateIndexMissing
+            | Self::ApproximateMetricMismatch { .. }
+            | Self::BatchLengthMismatch { .. } => GraphError::Inconsistent {
+                reason: self.to_string(),
+            },
         }
     }
 }

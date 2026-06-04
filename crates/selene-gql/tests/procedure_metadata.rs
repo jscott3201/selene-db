@@ -2,7 +2,7 @@
 
 use selene_core::{GraphId, IStr, Value, intern};
 use selene_gql::{
-    BindingTable, BuiltinProcedureRegistry, ProcedureRegistry, Session, StatementOutput,
+    BindingTable, BuiltinProcedureRegistry, GqlType, ProcedureRegistry, Session, StatementOutput,
 };
 use selene_graph::SharedGraph;
 
@@ -66,11 +66,11 @@ fn semver_like(value: &str) -> bool {
 }
 
 #[test]
-fn default_registry_exposes_non_empty_metadata_for_all_34_procedures() {
+fn default_registry_exposes_non_empty_metadata_for_all_35_procedures() {
     let registry = full_registry();
     let procedures = registry.iter_handles().collect::<Vec<_>>();
 
-    assert_eq!(procedures.len(), 34);
+    assert_eq!(procedures.len(), 35);
     for (name, metadata) in procedures {
         let rendered = name
             .iter()
@@ -133,7 +133,7 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
             "since_version",
         ]
     );
-    assert_eq!(table.row_count(), 34);
+    assert_eq!(table.row_count(), 35);
 
     let names = column_strings(&table, "name");
     let descriptions = column_strings(&table, "description");
@@ -143,6 +143,11 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         .expect("selene.health is registered");
     assert_eq!(descriptions[health], "Report basic graph health counters.");
     assert!(names.iter().any(|name| name == "selene.vector_index_stats"));
+    assert!(
+        names
+            .iter()
+            .any(|name| name == "selene.vector_score_nodes_batch")
+    );
     let rebuild = names
         .iter()
         .position(|name| name == "selene.rebuild_vector_indexes")
@@ -164,4 +169,42 @@ fn show_procedures_exposes_six_columns_and_zero_arg_description() {
         column_strings(&table, "mutability")[rebuild_recommended],
         "maintenance_write"
     );
+}
+
+#[test]
+fn vector_score_nodes_batch_metadata_has_nested_node_candidates() {
+    let registry = full_registry();
+    let name = [istr("selene"), istr("vector_score_nodes_batch")];
+    let metadata = registry
+        .lookup(&name)
+        .expect("vector_score_nodes_batch resolves");
+
+    let arity = metadata.signature.arity();
+    assert_eq!(arity.minimum, 4);
+    assert_eq!(arity.maximum, 5);
+    let parameters = &metadata.signature.parameters;
+    assert_eq!(parameters[0].name.as_str(), "property");
+    assert_eq!(parameters[0].ty, GqlType::String);
+    assert_eq!(parameters[1].name.as_str(), "queries");
+    assert_eq!(parameters[1].ty, GqlType::List(Box::new(GqlType::Vector)));
+    assert_eq!(parameters[2].name.as_str(), "nodes");
+    assert_eq!(
+        parameters[2].ty,
+        GqlType::List(Box::new(GqlType::List(Box::new(GqlType::NodeRef))))
+    );
+    assert_eq!(parameters[3].name.as_str(), "k");
+    assert_eq!(parameters[3].ty, GqlType::Integer);
+    assert_eq!(parameters[4].name.as_str(), "metric");
+    assert_eq!(parameters[4].ty, GqlType::String);
+    assert_eq!(parameters[4].default_doc, Some("squared_euclidean"));
+    assert!(parameters[4].default.is_some());
+
+    let columns = &metadata.output_schema.columns;
+    assert_eq!(columns.len(), 3);
+    assert_eq!(columns[0].name.as_str(), "query_index");
+    assert_eq!(columns[0].ty, GqlType::Uint64);
+    assert_eq!(columns[1].name.as_str(), "node_id");
+    assert_eq!(columns[1].ty, GqlType::NodeRef);
+    assert_eq!(columns[2].name.as_str(), "distance");
+    assert_eq!(columns[2].ty, GqlType::Float64);
 }

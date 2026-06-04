@@ -25,6 +25,7 @@ const VECTOR_SOURCE: &str =
     "CALL selene.vector_search_nodes('VectorDoc', 'embedding', $query, 10) YIELD node_id, distance";
 const VECTOR_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean') YIELD query_index, node_id, distance";
 const VECTOR_SCORE_SOURCE: &str = "CALL selene.vector_score_nodes('embedding', $query, $nodes, 10, 'squared_euclidean') YIELD node_id, distance";
+const VECTOR_SCORE_BATCH_SOURCE: &str = "CALL selene.vector_score_nodes_batch('embedding', $queries, $nodes, 10, 'squared_euclidean') YIELD query_index, node_id, distance";
 const VECTOR_ANN_SOURCE: &str = "CALL selene.vector_search_nodes_ann('VectorDoc', 'embedding', $query, 10, 'squared_euclidean', 64) YIELD node_id, distance";
 const VECTOR_ANN_BATCH_SOURCE: &str = "CALL selene.vector_search_nodes_ann_batch('VectorDoc', 'embedding', $queries, 10, 'squared_euclidean', 64) YIELD query_index, node_id, distance";
 const VECTOR_SCALE: usize = 1_000;
@@ -107,6 +108,7 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
     let indexed_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let exact_batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let score_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
+    let score_batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let hnsw_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     let batch_cache = Arc::new(CallPlanCache::new(NonZeroUsize::new(256).expect("nonzero")));
     warm_vector_cache(&graph, &registry, Arc::clone(&cache), VECTOR_SOURCE);
@@ -127,6 +129,12 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
         &registry,
         Arc::clone(&score_cache),
         VECTOR_SCORE_SOURCE,
+    );
+    warm_vector_score_batch_cache(
+        &graph,
+        &registry,
+        Arc::clone(&score_batch_cache),
+        VECTOR_SCORE_BATCH_SOURCE,
     );
     warm_vector_cache(
         &hnsw_graph,
@@ -187,6 +195,27 @@ fn bench_vector_search_procedure(c: &mut Criterion) {
                 &graph,
                 &registry,
                 Some(Arc::clone(&score_cache)),
+            ));
+        });
+    });
+    group.bench_function(
+        "shared_cache_score_nodes_repeated_8x64_dim128_k10_1000",
+        |b| {
+            b.iter(|| {
+                std::hint::black_box(execute_vector_score_repeated_batch(
+                    &graph,
+                    &registry,
+                    Some(Arc::clone(&score_cache)),
+                ));
+            });
+        },
+    );
+    group.bench_function("shared_cache_score_nodes_batch_8x64_dim128_k10_1000", |b| {
+        b.iter(|| {
+            std::hint::black_box(execute_vector_score_batch(
+                &graph,
+                &registry,
+                Some(Arc::clone(&score_batch_cache)),
             ));
         });
     });
@@ -285,6 +314,19 @@ fn warm_vector_score_cache(
         .expect("warmup vector candidate scoring executes");
 }
 
+fn warm_vector_score_batch_cache(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Arc<CallPlanCache>,
+    source: &str,
+) {
+    let mut session = Session::new(graph).with_call_plan_cache(cache);
+    bind_vector_score_batch_inputs(&mut session);
+    session
+        .execute_source(source, registry)
+        .expect("warmup batched vector candidate scoring executes");
+}
+
 fn execute_vector_search(
     graph: &SharedGraph,
     registry: &BuiltinProcedureRegistry,
@@ -321,6 +363,48 @@ fn execute_vector_score(
     match session
         .execute_source(VECTOR_SCORE_SOURCE, registry)
         .expect("vector candidate scoring procedure executes")
+    {
+        StatementOutput::Rows(table) => table.row_count(),
+        other => panic!("unexpected output: {other:?}"),
+    }
+}
+
+fn execute_vector_score_repeated_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut rows = 0;
+    for query_index in 0..VECTOR_BATCH_QUERIES {
+        let mut session = Session::new(graph);
+        if let Some(cache) = cache.as_ref() {
+            session = session.with_call_plan_cache(Arc::clone(cache));
+        }
+        bind_vector_score_inputs_for(&mut session, query_index);
+        match session
+            .execute_source(VECTOR_SCORE_SOURCE, registry)
+            .expect("single vector candidate scoring procedure executes")
+        {
+            StatementOutput::Rows(table) => rows += table.row_count(),
+            other => panic!("unexpected output: {other:?}"),
+        }
+    }
+    rows
+}
+
+fn execute_vector_score_batch(
+    graph: &SharedGraph,
+    registry: &BuiltinProcedureRegistry,
+    cache: Option<Arc<CallPlanCache>>,
+) -> usize {
+    let mut session = Session::new(graph);
+    if let Some(cache) = cache {
+        session = session.with_call_plan_cache(cache);
+    }
+    bind_vector_score_batch_inputs(&mut session);
+    match session
+        .execute_source(VECTOR_SCORE_BATCH_SOURCE, registry)
+        .expect("batched vector candidate scoring procedure executes")
     {
         StatementOutput::Rows(table) => table.row_count(),
         other => panic!("unexpected output: {other:?}"),
@@ -476,16 +560,39 @@ fn vector_query_batch() -> Value {
 }
 
 fn bind_vector_score_inputs(session: &mut Session<'_>) {
-    session.bind_parameter(
-        istr("query"),
-        Value::Vector(vector_value(0, VECTOR_DIMENSION)),
-    );
-    session.bind_parameter(istr("nodes"), vector_score_candidates());
+    bind_vector_score_inputs_for(session, 0);
 }
 
-fn vector_score_candidates() -> Value {
+fn bind_vector_score_inputs_for(session: &mut Session<'_>, query_index: usize) {
+    session.bind_parameter(
+        istr("query"),
+        Value::Vector(vector_value(query_index, VECTOR_DIMENSION)),
+    );
+    session.bind_parameter(istr("nodes"), vector_score_candidates(query_index));
+}
+
+fn bind_vector_score_batch_inputs(session: &mut Session<'_>) {
+    session.bind_parameter(istr("queries"), vector_query_batch());
+    session.bind_parameter(istr("nodes"), vector_score_candidate_batch());
+}
+
+fn vector_score_candidate_batch() -> Value {
     Value::List(
-        (0..VECTOR_SCORE_CANDIDATES)
+        (0..VECTOR_BATCH_QUERIES)
+            .map(vector_score_candidates)
+            .collect(),
+    )
+}
+
+fn vector_score_candidates(query_index: usize) -> Value {
+    let max_start = VECTOR_SCALE.saturating_sub(VECTOR_SCORE_CANDIDATES);
+    let start = if max_start == 0 {
+        0
+    } else {
+        (query_index * VECTOR_SCORE_CANDIDATES) % max_start
+    };
+    Value::List(
+        (start..start + VECTOR_SCORE_CANDIDATES)
             .map(|idx| Value::NodeRef(NodeId::new((idx + 1) as u64)))
             .collect(),
     )

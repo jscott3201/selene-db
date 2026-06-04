@@ -131,3 +131,135 @@ fn score_vector_nodes_surfaces_candidate_dimension_errors() {
         }))
     ));
 }
+
+#[test]
+fn score_vector_nodes_batch_matches_single_queries() {
+    let shared = SharedGraph::new(GraphId::new(977));
+    let label = intern("vector.score.batch.doc").unwrap();
+    let embedding = intern("embedding").unwrap();
+    let ids = {
+        let mut txn = shared.begin_write();
+        let mut mutator = txn.mutator();
+        let mut ids = Vec::new();
+        for value in 0..8 {
+            ids.push(
+                mutator
+                    .create_node(
+                        LabelSet::single(label.clone()),
+                        props(&embedding, Value::Vector(vector(&[value as f32, 0.0]))),
+                    )
+                    .unwrap(),
+            );
+        }
+        txn.commit().unwrap();
+        ids
+    };
+    let queries = vec![vector(&[2.2, 0.0]), vector(&[5.1, 0.0])];
+    let candidate_sets = vec![
+        vec![ids[4], ids[2], ids[2], ids[0], NodeId::new(999)],
+        vec![ids[7], ids[5], ids[1], ids[5]],
+    ];
+
+    let batched = shared
+        .score_vector_nodes_batch_checked(
+            &embedding,
+            &queries,
+            &candidate_sets,
+            VectorMetric::SquaredEuclidean,
+            2,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    let singles: Vec<_> = queries
+        .iter()
+        .zip(&candidate_sets)
+        .map(|(query, candidates)| {
+            shared
+                .score_vector_nodes_checked(
+                    &embedding,
+                    query,
+                    candidates,
+                    VectorMetric::SquaredEuclidean,
+                    2,
+                    CancellationChecker::disabled(),
+                )
+                .unwrap()
+        })
+        .collect();
+
+    assert_eq!(batched, singles);
+    assert_eq!(batched[0][0].node_id, ids[2]);
+    assert_eq!(batched[1][0].node_id, ids[5]);
+}
+
+#[test]
+fn score_vector_nodes_batch_empty_and_zero_k_do_not_bind_queries() {
+    let shared = SharedGraph::new(GraphId::new(978));
+    let embedding = intern("embedding").unwrap();
+
+    let empty = shared
+        .score_vector_nodes_batch_checked::<Vec<NodeId>>(
+            &embedding,
+            &[],
+            &[],
+            VectorMetric::Cosine,
+            10,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    assert!(empty.is_empty());
+
+    let hits = shared
+        .score_vector_nodes_batch_checked(
+            &embedding,
+            &[vector(&[0.0, 0.0]), vector(&[0.0, 0.0])],
+            &[vec![NodeId::new(1)], vec![NodeId::new(2)]],
+            VectorMetric::Cosine,
+            0,
+            CancellationChecker::disabled(),
+        )
+        .unwrap();
+    assert_eq!(hits, vec![Vec::new(), Vec::new()]);
+}
+
+#[test]
+fn score_vector_nodes_batch_rejects_invalid_batch_shape() {
+    let shared = SharedGraph::new(GraphId::new(979));
+    let embedding = intern("embedding").unwrap();
+
+    let err = shared
+        .score_vector_nodes_batch_checked(
+            &embedding,
+            &[vector(&[0.0, 0.0]), vector(&[1.0, 0.0])],
+            &[vec![NodeId::new(1)]],
+            VectorMetric::SquaredEuclidean,
+            1,
+            CancellationChecker::disabled(),
+        )
+        .expect_err("query/candidate batch arity mismatch must error");
+    assert!(matches!(
+        err,
+        VectorSearchError::BatchLengthMismatch {
+            queries: 2,
+            candidate_sets: 1
+        }
+    ));
+
+    let err = shared
+        .score_vector_nodes_batch_checked(
+            &embedding,
+            &[vector(&[0.0, 0.0]), vector(&[1.0, 0.0, 0.0])],
+            &[vec![NodeId::new(1)], vec![NodeId::new(2)]],
+            VectorMetric::SquaredEuclidean,
+            1,
+            CancellationChecker::disabled(),
+        )
+        .expect_err("mixed query dimensions must error");
+    assert!(matches!(
+        err,
+        VectorSearchError::Graph(GraphError::Core(CoreError::VectorDimensionMismatch {
+            lhs: 2,
+            rhs: 3
+        }))
+    ));
+}

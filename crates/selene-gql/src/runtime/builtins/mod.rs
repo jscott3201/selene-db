@@ -9,17 +9,17 @@
 //! concrete dispatch arm, with planner-visible metadata built from static
 //! parameter/output tables (the same `StaticParameter`/`StaticOutputColumn` →
 //! `ProcedureMetadata` conversion the pack registry performed). The vector
-//! search, batched exact vector-search, candidate vector scoring, approximate
-//! vector-search, batched approximate vector-search, vector-index stats, and
-//! vector-index procedures are new native engine functionality on the same
-//! concrete built-in dispatch path.
+//! search, batched exact vector-search, candidate vector scoring, batched
+//! candidate vector scoring, approximate vector-search, batched approximate
+//! vector-search, vector-index stats, and vector-index procedures are new
+//! native engine functionality on the same concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
 //!   `selene.vector_search_nodes`, `selene.vector_search_nodes_batch`,
-//!   `selene.vector_score_nodes`, `selene.vector_search_nodes_ann`,
-//!   `selene.vector_search_nodes_ann_batch`, and `selene.vector_index_stats`
-//!   are read-only graph-tier
+//!   `selene.vector_score_nodes`, `selene.vector_score_nodes_batch`,
+//!   `selene.vector_search_nodes_ann`, `selene.vector_search_nodes_ann_batch`,
+//!   and `selene.vector_index_stats` are read-only graph-tier
 //!   ([`ProcedureTier::Graph`] + [`ProcedureMutability::Read`]); they never
 //!   mutate and never re-enter `begin_write`.
 //! - `selene.create_index`, `selene.drop_index`, `selene.create_vector_index`,
@@ -48,6 +48,7 @@ mod meta;
 mod rebuild_vector_indexes;
 mod vector_index_stats;
 mod vector_score_nodes;
+mod vector_score_nodes_batch;
 mod vector_search;
 mod vector_search_ann;
 mod vector_search_ann_batch;
@@ -79,6 +80,8 @@ pub(super) enum BuiltinKind {
     VectorSearchNodesBatch,
     /// `selene.vector_score_nodes` — exact scoring for explicit node candidates.
     VectorScoreNodes,
+    /// `selene.vector_score_nodes_batch` — batched exact scoring for explicit node candidates.
+    VectorScoreNodesBatch,
     /// `selene.vector_search_nodes_ann` — approximate vector node search.
     VectorSearchNodesAnn,
     /// `selene.vector_search_nodes_ann_batch` — batched approximate vector node search.
@@ -116,7 +119,7 @@ pub(super) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(super) const BUILTIN_SPECS: [BuiltinSpec; 15] = [
+pub(super) const BUILTIN_SPECS: [BuiltinSpec; 16] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -207,6 +210,12 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 15] = [
         since_version: "1.1.0",
         kind: BuiltinKind::VectorScoreNodes,
     },
+    BuiltinSpec {
+        name: &["selene", "vector_score_nodes_batch"],
+        description: "Batched scoring for explicit node candidates by a vector property.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::VectorScoreNodesBatch,
+    },
 ];
 
 impl BuiltinKind {
@@ -244,6 +253,7 @@ impl BuiltinKind {
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
+            | Self::VectorScoreNodesBatch
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => ProcedureTier::Graph,
@@ -266,6 +276,7 @@ impl BuiltinKind {
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
+            | Self::VectorScoreNodesBatch
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => ProcedureMutability::Read,
@@ -287,6 +298,7 @@ impl BuiltinKind {
             Self::VectorSearchNodes => vector_search::signature(),
             Self::VectorSearchNodesBatch => vector_search_batch::signature(),
             Self::VectorScoreNodes => vector_score_nodes::signature(),
+            Self::VectorScoreNodesBatch => vector_score_nodes_batch::signature(),
             Self::VectorSearchNodesAnn => vector_search_ann::signature(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::signature(),
             Self::VectorIndexStats => vector_index_stats::signature(),
@@ -309,6 +321,7 @@ impl BuiltinKind {
             Self::VectorSearchNodes => vector_search::output_columns(),
             Self::VectorSearchNodesBatch => vector_search_batch::output_columns(),
             Self::VectorScoreNodes => vector_score_nodes::output_columns(),
+            Self::VectorScoreNodesBatch => vector_score_nodes_batch::output_columns(),
             Self::VectorSearchNodesAnn => vector_search_ann::output_columns(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::output_columns(),
             Self::VectorIndexStats => vector_index_stats::output_columns(),
@@ -342,6 +355,7 @@ impl BuiltinKind {
             Self::VectorSearchNodes => vector_search::execute(ctx, args),
             Self::VectorSearchNodesBatch => vector_search_batch::execute(ctx, args),
             Self::VectorScoreNodes => vector_score_nodes::execute(ctx, args),
+            Self::VectorScoreNodesBatch => vector_score_nodes_batch::execute(ctx, args),
             Self::VectorSearchNodesAnn => vector_search_ann::execute(ctx, args),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::execute(ctx, args),
             Self::VectorIndexStats => vector_index_stats::execute(ctx, args),
@@ -379,6 +393,7 @@ impl BuiltinKind {
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
+            | Self::VectorScoreNodesBatch
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => Err(ProcedureError::TierMismatch {
@@ -411,6 +426,7 @@ impl BuiltinKind {
             | Self::VectorSearchNodes
             | Self::VectorSearchNodesBatch
             | Self::VectorScoreNodes
+            | Self::VectorScoreNodesBatch
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => Err(ProcedureError::TierMismatch {
