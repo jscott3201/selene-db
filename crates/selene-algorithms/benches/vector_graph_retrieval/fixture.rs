@@ -120,6 +120,7 @@ struct MemoryRetrievalFixture {
     session_edge: IStr,
     valid_edge: IStr,
     superseded_by_edge: IStr,
+    contradicts_edge: IStr,
     queries: Vec<Query>,
     metadata: HashMap<NodeId, NodeMeta>,
     graph_current_nodes: HashSet<NodeId>,
@@ -464,6 +465,7 @@ enum TopologyNoise {
     MultiHopSupport,
     NoisyMultiHopSupport,
     NoisySparseMultiHopSupport,
+    ContradictedCurrentDuplicates,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
