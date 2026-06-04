@@ -245,6 +245,7 @@ fn bench_vector_candidate_set(c: &mut Criterion) {
             });
         },
     );
+    group.throughput(Throughput::Elements(fixture.set_width() as u64));
     group.bench_function(
         BenchmarkId::new(fixture.bench_id("set_union"), fixture.overlap_width()),
         |b| {
