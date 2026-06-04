@@ -152,6 +152,76 @@ fn seed_neighbor_vector_graph(graph: &SharedGraph) -> (NodeId, NodeId, Vec<NodeI
     (anchor, second_anchor, ids)
 }
 
+fn seed_expanded_candidate_graph(graph: &SharedGraph) -> (NodeId, NodeId, NodeId, NodeId, NodeId) {
+    let doc = istr("VectorDoc");
+    let embedding = istr("embedding");
+    let other = istr("other");
+    let support = istr("SUPPORTS");
+    let mentions = istr("MENTIONS");
+    let mut txn = graph.begin_write();
+    let mut mutator = txn.mutator();
+    let root_a = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&embedding, Value::Vector(vector(&[2.0, 0.0]))),
+        )
+        .expect("root_a inserts");
+    let root_b = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&embedding, Value::Vector(vector(&[8.0, 0.0]))),
+        )
+        .expect("root_b inserts");
+    let outgoing_near = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&embedding, Value::Vector(vector(&[3.0, 0.0]))),
+        )
+        .expect("outgoing near inserts");
+    let outgoing_far = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&embedding, Value::Vector(vector(&[7.0, 0.0]))),
+        )
+        .expect("outgoing far inserts");
+    let incoming = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&embedding, Value::Vector(vector(&[1.0, 0.0]))),
+        )
+        .expect("incoming inserts");
+    let wrong_label = mutator
+        .create_node(
+            LabelSet::single(doc.clone()),
+            props(&embedding, Value::Vector(vector(&[4.0, 0.0]))),
+        )
+        .expect("wrong-label node inserts");
+    let non_vector = mutator
+        .create_node(
+            LabelSet::single(doc),
+            props(&other, Value::String(istr("not-a-vector"))),
+        )
+        .expect("non-vector node inserts");
+    for &node in &[outgoing_near, outgoing_near] {
+        mutator
+            .create_edge(support.clone(), root_a, node, PropertyMap::new())
+            .expect("root_a support edge inserts");
+    }
+    for &node in &[outgoing_far, non_vector] {
+        mutator
+            .create_edge(support.clone(), root_b, node, PropertyMap::new())
+            .expect("root_b support edge inserts");
+    }
+    mutator
+        .create_edge(support, incoming, root_a, PropertyMap::new())
+        .expect("incoming support edge inserts");
+    mutator
+        .create_edge(mentions, root_a, wrong_label, PropertyMap::new())
+        .expect("wrong-label edge inserts");
+    txn.commit().expect("seed graph commits");
+    (root_a, root_b, outgoing_near, outgoing_far, incoming)
+}
+
 #[test]
 fn vector_score_nodes_reranks_explicit_candidates_without_index() {
     let graph = graph(330_207);
@@ -349,6 +419,84 @@ fn vector_score_nodes_batch_rejects_non_nested_node_candidates() {
             source: ProcedureError::InvalidArgument { ref detail },
             ..
         } if detail.contains("nodes[0][0] must be a NODE")
+    ));
+}
+
+#[test]
+fn vector_score_expanded_candidates_scores_preserved_roots_and_outgoing_expansion() {
+    let graph = graph(330_217);
+    let registry = BuiltinProcedureRegistry::new();
+    let (root_a, root_b, outgoing_near, outgoing_far, _) = seed_expanded_candidate_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[3.2, 0.0])));
+    session.bind_parameter(
+        istr("roots"),
+        Value::List(vec![
+            Value::NodeRef(root_b),
+            Value::NodeRef(root_a),
+            Value::NodeRef(root_a),
+        ]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_expanded_candidates('embedding', $query, $roots, 'SUPPORTS', 4) \
+         YIELD node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![outgoing_near, root_a, outgoing_far, root_b]
+    );
+}
+
+#[test]
+fn vector_score_expanded_candidates_scores_incoming_expansion() {
+    let graph = graph(330_218);
+    let registry = BuiltinProcedureRegistry::new();
+    let (root_a, root_b, _, _, incoming) = seed_expanded_candidate_graph(&graph);
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[1.1, 0.0])));
+    session.bind_parameter(
+        istr("roots"),
+        Value::List(vec![Value::NodeRef(root_a), Value::NodeRef(root_b)]),
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_score_expanded_candidates('embedding', $query, $roots, 'SUPPORTS', 3, 'incoming', 'squared_euclidean') \
+         YIELD node_id, distance",
+        &registry,
+    );
+
+    assert_eq!(
+        node_column(&table, "node_id"),
+        vec![incoming, root_a, root_b]
+    );
+}
+
+#[test]
+fn vector_score_expanded_candidates_rejects_non_node_roots() {
+    let graph = graph(330_219);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    session.bind_parameter(istr("query"), Value::Vector(vector(&[0.0, 0.0])));
+    session.bind_parameter(istr("roots"), Value::List(vec![Value::Int(1)]));
+
+    let err = session
+        .execute_source(
+            "CALL selene.vector_score_expanded_candidates('embedding', $query, $roots, 'SUPPORTS', 2)",
+            &registry,
+        )
+        .expect_err("non-node roots must error");
+
+    assert!(matches!(
+        err,
+        ExecutorError::Procedure {
+            source: ProcedureError::InvalidArgument { ref detail },
+            ..
+        } if detail.contains("roots[0] must be a NODE")
     ));
 }
 
