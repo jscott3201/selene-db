@@ -7,8 +7,8 @@ use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 
 use super::{
-    VECTOR_SEARCH_CANCEL_STRIDE, VectorNeighborDirection, VectorNeighborSearchOptions,
-    VectorNodeSearchHit, VectorSearchError, vector_node_hits,
+    VECTOR_SEARCH_CANCEL_STRIDE, VectorCandidateSet, VectorNeighborDirection,
+    VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError, vector_node_hits,
 };
 
 impl SeleneGraph {
@@ -56,14 +56,12 @@ impl SeleneGraph {
             return Ok(Vec::new());
         }
 
-        let mut unique_candidates = candidates.to_vec();
-        unique_candidates.sort_unstable();
-        unique_candidates.dedup();
+        let candidates = VectorCandidateSet::from_nodes(candidates.iter().copied());
         checker.check()?;
 
         let scorer = metric.bind_query(query).map_err(GraphError::from)?;
         let mut top_k = VectorTopK::new(k);
-        for (offset, node_id) in unique_candidates.into_iter().enumerate() {
+        for (offset, node_id) in candidates.as_nodes().iter().copied().enumerate() {
             if offset % VECTOR_SEARCH_CANCEL_STRIDE == 0 {
                 checker.check()?;
             }
@@ -186,11 +184,12 @@ impl SeleneGraph {
         if options.k == 0 {
             return Ok(Vec::new());
         }
-        let candidates = self.neighbor_candidates(anchor, options.edge_label, options.direction);
+        let candidates =
+            self.vector_neighbor_candidates(anchor, options.edge_label, options.direction);
         self.score_vector_nodes_checked(
             property,
             query,
-            &candidates,
+            candidates.as_nodes(),
             options.metric,
             options.k,
             checker,
@@ -238,7 +237,9 @@ impl SeleneGraph {
         }
         let candidate_sets: Vec<_> = anchors
             .iter()
-            .map(|anchor| self.neighbor_candidates(*anchor, options.edge_label, options.direction))
+            .map(|anchor| {
+                self.vector_neighbor_candidates(*anchor, options.edge_label, options.direction)
+            })
             .collect();
         self.score_vector_nodes_batch_checked(
             property,
@@ -250,12 +251,19 @@ impl SeleneGraph {
         )
     }
 
-    fn neighbor_candidates(
+    /// Return canonical vector-score candidates reached from one graph anchor.
+    ///
+    /// Candidates are filtered by edge label and direction, sorted by
+    /// [`NodeId`], and deduplicated. The returned set intentionally does not
+    /// check vector property presence or node liveness; scoring APIs apply
+    /// normal snapshot visibility when the set is consumed.
+    #[must_use]
+    pub fn vector_neighbor_candidates(
         &self,
         anchor: NodeId,
         edge_label: &IStr,
         direction: VectorNeighborDirection,
-    ) -> Vec<NodeId> {
+    ) -> VectorCandidateSet {
         let mut candidates = Vec::new();
         if matches!(
             direction,
@@ -281,7 +289,7 @@ impl SeleneGraph {
                     .map(|edge| edge.neighbor),
             );
         }
-        candidates
+        VectorCandidateSet::from_nodes(candidates)
     }
 }
 
@@ -410,6 +418,19 @@ impl SharedGraph {
     ) -> Result<Vec<Vec<VectorNodeSearchHit>>, VectorSearchError> {
         self.read()
             .score_vector_neighbors_batch_checked(property, queries, anchors, options, checker)
+    }
+
+    /// Return canonical vector-score candidates reached from one graph anchor
+    /// in the current snapshot.
+    #[must_use]
+    pub fn vector_neighbor_candidates(
+        &self,
+        anchor: NodeId,
+        edge_label: &IStr,
+        direction: VectorNeighborDirection,
+    ) -> VectorCandidateSet {
+        self.read()
+            .vector_neighbor_candidates(anchor, edge_label, direction)
     }
 }
 

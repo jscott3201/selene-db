@@ -1,12 +1,12 @@
 //! Exact native vector search over graph node properties.
 
-use std::{cmp::Ordering, time::Duration};
+use std::cmp::Ordering;
 
 use rayon::prelude::*;
 use roaring::RoaringBitmap;
 use selene_core::{
-    CancellationCause, CancellationChecker, CoreError, IStr, NodeId, Value, VectorMetric,
-    VectorMetricQuery, VectorTopK, VectorValue,
+    CancellationChecker, CoreError, IStr, NodeId, Value, VectorMetric, VectorMetricQuery,
+    VectorTopK, VectorValue,
 };
 
 use crate::error::{GraphError, GraphResult};
@@ -14,6 +14,12 @@ use crate::graph::SeleneGraph;
 use crate::shared::SharedGraph;
 use crate::store::RowIndex;
 use crate::vector_index::{HnswSearchScratch, VectorIndex, VectorIndexSearchHit};
+#[path = "vector_search/types.rs"]
+mod types;
+pub use types::{
+    ApproximateVectorSearchOptions, VectorCandidateSet, VectorNeighborDirection,
+    VectorNeighborSearchOptions, VectorNodeSearchHit, VectorSearchError,
+};
 
 const VECTOR_SEARCH_CANCEL_STRIDE: usize = 1024;
 const VECTOR_SEARCH_PARALLEL_CHUNK_ROWS: usize = 2048;
@@ -22,141 +28,6 @@ const VECTOR_SEARCH_PARALLEL_CHUNK_ROWS: usize = 2048;
 const VECTOR_SEARCH_PARALLEL_MIN_ROWS: u64 = 16_384;
 #[cfg(test)]
 const VECTOR_SEARCH_PARALLEL_MIN_ROWS: u64 = 8;
-
-/// Exact vector-search result for a graph node.
-#[derive(Clone, Debug, PartialEq)]
-pub struct VectorNodeSearchHit {
-    /// Stable external node identifier.
-    pub node_id: NodeId,
-    /// Lower-is-better score under the requested [`VectorMetric`].
-    pub distance: f64,
-}
-
-/// Direction used when deriving vector-score candidates from a graph edge label.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum VectorNeighborDirection {
-    /// Score outgoing neighbors reached from the anchor node.
-    Outgoing,
-    /// Score incoming neighbors that point at the anchor node.
-    Incoming,
-    /// Score both incoming and outgoing neighbors.
-    Both,
-}
-
-/// Tunable options for deriving and ranking vector neighbors from graph edges.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VectorNeighborSearchOptions<'a> {
-    /// Edge label used to derive the one-hop candidate set.
-    pub edge_label: &'a IStr,
-    /// Direction used when walking one-hop graph adjacency.
-    pub direction: VectorNeighborDirection,
-    /// Distance metric requested by the caller.
-    pub metric: VectorMetric,
-    /// Maximum result count.
-    pub k: usize,
-}
-
-impl<'a> VectorNeighborSearchOptions<'a> {
-    /// Construct one-hop vector-neighbor scoring options.
-    #[must_use]
-    pub const fn new(
-        edge_label: &'a IStr,
-        direction: VectorNeighborDirection,
-        metric: VectorMetric,
-        k: usize,
-    ) -> Self {
-        Self {
-            edge_label,
-            direction,
-            metric,
-            k,
-        }
-    }
-}
-
-/// Tunable options for approximate vector search.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ApproximateVectorSearchOptions {
-    /// Distance metric requested by the caller.
-    pub metric: VectorMetric,
-    /// Maximum result count.
-    pub k: usize,
-    /// ANN search-width hint.
-    pub ef_search: usize,
-}
-
-impl ApproximateVectorSearchOptions {
-    /// Construct approximate vector-search options.
-    #[must_use]
-    pub const fn new(metric: VectorMetric, k: usize, ef_search: usize) -> Self {
-        Self {
-            metric,
-            k,
-            ef_search,
-        }
-    }
-}
-
-/// Error returned by cancellation-aware vector search.
-#[derive(Debug, thiserror::Error)]
-pub enum VectorSearchError {
-    /// Graph storage or metric error.
-    #[error(transparent)]
-    Graph(#[from] GraphError),
-    /// Caller-requested cancellation was observed.
-    #[error("vector search cancelled")]
-    Cancelled,
-    /// Statement deadline elapsed while vector search was scanning.
-    #[error("vector search deadline exceeded after {elapsed:?}")]
-    Timeout {
-        /// Duration since the deadline elapsed.
-        elapsed: Duration,
-    },
-    /// Approximate search was requested without a matching ANN index.
-    #[error("matching ANN vector index not found")]
-    ApproximateIndexMissing,
-    /// Approximate search metric does not match the ANN index metric.
-    #[error("ANN vector index was built for {indexed:?}, not requested {requested:?}")]
-    ApproximateMetricMismatch {
-        /// Metric stored in the ANN index.
-        indexed: VectorMetric,
-        /// Metric requested by the caller.
-        requested: VectorMetric,
-    },
-    /// Batched vector input lists do not align one-to-one.
-    #[error(
-        "batched vector input length mismatch: {queries} queries, {candidate_sets} candidate sets"
-    )]
-    BatchLengthMismatch {
-        /// Query vector count.
-        queries: usize,
-        /// Candidate-set count.
-        candidate_sets: usize,
-    },
-}
-
-impl VectorSearchError {
-    pub(crate) fn into_graph_error(self) -> GraphError {
-        match self {
-            Self::Graph(error) => error,
-            Self::Cancelled | Self::Timeout { .. } => GraphError::Cancelled,
-            Self::ApproximateIndexMissing
-            | Self::ApproximateMetricMismatch { .. }
-            | Self::BatchLengthMismatch { .. } => GraphError::Inconsistent {
-                reason: self.to_string(),
-            },
-        }
-    }
-}
-
-impl From<CancellationCause> for VectorSearchError {
-    fn from(cause: CancellationCause) -> Self {
-        match cause {
-            CancellationCause::Cancelled => Self::Cancelled,
-            CancellationCause::Timeout { elapsed } => Self::Timeout { elapsed },
-        }
-    }
-}
 
 impl SeleneGraph {
     /// Exhaustively rank vector-valued node properties for one label.
