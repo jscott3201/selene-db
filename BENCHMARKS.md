@@ -253,6 +253,14 @@ PR-local PQ candidate compression spot-check:
 | `graph_pq_candidate_recall/cluster_l2/m16_k64_c256_d128_k10_recallbp9500_m1594-full50000` | 9.68 ms (quick) | Best medium-width row: higher recall than `k16` at the same 256-candidate rerank width, for a small codebook-memory increase. |
 | `graph_pq_candidate_recall/cluster_l2/m16_k64_c1024_d128_k10_recallbp10000_m1594-full50000` | 12.73 ms (quick) | Matches the 10000 bp high-recall row; useful as the baseline for future IVF/HNSW plus PQ layering rather than standalone full-code scans. |
 
+PR-local scalar quantization spot-check:
+
+| Bench | 100k | Notes |
+|---|---:|---|
+| `graph_scalar_quant_candidate_recall/cluster_l2/u8_c64_d128_k10_recallbp10000_m12501-full50000` | 79.90 ms (quick) | Benchmark-only per-dimension u8 scalar quantization over 100k 128-dim vectors and 16 queries. Compressed storage is ~12.2 MiB vs ~48.8 MiB full vectors, and 64 exact-rerank candidates reach 10000 bp recall on this clustered fixture. |
+| `graph_scalar_quant_candidate_recall/cluster_l2/u8_c256_d128_k10_recallbp10000_m12501-full50000` | 81.00 ms (quick) | Wider rerank has no recall upside on this corpus and adds a small exact-rerank cost. The full compressed scan remains the dominant cost. |
+| `graph_scalar_quant_candidate_recall/cluster_l2/u8_c1024_d128_k10_recallbp10000_m12501-full50000` | 85.35 ms (quick) | High-candidate anchor for comparison with PQ. Scalar quantization is simple and training-free, but standalone row-wise dequantized scoring is much slower than PQ and IVF+PQ candidate generation without SIMD/block scoring. |
+
 PR-local IVF+PQ layering spot-check:
 
 | Bench | 100k | Notes |
