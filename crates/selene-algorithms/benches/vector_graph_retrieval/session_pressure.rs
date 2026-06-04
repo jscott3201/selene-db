@@ -7,7 +7,7 @@ use selene_core::NodeId;
 
 use crate::common::scale_label;
 
-use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, basis_points, vector_scales};
+use super::support::{FACTS_PER_TOPIC, RESULT_K, SEED_K, WIDE_SEED_K, basis_points, vector_scales};
 use super::{MemoryRetrievalFixture, Query, RetrievalQuality, TopologyNoise};
 
 const SESSION_STRATEGIES: &[SessionStrategy] = &[
@@ -28,6 +28,20 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const SPARSE_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionProvenanceExpandK1,
+    SessionStrategy::GraphSessionProvenanceExpand,
+    SessionStrategy::GraphSessionProvenanceExpandK8,
+    SessionStrategy::GraphSessionProvenanceExpandK16,
+    SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeProvenanceExpandK1,
+    SessionStrategy::GraphScopeProvenanceExpand,
+    SessionStrategy::GraphScopeProvenanceExpandK8,
+    SessionStrategy::GraphScopeProvenanceExpandK16,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -38,12 +52,16 @@ enum SessionStrategy {
     GraphSessionMaterializedCurrentFilter,
     GraphSessionProvenanceExpandK1,
     GraphSessionProvenanceExpand,
+    GraphSessionProvenanceExpandK8,
+    GraphSessionProvenanceExpandK16,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
     GraphScopeMaterializedCurrentFilter,
     GraphScopeProvenanceExpandK1,
     GraphScopeProvenanceExpand,
+    GraphScopeProvenanceExpandK8,
+    GraphScopeProvenanceExpandK16,
     TopicFilter,
 }
 
@@ -60,18 +78,41 @@ impl SessionStrategy {
             }
             Self::GraphSessionProvenanceExpandK1 => "graph_session_provenance_expand_k1",
             Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
+            Self::GraphSessionProvenanceExpandK8 => "graph_session_provenance_expand_k8",
+            Self::GraphSessionProvenanceExpandK16 => "graph_session_provenance_expand_k16",
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
             Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
             Self::GraphScopeProvenanceExpandK1 => "graph_scope_provenance_expand_k1",
             Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
+            Self::GraphScopeProvenanceExpandK8 => "graph_scope_provenance_expand_k8",
+            Self::GraphScopeProvenanceExpandK16 => "graph_scope_provenance_expand_k16",
             Self::TopicFilter => "topic_filter",
+        }
+    }
+
+    const fn provenance_seed_roots(self) -> Option<usize> {
+        match self {
+            Self::GraphSessionProvenanceExpandK1 | Self::GraphScopeProvenanceExpandK1 => Some(1),
+            Self::GraphSessionProvenanceExpand | Self::GraphScopeProvenanceExpand => Some(SEED_K),
+            Self::GraphSessionProvenanceExpandK8 | Self::GraphScopeProvenanceExpandK8 => {
+                Some(SEED_K * 2)
+            }
+            Self::GraphSessionProvenanceExpandK16 | Self::GraphScopeProvenanceExpandK16 => {
+                Some(WIDE_SEED_K)
+            }
+            _ => None,
         }
     }
 }
 
 pub(super) fn bench(c: &mut Criterion) {
+    bench_session_filter_pressure(c);
+    bench_sparse_provenance_pressure(c);
+}
+
+fn bench_session_filter_pressure(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_vector_session_filter_pressure");
     for scale in vector_scales() {
         let fixture = MemoryRetrievalFixture::build_with_community_topology(
@@ -79,6 +120,44 @@ pub(super) fn bench(c: &mut Criterion) {
             TopologyNoise::CrossTopicSupportRing,
         );
         for &strategy in SESSION_STRATEGIES {
+            let avg_candidates = fixture.average_session_candidates(strategy);
+            let quality = fixture.session_quality(strategy);
+            group.throughput(Throughput::Elements(
+                (fixture.query_count() * avg_candidates) as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    strategy.name(),
+                    format!(
+                        "{}_q{}_c{}_covbp{}_curbp{}_precbp{}",
+                        scale_label(fixture.scale()),
+                        fixture.query_count(),
+                        avg_candidates,
+                        basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
+                        basis_points(
+                            quality.current_coverage,
+                            fixture.query_count() * FACTS_PER_TOPIC
+                        ),
+                        basis_points(quality.precision, fixture.query_count() * RESULT_K),
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        black_box(fixture.session_total_coverage(strategy));
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+fn bench_sparse_provenance_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_sparse_provenance_pressure");
+    for scale in vector_scales() {
+        let fixture =
+            MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::SparseSupport);
+        for &strategy in SPARSE_PROVENANCE_STRATEGIES {
             let avg_candidates = fixture.average_session_candidates(strategy);
             let quality = fixture.session_quality(strategy);
             group.throughput(Throughput::Elements(
@@ -135,16 +214,8 @@ impl MemoryRetrievalFixture {
 
     fn select_session_candidates(&self, query: &Query, strategy: SessionStrategy) -> Vec<NodeId> {
         let candidates = self.session_candidates(query, strategy);
-        match strategy {
-            SessionStrategy::GraphSessionProvenanceExpandK1
-            | SessionStrategy::GraphScopeProvenanceExpandK1 => {
-                return self.select_provenance_expansion(query, candidates, 1);
-            }
-            SessionStrategy::GraphSessionProvenanceExpand
-            | SessionStrategy::GraphScopeProvenanceExpand => {
-                return self.select_provenance_expansion(query, candidates, SEED_K);
-            }
-            _ => {}
+        if let Some(seed_roots) = strategy.provenance_seed_roots() {
+            return self.select_provenance_expansion(query, candidates, seed_roots);
         }
         let hits = self.score_candidate_ids(query, candidates);
         self.select_from_candidates(query, hits, true, false, true)
@@ -173,10 +244,10 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_candidates(query))
             }
-            SessionStrategy::GraphSessionProvenanceExpandK1 => self.provenance_root_candidates(
-                self.materialized_current_candidates(self.graph_session_candidates(query)),
-            ),
-            SessionStrategy::GraphSessionProvenanceExpand => self.provenance_root_candidates(
+            SessionStrategy::GraphSessionProvenanceExpandK1
+            | SessionStrategy::GraphSessionProvenanceExpand
+            | SessionStrategy::GraphSessionProvenanceExpandK8
+            | SessionStrategy::GraphSessionProvenanceExpandK16 => self.provenance_root_candidates(
                 self.materialized_current_candidates(self.graph_session_candidates(query)),
             ),
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
@@ -189,10 +260,10 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphScopeMaterializedCurrentFilter => {
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query))
             }
-            SessionStrategy::GraphScopeProvenanceExpandK1 => self.provenance_root_candidates(
-                self.materialized_current_candidates(self.graph_session_scope_candidates(query)),
-            ),
-            SessionStrategy::GraphScopeProvenanceExpand => self.provenance_root_candidates(
+            SessionStrategy::GraphScopeProvenanceExpandK1
+            | SessionStrategy::GraphScopeProvenanceExpand
+            | SessionStrategy::GraphScopeProvenanceExpandK8
+            | SessionStrategy::GraphScopeProvenanceExpandK16 => self.provenance_root_candidates(
                 self.materialized_current_candidates(self.graph_session_scope_candidates(query)),
             ),
             SessionStrategy::TopicFilter => self

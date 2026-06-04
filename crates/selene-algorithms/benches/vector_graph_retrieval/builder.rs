@@ -6,8 +6,9 @@ use selene_core::{HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value};
 use selene_graph::{SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind};
 
 use super::support::{
-    DIMENSION, FACTS_PER_TOPIC, TOPICS_PER_SESSION, component_candidates, current_replacement,
-    duplicates_per_fact, graph_id_for_scale, istr, memory_vector, pagerank_scores, topic_count,
+    DIMENSION, FACTS_PER_TOPIC, SEED_K, TOPICS_PER_SESSION, component_candidates,
+    current_replacement, duplicates_per_fact, graph_id_for_scale, istr, memory_vector,
+    pagerank_scores, topic_count,
 };
 use super::{MemoryRetrievalFixture, NodeMeta, Query, TopologyNoise, support};
 
@@ -99,7 +100,10 @@ impl MemoryRetrievalFixture {
                 }
                 for facts in &topic_nodes {
                     for (duplicate, summary) in facts[0].iter().enumerate() {
-                        for evidence_nodes in facts.iter().skip(1) {
+                        for (fact, evidence_nodes) in facts.iter().enumerate().skip(1) {
+                            if !support_edge_included(topology, duplicate, fact) {
+                                continue;
+                            }
                             let evidence = evidence_nodes[duplicate % evidence_nodes.len()];
                             mutator
                                 .create_edge(
@@ -244,6 +248,13 @@ impl MemoryRetrievalFixture {
         fixture.label_by_node = label_by_node;
         fixture.label_candidates = label_candidates;
         fixture
+    }
+}
+
+fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize) -> bool {
+    match topology {
+        TopologyNoise::SparseSupport => (fact - 1) % SEED_K == duplicate % SEED_K,
+        TopologyNoise::Clean | TopologyNoise::CrossTopicSupportRing => true,
     }
 }
 

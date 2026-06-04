@@ -459,6 +459,7 @@ struct NodeMeta {
 enum TopologyNoise {
     Clean,
     CrossTopicSupportRing,
+    SparseSupport,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
