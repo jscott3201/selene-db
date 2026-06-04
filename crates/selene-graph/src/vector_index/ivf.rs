@@ -43,6 +43,12 @@ pub(crate) struct IvfMemoryUsage {
     pub(crate) centroids: usize,
     /// Number of inverted lists.
     pub(crate) list_count: usize,
+    /// Number of inverted lists with at least one assigned live entry.
+    pub(crate) non_empty_list_count: usize,
+    /// Maximum assigned live entries in one inverted list.
+    pub(crate) max_list_len: usize,
+    /// Average assigned live entries per inverted list, scaled by 10,000.
+    pub(crate) average_list_len_basis_points: usize,
     /// Non-stale entry ids assigned to inverted lists.
     pub(crate) assigned_entries: usize,
     /// Estimated heap bytes owned by IVF structures, excluding vector components.
@@ -212,6 +218,8 @@ impl IvfVectorIndex {
         let live_entries = self.row_to_entry.len();
         let deleted_entries = self.entries.iter().filter(|entry| entry.deleted).count();
         let assigned_entries = self.lists.iter().map(Vec::len).sum();
+        let non_empty_list_count = self.lists.iter().filter(|list| !list.is_empty()).count();
+        let max_list_len = self.lists.iter().map(Vec::len).max().unwrap_or_default();
         let list_capacity = self.lists.iter().map(Vec::capacity).sum::<usize>();
         let referenced_vector_bytes = self
             .entries
@@ -255,6 +263,12 @@ impl IvfVectorIndex {
             deleted_entries,
             centroids: self.centroids.len(),
             list_count: self.lists.len(),
+            non_empty_list_count,
+            max_list_len,
+            average_list_len_basis_points: average_list_len_basis_points(
+                assigned_entries,
+                self.lists.len(),
+            ),
             assigned_entries,
             estimated_heap_bytes,
             referenced_vector_bytes,
@@ -505,6 +519,13 @@ fn ceil_sqrt(value: usize) -> usize {
         root -= 1;
     }
     root
+}
+
+fn average_list_len_basis_points(assigned_entries: usize, list_count: usize) -> usize {
+    assigned_entries
+        .saturating_mul(10_000)
+        .checked_div(list_count)
+        .unwrap_or_default()
 }
 
 fn vector_hits(top_k: VectorTopK<u32>) -> Vec<IvfVectorHit> {

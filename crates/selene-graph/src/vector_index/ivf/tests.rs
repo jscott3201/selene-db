@@ -55,7 +55,37 @@ fn ivf_search_finds_near_rows_when_all_lists_are_probed() {
     assert!(hits.iter().any(|hit| hit.row == 5));
     assert_eq!(usage.live_entries, 32);
     assert_eq!(usage.assigned_entries, 32);
+    assert!(usage.non_empty_list_count > 0);
+    assert!(usage.max_list_len > 0);
+    assert_eq!(
+        usage.average_list_len_basis_points,
+        usage.assigned_entries * 10_000 / usage.list_count
+    );
     assert!(usage.centroids > 1);
+}
+
+#[test]
+fn ivf_memory_usage_reports_list_distribution() {
+    let mut index = IvfVectorIndex::new(VectorMetric::SquaredEuclidean);
+    for row in 0..16 {
+        index.insert(row, vector(&[row as f32, 0.0])).unwrap();
+    }
+
+    index.finish_bulk_load().unwrap();
+
+    let usage = index.memory_usage();
+    assert_eq!(
+        usage.non_empty_list_count,
+        index.lists.iter().filter(|list| !list.is_empty()).count()
+    );
+    assert_eq!(
+        usage.max_list_len,
+        index.lists.iter().map(Vec::len).max().unwrap()
+    );
+    assert_eq!(
+        usage.average_list_len_basis_points,
+        usage.assigned_entries * 10_000 / usage.list_count
+    );
 }
 
 #[test]

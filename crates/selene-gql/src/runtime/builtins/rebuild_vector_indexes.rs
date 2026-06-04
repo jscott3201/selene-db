@@ -17,7 +17,7 @@ use crate::{
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
 
-static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 59] = [
+static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 65] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
     StaticOutputColumn::new("label", GqlType::String).with_description("Indexed node label."),
     StaticOutputColumn::new("property", GqlType::String).with_description("Indexed property."),
@@ -114,6 +114,18 @@ static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 59] = [
         .with_description("IVF inverted-list count before rebuild."),
     StaticOutputColumn::new("after_ivf_list_count", GqlType::Uint64)
         .with_description("IVF inverted-list count after rebuild."),
+    StaticOutputColumn::new("before_ivf_non_empty_list_count", GqlType::Uint64)
+        .with_description("IVF non-empty list count before rebuild."),
+    StaticOutputColumn::new("after_ivf_non_empty_list_count", GqlType::Uint64)
+        .with_description("IVF non-empty list count after rebuild."),
+    StaticOutputColumn::new("before_ivf_max_list_len", GqlType::Uint64)
+        .with_description("Maximum IVF list length before rebuild."),
+    StaticOutputColumn::new("after_ivf_max_list_len", GqlType::Uint64)
+        .with_description("Maximum IVF list length after rebuild."),
+    StaticOutputColumn::new("before_ivf_average_list_len_basis_points", GqlType::Uint64)
+        .with_description("Average IVF entries per list before rebuild scaled by 10,000."),
+    StaticOutputColumn::new("after_ivf_average_list_len_basis_points", GqlType::Uint64)
+        .with_description("Average IVF entries per list after rebuild scaled by 10,000."),
     StaticOutputColumn::new("before_ivf_assigned_entries", GqlType::Uint64)
         .with_description("Live IVF entries assigned to lists before rebuild."),
     StaticOutputColumn::new("after_ivf_assigned_entries", GqlType::Uint64)
@@ -267,6 +279,12 @@ impl RebuildRow {
             bytes(self.after.ivf_centroids),
             bytes(self.before.ivf_list_count),
             bytes(self.after.ivf_list_count),
+            bytes(self.before.ivf_non_empty_list_count),
+            bytes(self.after.ivf_non_empty_list_count),
+            bytes(self.before.ivf_max_list_len),
+            bytes(self.after.ivf_max_list_len),
+            bytes(self.before.ivf_average_list_len_basis_points),
+            bytes(self.after.ivf_average_list_len_basis_points),
             bytes(self.before.ivf_assigned_entries),
             bytes(self.after.ivf_assigned_entries),
             bytes(self.before.estimated_index_bytes),
