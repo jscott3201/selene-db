@@ -36,6 +36,7 @@ run-benches.sh --bench graph_hub_delete --sample-size 50 --measurement-time 5   
 run-benches.sh --bench single_graph --filter graph_exact_vector_scan --vector-scales million
 run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
+SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 run-benches.sh --bench vector_index_rebuild --allocator system   # allocator A/B without mimalloc
 run-benches.sh --crate selene-algorithms --dry-run   # preview resolved invocations, run nothing
 ```
@@ -55,6 +56,12 @@ Vector benches also accept an independent runner override with
 `--vector-scales`. The flag exports both `SELENE_VECTOR_BENCH_SCALES` and
 `SELENE_VECTOR_REBUILD_BENCH_SCALES`, so it covers exact/ANN query sweeps and
 index rebuild sweeps without changing non-vector benches.
+
+`vector_ivf_insert_drift` also accepts
+`SELENE_VECTOR_IVF_INSERT_DRIFT_BPS` as a comma-separated basis-point sweep over
+post-training novel inserts. The default remains `1000` (10%) so routine runs
+keep the historical row count; use `100,500,1000` for the maintenance-policy
+threshold sweep.
 
 For `vector_index_rebuild`, Criterion's positional `--filter` is mirrored into
 `SELENE_VECTOR_REBUILD_GROUP_FILTER` and
@@ -256,14 +263,24 @@ falls to 8725 bp recall/quality at ~112.4 µs, while width 2 restores 10000 bp a
 ~160.8 µs. Width 4 / 8 / 64 remain perfect-recall guardrails at ~274.4 µs /
 ~494.1 µs / ~3.065 ms.
 
-PR-local IVF incremental-insert drift spot-check:
+PR-local IVF incremental-insert drift spot-check. Bench IDs include
+`_d{basis_points}bp`; the suffix also includes pending-retrain pressure as
+`pend{count}pdbp{basis_points}`.
 
-| Bench | 1k | 10k | Notes |
-|---|---:|---:|---|
-| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w2` incremental | 179.68 µs | 141.42 µs | 10% novel post-build inserts, queried against the inserted cluster. Recall/quality falls to 9563 bp at 1k and 8250 bp at 10k because centroids were trained before the new cluster arrived. |
-| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w2` rebuilt | 39.85 µs | 113.36 µs | Rebuild retrains 34/105 lists for 1.1k/11k live entries and restores 10000 bp recall/quality; this is now the concrete threshold signal for future IVF maintenance policy. |
-| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w64` incremental | 421.15 µs | 2.665 ms | Wide probing recovers 10000 bp without rebuild, but scans enough candidate rows to be a poor substitute for maintenance under the 60/40 workload. |
-| `vector_ivf_insert_drift` / `graph_ivf_insert_drift/ivf_cos_dim128_w64` rebuilt | 364.13 µs | 2.511 ms | Wide-probe guardrail after rebuild; still much slower than the width-2 rebuilt row. |
+| Drift | Mode | 1k width-2 | 1k recall/quality | 10k width-2 | 10k recall/quality | Notes |
+|---:|---|---:|---:|---:|---:|---|
+| 1% | incremental | 151.48 µs | 7063 bp | 108.06 µs | 3188 bp | Tiny novel clusters can be badly missed at default width before retraining. |
+| 1% | rebuilt | 37.70 µs | 3500 bp | 92.06 µs | 10000 bp | At 1k, retraining too early hurts width-2 recall; at 10k it restores recall and lowers latency. |
+| 5% | incremental | 161.46 µs | 8500 bp | 125.89 µs | 7313 bp | Drift becomes visible but still scale-sensitive. |
+| 5% | rebuilt | 39.11 µs | 6000 bp | 90.99 µs | 10000 bp | 10k has enough novel mass for rebuild to be clearly useful. |
+| 10% | incremental | 176.51 µs | 9563 bp | 150.12 µs | 8250 bp | Matches the original 10% drift signal: default width is degraded before retrain. |
+| 10% | rebuilt | 38.23 µs | 10000 bp | 121.81 µs | 10000 bp | Rebuild restores default-width recall once the novel cluster is large enough. |
+
+Width-64 guardrail rows still recover recall without rebuild, but they are much
+slower than width-2 on the same fixture: 1k ranges from ~357-400 µs incremental
+and ~342-370 µs rebuilt; 10k ranges from ~2.38-3.26 ms incremental and
+~2.35-3.13 ms rebuilt. This supports a measured retrain policy over simply
+raising IVF's default probe width under the 60% read / 40% write workload.
 
 PR-local ANN recall spot-check:
 

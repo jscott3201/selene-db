@@ -22,6 +22,7 @@
 #   run-benches.sh --bench vector_index_rebuild --vector-scales 10000,50000
 #   run-benches.sh --bench vector_index_rebuild --filter graph_vector_index_rebuild/ivf --vector-scales 100000
 #   run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
+#   SELENE_VECTOR_IVF_INSERT_DRIFT_BPS=100,500,1000 run-benches.sh --bench vector_ivf_insert_drift --vector-scales 10000
 #   run-benches.sh --bench vector_index_rebuild --allocator system    # allocator A/B
 #   run-benches.sh --crate selene-graph --dry-run        # preview, run nothing
 #
