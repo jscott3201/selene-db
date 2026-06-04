@@ -98,6 +98,25 @@ impl MemoryRetrievalFixture {
                         }
                     }
                 }
+                if topology == TopologyNoise::NoisySparseSupport {
+                    for topic in 0..topic_count {
+                        let next_topic = (topic + 1) % topic_count;
+                        for duplicate in 0..duplicates {
+                            let summary = topic_nodes[topic][0][duplicate];
+                            let target_fact = 1 + duplicate % (FACTS_PER_TOPIC - 1);
+                            let target_nodes = &topic_nodes[next_topic][target_fact];
+                            let target = current_replacement(target_nodes, duplicate);
+                            mutator
+                                .create_edge(
+                                    support_edge.clone(),
+                                    summary,
+                                    target,
+                                    PropertyMap::new(),
+                                )
+                                .expect("bench noisy sparse support edge inserts");
+                        }
+                    }
+                }
                 for facts in &topic_nodes {
                     for (duplicate, summary) in facts[0].iter().enumerate() {
                         for (fact, evidence_nodes) in facts.iter().enumerate().skip(1) {
@@ -253,7 +272,9 @@ impl MemoryRetrievalFixture {
 
 fn support_edge_included(topology: TopologyNoise, duplicate: usize, fact: usize) -> bool {
     match topology {
-        TopologyNoise::SparseSupport => (fact - 1) % SEED_K == duplicate % SEED_K,
+        TopologyNoise::SparseSupport | TopologyNoise::NoisySparseSupport => {
+            (fact - 1) % SEED_K == duplicate % SEED_K
+        }
         TopologyNoise::Clean | TopologyNoise::CrossTopicSupportRing => true,
     }
 }
