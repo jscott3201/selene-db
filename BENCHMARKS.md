@@ -803,6 +803,28 @@ set but tests whether bounded-depth expansion admits off-topic tail evidence:
 | `graph_vector_noisy_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k1/...covbp10000_curbp10000_precbp10000` | 59.09 µs (`c4`) | 432.1 µs (`c19`) | Two-hop scope expansion keeps full quality and stays below both materialized-current and topic-filter references. |
 | `graph_vector_noisy_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 113.6 µs (`c32`) | 1.209 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
 
+Noisy sparse multi-hop provenance rows combine sparse correct support,
+wrong-topic support inserted first, and bridged correct support facts. This is
+the first fixture where provenance depth and root fanout matter together:
+
+| Strategy | 1k requested / 992 actual | 10k requested / 9,728 actual | Notes |
+|---|---:|---:|---|
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 373.6 µs (`c113`) | 3.828 ms (`c552`) | Full-quality broad session-current baseline. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_provenance_expand_k1/...covbp2500_curbp2500_precbp2500` | 145.2 µs (`c15`) | 1.475 ms (`c76`) | One-hop k1 sees only the direct part of one sparse root. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_provenance_expand_2hop_k1/...covbp3750_curbp3750_precbp3750` | 148.8 µs (`c15`) | 1.467 ms (`c76`) | Two-hop k1 recovers bridged facts for one root but still leaves sparse-root coverage on the floor. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_provenance_expand_2hop/...` | 175.4 µs (`c15`, full) | 1.521 ms (`c76`, `covbp8144`, `precbp8886`) | Four two-hop roots are enough at 1k but partial at 10k under sparse noisy support. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_provenance_expand_2hop_k8/...` | 193.8 µs (`c15`, full) | 1.583 ms (`c76`, `covbp9453`, `precbp9648`) | Eight two-hop roots nearly close the 10k gap. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_provenance_expand_k16/...` | 204.6 µs (`c15`, `covbp5927`, `precbp7500`) | 1.624 ms (`c76`, `covbp5000`, `precbp7500`) | Wide one-hop fanout improves precision but cannot see bridged correct support. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_session_provenance_expand_2hop_k16/...covbp10000_curbp10000_precbp10000` | 228.7 µs (`c15`) | 1.669 ms (`c76`) | Wide two-hop expansion restores full session quality, still below materialized-current scoring. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_materialized_current_filter/...covbp10000_curbp10000_precbp10000` | 116.6 µs (`c29`) | 1.242 ms (`c138`) | Full-quality scope-current baseline. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_k1/...covbp2500_curbp2500_precbp2500` | 44.09 µs (`c4`) | 411.0 µs (`c19`) | Lowest latency but only the direct part of one sparse root. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k1/...covbp3750_curbp3750_precbp3750` | 47.17 µs (`c4`) | 418.1 µs (`c19`) | Two-hop k1 restores bridged facts for one root. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_2hop/...` | 74.66 µs (`c4`, full) | 477.7 µs (`c19`, `covbp8144`, `precbp8886`) | Scope-local four-root expansion has the same 10k quality knee as the session row. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k8/...` | 74.16 µs (`c4`, full) | 540.8 µs (`c19`, `covbp9453`, `precbp9648`) | Eight roots nearly close the 10k gap while staying below topic filtering. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_k16/...` | 60.06 µs (`c4`, `covbp5000`, `precbp7500`) | 571.0 µs (`c19`, `covbp5000`, `precbp7500`) | Wide one-hop fanout remains depth-limited. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/graph_scope_provenance_expand_2hop_k16/...covbp10000_curbp10000_precbp10000` | 74.23 µs (`c4`) | 615.2 µs (`c19`) | Wide two-hop scope expansion restores full quality and remains below materialized-current and topic-filter references. |
+| `graph_vector_noisy_sparse_multihop_provenance_pressure/topic_filter/...covbp10000_curbp10000_precbp10000` | 114.2 µs (`c32`) | 1.214 ms (`c152`) | Metadata hard-topic lower-bound reference for comparison. |
+
 ## Cluster-B regression targets
 
 This doc is the baseline for the v1.2 cluster-B performance-uplift work

@@ -463,6 +463,7 @@ enum TopologyNoise {
     NoisySparseSupport,
     MultiHopSupport,
     NoisyMultiHopSupport,
+    NoisySparseMultiHopSupport,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

@@ -52,6 +52,24 @@ const MULTIHOP_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::TopicFilter,
 ];
 
+const SPARSE_MULTIHOP_PROVENANCE_STRATEGIES: &[SessionStrategy] = &[
+    SessionStrategy::GraphSessionMaterializedCurrentFilter,
+    SessionStrategy::GraphSessionProvenanceExpandK1,
+    SessionStrategy::GraphSessionProvenanceExpand2HopK1,
+    SessionStrategy::GraphSessionProvenanceExpand2Hop,
+    SessionStrategy::GraphSessionProvenanceExpand2HopK8,
+    SessionStrategy::GraphSessionProvenanceExpandK16,
+    SessionStrategy::GraphSessionProvenanceExpand2HopK16,
+    SessionStrategy::GraphScopeMaterializedCurrentFilter,
+    SessionStrategy::GraphScopeProvenanceExpandK1,
+    SessionStrategy::GraphScopeProvenanceExpand2HopK1,
+    SessionStrategy::GraphScopeProvenanceExpand2Hop,
+    SessionStrategy::GraphScopeProvenanceExpand2HopK8,
+    SessionStrategy::GraphScopeProvenanceExpandK16,
+    SessionStrategy::GraphScopeProvenanceExpand2HopK16,
+    SessionStrategy::TopicFilter,
+];
+
 #[derive(Clone, Copy, Debug)]
 enum SessionStrategy {
     NoisyWcc,
@@ -63,8 +81,11 @@ enum SessionStrategy {
     GraphSessionProvenanceExpandK1,
     GraphSessionProvenanceExpand2HopK1,
     GraphSessionProvenanceExpand,
+    GraphSessionProvenanceExpand2Hop,
     GraphSessionProvenanceExpandK8,
+    GraphSessionProvenanceExpand2HopK8,
     GraphSessionProvenanceExpandK16,
+    GraphSessionProvenanceExpand2HopK16,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
@@ -72,8 +93,11 @@ enum SessionStrategy {
     GraphScopeProvenanceExpandK1,
     GraphScopeProvenanceExpand2HopK1,
     GraphScopeProvenanceExpand,
+    GraphScopeProvenanceExpand2Hop,
     GraphScopeProvenanceExpandK8,
+    GraphScopeProvenanceExpand2HopK8,
     GraphScopeProvenanceExpandK16,
+    GraphScopeProvenanceExpand2HopK16,
     TopicFilter,
 }
 
@@ -91,8 +115,11 @@ impl SessionStrategy {
             Self::GraphSessionProvenanceExpandK1 => "graph_session_provenance_expand_k1",
             Self::GraphSessionProvenanceExpand2HopK1 => "graph_session_provenance_expand_2hop_k1",
             Self::GraphSessionProvenanceExpand => "graph_session_provenance_expand",
+            Self::GraphSessionProvenanceExpand2Hop => "graph_session_provenance_expand_2hop",
             Self::GraphSessionProvenanceExpandK8 => "graph_session_provenance_expand_k8",
+            Self::GraphSessionProvenanceExpand2HopK8 => "graph_session_provenance_expand_2hop_k8",
             Self::GraphSessionProvenanceExpandK16 => "graph_session_provenance_expand_k16",
+            Self::GraphSessionProvenanceExpand2HopK16 => "graph_session_provenance_expand_2hop_k16",
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
@@ -100,8 +127,11 @@ impl SessionStrategy {
             Self::GraphScopeProvenanceExpandK1 => "graph_scope_provenance_expand_k1",
             Self::GraphScopeProvenanceExpand2HopK1 => "graph_scope_provenance_expand_2hop_k1",
             Self::GraphScopeProvenanceExpand => "graph_scope_provenance_expand",
+            Self::GraphScopeProvenanceExpand2Hop => "graph_scope_provenance_expand_2hop",
             Self::GraphScopeProvenanceExpandK8 => "graph_scope_provenance_expand_k8",
+            Self::GraphScopeProvenanceExpand2HopK8 => "graph_scope_provenance_expand_2hop_k8",
             Self::GraphScopeProvenanceExpandK16 => "graph_scope_provenance_expand_k16",
+            Self::GraphScopeProvenanceExpand2HopK16 => "graph_scope_provenance_expand_2hop_k16",
             Self::TopicFilter => "topic_filter",
         }
     }
@@ -117,11 +147,20 @@ impl SessionStrategy {
             Self::GraphSessionProvenanceExpand | Self::GraphScopeProvenanceExpand => {
                 Some((SEED_K, 1))
             }
+            Self::GraphSessionProvenanceExpand2Hop | Self::GraphScopeProvenanceExpand2Hop => {
+                Some((SEED_K, 2))
+            }
             Self::GraphSessionProvenanceExpandK8 | Self::GraphScopeProvenanceExpandK8 => {
                 Some((SEED_K * 2, 1))
             }
+            Self::GraphSessionProvenanceExpand2HopK8 | Self::GraphScopeProvenanceExpand2HopK8 => {
+                Some((SEED_K * 2, 2))
+            }
             Self::GraphSessionProvenanceExpandK16 | Self::GraphScopeProvenanceExpandK16 => {
                 Some((WIDE_SEED_K, 1))
+            }
+            Self::GraphSessionProvenanceExpand2HopK16 | Self::GraphScopeProvenanceExpand2HopK16 => {
+                Some((WIDE_SEED_K, 2))
             }
             _ => None,
         }
@@ -134,6 +173,7 @@ pub(super) fn bench(c: &mut Criterion) {
     bench_noisy_sparse_provenance_pressure(c);
     bench_multihop_provenance_pressure(c);
     bench_noisy_multihop_provenance_pressure(c);
+    bench_noisy_sparse_multihop_provenance_pressure(c);
 }
 
 fn bench_session_filter_pressure(c: &mut Criterion) {
@@ -218,6 +258,20 @@ fn bench_noisy_multihop_provenance_pressure(c: &mut Criterion) {
         let fixture =
             MemoryRetrievalFixture::build_with_topology(scale, TopologyNoise::NoisyMultiHopSupport);
         for &strategy in MULTIHOP_PROVENANCE_STRATEGIES {
+            bench_strategy(&mut group, &fixture, strategy);
+        }
+    }
+    group.finish();
+}
+
+fn bench_noisy_sparse_multihop_provenance_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_noisy_sparse_multihop_provenance_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build_with_topology(
+            scale,
+            TopologyNoise::NoisySparseMultiHopSupport,
+        );
+        for &strategy in SPARSE_MULTIHOP_PROVENANCE_STRATEGIES {
             bench_strategy(&mut group, &fixture, strategy);
         }
     }
@@ -315,10 +369,14 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionProvenanceExpandK1
             | SessionStrategy::GraphSessionProvenanceExpand2HopK1
             | SessionStrategy::GraphSessionProvenanceExpand
+            | SessionStrategy::GraphSessionProvenanceExpand2Hop
             | SessionStrategy::GraphSessionProvenanceExpandK8
-            | SessionStrategy::GraphSessionProvenanceExpandK16 => self.provenance_root_candidates(
-                self.materialized_current_candidates(self.graph_session_candidates(query)),
-            ),
+            | SessionStrategy::GraphSessionProvenanceExpand2HopK8
+            | SessionStrategy::GraphSessionProvenanceExpandK16
+            | SessionStrategy::GraphSessionProvenanceExpand2HopK16 => self
+                .provenance_root_candidates(
+                    self.materialized_current_candidates(self.graph_session_candidates(query)),
+                ),
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
@@ -332,10 +390,16 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphScopeProvenanceExpandK1
             | SessionStrategy::GraphScopeProvenanceExpand2HopK1
             | SessionStrategy::GraphScopeProvenanceExpand
+            | SessionStrategy::GraphScopeProvenanceExpand2Hop
             | SessionStrategy::GraphScopeProvenanceExpandK8
-            | SessionStrategy::GraphScopeProvenanceExpandK16 => self.provenance_root_candidates(
-                self.materialized_current_candidates(self.graph_session_scope_candidates(query)),
-            ),
+            | SessionStrategy::GraphScopeProvenanceExpand2HopK8
+            | SessionStrategy::GraphScopeProvenanceExpandK16
+            | SessionStrategy::GraphScopeProvenanceExpand2HopK16 => self
+                .provenance_root_candidates(
+                    self.materialized_current_candidates(
+                        self.graph_session_scope_candidates(query),
+                    ),
+                ),
             SessionStrategy::TopicFilter => self
                 .topic_candidates
                 .get(query.topic)
