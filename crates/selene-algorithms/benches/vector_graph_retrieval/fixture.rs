@@ -4,29 +4,24 @@ use std::collections::{HashMap, HashSet};
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, Throughput};
-use selene_algorithms::{
-    GraphProjection, PageRankConfig, Parallelism, ProjectionConfig, pagerank, wcc,
-};
 use selene_core::{
-    CancellationChecker, GraphId, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value,
-    VectorMetric, VectorValue, intern,
+    CancellationChecker, HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value, VectorMetric,
+    VectorValue,
 };
 use selene_graph::{
     ApproximateVectorSearchOptions, SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind,
     VectorNodeSearchHit,
 };
-use selene_testing::BenchProfile;
 
 use crate::common::scale_label;
 
-const DIMENSION: usize = 128;
-const FACTS_PER_TOPIC: usize = 8;
-const RESULT_K: usize = FACTS_PER_TOPIC;
-const SEED_K: usize = 4;
-const WIDE_SEED_K: usize = 16;
-const ORACLE_SEED_K: usize = 64;
-const SEARCH_WIDTH: usize = 32;
-const PAGERANK_WEIGHT: f64 = 0.05;
+mod support;
+
+use support::{
+    DIMENSION, FACTS_PER_TOPIC, ORACLE_SEED_K, PAGERANK_WEIGHT, RESULT_K, SEARCH_WIDTH, SEED_K,
+    WIDE_SEED_K, basis_points, component_candidates, current_replacement, duplicates_per_fact,
+    graph_id_for_scale, istr, memory_vector, pagerank_scores, topic_count, vector_scales,
+};
 
 const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::VectorOnly,
@@ -40,6 +35,8 @@ const STRATEGIES: &[RetrievalStrategy] = &[
     RetrievalStrategy::GraphExpandPagerank,
     RetrievalStrategy::ExactGraphOracle,
 ];
+
+const COMPONENT_PRESSURE_WIDTHS: &[usize] = &[1, 4, 16, 64];
 
 #[derive(Clone, Copy, Debug)]
 enum RetrievalStrategy {
@@ -73,6 +70,11 @@ impl RetrievalStrategy {
 }
 
 pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
+    bench_retrieval_strategies(c);
+    bench_component_pressure(c);
+}
+
+fn bench_retrieval_strategies(c: &mut Criterion) {
     let mut group = c.benchmark_group("graph_vector_retrieval");
     for scale in vector_scales() {
         let fixture = MemoryRetrievalFixture::build(scale);
@@ -107,6 +109,44 @@ pub(crate) fn bench_graph_augmented_vector_retrieval(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_component_pressure(c: &mut Criterion) {
+    let mut group = c.benchmark_group("graph_vector_component_pressure");
+    for scale in vector_scales() {
+        let fixture = MemoryRetrievalFixture::build(scale);
+        for &width in COMPONENT_PRESSURE_WIDTHS {
+            let actual_width = fixture.component_pool_width(width);
+            let avg_candidates = fixture.average_component_pool_candidates(width);
+            let quality = fixture.component_pressure_quality(width);
+            group.throughput(Throughput::Elements(
+                (fixture.query_count() * avg_candidates) as u64,
+            ));
+            group.bench_function(
+                BenchmarkId::new(
+                    format!("component_pool_w{actual_width}"),
+                    format!(
+                        "{}_q{}_c{}_covbp{}_curbp{}_precbp{}",
+                        scale_label(fixture.scale()),
+                        fixture.query_count(),
+                        avg_candidates,
+                        basis_points(quality.coverage, fixture.query_count() * FACTS_PER_TOPIC),
+                        basis_points(
+                            quality.current_coverage,
+                            fixture.query_count() * FACTS_PER_TOPIC
+                        ),
+                        basis_points(quality.precision, fixture.query_count() * RESULT_K),
+                    ),
+                ),
+                |b| {
+                    b.iter(|| {
+                        black_box(fixture.component_pressure_total_coverage(width));
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
 struct MemoryRetrievalFixture {
     graph: SeleneGraph,
     scale: usize,
@@ -119,6 +159,8 @@ struct MemoryRetrievalFixture {
     metadata: HashMap<NodeId, NodeMeta>,
     pagerank: HashMap<NodeId, f64>,
     component_candidates: HashMap<u64, Vec<NodeId>>,
+    component_order: Vec<u64>,
+    component_offsets: HashMap<u64, usize>,
 }
 
 impl MemoryRetrievalFixture {
@@ -130,7 +172,7 @@ impl MemoryRetrievalFixture {
         let superseded_by_edge = istr("SUPERSEDED_BY");
         let topic_count = topic_count(requested_scale);
         let duplicates = duplicates_per_fact(requested_scale, topic_count);
-        let shared = SharedGraph::new(GraphId::new(91_000 + requested_scale as u64));
+        let shared = SharedGraph::new(graph_id_for_scale(requested_scale));
         let mut topic_nodes = vec![vec![Vec::new(); FACTS_PER_TOPIC]; topic_count];
         let mut metadata = HashMap::new();
 
@@ -215,6 +257,14 @@ impl MemoryRetrievalFixture {
         let pagerank = pagerank_scores(&graph, &label, &support_edge);
         let (component_by_node, component_candidates) =
             component_candidates(&graph, &label, &support_edge, &superseded_by_edge);
+        let mut component_order: Vec<_> = component_candidates.keys().copied().collect();
+        component_order.sort_unstable();
+        let component_offsets = component_order
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(offset, component)| (component, offset))
+            .collect();
         let queries = (0..topic_count)
             .map(|topic| Query {
                 topic,
@@ -234,6 +284,8 @@ impl MemoryRetrievalFixture {
             metadata,
             pagerank,
             component_candidates,
+            component_order,
+            component_offsets,
         }
     }
 
@@ -261,8 +313,33 @@ impl MemoryRetrievalFixture {
         self.quality(strategy).coverage
     }
 
+    fn component_pressure_quality(&self, width: usize) -> RetrievalQuality {
+        self.queries
+            .iter()
+            .map(|query| self.component_pressure_query_quality(query, width))
+            .fold(RetrievalQuality::default(), |mut total, next| {
+                total.coverage += next.coverage;
+                total.current_coverage += next.current_coverage;
+                total.precision += next.precision;
+                total
+            })
+    }
+
+    fn component_pressure_total_coverage(&self, width: usize) -> usize {
+        self.component_pressure_quality(width).coverage
+    }
+
+    fn component_pressure_query_quality(&self, query: &Query, width: usize) -> RetrievalQuality {
+        let selected = self.select_component_pool(query, width);
+        self.selected_quality(query, selected)
+    }
+
     fn query_quality(&self, query: &Query, strategy: RetrievalStrategy) -> RetrievalQuality {
         let selected = self.select(query, strategy);
+        self.selected_quality(query, selected)
+    }
+
+    fn selected_quality(&self, query: &Query, selected: Vec<NodeId>) -> RetrievalQuality {
         let mut facts = [false; FACTS_PER_TOPIC];
         let mut current_facts = [false; FACTS_PER_TOPIC];
         let mut precision = 0usize;
@@ -374,6 +451,53 @@ impl MemoryRetrievalFixture {
                 )
             }
         }
+    }
+
+    fn select_component_pool(&self, query: &Query, width: usize) -> Vec<NodeId> {
+        let candidates = self.component_pool_candidates(query, width);
+        let hits = self.score_candidate_ids(query, candidates);
+        self.select_from_candidates(query, hits, true, false, true)
+    }
+
+    fn component_pool_candidates(&self, query: &Query, width: usize) -> Vec<NodeId> {
+        let Some(start) = self.component_offsets.get(&query.component).copied() else {
+            return Vec::new();
+        };
+        let mut candidates = Vec::with_capacity(self.component_pool_candidate_count(query, width));
+        for offset in 0..self.component_pool_width(width) {
+            let component = self.component_order[(start + offset) % self.component_order.len()];
+            if let Some(nodes) = self.component_candidates.get(&component) {
+                candidates.extend(nodes.iter().copied());
+            }
+        }
+        candidates
+    }
+
+    fn component_pool_width(&self, width: usize) -> usize {
+        width.max(1).min(self.component_order.len())
+    }
+
+    fn component_pool_candidate_count(&self, query: &Query, width: usize) -> usize {
+        let Some(start) = self.component_offsets.get(&query.component).copied() else {
+            return 0;
+        };
+        (0..self.component_pool_width(width))
+            .map(|offset| {
+                let component = self.component_order[(start + offset) % self.component_order.len()];
+                self.component_candidates
+                    .get(&component)
+                    .map_or(0, Vec::len)
+            })
+            .sum()
+    }
+
+    fn average_component_pool_candidates(&self, width: usize) -> usize {
+        self.queries
+            .iter()
+            .map(|query| self.component_pool_candidate_count(query, width))
+            .sum::<usize>()
+            .checked_div(self.query_count())
+            .unwrap_or(0)
     }
 
     fn ann_hits(&self, query: &Query, k: usize) -> Vec<VectorNodeSearchHit> {
@@ -557,126 +681,4 @@ struct RetrievalQuality {
     coverage: usize,
     current_coverage: usize,
     precision: usize,
-}
-
-fn pagerank_scores(graph: &SeleneGraph, label: &IStr, support_edge: &IStr) -> HashMap<NodeId, f64> {
-    let projection = GraphProjection::build(
-        graph,
-        &ProjectionConfig {
-            name: "memory_retrieval".to_owned(),
-            node_labels: vec![label.clone()],
-            edge_labels: vec![support_edge.clone()],
-            weight_property: None,
-        },
-        None,
-    )
-    .expect("bench projection builds");
-    let scores = pagerank(
-        &projection,
-        PageRankConfig {
-            damping: 0.85,
-            max_iter: 32,
-            tolerance: 1e-6,
-            parallelism: Parallelism::Sequential,
-        },
-    );
-    let max = scores.iter().map(|(_, score)| *score).fold(0.0, f64::max);
-    scores
-        .into_iter()
-        .map(|(node, score)| (node, if max > 0.0 { score / max } else { 0.0 }))
-        .collect()
-}
-
-fn component_candidates(
-    graph: &SeleneGraph,
-    label: &IStr,
-    support_edge: &IStr,
-    superseded_by_edge: &IStr,
-) -> (HashMap<NodeId, u64>, HashMap<u64, Vec<NodeId>>) {
-    let projection = GraphProjection::build(
-        graph,
-        &ProjectionConfig {
-            name: "memory_components".to_owned(),
-            node_labels: vec![label.clone()],
-            edge_labels: vec![support_edge.clone(), superseded_by_edge.clone()],
-            weight_property: None,
-        },
-        None,
-    )
-    .expect("bench component projection builds");
-    let mut by_node = HashMap::new();
-    let mut by_component: HashMap<u64, Vec<NodeId>> = HashMap::new();
-    for (node, component) in wcc(&projection) {
-        by_node.insert(node, component);
-        by_component.entry(component).or_default().push(node);
-    }
-    (by_node, by_component)
-}
-
-fn topic_count(scale: usize) -> usize {
-    (scale / (FACTS_PER_TOPIC * 4)).clamp(4, 64)
-}
-
-fn duplicates_per_fact(scale: usize, topics: usize) -> usize {
-    (scale / (topics * FACTS_PER_TOPIC)).max(2)
-}
-
-fn current_replacement(nodes: &[NodeId], duplicate: usize) -> NodeId {
-    let replacement = if duplicate.is_multiple_of(2) {
-        duplicate
-    } else {
-        duplicate.saturating_sub(1)
-    };
-    nodes[replacement]
-}
-
-fn vector_scales() -> Vec<usize> {
-    std::env::var("SELENE_VECTOR_BENCH_SCALES")
-        .ok()
-        .and_then(parse_scales)
-        .unwrap_or_else(|| BenchProfile::from_env().scales().to_vec())
-}
-
-fn parse_scales(raw: String) -> Option<Vec<usize>> {
-    let mut scales: Vec<_> = raw
-        .split(',')
-        .filter_map(|part| part.trim().parse::<usize>().ok())
-        .filter(|scale| *scale > 0)
-        .collect();
-    scales.sort_unstable();
-    scales.dedup();
-    (!scales.is_empty()).then_some(scales)
-}
-
-fn memory_vector(topic: usize, fact: usize, duplicate: usize, shift: f32) -> VectorValue {
-    let primary = topic % DIMENSION;
-    let secondary = topic.wrapping_mul(5).wrapping_add(3) % DIMENSION;
-    let fact_dim = topic.wrapping_mul(11).wrapping_add(fact * 17 + 7) % DIMENSION;
-    let components: Vec<f32> = (0..DIMENSION)
-        .map(|dim| {
-            let base = (((topic + 3) * (dim + 11)) % 17) as f32 / 200.0;
-            let topic_signal = if dim == primary { 1.0 } else { 0.0 };
-            let secondary_signal = if dim == secondary { 0.25 } else { 0.0 };
-            let fact_signal = if dim == fact_dim {
-                fact as f32 * 0.055
-            } else {
-                0.0
-            };
-            let duplicate_noise =
-                ((duplicate * (dim + 13) + fact * 31 + topic * 7) % 29) as f32 / 100_000.0;
-            base + topic_signal + secondary_signal + fact_signal + duplicate_noise + shift
-        })
-        .collect();
-    VectorValue::new(components).expect("bench vector is valid")
-}
-
-fn basis_points(numerator: usize, denominator: usize) -> usize {
-    numerator
-        .saturating_mul(10_000)
-        .checked_div(denominator)
-        .unwrap_or(10_000)
-}
-
-fn istr(value: &str) -> IStr {
-    intern(value).expect("bench string interns")
 }
