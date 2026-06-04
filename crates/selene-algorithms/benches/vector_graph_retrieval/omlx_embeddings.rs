@@ -17,11 +17,13 @@ const API_KEY_ENVS: &[&str] = &["SELENE_OMLX_API_KEY", "OMLX_KEY"];
 const BASE_URL_ENV: &str = "SELENE_OMLX_BASE_URL";
 const MODELS_ENV: &str = "SELENE_OMLX_EMBEDDING_MODELS";
 const CORPUS_ENV: &str = "SELENE_OMLX_CORPUS";
+const BATCH_SIZE_ENV: &str = "SELENE_OMLX_EMBEDDING_BATCH_SIZE";
 const DEFAULT_BASE_URL: &str = "http://127.0.0.1:7700/v1";
 const DEFAULT_MODELS: &[&str] = &[
     "Qwen3-Embedding-0.6B-4bit-DWQ",
     "Qwen3-Embedding-4B-4bit-DWQ",
 ];
+const DEFAULT_EMBEDDING_BATCH_SIZE: usize = 64;
 const TOP_K: usize = 4;
 const ANN_SEARCH_WIDTH: usize = 64;
 
@@ -29,7 +31,7 @@ pub(super) fn bench(c: &mut Criterion) {
     let Some(config) = OmlxBenchConfig::from_env() else {
         return;
     };
-    let client = OmlxClient::new(config.base_url, config.api_key);
+    let client = OmlxClient::new(config.base_url, config.api_key, config.batch_size);
     let inputs = config.corpus.inputs();
     let mut group = c.benchmark_group("graph_vector_omlx_embedding_pressure");
     for model in config.models {
@@ -54,7 +56,13 @@ pub(super) fn bench(c: &mut Criterion) {
         group.bench_function(
             BenchmarkId::new(
                 "embed_batch",
-                format!("{}_docs{}_dim{}", model_id, inputs.len(), fixture.dimension),
+                format!(
+                    "{}_docs{}_batch{}_dim{}",
+                    model_id,
+                    inputs.len(),
+                    config.batch_size,
+                    fixture.dimension
+                ),
             ),
             |b| {
                 b.iter(|| {
@@ -165,6 +173,7 @@ struct OmlxBenchConfig {
     api_key: String,
     models: Vec<String>,
     corpus: CorpusProfile,
+    batch_size: usize,
 }
 
 impl OmlxBenchConfig {
@@ -198,8 +207,25 @@ impl OmlxBenchConfig {
             api_key,
             models,
             corpus: CorpusProfile::from_env(CORPUS_ENV),
+            batch_size: embedding_batch_size(),
         })
     }
+}
+
+fn embedding_batch_size() -> usize {
+    std::env::var(BATCH_SIZE_ENV)
+        .ok()
+        .map(|raw| {
+            let batch_size = raw
+                .parse::<usize>()
+                .expect("SELENE_OMLX_EMBEDDING_BATCH_SIZE must be a positive integer");
+            assert!(
+                batch_size > 0,
+                "SELENE_OMLX_EMBEDDING_BATCH_SIZE must be greater than zero"
+            );
+            batch_size
+        })
+        .unwrap_or(DEFAULT_EMBEDDING_BATCH_SIZE)
 }
 
 fn model_id(model: &str) -> String {

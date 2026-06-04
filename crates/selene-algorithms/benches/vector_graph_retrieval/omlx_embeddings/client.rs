@@ -11,12 +11,18 @@ use super::corpus::CorpusInput;
 pub(super) struct OmlxClient {
     endpoint: HttpEndpoint,
     api_key: String,
+    batch_size: usize,
 }
 
 impl OmlxClient {
-    pub(super) fn new(base_url: String, api_key: String) -> Self {
+    pub(super) fn new(base_url: String, api_key: String, batch_size: usize) -> Self {
         let endpoint = HttpEndpoint::parse(&base_url).expect("valid local oMLX HTTP base URL");
-        Self { endpoint, api_key }
+        assert!(batch_size > 0, "oMLX embedding batch size must be non-zero");
+        Self {
+            endpoint,
+            api_key,
+            batch_size,
+        }
     }
 
     pub(super) fn embed(
@@ -24,6 +30,21 @@ impl OmlxClient {
         model: &str,
         inputs: &[CorpusInput],
     ) -> Result<Vec<VectorValue>, String> {
+        let mut vectors = Vec::with_capacity(inputs.len());
+        for chunk in inputs.chunks(self.batch_size) {
+            vectors.extend(self.embed_chunk(model, chunk)?);
+        }
+        if vectors.len() != inputs.len() {
+            return Err(format!(
+                "oMLX embedding response for {model} returned {} vectors for {} inputs",
+                vectors.len(),
+                inputs.len()
+            ));
+        }
+        Ok(vectors)
+    }
+
+    fn embed_chunk(&self, model: &str, inputs: &[CorpusInput]) -> Result<Vec<VectorValue>, String> {
         let body = serde_json::json!({
             "model": model,
             "input": inputs.iter().map(|input| input.text).collect::<Vec<_>>(),
@@ -32,33 +53,49 @@ impl OmlxClient {
         let response = self
             .endpoint
             .post_json("/embeddings", &self.api_key, &body)?;
-        let json: serde_json::Value = serde_json::from_slice(&response)
-            .map_err(|err| format!("oMLX embedding response is not JSON: {err}"))?;
-        let Some(data) = json.get("data").and_then(|value| value.as_array()) else {
-            return Err(format!(
-                "oMLX embedding response for {model} has no data array: {}",
-                truncate_json(&json)
-            ));
-        };
-        data.iter()
-            .map(|item| {
-                let Some(values) = item.get("embedding").and_then(|value| value.as_array()) else {
-                    return Err("oMLX embedding item has no embedding array".to_owned());
-                };
-                let components = values
-                    .iter()
-                    .map(|value| {
-                        value
-                            .as_f64()
-                            .map(|component| component as f32)
-                            .ok_or_else(|| "oMLX embedding component is not numeric".to_owned())
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                VectorValue::new(components)
-                    .map_err(|err| format!("oMLX embedding vector failed validation: {err}"))
-            })
-            .collect()
+        parse_embedding_response(model, inputs.len(), &response)
     }
+}
+
+fn parse_embedding_response(
+    model: &str,
+    expected_count: usize,
+    response: &[u8],
+) -> Result<Vec<VectorValue>, String> {
+    let json: serde_json::Value = serde_json::from_slice(response)
+        .map_err(|err| format!("oMLX embedding response is not JSON: {err}"))?;
+    let Some(data) = json.get("data").and_then(|value| value.as_array()) else {
+        return Err(format!(
+            "oMLX embedding response for {model} has no data array: {}",
+            truncate_json(&json)
+        ));
+    };
+    let vectors = data
+        .iter()
+        .map(|item| {
+            let Some(values) = item.get("embedding").and_then(|value| value.as_array()) else {
+                return Err("oMLX embedding item has no embedding array".to_owned());
+            };
+            let components = values
+                .iter()
+                .map(|value| {
+                    value
+                        .as_f64()
+                        .map(|component| component as f32)
+                        .ok_or_else(|| "oMLX embedding component is not numeric".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            VectorValue::new(components)
+                .map_err(|err| format!("oMLX embedding vector failed validation: {err}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if vectors.len() != expected_count {
+        return Err(format!(
+            "oMLX embedding response for {model} returned {} vectors for {expected_count} inputs",
+            vectors.len()
+        ));
+    }
+    Ok(vectors)
 }
 
 struct HttpEndpoint {
