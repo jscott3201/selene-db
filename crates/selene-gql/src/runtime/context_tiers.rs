@@ -183,6 +183,15 @@ impl<'a, 'g> MaintenanceContext<'a, 'g> {
         self.graph.rebuild_vector_indexes()
     }
 
+    /// Rebuild vector indexes whose diagnostics recommend maintenance.
+    ///
+    /// # Errors
+    ///
+    /// Returns graph errors raised by strict rebuild validation.
+    pub fn rebuild_recommended_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        self.graph.rebuild_recommended_vector_indexes()
+    }
+
     /// Register a binding table for this procedure call's statement.
     pub fn register_binding_table(&self, table: Arc<BindingTable>) -> BindingTableId {
         self.binding_tables.register(table)

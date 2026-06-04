@@ -7,6 +7,7 @@
 use selene_core::{CancellationCause, IStr, Value, intern};
 use selene_graph::{
     HnswIndexConfig, VectorIndexKind, VectorIndexMemoryUsage, VectorIndexRebuildEntry,
+    VectorIndexRebuildReport,
 };
 
 use super::meta::{StaticOutputColumn, StaticParameter};
@@ -16,6 +17,7 @@ use crate::{
 };
 
 const PROC_NAME: &str = "selene.rebuild_vector_indexes";
+const RECOMMENDED_PROC_NAME: &str = "selene.rebuild_recommended_vector_indexes";
 
 static REBUILD_VECTOR_INDEXES_OUTPUTS: [StaticOutputColumn; 71] = [
     StaticOutputColumn::new("name", GqlType::String).with_description("Catalog index name."),
@@ -184,9 +186,32 @@ pub(super) fn execute(
     ctx: &MaintenanceContext<'_, '_>,
     args: &[Value],
 ) -> Result<ProcedureResult, ProcedureError> {
+    execute_with(ctx, args, PROC_NAME, |ctx| ctx.rebuild_vector_indexes())
+}
+
+pub(super) fn execute_recommended(
+    ctx: &MaintenanceContext<'_, '_>,
+    args: &[Value],
+) -> Result<ProcedureResult, ProcedureError> {
+    execute_with(ctx, args, RECOMMENDED_PROC_NAME, |ctx| {
+        ctx.rebuild_recommended_vector_indexes()
+    })
+}
+
+fn execute_with<'ctx, 'graph, 'txn, F>(
+    ctx: &'ctx MaintenanceContext<'graph, 'txn>,
+    args: &[Value],
+    proc_name: &str,
+    rebuild: F,
+) -> Result<ProcedureResult, ProcedureError>
+where
+    F: FnOnce(
+        &'ctx MaintenanceContext<'graph, 'txn>,
+    ) -> selene_graph::GraphResult<VectorIndexRebuildReport>,
+{
     if !args.is_empty() {
         return Err(ProcedureError::InvalidArgument {
-            detail: format!("{PROC_NAME} expects zero arguments"),
+            detail: format!("{proc_name} expects zero arguments"),
         });
     }
     ctx.cancellation_checker()
@@ -195,11 +220,9 @@ pub(super) fn execute(
             CancellationCause::Cancelled => ProcedureError::Cancelled,
             CancellationCause::Timeout { elapsed } => ProcedureError::Timeout { elapsed },
         })?;
-    let report = ctx
-        .rebuild_vector_indexes()
-        .map_err(|source| ProcedureError::Internal {
-            detail: format!("vector index rebuild failed: {source}"),
-        })?;
+    let report = rebuild(ctx).map_err(|source| ProcedureError::Internal {
+        detail: format!("vector index rebuild failed: {source}"),
+    })?;
     let rows = report
         .entries
         .into_iter()

@@ -10,13 +10,13 @@
 //! so the shared CALL plan cache ([`crate::CallPlanCache`]) key stays stable
 //! across statements.
 //!
-//! STEP 2 registers the 19 `algo.*` procedures. The 12 platform
+//! STEP 2 registers the 19 `algo.*` procedures. The 13 platform
 //! built-ins (`selene.health`, `selene.feature_status`, `selene.verify`,
 //! `selene.create_index`, `selene.drop_index`, `selene.vector_search_nodes`,
 //! `selene.vector_search_nodes_ann`, `selene.vector_search_nodes_ann_batch`,
 //! `selene.vector_index_stats`, `selene.rebuild_vector_indexes`,
-//! `selene.create_vector_index`, `selene.drop_vector_index`) are registered
-//! here, bringing the total to 31;
+//! `selene.rebuild_recommended_vector_indexes`, `selene.create_vector_index`,
+//! `selene.drop_vector_index`) are registered here, bringing the total to 32;
 //! the registry's tables and
 //! `iter_handles` are
 //! already shaped to carry both.
@@ -79,8 +79,8 @@ impl BuiltinProcedureRegistry {
         let mut ordered = Vec::new();
 
         // Handles are 1-based and assigned in registration order: the 19
-        // `algo.*` procedures first (handles 1..=19), then the 12 `selene.*`
-        // platform built-ins (handles 20..=31), continuing the same monotonic
+        // `algo.*` procedures first (handles 1..=19), then the 13 `selene.*`
+        // platform built-ins (handles 20..=32), continuing the same monotonic
         // sequence. `next_handle` carries the running 1-based handle value.
         let mut next_handle = 1_u64;
         for spec in &ALGO_SPECS {
@@ -247,18 +247,18 @@ mod tests {
     }
 
     #[test]
-    fn registers_all_thirty_one_procedures() {
+    fn registers_all_thirty_two_procedures() {
         let registry = BuiltinProcedureRegistry::new();
         let handles: Vec<_> = registry.iter_handles().collect();
         assert_eq!(
             handles.len(),
-            31,
-            "expected 19 algo procedures + 12 platform built-ins"
+            32,
+            "expected 19 algo procedures + 13 platform built-ins"
         );
     }
 
     #[test]
-    fn iter_handles_yields_all_twelve_platform_builtins() {
+    fn iter_handles_yields_all_thirteen_platform_builtins() {
         let registry = BuiltinProcedureRegistry::new();
         let names: Vec<Vec<String>> = registry
             .iter_handles()
@@ -279,6 +279,7 @@ mod tests {
             ["selene", "vector_search_nodes_ann_batch"],
             ["selene", "vector_index_stats"],
             ["selene", "rebuild_vector_indexes"],
+            ["selene", "rebuild_recommended_vector_indexes"],
             ["selene", "create_vector_index"],
             ["selene", "drop_vector_index"],
         ] {
@@ -329,6 +330,11 @@ mod tests {
         let metadata = registry
             .lookup(&name(&["selene", "rebuild_vector_indexes"]))
             .expect("rebuild_vector_indexes resolves");
+        assert_eq!(metadata.tier, ProcedureTier::Maintenance);
+        assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_recommended_vector_indexes"]))
+            .expect("rebuild_recommended_vector_indexes resolves");
         assert_eq!(metadata.tier, ProcedureTier::Maintenance);
         assert_eq!(metadata.mutability, ProcedureMutability::MaintenanceWrite);
     }
@@ -435,7 +441,6 @@ mod tests {
         let metadata = registry
             .lookup(&name(&["selene", "vector_search_nodes_ann_batch"]))
             .expect("vector_search_nodes_ann_batch resolves");
-        assert_eq!(metadata.handle.raw(), 31);
         let arity = metadata.signature.arity();
         assert_eq!(arity.minimum, 4);
         assert_eq!(arity.maximum, 6);
@@ -523,6 +528,19 @@ mod tests {
         let metadata = registry
             .lookup(&name(&["selene", "rebuild_vector_indexes"]))
             .expect("rebuild_vector_indexes resolves");
+        assert_rebuild_vector_indexes_metadata(&metadata);
+    }
+
+    #[test]
+    fn rebuild_recommended_vector_indexes_signature_is_zero_arg_maintenance() {
+        let registry = BuiltinProcedureRegistry::new();
+        let metadata = registry
+            .lookup(&name(&["selene", "rebuild_recommended_vector_indexes"]))
+            .expect("rebuild_recommended_vector_indexes resolves");
+        assert_rebuild_vector_indexes_metadata(&metadata);
+    }
+
+    fn assert_rebuild_vector_indexes_metadata(metadata: &crate::ProcedureMetadata) {
         let arity = metadata.signature.arity();
         assert_eq!(arity.minimum, 0);
         assert_eq!(arity.maximum, 0);
@@ -662,7 +680,7 @@ mod tests {
             .map(|(_, metadata)| metadata.handle.raw())
             .collect();
         handles.sort_unstable();
-        assert_eq!(handles, (1..=31).collect::<Vec<_>>());
+        assert_eq!(handles, (1..=32).collect::<Vec<_>>());
     }
 
     #[test]

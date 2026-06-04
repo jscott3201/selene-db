@@ -291,6 +291,107 @@ fn vector_index_stats_recommends_ivf_rebuild_after_scale_aware_drift() {
 }
 
 #[test]
+fn rebuild_recommended_vector_indexes_selects_only_recommended_ivf_indexes() {
+    let graph = graph(330_156);
+    let registry = BuiltinProcedureRegistry::new();
+    let mut session = Session::new(&graph);
+    let hot = istr("HotVectorDoc");
+    let cold = istr("ColdVectorDoc");
+    let embedding = istr("embedding");
+    for (label, offset) in [(&hot, 0.0), (&cold, 10_000.0)] {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for value in 0..100 {
+            mutator
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    props(
+                        &embedding,
+                        Value::Vector(vector(&[offset + value as f32, 0.0])),
+                    ),
+                )
+                .expect("base vector insert succeeds");
+        }
+        txn.commit().expect("base seed commits");
+    }
+
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('HotVectorDoc', 'embedding', 2, 'ivf')",
+            &registry,
+        )
+        .expect("hot ivf vector index creation executes");
+    session
+        .execute_source(
+            "CALL selene.create_vector_index('ColdVectorDoc', 'embedding', 2, 'ivf')",
+            &registry,
+        )
+        .expect("cold ivf vector index creation executes");
+
+    for (label, count, offset) in [(&hot, 100, 20_000.0), (&cold, 1, 30_000.0)] {
+        let mut txn = graph.begin_write();
+        let mut mutator = txn.mutator();
+        for value in 0..count {
+            mutator
+                .create_node(
+                    LabelSet::single(label.clone()),
+                    props(
+                        &embedding,
+                        Value::Vector(vector(&[offset + value as f32, 0.0])),
+                    ),
+                )
+                .expect("post-training vector insert succeeds");
+        }
+        txn.commit().expect("post-training inserts commit");
+    }
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.rebuild_recommended_vector_indexes() \
+         YIELD label, before_ivf_pending_retrain_entries, after_ivf_pending_retrain_entries, \
+               before_ivf_rebuild_recommended, after_ivf_rebuild_recommended",
+        &registry,
+    );
+    assert_eq!(table.row_count(), 1);
+    assert_eq!(string_column(&table, "label"), vec!["HotVectorDoc"]);
+    assert_eq!(
+        uint_column(&table, "before_ivf_pending_retrain_entries"),
+        vec![100]
+    );
+    assert_eq!(
+        uint_column(&table, "after_ivf_pending_retrain_entries"),
+        vec![0]
+    );
+    assert_eq!(
+        bool_column(&table, "before_ivf_rebuild_recommended"),
+        vec![true]
+    );
+    assert_eq!(
+        bool_column(&table, "after_ivf_rebuild_recommended"),
+        vec![false]
+    );
+
+    let table = execute_rows(
+        &mut session,
+        "CALL selene.vector_index_stats() \
+         YIELD label, ivf_pending_retrain_entries, ivf_rebuild_recommended",
+        &registry,
+    );
+    assert_eq!(
+        string_column(&table, "label"),
+        vec!["ColdVectorDoc", "HotVectorDoc"]
+    );
+    assert_eq!(
+        uint_column(&table, "ivf_pending_retrain_entries"),
+        vec![1, 0]
+    );
+    assert_eq!(
+        bool_column(&table, "ivf_rebuild_recommended"),
+        vec![false, false]
+    );
+}
+
+#[test]
 fn rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     let graph = graph(330_154);
     let registry = BuiltinProcedureRegistry::new();
