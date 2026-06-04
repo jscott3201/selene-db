@@ -63,19 +63,27 @@ pub(crate) fn build_vector_index_lenient_with_hnsw_config(
 
 /// Rebuild every registered vector index from node columns.
 pub(crate) fn rebuild_vector_indexes(graph: &mut crate::SeleneGraph) -> GraphResult<()> {
-    rebuild_vector_indexes_inner(graph, BuildPolicy::Lenient).map(|_| ())
+    rebuild_vector_indexes_inner(graph, BuildPolicy::Lenient, RebuildSelection::All).map(|_| ())
 }
 
 /// Strictly rebuild every registered vector index from node columns.
 pub(crate) fn rebuild_vector_indexes_strict(
     graph: &mut crate::SeleneGraph,
 ) -> GraphResult<VectorIndexRebuildReport> {
-    rebuild_vector_indexes_inner(graph, BuildPolicy::Strict)
+    rebuild_vector_indexes_inner(graph, BuildPolicy::Strict, RebuildSelection::All)
+}
+
+/// Strictly rebuild vector indexes whose diagnostics recommend maintenance.
+pub(crate) fn rebuild_recommended_vector_indexes_strict(
+    graph: &mut crate::SeleneGraph,
+) -> GraphResult<VectorIndexRebuildReport> {
+    rebuild_vector_indexes_inner(graph, BuildPolicy::Strict, RebuildSelection::Recommended)
 }
 
 fn rebuild_vector_indexes_inner(
     graph: &mut crate::SeleneGraph,
     policy: BuildPolicy,
+    selection: RebuildSelection,
 ) -> GraphResult<VectorIndexRebuildReport> {
     let registrations: Vec<VectorIndexRegistration> = graph
         .vector_index
@@ -90,9 +98,15 @@ fn rebuild_vector_indexes_inner(
             before: entry.memory_usage(),
         })
         .collect();
-    let mut rebuilt = VectorIndexMap::default();
+    let mut rebuilt = match selection {
+        RebuildSelection::All => VectorIndexMap::default(),
+        RebuildSelection::Recommended => graph.vector_index.clone(),
+    };
     let mut entries = Vec::with_capacity(registrations.len());
     for registration in registrations {
+        if !selection.should_rebuild(&registration.before) {
+            continue;
+        }
         let index = build_vector_index_inner(
             graph,
             registration.label.clone(),
@@ -193,4 +207,19 @@ fn build_vector_index_inner(
 enum BuildPolicy {
     Strict,
     Lenient,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RebuildSelection {
+    All,
+    Recommended,
+}
+
+impl RebuildSelection {
+    fn should_rebuild(self, usage: &VectorIndexMemoryUsage) -> bool {
+        match self {
+            Self::All => true,
+            Self::Recommended => usage.ivf_rebuild_recommended(),
+        }
+    }
 }

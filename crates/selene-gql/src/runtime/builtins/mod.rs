@@ -10,9 +10,8 @@
 //! parameter/output tables (the same `StaticParameter`/`StaticOutputColumn` →
 //! `ProcedureMetadata` conversion the pack registry performed). The vector
 //! search, approximate vector-search, batched approximate vector-search,
-//! vector-index stats, and vector-index
-//! procedures are new native engine functionality on the same concrete built-in
-//! dispatch path.
+//! vector-index stats, and vector-index procedures are new native engine
+//! functionality on the same concrete built-in dispatch path.
 //!
 //! Tiers and mutability are preserved exactly:
 //! - `selene.health`, `selene.feature_status`, `selene.verify`, and
@@ -27,9 +26,10 @@
 //!   route every write through [`MutationContext::mutator`] — emitting index
 //!   schema changes through the single mutation funnel (Hard Rule 11). They
 //!   never bypass the funnel and never re-enter `begin_write`.
-//! - `selene.rebuild_vector_indexes` is maintenance-tier
+//! - `selene.rebuild_vector_indexes` and
+//!   `selene.rebuild_recommended_vector_indexes` are maintenance-tier
 //!   ([`ProcedureTier::Maintenance`] +
-//!   [`ProcedureMutability::MaintenanceWrite`]); it rebuilds derived vector
+//!   [`ProcedureMutability::MaintenanceWrite`]); they rebuild derived vector
 //!   index state through [`MaintenanceContext`] without graph changes, WAL
 //!   entries, or schema-version bumps.
 //!
@@ -79,6 +79,8 @@ pub(super) enum BuiltinKind {
     VectorIndexStats,
     /// `selene.rebuild_vector_indexes` — vector index derived-state rebuild.
     RebuildVectorIndexes,
+    /// `selene.rebuild_recommended_vector_indexes` — recommended vector-index rebuild.
+    RebuildRecommendedVectorIndexes,
     /// `selene.create_index` — mutation-tier property-index creation.
     CreateIndex,
     /// `selene.drop_index` — mutation-tier property-index drop.
@@ -106,7 +108,7 @@ pub(super) struct BuiltinSpec {
 /// `feature_status`, `verify`, `create_index`, `drop_index`; the former
 /// `pack_history` built-in is not relocated). Vector built-ins are appended so
 /// legacy handles keep their relative ordering.
-pub(super) const BUILTIN_SPECS: [BuiltinSpec; 12] = [
+pub(super) const BUILTIN_SPECS: [BuiltinSpec; 13] = [
     BuiltinSpec {
         name: &["selene", "health"],
         description: "Report basic graph health counters.",
@@ -160,6 +162,12 @@ pub(super) const BUILTIN_SPECS: [BuiltinSpec; 12] = [
         description: "Rebuild vector indexes from primary graph values.",
         since_version: "1.1.0",
         kind: BuiltinKind::RebuildVectorIndexes,
+    },
+    BuiltinSpec {
+        name: &["selene", "rebuild_recommended_vector_indexes"],
+        description: "Rebuild vector indexes whose diagnostics recommend maintenance.",
+        since_version: "1.1.0",
+        kind: BuiltinKind::RebuildRecommendedVectorIndexes,
     },
     BuiltinSpec {
         name: &["selene", "create_vector_index"],
@@ -217,7 +225,9 @@ impl BuiltinKind {
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => ProcedureTier::Graph,
-            Self::RebuildVectorIndexes => ProcedureTier::Maintenance,
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+                ProcedureTier::Maintenance
+            }
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -235,7 +245,9 @@ impl BuiltinKind {
             | Self::VectorSearchNodesAnn
             | Self::VectorSearchNodesAnnBatch
             | Self::VectorIndexStats => ProcedureMutability::Read,
-            Self::RebuildVectorIndexes => ProcedureMutability::MaintenanceWrite,
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+                ProcedureMutability::MaintenanceWrite
+            }
             Self::CreateIndex
             | Self::DropIndex
             | Self::CreateVectorIndex
@@ -252,7 +264,9 @@ impl BuiltinKind {
             Self::VectorSearchNodesAnn => vector_search_ann::signature(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::signature(),
             Self::VectorIndexStats => vector_index_stats::signature(),
-            Self::RebuildVectorIndexes => rebuild_vector_indexes::signature(),
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+                rebuild_vector_indexes::signature()
+            }
             Self::CreateIndex => create_index::signature(),
             Self::DropIndex => drop_index::signature(),
             Self::CreateVectorIndex => create_vector_index::signature(),
@@ -269,7 +283,9 @@ impl BuiltinKind {
             Self::VectorSearchNodesAnn => vector_search_ann::output_columns(),
             Self::VectorSearchNodesAnnBatch => vector_search_ann_batch::output_columns(),
             Self::VectorIndexStats => vector_index_stats::output_columns(),
-            Self::RebuildVectorIndexes => rebuild_vector_indexes::output_columns(),
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+                rebuild_vector_indexes::output_columns()
+            }
             Self::CreateIndex => create_index::output_columns(),
             Self::DropIndex => drop_index::output_columns(),
             Self::CreateVectorIndex => create_vector_index::output_columns(),
@@ -305,10 +321,12 @@ impl BuiltinKind {
                 expected: ProcedureTier::Mutation,
                 actual: ProcedureTier::Graph,
             }),
-            Self::RebuildVectorIndexes => Err(ProcedureError::TierMismatch {
-                expected: ProcedureTier::Maintenance,
-                actual: ProcedureTier::Graph,
-            }),
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+                Err(ProcedureError::TierMismatch {
+                    expected: ProcedureTier::Maintenance,
+                    actual: ProcedureTier::Graph,
+                })
+            }
         }
     }
 
@@ -334,10 +352,12 @@ impl BuiltinKind {
                 expected: ProcedureTier::Graph,
                 actual: ProcedureTier::Mutation,
             }),
-            Self::RebuildVectorIndexes => Err(ProcedureError::TierMismatch {
-                expected: ProcedureTier::Maintenance,
-                actual: ProcedureTier::Mutation,
-            }),
+            Self::RebuildVectorIndexes | Self::RebuildRecommendedVectorIndexes => {
+                Err(ProcedureError::TierMismatch {
+                    expected: ProcedureTier::Maintenance,
+                    actual: ProcedureTier::Mutation,
+                })
+            }
         }
     }
 
@@ -349,6 +369,9 @@ impl BuiltinKind {
     ) -> Result<ProcedureResult, ProcedureError> {
         match self {
             Self::RebuildVectorIndexes => rebuild_vector_indexes::execute(ctx, args),
+            Self::RebuildRecommendedVectorIndexes => {
+                rebuild_vector_indexes::execute_recommended(ctx, args)
+            }
             Self::Health
             | Self::FeatureStatus
             | Self::Verify

@@ -35,7 +35,8 @@ use crate::error::{GraphError, GraphResult};
 use crate::graph::VectorIndexEntry;
 pub(crate) use build::{
     build_vector_index_lenient_with_hnsw_config, build_vector_index_with_hnsw_config,
-    rebuild_vector_indexes, rebuild_vector_indexes_strict,
+    rebuild_recommended_vector_indexes_strict, rebuild_vector_indexes,
+    rebuild_vector_indexes_strict,
 };
 use config::hnsw_config_for_kind;
 pub(crate) use hnsw::HnswSearchScratch;

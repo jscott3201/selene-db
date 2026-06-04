@@ -369,6 +369,34 @@ impl SharedGraph {
         committer.submit_vector_index_rebuild(seal_seq, rebuilt, report)
     }
 
+    /// Rebuild only vector indexes whose diagnostics recommend maintenance.
+    ///
+    /// This is the bounded maintenance variant for IVF drift: it uses each index's current
+    /// [`ivf_rebuild_recommended`](crate::vector_index::VectorIndexMemoryUsage::ivf_rebuild_recommended)
+    /// value to decide whether to rebuild that derived index. Indexes that do not recommend rebuild
+    /// are left untouched, and a no-op call returns an empty report without publishing a maintenance
+    /// item.
+    ///
+    /// The rebuild is strict on live data for selected indexes, matching
+    /// [`Self::rebuild_vector_indexes`].
+    pub fn rebuild_recommended_vector_indexes(&self) -> GraphResult<VectorIndexRebuildReport> {
+        let committer = self.committer.handle();
+        let (seal_seq, rebuilt, report) = {
+            let mut guard = self.shared.write();
+            let mut rebuilt = guard.as_ref().clone();
+            let report =
+                crate::vector_index::rebuild_recommended_vector_indexes_strict(&mut rebuilt)?;
+            if report.entries.is_empty() {
+                return Ok(report);
+            }
+            let rebuilt = Arc::new(rebuilt);
+            let seal_seq = committer.next_seal_seq();
+            *guard = Arc::clone(&rebuilt);
+            (seal_seq, rebuilt, report)
+        };
+        committer.submit_vector_index_rebuild(seal_seq, rebuilt, report)
+    }
+
     /// Return the runtime schema-version epoch used for plan-cache invalidation.
     ///
     /// The epoch starts at zero for each [`SharedGraph`] instance and advances
