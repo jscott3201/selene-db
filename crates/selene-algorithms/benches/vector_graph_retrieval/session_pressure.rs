@@ -16,9 +16,11 @@ const SESSION_STRATEGIES: &[SessionStrategy] = &[
     SessionStrategy::GraphSessionFilter,
     SessionStrategy::GraphSessionCurrentFilter,
     SessionStrategy::GraphSessionUnsupersededFilter,
+    SessionStrategy::GraphSessionMaterializedCurrentFilter,
     SessionStrategy::GraphScopeFilter,
     SessionStrategy::GraphScopeCurrentFilter,
     SessionStrategy::GraphScopeUnsupersededFilter,
+    SessionStrategy::GraphScopeMaterializedCurrentFilter,
     SessionStrategy::TopicFilter,
 ];
 
@@ -29,9 +31,11 @@ enum SessionStrategy {
     GraphSessionFilter,
     GraphSessionCurrentFilter,
     GraphSessionUnsupersededFilter,
+    GraphSessionMaterializedCurrentFilter,
     GraphScopeFilter,
     GraphScopeCurrentFilter,
     GraphScopeUnsupersededFilter,
+    GraphScopeMaterializedCurrentFilter,
     TopicFilter,
 }
 
@@ -43,9 +47,13 @@ impl SessionStrategy {
             Self::GraphSessionFilter => "graph_session_filter",
             Self::GraphSessionCurrentFilter => "graph_session_current_filter",
             Self::GraphSessionUnsupersededFilter => "graph_session_unsuperseded_filter",
+            Self::GraphSessionMaterializedCurrentFilter => {
+                "graph_session_materialized_current_filter"
+            }
             Self::GraphScopeFilter => "graph_scope_filter",
             Self::GraphScopeCurrentFilter => "graph_scope_current_filter",
             Self::GraphScopeUnsupersededFilter => "graph_scope_unsuperseded_filter",
+            Self::GraphScopeMaterializedCurrentFilter => "graph_scope_materialized_current_filter",
             Self::TopicFilter => "topic_filter",
         }
     }
@@ -139,12 +147,18 @@ impl MemoryRetrievalFixture {
             SessionStrategy::GraphSessionUnsupersededFilter => {
                 self.unsuperseded_candidates(self.graph_session_candidates(query))
             }
+            SessionStrategy::GraphSessionMaterializedCurrentFilter => {
+                self.materialized_current_candidates(self.graph_session_candidates(query))
+            }
             SessionStrategy::GraphScopeFilter => self.graph_session_scope_candidates(query),
             SessionStrategy::GraphScopeCurrentFilter => {
                 self.current_candidates(self.graph_session_scope_candidates(query))
             }
             SessionStrategy::GraphScopeUnsupersededFilter => {
                 self.unsuperseded_candidates(self.graph_session_scope_candidates(query))
+            }
+            SessionStrategy::GraphScopeMaterializedCurrentFilter => {
+                self.materialized_current_candidates(self.graph_session_scope_candidates(query))
             }
             SessionStrategy::TopicFilter => self
                 .topic_candidates
@@ -180,6 +194,13 @@ impl MemoryRetrievalFixture {
         candidates
             .into_iter()
             .filter(|node_id| self.is_current(*node_id))
+            .collect()
+    }
+
+    fn materialized_current_candidates(&self, candidates: Vec<NodeId>) -> Vec<NodeId> {
+        candidates
+            .into_iter()
+            .filter(|node_id| self.graph_current_nodes.contains(node_id))
             .collect()
     }
 

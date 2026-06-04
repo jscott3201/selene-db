@@ -1,9 +1,9 @@
 //! Fixture construction for graph/vector retrieval benchmarks.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use selene_core::{HnswIndexConfig, LabelSet, PropertyMap, Value};
-use selene_graph::{SharedGraph, VectorIndexConfig, VectorIndexKind};
+use selene_core::{HnswIndexConfig, IStr, LabelSet, NodeId, PropertyMap, Value};
+use selene_graph::{SeleneGraph, SharedGraph, VectorIndexConfig, VectorIndexKind};
 
 use super::support::{
     DIMENSION, FACTS_PER_TOPIC, TOPICS_PER_SESSION, component_candidates, current_replacement,
@@ -166,6 +166,8 @@ impl MemoryRetrievalFixture {
         }
 
         let graph = shared.read().as_ref().clone();
+        let graph_current_nodes =
+            materialized_current_nodes(&graph, metadata.keys().copied(), &superseded_by_edge);
         let pagerank = pagerank_scores(&graph, &label, &support_edge);
         let (component_by_node, component_candidates) =
             component_candidates(&graph, &label, &support_edge, &superseded_by_edge);
@@ -207,6 +209,7 @@ impl MemoryRetrievalFixture {
             superseded_by_edge,
             queries,
             metadata,
+            graph_current_nodes,
             pagerank,
             component_candidates,
             component_order,
@@ -242,4 +245,22 @@ impl MemoryRetrievalFixture {
         fixture.label_candidates = label_candidates;
         fixture
     }
+}
+
+fn materialized_current_nodes<I>(
+    graph: &SeleneGraph,
+    nodes: I,
+    superseded_by_edge: &IStr,
+) -> HashSet<NodeId>
+where
+    I: IntoIterator<Item = NodeId>,
+{
+    nodes
+        .into_iter()
+        .filter(|node_id| {
+            !graph
+                .outgoing_edges(*node_id)
+                .is_some_and(|edges| edges.iter().any(|edge| edge.label == *superseded_by_edge))
+        })
+        .collect()
 }
