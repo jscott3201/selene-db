@@ -146,6 +146,7 @@ fn ivf_remove_excludes_row_from_results() {
     let usage = index.memory_usage();
     assert_eq!(usage.live_entries, 1);
     assert_eq!(usage.deleted_entries, 1);
+    assert_eq!(usage.assigned_entries, 1);
 }
 
 #[test]

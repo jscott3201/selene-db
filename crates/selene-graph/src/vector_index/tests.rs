@@ -662,6 +662,7 @@ fn shared_rebuild_vector_indexes_reclaims_stale_ivf_entries() {
     assert_eq!(before.ivf_entries, 24);
     assert_eq!(before.ivf_live_entries, 22);
     assert_eq!(before.ivf_deleted_entries, 2);
+    assert_eq!(before.ivf_assigned_entries, 22);
 
     let report = shared.rebuild_vector_indexes().unwrap();
 

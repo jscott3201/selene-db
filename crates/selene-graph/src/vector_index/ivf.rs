@@ -67,6 +67,7 @@ pub(crate) struct IvfVectorIndex {
     centroids: Vec<VectorValue>,
     centroid_squared_norms: Vec<f64>,
     lists: Vec<Vec<u32>>,
+    assigned_entry_count: usize,
 }
 
 impl IvfVectorIndex {
@@ -80,6 +81,7 @@ impl IvfVectorIndex {
             centroids: Vec::new(),
             centroid_squared_norms: Vec::new(),
             lists: Vec::new(),
+            assigned_entry_count: 0,
         }
     }
 
@@ -101,10 +103,15 @@ impl IvfVectorIndex {
 
     /// Mark the current vector for `row` stale, if present.
     pub(crate) fn remove(&mut self, row: u32) {
-        let Some(entry) = self.row_to_entry.remove(&row) else {
+        let Some(entry_id) = self.row_to_entry.remove(&row) else {
             return;
         };
-        if let Some(node) = self.entries.get_mut(entry as usize) {
+        if let Ok(Some(list)) = self.nearest_centroid_for_current_entry(entry_id)
+            && self.remove_entry_from_list(entry_id, list)
+        {
+            self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
+        }
+        if let Some(node) = self.entries.get_mut(entry_id as usize) {
             node.deleted = true;
         }
     }
@@ -116,6 +123,7 @@ impl IvfVectorIndex {
             self.centroids.clear();
             self.centroid_squared_norms.clear();
             self.lists.clear();
+            self.assigned_entry_count = 0;
             return Ok(());
         }
         let centroid_count = target_centroid_count(live_entries.len());
@@ -139,8 +147,8 @@ impl IvfVectorIndex {
         }
         let scorer = self.metric.bind_query(query)?;
         let mut top_k = VectorTopK::new(k);
-        let has_stale_entries = self.has_stale_entries();
         if self.centroids.is_empty() || self.lists.is_empty() {
+            let has_stale_entries = self.has_stale_entries();
             if self.metric == VectorMetric::Cosine {
                 for (entry_id, entry) in self.entries.iter().enumerate() {
                     let entry_id = u32::try_from(entry_id).expect("IVF entry id fits u32");
@@ -166,6 +174,7 @@ impl IvfVectorIndex {
             return Ok(vector_hits(top_k));
         }
 
+        let has_stale_entries = self.has_stale_assigned_entries();
         let probe_count = search_width.max(1).min(self.centroids.len());
         let mut centroid_top_k = VectorTopK::new(probe_count);
         if self.metric == VectorMetric::Cosine {
@@ -222,7 +231,11 @@ impl IvfVectorIndex {
         let entries = self.entries.len();
         let live_entries = self.row_to_entry.len();
         let deleted_entries = self.entries.iter().filter(|entry| entry.deleted).count();
-        let assigned_entries = self.lists.iter().map(Vec::len).sum();
+        debug_assert_eq!(
+            self.assigned_entry_count,
+            self.lists.iter().map(Vec::len).sum::<usize>()
+        );
+        let assigned_entries = self.assigned_entry_count;
         let non_empty_list_count = self.lists.iter().filter(|list| !list.is_empty()).count();
         let max_list_len = self.lists.iter().map(Vec::len).max().unwrap_or_default();
         let list_capacity = self.lists.iter().map(Vec::capacity).sum::<usize>();
@@ -283,6 +296,7 @@ impl IvfVectorIndex {
     fn assign_entry(&mut self, entry_id: u32) -> CoreResult<()> {
         if let Some(list) = self.nearest_centroid_for_current_entry(entry_id)? {
             self.lists[list].push(entry_id);
+            self.assigned_entry_count += 1;
         }
         Ok(())
     }
@@ -290,8 +304,10 @@ impl IvfVectorIndex {
     fn replace_entry(&mut self, entry_id: u32, vector: VectorValue) -> CoreResult<()> {
         let old_list = self.nearest_centroid_for_current_entry(entry_id)?;
         let new_list = self.nearest_centroid_for_vector(&vector)?;
-        if let Some(old_list) = old_list {
-            self.remove_entry_from_list(entry_id, old_list);
+        if let Some(old_list) = old_list
+            && self.remove_entry_from_list(entry_id, old_list)
+        {
+            self.assigned_entry_count = self.assigned_entry_count.saturating_sub(1);
         }
         let entry = &mut self.entries[entry_id as usize];
         entry.vector = vector;
@@ -299,6 +315,7 @@ impl IvfVectorIndex {
         self.record_entry_squared_norm(entry_id as usize);
         if let Some(new_list) = new_list {
             self.lists[new_list].push(entry_id);
+            self.assigned_entry_count += 1;
         }
         Ok(())
     }
@@ -323,23 +340,28 @@ impl IvfVectorIndex {
         self.nearest_centroid(scorer).map(Some)
     }
 
-    fn remove_entry_from_list(&mut self, entry_id: u32, list_id: usize) {
+    fn remove_entry_from_list(&mut self, entry_id: u32, list_id: usize) -> bool {
         if self
             .lists
             .get_mut(list_id)
             .is_some_and(|list| remove_entry_id(list, entry_id))
         {
-            return;
+            return true;
         }
         for list in &mut self.lists {
             if remove_entry_id(list, entry_id) {
-                return;
+                return true;
             }
         }
+        false
     }
 
     fn has_stale_entries(&self) -> bool {
         self.entries.len() != self.row_to_entry.len()
+    }
+
+    fn has_stale_assigned_entries(&self) -> bool {
+        self.assigned_entry_count != self.row_to_entry.len()
     }
 
     fn is_current_entry(&self, entry_id: u32, entry: &IvfEntry, has_stale_entries: bool) -> bool {
@@ -468,6 +490,7 @@ impl IvfVectorIndex {
         for (&entry_id, list) in live_entries.iter().zip(assignments) {
             self.lists[list].push(entry_id);
         }
+        self.assigned_entry_count = live_entries.len();
         Ok(())
     }
 
